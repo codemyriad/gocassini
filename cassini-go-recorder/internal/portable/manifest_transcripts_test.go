@@ -66,7 +66,7 @@ func TestValidateTranscriptID(t *testing.T) {
 		{"readable-qwen", false},
 		{"a", false},
 		{"a1", false},
-		{"a_b_c", false},
+		{"a_b_c", true},                 // underscore is not in the published grammar
 		{"PARAKEET", true},              // uppercase rejected
 		{"-leading", true},              // must start with [a-z0-9]
 		{"with space", true},            // no spaces
@@ -315,12 +315,12 @@ func TestEncodePublishedManifestRejectsBadInputs(t *testing.T) {
 			expectMsg: "duplicate",
 		},
 		{
-			name: "two defaults raw-asr",
+			name: "two default words transcripts",
 			transcripts: []TranscriptInput{
 				{ID: "parakeet", Role: RoleRawASR, Body: body, Default: true},
 				{ID: "canary", Role: RoleRawASR, Body: body, Default: true},
 			},
-			expectMsg: "more than one default raw-ASR",
+			expectMsg: "more than one default words transcript",
 		},
 		{
 			name: "readable-cleanup without source",

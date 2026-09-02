@@ -19,6 +19,7 @@ import {
   getDefaultTranscriptId,
   listAvailableTranscripts,
   loadPortableTranscriptBody,
+  pickDisplayForTranscript,
   pickReadableForTranscript,
   type ExtractedPortableManifest,
   type PortableMeetingManifest,
@@ -275,16 +276,21 @@ export async function switchPortableTranscript(
       readableEntry,
     )) as PortableMeetingManifest["readableTranscript"];
   }
+  const displayEntry = pickDisplayForTranscript(manifest, transcriptId);
+  let displayBody: PortableMeetingManifest["displayTranscript"] | undefined;
+  if (displayEntry) {
+    displayBody = (await store.loadBody(
+      resolvedAudioPath,
+      displayEntry.id,
+      tags,
+      displayEntry,
+    )) as PortableMeetingManifest["displayTranscript"];
+  }
   const swappedManifest: PortableMeetingManifest = {
     ...manifest,
     transcript: transcriptBody,
     readableTranscript: readableBody,
-    // A baked display body belongs to the producer-default transcript. Other
-    // raw transcripts are rendered from their own words/readable body.
-    displayTranscript:
-      transcriptId === getDefaultTranscriptId(manifest)
-        ? manifest.displayTranscript
-        : undefined,
+    displayTranscript: displayBody,
   };
   const availableTranscripts = listAvailableTranscripts(manifest);
   return buildPortableLoadedArtifact({

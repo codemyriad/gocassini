@@ -25,16 +25,19 @@ func buildPortableMeetingTagsFromSource(manifest portable.Manifest, source porta
 	return portable.BuildPublishedOpusTags(manifest, encoded, defaultID), nil
 }
 
-// assembleTranscriptInputs returns the list of transcript inputs plus the
-// id of the default raw-ASR entry. The default rule: if any input declares
-// Default=true, that's the default; otherwise the first raw-ASR input wins.
+// assembleTranscriptInputs returns the list of transcript inputs plus the id
+// of the default words entry. The default rule is the first marked entry, or
+// the first words entry when none is marked.
 func assembleTranscriptInputs(manifest portable.Manifest, source portableMeetingSource) ([]portable.TranscriptInput, string, error) {
 	additional := source.AdditionalTranscripts
 	var inputs []portable.TranscriptInput
 	if len(additional) == 0 {
 		// A single-transcript bundle uses the same published indexed layout as a
 		// bundle carrying several raw transcripts.
-		items := flattenPortableTranscriptItems(source.Transcript)
+		items, err := flattenPortableTranscriptItems(source.Transcript)
+		if err != nil {
+			return nil, "", err
+		}
 		inputs = append(inputs, portable.TranscriptInput{
 			ID:           portable.RoleRawASR,
 			Role:         portable.RoleRawASR,
@@ -56,7 +59,10 @@ func assembleTranscriptInputs(manifest portable.Manifest, source portableMeeting
 			if role == "" {
 				role = portable.RoleRawASR
 			}
-			items := flattenPortableTranscriptItems(entry.Transcript)
+			items, err := flattenPortableTranscriptItems(entry.Transcript)
+			if err != nil {
+				return nil, "", fmt.Errorf("transcript %q: %w", entry.ID, err)
+			}
 			body := portable.TranscriptBody{
 				Format:    "cassini.words.v1",
 				Language:  entry.Language,
@@ -64,20 +70,21 @@ func assembleTranscriptInputs(manifest portable.Manifest, source portableMeeting
 				Items:     items,
 			}
 			inputs = append(inputs, portable.TranscriptInput{
-				ID:           entry.ID,
-				Role:         role,
-				Default:      entry.Default,
-				Language:     entry.Language,
-				CreatedAtUTC: manifest.Meeting.ProcessedAtUTC,
-				Body:         body,
-				Provenance:   entry.Provenance,
+				ID:                 entry.ID,
+				Role:               role,
+				Default:            entry.Default,
+				Language:           entry.Language,
+				SourceTranscriptID: entry.SourceTranscriptID,
+				CreatedAtUTC:       manifest.Meeting.ProcessedAtUTC,
+				Body:               body,
+				Provenance:         entry.Provenance,
 			})
 		}
 	}
 
-	defaultID := pickDefaultRawTranscriptID(inputs)
+	defaultID := pickDefaultWordsTranscriptID(inputs)
 	if defaultID == "" {
-		return nil, "", fmt.Errorf("portable meeting bundle has no raw-ASR entry to use as default")
+		return nil, "", fmt.Errorf("portable meeting bundle has no words transcript to use as default")
 	}
 	if source.ReadableTranscript != nil {
 		inputs = append(inputs, portable.TranscriptInput{
@@ -118,23 +125,23 @@ func portableDocumentFormat(document map[string]any) string {
 	return ""
 }
 
-func pickDefaultRawTranscriptID(inputs []portable.TranscriptInput) string {
+func pickDefaultWordsTranscriptID(inputs []portable.TranscriptInput) string {
 	for _, input := range inputs {
-		if input.Default && isRawRole(input.Role) {
+		if input.Default && isWordsRole(input.Role) {
 			return input.ID
 		}
 	}
 	for _, input := range inputs {
-		if isRawRole(input.Role) {
+		if isWordsRole(input.Role) {
 			return input.ID
 		}
 	}
 	return ""
 }
 
-func isRawRole(role string) bool {
+func isWordsRole(role string) bool {
 	switch role {
-	case portable.RoleRawASR, portable.RoleHumanCorrected, portable.RoleTranslation:
+	case portable.RoleRawASR, portable.RoleHumanCorrected, portable.RoleTranslation, portable.RoleScripted:
 		return true
 	default:
 		return false

@@ -104,8 +104,9 @@ func inspectPortableAudio(out io.Writer, path string) error {
 
 	payload, manifest, err := decodePortableMeeting(tags)
 	if err != nil {
+		// Nothing from an unusable manifest is safe to display.
 		printPlainPortableAudio(out, audioSummary, "invalid-cassini-metadata", err.Error())
-		return err
+		return fmt.Errorf("%s: %w", path, err)
 	}
 
 	bodies := readPortableTranscriptBodies(tags, manifest)
@@ -117,16 +118,14 @@ func inspectPortableAudio(out io.Writer, path string) error {
 			Warnings: []string{verifyErr.Error()},
 		}
 	}
-	audioStatus := integrity.Status
-	// The metadata verdict outranks the audio verdict. A file whose transcript
-	// body cannot be read is invalid-cassini-metadata however the audio turned
-	// out, and `cassini=ok` printed beside a transcript nobody could read is
-	// exactly the reading this command exists to prevent. The audio verdict
-	// still decides the plain-audio fallback, which is about the audio.
-	if len(bodies.Unreadable) > 0 {
-		integrity.Status = "invalid-cassini-metadata"
+	// A repeated load-bearing tag means the file was edited and no manifest
+	// field is trustworthy. A missing body affects only that transcript.
+	if bodies.Repeated {
+		printPlainPortableAudio(out, audioSummary, "invalid-cassini-metadata", strings.Join(bodies.Warnings, "; "))
+		return fmt.Errorf("%s: a load-bearing tag appears twice", path)
 	}
 
+	audioStatus := integrity.Status
 	printPortableMeeting(out, path, audioSummary, payload, manifest, bodies, integrity)
 	if audioStatus != "ok" {
 		fmt.Fprintln(out, "fallback=plain-audio")
@@ -147,7 +146,9 @@ type portableTranscriptBodies struct {
 	// Unreadable names every transcript whose body could not be read, in
 	// manifest order.
 	Unreadable []string
-	Warnings   []string
+	// Repeated marks a repeated chunk comment, which invalidates the file.
+	Repeated bool
+	Warnings []string
 }
 
 // err reports the transcripts whose bodies could not be read, so `cassini
@@ -179,20 +180,27 @@ func readPortableTranscriptBodies(tags map[string]string, manifest portable.Mani
 		body, warnings, err := decodeTranscriptBody(tags, entry)
 		bodies.Warnings = append(bodies.Warnings, warnings...)
 		if err != nil {
+			if errors.Is(err, errRepeatedTag) {
+				bodies.Repeated = true
+			}
 			bodies.Unreadable = append(bodies.Unreadable, entry.ID)
 			bodies.Warnings = append(bodies.Warnings, fmt.Sprintf("transcript %s body could not be read: %v", entry.ID, err))
 			continue
 		}
-		count := body.WordCount
-		if count == 0 {
-			count = len(body.Items)
+		if body.WordCount != 0 && body.WordCount != len(body.Items) {
+			bodies.Warnings = append(bodies.Warnings, fmt.Sprintf(
+				"transcript %s declares wordCount=%d and carries %d items; using the items",
+				entry.ID, body.WordCount, len(body.Items)))
 		}
-		bodies.WordCounts[entry.ID] = count
+		bodies.WordCounts[entry.ID] = len(body.Items)
 	}
 	for _, entry := range manifest.ReadableTranscripts {
 		_, warnings, err := decodeTranscriptBody(tags, entry)
 		bodies.Warnings = append(bodies.Warnings, warnings...)
 		if err != nil {
+			if errors.Is(err, errRepeatedTag) {
+				bodies.Repeated = true
+			}
 			bodies.Unreadable = append(bodies.Unreadable, entry.ID)
 			bodies.Warnings = append(bodies.Warnings, fmt.Sprintf("transcript %s body could not be read: %v", entry.ID, err))
 		}
@@ -228,7 +236,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	language := manifest.Meeting.Language
 	if language == "" {
 		for _, entry := range manifest.Transcripts {
-			if entry.Default && entry.Language != "" {
+			if entry.ID == bodies.DefaultID {
 				language = entry.Language
 				break
 			}
@@ -255,10 +263,10 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), blankDash(language))
 	printPortableOrigin(out, manifest.Meeting)
 	for _, entry := range manifest.Transcripts {
-		printPortableTranscriptEntry(out, "transcript", entry)
+		printPortableTranscriptEntry(out, "transcript", entry, bodies.DefaultID)
 	}
 	for _, entry := range manifest.ReadableTranscripts {
-		printPortableTranscriptEntry(out, "readable_transcript", entry)
+		printPortableTranscriptEntry(out, "readable_transcript", entry, "")
 	}
 	if manifest.Provenance != nil {
 		printProcessingStep(out, "speech_to_text", manifest.Provenance.SpeechToText)
@@ -300,9 +308,9 @@ func printPortableOrigin(out io.Writer, meeting portable.Meeting) {
 		blankDash(meeting.RoomID), blankDash(meeting.JobID), attempt)
 }
 
-func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry) {
+func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry, defaultID string) {
 	defaultMarker := "no"
-	if entry.Default {
+	if entry.ID != "" && entry.ID == defaultID {
 		defaultMarker = "yes"
 	}
 	source := entry.SourceTranscriptID
@@ -430,6 +438,16 @@ func isPublishedPortableFormat(formatTag string) bool {
 	return strings.TrimSpace(formatTag) == portable.Format
 }
 
+var errRepeatedTag = errors.New("repeated tag")
+
+func chunkValue(tags map[string]string, key string) (string, error) {
+	part := metadataTag(tags, key)
+	if strings.Contains(part, ";") {
+		return "", fmt.Errorf("%w %s", errRepeatedTag, key)
+	}
+	return part, nil
+}
+
 func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portable.Manifest, error) {
 	formatTag := metadataTag(tags, "CASSINI_FORMAT")
 	if formatTag == "" {
@@ -462,7 +480,10 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 	var encoded strings.Builder
 	for idx := 0; idx < chunkCount; idx++ {
 		key := fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)
-		part := metadataTag(tags, key)
+		part, err := chunkValue(tags, key)
+		if err != nil {
+			return portablePayloadInfo{}, portable.Manifest{}, err
+		}
 		if part == "" {
 			return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("missing payload chunk %s", key)
 		}
@@ -740,8 +761,9 @@ func extractedFromTranscriptBody(id, format, language string, wordCount int, ite
 // meant a tool that rewrote the tag and not the manifest silently moved which
 // transcript every consumer read.
 //
-// Preference: the entry flagged Default, then the entry the tag names, then the
-// first raw transcript entry.
+// Preference: the entry flagged Default, then the first words transcript.
+// CASSINI_TRANSCRIPT_DEFAULT is a discoverability copy and disagreement is a
+// warning, never a resolver.
 func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manifest) (portable.TranscriptEntry, []string, bool) {
 	if len(manifest.Transcripts) == 0 {
 		return portable.TranscriptEntry{}, nil, false
@@ -759,14 +781,14 @@ func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manif
 		}
 		return entry, warnings, true
 	}
-	if taggedID != "" {
-		for _, entry := range manifest.Transcripts {
-			if entry.ID == taggedID {
-				return entry, nil, true
-			}
-		}
+	first := manifest.Transcripts[0]
+	var warnings []string
+	if taggedID != "" && taggedID != first.ID {
+		warnings = append(warnings, fmt.Sprintf(
+			"default transcript disagrees between manifest and tag: manifest=%s CASSINI_TRANSCRIPT_DEFAULT=%s",
+			first.ID, taggedID))
 	}
-	return manifest.Transcripts[0], nil, true
+	return first, warnings, true
 }
 
 // decodeTranscriptBody reverses portable.EncodeTranscriptBody for one
@@ -784,7 +806,8 @@ func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manif
 // still read, because a disagreement is worth reporting — but it is a warning,
 // not a failure.
 func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry) (portable.TranscriptBody, []string, error) {
-	prefix := portable.TranscriptIDToTagPrefix(entry.ID)
+	// payloadRef is authoritative. Its prefix is not reconstructed from the id.
+	prefix := strings.TrimSpace(entry.PayloadRef.Prefix)
 	var warnings []string
 	chunkCount := entry.PayloadRef.ChunkCount
 	tagged := parseIntOrZero(metadataTag(tags, prefix+"CHUNK_COUNT"))
@@ -796,7 +819,10 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 	var encoded strings.Builder
 	for idx := 0; idx < chunkCount; idx++ {
 		key := fmt.Sprintf("%s%03d", prefix, idx)
-		part := metadataTag(tags, key)
+		part, err := chunkValue(tags, key)
+		if err != nil {
+			return portable.TranscriptBody{}, warnings, err
+		}
 		if part == "" {
 			return portable.TranscriptBody{}, warnings, fmt.Errorf("missing transcript chunk %s", key)
 		}
@@ -836,11 +862,16 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 		{name: "RAW_BYTES", want: strconv.Itoa(entry.PayloadRef.RawBytes)},
 		{name: "GZIP_BYTES", want: strconv.Itoa(entry.PayloadRef.GzipBytes)},
 		{name: "SHA256", want: entry.PayloadRef.SHA256},
+		{name: "ENCODING", want: entry.PayloadRef.Encoding},
 	} {
-		if tagged := strings.TrimSpace(metadataTag(tags, prefix+mirror.name)); tagged != "" && tagged != mirror.want {
+		tagged := strings.TrimSpace(metadataTag(tags, prefix+mirror.name))
+		if mirror.name == "SHA256" {
+			tagged = strings.ToLower(tagged)
+		}
+		if tagged != "" && mirror.want != "" && tagged != mirror.want {
 			warnings = append(warnings, fmt.Sprintf(
-				"transcript %s %s disagrees between manifest and tag: manifest=%s tag=%s",
-				entry.ID, strings.ToLower(mirror.name), mirror.want, tagged,
+				"transcript %s %s%s disagrees with payloadRef: tag=%s payloadRef=%s",
+				entry.ID, prefix, mirror.name, tagged, mirror.want,
 			))
 		}
 	}
@@ -853,9 +884,8 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 }
 
 // WriteTranscriptWordsV1JSON renders an extracted transcript as a
-// transcript.words.v1.json-shaped document (one segment carrying the ordered
-// words) so existing consumers — including the Talk roundtrip phase-9 check —
-// can read it without bespoke parsing.
+// transcript.words.v1.json-shaped document, preserving each maximal speaker
+// turn as a segment.
 func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) error {
 	type wordsV1Word struct {
 		Text                 string   `json:"text"`
@@ -875,21 +905,31 @@ func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) er
 		Segments  []wordsV1Segment `json:"segments"`
 	}
 
-	words := make([]wordsV1Word, 0, len(extracted.Words))
+	segments := make([]wordsV1Segment, 0, 8)
+	emitted := 0
 	for _, w := range extracted.Words {
-		words = append(words, wordsV1Word{
+		word := wordsV1Word{
 			Text:                 w.Text,
 			StartMS:              w.StartMS,
 			EndMS:                w.EndMS,
 			AttributionGapDB:     w.AttributionGapDB,
 			LowConfidenceSpeaker: w.LowConfidenceSpeaker,
-		})
+		}
+		if n := len(segments); n > 0 && segments[n-1].Speaker == w.Speaker {
+			segments[n-1].Words = append(segments[n-1].Words, word)
+		} else {
+			segments = append(segments, wordsV1Segment{Speaker: w.Speaker, Words: []wordsV1Word{word}})
+		}
+		emitted++
+	}
+	if len(segments) == 0 {
+		segments = []wordsV1Segment{{Words: []wordsV1Word{}}}
 	}
 	doc := wordsV1Doc{
 		Version:   "transcript.words.v1",
 		Language:  extracted.Language,
-		WordCount: extracted.WordCount,
-		Segments:  []wordsV1Segment{{Words: words}},
+		WordCount: emitted,
+		Segments:  segments,
 	}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")

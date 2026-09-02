@@ -346,33 +346,52 @@ export function validatePublishedPortableManifest(manifest, path = "portable mee
   const readable = Array.isArray(manifest.readableTranscripts)
     ? manifest.readableTranscripts
     : [];
-  const rawIDs = new Set();
+  const wordIDs = new Set();
   const allIDs = new Set();
   for (const entry of manifest.transcripts) {
-    validatePortableTranscriptEntry(entry, path, new Set(["raw-asr", "human-corrected", "translation"]));
+    validatePortableTranscriptEntry(
+      entry,
+      path,
+      new Set(["raw-asr", "human-corrected", "translation", "scripted"]),
+    );
     if (allIDs.has(entry.id)) {
       throw new Error(`Duplicate portable transcript id ${String(entry.id)} in ${path}`);
     }
     allIDs.add(entry.id);
-    rawIDs.add(entry.id);
+    wordIDs.add(entry.id);
   }
   for (const entry of readable) {
     validatePortableTranscriptEntry(entry, path, new Set(["readable-cleanup", "display"]));
     if (allIDs.has(entry.id)) {
       throw new Error(`Duplicate portable transcript id ${String(entry.id)} in ${path}`);
     }
-    if (!rawIDs.has(entry.sourceTranscriptId)) {
+    allIDs.add(entry.id);
+  }
+  for (const entry of manifest.transcripts) {
+    if (entry.role === "raw-asr" || entry.role === "scripted") {
+      if (entry.sourceTranscriptId !== undefined) {
+        throw new Error(`Portable transcript ${entry.id} must not set sourceTranscriptId in ${path}`);
+      }
+      continue;
+    }
+    if (!entry.sourceTranscriptId || !wordIDs.has(entry.sourceTranscriptId)) {
       throw new Error(
         `Portable transcript ${String(entry.id)} has unknown sourceTranscriptId in ${path}`,
       );
     }
-    allIDs.add(entry.id);
+  }
+  for (const entry of readable) {
+    if (!entry.sourceTranscriptId || !wordIDs.has(entry.sourceTranscriptId)) {
+      throw new Error(
+        `Portable transcript ${String(entry.id)} has unknown sourceTranscriptId in ${path}`,
+      );
+    }
   }
 }
 
 function validatePortableTranscriptEntry(entry, path, roles) {
   const id = String(entry?.id ?? "");
-  if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id)) {
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
     throw new Error(`Invalid portable transcript id ${JSON.stringify(id)} in ${path}`);
   }
   if (!roles.has(entry?.role)) {
@@ -382,8 +401,12 @@ function validatePortableTranscriptEntry(entry, path, roles) {
     throw new Error(`Invalid portable transcript format for ${id} in ${path}`);
   }
   const ref = entry?.payloadRef;
-  const expectedPrefix = `CASSINI_TX_${id.toUpperCase().replace(/-/g, "_")}_PAYLOAD_`;
-  if (!ref || ref.prefix !== expectedPrefix || !Number.isInteger(ref.chunkCount) || ref.chunkCount < 1) {
+  if (
+    !ref ||
+    !/^CASSINI_TX_[A-Z0-9_]+_PAYLOAD_$/.test(ref.prefix) ||
+    !Number.isInteger(ref.chunkCount) ||
+    ref.chunkCount < 1
+  ) {
     throw new Error(`Invalid transcript payloadRef for ${id} in ${path}`);
   }
   if (ref.encoding !== "base64url+gzip+utf8json") {
@@ -391,6 +414,16 @@ function validatePortableTranscriptEntry(entry, path, roles) {
   }
   if (!/^[0-9a-f]{64}$/.test(String(ref.sha256 ?? ""))) {
     throw new Error(`Invalid transcript digest for ${id} in ${path}`);
+  }
+  if (
+    !Number.isInteger(ref.rawBytes) ||
+    ref.rawBytes < 0 ||
+    !Number.isInteger(ref.gzipBytes) ||
+    ref.gzipBytes < 0 ||
+    typeof ref.mime !== "string" ||
+    ref.mime.trim() === ""
+  ) {
+    throw new Error(`Invalid transcript payload metadata for ${id} in ${path}`);
   }
 }
 
@@ -476,11 +509,8 @@ export function buildTranscriptWordsFromPortable(portable) {
     const startMs = safeToInt(item?.startMs, 0);
     const endMs = safeToInt(item?.endMs, startMs);
     const text = typeof item?.text === "string" ? item.text : "";
-    // Portable meetings may contain either true word-level transcript items or
-    // older segment-level text spans. Only the single-word case is safe to turn
-    // back into a timed transcript word. Multi-word spans would fabricate
-    // uniform word timings that were never produced by ASR.
-    const words = isSinglePortableWord(text) ? splitTextIntoWords(text, startMs, endMs) : [];
+    const wordText = text.trim();
+    const words = wordText ? [{ id: "w_0", text: wordText, startMs, endMs }] : [];
     const speaker = typeof item?.speaker === "string" && item.speaker.trim() !== "" ? item.speaker : undefined;
 
     return {
@@ -501,15 +531,11 @@ export function buildTranscriptWordsFromPortable(portable) {
     media: {
       src: "meeting.opus",
       durationMs: safeToInt(portable.meeting?.durationMs, 0),
-      sha256: safeToString(portable.audio?.sha256),
+      sha256: safeToString(portable.integrity?.opusAudioSha256),
     },
     speakers,
     segments,
   };
-}
-
-function isSinglePortableWord(text) {
-  return typeof text === "string" && text.trim().split(/\s+/).filter(Boolean).length <= 1;
 }
 
 function extractPortableReadableWords(segment, segmentId) {
@@ -1207,18 +1233,12 @@ export function isPortableMeeting(fileName) {
 // Absent rather than empty: an entry with `roomId: ""` would read as "this
 // meeting has a room whose id is the empty string", and every consumer — the
 // viewer's grouping, the CLI's --room filter — would have to check presence
-// AND emptiness. Meetings recorded before D-622, and Talk recordings whose room
-// lookup failed, genuinely have no room, and saying so is the correct answer.
+// AND emptiness. Hand-packed meetings and Talk recordings whose room lookup
+// failed genuinely have no room, and saying so is the correct answer.
 //
-// roomName is still read here, and is no longer WRITTEN by any producer
-// (D-640): a display name is editable and a sealed recording is not, so the
-// current name is stamped onto the entry by the operator at publish time and
-// carried across a republish by upsertSiteCatalog. Files packed before that
-// change still carry one, and it is still the best answer available for them.
 export function portableRoomFields(portable) {
   const fields = {};
   const roomId = typeof portable?.meeting?.roomId === "string" ? portable.meeting.roomId.trim() : "";
-  const roomName = typeof portable?.meeting?.roomName === "string" ? portable.meeting.roomName.trim() : "";
   const jobId = typeof portable?.meeting?.jobId === "string" ? portable.meeting.jobId.trim() : "";
   // Strict on the type, like every other optional field here and in
   // catalog.ts: a wrong-typed value means "not recorded", never "coerce it".
@@ -1227,9 +1247,6 @@ export function portableRoomFields(portable) {
   const attemptNumber = portable?.meeting?.attemptNumber;
   if (roomId !== "") {
     fields.roomId = roomId;
-  }
-  if (roomName !== "") {
-    fields.roomName = roomName;
   }
   // Which job and attempt produced the artifact (D-640). jobId normally equals
   // the entry's own id — the operator publishes meetings/<jobID>.opus — and is

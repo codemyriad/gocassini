@@ -24,6 +24,8 @@ import {
 } from "../core/overlap";
 import type { TranscriptWordsV1 } from "../core/types";
 
+const OPUS_AUDIO_SHA256 = "a".repeat(64);
+
 const transcriptFixture = {
   version: "transcript.words.v1",
   media: {
@@ -259,9 +261,7 @@ describe("loadArtifactFromDirectory", () => {
       meeting: {
         durationMs: 3000,
       },
-      audio: {
-        sha256: "abc123",
-      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [{ id: "spk_1", label: "Alice" }],
       transcript: {
         items: [
@@ -270,7 +270,7 @@ describe("loadArtifactFromDirectory", () => {
             speaker: "spk_1",
             startMs: 1000,
             endMs: 1500,
-            text: "hello there",
+            text: "hello",
           },
         ],
       },
@@ -303,7 +303,7 @@ describe("loadArtifactFromDirectory", () => {
 
     expect(artifact.audioSrc).toBe("http://127.0.0.1:8765/daily-meeting-2026-03-18--12:30.opus");
     expect(artifact.transcript.segments).toHaveLength(1);
-    expect(artifact.transcript.segments[0]?.text).toBe("hello there");
+    expect(artifact.transcript.segments[0]?.text).toBe("hello");
     expect(artifact.readableTranscript?.segments).toHaveLength(1);
     expect(artifact.displayTranscript?.blocks).toHaveLength(1);
   });
@@ -323,16 +323,13 @@ describe("loadArtifactFromDirectory", () => {
         recordedAtLocal: "2026-03-10T12:30:00",
         processedAtUtc: "2026-03-19T09:43:13Z",
       },
-      audio: {
-        codec: "opus",
-        sampleRate: 48_000,
-        channels: 1,
-        sha256: "abc123",
-      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       provenance: {
         speechToText: {
-          backend: "sherpa-onnx",
-          model: "parakeet-tdt-0.6b-v2-int8",
+          "raw-asr": {
+            backend: "sherpa-onnx",
+            model: "parakeet-tdt-0.6b-v2-int8",
+          },
         },
       },
       speakers: [
@@ -346,7 +343,7 @@ describe("loadArtifactFromDirectory", () => {
             speaker: "spk_chris",
             startMs: 1000,
             endMs: 1500,
-            text: "hello there",
+            text: "hello",
           },
         ],
       },
@@ -405,9 +402,7 @@ describe("loadArtifactFromDirectory", () => {
       meeting: {
         durationMs: 3000,
       },
-      audio: {
-        sha256: "abc123",
-      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [{ id: "spk_1", label: "Alice" }],
       transcript: {
         items: [
@@ -416,7 +411,7 @@ describe("loadArtifactFromDirectory", () => {
             speaker: "spk_1",
             startMs: 1000,
             endMs: 1500,
-            text: "hello there",
+            text: "hello",
           },
         ],
       },
@@ -504,19 +499,19 @@ describe("loadArtifactFromDirectory", () => {
       meeting: {
         durationMs: 5000,
       },
-      audio: {
-        sha256: "abc123",
-      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [{ id: "spk_1", label: "Alice" }],
       transcript: {
         items: [
-          {
-            id: "seg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-          },
+          { speaker: "spk_1", startMs: 1000, endMs: 1200, text: "And" },
+          { speaker: "spk_1", startMs: 1200, endMs: 1400, text: "I" },
+          { speaker: "spk_1", startMs: 1400, endMs: 1800, text: "think" },
+          { speaker: "spk_1", startMs: 1800, endMs: 2200, text: "they'll" },
+          { speaker: "spk_1", startMs: 2200, endMs: 2400, text: "be" },
+          { speaker: "spk_1", startMs: 2400, endMs: 2800, text: "very" },
+          { speaker: "spk_1", startMs: 2800, endMs: 3300, text: "happy" },
+          { speaker: "spk_1", startMs: 3300, endMs: 3600, text: "with" },
+          { speaker: "spk_1", startMs: 3600, endMs: 4000, text: "it." },
         ],
       },
       readableTranscript: {
@@ -662,10 +657,22 @@ describe("switchPortableTranscript", () => {
     };
     const parakeetPayload = encodeBodyForOpusTags(parakeetBody, "CASSINI_TX_PARAKEET_PAYLOAD_");
     const canaryPayload = encodeBodyForOpusTags(canaryBody, "CASSINI_TX_CANARY_PAYLOAD_");
+    const displayBody = (text: string) => ({
+      ...displayFixture,
+      blocks: [{ ...displayFixture.blocks[0], text }],
+    });
+    const parakeetDisplay = encodeBodyForOpusTags(
+      displayBody("Parakeet display."),
+      "CASSINI_TX_DISPLAY_PARAKEET_PAYLOAD_",
+    );
+    const canaryDisplay = encodeBodyForOpusTags(
+      displayBody("Canary display."),
+      "CASSINI_TX_DISPLAY_CANARY_PAYLOAD_",
+    );
     const indexManifest = {
       version: 1,
       meeting: { durationMs: 3000 },
-      audio: { sha256: "abc" },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [{ id: "spk_1", label: "Alice" }],
       transcripts: [
         {
@@ -682,6 +689,23 @@ describe("switchPortableTranscript", () => {
           payloadRef: canaryPayload.payloadRef,
         },
       ],
+      readableTranscripts: [
+        {
+          id: "display-parakeet",
+          role: "display",
+          format: "transcript.display.v1",
+          sourceTranscriptId: "parakeet",
+          payloadRef: parakeetDisplay.payloadRef,
+        },
+        {
+          id: "display-canary",
+          role: "display",
+          default: true,
+          format: "transcript.display.v1",
+          sourceTranscriptId: "canary",
+          payloadRef: canaryDisplay.payloadRef,
+        },
+      ],
       provenance: {
         speechToText: {
           parakeet: { engine: "Parakeet" },
@@ -689,7 +713,12 @@ describe("switchPortableTranscript", () => {
         },
       },
     };
-    const extraTags = { ...parakeetPayload.tags, ...canaryPayload.tags };
+    const extraTags = {
+      ...parakeetPayload.tags,
+      ...canaryPayload.tags,
+      ...parakeetDisplay.tags,
+      ...canaryDisplay.tags,
+    };
     return buildPortableOpusFixture({ manifest: indexManifest, extraTags });
   }
 
@@ -714,6 +743,7 @@ describe("switchPortableTranscript", () => {
     expect(artifact.currentTranscriptId).toBe("canary");
     expect(artifact.availableTranscripts.map((t) => t.id)).toEqual(["parakeet", "canary"]);
     expect(artifact.transcript.segments[0]?.text).toBe("canary");
+    expect(artifact.displayTranscript?.blocks[0]?.text).toBe("Canary display.");
   });
 
   it("switches to an alternate transcript and caches the body on round-trip", async () => {
@@ -731,6 +761,7 @@ describe("switchPortableTranscript", () => {
     const switched = await switchPortableTranscript("./portable-fixture-switch.opus", "parakeet");
     expect(switched.currentTranscriptId).toBe("parakeet");
     expect(switched.transcript.segments[0]?.text).toBe("parakeet");
+    expect(switched.displayTranscript?.blocks[0]?.text).toBe("Parakeet display.");
     // No additional fetch — body decoded from cached tags map.
     expect((fetchMock as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(
       fetchCountAfterLoad,
@@ -739,6 +770,7 @@ describe("switchPortableTranscript", () => {
     const back = await switchPortableTranscript("./portable-fixture-switch.opus", "canary");
     expect(back.currentTranscriptId).toBe("canary");
     expect(back.transcript.segments[0]?.text).toBe("canary");
+    expect(back.displayTranscript?.blocks[0]?.text).toBe("Canary display.");
   });
 
   it("throws for an unknown transcript id", async () => {
@@ -911,7 +943,7 @@ describe("loose-file vs packed `.opus` parity", () => {
   // assigns these ids when items carry none (as the producer's items do).
   const sourceTranscript: TranscriptWordsV1 = {
     version: "transcript.words.v1",
-    media: { src: "meeting.opus", durationMs: 6000, sha256: "deadbeef" },
+    media: { src: "meeting.opus", durationMs: 6000, sha256: OPUS_AUDIO_SHA256 },
     speakers: [
       { id: "spk_1", label: "Alice" },
       { id: "spk_2", label: "Bob" },
@@ -941,13 +973,6 @@ describe("loose-file vs packed `.opus` parity", () => {
     const items: Array<{ speaker: string; startMs: number; endMs: number; text: string }> = [];
     for (const segment of transcript.segments) {
       const words = Array.isArray(segment.words) ? segment.words : [];
-      if (words.length === 0) {
-        const text = (segment.text ?? "").trim();
-        if (text) {
-          items.push({ speaker: segment.speaker ?? "", startMs: segment.startMs, endMs: segment.endMs, text });
-        }
-        continue;
-      }
       for (const word of words) {
         const text = (word.text ?? "").trim();
         if (!text) {
@@ -989,7 +1014,7 @@ describe("loose-file vs packed `.opus` parity", () => {
   async function loadViaPackedOpus(): Promise<LoadedArtifact> {
     const portableManifest = {
       meeting: { durationMs: sourceTranscript.media.durationMs },
-      audio: { sha256: sourceTranscript.media.sha256 },
+      integrity: { opusAudioSha256: sourceTranscript.media.sha256 },
       speakers: sourceTranscript.speakers,
       transcript: { items: flattenPortableTranscriptItems(sourceTranscript) },
       readableTranscript: sharedReadable,
@@ -1048,7 +1073,7 @@ describe("loose-file vs packed `.opus` parity", () => {
     expect(packed.transcript).toEqual(buildTranscriptWordsFromPortable(
       {
         meeting: { durationMs: sourceTranscript.media.durationMs },
-        audio: { sha256: sourceTranscript.media.sha256 },
+        integrity: { opusAudioSha256: sourceTranscript.media.sha256 },
         speakers: sourceTranscript.speakers as unknown[],
         transcript: { items: flattenPortableTranscriptItems(sourceTranscript) },
       },
@@ -1139,7 +1164,7 @@ describe("portable attribution end-to-end (crosstalk badge judgement)", () => {
     } as Window;
     const portableFixture = {
       meeting: { durationMs: 4000 },
-      audio: { sha256: "abc123" },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [
         { id: "spk_ana", label: "Ana" },
         { id: "spk_ben", label: "Ben" },
@@ -1303,7 +1328,7 @@ describe("word-timing provenance (does the fallback repair apply?)", () => {
 
   const portableBaseManifest = {
     meeting: { durationMs: 5000 },
-    audio: { sha256: "abc123" },
+    integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
     speakers: [{ id: "spk_1", label: "Alice" }],
   };
   const portableBaseTranscript = {
@@ -1325,7 +1350,7 @@ describe("word-timing provenance (does the fallback repair apply?)", () => {
       manifest: {
         ...portableBaseManifest,
         provenance: {
-          speechToText: { engine: "sherpa-onnx" },
+          speechToText: { "raw-asr": { engine: "sherpa-onnx" } },
           wordTimings: { endsBoundedByAudio: true },
         },
       },
@@ -1361,7 +1386,7 @@ describe("word-timing provenance (does the fallback repair apply?)", () => {
     servePortable({
       manifest: {
         ...portableBaseManifest,
-        provenance: { speechToText: { engine: "sherpa-onnx" } },
+        provenance: { speechToText: { "raw-asr": { engine: "sherpa-onnx" } } },
       },
       rawTranscript: portableBaseTranscript,
     });
@@ -1508,7 +1533,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     servePortableMeeting({
       manifest: {
         meeting: { durationMs: 6000 },
-        audio: { sha256: "abc123" },
+        integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
         speakers: [{ id: "spk_1", label: "Alice" }],
         provenance: { wordTimings: { endsBoundedByAudio: true } },
       },
@@ -1532,7 +1557,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     servePortableMeeting({
       manifest: {
         meeting: { durationMs: 6000 },
-        audio: { sha256: "abc123" },
+        integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
         speakers: [{ id: "spk_1", label: "Alice" }],
       },
       rawTranscript: { items: heldWordItems },
@@ -1551,22 +1576,9 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     expect(segments[0]?.endMs).toBe(5400);
   });
 
-  /**
-   * The shape the deleted readable splitter used to act on, and the only shape
-   * it COULD act on: a portable meeting with no baked display transcript
-   * (so the viewer rebuilds one at runtime) whose readable segments carry their
-   * own timed words (the splitter's precondition), with another speaker landing
-   * in the middle of one paragraph.
-   *
-   * Inventory of every portable meeting and artifact directory in the repo's
-   * export tree — 36 packed `.opus` files and 54 loose artifact directories —
-   * found this combination ZERO times: all 36 packed meetings carry readable
-   * words AND an embedded display transcript, and the 3 directories with no
-   * display transcript carry no readable words. So the splitter never fired,
-   * and this test pins what the reader gets instead of a prose split: the
-   * paragraph stays whole and the interjection is labelled as having happened
-   * during it — an affordance the splitter destroyed, because after cutting A
-   * in two neither half contained B any more.
+  /** A published readable body may omit a display body. In that case the
+   * viewer builds the display while preserving the readable paragraph and its
+   * word-level overlap evidence.
    */
   it("keeps a rebuilt paragraph whole and marks what landed inside it", async () => {
     const hostWords = [
@@ -1584,22 +1596,25 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     servePortableMeeting({
       manifest: {
         meeting: { durationMs: 9000 },
-        audio: { sha256: "abc123" },
+        integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
         speakers: [
           { id: "spk_1", label: "Alice" },
           { id: "spk_2", label: "Bob" },
         ],
       },
-      // Segment-level canonical items, so the readable words are the only
-      // per-word timing in this fixture — the shape the splitter needed. The
-      // packed meetings in this repo's export tree are not like this: their
-      // items are word-level AND their readable segments carry words, so both
-      // pools are timed there.
       rawTranscript: {
         items: [
-          { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 4500, text: "So the installer is finished" },
-          { id: "seg_2", speaker: "spk_2", startMs: 4000, endMs: 4600, text: "Right." },
-          { id: "seg_3", speaker: "spk_1", startMs: 4500, endMs: 8000, text: "and the documentation went out." },
+          ...hostWords.slice(0, 5).map((word, index) => ({
+            id: `host_${index}`,
+            speaker: "spk_1",
+            ...word,
+          })),
+          { id: "aside_0", speaker: "spk_2", startMs: 4000, endMs: 4600, text: "Right." },
+          ...hostWords.slice(5).map((word, index) => ({
+            id: `host_${index + 5}`,
+            speaker: "spk_1",
+            ...word,
+          })),
         ],
       },
       readableTranscript: {
@@ -1615,7 +1630,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
             startMs: 1000,
             endMs: 8000,
             text: hostWords.map((word) => word.text).join(" "),
-            sourceSegmentIds: ["seg_1", "seg_3"],
+            sourceSegmentIds: hostWords.map((_, index) => `host_${index}`),
             words: hostWords,
           },
           {
@@ -1624,7 +1639,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
             startMs: 4000,
             endMs: 4600,
             text: "Right.",
-            sourceSegmentIds: ["seg_2"],
+            sourceSegmentIds: ["aside_0"],
             words: [{ text: "Right.", startMs: 4000, endMs: 4600 }],
           },
         ],
@@ -1635,9 +1650,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     const segments = displaySegmentsFor(artifact);
     const analysis = analyzeOverlap(segments);
 
-    // The precondition the splitter needed is present in this fixture: the
-    // ONLY word timing in the file rides on the readable segments, so a timed
-    // display token proves the splitter's input was there.
+    // The display builder used the published readable word timing.
     expect(segments[0]?.tokens[0]).toMatchObject({ text: "So", startMs: 1000, endMs: 1700 });
     // The paragraph is not cut, and no prose is redistributed by word count.
     expect(segments).toHaveLength(2);
@@ -1743,25 +1756,6 @@ function buildPortableOpusFixture({
   }
   if (derivedEntries.length > 0) {
     wire.readableTranscripts = derivedEntries;
-  }
-
-  const provenance = wire.provenance as Record<string, unknown> | undefined;
-  if (provenance) {
-    for (const [field, id] of [
-      ["speechToText", rawTranscriptId],
-      ["readableCleanup", "readable"],
-      ["displayTranscript", "display"],
-    ] as const) {
-      const step = provenance[field];
-      if (
-        step && typeof step === "object" && !Array.isArray(step) &&
-        ["backend", "engine", "model", "device", "language", "source"].some(
-          (key) => key in (step as Record<string, unknown>),
-        )
-      ) {
-        provenance[field] = { [id]: step };
-      }
-    }
   }
 
   wire.kind ??= "cassini-portable-meeting";

@@ -38,6 +38,10 @@ const (
 	RoleDisplay         = "display"
 	RoleHumanCorrected  = "human-corrected"
 	RoleTranslation     = "translation"
+	// RoleScripted is authored text the recording is a performance of: a
+	// script, a song's lyrics. Not a transcription, so it never names a
+	// source transcript.
+	RoleScripted = "scripted"
 )
 
 type Manifest struct {
@@ -274,7 +278,7 @@ func ValidatePublishedManifest(manifest Manifest) error {
 	}
 
 	seen := make(map[string]struct{}, len(manifest.Transcripts)+len(manifest.ReadableTranscripts))
-	rawIDs := make(map[string]struct{}, len(manifest.Transcripts))
+	wordIDs := make(map[string]struct{}, len(manifest.Transcripts))
 	for _, entry := range manifest.Transcripts {
 		if err := validatePublishedTranscriptEntry(entry, false); err != nil {
 			return err
@@ -283,7 +287,7 @@ func ValidatePublishedManifest(manifest Manifest) error {
 			return fmt.Errorf("duplicate transcript id %q", entry.ID)
 		}
 		seen[entry.ID] = struct{}{}
-		rawIDs[entry.ID] = struct{}{}
+		wordIDs[entry.ID] = struct{}{}
 	}
 	for _, entry := range manifest.ReadableTranscripts {
 		if err := validatePublishedTranscriptEntry(entry, true); err != nil {
@@ -292,10 +296,18 @@ func ValidatePublishedManifest(manifest Manifest) error {
 		if _, exists := seen[entry.ID]; exists {
 			return fmt.Errorf("duplicate transcript id %q", entry.ID)
 		}
-		if _, exists := rawIDs[entry.SourceTranscriptID]; !exists {
+		if _, exists := wordIDs[entry.SourceTranscriptID]; !exists {
 			return fmt.Errorf("transcript %q has unknown sourceTranscriptId %q", entry.ID, entry.SourceTranscriptID)
 		}
 		seen[entry.ID] = struct{}{}
+	}
+	for _, entry := range manifest.Transcripts {
+		if entry.SourceTranscriptID == "" {
+			continue
+		}
+		if _, exists := wordIDs[entry.SourceTranscriptID]; !exists {
+			return fmt.Errorf("transcript %q has unknown sourceTranscriptId %q", entry.ID, entry.SourceTranscriptID)
+		}
 	}
 	return nil
 }
@@ -316,13 +328,19 @@ func validatePublishedTranscriptEntry(entry TranscriptEntry, readable bool) erro
 		}
 	} else {
 		switch entry.Role {
-		case RoleRawASR, RoleHumanCorrected, RoleTranslation:
+		case RoleRawASR, RoleScripted:
+			if entry.SourceTranscriptID != "" {
+				return fmt.Errorf("transcript %q (role %q) must not set sourceTranscriptId", entry.ID, entry.Role)
+			}
+		case RoleHumanCorrected, RoleTranslation:
+			if strings.TrimSpace(entry.SourceTranscriptID) == "" {
+				return fmt.Errorf("transcript %q (role %q) requires sourceTranscriptId", entry.ID, entry.Role)
+			}
 		default:
 			return fmt.Errorf("transcript %q has unsupported role %q", entry.ID, entry.Role)
 		}
 	}
-	wantPrefix := TranscriptIDToTagPrefix(entry.ID)
-	if entry.PayloadRef.Prefix != wantPrefix || entry.PayloadRef.ChunkCount < 1 {
+	if !payloadPrefixRE.MatchString(entry.PayloadRef.Prefix) || entry.PayloadRef.ChunkCount < 1 {
 		return fmt.Errorf("transcript %q has invalid payloadRef", entry.ID)
 	}
 	if entry.PayloadRef.Encoding != PayloadEncoding {

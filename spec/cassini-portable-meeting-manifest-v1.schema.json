@@ -122,14 +122,31 @@
       "required": ["id", "role", "format", "payloadRef"],
       "properties": {
         "id": { "$ref": "#/$defs/transcriptId" },
-        "role": { "enum": ["raw-asr", "human-corrected", "translation"] },
+        "role": { "enum": ["raw-asr", "human-corrected", "translation", "scripted"] },
         "default": { "type": "boolean" },
         "format": { "type": "string", "minLength": 1 },
         "language": { "type": "string" },
         "wordCount": { "type": "integer", "minimum": 0 },
+        "sourceTranscriptId": { "$ref": "#/$defs/transcriptId" },
         "createdAtUtc": { "type": "string", "format": "date-time" },
         "payloadRef": { "$ref": "#/$defs/payloadRef" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "role": { "enum": ["human-corrected", "translation"] } },
+            "required": ["role"]
+          },
+          "then": { "required": ["sourceTranscriptId"] }
+        },
+        {
+          "if": {
+            "properties": { "role": { "enum": ["raw-asr", "scripted"] } },
+            "required": ["role"]
+          },
+          "then": { "not": { "required": ["sourceTranscriptId"] } }
+        }
+      ]
     },
     "readableTranscriptEntry": {
       "type": "object",
@@ -149,7 +166,7 @@
     },
     "transcriptId": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$"
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
     },
     "payloadRef": {
       "type": "object",

@@ -212,13 +212,13 @@ func TestAssembleTranscriptInputsCarriesPublishedReadableAndDisplayBodies(t *tes
 	}
 }
 
-func TestPickDefaultRawTranscriptID(t *testing.T) {
+func TestPickDefaultWordsTranscriptID(t *testing.T) {
 	inputs := []portable.TranscriptInput{
 		{ID: "qwen", Role: portable.RoleReadableCleanup},
 		{ID: "parakeet", Role: portable.RoleRawASR},
 		{ID: "canary", Role: portable.RoleRawASR, Default: true},
 	}
-	if got := pickDefaultRawTranscriptID(inputs); got != "canary" {
+	if got := pickDefaultWordsTranscriptID(inputs); got != "canary" {
 		t.Errorf("expected canary default, got %q", got)
 	}
 
@@ -227,7 +227,7 @@ func TestPickDefaultRawTranscriptID(t *testing.T) {
 		{ID: "qwen", Role: portable.RoleReadableCleanup},
 		{ID: "parakeet", Role: portable.RoleRawASR},
 	}
-	if got := pickDefaultRawTranscriptID(inputs2); got != "parakeet" {
+	if got := pickDefaultWordsTranscriptID(inputs2); got != "parakeet" {
 		t.Errorf("expected parakeet default, got %q", got)
 	}
 
@@ -235,7 +235,7 @@ func TestPickDefaultRawTranscriptID(t *testing.T) {
 	inputs3 := []portable.TranscriptInput{
 		{ID: "qwen", Role: portable.RoleReadableCleanup},
 	}
-	if got := pickDefaultRawTranscriptID(inputs3); got != "" {
+	if got := pickDefaultWordsTranscriptID(inputs3); got != "" {
 		t.Errorf("expected empty default, got %q", got)
 	}
 }

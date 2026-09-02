@@ -193,11 +193,13 @@ func TestPublishedDerivedTranscriptChunkSetIsReadAndHolesFailClosed(t *testing.T
 }
 
 type portableFixtureOptions struct {
-	words       []string
-	stale       bool
-	withSummary bool
-	withOrigin  bool
-	withDerived bool
+	words                      []string
+	stale                      bool
+	withSummary                bool
+	withOrigin                 bool
+	withDerived                bool
+	dropLastTranscriptChunk    bool
+	repeatFirstTranscriptChunk bool
 }
 
 func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
@@ -205,6 +207,14 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 	basePath := createTestOpus(t, outPath+".audio.opus")
 	audio := readTestOpusIntegrity(t, basePath)
 	tags := buildPublishedPortableTags(t, opts, &audio)
+	prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+	if opts.dropLastTranscriptChunk {
+		delete(tags, fmt.Sprintf("%s%03d", prefix, parseIntOrZero(tags[prefix+"CHUNK_COUNT"])-1))
+	}
+	if opts.repeatFirstTranscriptChunk {
+		key := prefix + "000"
+		tags[key] = tags[key] + ";" + tags[key]
+	}
 
 	args := []string{"-y", "-v", "error", "-i", basePath, "-map", "0:a:0", "-c", "copy"}
 	for key, value := range tags {

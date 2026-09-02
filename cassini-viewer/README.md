@@ -118,7 +118,7 @@ For current Cassini files, the important fields are:
 - `speakers`: rendered as readable speaker chips, not raw JSON
 - `provenance.*`: rendered in the `Processing` section
 
-The recorder now writes `source.recordedAtLocal` into `manifest.json`, and portable packing copies it into the embedded portable manifest. If an older artifact is missing that field, the portable repacker infers it from the standard Cassini timestamped filename so existing meetings can be upgraded without rerunning ASR.
+The recorder writes `source.recordedAtLocal` into `manifest.json`, and portable packing copies it into the embedded portable manifest.
 
 ## Static export
 

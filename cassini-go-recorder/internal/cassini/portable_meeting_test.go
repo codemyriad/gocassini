@@ -5,8 +5,23 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestFlattenPortableTranscriptItemsRequiresWordTimings(t *testing.T) {
+	_, err := flattenPortableTranscriptItems(portableTranscriptArtifact{
+		Segments: []portableTranscriptSegment{{
+			Speaker: "spk_1",
+			StartMS: 0,
+			EndMS:   500,
+			Text:    "hello world",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "text but no word timings") {
+		t.Fatalf("flattenPortableTranscriptItems error = %v, want missing word timings", err)
+	}
+}
 
 func TestLoadPortableMeetingSource(t *testing.T) {
 	root := t.TempDir()

@@ -175,23 +175,12 @@ function describeTokenSource(manifest, token) {
   if (!item || typeof item.text !== "string") {
     return `generated[segment=${segmentIndex} word=${wordIndex}]`;
   }
-  const words = item.text.trim().split(/\s+/).filter(Boolean);
-  const span = Math.max(0, Number(item.endMs || 0) - Number(item.startMs || 0));
-  const synthetic = words.length > 1;
-  const expectedStart = words.length <= 1
-    ? Number(item.startMs || 0)
-    : Number(item.startMs || 0) + Math.floor((span * wordIndex) / words.length);
-  const expectedEnd = words.length <= 1
-    ? Number(item.endMs || 0)
-    : Number(item.startMs || 0) + Math.floor((span * (wordIndex + 1)) / words.length);
-  const wordText = words[wordIndex] ?? "";
   return [
-    synthetic ? "synthetic-even-split" : "single-word-item",
+    "word-item",
     `segment=${segmentIndex}`,
-    `word=${wordIndex}/${Math.max(0, words.length - 1)}`,
-    `segmentSpan=${item.startMs}-${item.endMs}`,
-    `slot=${expectedStart}-${expectedEnd}`,
-    wordText ? `wordText=${JSON.stringify(wordText)}` : "",
+    `word=${wordIndex}`,
+    `span=${item.startMs}-${item.endMs}`,
+    item.text.trim() ? `wordText=${JSON.stringify(item.text.trim())}` : "",
   ].filter(Boolean).join(" ");
 }
 

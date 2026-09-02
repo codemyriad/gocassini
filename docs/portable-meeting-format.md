@@ -143,11 +143,11 @@ Example descriptor:
 }
 ```
 
-Transcript ids match `^[a-z0-9][a-z0-9_-]{0,31}$`. Their tag prefix is formed
+Transcript ids match `^[a-z0-9][a-z0-9-]{0,31}$`. Producers normally form the tag prefix
 by uppercasing the id and replacing hyphens with underscores. For example,
 `raw-asr` maps to `CASSINI_TX_RAW_ASR_PAYLOAD_`.
 
-Each referenced body has this shape:
+Words transcript bodies have this shape:
 
 ```json
 {
@@ -160,6 +160,11 @@ Each referenced body has this shape:
   ]
 }
 ```
+
+Readable-cleanup and display entries retain their native JSON documents:
+`transcript.readable.v1` with `segments`, and `transcript.display.v1` with
+`blocks`. The entry's `format`, role, and MIME identify which body it carries;
+all body kinds use the same chunk and integrity mechanism below.
 
 The body tags repeat the descriptor metadata:
 
@@ -181,13 +186,15 @@ digest, and byte counts.
 ## Default selection and provenance
 
 For the raw transcript shown first, readers select the entry marked
-`default=true`, then the id named by `CASSINI_TRANSCRIPT_DEFAULT`, then the
-first raw entry. A disagreement between the manifest and the summary tag should
-be reported; the manifest wins.
+`default=true`, or the first words entry when none is marked. The
+`CASSINI_TRANSCRIPT_DEFAULT` tag is a discoverability copy: a disagreement
+should be reported, but the manifest still wins.
 
-Derived entries set `sourceTranscriptId` to the raw transcript they came from.
-When switching raw transcripts, consumers should prefer a derived entry whose
-source id matches the newly selected raw transcript.
+`raw-asr` and `scripted` entries come directly from the recording and do not
+set `sourceTranscriptId`. `human-corrected` and `translation` entries require
+it. Readable-cleanup and display entries also require it and name the words
+transcript they came from. When switching words transcripts, consumers should
+use only a derived entry whose source id matches the newly selected entry.
 
 Processing provenance is keyed by transcript id:
 

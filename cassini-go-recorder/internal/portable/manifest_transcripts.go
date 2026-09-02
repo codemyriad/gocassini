@@ -172,8 +172,9 @@ func defaultProcessingStep(steps map[string]*ProcessingStep, entries []Transcrip
 }
 
 var (
-	transcriptIDRE        = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	transcriptIDRE        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 	sha256HexRE           = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	payloadPrefixRE       = regexp.MustCompile(`^CASSINI_TX_[A-Z0-9_]+_PAYLOAD_$`)
 	reservedTranscriptIDs = map[string]struct{}{
 		"payload":     {},
 		"format":      {},
@@ -192,7 +193,7 @@ var (
 // list. Returns nil on success.
 func ValidateTranscriptID(id string) error {
 	if !transcriptIDRE.MatchString(id) {
-		return fmt.Errorf("transcript id %q does not match ^[a-z0-9][a-z0-9_-]{0,31}$", id)
+		return fmt.Errorf("transcript id %q does not match ^[a-z0-9][a-z0-9-]{0,31}$", id)
 	}
 	if _, reserved := reservedTranscriptIDs[id]; reserved {
 		return fmt.Errorf("transcript id %q is reserved (collides with the descriptor tag namespace)", id)
@@ -409,7 +410,8 @@ func hasAnyProvenance(p *multiTranscriptProvenanceWire) bool {
 
 func validateTranscriptInputs(transcripts []TranscriptInput) error {
 	seenID := map[string]struct{}{}
-	rawDefaults := 0
+	wordIDs := map[string]struct{}{}
+	wordsDefaults := 0
 	readableDefaults := 0
 	displayDefaults := 0
 	for _, input := range transcripts {
@@ -432,12 +434,23 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 		}
 
 		switch input.Role {
-		case RoleRawASR, RoleHumanCorrected, RoleTranslation:
+		case RoleRawASR, RoleHumanCorrected, RoleTranslation, RoleScripted:
+			wordIDs[input.ID] = struct{}{}
 			if input.Default {
-				rawDefaults++
+				wordsDefaults++
 			}
-			if input.SourceTranscriptID != "" {
-				return fmt.Errorf("transcript %q (role %q) must not set sourceTranscriptId", input.ID, input.Role)
+			// raw-asr came from the audio and scripted is what the audio
+			// performs; neither is derived from another transcript. The other
+			// two are, and MUST name their source.
+			switch input.Role {
+			case RoleRawASR, RoleScripted:
+				if input.SourceTranscriptID != "" {
+					return fmt.Errorf("transcript %q (role %q) must not set sourceTranscriptId", input.ID, input.Role)
+				}
+			default:
+				if strings.TrimSpace(input.SourceTranscriptID) == "" {
+					return fmt.Errorf("transcript %q (role %q) requires sourceTranscriptId", input.ID, input.Role)
+				}
 			}
 		case RoleReadableCleanup:
 			if strings.TrimSpace(input.SourceTranscriptID) == "" {
@@ -457,8 +470,8 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 			return fmt.Errorf("transcript %q has unknown role %q", input.ID, input.Role)
 		}
 	}
-	if rawDefaults > 1 {
-		return fmt.Errorf("more than one default raw-ASR transcript declared")
+	if wordsDefaults > 1 {
+		return fmt.Errorf("more than one default words transcript declared")
 	}
 	if readableDefaults > 1 {
 		return fmt.Errorf("more than one default readable-cleanup transcript declared")
@@ -467,13 +480,13 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 		return fmt.Errorf("more than one default display transcript declared")
 	}
 
-	// validate that every sourceTranscriptId points at a declared id
+	// Every derived transcript names a words transcript in this file.
 	for _, input := range transcripts {
 		if input.SourceTranscriptID == "" {
 			continue
 		}
-		if _, ok := seenID[input.SourceTranscriptID]; !ok {
-			return fmt.Errorf("transcript %q has sourceTranscriptId %q that is not in this file", input.ID, input.SourceTranscriptID)
+		if _, ok := wordIDs[input.SourceTranscriptID]; !ok {
+			return fmt.Errorf("transcript %q has sourceTranscriptId %q that is not in this file's words transcript index", input.ID, input.SourceTranscriptID)
 		}
 	}
 
@@ -515,12 +528,12 @@ func transcriptInputDescriptor(input TranscriptInput) (string, int) {
 // BuildPublishedOpusTags emits the OpusTags map of a published portable
 // meeting file: format tag org.cassini.portable-meeting/1 and the schema URL
 // that resolves.
-func BuildPublishedOpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultRawID string) map[string]string {
+func BuildPublishedOpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultWordsID string) map[string]string {
 	manifest = NormalizePublishedManifest(manifest)
-	return buildMultiTranscriptOpusTags(manifest, encoded, defaultRawID)
+	return buildMultiTranscriptOpusTags(manifest, encoded, defaultWordsID)
 }
 
-func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultRawID string) map[string]string {
+func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultWordsID string) map[string]string {
 	tags := map[string]string{
 		"TITLE":                       manifest.Meeting.Title,
 		"DATE":                        manifest.Meeting.CreatedAtUTC,
@@ -588,8 +601,8 @@ func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscr
 		ids = append(ids, named.ID)
 	}
 	tags["CASSINI_TRANSCRIPT_IDS"] = strings.Join(ids, ",")
-	if defaultRawID != "" {
-		tags["CASSINI_TRANSCRIPT_DEFAULT"] = defaultRawID
+	if defaultWordsID != "" {
+		tags["CASSINI_TRANSCRIPT_DEFAULT"] = defaultWordsID
 	}
 
 	return tags

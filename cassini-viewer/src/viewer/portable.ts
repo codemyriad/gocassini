@@ -28,9 +28,9 @@ export interface PortableTranscriptEntry {
 }
 
 export interface PortableMeetingManifest {
-	kind?: string;
+  kind?: string;
   version?: number;
-	profile?: string;
+  profile?: string;
   meeting?: {
     durationMs?: number;
     createdAtUtc?: string;
@@ -40,7 +40,12 @@ export interface PortableMeetingManifest {
     id?: string;
   };
   audio?: {
-    sha256?: string;
+    container?: string;
+    codec?: string;
+    sampleRate?: number;
+    channels?: number;
+    sampleCount?: number;
+    durationMs?: number;
   };
   integrity?: {
     matchPolicy?: string;
@@ -150,25 +155,41 @@ function validatePortableIndexManifest(manifest: PortableMeetingManifest): void 
   const readable = Array.isArray(manifest.readableTranscripts)
     ? manifest.readableTranscripts
     : [];
-  const rawIds = new Set<string>();
+  const wordIds = new Set<string>();
   const allIds = new Set<string>();
   for (const entry of manifest.transcripts) {
-    validatePortableTranscriptEntry(entry, new Set(["raw-asr", "human-corrected", "translation"]));
+    validatePortableTranscriptEntry(
+      entry,
+      new Set(["raw-asr", "human-corrected", "translation", "scripted"]),
+    );
     if (allIds.has(entry.id)) {
       throw new Error(`portable manifest has duplicate transcript id ${entry.id}`);
     }
     allIds.add(entry.id);
-    rawIds.add(entry.id);
+    wordIds.add(entry.id);
   }
   for (const entry of readable) {
     validatePortableTranscriptEntry(entry, new Set(["readable-cleanup", "display"]));
     if (allIds.has(entry.id)) {
       throw new Error(`portable manifest has duplicate transcript id ${entry.id}`);
     }
-    if (!rawIds.has(String(entry.sourceTranscriptId ?? ""))) {
+    allIds.add(entry.id);
+  }
+  for (const entry of manifest.transcripts) {
+    if (entry.role === "raw-asr" || entry.role === "scripted") {
+      if (entry.sourceTranscriptId !== undefined) {
+        throw new Error(`portable transcript ${entry.id} must not set sourceTranscriptId`);
+      }
+      continue;
+    }
+    if (!entry.sourceTranscriptId || !wordIds.has(entry.sourceTranscriptId)) {
       throw new Error(`portable transcript ${entry.id} has an unknown sourceTranscriptId`);
     }
-    allIds.add(entry.id);
+  }
+  for (const entry of readable) {
+    if (!entry.sourceTranscriptId || !wordIds.has(entry.sourceTranscriptId)) {
+      throw new Error(`portable transcript ${entry.id} has an unknown sourceTranscriptId`);
+    }
   }
 }
 
@@ -177,7 +198,7 @@ function validatePortableTranscriptEntry(
   roles: ReadonlySet<string>,
 ): void {
   const id = String(entry?.id ?? "");
-  if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id)) {
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
     throw new Error(`portable manifest has an invalid transcript id ${JSON.stringify(id)}`);
   }
   if (!roles.has(entry?.role)) {
@@ -187,8 +208,12 @@ function validatePortableTranscriptEntry(
     throw new Error(`portable transcript ${id} has an invalid format`);
   }
   const ref = entry?.payloadRef;
-  const expectedPrefix = `CASSINI_TX_${id.toUpperCase().replace(/-/g, "_")}_PAYLOAD_`;
-  if (!ref || ref.prefix !== expectedPrefix || !Number.isInteger(ref.chunkCount) || ref.chunkCount < 1) {
+  if (
+    !ref ||
+    !/^CASSINI_TX_[A-Z0-9_]+_PAYLOAD_$/.test(ref.prefix) ||
+    !Number.isInteger(ref.chunkCount) ||
+    ref.chunkCount < 1
+  ) {
     throw new Error(`portable transcript ${id} has an invalid payloadRef`);
   }
   if (ref.encoding !== "base64url+gzip+utf8json") {
@@ -196,6 +221,16 @@ function validatePortableTranscriptEntry(
   }
   if (!/^[0-9a-f]{64}$/.test(String(ref.sha256 ?? ""))) {
     throw new Error(`portable transcript ${id} has an invalid payload digest`);
+  }
+  if (
+    !Number.isInteger(ref.rawBytes) ||
+    ref.rawBytes < 0 ||
+    !Number.isInteger(ref.gzipBytes) ||
+    ref.gzipBytes < 0 ||
+    typeof ref.mime !== "string" ||
+    ref.mime.trim() === ""
+  ) {
+    throw new Error(`portable transcript ${id} has invalid payload metadata`);
   }
 }
 
@@ -313,6 +348,17 @@ export function pickReadableForTranscript(
     return null;
   }
   return pickDerivedTranscript(readables, "readable-cleanup", transcriptId);
+}
+
+/** Returns the display body paired to one words transcript, when published. */
+export function pickDisplayForTranscript(
+  manifest: PortableMeetingManifest,
+  transcriptId: string,
+): PortableTranscriptEntry | null {
+  const entries = Array.isArray(manifest.readableTranscripts)
+    ? manifest.readableTranscripts
+    : [];
+  return pickDerivedTranscript(entries, "display", transcriptId);
 }
 
 /**
@@ -577,12 +623,9 @@ export function buildTranscriptWordsFromPortable(
     const startMs = safeToInt(segment.startMs, 0);
     const endMs = safeToInt(segment.endMs, startMs);
     const text = typeof segment.text === "string" ? segment.text : "";
-    // Portable meetings may contain either true word-level transcript items or
-    // older segment-level text spans. Only the single-word case is safe to turn
-    // back into a timed transcript word. Multi-word spans would fabricate
-    // uniform word timings that were never produced by ASR.
-    const words = isSinglePortableWord(text)
-      ? splitTextIntoWords(text, startMs, endMs)
+    const wordText = text.trim();
+    const words = wordText
+      ? [{ id: "w_0", text: wordText, startMs, endMs }]
       : [];
     const speaker =
       typeof segment.speaker === "string" && segment.speaker.trim() !== "" ? segment.speaker : undefined;
@@ -617,15 +660,11 @@ export function buildTranscriptWordsFromPortable(
     media: {
       src: mediaSrc,
       durationMs: safeToInt(portable.meeting?.durationMs, 0),
-      sha256: safeToString(portable.audio?.sha256) || undefined,
+      sha256: safeToString(portable.integrity?.opusAudioSha256) || undefined,
     },
     speakers,
     segments,
   };
-}
-
-function isSinglePortableWord(text: string): boolean {
-  return typeof text === "string" && text.trim().split(/\s+/).filter(Boolean).length <= 1;
 }
 
 function extractPortableReadableWords(
