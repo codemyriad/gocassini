@@ -250,7 +250,7 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 		if err != nil {
 			return err
 		}
-		opusTags, err := buildPortableMeetingV3TagsFromSource(manifest, source)
+		opusTags, err := buildPortableMeetingTagsFromSource(manifest, source)
 		if err != nil {
 			return err
 		}
@@ -536,7 +536,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	}
 	processedAtUTC := strings.TrimSpace(source.Artifact.GeneratedAt)
 
-	manifest := portable.NormalizeManifestV3(portable.Manifest{
+	manifest := portable.NormalizePublishedManifest(portable.Manifest{
 		Meeting: portable.Meeting{
 			ID:              portable.MeetingIDFromAudioHash(audio.OpusSHA256),
 			Title:           title,

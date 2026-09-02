@@ -97,7 +97,7 @@ func inspectPortableAudio(out io.Writer, path string) error {
 		printPlainPortableAudio(out, audioSummary, "plain-audio", "")
 		return nil
 	}
-	if !strings.EqualFold(formatTag, portable.Format) && !strings.EqualFold(formatTag, portable.FormatV2) && !strings.EqualFold(formatTag, portable.FormatV3) {
+	if !knownPortableFormatTag(formatTag) {
 		printPlainPortableAudio(out, audioSummary, "unknown-cassini-format", fmt.Sprintf("unsupported CASSINI_FORMAT=%s", formatTag))
 		return nil
 	}
@@ -160,8 +160,9 @@ func (b portableTranscriptBodies) err(path string) error {
 	return fmt.Errorf("%s: could not read the transcript body of %s", path, strings.Join(b.Unreadable, ", "))
 }
 
-// readPortableTranscriptBodies decodes every transcript body a v2/v3 file
-// declares.
+// readPortableTranscriptBodies decodes every transcript body a
+// multi-transcript file declares. A draft-1 file declares none: its words are
+// inline in the main manifest.
 //
 // inspect used to print the manifest index's declared wordCount and label it
 // `words=`, which meant the one number it reported about the transcript was the
@@ -171,7 +172,7 @@ func (b portableTranscriptBodies) err(path string) error {
 // and it is the only way `words=` can mean anything.
 func readPortableTranscriptBodies(tags map[string]string, manifest portable.Manifest) portableTranscriptBodies {
 	bodies := portableTranscriptBodies{WordCounts: map[string]int{}}
-	if manifest.Version != 2 && manifest.Version != 3 {
+	if !manifest.IsMultiTranscript() {
 		return bodies
 	}
 	if entry, warnings, ok := defaultWordsTranscriptEntry(tags, manifest); ok {
@@ -218,8 +219,8 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	createdAt := blankDash(manifest.Meeting.CreatedAtUTC)
 	wordCount := manifest.Transcript.WordCount
 	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
-	if manifest.Version == 2 || manifest.Version == 3 {
-		// v2 stores transcript bodies in separate chunk sets; the main payload
+	if manifest.IsMultiTranscript() {
+		// A multi-transcript file stores its bodies in separate chunk sets; the main payload
 		// only carries descriptors. Two things follow for the meeting's word
 		// count. It is the words that came back out of a chunk set, not the
 		// ones a descriptor claims, so a file whose bodies are unreachable
@@ -261,7 +262,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	fmt.Fprintf(out, "payload encoding=%s schema=%s chunks=%d raw_bytes=%d compressed_bytes=%d sha256=%s language=%s\n",
 		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), blankDash(language))
 	printPortableOrigin(out, manifest.Meeting)
-	if manifest.Version == 2 || manifest.Version == 3 {
+	if manifest.IsMultiTranscript() {
 		for _, entry := range manifest.Transcripts {
 			printPortableTranscriptEntry(out, "transcript", entry)
 		}
@@ -437,6 +438,30 @@ func decodeCassiniBase64URL(encoded string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(strings.TrimRight(stripped, "="))
 }
 
+// knownPortableFormatTag reports whether CASSINI_FORMAT names a portable
+// meeting shape this build can read: the published format, or any of the three
+// pre-publication drafts. The published format and draft 1 share a string, so
+// this answers "is it one of ours", not "which one is it" — what a file
+// actually contains is settled by Manifest.IsMultiTranscript.
+func knownPortableFormatTag(formatTag string) bool {
+	for _, known := range []string{portable.Format, portable.FormatDraft1, portable.FormatDraft2, portable.FormatDraft3} {
+		if strings.EqualFold(formatTag, known) {
+			return true
+		}
+	}
+	return false
+}
+
+// knownPortableWireVersion reports whether the manifest's own version number is
+// one this build reads. Version 1 covers both the published format and draft 1.
+func knownPortableWireVersion(version int) bool {
+	switch version {
+	case portable.WireVersion, portable.Draft2WireVersion, portable.Draft3WireVersion:
+		return true
+	}
+	return false
+}
+
 func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portable.Manifest, error) {
 	chunkCount := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_CHUNK_COUNT"))
 	if chunkCount <= 0 {
@@ -488,7 +513,7 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 	if manifest.Kind != "cassini-portable-meeting" {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unexpected payload kind %q", manifest.Kind)
 	}
-	if manifest.Version != 1 && manifest.Version != 2 && manifest.Version != 3 {
+	if !knownPortableWireVersion(manifest.Version) {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported payload version %d", manifest.Version)
 	}
 	if manifest.Profile != portable.Profile {
