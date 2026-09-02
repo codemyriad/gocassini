@@ -295,3 +295,35 @@ func TestTalkStartIsRefusedWithoutCreatingAJob(t *testing.T) {
 		t.Fatal("a refused start left the room claimed, so the next attempt would be swallowed as a duplicate")
 	}
 }
+
+// The recorded deferral in ncFilesProxy's doc comment, made a fact.
+//
+// The proxy is constructed on AppAPI presence alone, not on the resolved publish
+// sink, so under CASSINI_PUBLISH_SINK=local it is still installed and still
+// claims catalog.json and meetings/*. What keeps that safe is not the sink but
+// the substrate: serving as the owner also requires ncAccessSubstrate.usable(),
+// and a `local` sink never marks the substrate applicable, so it never reaches
+// `provisioned`.
+//
+// D-668 asked for the construction to be scoped OR the deferral recorded. It is
+// recorded, and this is what stops "it should hold" from being the whole
+// argument — that sentence preceded the disclosure the D-616 review reproduced.
+func TestNCFilesProxyCannotServeAsOwnerUnderALocalSink(t *testing.T) {
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+
+	// The most permissive mode this operator can be in...
+	ncStorage.set(false, storageModeSourceEnv)
+	// ...on a deployment whose sink is local, so nothing ever marks the
+	// substrate applicable and the preflight never records success.
+	if ncStorageServesAsOwner() {
+		t.Fatal("served as the owner with an unproven substrate; the guard requires BOTH the mode and usable()")
+	}
+
+	// And it stays false however loudly the mode says default, right up until
+	// a preflight actually proves the storage.
+	ncAccessSubstrate.beginRun()
+	if ncStorageServesAsOwner() {
+		t.Fatal("a run that has begun but not succeeded is not a proven substrate")
+	}
+}
