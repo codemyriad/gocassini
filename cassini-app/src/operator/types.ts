@@ -107,3 +107,61 @@ export interface SettingsUpdate {
   model_override: string;
   transcription_terms: string[];
 }
+
+// --- LLM settings (D-696): mirror GET/PUT <basePath>/settings/llm. Keys are
+// write-only: the server reports api_key_configured and never the value.
+
+export interface LLMProviderView {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key_configured: boolean;
+}
+
+export interface LLMStep {
+  enabled: boolean;
+  provider: string;
+  model: string;
+}
+
+export interface LLMEffectiveStep {
+  provider: string;
+  base_url: string;
+  model: string;
+  api_key_configured: boolean;
+}
+
+export interface LLMSettings {
+  providers: LLMProviderView[];
+  readable: LLMStep;
+  summary: LLMStep;
+  timeout_sec: number;
+  max_tokens: number;
+  effective: {
+    readable: LLMEffectiveStep | null;
+    summary: LLMEffectiveStep | null;
+  };
+}
+
+// api_key semantics on PUT: omitted/null keeps the stored key for that id,
+// "" clears it, any other string replaces it.
+export interface LLMProviderUpdate {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key?: string | null;
+}
+
+export interface LLMSettingsUpdate {
+  providers?: LLMProviderUpdate[];
+  readable?: LLMStep;
+  summary?: LLMStep;
+  timeout_sec?: number;
+  max_tokens?: number;
+}
+
+export interface LLMModel {
+  id: string;
+  name?: string;
+  context_length?: number;
+}
