@@ -222,6 +222,53 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 	}
 }
 
+// preflightOnRestart closes the restart-convergence gap (D-541/D-669): the
+// substrate record is a process-wide singleton written only by the enabled edge,
+// so a bare container restart left it at `unknown` and publishing refused until
+// an administrator disabled and re-enabled the app.
+//
+//	before                          after
+//	------                          -----
+//	start ──▶ mode loaded           start ──▶ mode loaded
+//	          substrate = unknown             │
+//	          publish REFUSED                 └─▶ preflight
+//	               ▲                                   │
+//	               │  the only writer            substrate proven
+//	         enabled edge                        publish WORKS
+//
+// It runs ONLY when a mode is already recorded, and that condition is doing two
+// jobs. It is the signal that this install has completed a preflight before —
+// so this is a restart rather than a first registration, which matters because
+// AppAPI rejects act-as-user calls during registration and a startup run would
+// deterministically 401 and log a failure for every new install. And it means
+// nothing here can decide a mode: the file already did, and this run only
+// re-proves it against Nextcloud.
+//
+// This is cheap now in a way it was not when D-669 was written. The enabled edge
+// used to CREATE the substrate; since D-616 it probes, sanity-checks, and MKCOLs
+// the app's own collections. Re-running that is a handful of reads and
+// idempotent creates, with no partial-build risk.
+//
+// Asynchronous, because an unreachable Nextcloud must not stop the operator from
+// serving /status — which is how an administrator finds out it is unreachable.
+// Both paths take provisionMu, so a startup run and an enable cannot interleave.
+func (c ExAppConfig) preflightOnRestart(ctx context.Context, logger *log.Logger) {
+	if !c.appAPIActive() {
+		return
+	}
+	settings, err := LoadStorageSettings(ncStorage.settingsPath())
+	if err != nil || !settings.Configured() {
+		// No recorded mode: either a first registration, or an install whose
+		// fallback has not survived a sanity gate yet. Either way the enabled
+		// edge is the right place, and it is about to fire.
+		return
+	}
+	go func() {
+		logger.Printf("nc storage: re-proving the recorded %q mode at startup (the enabled edge is not the only writer any more)", settings.Mode())
+		c.preflightNCStorage(ctx, logger)
+	}()
+}
+
 // provisionNCFilesAccess first establishes the ownership/provisioning
 // identities, then creates (idempotently) the group folder + ACL topology the
 // access-control model needs. No-op only outside AppAPI.

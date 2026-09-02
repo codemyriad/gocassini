@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // storageMock is a Nextcloud whose SHAPE is the test case: which apps are on,
@@ -838,4 +839,71 @@ func TestProbeAcceptsAnEmptyFolderList(t *testing.T) {
 	if !snap.OK {
 		t.Fatalf("substrate = %+v, want usable: an empty folder list means no folder is in the way", snap)
 	}
+}
+
+// D-541/D-669: a bare container restart must not leave the substrate at
+// `unknown` with publishing refused until somebody disables and re-enables the
+// app. The recorded mode is what makes the startup run both safe and possible.
+func TestPreflightOnRestartProvesARecordedMode(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	ncStorage.setPath(path)
+	if err := SaveStorageSettings(path, false, storageModeSourceEnv); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+
+	// A healthy default-mode instance, and NO enabled edge — only the restart.
+	mock := &storageMock{apps: []string{}, serviceAccount: true}
+	cfg := testExAppConfig(mock.server(t).URL)
+	cfg.preflightOnRestart(context.Background(), log.New(io.Discard, "", 0))
+
+	waitForSubstrate(t, func(snap statusRecordingsAccess) bool { return snap.OK })
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.State == string(ncSubstrateUnknown) {
+		t.Fatalf("substrate = %+v, want it proven without an enable edge", snap)
+	}
+	if snap.Mode != storageModeDefault {
+		t.Fatalf("mode = %q, want %q", snap.Mode, storageModeDefault)
+	}
+}
+
+// The other half of the condition: an install with NO recorded mode must not
+// preflight at startup. AppAPI rejects act-as-user calls during registration, so
+// a startup run there deterministically 401s — it would log a failure on every
+// new install, for a record the enabled edge is about to write anyway.
+func TestPreflightOnRestartStaysOutOfTheWayOfAFirstRegistration(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	ncStorage.setPath(filepath.Join(t.TempDir(), storageSettingsFileName))
+
+	mock := &storageMock{apps: []string{}, serviceAccount: true}
+	cfg := testExAppConfig(mock.server(t).URL)
+	cfg.preflightOnRestart(context.Background(), log.New(io.Discard, "", 0))
+
+	// Nothing should have been asked of Nextcloud at all.
+	time.Sleep(50 * time.Millisecond)
+	if mock.saw(http.MethodGet, "/ocs/v2.php/cloud/apps") {
+		t.Fatal("the startup preflight probed Nextcloud on an install with no recorded mode")
+	}
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.State != string(ncSubstrateUnknown) {
+		t.Fatalf("substrate = %+v, want untouched", snap)
+	}
+}
+
+// waitForSubstrate polls the substrate record, which preflightOnRestart writes
+// from a goroutine so an unreachable Nextcloud cannot stop the operator serving
+// /status.
+func waitForSubstrate(t *testing.T, ok func(statusRecordingsAccess) bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ok(ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("substrate never reached the expected state: %+v", ncAccessSubstrate.snapshot(publishSinkNextcloudFiles))
 }
