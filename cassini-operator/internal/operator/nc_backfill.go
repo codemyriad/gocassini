@@ -87,6 +87,45 @@ type backfillNCFiles struct {
 }
 
 // runBackfillNCFiles is the `cassini-operator backfill-nc-files` entry point.
+// refuseBackfillOutsideAccessControl stops the backfill on an installation that
+// does not run the Team-folder model. Returns 0 to proceed.
+//
+// Everything this command writes carries ACL rules — recordingACLRules on each
+// leaf, catalogProtectionACLRules on the index — and those rules are meaningless
+// in the service account's own private home, which is where the default model
+// keeps recordings. Running here would at best write rules nothing enforces, and
+// at worst re-derive an audience for recordings an administrator deliberately
+// left readable by everyone.
+//
+// It is checked HERE rather than inside run() because it is a property of the
+// installation, not of the archive: nothing should be probed, guarded or
+// uploaded before we know the command applies at all.
+//
+// This is a separate process from the operator, so ncStorage is empty and the
+// file is the only source. An unreadable or absent file refuses too — the mode
+// this command needs is the one that must be positively confirmed.
+func refuseBackfillOutsideAccessControl(settingsPath string, stderr io.Writer) int {
+	settings, err := LoadStorageSettings(settingsPath)
+	switch {
+	case err != nil:
+		fmt.Fprintf(stderr, "cannot read the storage mode from %s: %v\n"+
+			"This command only applies to the access-controlled storage model, and will not guess.\n", settingsPath, err)
+		return backfillExitNotStarted
+	case !settings.Configured():
+		fmt.Fprintf(stderr, "no storage mode is recorded in %s, so this installation has not completed a preflight yet.\n"+
+			"Enable the Cassini app and let it run once, then try again.\n", settingsPath)
+		return backfillExitNotStarted
+	case !settings.AccessControlled():
+		fmt.Fprintf(stderr, "this installation runs the %q storage model, and this command only applies to %q.\n\n"+
+			"In %[1]q, recordings live in the %q account's own folder and every signed-in account can already read them — there is no per-recording audience to write, and the ACL rules this command applies would mean nothing there.\n"+
+			"Nothing was read and nothing was written.\n\n"+
+			"If you meant to migrate this archive INTO the Team folder, switch storage modes in the app's Setup tab instead: that moves the recordings that are already published.\n",
+			storageModeDefault, storageModeAccessControlled, ncRecordingsOwner)
+		return backfillExitNothingToDo
+	}
+	return 0
+}
+
 func runBackfillNCFiles(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini-operator "+backfillNCFilesCommand, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -101,6 +140,9 @@ func runBackfillNCFiles(ctx context.Context, args []string, stdout, stderr io.Wr
 		"grant every signed-in account read on the backfilled recordings, instead of leaving them\nowner-only. Decide before the run: the migration cannot be re-run to widen them afterwards")
 	dryRun := fs.Bool("dry-run", false,
 		"check the guard and report what would be uploaded, without writing anything")
+	settingsPath := fs.String("storage-settings", filepath.Join(filepath.Dir(
+		defaultDBPath(persistentStorageRoot(), defaultOperatorDataRoot(repoRoot))), storageSettingsFileName),
+		"where this installation's storage mode is recorded. Only set it if the operator runs with a\nnon-default --db")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Backfill a legacy in-container published archive into Nextcloud Files.
 
@@ -110,6 +152,12 @@ nothing from this command.
 
 It refuses to run when Nextcloud Files already holds recordings, because the
 only archive it is correct to write into is an empty one.
+
+It also refuses in the DEFAULT storage mode. Everything it writes is protected
+by Team-folder ACL rules, which mean nothing in the service account's own home:
+in that mode recordings are readable by every signed-in account by design, and
+this command would either be a no-op with side effects or would re-derive an
+audience for recordings the administrator deliberately left open.
 
 Usage:
   cassini-operator `+backfillNCFilesCommand+` [--dry-run] [--public] [--site-root DIR]
@@ -143,6 +191,9 @@ Flags:
 		fmt.Fprint(stderr, "NEXTCLOUD_URL, APP_ID and APP_SECRET are not all set, so there is no Nextcloud to back up to.\n"+
 			"Run this inside the Cassini app container, where AppAPI injects them.\n")
 		return 2
+	}
+	if code := refuseBackfillOutsideAccessControl(*settingsPath, stderr); code != 0 {
+		return code
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, ncBackfillTimeout)

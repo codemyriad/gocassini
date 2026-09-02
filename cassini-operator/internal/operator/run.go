@@ -473,10 +473,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	// deploy (APP_PERSISTENT_STORAGE set) paths left unset or still at their
 	// baked image defaults land on the AppAPI volume instead of overlayfs.
 	persistRoot := persistentStorageRoot()
-	fs.StringVar(&cfg.DBPath, "db", exAppDataPathDefault(persistRoot,
-		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
-		imageDefaultDBPath, "operator/jobs.sqlite3",
-		filepath.Join(defaultDataRoot, "jobs.sqlite3")), "SQLite database path")
+	fs.StringVar(&cfg.DBPath, "db", defaultDBPath(persistRoot, defaultDataRoot), "SQLite database path")
 	fs.StringVar(&cfg.WorkRoot, "work-root", exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, ""),
 		imageDefaultWorkRoot, "operator/jobs",
@@ -570,6 +567,19 @@ func defaultSiteRoot(persistRoot, dataRoot string) string {
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
 		imageDefaultSiteRoot, "site/published",
 		filepath.Join(dataRoot, "site"))
+}
+
+// defaultDBPath is where the job database lands when nothing overrides it.
+//
+// Factored out because the one-shot commands need it too: storage_settings.json
+// lives beside the database, and a command that has to know which storage model
+// this installation runs cannot ask the running operator — it is a separate
+// process with its own empty ncStorage.
+func defaultDBPath(persistRoot, dataRoot string) string {
+	return exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
+		imageDefaultDBPath, "operator/jobs.sqlite3",
+		filepath.Join(dataRoot, "jobs.sqlite3"))
 }
 
 func parsePositiveIntEnvAny(names []string, fallback int) (int, error) {
