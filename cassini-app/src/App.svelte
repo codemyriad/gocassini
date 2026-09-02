@@ -4,6 +4,7 @@
   import { StaticCatalogProvider } from "cassini-viewer/dataProvider";
   import Operator from "./Operator.svelte";
   import Settings from "./Settings.svelte";
+  import Setup from "./Setup.svelte";
   import SetupNotice from "./SetupNotice.svelte";
   import { loadConfig } from "./operator/config";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
@@ -34,10 +35,14 @@
 
   const dataProvider = new StaticCatalogProvider();
 
-  // Browse is always available; operator is added only when the boundary probe
-  // confirms admin access. The tab bar renders only when the operator surface
-  // is available, so a non-admin sees exactly today's browse-only experience —
-  // no shell chrome, byte-identical output.
+  // Browse is always available; the admin surfaces (operator, and setup since
+  // D-616) are added only when the boundary probe confirms admin access. The
+  // tab bar renders only when they are available, so a non-admin sees exactly
+  // today's browse-only experience — no shell chrome, byte-identical output.
+  //
+  // One flag governs both, deliberately: the probe asks whether the ADMIN-gated
+  // operator API answers, and both surfaces are that same API. A second notion
+  // of admin here would be a second thing to drift.
   let operatorAvailable = false;
   let surface: Surface = "browse";
 
@@ -85,9 +90,8 @@
 
   function applySurfaceFromLocation(): void {
     const next = readSurface(window.location.hash);
-    // A non-admin deep-linking an admin surface falls back to browse (the
-    // operator API would 403 anyway). Settings is gated by the same probe:
-    // everything it touches is an ADMIN route.
+    // A non-admin deep-linking #surface=operator (or #surface=setup) falls back
+    // to browse — the operator API would 403 anyway.
     surface = next !== "browse" && !operatorAvailable ? "browse" : next;
   }
 
@@ -198,6 +202,14 @@
       <button
         type="button"
         class="cassini-shell-tab"
+        aria-current={surface === "setup" ? "page" : undefined}
+        on:click={() => selectSurface("setup")}
+      >
+        Setup
+      </button>
+      <button
+        type="button"
+        class="cassini-shell-tab"
         aria-current={surface === "settings" ? "page" : undefined}
         on:click={() => selectSurface("settings")}
       >
@@ -232,8 +244,8 @@
       </div>
     {:else}
       <!-- Browse stays mounted (preserves list/meeting/playback state) and is
-           hidden while the operator surface is active; the operator mounts only
-           when active so its SSE stream + polling don't run in the background. -->
+           hidden while an admin surface is active; those mount only when active
+           so the operator's SSE stream + polling don't run in the background. -->
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
         <ViewerApp {ncMode} {dataProvider} />
       </div>
@@ -244,6 +256,15 @@
       <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
           <Settings />
+        </div>
+      </div>
+    {/if}
+    {#if surface === "setup"}
+      <!-- Same bounded-scroller + themed .cassini-root wrapper as the operator
+           surface below, and for the same reasons. -->
+      <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
+        <div class="cassini-root" data-theme={themeMode}>
+          <Setup />
         </div>
       </div>
     {/if}

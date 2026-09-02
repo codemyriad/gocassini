@@ -32,6 +32,7 @@ function accessWithMissingApps(...names: string[]): RecordingsAccess {
     state: "unavailable",
     step: `app_missing:${names[0]}`,
     detail: `app_missing:${names[0]}: the "${names[0]}" app is not enabled; an ExApp cannot install it`,
+    mode: "access_controlled",
     prerequisites: names.map((name) => ({ name, state: "missing" })),
   };
 }
@@ -88,6 +89,7 @@ describe("readRecordingsAccess", () => {
           state: "unavailable",
           step: "app_missing:group_everyone",
           detail: "app_missing:group_everyone: the app is not enabled",
+          mode: "access_controlled",
           prerequisites: [
             { name: "groupfolders", state: "enabled" },
             { name: "group_everyone", state: "missing" },
@@ -99,6 +101,7 @@ describe("readRecordingsAccess", () => {
       state: "unavailable",
       step: "app_missing:group_everyone",
       detail: "app_missing:group_everyone: the app is not enabled",
+      mode: "access_controlled",
       prerequisites: [
         { name: "groupfolders", state: "enabled" },
         { name: "group_everyone", state: "missing" },
@@ -118,6 +121,7 @@ describe("readRecordingsAccess", () => {
       state: "unknown",
       step: "",
       detail: "",
+      mode: "",
       prerequisites: [],
     });
   });
@@ -263,6 +267,7 @@ describe("buildSetupNotice", () => {
         state: "unavailable",
         step: "app_missing:groupfolders",
         detail: "",
+        mode: "",
         prerequisites: [],
       },
       isAdmin: true,
@@ -281,6 +286,7 @@ describe("buildSetupNotice", () => {
         state: "unavailable",
         step: "administrator",
         detail: "administrator: no Nextcloud administrator could be resolved",
+        mode: "",
         prerequisites: [
           { name: "groupfolders", state: "enabled" },
           { name: "group_everyone", state: "enabled" },
@@ -304,6 +310,7 @@ describe("buildSetupNotice", () => {
         state: "degraded",
         step: "mount_mapping:everyone",
         detail: "mount_mapping:everyone: POST -> 500",
+        mode: "",
         prerequisites: [
           { name: "groupfolders", state: "enabled" },
           { name: "group_everyone", state: "enabled" },
@@ -323,7 +330,7 @@ describe("buildSetupNotice", () => {
   it("explains a restart that never re-ran setup", () => {
     const notice = buildSetupNotice({
       health: { ok: false, state: "unknown" },
-      access: { ok: false, state: "unknown", step: "", detail: "", prerequisites: [] },
+      access: { ok: false, state: "unknown", step: "", detail: "", mode: "", prerequisites: [] },
       isAdmin: true,
       appUrl: APP_URL,
     });
@@ -343,7 +350,7 @@ describe("buildSetupNotice", () => {
     function blockingFor(state: string, isAdmin: boolean): boolean | undefined {
       return buildSetupNotice({
         health: { ok: false, state },
-        access: { ok: false, state, step: "", detail: "", prerequisites: [] },
+        access: { ok: false, state, step: "", detail: "", mode: "", prerequisites: [] },
         isAdmin,
         appUrl: APP_URL,
       })?.blocking;
@@ -385,7 +392,7 @@ describe("buildSetupNotice", () => {
   it("names the state rather than guessing when it recognises nothing", () => {
     const notice = buildSetupNotice({
       health: { ok: false, state: "something-new" },
-      access: { ok: false, state: "something-new", step: "a_new_step", detail: "", prerequisites: [] },
+      access: { ok: false, state: "something-new", step: "a_new_step", detail: "", mode: "", prerequisites: [] },
       isAdmin: true,
       appUrl: APP_URL,
     });
@@ -405,5 +412,88 @@ describe("buildSetupNotice", () => {
     expect(notice?.steps[0].commands).toEqual([
       "occ app:install groupfolders && occ app:enable groupfolders",
     ]);
+  });
+});
+
+// D-616 made the substrate two models, and the notice has to name the right
+// prerequisite for whichever one is in force. Telling the administrator of a
+// deps-free instance to install two Nextcloud apps sends them after something
+// they do not need — and away from the account that is actually missing.
+describe("buildSetupNotice under the default storage model", () => {
+  function defaultModeAccess(step: string, detail: string): RecordingsAccess {
+    return {
+      ok: false,
+      state: "unavailable",
+      step,
+      detail,
+      mode: "default",
+      prerequisites: [
+        { name: "groupfolders", state: "missing" },
+        { name: "group_everyone", state: "missing" },
+      ],
+    };
+  }
+
+  it("asks for the service account, not for the two apps it does not need", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable" },
+      access: defaultModeAccess(
+        "owner_account",
+        'the "cassini" service account does not exist; create it with `occ user:add --group=cassini cassini`',
+      ),
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+
+    expect(notice?.summary).toContain("service account");
+    const commands = (notice?.steps ?? []).flatMap((step) => step.commands).join("\n");
+    expect(commands).toContain("occ user:add --group=cassini cassini");
+    expect(commands).toContain("occ group:add cassini");
+    expect(commands).not.toContain("groupfolders");
+    expect(commands).not.toContain("group_everyone");
+  });
+
+  // Nothing is missing here — the recorded mode and the storage simply are not
+  // the same thing, and the fix is a decision rather than an install.
+  it("points a mode mismatch at the Setup tab rather than at a command", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable" },
+      access: defaultModeAccess(
+        "mode_mismatch:group_folder_mount",
+        'access control is off, but a "Cassini" Team folder is still mapped to a group.',
+      ),
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+
+    expect(notice?.summary).toContain("disagree");
+    expect(notice?.steps[0].label).toContain("Setup tab");
+    expect((notice?.steps ?? []).flatMap((step) => step.commands)).toEqual([]);
+  });
+
+  // A missing app is still the answer when access control is the mode in force.
+  it("still names the missing apps under access control", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable" },
+      access: accessWithMissingApps("groupfolders", "group_everyone"),
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+
+    expect(notice?.steps[0].commands.join("\n")).toContain("occ app:install groupfolders");
+  });
+
+  // The verdict is not private; the diagnosis is. That must hold for the new
+  // branches too.
+  it("tells a non-administrator nothing about which account is missing", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable" },
+      access: null,
+      isAdmin: false,
+      appUrl: APP_URL,
+    });
+
+    expect(JSON.stringify(notice)).not.toContain("cassini service account");
+    expect(JSON.stringify(notice)).not.toContain("occ");
   });
 });
