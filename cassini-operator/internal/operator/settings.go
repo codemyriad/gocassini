@@ -425,7 +425,11 @@ type effectiveSTT struct {
 	// ModelDownloadMB is the approximate download size when the running image
 	// does not bake Model, and 0 when the build starts without a download. The
 	// first build of such a tier waits for that fetch once (D-704).
-	ModelDownloadMB int    `json:"model_download_mb,omitempty"`
+	ModelDownloadMB int `json:"model_download_mb,omitempty"`
+	// MinFreeMemoryMB is the memory that must be free before a build of this
+	// tier starts. An administrator who picks a heavy tier on a small host
+	// otherwise learns the requirement only from a deferred build (D-702).
+	MinFreeMemoryMB int    `json:"min_free_memory_mb,omitempty"`
 	Note            string `json:"note"`
 }
 
@@ -450,6 +454,7 @@ func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
 		if rt.modelNeedsDownload(admitted) {
 			effective.ModelDownloadMB = modelDownloadMB(admitted)
 		}
+		effective.MinFreeMemoryMB = resourceLimitsFromEnv().minFreeMemForBuild(effective.Device, admitted)
 		return effective
 	}
 	// Admission refused this policy, so the panel must say why instead of

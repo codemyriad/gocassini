@@ -41,9 +41,9 @@ var (
 
 type resourceLimits struct {
 	cpuReserve       int           // cores to leave free for the rest of the host
-	minFreeMemMB     int           // do not start a CUDA build below this free RAM
+	minFreeMemMB     int           // a CUDA build needs this much free RAM to start
 	cpuMemHeadroomMB int           // free RAM a CPU build needs on top of its model weights
-	gpuMinFreeMB     int           // defer a CUDA build below this free VRAM
+	gpuMinFreeMB     int           // a CUDA build needs this much free video memory
 	memWaitMax       time.Duration // bound on how long to wait for RAM to free up
 	memPoll          time.Duration
 }
@@ -67,8 +67,8 @@ func resourceLimitsFromEnv() resourceLimits {
 	}
 }
 
-// minFreeMemForBuild is the free-RAM floor for a build of model on device.
-// CUDA keeps the measured full-run floor. A CPU build holds the recognizer in
+// minFreeMemForBuild is the memory that must be free before a build of this
+// model starts on this device. CUDA keeps the measured full-run figure. A CPU build holds the recognizer in
 // host RAM instead of VRAM, so its floor is that model's measured peak plus a
 // margin: 1.5GiB for the 110M CTC model, 2.75GiB for 0.6B int8, 4.5GiB for
 // 0.6B fp32. A 4-core/8GiB host therefore runs the fast and balanced tiers and
@@ -186,7 +186,7 @@ func (l resourceLimits) applyToEnv(env []string, device, model string) ([]string
 	if free < l.gpuMinFreeMB {
 		return nil, &resourceUnavailableError{
 			resource: "GPU memory",
-			detail:   fmt.Sprintf("free %dMiB is below the %dMiB floor", free, l.gpuMinFreeMB),
+			detail:   fmt.Sprintf("free video memory is %dMiB, and a build needs %dMiB to start", free, l.gpuMinFreeMB),
 		}
 	}
 	return env, nil
@@ -196,25 +196,25 @@ func (l resourceLimits) applyToEnv(env []string, device, model string) ([]string
 // never spawned into a near-OOM host during a transient memory spike. After
 // memWaitMax it returns a transient capacity error so the worker can defer the
 // job without launching or terminally failing it.
-func (l resourceLimits) waitForMemory(ctx context.Context, floorMB int, logf func(format string, v ...any)) error {
-	if floorMB <= 0 {
+func (l resourceLimits) waitForMemory(ctx context.Context, minFreeMB int, logf func(format string, v ...any)) error {
+	if minFreeMB <= 0 {
 		return nil
 	}
 	deadline := time.Now().Add(l.memWaitMax)
 	warned := false
 	for {
 		free := probeAvailableMem()
-		if free >= floorMB {
+		if free >= minFreeMB {
 			return nil
 		}
 		if time.Now().After(deadline) {
 			return &resourceUnavailableError{
 				resource: "host memory",
-				detail:   fmt.Sprintf("free %dMiB is below the %dMiB floor after waiting %s", free, floorMB, l.memWaitMax),
+				detail:   fmt.Sprintf("free memory is %dMiB after waiting %s, and this quality tier needs %dMiB to start", free, l.memWaitMax, minFreeMB),
 			}
 		}
 		if !warned {
-			logf("resource governor: free mem %dMiB < %dMiB; deferring build start", free, floorMB)
+			logf("resource governor: free memory %dMiB is under the %dMiB this tier needs to start; waiting", free, minFreeMB)
 			warned = true
 		}
 		select {

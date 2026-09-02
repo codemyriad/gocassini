@@ -160,10 +160,8 @@ function normalizeSettings(raw: unknown): Settings {
     quality: normalizeQuality(rawEffective.quality),
     device: asString(rawEffective.device),
     model: asString(rawEffective.model),
-    model_download_mb:
-      typeof rawEffective.model_download_mb === "number" && Number.isFinite(rawEffective.model_download_mb)
-        ? rawEffective.model_download_mb
-        : 0,
+    model_download_mb: asNumber(rawEffective.model_download_mb),
+    min_free_memory_mb: asNumber(rawEffective.min_free_memory_mb),
     note: asString(rawEffective.note),
   };
   return {
@@ -182,6 +180,10 @@ function normalizeQuality(value: unknown): SettingsQuality {
   return SETTINGS_QUALITIES.includes(value as SettingsQuality)
     ? (value as SettingsQuality)
     : "balanced";
+}
+
+function asNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function asString(value: unknown): string {

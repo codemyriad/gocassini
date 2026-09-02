@@ -101,6 +101,8 @@ export interface SettingsEffective {
   // Approximate download size in MB when the running image does not bake this
   // model, and 0 when the build starts without a download.
   model_download_mb: number;
+  // Memory that must be free before a build of this tier starts, in MB.
+  min_free_memory_mb: number;
   note: string;
 }
 

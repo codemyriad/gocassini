@@ -115,6 +115,15 @@
     return device || "—";
   }
 
+  // formatMemory reads a size in MB back to an administrator. Gigabytes are
+  // what a host is described in, so a four-digit MB number is the wrong unit.
+  function formatMemory(mb: number): string {
+    if (mb >= 1024) {
+      return `${(mb / 1024).toFixed(1)} GB`;
+    }
+    return `${mb} MB`;
+  }
+
   function sourceLabel(source: string): string {
     if (source === "user") {
       return "User override";
@@ -198,6 +207,12 @@
             using <code class="text-xs">{settings.effective.model}</code>
           {/if}
         </p>
+        {#if settings.effective.min_free_memory_mb > 0}
+          <p class="mt-1 text-xs text-base-content/60">
+            A build of this tier starts when {formatMemory(settings.effective.min_free_memory_mb)}
+            of memory is free.
+          </p>
+        {/if}
         {#if settings.effective.model_download_mb > 0}
           <p class="mt-1 text-xs text-warning">
             This image does not carry that model. The first build downloads it once,

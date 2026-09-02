@@ -52,6 +52,7 @@ describe("operator settings client", () => {
       device: "cpu",
       model: "parakeet-tdt-0.6b-v3-int8",
       model_download_mb: 0,
+      min_free_memory_mb: 0,
       note: "no usable GPU on this host",
     });
   });
@@ -74,6 +75,7 @@ describe("operator settings client", () => {
       device: "",
       model: "",
       model_download_mb: 0,
+      min_free_memory_mb: 0,
       note: "",
     });
   });
