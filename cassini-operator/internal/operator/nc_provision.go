@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -701,6 +702,14 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 	if err := json.Unmarshal(body, &env); err != nil {
 		return gfFolder{}, false, fmt.Errorf("decode folders list: %w", err)
 	}
+	// `null` is not "no folders". An empty instance answers `[]`, and a JSON null
+	// unmarshals into a map without error and leaves it nil — which would read as
+	// an authoritative "there is no Cassini Team folder here". Reject it for the
+	// same reason as the undecodable shapes below: on an instance that really is
+	// access-controlled, that answer is a disclosure.
+	if bytes.Equal(bytes.TrimSpace(env.OCS.Data), []byte("null")) {
+		return gfFolder{}, false, fmt.Errorf("decode folders list: ocs.data is null, which is not an answer about whether a %q folder exists", mount)
+	}
 	// The list is an object keyed by folder id, or an empty array. Collect all
 	// folders and pick the lowest-id match deterministically: if a duplicate
 	// mount point ever exists, every run must resolve to the same folder rather
@@ -721,8 +730,23 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 		if f, ok := lowestIDMatch(asArr, mount); ok {
 			return f, true, nil
 		}
+		return gfFolder{}, false, nil
 	}
-	return gfFolder{}, false, nil
+	// Neither shape decoded. This must be an ERROR, not "there is no such
+	// folder", and the difference is a disclosure.
+	//
+	// Group Folders returns every folder on the instance in one list, and Go
+	// fails the WHOLE decode if any single record does not fit gfFolder — one
+	// unrelated folder whose `acl` comes back as 0 rather than false is enough.
+	// Swallowed as "absent", that answer passes the default mode's sanity check
+	// on an instance that really does have a mapped, ACL-enabled Cassini Team
+	// folder: the substrate records `provisioned`, and the read proxy then
+	// serves the entire archive as the ACL manager to every authenticated
+	// account.
+	//
+	// An unanswered question is not a negative answer. Returning an error makes
+	// the probe record FolderProbed=false, which fails closed.
+	return gfFolder{}, false, fmt.Errorf("decode folders list: ocs.data is neither an object keyed by folder id nor an array (%d bytes)", len(env.OCS.Data))
 }
 
 // lowestIDMatch returns the folder with the given mount point that has the
