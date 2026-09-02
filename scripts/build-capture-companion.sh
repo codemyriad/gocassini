@@ -7,7 +7,12 @@ set -euo pipefail
 usage() {
 	cat >&2 <<'EOF'
 Usage: ./scripts/build-capture-companion.sh [--version VERSION]
-       [--staging DIR] [--output FILE] [--skip-js-build]
+       [--staging DIR] [--output FILE] [--skip-js-build] [--payload FILE]
+
+  --payload FILE  package this prebuilt capture-payload.js instead of the one
+                  under cassini-app/dist/capture (implies --skip-js-build).
+                  The harness uses it to ship the payload the ExApp image
+                  under test already carries.
 EOF
 }
 
@@ -16,6 +21,7 @@ die() { echo "error: $*" >&2; exit 1; }
 version=""
 staging=""
 output=""
+payload=""
 skip_js=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -23,6 +29,7 @@ while [[ $# -gt 0 ]]; do
 		--staging) staging="${2:?--staging needs a directory}"; shift 2 ;;
 		--output) output="${2:?--output needs a file}"; shift 2 ;;
 		--skip-js-build) skip_js=1; shift ;;
+		--payload) payload="${2:?--payload needs a file}"; skip_js=1; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) die "unknown argument: $1" ;;
 	esac
@@ -42,7 +49,7 @@ version="${version:-$manifest_version}"
 if [[ "$skip_js" -eq 0 ]]; then
 	( cd "$root" && npm run build:capture -w cassini-app )
 fi
-payload="$root/cassini-app/dist/capture/capture-payload.js"
+payload="${payload:-$root/cassini-app/dist/capture/capture-payload.js}"
 [[ -s "$payload" ]] || die "missing built payload: $payload"
 
 staging="${staging:-$root/build/capture-companion}"

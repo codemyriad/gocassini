@@ -52,6 +52,15 @@ const (
 
 	captureSidecarName = "capture.json"
 
+	// captureSidecarField is the one form field name that carries meaning. It
+	// is a single part, so the proxy cannot collapse it, and it is plain ASCII
+	// with no character PHP rewrites.
+	captureSidecarField = "sidecar"
+	// captureSegmentPart is an internal label for "this part is a segment",
+	// decided by the part carrying a file name rather than by its field name.
+	// See the classification comment in the read loop.
+	captureSegmentPart = "\x00segment"
+
 	// captureSourceFormat must match SOURCE_CAPTURE_FORMAT in
 	// cassini-app/src/capture/protocol.ts. Rejecting an unknown value is how a
 	// breaking client change is fenced off from an older server.
@@ -412,8 +421,29 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				http.Error(w, "malformed upload", http.StatusBadRequest)
 				return
 			}
-			switch part.FormName() {
-			case "sidecar":
+			// Parts are classified by whether they carry a FILE NAME, not by
+			// their form field name.
+			//
+			// A browser can send every segment under one repeated field name,
+			// and Go's multipart reader hands them all back. Nextcloud's AppAPI
+			// proxy does not stream the body through: it rebuilds it from PHP's
+			// $_POST/$_FILES, and PHP keeps only the LAST file for a repeated
+			// field name. Depending on the field name therefore lost every
+			// segment but one, and the upload was refused as incomplete — for
+			// the ordinary case of a participant switching microphone mid-call.
+			// PHP also rewrites characters it dislikes in field names, so no
+			// naming scheme is safe to rely on across that hop.
+			//
+			// The file name is what the sidecar already refers to and what the
+			// staging directory is keyed by, so it is the only identifier that
+			// has to survive. The client sends distinct field names purely so
+			// the proxy keeps every part.
+			formName := part.FormName()
+			if formName != captureSidecarField && part.FileName() != "" {
+				formName = captureSegmentPart
+			}
+			switch formName {
+			case captureSidecarField:
 				var parsed captureSidecar
 				if err := json.NewDecoder(io.LimitReader(part, 32<<20)).Decode(&parsed); err != nil {
 					if captureBodyTooLarge(err) {
@@ -428,7 +458,7 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 					return
 				}
 				sidecar = &parsed
-			case "segments":
+			case captureSegmentPart:
 				name := filepath.Base(part.FileName())
 				if !captureSafeName.MatchString(name) || name == captureSidecarName {
 					http.Error(w, "invalid segment name", http.StatusBadRequest)

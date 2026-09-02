@@ -537,9 +537,24 @@ async function uploadCapture(
   const dir = await opfsRoot.getDirectoryHandle(dirName);
   const form = new FormData();
   form.append("sidecar", new Blob([JSON.stringify(sidecar)], { type: "application/json" }), "capture.json");
-  for (const segment of sidecar.segments) {
+  // One DISTINCT field name per segment, and nothing but ASCII letters,
+  // digits and an underscore in it.
+  //
+  // Every segment used to go under the repeated name "segments". Go's
+  // multipart reader accepts that, but Nextcloud's AppAPI proxy rebuilds the
+  // body from PHP's $_POST/$_FILES rather than streaming it, and PHP keeps
+  // only the last file for a repeated field name — so a two-segment upload
+  // arrived as one and was refused. Segments are cut whenever Talk replaces
+  // the sender's track, i.e. on any microphone change during a recorded call,
+  // so this was not an edge case. PHP also rewrites "." and other characters
+  // in field names, which is why the name is deliberately dull.
+  //
+  // The server identifies a segment by its FILE name, which the sidecar
+  // already refers to; these field names exist only so the proxy keeps every
+  // part.
+  for (const [index, segment] of sidecar.segments.entries()) {
     const fileHandle = await dir.getFileHandle(segment.audioName);
-    form.append("segments", await fileHandle.getFile(), segment.audioName);
+    form.append(`segment_${index}`, await fileHandle.getFile(), segment.audioName);
   }
   // Last check, immediately before the bytes leave: reading the segments back
   // out of OPFS above is several awaits long, and consent can be withdrawn in
