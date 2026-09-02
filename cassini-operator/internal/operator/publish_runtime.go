@@ -30,6 +30,10 @@ func (rt *Runtime) startPublishWorker() {
 	// ".backup" copy surviving in the staging root.
 	rt.reconcilePromotionLeftovers()
 	rt.sweepArtifactRetention()
+	// Participant uploads are swept on the same two edges as attempt artifacts.
+	// At startup because an operator that ran without a policy — or crashed
+	// mid-promotion — has to converge instead of waiting for the next publish.
+	rt.sweepCaptureStorage()
 	rt.workerWG.Add(1)
 	go rt.publishWorker()
 }
@@ -142,6 +146,11 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// removal is idempotent, and the policy still governs the attempt `.run`,
 	// `.meeting` and every superseded attempt.
 	rt.pruneArtifactsForJob(task.JobID)
+	// And the capture root, on the same edge and for the same reason: a publish
+	// is the moment the volume has just grown, and the sweep is the only thing
+	// that shrinks it. It is not scoped to this job — captures are keyed by room
+	// and call window, not by job id — so it reconsiders the whole root.
+	rt.sweepCaptureStorage()
 }
 
 func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (string, error) {

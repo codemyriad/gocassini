@@ -344,32 +344,66 @@ func (rt *Runtime) captureEnabledHandler(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(map[string]bool{"enabled": sourceCaptureEnabled()})
 }
 
+// refuseCaptureUpload answers one refusal and leaves a server-side trace of it.
+//
+// Every non-2xx exit from the upload handler goes through here. A refusal used
+// to be invisible on the server: the client discarded the recording and said so
+// in a browser console nobody reads, so a pilot could lose captures with
+// nothing in the container log to explain it. The reason is a stable token
+// rather than prose, so grepping for "capture upload refused" answers "why is
+// nothing arriving" on its own.
+func refuseCaptureUpload(w http.ResponseWriter, logger *log.Logger, owner string, status int, reason, message string) {
+	if strings.TrimSpace(owner) == "" {
+		owner = "-"
+	}
+	if logger != nil {
+		logger.Printf("capture upload refused: owner=%s status=%d reason=%s: %s", owner, status, reason, message)
+	}
+	http.Error(w, message, status)
+}
+
 // captureUploadHandler receives one participant's post-call source audio.
 func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", "POST")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			refuseCaptureUpload(w, logger, "", http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 			return
 		}
 		if !sourceCaptureEnabled() {
 			// The administrator gate, checked server-side on every upload. A
 			// stale client from before the feature was turned off still cannot
 			// store anything.
-			http.Error(w, "source capture is not enabled on this installation", http.StatusForbidden)
+			//
+			// It stays the FIRST thing this handler decides, ahead of the
+			// free-space and quota checks below. The documented promise is that
+			// with collection off this feature touches no storage at all, and a
+			// statfs or a walk of the capture root is work done on behalf of a
+			// feature that is supposed to be inert.
+			refuseCaptureUpload(w, logger, "", http.StatusForbidden, "collection_disabled",
+				"source capture is not enabled on this installation")
 			return
 		}
 		owner := strings.TrimSpace(appapi.UserID(r.Context()))
 		if owner == "" {
 			// Without an authenticated caller there is no way to know whose
 			// track this is, and an upload nobody owns can never be verified.
-			http.Error(w, "authentication required", http.StatusUnauthorized)
+			refuseCaptureUpload(w, logger, "", http.StatusUnauthorized, "unauthenticated", "authentication required")
+			return
+		}
+		// Storage admission, before a byte is written and before the body is
+		// read. Uploads share a volume with the job database, the work root and
+		// the published site, so one that would crowd them out has to be
+		// refused rather than half-written and cleaned up afterwards.
+		admission, refusal := admitCaptureUpload(rt.cfg.CaptureRoot, owner, r.ContentLength, captureLimitsFromEnv())
+		if refusal != nil {
+			refuseCaptureUpload(w, logger, owner, refusal.status, refusal.reason, refusal.message)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, captureMaxUploadBytes)
 		reader, err := r.MultipartReader()
 		if err != nil {
-			http.Error(w, "expected multipart/form-data", http.StatusBadRequest)
+			refuseCaptureUpload(w, logger, owner, http.StatusBadRequest, "not_multipart", "expected multipart/form-data")
 			return
 		}
 
@@ -397,13 +431,13 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 		// nobody has opted in never grows the directory.
 		if err := os.MkdirAll(rt.cfg.CaptureRoot, 0o750); err != nil {
 			logger.Printf("capture upload: capture root %s: %v", rt.cfg.CaptureRoot, err)
-			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
+			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
-		staging, err := os.MkdirTemp(rt.cfg.CaptureRoot, "upload-")
+		staging, err := os.MkdirTemp(rt.cfg.CaptureRoot, captureStagingPrefix)
 		if err != nil {
 			logger.Printf("capture upload: staging dir: %v", err)
-			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
+			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
 		stagedDir = staging
@@ -415,14 +449,14 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			}
 			if err != nil {
 				if captureBodyTooLarge(err) {
-					http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
+					refuseCaptureUpload(w, logger, owner, http.StatusRequestEntityTooLarge, "too_large", "capture upload is too large")
 					return
 				}
 				// Truncation is a property of THIS delivery, not of the
 				// capture: a proxy or upstream cutting the body short must
 				// not make the client throw away an intact recording. 503
 				// is the status the client retries on.
-				http.Error(w, "upload truncated in transit", http.StatusServiceUnavailable)
+				refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "truncated", "upload truncated in transit")
 				return
 			}
 			// Parts are classified by whether they carry a FILE NAME, not by
@@ -451,47 +485,60 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				var parsed captureSidecar
 				if err := json.NewDecoder(io.LimitReader(part, 32<<20)).Decode(&parsed); err != nil {
 					if captureBodyTooLarge(err) {
-						http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
+						refuseCaptureUpload(w, logger, owner, http.StatusRequestEntityTooLarge, "too_large", "capture upload is too large")
 						return
 					}
 					// A sidecar that stops mid-JSON was cut in transit; a
 					// sidecar that parses wrong is the client's bug. Only the
 					// second is worth telling the client to give up over.
 					if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
-						http.Error(w, "upload truncated in transit", http.StatusServiceUnavailable)
+						refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "truncated", "upload truncated in transit")
 						return
 					}
-					http.Error(w, "malformed sidecar", http.StatusBadRequest)
+					refuseCaptureUpload(w, logger, owner, http.StatusBadRequest, "malformed_sidecar", "malformed sidecar")
 					return
 				}
 				if err := validateSidecar(&parsed); err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
+					refuseCaptureUpload(w, logger, owner, http.StatusBadRequest, "invalid_sidecar", err.Error())
 					return
 				}
 				sidecar = &parsed
 			case captureSegmentPart:
 				name := filepath.Base(part.FileName())
 				if !captureSafeName.MatchString(name) || name == captureSidecarName {
-					http.Error(w, "invalid segment name", http.StatusBadRequest)
+					refuseCaptureUpload(w, logger, owner, http.StatusBadRequest, "invalid_segment_name", "invalid segment name")
 					return
 				}
 				dest, err := os.Create(filepath.Join(staging, name))
 				if err != nil {
 					logger.Printf("capture upload: create segment: %v", err)
-					http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
+					refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 					return
 				}
-				n, copyErr := io.Copy(dest, part)
+				// The quota again, against the bytes that actually arrive.
+				// admitCaptureUpload could only charge what Content-Length
+				// declared, and that number is absent on a chunked body and
+				// wrong on a lying one. Reading one byte past the budget is how
+				// the overrun is detected; it goes out with the staging
+				// directory.
+				budget := admission.remaining()
+				n, copyErr := io.Copy(dest, io.LimitReader(part, budget+1))
 				closeErr := dest.Close()
 				if copyErr != nil || closeErr != nil {
 					if captureBodyTooLarge(copyErr) {
-						http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
+						refuseCaptureUpload(w, logger, owner, http.StatusRequestEntityTooLarge, "too_large", "capture upload is too large")
 						return
 					}
 					// Same reasoning as the reader error above: retryable.
-					http.Error(w, "upload truncated in transit", http.StatusServiceUnavailable)
+					refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "truncated", "upload truncated in transit")
 					return
 				}
+				if n > budget {
+					refusal := admission.overrun()
+					refuseCaptureUpload(w, logger, owner, refusal.status, refusal.reason, refusal.message)
+					return
+				}
+				admission = admission.consume(n)
 				written[name] = n
 			default:
 				// Ignore unknown parts rather than failing: a newer client may
@@ -501,14 +548,15 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 		}
 
 		if sidecar == nil {
-			http.Error(w, "missing sidecar", http.StatusBadRequest)
+			refuseCaptureUpload(w, logger, owner, http.StatusBadRequest, "missing_sidecar", "missing sidecar")
 			return
 		}
 		declared := make(map[string]struct{}, len(sidecar.Segments))
 		for _, segment := range sidecar.Segments {
 			declared[segment.AudioName] = struct{}{}
 			if _, ok := written[segment.AudioName]; !ok {
-				http.Error(w, fmt.Sprintf("missing segment %q", segment.AudioName), http.StatusBadRequest)
+				refuseCaptureUpload(w, logger, owner, http.StatusBadRequest, "missing_segment",
+					fmt.Sprintf("missing segment %q", segment.AudioName))
 				return
 			}
 		}
@@ -519,7 +567,8 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 		// expects it.
 		for name := range written {
 			if _, ok := declared[name]; !ok {
-				http.Error(w, fmt.Sprintf("segment %q is not declared in the sidecar", name), http.StatusBadRequest)
+				refuseCaptureUpload(w, logger, owner, http.StatusBadRequest, "undeclared_segment",
+					fmt.Sprintf("segment %q is not declared in the sidecar", name))
 				return
 			}
 		}
@@ -527,13 +576,13 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			member, err := isMember(r.Context(), owner, sidecar.RoomToken)
 			if err != nil {
 				logger.Printf("capture upload: membership check for %s: %v", sidecar.RoomToken, err)
-				http.Error(w, "could not verify room membership", http.StatusBadGateway)
+				refuseCaptureUpload(w, logger, owner, http.StatusBadGateway, "membership_unknown", "could not verify room membership")
 				return
 			}
 			if !member {
 				// Not an error the client can fix by retrying: they were not in
 				// this call.
-				http.Error(w, "not a participant of this room", http.StatusForbidden)
+				refuseCaptureUpload(w, logger, owner, http.StatusForbidden, "not_a_participant", "not a participant of this room")
 				return
 			}
 		}
@@ -552,24 +601,24 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 		// what DiscoverSourceCaptures reads.
 		body, err := json.Marshal(sidecar)
 		if err != nil {
-			http.Error(w, "could not record sidecar", http.StatusInternalServerError)
+			refuseCaptureUpload(w, logger, owner, http.StatusInternalServerError, "sidecar_unencodable", "could not record sidecar")
 			return
 		}
 		if err := writeFileSynced(filepath.Join(staging, captureSidecarName), body); err != nil {
 			logger.Printf("capture upload: write sidecar: %v", err)
-			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
+			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
 
 		final := captureUploadDir(rt.cfg.CaptureRoot, sidecar.RoomToken, owner, sidecar.CallStartWallMS)
 		if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
 			logger.Printf("capture upload: mkdir %s: %v", final, err)
-			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
+			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
 		if err := rt.promoteCapture(staging, final); err != nil {
 			logger.Printf("capture upload: promote %s -> %s: %v", staging, final, err)
-			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
+			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
 		promoted = true

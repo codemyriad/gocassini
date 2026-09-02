@@ -137,6 +137,12 @@ func captureTestRuntime(t *testing.T) *Runtime {
 	// of the intake path has to turn it on first — which is itself the
 	// assertion that the gate is real.
 	t.Setenv(envSourceCaptureEnabled, "1")
+	// The free-space floor is checked against the real volume the temp
+	// directory sits on. A CI host whose /tmp is smaller than the floor would
+	// fail every one of these with a 507 that has nothing to do with what they
+	// assert, so the volume is made roomy here; the tests that mean to exercise
+	// the floor stub it again with the figure they want.
+	stubCaptureFreeBytes(t, 64<<30)
 	return &Runtime{cfg: Config{CaptureRoot: filepath.Join(t.TempDir(), "capture")}}
 }
 

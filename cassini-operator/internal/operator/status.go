@@ -52,6 +52,12 @@ const (
 	recordHealthProbeTTL     = 15 * time.Second
 	recordHealthProbeTimeout = 30 * time.Second
 	computeReadinessProbeTTL = 10 * time.Second
+
+	// captureUsageProbeTTL throttles the capture root walk behind
+	// source_capture. The figures move only when an upload lands or the sweep
+	// runs, so a stale half-minute costs an admin nothing and saves a
+	// filesystem walk per status poll.
+	captureUsageProbeTTL = 30 * time.Second
 )
 
 type statusResponse struct {
@@ -70,6 +76,89 @@ type statusResponse struct {
 	// recordings per-participant readable is actually there (D-554). It is the
 	// last recorded outcome of provisioning, not a live probe.
 	RecordingsAccess statusRecordingsAccess `json:"recordings_access"`
+	// SourceCapture reports the participant-upload pilot (D-698).
+	SourceCapture statusSourceCapture `json:"source_capture"`
+}
+
+// statusSourceCapture answers the questions an administrator running the source
+// capture pilot cannot otherwise ask: are captures arriving, how much of the
+// volume do they hold, and how close is the intake to refusing them.
+//
+// Deliberately absent from resp.OK below. A full capture root refuses uploads
+// and sweeps itself; it does not stop the operator recording, building or
+// publishing, and reporting the whole ExApp unhealthy for a pilot feature would
+// take a monitor's 503 away from the failures that mean it.
+type statusSourceCapture struct {
+	// CollectionEnabled is CASSINI_SOURCE_CAPTURE: whether uploads are accepted
+	// at all. IngestEnabled is CASSINI_SOURCE_AUDIO_INGEST: whether what was
+	// collected may reach a transcript. They are independent switches and an
+	// admin has to be able to tell which one is off.
+	CollectionEnabled bool   `json:"collection_enabled"`
+	IngestEnabled     bool   `json:"ingest_enabled"`
+	Root              string `json:"root,omitempty"`
+	Captures          int    `json:"captures"`
+	Bytes             int64  `json:"bytes"`
+	// OldestReceivedAt dates the capture the retention sweep will drop first.
+	OldestReceivedAt string `json:"oldest_received_at,omitempty"`
+	OwnerQuotaBytes  int64  `json:"owner_quota_bytes"`
+	TotalQuotaBytes  int64  `json:"total_quota_bytes"`
+	MinFreeDiskBytes int64  `json:"min_free_disk_bytes"`
+	FreeDiskBytes    int64  `json:"free_disk_bytes"`
+	MaxAgeHours      int64  `json:"max_age_hours"`
+	// Detail carries whatever stopped the figures from being measured, so a
+	// zero here is never mistaken for an empty capture root.
+	Detail string `json:"detail,omitempty"`
+}
+
+// sourceCaptureStatus measures the capture root through the cached probe.
+//
+// It reports whether or not collection is enabled: an administrator who has
+// just switched capture off still needs to watch what it already collected
+// drain away. Nothing here creates the root — a deployment that never collected
+// anything must not grow a directory because somebody opened /status.
+func (rt *Runtime) sourceCaptureStatus() statusSourceCapture {
+	limits := captureLimitsFromEnv()
+	status := statusSourceCapture{
+		CollectionEnabled: sourceCaptureEnabled(),
+		IngestEnabled:     sourceAudioIngestEnabled(),
+		Root:              rt.cfg.CaptureRoot,
+		OwnerQuotaBytes:   limits.ownerQuota,
+		TotalQuotaBytes:   limits.totalQuota,
+		MinFreeDiskBytes:  limits.minFreeDisk,
+		MaxAgeHours:       int64(limits.maxAge / time.Hour),
+	}
+	if strings.TrimSpace(rt.cfg.CaptureRoot) == "" {
+		status.Detail = "no capture root is configured"
+		return status
+	}
+	usage, err := rt.measureCaptureUsage()
+	if err != nil {
+		status.Detail = err.Error()
+		return status
+	}
+	status.Captures = usage.Captures
+	status.Bytes = usage.Bytes
+	if !usage.Oldest.IsZero() {
+		status.OldestReceivedAt = usage.Oldest.UTC().Format(time.RFC3339)
+	}
+	free, err := probeCaptureFreeBytes(rt.cfg.CaptureRoot)
+	if err != nil {
+		status.Detail = err.Error()
+		return status
+	}
+	status.FreeDiskBytes = free
+	return status
+}
+
+// measureCaptureUsage prefers the shared probe and falls back to an inline walk,
+// the same way effectiveComputeStatus falls back when its probe is unset: a
+// Runtime built directly by a test has no probe, and a status section that
+// panicked there would be worse than an unthrottled walk.
+func (rt *Runtime) measureCaptureUsage() (captureUsage, error) {
+	if rt.captureUsage != nil {
+		return rt.captureUsage.check()
+	}
+	return measureCaptureRoot(rt.cfg.CaptureRoot)
 }
 
 // statusRecordingsAccess answers "can this deployment actually restrict a
@@ -193,6 +282,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 		// actually delivering to Nextcloud Files, which is exactly backwards for
 		// the field an admin uses to decide whether a substrate is expected.
 		RecordingsAccess: ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName()),
+		SourceCapture:    rt.sourceCaptureStatus(),
 	}
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
