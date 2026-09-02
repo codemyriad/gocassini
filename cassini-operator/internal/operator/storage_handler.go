@@ -1,10 +1,12 @@
 package operator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 )
 
@@ -51,9 +53,12 @@ type storageModeOption struct {
 	// Step is the machine-readable form of Blocker, keyed the same way
 	// /status's recordings_access.step is.
 	Step string `json:"step,omitempty"`
-	// Instructions are shell lines an administrator can run. The first pass
-	// scaffolds nothing, so this IS the setup path.
+	// Instructions are shell lines an administrator can run. Derived from Setup
+	// below, so the printed recipe and the executed one cannot drift.
 	Instructions []string `json:"instructions,omitempty"`
+	// Setup is the same thing as something to EXECUTE rather than retype
+	// (D-671). Empty when the mode is already available.
+	Setup []storageSetupStep `json:"setup,omitempty"`
 }
 
 // storageStatusResponse is the body of both GET and a successful PUT, so the UI
@@ -73,7 +78,30 @@ type storageStatusResponse struct {
 	Modes     []storageModeOption `json:"modes"`
 	// Transition is present only on the PUT that performed one.
 	Transition *storageTransitionResult `json:"transition,omitempty"`
+	// Installs is present only on the POST that attempted app installs.
+	Installs []appInstallOutcome `json:"installs,omitempty"`
 }
+
+// storageAction is the POST body. Two verbs share one route because AppAPI
+// learns an ExApp's routes at REGISTRATION time — an already-installed app does
+// not get a new one until it is re-registered, so a second path would 404 for
+// exactly the administrators who most need it.
+type storageAction struct {
+	Action string `json:"action"`
+}
+
+const (
+	// storageActionRecheck re-runs the enabled-edge preflight now. The browser
+	// performs the setup writes itself (D-671), and the operator cannot see
+	// them until it looks again — without this the Setup tab would keep showing
+	// what was missing before the administrator fixed it.
+	storageActionRecheck = "recheck"
+	// storageActionInstallApps attempts the two native prerequisites from the
+	// backend. It is the one part of the plan the browser cannot do, and the
+	// backend can on releases that predate the password-confirmation hardening
+	// or where the administrator has set a bypass range.
+	storageActionInstallApps = "install_apps"
+)
 
 // storageUpdate is the PUT body: the same field name the config file uses, so
 // there is one vocabulary for this decision end to end.
@@ -98,12 +126,71 @@ func (c ExAppConfig) storageHandler(rt *Runtime) http.Handler {
 		switch r.Method {
 		case http.MethodGet:
 			writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
+		case http.MethodPost:
+			c.handlePostStorage(w, r, rt)
 		case http.MethodPut:
 			c.handlePutStorage(w, r, rt)
 		default:
-			writeMethodNotAllowed(w, http.MethodGet+", "+http.MethodPut)
+			writeMethodNotAllowed(w, http.MethodGet+", "+http.MethodPost+", "+http.MethodPut)
 		}
 	})
+}
+
+// handlePostStorage runs one of the two setup actions and answers with the
+// refreshed state, so a caller never has to follow up with a GET to find out
+// what changed.
+func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, rt *Runtime) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
+		return
+	}
+	var in storageAction
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &in); err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid request JSON: %v", err))
+			return
+		}
+	}
+
+	switch in.Action {
+	case storageActionRecheck, "":
+		// An empty body means recheck: it is the harmless action, and the one a
+		// caller reaching for "look again" would guess.
+		c.preflightNCStorage(r.Context(), rt.logger)
+		writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
+	case storageActionInstallApps:
+		installs, err := c.attemptAppInstalls(r.Context(), rt.logger)
+		if err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		// Re-probe regardless of the outcome: a partial success has to be
+		// visible, and an install that worked is visible immediately (measured
+		// at 0 s — the writer and the reader are the same worker pool).
+		c.preflightNCStorage(r.Context(), rt.logger)
+		resp := c.storageStatus(rt, nil)
+		resp.Installs = installs
+		writeJSON(w, http.StatusOK, resp)
+	default:
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q or %q", in.Action, storageActionRecheck, storageActionInstallApps))
+	}
+}
+
+// attemptAppInstalls probes for what is missing and tries to install it. The
+// probe is re-run rather than read from the record, because the administrator
+// has very likely just changed something and a stale list would install the
+// wrong set — or nothing.
+func (c ExAppConfig) attemptAppInstalls(ctx context.Context, logger *log.Logger) ([]appInstallOutcome, error) {
+	if !c.appAPIActive() {
+		return nil, fmt.Errorf("apps can only be installed in a Nextcloud (AppAPI) deployment")
+	}
+	client := &http.Client{Timeout: ncProvisionTimeout}
+	probe, err := c.probeNCStorage(ctx, client, logger)
+	if err != nil {
+		return nil, fmt.Errorf("could not inspect this Nextcloud: %w", err)
+	}
+	return c.installMissingApps(ctx, client, probe, logger), nil
 }
 
 func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt *Runtime) {
@@ -195,6 +282,7 @@ func storageOption(accessControlled bool, activeMode string, probe ncStorageProb
 	if !ready {
 		option.Step = step
 		option.Blocker = detail
+		option.Setup = storageSetupPlan(accessControlled, probe)
 		option.Instructions = storageModeInstructions(accessControlled, probe)
 	}
 	return option

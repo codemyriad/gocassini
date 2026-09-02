@@ -16,16 +16,39 @@ describe("StoragePanel", () => {
     // instance on one click.
     expect(storagePanelSource).toContain("function requestSwitch");
     expect(storagePanelSource).toContain("function confirmSwitch");
-    expect(storagePanelSource).toContain("on:click={() => requestSwitch(option)}");
+    expect(storagePanelSource).toContain("requestSwitch(option)");
     expect(storagePanelSource).toContain("on:click={confirmSwitch}");
     const putCalls = storagePanelSource.match(/operatorClient\.putStorage\(/g) ?? [];
     expect(putCalls).toHaveLength(1);
-    expect(storagePanelSource).toContain("aria-label=\"Confirm storage mode change\"");
+    expect(storagePanelSource).toContain('"Confirm storage mode change"');
+  });
+
+  // The switch and the setup are different decisions with different
+  // consequences, and confirmSwitch must not be able to do the wrong one.
+  it("distinguishes switching a mode from building one", () => {
+    expect(storagePanelSource).toContain('pendingKind === "setup"');
+    expect(storagePanelSource).toContain("await runSetup(target)");
+    expect(storagePanelSource).toContain("await operatorClient.putStorage(");
+    expect(storagePanelSource).toContain('"Confirm Nextcloud setup changes"');
+  });
+
+  it("never switches modes as a side effect of setting one up", () => {
+    // Building a mode and moving into it are separate decisions. runSetup
+    // re-checks; it must not call putStorage.
+    const runSetup = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function runSetup("),
+      storagePanelSource.indexOf("async function confirmSwitch("),
+    );
+    expect(runSetup).toContain("recheckStorage()");
+    expect(runSetup).not.toContain("putStorage(");
   });
 
   it("cannot switch to a mode the operator did not call available", () => {
-    expect(storagePanelSource).toContain("if (option.active || !option.available || switching)");
-    expect(storagePanelSource).toContain("disabled={option.active || !option.available || switching}");
+    // An unavailable mode now offers SETUP rather than a switch, so the guard
+    // moved — but a switch still requires `available`.
+    expect(storagePanelSource).toContain('pendingKind = option.available ? "switch" : "setup"');
+    // …and a mode with no plan is still a dead end, not a button that does nothing.
+    expect(storagePanelSource).toContain("(!option.available && option.setup.length === 0)");
   });
 
   it("re-reads the mode after a failed switch instead of claiming nothing changed", () => {

@@ -347,54 +347,6 @@ func (p ncStorageProbe) sanity(accessControlled bool) (ok bool, step, detail str
 	return true, "", ""
 }
 
-// storageModeInstructions is the manual recipe for a mode that is not ready
-// yet, as shell lines an administrator can run. The first pass scaffolds
-// nothing, so this IS the setup path — it is served through /storage and shown
-// in the Setup tab.
-func storageModeInstructions(accessControlled bool, p ncStorageProbe) []string {
-	var out []string
-	if !p.ServiceAccount {
-		out = append(out,
-			"occ group:add "+ncRecordingsOwnerGroup,
-			"occ user:add --group="+ncRecordingsOwnerGroup+" "+ncRecordingsOwner,
-		)
-	}
-	if !accessControlled {
-		return out
-	}
-	for _, prereq := range p.Prereqs {
-		if prereq.State == ncPrerequisiteMissing {
-			out = append(out, fmt.Sprintf("occ app:install %s && occ app:enable %s", prereq.Name, prereq.Name))
-		}
-	}
-	if !p.FolderPresent {
-		out = append(out,
-			"occ groupfolders:create "+ncRecordingsMount,
-			"# note the folder id it prints, and use it below in place of <id>",
-			fmt.Sprintf("occ groupfolders:group <id> %s read write share delete", ncRecordingsOwnerGroup),
-			fmt.Sprintf("occ groupfolders:group <id> %s read", ncRecordingsEveryoneGroup),
-			"occ groupfolders:permissions <id> --enable",
-			fmt.Sprintf("occ groupfolders:permissions <id> -m --user %s", ncRecordingsOwner),
-		)
-		return out
-	}
-	folderID, _ := p.Folder.idInt()
-	id := fmt.Sprintf("%d", folderID)
-	if !p.OwnerAll {
-		out = append(out, fmt.Sprintf("occ groupfolders:group %s %s read write share delete", id, ncRecordingsOwnerGroup))
-	}
-	if !p.EveryoneRead {
-		out = append(out, fmt.Sprintf("occ groupfolders:group %s %s read", id, ncRecordingsEveryoneGroup))
-	}
-	if !p.ACLEnabled {
-		out = append(out, "occ groupfolders:permissions "+id+" --enable")
-	}
-	if !p.OwnerManages {
-		out = append(out, fmt.Sprintf("occ groupfolders:permissions %s -m --user %s", id, ncRecordingsOwner))
-	}
-	return out
-}
-
 // summarizeProbe is the one line the operator log carries per preflight, so an
 // administrator reading the container log sees the same facts /storage reports.
 func summarizeProbe(p ncStorageProbe) string {

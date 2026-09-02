@@ -63,6 +63,7 @@ describe("OperatorClient storage", () => {
       blocker: "",
       step: "",
       instructions: [],
+      setup: [],
     });
     expect(status.modes[1].available).toBe(false);
     expect(status.modes[1].instructions).toEqual([
