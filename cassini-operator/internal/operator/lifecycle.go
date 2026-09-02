@@ -189,6 +189,22 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.logger().Printf("lifecycle enabled -> %v", enabled)
+	// The DISABLE edge runs before we answer, and blocks this request.
+	//
+	// AppAPI stops the container as soon as this response returns, so anything
+	// started in a goroutine here is racing a SIGTERM it loses. That is not
+	// hypothetical: the source-capture switch is mirrored into Nextcloud from
+	// this callback, and on disable the write died as `context canceled` every
+	// time, leaving the stored value saying `true`. The companion is a separate
+	// app that reads that value, so it kept injecting the capture payload into
+	// every Talk call page of an installation whose administrator had just
+	// disabled Cassini.
+	//
+	// The callback is responsible for bounding its own work; see
+	// ExAppConfig.enabledCallback.
+	if h.EnabledCallback != nil && !enabled {
+		h.EnabledCallback(enabled)
+	}
 	// AppAPI expects `{"error": ""}` on success, `{"error": "..."}` to refuse.
 	writeJSON(w, http.StatusOK, map[string]string{"error": ""})
 	// AppAPI's lifecycle docs have ExApps register their UI (top-menu
@@ -198,7 +214,9 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 	if enabled && h.UIRegistrar != nil {
 		go h.UIRegistrar()
 	}
-	if h.EnabledCallback != nil {
+	// The enable edge stays asynchronous: the container is staying up, and
+	// provisioning behind it is far too slow to hold AppAPI's request open.
+	if h.EnabledCallback != nil && enabled {
 		go h.EnabledCallback(enabled)
 	}
 }
