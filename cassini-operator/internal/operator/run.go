@@ -339,6 +339,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// The preflight remains tied to the AppAPI enabled edge, but not to the
 	// eager whole-archive uploader removed by D-613.
 	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
+	exappCfg.preflightOnRestart(runtime.ctx, logger)
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
