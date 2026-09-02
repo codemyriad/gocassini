@@ -108,6 +108,17 @@ const SERVICE_ACCOUNT_SETUP: SetupNoticeStep = {
   ],
 };
 
+// The offer, not the recipe (D-671). Cassini can now perform most of its own
+// setup, as the administrator, using Nextcloud's own password confirmation — so
+// the first thing to say is "there is a button", and the commands become the
+// alternative rather than the only way.
+const SETUP_TAB_OFFER: SetupNoticeStep = {
+  label:
+    "Open the Setup tab above. Cassini can make these changes for you — Nextcloud will ask you " +
+    "to confirm your password, and Cassini never sees it",
+  commands: [],
+};
+
 const RERUN_SETUP: SetupNoticeStep = {
   // Provisioning is driven by the AppAPI enabled callback, so re-running it
   // means re-firing that edge. A container restart alone does not (D-541).
@@ -298,7 +309,7 @@ function adminNotice(
       summary:
         "Cassini stores every recording as a dedicated Nextcloud service account, and that " +
         "account does not exist on this instance. Nothing can be published or read until it does.",
-      steps: [SERVICE_ACCOUNT_SETUP, RERUN_SETUP],
+      steps: [SETUP_TAB_OFFER, SERVICE_ACCOUNT_SETUP, RERUN_SETUP],
     };
   }
   if (access?.step.startsWith(MODE_MISMATCH_STEP)) {
@@ -324,7 +335,12 @@ function adminNotice(
         "they were in. It needs two Nextcloud apps to do that, and an external app cannot " +
         "install them for itself. Until they are enabled, recordings reach nobody.",
       steps: [
+        SETUP_TAB_OFFER,
         {
+          // Installing an app is the one step Cassini may not be able to take:
+          // Nextcloud demands the administrator's password on that request
+          // itself, which Cassini does not have and will not ask for. It tries,
+          // and hands off to Nextcloud's own Apps page when it is refused.
           label: `Install and enable ${describeApps(missing)}, either from Apps in Nextcloud or on the server`,
           commands: missing.map((app) => `occ app:install ${app} && occ app:enable ${app}`),
         },

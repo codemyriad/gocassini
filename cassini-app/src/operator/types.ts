@@ -143,6 +143,35 @@ export interface StorageModeOption {
   blocker: string;
   step: string;
   instructions: string[];
+  // setup is the same recipe as something to EXECUTE (D-671). Empty for a mode
+  // that is already available.
+  setup: StorageSetupStep[];
+}
+
+// StorageSetupStep is one missing prerequisite and how to make it exist.
+// `browser` is the load-bearing field: false means Nextcloud requires the
+// administrator's password on the request itself (a `strict` password
+// confirmation), which no session can satisfy and Cassini will not do — those
+// steps are attempted by the operator instead, and handed off if it is refused.
+export interface StorageSetupStep {
+  id: string;
+  action: string;
+  title: string;
+  args: Record<string, string>;
+  browser: boolean;
+  occ: string;
+  app_url: string;
+}
+
+// AppInstallOutcome is what the operator's own attempt at a `strict` app
+// install produced. The reason is what the UI branches on: `enabled` is done,
+// `password_confirmation_required` needs Nextcloud's Apps page, and
+// `app_store_unavailable` must not be retried for five minutes.
+export interface AppInstallOutcome {
+  app: string;
+  ok: boolean;
+  reason: string;
+  detail: string;
 }
 
 // StorageTransition is what a switch actually did, present only on the PUT that
@@ -167,4 +196,5 @@ export interface StorageStatus {
   checked_at: string;
   modes: StorageModeOption[];
   transition: StorageTransition | null;
+  installs: AppInstallOutcome[];
 }

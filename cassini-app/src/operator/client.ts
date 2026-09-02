@@ -6,8 +6,10 @@ import type {
   SettingsEffective,
   SettingsQuality,
   SettingsUpdate,
+  AppInstallOutcome,
   StorageMode,
   StorageModeOption,
+  StorageSetupStep,
   StorageStatus,
   StorageTransition,
 } from "./types";
@@ -129,6 +131,38 @@ export class OperatorClient {
     );
   }
 
+  // recheckStorage makes the operator look at Nextcloud again.
+  //
+  // The setup writes happen in the browser (D-671), so the operator cannot see
+  // them until it re-probes — without this the Setup tab would go on reporting
+  // what was missing before the administrator fixed it.
+  async recheckStorage(): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "recheck" }),
+      }),
+    );
+  }
+
+  // installStorageApps asks the operator to attempt the native app installs.
+  //
+  // This is the one part of the setup the browser cannot do — those routes want
+  // the password on the request itself — and the operator can, on releases that
+  // predate Nextcloud's password-confirmation hardening or where an
+  // administrator has set a bypass range. It reports per-app what happened so
+  // the UI can hand off the ones it could not do.
+  async installStorageApps(): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "install_apps" }),
+      }),
+    );
+  }
+
   openEventStream(handlers: OperatorStreamHandlers): EventSource {
     const eventSource = new EventSource(`${this.#baseUrl}/events`);
     const handleMessage = (event: MessageEvent<string>) => {
@@ -243,7 +277,57 @@ function normalizeStorage(raw: unknown): StorageStatus {
     checked_at: asString(value.checked_at),
     modes: normalizeStorageModes(value.modes),
     transition: normalizeStorageTransition(value.transition),
+    installs: normalizeInstalls(value.installs),
   };
+}
+
+function normalizeInstalls(value: unknown): AppInstallOutcome[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: AppInstallOutcome[] = [];
+  for (const entry of value) {
+    if (entry == null || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const app = asString(row.app);
+    if (app === "") continue;
+    out.push({ app, ok: row.ok === true, reason: asString(row.reason), detail: asString(row.detail) });
+  }
+  return out;
+}
+
+// normalizeSetupSteps will not invent `browser`. That flag decides whether the
+// UI attempts a write against Nextcloud, and a step the server did not
+// explicitly call browser-doable must never be attempted — the ones that are
+// not are refused by Nextcloud every time.
+function normalizeSetupSteps(value: unknown): StorageSetupStep[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: StorageSetupStep[] = [];
+  for (const entry of value) {
+    if (entry == null || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const id = asString(row.id);
+    const action = asString(row.action);
+    if (id === "" || action === "") continue;
+    const args: Record<string, string> = {};
+    if (row.args != null && typeof row.args === "object" && !Array.isArray(row.args)) {
+      for (const [key, raw] of Object.entries(row.args as Record<string, unknown>)) {
+        if (typeof raw === "string") args[key] = raw;
+      }
+    }
+    out.push({
+      id,
+      action,
+      title: asString(row.title),
+      args,
+      browser: row.browser === true,
+      occ: asString(row.occ),
+      app_url: asString(row.app_url),
+    });
+  }
+  return out;
 }
 
 function normalizeStorageMode(value: unknown): StorageMode {
@@ -275,6 +359,7 @@ function normalizeStorageModes(value: unknown): StorageModeOption[] {
       blocker: asString(row.blocker),
       step: asString(row.step),
       instructions: asStringArray(row.instructions),
+      setup: normalizeSetupSteps(row.setup),
     });
   }
   return out;

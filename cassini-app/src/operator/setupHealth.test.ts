@@ -24,6 +24,22 @@ function fetchWithJSON(status: number, body: unknown, capture?: (url: string) =>
   }) as unknown as typeof fetch;
 }
 
+
+// stepWith finds a notice step by what it says. Asserting on steps[0] couples
+// every test to the ORDER of a list whose whole purpose is to grow — adding the
+// Setup-tab offer broke seven of them at once.
+function stepWith(notice: { steps: { label: string; commands: string[] }[] } | null, needle: string) {
+  const found = notice?.steps.find(
+    (step) => step.label.includes(needle) || step.commands.join("\n").includes(needle),
+  );
+  if (!found) {
+    throw new Error(
+      `no step mentioning ${JSON.stringify(needle)} in: ${JSON.stringify(notice?.steps, null, 2)}`,
+    );
+  }
+  return found;
+}
+
 const APP_URL = "https://cloud.example.test/index.php/apps/app_api/embedded/gocassini/viewer";
 
 function accessWithMissingApps(...names: string[]): RecordingsAccess {
@@ -205,12 +221,11 @@ describe("buildSetupNotice", () => {
     });
 
     it("names both apps by their Nextcloud name and their id", () => {
-      expect(notice?.steps[0].label).toContain("Team folders (groupfolders)");
-      expect(notice?.steps[0].label).toContain("Everyone Group (group_everyone)");
+      expect(stepWith(notice, "Team folders (groupfolders)").label).toContain("Everyone Group (group_everyone)");
     });
 
     it("gives the install command for each one", () => {
-      expect(notice?.steps[0].commands).toEqual([
+      expect(stepWith(notice, "occ app:install groupfolders").commands).toEqual([
         "occ app:install groupfolders && occ app:enable groupfolders",
         "occ app:install group_everyone && occ app:enable group_everyone",
       ]);
@@ -219,7 +234,7 @@ describe("buildSetupNotice", () => {
     // Setup runs on the AppAPI enabled edge, so installing the apps is only
     // half the fix — without re-firing that edge nothing re-checks (D-541).
     it("tells them to re-run setup by re-enabling the app", () => {
-      expect(notice?.steps[1].commands).toEqual([
+      expect(stepWith(notice, "occ app_api:app:disable").commands).toEqual([
         "occ app_api:app:disable gocassini",
         "occ app_api:app:enable gocassini",
       ]);
@@ -252,10 +267,11 @@ describe("buildSetupNotice", () => {
       isAdmin: true,
       appUrl: APP_URL,
     });
-    expect(notice?.steps[0].commands).toEqual([
+    const install = stepWith(notice, "occ app:install group_everyone");
+    expect(install.commands).toEqual([
       "occ app:install group_everyone && occ app:enable group_everyone",
     ]);
-    expect(notice?.steps[0].label).not.toContain("groupfolders");
+    expect(install.label).not.toContain("groupfolders");
   });
 
   // An operator that reported the step without the per-app list.
@@ -273,7 +289,7 @@ describe("buildSetupNotice", () => {
       isAdmin: true,
       appUrl: APP_URL,
     });
-    expect(notice?.steps[0].commands).toEqual([
+    expect(stepWith(notice, "occ app:install groupfolders").commands).toEqual([
       "occ app:install groupfolders && occ app:enable groupfolders",
     ]);
   });
@@ -295,9 +311,8 @@ describe("buildSetupNotice", () => {
       isAdmin: true,
       appUrl: APP_URL,
     });
-    expect(notice?.steps[0].label).toContain("CASSINI_NC_ADMIN_USER");
-    expect(notice?.steps[0].commands).toEqual([]);
-    expect(notice?.steps[1].commands).toContain("occ app_api:app:enable gocassini");
+    expect(stepWith(notice, "CASSINI_NC_ADMIN_USER").commands).toEqual([]);
+    expect(stepWith(notice, "occ app_api:app:enable gocassini")).toBeTruthy();
   });
 
   // A failed call is not an absent app: there is nothing to install, so the
@@ -320,7 +335,7 @@ describe("buildSetupNotice", () => {
       appUrl: APP_URL,
     });
     expect(notice?.summary).toContain("Nothing is missing that you can install");
-    expect(notice?.steps[0].label).toContain("nc provision:");
+    expect(stepWith(notice, "nc provision:")).toBeTruthy();
     expect(JSON.stringify(notice?.steps)).not.toContain("app:install");
   });
 
@@ -409,7 +424,7 @@ describe("buildSetupNotice", () => {
       isAdmin: true,
       appUrl: APP_URL,
     });
-    expect(notice?.steps[0].commands).toEqual([
+    expect(stepWith(notice, "occ app:install groupfolders").commands).toEqual([
       "occ app:install groupfolders && occ app:enable groupfolders",
     ]);
   });
@@ -480,7 +495,7 @@ describe("buildSetupNotice under the default storage model", () => {
       appUrl: APP_URL,
     });
 
-    expect(notice?.steps[0].commands.join("\n")).toContain("occ app:install groupfolders");
+    expect(stepWith(notice, "occ app:install groupfolders")).toBeTruthy();
   });
 
   // The verdict is not private; the diagnosis is. That must hold for the new
@@ -495,5 +510,72 @@ describe("buildSetupNotice under the default storage model", () => {
 
     expect(JSON.stringify(notice)).not.toContain("cassini service account");
     expect(JSON.stringify(notice)).not.toContain("occ");
+  });
+});
+
+// D-671: the notice used to be a recipe an administrator retyped. Cassini can
+// now perform most of its own setup, so the first thing it says is that there
+// is a button — with the commands kept as the alternative, not deleted.
+describe("buildSetupNotice offers the Setup tab", () => {
+  const offer = "Setup tab";
+
+  it("leads with the offer when the service account is missing", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable" },
+      access: {
+        ok: false,
+        state: "unavailable",
+        step: "owner_account",
+        detail: "the \"cassini\" service account does not exist",
+        mode: "default",
+        prerequisites: [],
+      },
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+
+    expect(notice?.steps[0].label).toContain(offer);
+    // The commands survive: an administrator who would rather run them, or
+    // whose browser cannot reach Nextcloud's dialog, still needs them.
+    expect(stepWith(notice, "occ user:add")).toBeTruthy();
+  });
+
+  it("leads with the offer when the native apps are missing", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable" },
+      access: accessWithMissingApps("groupfolders", "group_everyone"),
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+
+    expect(notice?.steps[0].label).toContain(offer);
+    expect(stepWith(notice, "occ app:install groupfolders")).toBeTruthy();
+  });
+
+  // The offer says who asks for the password, because that is the question an
+  // administrator will have before clicking anything.
+  it("says Nextcloud asks for the password and Cassini never sees it", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable" },
+      access: accessWithMissingApps("groupfolders"),
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+
+    expect(notice?.steps[0].label).toContain("Nextcloud will ask you");
+    expect(notice?.steps[0].label).toContain("never sees it");
+  });
+
+  // A non-administrator has no Setup tab, and telling them about one would be
+  // pointing at a door they cannot open.
+  it("offers nothing to someone who is not an administrator", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable" },
+      access: null,
+      isAdmin: false,
+      appUrl: APP_URL,
+    });
+
+    expect(JSON.stringify(notice)).not.toContain(offer);
   });
 });
