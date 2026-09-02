@@ -5,6 +5,12 @@ on:
     branches:
       - main
       - master
+      # A long-running integration branch (D-698) accumulates merges from
+      # stacked pull requests. Each of those was green against the branch as
+      # it stood, which does not make the merged result green: without this,
+      # a semantic conflict between two of them stays invisible until a third
+      # pull request happens to trip over it.
+      - feat/source-audio-capture
     # Pure docs/planning changes touch no code, tests, or image — skip the
     # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
     # outside this list the whole suite still runs, so a real code change is

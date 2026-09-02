@@ -44,6 +44,22 @@ if [[ -f "$COMPANION_INFO" ]]; then
     || fail "cassini_capture/appinfo/info.xml failed App Store schema validation"
 fi
 
+# The companion ships as a separate app and an administrator installs the pair,
+# so a version mismatch is a packaging bug. It is asserted HERE, in the contract
+# job that every pull request must pass, rather than only inside the optional
+# capture package build: main's release path bumps appinfo/info.xml on its own,
+# and the drift that creates would otherwise go unnoticed until someone
+# happened to build the companion.
+if [[ -f "$COMPANION_INFO" ]]; then
+  info_version="$(xmllint --xpath 'string(/info/version)' "$INFO" 2>/dev/null || true)"
+  companion_version="$(xmllint --xpath 'string(/info/version)' "$COMPANION_INFO" 2>/dev/null || true)"
+  [[ -n "$info_version" ]] || fail "could not read <version> from appinfo/info.xml"
+  [[ -n "$companion_version" ]] || fail "could not read <version> from cassini_capture/appinfo/info.xml"
+  if [[ "$info_version" != "$companion_version" ]]; then
+    fail "version drift: gocassini is $info_version, cassini_capture is $companion_version. An administrator installs the pair, so they must be released together. Reconcile cassini_capture/appinfo/info.xml before merging."
+  fi
+fi
+
 cp "$INFO" "$TMP_DIR/invalid.xml"
 if ! grep -q '<category>[^<]*</category>' "$TMP_DIR/invalid.xml"; then
   fail "fixture setup could not find a category in info.xml"
@@ -54,4 +70,4 @@ if validate "$TMP_DIR/invalid.xml" "$TMP_DIR/invalid.pre.xml" >/dev/null 2>&1; t
   fail "schema accepted an invalid category fixture"
 fi
 
-echo "PASS: ExApp and native companion manifests validate and invalid fixture fails"
+echo "PASS: ExApp and native companion manifests validate, versions agree, and an invalid fixture fails"
