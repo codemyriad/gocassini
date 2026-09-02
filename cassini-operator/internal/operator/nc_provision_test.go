@@ -771,14 +771,14 @@ func TestEnabledCallbackProvisionsWheneverAppAPIIsActive(t *testing.T) {
 	}
 
 	// Disabled edges must not provision.
-	hook(false)
+	hook(false, 1)
 	mu.Lock()
 	if called {
 		t.Error("provisioning ran on an enabled=false edge")
 	}
 	mu.Unlock()
 
-	hook(true)
+	hook(true, 2)
 	mu.Lock()
 	defer mu.Unlock()
 	if !called {

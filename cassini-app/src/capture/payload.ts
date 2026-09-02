@@ -109,6 +109,57 @@ const AUDIO_BITS_PER_SECOND = 128_000;
 //   422 the sidecar contradicts itself
 const TERMINAL_UPLOAD_STATUSES = new Set([400, 403, 413, 415, 422]);
 
+// MAX_UPLOAD_ATTEMPTS caps how many times one capture is offered to the server.
+//
+// The terminal list above is an allowlist, so anything outside it keeps the
+// buffer — which is right for a 502 and wrong forever. A deployment that
+// answers 404 or 410 to this route (a companion left enabled against an ExApp
+// that is gone, a route removed by an upgrade) would otherwise have every
+// affected participant re-uploading a meeting-sized body on every Talk page
+// load, permanently, with no backoff. A capture that has been refused this
+// many times is not going to be accepted.
+const MAX_UPLOAD_ATTEMPTS = 5;
+const ATTEMPTS_STORAGE_KEY = "cassini.sourceCapture.uploadAttempts";
+
+function readUploadAttempts(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(ATTEMPTS_STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeUploadAttempts(attempts: Record<string, number>): void {
+  try {
+    localStorage.setItem(ATTEMPTS_STORAGE_KEY, JSON.stringify(attempts));
+  } catch {
+    // Storage full or blocked. The cap is a safety net, not a correctness
+    // requirement, so losing the count is survivable.
+  }
+}
+
+// noteUploadAttempt records one refusal and reports whether this capture has
+// run out of attempts.
+function noteUploadAttempt(dirName: string): boolean {
+  const attempts = readUploadAttempts();
+  const next = (attempts[dirName] ?? 0) + 1;
+  attempts[dirName] = next;
+  writeUploadAttempts(attempts);
+  return next >= MAX_UPLOAD_ATTEMPTS;
+}
+
+function clearUploadAttempts(dirName: string): void {
+  const attempts = readUploadAttempts();
+  if (dirName in attempts) {
+    delete attempts[dirName];
+    writeUploadAttempts(attempts);
+  }
+}
+
+
+
 const SERVER_CHECK_MS = 30_000;
 
 // SERVER_CHECK_TIMEOUT_MS bounds each of those requests. Without a deadline a
@@ -596,15 +647,28 @@ async function uploadCapture(
     console.warn(
       `Cassini source capture: upload rejected (${response.status}); discarding this recording`,
     );
+    clearUploadAttempts(dirName);
     await discardCapture(opfsRoot, dirName);
     return;
   }
   if (!response.ok) {
-    // 5xx and anything else: the server did not decide, it failed. Leave OPFS
-    // untouched so the next Talk page load can retry. Losing the recording to a
-    // transient 502 would defeat the point of buffering it.
+    // The server did not decide, it failed. Leave OPFS untouched so the next
+    // Talk page load can retry: losing a recording to a transient 502 would
+    // defeat the point of buffering it. But give up eventually, or a
+    // permanently-failing deployment turns every participant into a forever
+    // re-uploader.
+    if (noteUploadAttempt(dirName)) {
+      console.warn(
+        `Cassini source capture: giving up after ${MAX_UPLOAD_ATTEMPTS} attempts ` +
+          `(last status ${response.status}); discarding this recording`,
+      );
+      clearUploadAttempts(dirName);
+      await discardCapture(opfsRoot, dirName);
+      return;
+    }
     throw new Error(`upload failed: ${response.status}`);
   }
+  clearUploadAttempts(dirName);
   await opfsRoot.removeEntry(dirName, { recursive: true });
   console.info("Cassini source capture: upload accepted");
 }

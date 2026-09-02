@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -749,5 +750,35 @@ func TestReadPCM16LEFloatsBoundedRefusesRunawayOutput(t *testing.T) {
 	// A zero ceiling means unbounded, for inputs the recorder itself wrote.
 	if _, err := readPCM16LEFloatsBounded(bytes.NewReader(raw), 0, 0); err != nil {
 		t.Fatalf("an unbounded read failed: %v", err)
+	}
+}
+
+// The ceiling has to be reachable from the ffmpeg path, not only from the
+// reader. An earlier attempt wired the reader but not the command that calls
+// it, and the reader-level test did not notice.
+func TestDecodeSourceSegmentEnforcesTheCeiling(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "long.wav")
+	// Ten seconds of tone, offered as a segment that declares nothing.
+	cmd := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi",
+		"-i", "sine=frequency=440:duration=10", "-ac", "1", "-ar", "16000", src)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("could not synthesise input: %v: %s", err, out)
+	}
+
+	// A ceiling below the real length must be refused, through the real path.
+	if _, err := decodeSourceSegment(context.Background(), src, 16000, 30*time.Second, 16000); err == nil {
+		t.Fatal("decode past the ceiling was accepted through decodeSourceSegment")
+	}
+	// A ceiling above it decodes normally.
+	samples, err := decodeSourceSegment(context.Background(), src, 16000, 30*time.Second, 16000*60)
+	if err != nil {
+		t.Fatalf("decodeSourceSegment: %v", err)
+	}
+	if len(samples) < 16000*9 {
+		t.Fatalf("decoded %d samples, want about ten seconds", len(samples))
 	}
 }

@@ -176,7 +176,7 @@ type ExAppConfig struct {
 	// the nextcloud-files sink nothing is ever written to PublishedDir, so
 	// mounting a file server over it would only ever serve staleness.
 	PublishSink string
-	onEnabled   func(bool)
+	onEnabled   func(enabled bool, edge uint64)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build

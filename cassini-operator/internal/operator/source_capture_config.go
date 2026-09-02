@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -24,28 +22,11 @@ const (
 	appAPIAppConfigPath       = "/ocs/v2.php/apps/app_api/api/v1/ex-app/config"
 )
 
-// captureConfigSyncTimeout bounds the companion-state write. It is held open
-// across an AppAPI lifecycle request on the disable edge, so it must be short
-// enough that a slow Nextcloud cannot stall disabling the app.
-const captureConfigSyncTimeout = 5 * time.Second
-
-// captureConfigSyncMu serializes companion-state writes, and
-// captureConfigSyncSeq orders them.
-//
-// The enable and disable edges both run in their own goroutine, so without
-// this a slow enable-edge `true` could be delivered to Nextcloud after a
-// later disable-edge `false` and restore exactly the stale-enabled state the
-// disable edge exists to clear. The sequence number makes a write that has
-// already been overtaken drop itself rather than race.
-var (
-	captureConfigSyncMu  sync.Mutex
-	captureConfigSyncSeq uint64
-)
-
-// nextCaptureConfigSync claims a slot in the write order.
-func nextCaptureConfigSync() uint64 {
-	return atomic.AddUint64(&captureConfigSyncSeq, 1)
-}
+// captureConfigSyncTimeout bounds the companion-state write. On the disable
+// edge the process is racing its own container stop, so this and
+// lifecycleShutdownWait together have to fit inside a container-stop grace
+// period, and shutdown's wait is deliberately the longer of the two.
+const captureConfigSyncTimeout = 3 * time.Second
 
 func (c ExAppConfig) syncSourceCaptureInitialState(ctx context.Context, enabled bool, logger *log.Logger) error {
 	if !c.appAPIActive() {

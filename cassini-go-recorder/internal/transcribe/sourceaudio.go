@@ -581,9 +581,19 @@ func sourceDecodeTimeout(segmentMS int64) time.Duration {
 // the client committed to; anything past it plus generous slack is the file
 // contradicting its own sidecar.
 func maxSourceSegmentSamples(segmentMS int64, sampleRate int) int {
-	const slackMS = 60_000
+	const (
+		slackMS = 60_000
+		// The declaration is participant-controlled, so it cannot be the only
+		// bound: a sidecar claiming a month would otherwise buy a month of
+		// buffering. Four hours is longer than any meeting this records and
+		// still a bounded allocation.
+		absoluteMS = 4 * 60 * 60 * 1000
+	)
 	if segmentMS < 0 {
 		segmentMS = 0
+	}
+	if segmentMS > absoluteMS {
+		segmentMS = absoluteMS
 	}
 	limit := expectedPCMSamples(segmentMS+slackMS, sampleRate)
 	if limit <= 0 {

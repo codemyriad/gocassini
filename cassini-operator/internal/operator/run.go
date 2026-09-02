@@ -28,8 +28,10 @@ import (
 // lifecycleShutdownWait bounds how long shutdown waits for an AppAPI
 // enabled/disabled callback. AppAPI stops the container right after the
 // lifecycle response, and a container stop kills the process shortly after
-// SIGTERM, so this has to stay well inside that grace period.
-const lifecycleShutdownWait = 3 * time.Second
+// SIGTERM, so this has to stay well inside that grace period — while still
+// exceeding the callback's own deadline, or shutdown would give up on a write
+// that was about to succeed and the wait would be theatre.
+const lifecycleShutdownWait = captureConfigSyncTimeout + time.Second
 
 const (
 	defaultBind                  = "0.0.0.0:4000"
@@ -417,6 +419,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// disable edge this is the write that tells Nextcloud the ExApp's
 		// settings are no longer live; losing it leaves the companion app
 		// injecting a payload for an ExApp that is gone.
+		// After server.Shutdown above, no new lifecycle request can start, so
+		// the counter cannot go back up under this wait.
 		if runtime.lifecycle != nil {
 			done := make(chan struct{})
 			go func() {

@@ -290,7 +290,7 @@ func runPCM16LECommandBounded(cmd *exec.Cmd, expectedSamples, maxSamples int) ([
 		return nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
-	samples, readErr := readPCM16LEFloats(stdout, expectedSamples)
+	samples, readErr := readPCM16LEFloatsBounded(stdout, expectedSamples, maxSamples)
 	if readErr != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}

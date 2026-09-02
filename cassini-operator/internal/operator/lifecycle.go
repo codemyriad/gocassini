@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // AppAPI lifecycle callbacks. These are invoked by AppAPI directly (not by
@@ -129,12 +130,14 @@ type LifecycleHandlers struct {
 	// callbacks that AppAPI would reject while registration is still disabled.
 	// It must not run before the response: like UIRegistrar it calls back into
 	// Nextcloud, and doing that inside the request deadlocks single-worker PHP.
-	EnabledCallback func(bool)
+	EnabledCallback func(enabled bool, edge uint64)
 	// Background counts callbacks still in flight so shutdown can wait for
 	// them. The disable edge is the reason it exists: AppAPI stops the
 	// container as soon as the response returns, and a write that loses that
 	// race leaves Nextcloud believing the ExApp's settings are still live.
 	Background sync.WaitGroup
+	// edgeSeq numbers enabled/disabled edges in the order they arrived.
+	edgeSeq uint64
 }
 
 func (h *LifecycleHandlers) logger() *log.Logger {
@@ -213,10 +216,15 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 	// Background lets the process wait for it during shutdown, which is the
 	// only place it can be waited on without reintroducing the deadlock.
 	if h.EnabledCallback != nil {
+		// The edge number is claimed HERE, while still inside the request, so
+		// it records the order Nextcloud sent the edges in. Claiming it inside
+		// the goroutine would record goroutine scheduling instead, and a
+		// delayed enable could then out-rank a later disable.
+		edge := atomic.AddUint64(&h.edgeSeq, 1)
 		h.Background.Add(1)
 		go func() {
 			defer h.Background.Done()
-			h.EnabledCallback(enabled)
+			h.EnabledCallback(enabled, edge)
 		}()
 	}
 }
