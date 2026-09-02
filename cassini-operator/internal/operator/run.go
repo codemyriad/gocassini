@@ -327,7 +327,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	} else if raw != "" {
 		// Refused at startup rather than only on the enabled edge, because this
 		// is where a deploy option's typo is cheapest to notice.
-		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and the storage mode derived from the instance instead", envStorageMode, raw, storageModeEnvValues)
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and this install will start in %q instead", envStorageMode, raw, storageModeEnvValues, storageModeDefault)
+	} else {
+		// Nothing recorded, nothing declared. Say so here rather than leaving an
+		// administrator to infer it from silence: on an instance that IS
+		// access-controlled this is the line that precedes the mode_mismatch,
+		// and CASSINI_STORAGE_MODE is what would have avoided it.
+		logger.Printf("storage_mode -> %s (nothing recorded, nothing declared by %s; the mode is never inferred from the instance)", storageModeDefault, envStorageMode)
 	}
 
 	// The preflight remains tied to the AppAPI enabled edge, but not to the

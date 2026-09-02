@@ -35,9 +35,18 @@ import (
 //
 // ┌──────────────────── preflight ────────────────────────┐
 // │  probe Nextcloud (read only)                          │
-// │  flag absent ─▶ derive it from the probe, then persist│
-// │  flag present ─▶ sanity-check it against the probe    │
+// │  resolve the mode WITHOUT looking at the probe:        │
+// │      file ─▶ env ─▶ default                            │
+// │  sanity-check the resolved mode AGAINST the probe      │
 // └───────────────────────────┬───────────────────────────┘
+//
+// The probe never decides the mode, only whether the decided mode is usable.
+// Cassini used to infer it — "this instance has a Team folder, so it must want
+// access control" — and that made who can read the archive a function of what
+// Nextcloud happened to look like at one instant, which on a stack still being
+// assembled is the wrong instant. Now nothing is inferred: an instance whose
+// storage does not match its mode is reported as a mismatch and refuses to
+// publish, rather than being quietly re-interpreted.
 //
 //	│
 //	▼            ncStorage (process-wide)
@@ -58,21 +67,20 @@ const (
 	// storageModeAccessControlled is the Team-folder + per-recording-ACL model.
 	storageModeAccessControlled = "access_controlled"
 
-	// storageModeSourceConfigured means the flag was read from disk — either an
-	// administrator's choice, or a default this operator derived and persisted
-	// on an earlier run. Once written it is never re-derived: a derived default
-	// that could flip when Nextcloud changes underneath it would silently
-	// change who can read every recording.
+	// storageModeSourceConfigured means the flag was read from disk. Once
+	// written the file is authoritative for the life of the install: nothing
+	// re-opens it, so an administrator who reads storage_settings.json or
+	// /storage knows what the app will do.
 	storageModeSourceConfigured = "configured"
-	// storageModeSourceDerived means the flag was absent and this run derived
-	// it. It is only ever reported for the run that also persisted it.
-	storageModeSourceDerived = "derived"
+	// storageModeSourceDefault means nothing said otherwise. No file recorded a
+	// mode, no deploy option declared one, so Cassini took the model that needs
+	// no third-party apps — and did NOT guess from the instance.
+	storageModeSourceDefault = "default"
 	// storageModeSourceUser means an administrator chose it, by switching modes
-	// in the Setup tab. Never reconsidered.
+	// in the Setup tab.
 	storageModeSourceUser = "user"
 	// storageModeSourceEnv means the deployment declared it, through
-	// envStorageMode. Also never reconsidered: an operator who set it said what
-	// they wanted, and a deploy option is as explicit as a button.
+	// envStorageMode. A deploy option is as explicit as a button.
 	storageModeSourceEnv = "env"
 
 	// envStorageMode declares the mode a FRESH install starts in. It seeds the
@@ -80,10 +88,11 @@ const (
 	// file is authoritative and changing this variable does not move an archive
 	// that already exists.
 	//
-	// It exists because deriving the mode from the instance is a guess about
-	// timing — it reads whatever Nextcloud looks like on the first enabled edge,
-	// which on a stack still being built is the wrong moment. A deployment that
-	// KNOWS which model it wants should be able to say so instead.
+	// It is the ONLY way to start an install in the access-controlled model,
+	// because nothing infers it any more. An access-controlled Nextcloud whose
+	// Cassini has no recorded mode and no declaration resolves to `default`,
+	// finds its Team folder in the way, and reports a mismatch — which is the
+	// loud, recoverable outcome, and is what this variable exists to skip.
 	envStorageMode = "CASSINI_STORAGE_MODE"
 
 	storageSettingsFileName = "storage_settings.json"
@@ -100,33 +109,26 @@ const (
 // access-controlled archive into an org-wide one.
 type StorageSettings struct {
 	AccessControlEnabled *bool `json:"access_control_enabled"`
-	// Source is how the flag got there: storageModeSourceDerived when Cassini
-	// worked it out from the instance, storageModeSourceUser when somebody
-	// chose it.
+	// Source records HOW the flag got there — env, user, or default. It is
+	// written and shown, never branched on.
 	//
-	// The difference decides one thing only, and it is worth the extra field:
-	// whether a `default` may be RECONSIDERED. A derived one may — it was a
-	// guess made at whatever moment the enabled edge happened to fire, and on a
-	// Nextcloud still being set up (or one whose occ-made changes had not yet
-	// reached the web workers) that guess is wrong and permanent. A chosen one
-	// may not: an administrator who picked default meant it.
+	// That is deliberate. An earlier version used this field to decide whether a
+	// recorded mode could be RECONSIDERED against the live instance, which made
+	// the file non-authoritative: it could say `default` while the app acted
+	// access-controlled, because Nextcloud had changed underneath it. Nothing
+	// re-opens a recorded decision now, so the field's only job is to let an
+	// administrator reading the file see where the decision came from.
 	//
-	// Absent in files written before this field existed, which reads as derived
-	// — those were all written by the derivation.
+	// Absent in files written before the field existed. Values written by the
+	// removed derivation ("derived") still appear on installs from that build
+	// and are simply displayed.
 	Source string `json:"source,omitempty"`
-}
-
-// Chosen reports whether somebody STATED this mode — an administrator in the
-// Setup tab, or a deployment through CASSINI_STORAGE_MODE — as opposed to
-// Cassini having derived it. A stated mode is never reconsidered.
-func (s StorageSettings) Chosen() bool {
-	return s.Source == storageModeSourceUser || s.Source == storageModeSourceEnv
 }
 
 // storageModeFromEnv reads the declared initial mode.
 //
 // `ok` is false when the variable is unset, which is the ordinary case and
-// means "derive it". `ok` is also false for a value that is set but
+// means "take the default model". `ok` is also false for a value that is set but
 // unrecognised, and `raw` is then non-empty so the caller can say so loudly —
 // silently ignoring a typo would start the instance in a mode nobody asked for.
 //
