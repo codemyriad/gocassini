@@ -127,7 +127,10 @@ if [[ -z "${BUNDLED_ROOT}" ]]; then
 fi
 
 MODEL_DIR="${BUNDLED_ROOT}/models/${MODEL_ID}"
-VAD_PATH="${CACHE_ROOT}/vad/silero_vad.onnx"
+# The VAD is baked into the image, so assert it under the bundled root. The two
+# roots hold the same path in the images today, and an assertion against the
+# writable cache would keep passing if that stopped being true.
+VAD_PATH="${BUNDLED_ROOT}/vad/silero_vad.onnx"
 log "image ref:       ${IMAGE_REF}"
 log "cache root:      ${CACHE_ROOT}"
 log "model id:        ${MODEL_ID}"

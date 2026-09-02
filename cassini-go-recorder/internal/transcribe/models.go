@@ -5,10 +5,13 @@ import (
 	"compress/bzip2"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // ModelID identifies a sherpa-onnx model bundle.
@@ -186,7 +189,11 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 	modelDir := filepath.Join(cacheDir, "models", string(id))
 
 	paths := resolveModelPaths(modelDir, spec)
-	if allExist(requiredModelFiles(paths, spec)) {
+	// A downloaded model counts only when it also carries the completion
+	// marker. Files that merely exist can be the truncated remains of an
+	// interrupted download, and this cache is persistent, so such a directory
+	// would otherwise poison every later build (D-704).
+	if modelDirComplete(modelDir) && allNonEmpty(requiredModelFiles(paths, spec)) {
 		return paths, nil
 	}
 
@@ -212,7 +219,7 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 	}
 
 	fmt.Fprintf(progress, "downloading model %s from %s\n", id, spec.URL)
-	if err := downloadAndExtract(spec.URL, modelDir, progress); err != nil {
+	if err := downloadAndExtract(spec.URL, modelDir, RequiredModelFileNames(id), progress); err != nil {
 		return ModelPaths{}, fmt.Errorf("download model %s: %w", id, err)
 	}
 
@@ -250,8 +257,23 @@ func EnsureVAD(cacheDir string, progress io.Writer) (string, error) {
 		return "", fmt.Errorf("create vad dir: %w", err)
 	}
 	fmt.Fprintf(progress, "downloading Silero VAD from %s\n", sileroVADURL)
-	if err := downloadFile(sileroVADURL, vadPath); err != nil {
+	// Download beside the target and rename, so an interrupted fetch never
+	// leaves a truncated VAD that later builds would load.
+	tmp, err := os.CreateTemp(filepath.Dir(vadPath), ".silero_vad-*.onnx")
+	if err != nil {
+		return "", fmt.Errorf("create vad staging file: %w", err)
+	}
+	tmpName := tmp.Name()
+	tmp.Close()
+	defer os.Remove(tmpName)
+	if err := downloadFile(sileroVADURL, tmpName); err != nil {
 		return "", fmt.Errorf("download VAD: %w", err)
+	}
+	if info, err := os.Stat(tmpName); err != nil || info.Size() == 0 {
+		return "", fmt.Errorf("downloaded VAD from %s is empty", sileroVADURL)
+	}
+	if err := os.Rename(tmpName, vadPath); err != nil {
+		return "", fmt.Errorf("promote VAD into %s: %w", vadPath, err)
 	}
 	return vadPath, nil
 }
@@ -305,6 +327,18 @@ func RequiredModelFileNames(id ModelID) []string {
 	return names
 }
 
+// allNonEmpty reports whether every file exists and holds at least one byte.
+// A zero-length file is the signature of a download that died mid-write.
+func allNonEmpty(files []string) bool {
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil || info.Size() == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func allExist(files []string) bool {
 	for _, f := range files {
 		if !fileExists(f) {
@@ -314,8 +348,109 @@ func allExist(files []string) bool {
 	return true
 }
 
-func downloadAndExtract(url, destDir string, progress io.Writer) error {
-	resp, err := http.Get(url) //nolint:gosec
+// modelHTTPClient bounds every model fetch. A blackholed endpoint would
+// otherwise hold the only build worker forever, because the operator runs one
+// build at a time.
+var modelHTTPClient = &http.Client{
+	Timeout: 30 * time.Minute,
+	Transport: &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second,
+	},
+}
+
+// maxExtractedBytes caps one archive. The largest model this repository ships
+// unpacks to about 2.5GB, so this leaves room without letting a hostile or
+// corrupt archive fill the volume that also holds the job database and the
+// recordings.
+const maxExtractedBytes = 8 << 30
+
+// completionMarker marks a model directory that finished extraction and passed
+// validation. Its presence is the only proof a directory is usable: a truncated
+// file from an interrupted download still "exists", and the cache now lives on
+// a persistent volume where such a directory would survive forever (D-704).
+const completionMarker = ".cassini-model-complete"
+
+// modelDirComplete reports whether a model directory holds a finished download.
+func modelDirComplete(dir string) bool {
+	return fileExists(filepath.Join(dir, completionMarker))
+}
+
+// safeExtractPath joins one tar entry onto destDir and refuses anything that
+// escapes it. A tar entry controls its own name, so "a/../../etc/cron.d/x"
+// would otherwise write outside the cache from a container that runs as root.
+func safeExtractPath(destDir, name string) (string, error) {
+	raw := strings.TrimPrefix(name, "./")
+	// Test absoluteness before stripping the top-level directory. Stripping
+	// first turns "/etc/passwd" into "etc/passwd", which reads as a safe
+	// relative path.
+	if filepath.IsAbs(raw) || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "\\") {
+		return "", fmt.Errorf("tar entry %q is an absolute path", name)
+	}
+	if idx := strings.Index(raw, "/"); idx >= 0 {
+		raw = raw[idx+1:] // strip the archive's top-level directory
+	}
+	if raw == "" {
+		return "", nil
+	}
+	name = raw
+	clean := filepath.Clean(filepath.FromSlash(name))
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("tar entry %q escapes the destination", name)
+	}
+	out := filepath.Join(destDir, clean)
+	rel, err := filepath.Rel(destDir, out)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("tar entry %q escapes the destination", name)
+	}
+	return out, nil
+}
+
+// downloadAndExtract fetches an archive into a staging directory beside the
+// target, validates it, and only then moves it into place. Nothing ever writes
+// into the directory the recorder loads from, so an interrupted download leaves
+// no half-model behind.
+func downloadAndExtract(url, destDir string, required []string, progress io.Writer) error {
+	parent := filepath.Dir(destDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("create model cache dir: %w", err)
+	}
+	staging, err := os.MkdirTemp(parent, ".staging-"+filepath.Base(destDir)+"-")
+	if err != nil {
+		return fmt.Errorf("create staging dir: %w", err)
+	}
+	defer os.RemoveAll(staging)
+
+	if err := extractInto(url, staging, progress); err != nil {
+		return err
+	}
+	for _, name := range required {
+		info, err := os.Stat(filepath.Join(staging, name))
+		if err != nil {
+			return fmt.Errorf("downloaded archive from %s has no %s", url, name)
+		}
+		if info.Size() == 0 {
+			return fmt.Errorf("downloaded file %s from %s is empty", name, url)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(staging, completionMarker), []byte(url+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write completion marker: %w", err)
+	}
+
+	if err := os.Rename(staging, destDir); err != nil {
+		// Another build finished this model first. Its directory is complete,
+		// so use it and discard this copy.
+		if modelDirComplete(destDir) {
+			return nil
+		}
+		return fmt.Errorf("promote model into %s: %w", destDir, err)
+	}
+	return nil
+}
+
+func extractInto(url, destDir string, progress io.Writer) error {
+	resp, err := modelHTTPClient.Get(url) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("HTTP GET: %w", err)
 	}
@@ -323,9 +458,17 @@ func downloadAndExtract(url, destDir string, progress io.Writer) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
+	// This cache shares its volume with the job database and the recordings,
+	// so refuse a download that would leave the volume near full. A bz2 model
+	// archive expands to roughly 1.4x its size, and 1GiB stays free for the
+	// rest of the deployment.
+	if err := ensureDiskSpace(destDir, 2*resp.ContentLength+(1<<30)); err != nil {
+		return err
+	}
 
-	bzr := bzip2.NewReader(resp.Body)
+	bzr := bzip2.NewReader(io.LimitReader(resp.Body, maxExtractedBytes))
 	tr := tar.NewReader(bzr)
+	var written int64
 
 	for {
 		hdr, err := tr.Next()
@@ -339,17 +482,13 @@ func downloadAndExtract(url, destDir string, progress io.Writer) error {
 			continue
 		}
 
-		// Strip the top-level directory from the tar path.
-		// Handles both "dir/file" and "./dir/file" tar conventions.
-		name := strings.TrimPrefix(hdr.Name, "./")
-		if idx := strings.Index(name, "/"); idx >= 0 {
-			name = name[idx+1:]
+		outPath, err := safeExtractPath(destDir, hdr.Name)
+		if err != nil {
+			return fmt.Errorf("refusing archive from %s: %w", url, err)
 		}
-		if name == "" {
+		if outPath == "" {
 			continue
 		}
-
-		outPath := filepath.Join(destDir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 			return err
 		}
@@ -357,18 +496,22 @@ func downloadAndExtract(url, destDir string, progress io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(f, tr); err != nil {
-			f.Close()
+		n, err := io.Copy(f, io.LimitReader(tr, maxExtractedBytes-written))
+		f.Close()
+		if err != nil {
 			return err
 		}
-		f.Close()
-		fmt.Fprintf(progress, "  extracted: %s\n", name)
+		written += n
+		if written >= maxExtractedBytes {
+			return fmt.Errorf("archive from %s is larger than the %d byte limit", url, int64(maxExtractedBytes))
+		}
+		fmt.Fprintf(progress, "  extracted: %s\n", filepath.Base(outPath))
 	}
 	return nil
 }
 
 func downloadFile(url, destPath string) error {
-	resp, err := http.Get(url) //nolint:gosec
+	resp, err := modelHTTPClient.Get(url) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("HTTP GET: %w", err)
 	}
@@ -390,4 +533,28 @@ func downloadFile(url, destPath string) error {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// ensureDiskSpace refuses to start a download that the volume cannot hold.
+// need of zero or less means the server did not declare a length, and the
+// check then asks for a fixed 4GiB, above the largest model this repository
+// ships.
+func ensureDiskSpace(dir string, need int64) error {
+	if need <= 1<<30 {
+		need = 4 << 30
+	}
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(dir, &stat); err != nil {
+		// The check is a guard, not a gate: an unreadable filesystem should not
+		// stop a download that would have worked.
+		return nil
+	}
+	free := int64(stat.Bavail) * int64(stat.Bsize)
+	if free < need {
+		return fmt.Errorf(
+			"model download needs about %d MB free in %s but only %d MB is available; "+
+				"free space on the volume or select a quality tier this image bundles",
+			need/(1<<20), dir, free/(1<<20))
+	}
+	return nil
 }

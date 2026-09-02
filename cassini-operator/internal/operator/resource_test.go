@@ -875,3 +875,44 @@ func TestModelNeedsDownload(t *testing.T) {
 		t.Error("a model already in the cache must not be fetched again")
 	}
 }
+
+func TestAdmitModelForDeviceHonoursTheAirGapSwitch(t *testing.T) {
+	// An administrator who forbids downloads must get a blocked build with a
+	// message, not a build that reaches for the network and fails there.
+	bundledRoot := t.TempDir()
+	rt := &Runtime{cfg: Config{
+		BundledModelRoot:      bundledRoot,
+		ModelCacheRoot:        t.TempDir(),
+		DisallowModelDownload: true,
+	}}
+
+	_, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU)
+	var unavailable *resourceUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.resource != "model bundle" {
+		t.Fatalf("admission error = %v, want a model bundle refusal", err)
+	}
+	if !unavailable.permanent {
+		t.Error("no download can arrive while the switch is set; want a permanent block")
+	}
+	if !strings.Contains(unavailable.detail, "CASSINI_DISALLOW_MODEL_DOWNLOAD") {
+		t.Errorf("detail %q does not name the setting that blocks the build", unavailable.detail)
+	}
+
+	// The tier the image bakes still runs on the same air-gapped host.
+	dir := filepath.Join(bundledRoot, "models", modelParakeetV3Int8)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "encoder.int8.onnx"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU); err != nil {
+		t.Fatalf("a bundled tier was blocked on an air-gapped host: %v", err)
+	}
+
+	// Without the switch the same missing model is a download, not a block.
+	open := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: t.TempDir()}}
+	if _, err := open.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU); err != nil {
+		t.Fatalf("admission blocked a downloadable tier: %v", err)
+	}
+}

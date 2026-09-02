@@ -126,7 +126,21 @@ func (e *resourceUnavailableError) Error() string {
 // image, because a model the image does not carry is downloaded once into the
 // persistent cache (D-704).
 func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (string, error) {
-	return settings.modelForDevice(device), nil
+	model := settings.modelForDevice(device)
+	// An air-gapped deployment asked for no downloads. Say that the tier cannot
+	// run here, rather than starting a build that will fail when it reaches for
+	// the network.
+	if rt.cfg.DisallowModelDownload && rt.modelNeedsDownload(model) {
+		return "", &resourceUnavailableError{
+			resource: "model bundle",
+			detail: fmt.Sprintf(
+				"this image does not bundle model %q, and CASSINI_DISALLOW_MODEL_DOWNLOAD forbids fetching it; "+
+					"select a quality tier this image bundles, or clear that setting to allow the one-off download",
+				model),
+			permanent: true,
+		}
+	}
+	return model, nil
 }
 
 // modelNeedsDownload reports whether a build must fetch this model before it
@@ -415,4 +429,14 @@ func ceilDiv(a, b int) int {
 		return 0
 	}
 	return (a + b - 1) / b
+}
+
+// envBool reports whether an environment variable holds a truthy value.
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }

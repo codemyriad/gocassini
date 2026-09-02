@@ -290,6 +290,11 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		}
 		env = setEnvKey(env, envCacheRoot, root)
 	}
+	if rt.cfg.DisallowModelDownload {
+		// ChildEnv strips this so an inherited value cannot decide policy. The
+		// operator puts back exactly what the administrator configured.
+		env = setEnvKey(env, envDisallowModelDownload, "1")
+	}
 	buildEnv, err := limits.applyToEnv(env, device, model)
 	if err != nil {
 		return meetingPath, err
