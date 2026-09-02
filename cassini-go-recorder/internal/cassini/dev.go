@@ -140,8 +140,14 @@ Common options:
   --cassini none|installed-exapp
   --recording-backend legacy|direct-operator|installed-exapp|none
   --exapp-image-mode build|reuse-local|pull
+  --storage-mode default|acl-enabled
   --build
   --patch=auto|none|force
+  --debug-skip-storage-scaffold
+             build no recordings storage at all: no cassini service account,
+             no Team folder, neither native app. The state a real Nextcloud is
+             in before anybody has set Cassini up, for exercising the app's own
+             setup flow.
 
 up options:
   --resume   reuse matching stopped containers or retained harness volumes

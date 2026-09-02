@@ -27,13 +27,17 @@ harness_bootstrap_core_nextcloud() {
   # storage mode rather than of Cassini as such: without them Cassini runs in
   # its default mode instead. The harness installs them because that is the mode
   # the e2e suites assert.
-  log "Ensuring Group Folders app is installed/enabled"
-  occ_ignore_failure app:install groupfolders >/dev/null 2>&1
-  occ_ignore_failure app:enable groupfolders >/dev/null 2>&1
+  if harness_skip_storage_scaffold; then
+    log "Skipping Group Folders / Everyone Group (--debug-skip-storage-scaffold)"
+  else
+    log "Ensuring Group Folders app is installed/enabled"
+    occ_ignore_failure app:install groupfolders >/dev/null 2>&1
+    occ_ignore_failure app:enable groupfolders >/dev/null 2>&1
 
-  log "Ensuring Everyone Group app is installed/enabled"
-  occ_ignore_failure app:install group_everyone >/dev/null 2>&1
-  occ_ignore_failure app:enable group_everyone >/dev/null 2>&1
+    log "Ensuring Everyone Group app is installed/enabled"
+    occ_ignore_failure app:install group_everyone >/dev/null 2>&1
+    occ_ignore_failure app:enable group_everyone >/dev/null 2>&1
+  fi
 
   # The installs above tolerate failure on purpose: all three are app-store apps
   # and a hard install would abort the harness on any box without app-store
@@ -48,9 +52,20 @@ harness_bootstrap_core_nextcloud() {
   # first visible symptom is /operator/status answering 503 much later, with
   # nothing anywhere naming the cause. There is no Talk to record without it, so
   # a bootstrap that reaches this point without spreed has already failed.
-  for required_app in spreed groupfolders group_everyone; do
+  #
+  # Only spreed is unconditional. The other two are the access-controlled
+  # mode's prerequisites, so a stack deliberately brought up without them —
+  # `--storage-mode default`, or `--debug-skip-storage-scaffold` — must not be
+  # failed for their absence. That is the state a production Nextcloud is in
+  # before anybody installs anything, and being able to stand it up is the point.
+  local -a required_apps=(spreed)
+  if ! harness_skip_storage_scaffold && harness_storage_mode_is_acl; then
+    required_apps+=(groupfolders group_everyone)
+  fi
+  local required_app
+  for required_app in "${required_apps[@]}"; do
     if ! occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${required_app}:"; then
-      log "FATAL: ${required_app} is required for recordings and is not enabled"
+      log "FATAL: ${required_app} is required and is not enabled"
       return 1
     fi
   done
@@ -111,8 +126,7 @@ harness_bootstrap_core_nextcloud() {
   fi
 }
 
-# The recordings substrate the access-controlled storage mode needs, which
-# Cassini no longer builds for itself (D-616).
+# The recordings substrate, which Cassini no longer builds for itself (D-616).
 #
 # It used to: the ExApp created the `cassini` service account, its narrow owner
 # group and the Team folder on its enabled edge, so a harness that installed the
@@ -120,14 +134,26 @@ harness_bootstrap_core_nextcloud() {
 # the environment has to supply the same things a production administrator does
 # — and the harness IS that administrator here.
 #
-# Every step is idempotent and none of them is fatal on its own. A box without
-# app-store reachability has already failed the app check above; a box where
-# these fail leaves Cassini in its default storage mode, which is a legitimate
-# deployment and says so on /operator/status rather than breaking silently. The
-# e2e suites that require access control assert `recordings_access.ok` and will
-# fail loudly there.
+# What it builds depends on the mode the stack was asked for, and the difference
+# matters more than it looks:
+#
+#	acl-enabled   the account, its group, and a mapped, ACL-enabled Team folder.
+#	default       the account and its group, and NOTHING ELSE. A mapped Team
+#	              folder would win the `Cassini` path and put recordings
+#	              somewhere the default model is not looking — which the operator
+#	              reports as `mode_mismatch` and refuses to publish under.
+#
+# Every step is idempotent and none of them is fatal on its own. A box where
+# these fail leaves Cassini reporting what is missing on /operator/status rather
+# than breaking silently, and the e2e suites that require access control assert
+# `recordings_access.ok` and will fail loudly there.
 harness_bootstrap_recordings_substrate() {
   local owner="cassini" mount="Cassini" everyone="everyone" folder_id=""
+
+  if harness_skip_storage_scaffold; then
+    log "Skipping the recordings substrate (--debug-skip-storage-scaffold): no ${owner} account, no ${mount} Team folder"
+    return 0
+  fi
 
   log "Ensuring the ${owner} recordings service account"
   occ_ignore_failure group:add "$owner" >/dev/null 2>&1
@@ -145,6 +171,16 @@ harness_bootstrap_recordings_substrate() {
     unset OC_PASS
   fi
   occ_ignore_failure group:adduser "$owner" "$owner" >/dev/null 2>&1
+
+  if ! harness_storage_mode_is_acl; then
+    # The default model wants the account and nothing else. Creating the Team
+    # folder here would be worse than useless: a mapped folder wins the
+    # `Cassini` path, so recordings would land in the shared folder rather than
+    # the account's own home — which the operator detects as `mode_mismatch` and
+    # refuses to publish under.
+    log "Recordings substrate ready for the default storage mode: owner=${owner}, no Team folder"
+    return 0
+  fi
 
   log "Ensuring the ${mount} Team folder"
   folder_id="$(harness_groupfolder_id "$mount")"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -140,17 +141,42 @@ func (c ExAppConfig) resolveStorageMode(probe ncStorageProbe, logger *log.Logger
 			return settings.AccessControlled(), storageModeSourceConfigured
 		}
 	}
+	// Nothing recorded yet. A deployment that DECLARED which model it wants is
+	// believed before anything is guessed — deriving is a reading of whatever
+	// Nextcloud looked like at this instant, and on a stack still being built
+	// that instant is the wrong one.
+	//
+	// An unrecognised value is not silently ignored: starting an instance in a
+	// mode nobody asked for is the failure this variable exists to prevent.
+	declared, ok, raw := storageModeFromEnv(os.Getenv)
+	switch {
+	case ok:
+		return c.persistInitialMode(path, declared, storageModeSourceEnv,
+			fmt.Sprintf("%s=%s declared the initial storage mode %q", envStorageMode, raw, storageModeName(declared)), logger)
+	case raw != "":
+		logger.Printf("ERROR: nc storage: %s=%q is not %s; ignoring it and deriving the mode from this instance instead", envStorageMode, raw, storageModeEnvValues)
+	}
+
 	derived := probe.deriveAccessControlEnabled()
+	return c.persistInitialMode(path, derived, storageModeSourceDerived,
+		fmt.Sprintf("no storage mode was recorded; derived %q from this instance", storageModeName(derived)), logger)
+}
+
+// persistInitialMode writes the first decision an install makes and says where
+// it came from. A failed write is not fatal — the mode still governs this
+// process — but it is loud, because the decision would then be made again on
+// the next enable, possibly differently.
+func (c ExAppConfig) persistInitialMode(path string, accessControlled bool, source, why string, logger *log.Logger) (bool, string) {
 	if path == "" {
-		logger.Printf("nc storage: no settings path configured; using derived mode=%s for this process only", storageModeName(derived))
-		return derived, storageModeSourceDerived
+		logger.Printf("nc storage: %s; no settings path configured, so it governs this process only", why)
+		return accessControlled, source
 	}
-	if err := SaveStorageSettings(path, derived, storageModeSourceDerived); err != nil {
-		logger.Printf("ERROR: nc storage: could not persist the derived mode %q to %s: %v — it will be derived again on the next enable", storageModeName(derived), path, err)
+	if err := SaveStorageSettings(path, accessControlled, source); err != nil {
+		logger.Printf("ERROR: nc storage: %s, but it could not be written to %s: %v — it will be decided again on the next enable", why, path, err)
 	} else {
-		logger.Printf("nc storage: no storage mode was recorded; derived %q from this instance and wrote %s", storageModeName(derived), path)
+		logger.Printf("nc storage: %s and wrote %s", why, path)
 	}
-	return derived, storageModeSourceDerived
+	return accessControlled, source
 }
 
 // arrangeRecordingsTree makes the archive's own directories and, under access

@@ -3,6 +3,7 @@ package operator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -154,5 +155,76 @@ func TestStorageSettingsPathSitsBesideTheJobDatabase(t *testing.T) {
 	}
 	if storageSettingsPath(cfg) == settingsPath(cfg) {
 		t.Fatal("the storage mode must not share a file with the STT policy")
+	}
+}
+
+// CASSINI_STORAGE_MODE declares which model a FRESH install starts in. It
+// exists because deriving is a reading of whatever Nextcloud looked like on the
+// first enabled edge, and on a stack still being assembled that is the wrong
+// moment — the installed-ExApp e2e caught exactly that.
+func TestStorageModeFromEnvAcceptsBothVocabularies(t *testing.T) {
+	cases := map[string]bool{
+		"default":           false,
+		"DEFAULT":           false,
+		"  default  ":       false,
+		"off":               false,
+		"access_controlled": true,
+		"access-controlled": true,
+		// The harness's own word, because someone reading its --storage-mode
+		// flag should not have to know the app spells it differently.
+		"acl-enabled": true,
+		"acl":         true,
+		"on":          true,
+	}
+	for raw, wantAccessControlled := range cases {
+		got, ok, echoed := storageModeFromEnv(func(string) string { return raw })
+		if !ok {
+			t.Errorf("%q was not recognised", raw)
+			continue
+		}
+		if got != wantAccessControlled {
+			t.Errorf("%q = %t, want %t", raw, got, wantAccessControlled)
+		}
+		if echoed != strings.TrimSpace(raw) {
+			t.Errorf("%q echoed back as %q; the message quotes what was set", raw, echoed)
+		}
+	}
+}
+
+// Unset is the ordinary case and means "derive it" — which is what makes a
+// production fresh install land on the deps-free model without anyone
+// declaring anything.
+func TestStorageModeFromEnvUnsetMeansDerive(t *testing.T) {
+	_, ok, raw := storageModeFromEnv(func(string) string { return "" })
+	if ok || raw != "" {
+		t.Fatalf("unset reported as (ok=%t raw=%q), want (false, \"\")", ok, raw)
+	}
+}
+
+// A typo must be distinguishable from unset, or it silently starts the instance
+// in a mode nobody asked for — the failure this variable exists to prevent.
+func TestStorageModeFromEnvKeepsAnUnknownValueForTheErrorMessage(t *testing.T) {
+	_, ok, raw := storageModeFromEnv(func(string) string { return "acl_enabld" })
+	if ok {
+		t.Fatal("a misspelt value was accepted")
+	}
+	if raw != "acl_enabld" {
+		t.Fatalf("raw = %q, want the value back so the error can quote it", raw)
+	}
+}
+
+// A declared mode is as explicit as a button, so it is never reconsidered.
+func TestAStatedModeIsNeverReconsidered(t *testing.T) {
+	for _, source := range []string{storageModeSourceUser, storageModeSourceEnv} {
+		if !(StorageSettings{Source: source}).Chosen() {
+			t.Errorf("source %q must count as stated", source)
+		}
+	}
+	if (StorageSettings{Source: storageModeSourceDerived}).Chosen() {
+		t.Error("a derived mode must remain reconsiderable")
+	}
+	// A file written before the field existed: those were all derivations.
+	if (StorageSettings{}).Chosen() {
+		t.Error("a file with no source must read as derived")
 	}
 }
