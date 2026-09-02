@@ -194,12 +194,14 @@ func TestStorageRejectsOtherMethods(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	testExAppConfig("http://nextcloud.invalid").storageHandler(rt).
-		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/storage", nil))
+		ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/storage", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST /storage = %d, want 405", rec.Code)
+		t.Fatalf("DELETE /storage = %d, want 405", rec.Code)
 	}
-	if got := rec.Header().Get("Allow"); !strings.Contains(got, http.MethodPut) {
-		t.Fatalf("Allow = %q, want it to list PUT", got)
+	for _, verb := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
+		if got := rec.Header().Get("Allow"); !strings.Contains(got, verb) {
+			t.Fatalf("Allow = %q, want it to list %s", got, verb)
+		}
 	}
 }
 
