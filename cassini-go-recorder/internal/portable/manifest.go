@@ -79,6 +79,10 @@ const (
 	RoleDisplay         = "display"
 	RoleHumanCorrected  = "human-corrected"
 	RoleTranslation     = "translation"
+	// RoleScripted is authored text the recording is a performance of: a
+	// script, a song's lyrics. Not a transcription, so it never names a
+	// source transcript.
+	RoleScripted = "scripted"
 )
 
 type Manifest struct {

@@ -132,20 +132,9 @@ type SourceSidecar struct {
 	OwnerUserID string `json:"ownerUserId"`
 }
 
-// SourceTimeBase is the recorder's side of the mapping, read from the MKV
-// stream tags the remux writes.
-type SourceTimeBase struct {
-	// FirstPacketWallMS is when this track's first packet arrived, in Unix
-	// milliseconds, and FirstTimelineNS is where that instant sits on the
-	// meeting timeline. Together they map recorder wall time to meeting time.
-	FirstPacketWallMS int64
-	FirstTimelineNS   int64
-	// ClockRate is the track's RTP clock rate, used to read the client's
-	// anchors as a media-time axis. Janus does not change the rate, only the
-	// offset, so this stays correct for the sender's clock.
-	ClockRate uint32
-	Known     bool
-}
+// SourceTimeBase now lives in timebase.go, landed on main with the remux
+// anchor it reads. The mapping onto the meeting timeline stays here, with the
+// placement arithmetic that uses it.
 
 // timelineMS converts a wall-clock instant to a position on the meeting
 // timeline. Exact on the recorder's side; the caller's error is whatever

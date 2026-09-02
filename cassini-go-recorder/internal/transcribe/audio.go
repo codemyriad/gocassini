@@ -183,7 +183,7 @@ func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
 // sourceTimeBaseFromTags parses the wall-clock anchor the remux writes into
 // each audio stream. All three tags must be present and parseable: a partial
 // base cannot map anything, and silently treating a missing one as zero would
-// place somebody's audio at a confidently wrong time.
+// place a later caller's audio at a confidently wrong time.
 func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate string) SourceTimeBase {
 	wallMS, err1 := strconv.ParseInt(strings.TrimSpace(firstPacketWallMS), 10, 64)
 	timelineNS, err2 := strconv.ParseInt(strings.TrimSpace(firstTimelineNS), 10, 64)

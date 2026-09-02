@@ -94,11 +94,19 @@ export async function extractPortableManifestFromArrayBuffer(
   const tags = parseOpusCommentTags(bytes);
   const indexManifest = await readMainPortablePayload(tags);
   const version = typeof indexManifest.version === "number" ? indexManifest.version : 1;
+  const isMultiTranscript =
+    (Array.isArray(indexManifest.transcripts) && indexManifest.transcripts.length > 0) ||
+    (Array.isArray(indexManifest.readableTranscripts) &&
+      indexManifest.readableTranscripts.length > 0);
 
-  if (version === 1) {
+  // Published version 1 and the unpublished draft-1 format share the same
+  // version number. Their shapes do not: published meetings index separately
+  // chunked bodies in transcripts[], while draft 1 carries transcript inline.
+  // Decide from that shape, as the portable-format contract requires.
+  if (version === 1 && !isMultiTranscript) {
     return { manifest: indexManifest, tags };
   }
-  if (version === 2 || version === 3) {
+  if (version === 1 || version === 2 || version === 3) {
     const manifest = await resolvePortableV2DefaultBodies(indexManifest, tags);
     return { manifest, tags };
   }
