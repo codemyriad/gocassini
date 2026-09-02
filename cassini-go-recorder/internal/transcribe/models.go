@@ -221,12 +221,22 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 	// directory the winner just promoted, while a third process loads from it.
 	// This is a file lock, so the kernel releases it when a process dies, which
 	// is what lets the next holder clean up an abandoned staging directory.
-	if err := withModelLock(cacheDir, string(id), func() error {
+	if err := withCacheLock(cacheDir, func() error {
 		// Another process can have finished this model while this one waited.
 		if modelDirValid(modelDir, required) {
 			return nil
 		}
-		removeOrphanStaging(filepath.Join(cacheDir, "models"), string(id), progress)
+		// Reclaim the space of a partial model BEFORE measuring free space.
+		// A multi-gigabyte invalid directory would otherwise shrink the budget
+		// enough that its own replacement never fits, and the tier would be
+		// stuck on that host for good.
+		if dirExists(modelDir) {
+			fmt.Fprintf(progress, "  removing an incomplete %s from an earlier attempt\n", id)
+			if err := os.RemoveAll(modelDir); err != nil {
+				return fmt.Errorf("remove incomplete model directory %s: %w", modelDir, err)
+			}
+		}
+		removeOrphanStaging(filepath.Join(cacheDir, "models"), progress)
 		fmt.Fprintf(progress, "downloading model %s from %s\n", id, spec.URL)
 		return downloadAndExtract(spec.URL, modelDir, required, progress)
 	}); err != nil {
@@ -244,16 +254,16 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 // abandoned, and a wedged holder cannot occupy the build worker forever.
 const modelLockWait = 35 * time.Minute
 
-// withModelLock runs fn while holding an exclusive lock for one model. The lock
-// covers staging cleanup, the free-space budget, extraction and promotion, so
-// two processes cannot each reserve the same free space or race on the
-// destination directory.
-func withModelLock(cacheDir, id string, fn func() error) error {
+// withCacheLock runs fn while holding one exclusive lock for the whole model
+// cache. It is cache-wide rather than per-model because the free-space budget
+// is a property of the volume: two downloads of different models would each
+// reserve the same free space and together overrun it.
+func withCacheLock(cacheDir string, fn func() error) error {
 	dir := filepath.Join(cacheDir, "models")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create model cache dir: %w", err)
 	}
-	lockPath := filepath.Join(dir, "."+id+".lock")
+	lockPath := filepath.Join(dir, ".install.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return fmt.Errorf("open model lock %s: %w", lockPath, err)
@@ -267,12 +277,12 @@ func withModelLock(cacheDir, id string, fn func() error) error {
 			break
 		}
 		if !errors.Is(lockErr, syscall.EWOULDBLOCK) {
-			return fmt.Errorf("lock model %s: %w", id, lockErr)
+			return fmt.Errorf("lock the model cache: %w", lockErr)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf(
-				"another process has been downloading model %s for over %s; "+
-					"wait for it to finish, or select a quality tier this image bundles", id, modelLockWait)
+				"another process has been installing a model for over %s; "+
+					"wait for it to finish, or select a quality tier this image bundles", modelLockWait)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -282,15 +292,15 @@ func withModelLock(cacheDir, id string, fn func() error) error {
 }
 
 // removeOrphanStaging deletes staging directories left by a download that the
-// kernel killed before its cleanup ran. The caller holds the model lock, so a
-// staging directory for this model is abandoned by definition. Each one holds
-// up to gigabytes on the volume that also stores the recordings.
-func removeOrphanStaging(modelsDir, id string, progress io.Writer) {
+// kernel killed before its cleanup ran. The caller holds the cache lock, so
+// every staging directory is abandoned by definition. Each one holds up to
+// gigabytes on the volume that also stores the recordings.
+func removeOrphanStaging(modelsDir string, progress io.Writer) {
 	entries, err := os.ReadDir(modelsDir)
 	if err != nil {
 		return
 	}
-	prefix := ".staging-" + id + "-"
+	const prefix = ".staging-"
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
 			continue
@@ -519,15 +529,10 @@ func downloadAndExtract(url, destDir string, required []string, progress io.Writ
 		return fmt.Errorf("write completion marker: %w", err)
 	}
 
-	// Rename refuses a destination that exists and is not empty, so the remains
-	// of an interrupted download would block every later attempt forever.
-	// Remove such a directory first. A valid one is left alone: another build
-	// finished this model while this one ran.
-	if dirExists(destDir) && !modelDirValid(destDir, required) {
-		if err := os.RemoveAll(destDir); err != nil {
-			return fmt.Errorf("remove incomplete model directory %s: %w", destDir, err)
-		}
-	}
+	// The caller holds the cache lock and has already cleared an invalid
+	// destination, before the budget was measured. A destination that exists
+	// here is therefore a valid model another process promoted while this
+	// download ran.
 	if err := os.Rename(staging, destDir); err != nil {
 		// The loser of a race uses the winner's directory, but only after it
 		// passes the same validation this copy just passed.

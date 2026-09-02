@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestEnsureModelPrefersTheBundledRoot(t *testing.T) {
@@ -151,6 +153,30 @@ func TestEnsureModelRejectsAnEmptyCachedFile(t *testing.T) {
 // serveModelArchive builds a .tar.bz2 with one top-level directory and the
 // given files, and serves it. It needs the bzip2 command because the standard
 // library only decompresses.
+// serveCountingModelArchive is serveModelArchive plus a request counter and a
+// gate that holds every request until the test releases it. Counting is what
+// proves serialization: without it a concurrency test passes even when every
+// caller downloads its own copy.
+func serveCountingModelArchive(t *testing.T, files map[string]string, gate <-chan struct{}) (url string, requests *atomic.Int32) {
+	t.Helper()
+	requests = &atomic.Int32{}
+	base := serveModelArchive(t, files)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		<-gate
+		resp, err := http.Get(base)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
+		io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy.URL + "/model.tar.bz2", requests
+}
+
 func serveModelArchive(t *testing.T, files map[string]string) string {
 	t.Helper()
 	if _, err := exec.LookPath("bzip2"); err != nil {
@@ -307,15 +333,21 @@ func TestEnsureModelClearsStagingLeftByAKilledDownload(t *testing.T) {
 func TestEnsureModelSerializesConcurrentDownloads(t *testing.T) {
 	// Two writers must not both judge the destination invalid: the loser would
 	// remove the directory the winner promoted, while a reader loads from it.
+	// The server counts requests and holds the first, so this proves the other
+	// callers waited for the lock and then used the finished model, rather than
+	// each fetching their own copy.
 	const id = ModelParakeet110M
 	required := RequiredModelFileNames(id)
 	files := map[string]string{}
 	for _, name := range required {
 		files[name] = "content of " + name
 	}
+	gate := make(chan struct{})
+	url, requests := serveCountingModelArchive(t, files, gate)
+
 	spec := knownModels[id]
 	original := spec
-	spec.URL = serveModelArchive(t, files)
+	spec.URL = url
 	knownModels[id] = spec
 	t.Cleanup(func() { knownModels[id] = original })
 
@@ -329,17 +361,24 @@ func TestEnsureModelSerializesConcurrentDownloads(t *testing.T) {
 			_, errs[slot] = EnsureModel(cacheRoot, id, io.Discard)
 		}(i)
 	}
+
+	// Give every caller time to reach the lock, then let the winner finish.
+	time.Sleep(500 * time.Millisecond)
+	close(gate)
 	wg.Wait()
+
 	for slot, err := range errs {
 		if err != nil {
 			t.Errorf("concurrent EnsureModel %d error = %v", slot, err)
 		}
 	}
+	if got := requests.Load(); got != 1 {
+		t.Errorf("archive was requested %d times, want exactly 1", got)
+	}
 	if !modelDirValid(filepath.Join(cacheRoot, "models", string(id)), required) {
 		t.Fatal("the model directory is not valid after concurrent downloads")
 	}
 }
-
 func TestEnsureModelRejectsADirectoryNamedLikeTheModelFile(t *testing.T) {
 	// An archive entry of "model.int8.onnx/child" makes the extractor create a
 	// directory with the name of the required file. A size test alone accepts
