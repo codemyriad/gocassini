@@ -236,7 +236,7 @@ func TestPreflightHonoursARecordedFlagAndReportsAMismatch(t *testing.T) {
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
-	if err := SaveStorageSettings(path, false); err != nil {
+	if err := SaveStorageSettings(path, false, storageModeSourceUser); err != nil {
 		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 	ncStorage.setPath(path)
@@ -294,7 +294,7 @@ func TestPreflightScaffoldsNothingWhenAccessControlIsIncomplete(t *testing.T) {
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
-	if err := SaveStorageSettings(path, true); err != nil {
+	if err := SaveStorageSettings(path, true, storageModeSourceUser); err != nil {
 		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 	ncStorage.setPath(path)
@@ -326,7 +326,7 @@ func TestPreflightClearsAnEarlierFailureWhenTheInstanceIsFixed(t *testing.T) {
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
-	if err := SaveStorageSettings(path, true); err != nil {
+	if err := SaveStorageSettings(path, true, storageModeSourceUser); err != nil {
 		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 	ncStorage.setPath(path)
@@ -362,7 +362,7 @@ func TestPreflightStillSeesAMountedFolderWhenTheEveryoneAppIsOff(t *testing.T) {
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
-	if err := SaveStorageSettings(path, false); err != nil {
+	if err := SaveStorageSettings(path, false, storageModeSourceUser); err != nil {
 		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 	ncStorage.setPath(path)
@@ -394,7 +394,7 @@ func TestPreflightRefusesDefaultModeWhenNextcloudWillNotSayWhichAppsAreOn(t *tes
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
-	if err := SaveStorageSettings(path, false); err != nil {
+	if err := SaveStorageSettings(path, false, storageModeSourceUser); err != nil {
 		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 	ncStorage.setPath(path)
@@ -408,5 +408,94 @@ func TestPreflightRefusesDefaultModeWhenNextcloudWillNotSayWhichAppsAreOn(t *tes
 	}
 	if ncStorageServesAsOwner() {
 		t.Fatal("the read proxy switched to reading as the owner on an instance nothing could be established about")
+	}
+}
+
+// The derivation runs once, on whichever enabled edge comes first — which is
+// not always a moment the instance is finished. A substrate built with `occ`
+// moments earlier may not have reached the web workers the probe asks, so a
+// fully access-controlled Nextcloud can derive `default` and be stuck with it:
+// publishing refused, `mode_mismatch` forever, no way back. The installed-ExApp
+// e2e caught exactly that.
+//
+// Reconsidering can only ever NARROW who may read the archive, so it cannot
+// cause the disclosure the latch exists to prevent.
+func TestPreflightReconsidersADerivedDefaultOnAnAccessControlledInstance(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	// What an early derivation leaves behind.
+	if err := SaveStorageSettings(path, false, storageModeSourceDerived); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	ncStorage.setPath(path)
+
+	// The instance the probe can now see: complete, access-controlled.
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
+	var logs strings.Builder
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(&logs, "", 0))
+
+	if accessControlled, _ := ncStorage.mode(); !accessControlled {
+		t.Fatalf("stayed on the derived default over a complete access-controlled substrate:\n%s", logs.String())
+	}
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); !snap.OK {
+		t.Fatalf("substrate = %+v, want usable after adopting access control", snap)
+	}
+	// And the correction is durable, so the next enable does not undo it.
+	persisted := readPersistedMode(t, path)
+	if !persisted.AccessControlled() {
+		t.Fatalf("%s = %+v, want the corrected mode written down", storageSettingsFileName, persisted)
+	}
+}
+
+// The other direction is the whole point of the latch, and must never happen:
+// a derived ACCESS-CONTROLLED mode is not reconsidered towards default, because
+// that would widen an archive nobody asked to widen.
+func TestPreflightNeverReconsidersTowardsTheOpenMode(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	if err := SaveStorageSettings(path, true, storageModeSourceDerived); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	ncStorage.setPath(path)
+
+	// The substrate has gone away — the derivation would now say `default`.
+	mock := &storageMock{apps: []string{}, serviceAccount: true}
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	if accessControlled, _ := ncStorage.mode(); !accessControlled {
+		t.Fatal("a derived access-controlled mode was widened to default; the latch exists to stop exactly this")
+	}
+	if readPersistedMode(t, path).AccessControlled() != true {
+		t.Fatal("the recorded mode was widened on disk")
+	}
+}
+
+// An administrator who chose default meant it. Reconsidering that would
+// override a decision, not repair a guess.
+func TestPreflightNeverReconsidersAModeAnAdministratorChose(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	if err := SaveStorageSettings(path, false, storageModeSourceUser); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	ncStorage.setPath(path)
+
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	if accessControlled, _ := ncStorage.mode(); accessControlled {
+		t.Fatal("an administrator's explicit choice of default was overridden")
+	}
+	// It is still reported as a mismatch, which is the honest outcome: they
+	// have a mounted Team folder and a default mode, and only they can say
+	// which one they meant.
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); !strings.HasPrefix(snap.Step, storageStepModeMismatch) {
+		t.Fatalf("step = %q, want the mismatch reported rather than silently fixed", snap.Step)
 	}
 }

@@ -117,6 +117,26 @@ func (c ExAppConfig) resolveStorageMode(probe ncStorageProbe, logger *log.Logger
 			logger.Printf("ERROR: nc storage: %v — keeping access control ON until the file is readable or removed", err)
 			return true, storageModeSourceConfigured
 		case settings.Configured():
+			// A DERIVED default gets reconsidered, in one direction only.
+			//
+			// The derivation happens once, on whichever enabled edge comes
+			// first, and that is not always a moment the instance is finished:
+			// a substrate built with `occ` moments earlier may not have reached
+			// the web workers the probe asks, so a fully access-controlled
+			// Nextcloud can derive `default` and be stuck with it — publishing
+			// refused, `mode_mismatch` forever, and no way back. That is not
+			// hypothetical; it is what the installed-ExApp e2e caught.
+			//
+			// Adopting access control here can only ever NARROW who can read the
+			// archive, so it cannot cause the disclosure the latch exists to
+			// prevent. A mode an administrator CHOSE is never touched.
+			if !settings.Chosen() && !settings.AccessControlled() && probe.deriveAccessControlEnabled() {
+				logger.Printf("nc storage: the recorded %q mode was derived, but this instance has a complete access-controlled substrate — adopting access control (a derived mode is only ever reconsidered towards the more restrictive one)", storageModeDefault)
+				if err := SaveStorageSettings(path, true, storageModeSourceDerived); err != nil {
+					logger.Printf("ERROR: nc storage: could not persist the corrected mode to %s: %v", path, err)
+				}
+				return true, storageModeSourceDerived
+			}
 			return settings.AccessControlled(), storageModeSourceConfigured
 		}
 	}
@@ -125,7 +145,7 @@ func (c ExAppConfig) resolveStorageMode(probe ncStorageProbe, logger *log.Logger
 		logger.Printf("nc storage: no settings path configured; using derived mode=%s for this process only", storageModeName(derived))
 		return derived, storageModeSourceDerived
 	}
-	if err := SaveStorageSettings(path, derived); err != nil {
+	if err := SaveStorageSettings(path, derived, storageModeSourceDerived); err != nil {
 		logger.Printf("ERROR: nc storage: could not persist the derived mode %q to %s: %v — it will be derived again on the next enable", storageModeName(derived), path, err)
 	} else {
 		logger.Printf("nc storage: no storage mode was recorded; derived %q from this instance and wrote %s", storageModeName(derived), path)

@@ -62,7 +62,7 @@ func TestStorageSettingsAbsentFileIsNotADecision(t *testing.T) {
 func TestStorageSettingsRoundTripBothValues(t *testing.T) {
 	for _, want := range []bool{true, false} {
 		path := filepath.Join(t.TempDir(), storageSettingsFileName)
-		if err := SaveStorageSettings(path, want); err != nil {
+		if err := SaveStorageSettings(path, want, storageModeSourceUser); err != nil {
 			t.Fatalf("SaveStorageSettings(%t) error = %v", want, err)
 		}
 		settings, err := LoadStorageSettings(path)
@@ -103,7 +103,7 @@ func TestStorageSettingsRefusesAnUnparseableFile(t *testing.T) {
 func TestStorageSettingsSaveIsAtomicAndLeavesNoTempFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, storageSettingsFileName)
-	if err := SaveStorageSettings(path, true); err != nil {
+	if err := SaveStorageSettings(path, true, storageModeSourceUser); err != nil {
 		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
