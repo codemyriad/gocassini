@@ -110,8 +110,12 @@ func uploadRequest(t *testing.T, sidecar captureSidecar, segments map[string][]b
 	if err := json.NewEncoder(part).Encode(sidecar); err != nil {
 		t.Fatalf("encode sidecar: %v", err)
 	}
+	i := 0
 	for name, content := range segments {
-		filePart, err := writer.CreateFormFile("segments", name)
+		// Distinct field names, as the payload sends them. See
+		// TestCaptureUploadIdentifiesSegmentsByFileName for why.
+		filePart, err := writer.CreateFormFile(fmt.Sprintf("segment_%d", i), name)
+		i++
 		if err != nil {
 			t.Fatalf("create segment part: %v", err)
 		}
@@ -508,5 +512,128 @@ func TestCaptureUploadIsRefusedUntilAnAdministratorEnablesIt(t *testing.T) {
 	}
 	if _, err := os.Stat(rt.cfg.CaptureRoot); err == nil {
 		t.Fatal("a refused upload created the capture root")
+	}
+}
+
+// A segment is identified by its FILE name, never by its form field name.
+//
+// The AppAPI proxy does not stream the body through. It rebuilds it from PHP's
+// $_POST/$_FILES, and PHP keeps only the LAST file for a repeated field name,
+// and rewrites characters it dislikes in the names it does keep. A handler that
+// switched on the field name therefore lost every segment but one on a real
+// install and refused the upload as incomplete — for the ordinary case of a
+// participant changing microphone mid-call, which is exactly when a second
+// segment is cut. Reproduced against real AppAPI as
+// `400: missing segment "segment-0.webm"`.
+//
+// All three shapes must store both segments: what the client sends now, what an
+// older client still open in a browser sends, and what the proxy may hand over
+// after rewriting the names.
+func TestCaptureUploadIdentifiesSegmentsByFileName(t *testing.T) {
+	shapes := []struct {
+		name       string
+		fieldNames []string
+	}{
+		{"distinct names, as the client sends them", []string{"segment_0", "segment_1"}},
+		{"one repeated name, as an older client sends", []string{"segments", "segments"}},
+		{"names rewritten in transit", []string{"segment_0_webm", "file2"}},
+	}
+
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			sidecar := validSidecar()
+			second := sidecar.Segments[0]
+			second.Index = 1
+			second.AudioName = "segment-1.webm"
+			sidecar.Segments = append(sidecar.Segments, second)
+
+			var body bytes.Buffer
+			writer := multipart.NewWriter(&body)
+			part, err := writer.CreateFormFile("sidecar", captureSidecarName)
+			if err != nil {
+				t.Fatalf("create sidecar part: %v", err)
+			}
+			if err := json.NewEncoder(part).Encode(sidecar); err != nil {
+				t.Fatalf("encode sidecar: %v", err)
+			}
+			for i, field := range shape.fieldNames {
+				filePart, err := writer.CreateFormFile(field, sidecar.Segments[i].AudioName)
+				if err != nil {
+					t.Fatalf("create segment part: %v", err)
+				}
+				if _, err := fmt.Fprintf(filePart, "audio-%d", i); err != nil {
+					t.Fatalf("write segment: %v", err)
+				}
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatalf("close writer: %v", err)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/capture/upload", &body)
+			req.Header.Set("Content-Type", writer.FormDataContentType())
+			req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+
+			rt := captureTestRuntime(t)
+			rec := httptest.NewRecorder()
+			rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+			}
+			dir := captureUploadDir(rt.cfg.CaptureRoot, sidecar.RoomToken, "bob", sidecar.CallStartWallMS)
+			for i, segment := range sidecar.Segments {
+				got, err := os.ReadFile(filepath.Join(dir, segment.AudioName))
+				if err != nil {
+					t.Fatalf("%s was not stored: %v", segment.AudioName, err)
+				}
+				if want := fmt.Sprintf("audio-%d", i); string(got) != want {
+					t.Fatalf("%s holds %q, want %q", segment.AudioName, got, want)
+				}
+			}
+		})
+	}
+}
+
+// A part carrying no file name, under a field the server does not know, stays
+// ignored — so a newer client can add fields without breaking an older server.
+func TestCaptureUploadStillIgnoresUnknownNonFileFields(t *testing.T) {
+	sidecar := validSidecar()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("sidecar", captureSidecarName)
+	if err != nil {
+		t.Fatalf("create sidecar part: %v", err)
+	}
+	if err := json.NewEncoder(part).Encode(sidecar); err != nil {
+		t.Fatalf("encode sidecar: %v", err)
+	}
+	if err := writer.WriteField("clientVersion", "9.9.9"); err != nil {
+		t.Fatalf("write field: %v", err)
+	}
+	filePart, err := writer.CreateFormFile("segment_0", "segment-0.webm")
+	if err != nil {
+		t.Fatalf("create segment part: %v", err)
+	}
+	if _, err := filePart.Write([]byte("audio")); err != nil {
+		t.Fatalf("write segment: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/capture/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+
+	rt := captureTestRuntime(t)
+	rec := httptest.NewRecorder()
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	dir := captureUploadDir(rt.cfg.CaptureRoot, sidecar.RoomToken, "bob", sidecar.CallStartWallMS)
+	if _, err := os.Stat(filepath.Join(dir, "clientVersion")); !os.IsNotExist(err) {
+		t.Fatalf("a non-file field was stored as a segment (err=%v)", err)
 	}
 }

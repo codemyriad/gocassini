@@ -194,15 +194,19 @@ function parseMultipart(body, contentType) {
       const payload = part.subarray(headerEnd + 4, part.length - 2);
       const nameMatch = /name="([^"]+)"/.exec(headers);
       const name = nameMatch?.[1];
+      const fileMatch = /filename="([^"]+)"/.exec(headers);
       if (name === "sidecar") {
         try {
           result.sidecar = JSON.parse(payload.toString("utf8"));
         } catch {
           result.sidecar = null;
         }
-      } else if (name === "segments") {
-        const fileMatch = /filename="([^"]+)"/.exec(headers);
-        result.segments.push({ name: fileMatch?.[1] ?? "", bytes: payload.length });
+      } else if (fileMatch) {
+        // A part is a segment because it carries a FILE name, exactly as the
+        // operator decides it. The field name cannot be relied on: the AppAPI
+        // proxy rebuilds the body through PHP, which collapses a repeated
+        // field name to its last file and rewrites some characters.
+        result.segments.push({ name: fileMatch[1], bytes: payload.length });
       }
     }
     index = next;
