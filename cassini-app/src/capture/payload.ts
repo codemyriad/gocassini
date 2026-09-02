@@ -647,8 +647,8 @@ async function uploadCapture(
     console.warn(
       `Cassini source capture: upload rejected (${response.status}); discarding this recording`,
     );
-    clearUploadAttempts(dirName);
     await discardCapture(opfsRoot, dirName);
+    clearUploadAttempts(dirName);
     return;
   }
   if (!response.ok) {
@@ -662,14 +662,17 @@ async function uploadCapture(
         `Cassini source capture: giving up after ${MAX_UPLOAD_ATTEMPTS} attempts ` +
           `(last status ${response.status}); discarding this recording`,
       );
-      clearUploadAttempts(dirName);
       await discardCapture(opfsRoot, dirName);
+      clearUploadAttempts(dirName);
       return;
     }
     throw new Error(`upload failed: ${response.status}`);
   }
-  clearUploadAttempts(dirName);
+  // Cleared only after the capture is actually gone. Clearing first would
+  // reset the count on a deletion that failed, and the accepted capture would
+  // then be re-uploaded on every page load with a counter that never advances.
   await opfsRoot.removeEntry(dirName, { recursive: true });
+  clearUploadAttempts(dirName);
   console.info("Cassini source capture: upload accepted");
 }
 

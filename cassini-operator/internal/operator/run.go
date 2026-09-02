@@ -403,24 +403,27 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			fmt.Fprintf(stderr, "shutdown server: %v\n", err)
-			return 1
+		shutdownErr := server.Shutdown(shutdownCtx)
+		if shutdownErr != nil {
+			// Report it, but do NOT return yet: the lifecycle wait below is the
+			// only chance an in-flight disable-edge write gets, and skipping it
+			// because the HTTP shutdown timed out would lose exactly the case
+			// this exists for.
+			fmt.Fprintf(stderr, "shutdown server: %v\n", shutdownErr)
 		}
-		if err := <-serveErrCh; err != nil {
-			fmt.Fprintf(stderr, "serve: %v\n", err)
-			return 1
+		serveErr := <-serveErrCh
+		if serveErr != nil {
+			fmt.Fprintf(stderr, "serve: %v\n", serveErr)
 		}
-		// The operator is the container's main process: returning while a
-		// record job is still finalizing would SIGKILL the recorder
-		// mid-compose and destroy the recording (D-350). In-flight stops are
-		// enforced per process, so this wait is bounded.
 		// Give an in-flight AppAPI lifecycle callback a moment to land. On the
 		// disable edge this is the write that tells Nextcloud the ExApp's
 		// settings are no longer live; losing it leaves the companion app
-		// injecting a payload for an ExApp that is gone.
-		// After server.Shutdown above, no new lifecycle request can start, so
-		// the counter cannot go back up under this wait.
+		// injecting a payload for an ExApp that is gone. It runs even when the
+		// HTTP shutdown above failed, because that is precisely when an
+		// in-flight callback is most likely to still be there.
+		//
+		// After server.Shutdown, no new lifecycle request can start, so the
+		// counter cannot rise again underneath this wait.
 		if runtime.lifecycle != nil {
 			done := make(chan struct{})
 			go func() {
@@ -433,8 +436,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 				logger.Printf("shutdown: lifecycle callback still running after %s", lifecycleShutdownWait)
 			}
 		}
+		// The operator is the container's main process: returning while a
+		// record job is still finalizing would SIGKILL the recorder
+		// mid-compose and destroy the recording (D-350). In-flight stops are
+		// enforced per process, so this wait is bounded.
 		if !runtime.WaitForRecordJobs(recordShutdownWait) {
 			logger.Printf("shutdown abandoned record jobs still running after %s", recordShutdownWait)
+		}
+		if shutdownErr != nil || serveErr != nil {
+			return 1
 		}
 		return 0
 	case err := <-serveErrCh:

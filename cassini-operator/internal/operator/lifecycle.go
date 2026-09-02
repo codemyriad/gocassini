@@ -169,6 +169,13 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// The edge number is claimed on ARRIVAL, before parsing, persistence or the
+	// response. Claiming it any later — inside the callback goroutine, or after
+	// the state write — orders it by scheduling rather than by the order
+	// Nextcloud sent the edges in, and a delayed enable could then out-rank a
+	// later disable and put a stale value back.
+	edge := atomic.AddUint64(&h.edgeSeq, 1)
+
 	enabledRaw := strings.TrimSpace(r.URL.Query().Get("enabled"))
 	if enabledRaw == "" {
 		// AppAPI normally sends `?enabled=1` or `?enabled=0`, but some
@@ -216,11 +223,6 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 	// Background lets the process wait for it during shutdown, which is the
 	// only place it can be waited on without reintroducing the deadlock.
 	if h.EnabledCallback != nil {
-		// The edge number is claimed HERE, while still inside the request, so
-		// it records the order Nextcloud sent the edges in. Claiming it inside
-		// the goroutine would record goroutine scheduling instead, and a
-		// delayed enable could then out-rank a later disable.
-		edge := atomic.AddUint64(&h.edgeSeq, 1)
 		h.Background.Add(1)
 		go func() {
 			defer h.Background.Done()

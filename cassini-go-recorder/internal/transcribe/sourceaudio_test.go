@@ -713,20 +713,26 @@ func TestMaxSourceSegmentSamplesBoundsDecodedAudio(t *testing.T) {
 	// expressed through it rather than restated here.
 	floor := expectedPCMSamples(60_000, rate)
 
-	if got := maxSourceSegmentSamples(0, rate); got != floor {
+	if got := maxSourceSegmentSamples(0, rate, 0); got != floor {
 		t.Fatalf("a segment declaring no length got %d samples, want the %d floor", got, floor)
 	}
-	if got := maxSourceSegmentSamples(-5000, rate); got != floor {
+	if got := maxSourceSegmentSamples(-5000, rate, 0); got != floor {
 		t.Fatalf("a negative declaration got %d samples, want the %d floor", got, floor)
 	}
 	// Ten declared minutes plus the one-minute slack.
-	if got, want := maxSourceSegmentSamples(600_000, rate), expectedPCMSamples(660_000, rate); got != want {
+	if got, want := maxSourceSegmentSamples(600_000, rate, 0), expectedPCMSamples(660_000, rate); got != want {
 		t.Fatalf("a ten-minute segment got %d samples, want %d", got, want)
 	}
-	// The bound has to actually bind: an hour-long claim must not permit the
-	// gigabytes an expanding file would otherwise produce.
-	if got := maxSourceSegmentSamples(3_600_000, rate); got >= 4*expectedPCMSamples(3_600_000, rate) {
-		t.Fatalf("an hour-long segment permits %d samples; the ceiling is not binding", got)
+	// The recording is the real bound: a segment cannot legitimately hold more
+	// audio than the meeting it came from, whatever its sidecar claims.
+	timeline := expectedPCMSamples(120_000, rate)
+	got := maxSourceSegmentSamples(30*24*3_600_000, rate, timeline)
+	if got > timeline+expectedPCMSamples(60_000, rate) {
+		t.Fatalf("a segment claiming a month permits %d samples against a two-minute meeting", got)
+	}
+	// And a declaration inside the meeting is left alone.
+	if got := maxSourceSegmentSamples(60_000, rate, timeline); got != expectedPCMSamples(120_000, rate) {
+		t.Fatalf("a one-minute segment in a two-minute meeting got %d samples", got)
 	}
 }
 

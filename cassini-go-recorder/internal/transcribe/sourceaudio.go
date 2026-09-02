@@ -509,7 +509,7 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 			}
 			segmentMS := segment.StopWallMS - segment.StartWallMS
 			samples, err := decodeSourceSegment(ctx, filepath.Join(dir, segment.AudioName), sampleRate,
-				sourceDecodeTimeout(segmentMS), maxSourceSegmentSamples(segmentMS, sampleRate))
+				sourceDecodeTimeout(segmentMS), maxSourceSegmentSamples(segmentMS, sampleRate, outSamples))
 			if err != nil {
 				return nil, report, fmt.Errorf("segment %d: decode: %w", segment.Index, err)
 			}
@@ -580,26 +580,24 @@ func sourceDecodeTimeout(segmentMS int64) time.Duration {
 // on memory rather than on the timeout. The declared window is the only size
 // the client committed to; anything past it plus generous slack is the file
 // contradicting its own sidecar.
-func maxSourceSegmentSamples(segmentMS int64, sampleRate int) int {
-	const (
-		slackMS = 60_000
-		// The declaration is participant-controlled, so it cannot be the only
-		// bound: a sidecar claiming a month would otherwise buy a month of
-		// buffering. Four hours is longer than any meeting this records and
-		// still a bounded allocation.
-		absoluteMS = 4 * 60 * 60 * 1000
-	)
+func maxSourceSegmentSamples(segmentMS int64, sampleRate int, timelineSamples int) int {
+	const slackMS = 60_000
 	if segmentMS < 0 {
 		segmentMS = 0
-	}
-	if segmentMS > absoluteMS {
-		segmentMS = absoluteMS
 	}
 	limit := expectedPCMSamples(segmentMS+slackMS, sampleRate)
 	if limit <= 0 {
 		// A segment that declares no length still gets a floor rather than a
 		// blank cheque.
 		limit = expectedPCMSamples(slackMS, sampleRate)
+	}
+	// The recording is the real bound, and the only one not chosen by the
+	// participant. A segment cannot legitimately contain more audio than the
+	// meeting it came from, however long that meeting was, and a declaration
+	// that under-reports is still allowed everything the timeline can hold. A
+	// fixed constant could only be wrong in one direction or the other.
+	if ceiling := timelineSamples + expectedPCMSamples(slackMS, sampleRate); timelineSamples > 0 && limit > ceiling {
+		limit = ceiling
 	}
 	return limit
 }
