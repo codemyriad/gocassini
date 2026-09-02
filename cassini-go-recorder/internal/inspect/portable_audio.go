@@ -122,7 +122,11 @@ func inspectPortableAudio(out io.Writer, path string) error {
 	// not the file: the state describes the manifest and the audio, and the
 	// meeting, the speakers and the other transcripts are still good. The
 	// warning names the transcript, `words=` counts only what was read, and
-	// the command still exits non-zero so a script notices.
+	// the command still exits non-zero so a script notices. A repeated chunk
+	// tag is different: the file was edited, and the file is invalid.
+	if bodies.Repeated {
+		integrity.Status = "invalid-cassini-metadata"
+	}
 
 	printPortableMeeting(out, path, audioSummary, payload, manifest, bodies, integrity)
 	if audioStatus != "ok" {
@@ -144,6 +148,9 @@ type portableTranscriptBodies struct {
 	// Unreadable names every transcript whose body could not be read, in
 	// manifest order.
 	Unreadable []string
+	// Repeated is set when a body's chunk tag appears twice. Unlike a missing
+	// chunk, that is the file's problem: invalid-cassini-metadata.
+	Repeated bool
 	Warnings   []string
 }
 
@@ -180,6 +187,9 @@ func readPortableTranscriptBodies(tags map[string]string, manifest portable.Mani
 		body, warnings, err := decodeTranscriptBody(tags, entry)
 		bodies.Warnings = append(bodies.Warnings, warnings...)
 		if err != nil {
+			if errors.Is(err, errRepeatedTag) {
+				bodies.Repeated = true
+			}
 			bodies.Unreadable = append(bodies.Unreadable, entry.ID)
 			bodies.Warnings = append(bodies.Warnings, fmt.Sprintf("transcript %s body could not be read: %v", entry.ID, err))
 			continue
@@ -459,6 +469,21 @@ func knownPortableWireVersion(version int) bool {
 	return false
 }
 
+// errRepeatedTag marks a load-bearing CASSINI_* comment that appears twice.
+// ffprobe joins a repeated comment's values with ";", a byte no base64url
+// chunk can contain, so for chunk tags the join is proof of the repeat. The
+// published format makes a repeat invalid-cassini-metadata: it is evidence
+// the file was edited, whichever value is the right one.
+var errRepeatedTag = errors.New("repeated tag")
+
+func chunkValue(tags map[string]string, key string) (string, error) {
+	part := metadataTag(tags, key)
+	if strings.Contains(part, ";") {
+		return "", fmt.Errorf("%w %s", errRepeatedTag, key)
+	}
+	return part, nil
+}
+
 func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portable.Manifest, error) {
 	chunkCount := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_CHUNK_COUNT"))
 	if chunkCount <= 0 {
@@ -467,7 +492,10 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 	var encoded strings.Builder
 	for idx := 0; idx < chunkCount; idx++ {
 		key := fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)
-		part := metadataTag(tags, key)
+		part, err := chunkValue(tags, key)
+		if err != nil {
+			return portablePayloadInfo{}, portable.Manifest{}, err
+		}
 		if part == "" {
 			return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("missing payload chunk %s", key)
 		}
@@ -905,7 +933,10 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 	var encoded strings.Builder
 	for idx := 0; idx < chunkCount; idx++ {
 		key := fmt.Sprintf("%s%03d", prefix, idx)
-		part := metadataTag(tags, key)
+		part, err := chunkValue(tags, key)
+		if err != nil {
+			return portable.TranscriptBody{}, warnings, err
+		}
 		if part == "" {
 			return portable.TranscriptBody{}, warnings, fmt.Errorf("missing transcript chunk %s", key)
 		}
