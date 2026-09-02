@@ -44,7 +44,6 @@
   import { formatMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
   import type { DataProvider } from "../viewer/dataProvider";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "../viewer/hashRouting";
-  import TranscriptTokens from "./TranscriptTokens.svelte";
 
   // The single-meeting reading surface (D-420 V1). It is "smart": given a
   // DataProvider and a meeting entry (or bundled mode) it loads the artifact,
@@ -112,30 +111,22 @@
   let loading = false;
 
   let currentTimeMs = 0;
-  // Highlight state, pushed by syncHighlight rather than derived per frame.
-  // `activeSegments` holds the very objects `displaySegments` holds — the word
-  // template identity-compares its token against `activeTokens`, so anything
-  // that copied a block or a token here would quietly extinguish every
-  // highlight while still looking right in a structural test.
+  // Which turns are sounding right now, pushed by syncHighlight rather than
+  // derived per frame. `activeSegments` holds the very objects
+  // `displaySegments` holds, so identity comparisons downstream stay sound.
+  //
+  // This used to carry a second, per-WORD layer (a store per block, a token map
+  // to diff against). Word-level playback highlighting is gone (D-654), so the
+  // playhead is asked only which lines are sounding — which is what the ring
+  // and the auto-scroll target need.
   let activeSegments: DisplaySegment[] = [];
   let activeSegmentIds = new Set<string>();
   let activeFollowRowKey: string | null = null;
-  // The authoritative answer, and the comparison basis: only segments whose
-  // entry here actually changed get their store written. Nothing in the template
-  // reads this map any more, which is the whole point — see TranscriptTokens.
-  let activeTokens = new Map<string, DisplayTranscriptToken | null>();
-  // One store per rendered block, so a write reaches only that block's words.
-  let tokenHighlights = new Map<string, Writable<DisplayTranscriptToken | null>>();
-  let activeWords = new Map<string, IndexedWord | null>();
   let playheadIndex: PlayheadIndex<DisplaySegment> = buildPlayheadIndex<DisplaySegment>([]);
-  // The stretch `activeSegments`/`activeTokens` are known to be correct across.
-  // Deliberately empty to begin with, so the first call always resolves.
+  // The stretch `activeSegments` is known to be correct across. Deliberately
+  // empty to begin with, so the first call always resolves.
   let highlightValidFromMs = Number.POSITIVE_INFINITY;
   let highlightValidUntilMs = Number.NEGATIVE_INFINITY;
-  // Seeded to `showExactWords`'s own initial value. The empty validity window
-  // above already forces the first resolve, so this only has to avoid a
-  // spurious second one.
-  let highlightExactWords = false;
   let durationMs = 0;
   let playing = false;
   let followPlayback = true;
@@ -146,7 +137,6 @@
   let audioEl: HTMLAudioElement | null = null;
   let animationFrameId = 0;
   let lastAutoScrollRowKey = "";
-  let showExactWords = false;
 
   // The meeting-view section; used to resolve element lookups against the
   // component's ROOT NODE — the shadow root in the embedded build, the document
@@ -214,7 +204,6 @@
       artifact.availableTranscripts.find((entry) => entry.isDefault)?.id ?? artifact.currentTranscriptId;
     durationMs = artifact.index.transcript.media.durationMs;
     errorMessage = "";
-    showExactWords = false;
     manualScrollLock = false;
     lastAutoScrollRowKey = "";
   }
@@ -259,7 +248,6 @@
     transcriptSwitchPending = false;
     transcriptSwitchError = "";
     durationMs = 0;
-    showExactWords = false;
     manualScrollLock = false;
     lastAutoScrollRowKey = "";
   }
@@ -618,27 +606,6 @@
     return `${gapDb.toFixed(0)} dB louder`;
   }
 
-  function getActiveDisplayWord(
-    segment: DisplaySegment | null,
-    timeMs: number,
-  ): IndexedWord | null {
-    if (!segment || !showExactWords || segment.tokens.length > 0) {
-      return null;
-    }
-    return getActiveTimedRange(segment.words, timeMs);
-  }
-
-  // Highlighting is per ACTIVE SEGMENT, not per meeting: during an overlap two
-  // turns really are sounding, so both keep their ring and both track their own
-  // word. Keyed by segment id because the template renders segments through
-  // grouped rows and cannot rely on array position.
-  function activeWordsBySegment(
-    segments: readonly DisplaySegment[],
-    timeMs: number,
-  ): Map<string, IndexedWord | null> {
-    return new Map(segments.map((segment) => [segment.id, getActiveDisplayWord(segment, timeMs)]));
-  }
-
   // A row whose speaker just held the floor a moment ago does not repeat its
   // own name: the same rule as before, only asked of turns rather than of the
   // fragments a turn arrives in. A monologue the producer split at a two-second
@@ -671,30 +638,27 @@
    *
    * The index is rebuilt when `displaySegments` changes, which is exactly when
    * its identity changes: that array is recomputed and never mutated, so the
-   * identity test is both sound and complete. `showExactWords` forces a refresh
-   * because the canonical-word highlight is switched off at source while it is
-   * false, so its answer changes without the playhead moving.
+   * identity test is both sound and complete.
    */
-  function syncHighlight(
-    segments: DisplaySegment[],
-    exactWords: boolean,
-    timeMs: number,
-  ): void {
+  // Which lines are sounding, recomputed only when the answer can have moved.
+  //
+  // The validity window is D-692's doing and still earns its keep: resolvePlayhead
+  // reports the span its answer holds for, so sixty playhead writes a second
+  // become a few resolves a second. What is gone is the per-word half — a store
+  // per block, diffed token by token — which existed solely to light one word at
+  // a time (D-654).
+  function syncHighlight(segments: DisplaySegment[], timeMs: number): void {
     const rebuilt = playheadIndex.source !== segments;
     if (rebuilt) {
       playheadIndex = buildPlayheadIndex(segments);
-      tokenHighlights = new Map();
-      activeTokens = new Map();
     }
     if (
       !rebuilt &&
-      exactWords === highlightExactWords &&
       timeMs >= highlightValidFromMs &&
       timeMs < highlightValidUntilMs
     ) {
       return;
     }
-    highlightExactWords = exactWords;
 
     const state = resolvePlayhead(playheadIndex, timeMs);
     highlightValidFromMs = state.validFromMs;
@@ -702,47 +666,6 @@
 
     activeSegments = state.soundingBlocks as DisplaySegment[];
     activeSegmentIds = new Set(activeSegments.map((segment) => segment.id));
-    activeWords = activeWordsBySegment(activeSegments, timeMs);
-
-    const next = new Map<string, DisplayTranscriptToken | null>(
-      activeSegments.map((segment, position) => [
-        segment.id,
-        (state.activeTokens[position] ?? null) as DisplayTranscriptToken | null,
-      ]),
-    );
-    // Write only what moved, comparing against the PREVIOUS answer — which is
-    // why `activeTokens` is not replaced until both loops have run. A block
-    // that was lit and still is, on the same word, must not be written at all:
-    // a store set always notifies, so an unconditional write would re-run that
-    // block's words for nothing.
-    for (const [id, token] of next) {
-      if (activeTokens.get(id) !== token) {
-        tokenHighlightFor(id).set(token);
-      }
-    }
-    for (const [id, token] of activeTokens) {
-      if (token !== null && !next.has(id)) {
-        tokenHighlightFor(id).set(null);
-      }
-    }
-    activeTokens = next;
-  }
-
-  /**
-   * The highlight store for one block, created on first use.
-   *
-   * Lazily, because the template asks for it while rendering and a block that
-   * never sounds never needs one. Cleared wholesale when the transcript
-   * changes, so a switch cannot leave a previous body's blocks holding stale
-   * stores — or leak them.
-   */
-  function tokenHighlightFor(segmentId: string): Writable<DisplayTranscriptToken | null> {
-    let store = tokenHighlights.get(segmentId);
-    if (!store) {
-      store = writable<DisplayTranscriptToken | null>(null);
-      tokenHighlights.set(segmentId, store);
-    }
-    return store;
   }
 
   // The blocks a row renders as its own speaker's prose — the turn's own
@@ -752,14 +675,6 @@
     return row.members
       .filter((member): member is Extract<typeof member, { kind: "speech" }> => member.kind === "speech")
       .map((member) => member.block);
-  }
-
-  // Every block a row renders, chips included: what the exact-words strip
-  // enumerates, so no block loses its canonical-word view by being nested.
-  function rowAllBlocks(row: TranscriptRow<DisplaySegment>): DisplaySegment[] {
-    return row.members.flatMap((member) =>
-      member.kind === "speech" ? [member.block] : [...member.blocks],
-    );
   }
 
   // The ring says "this speaker is sounding now". It is judged on the turn's
@@ -786,10 +701,6 @@
     return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
   }
 
-  function hasTimedTokens(segment: DisplaySegment): boolean {
-    return segment.tokens.some((token) => token.startMs !== undefined && token.endMs !== undefined);
-  }
-
   function formatArtifactMode(): string {
     if (!transcriptIndex) {
       return hasCatalog ? "Runtime catalog" : "Viewer ready";
@@ -810,19 +721,11 @@
     if (!transcriptIndex) {
       return "Load a meeting artifact to inspect its transcript and timing.";
     }
-    if (displayTranscript) {
-      if (timingPrecision?.level === "word") {
-        return "Cleaned transcript with word-level playback highlighting. Click a word or time stamp to seek.";
-      }
-      if (timingPrecision?.level === "mixed") {
-        return "Cleaned transcript with mixed timing precision. Timed words stay clickable; rewritten text falls back to passage timing.";
-      }
-      return "Cleaned transcript with passage timing. Click a passage or time stamp to seek without fake word precision.";
-    }
-    if (readableTranscript) {
-      return "Readable transcript first. Click any passage to seek. Press space to play or pause.";
-    }
-    return "Canonical timed transcript. Click any passage to seek the audio. Press space to play or pause.";
+    // One line for every transcript kind (D-654, per Alex's mock). The old copy
+    // advertised word-level playback highlighting, which is being retired: it
+    // described a precision our transcripts do not actually carry, and it named
+    // an affordance the page no longer offers.
+    return "Select a line to play from there.";
   }
 
   function formatMetadataLabel(label: string): string {
@@ -934,7 +837,7 @@
   // keeps them assigned only when the answer actually moves — which, since a
   // word lasts a few hundred milliseconds, is a few times a second rather than
   // sixty. The work is not made cheaper; it is not entered.
-  $: syncHighlight(displaySegments, showExactWords, currentTimeMs);
+  $: syncHighlight(displaySegments, currentTimeMs);
   $: hasPrecomputedDisplay = displayTranscript !== null;
   $: metadataSections = artifactMetadata?.sections ?? [];
   $: safeDurationMs = asFiniteMilliseconds(durationMs);
@@ -1021,15 +924,6 @@
             </button>
           {/each}
         </div>
-      {/if}
-      {#if transcriptIndex && timingPrecision}
-        <span
-          class:badge-warning={timingPrecision.level !== "word"}
-          class="badge badge-xs badge-outline px-1"
-          title={timingPrecision.detail}
-        >
-          {timingPrecision.label}
-        </span>
       {/if}
     </div>
 
@@ -1156,16 +1050,14 @@
              own, and two people who genuinely held the floor at once are named
              on each other's rows ("over Chris"). No durations anywhere: the
              model keeps the measurement, the page shows who. -->
-        {#snippet blockProse(block: DisplaySegment)}{#if block.tokens.length > 0 && hasTimedTokens(block)}<TranscriptTokens
-              tokens={block.tokens}
-              fallbackStartMs={block.startMs}
-              activeToken={tokenHighlightFor(block.id)}
-              seek={seekTo}
-            />{:else}<button
+        <!-- The whole turn is one seek target. Word-level highlighting used to
+             split this into per-token buttons; the line is the unit now, which
+             is what the mock offers and what our timings can honestly support. -->
+        {#snippet blockProse(block: DisplaySegment)}<button
               class="inline p-0 border-0 bg-transparent text-left text-[1.06rem] leading-[1.72] rounded cursor-pointer hover:bg-primary/40"
               on:click={() => seekTo(block.startMs)}
               type="button"
-            >{block.text}</button>{/if}{/snippet}
+            >{block.text}</button>{/snippet}
         {#each transcriptRows as row (row.key)}
           <article
             aria-current={isRowSounding(row, activeSegmentIds) ? "true" : undefined}
@@ -1231,28 +1123,6 @@
                       class="rounded {activeSegmentIds.has(chipBlock.id) ? 'bg-primary/25' : ''}"
                       id={segmentDomId(chipBlock.id)}
                     >{@render blockProse(chipBlock)}</span>{/each}<span aria-hidden="true">)</span></span>{/if}{/each}</p>
-
-            {#if !hasPrecomputedDisplay && showExactWords}
-              {#each rowAllBlocks(row) as block (block.id)}
-                {#if block.words.length > 0}
-                  <div class="block mt-3 pt-3 border-t border-base-300 text-base leading-normal">
-                    {#each block.words as word, wordIndex}{#if wordIndex > 0}{' '}{/if}<button
-                        class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer {word.id ===
-                          activeWords.get(block.id)?.id
-                          ? 'bg-primary ring-1 ring-primary'
-                          : 'hover:bg-primary'} {word.lowConfidenceSpeaker
-                          ? 'text-base-content/55 border-b border-dashed border-warning/60'
-                          : ''}"
-                        on:click={() => seekTo(word.startMs)}
-                        title={word.lowConfidenceSpeaker
-                          ? `Another microphone was ${describeAttributionGap(word.attributionGapDb)} here — probably not ${block.speakerLabel} speaking`
-                          : undefined}
-                        type="button"
-                      >{word.text}</button>{/each}
-                  </div>
-                {/if}
-              {/each}
-            {/if}
           </article>
         {/each}
       </div>
@@ -1424,15 +1294,6 @@
                 on:change={toggleFollowPlayback}
               />
             </label>
-            {#if readableTranscript && !hasPrecomputedDisplay}
-              <button
-                class="btn btn-ghost btn-xs rounded-full min-[981px]:btn-sm"
-                on:click={() => (showExactWords = !showExactWords)}
-                type="button"
-              >
-                {showExactWords ? "Exact words: on" : "Exact words: off"}
-              </button>
-            {/if}
           </div>
 
           <div
