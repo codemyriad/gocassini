@@ -305,20 +305,17 @@ func missingServiceAccountDetail() string {
 		ncRecordingsOwner, ncRecordingsOwnerGroup, ncRecordingsOwnerGroup, ncRecordingsOwner)
 }
 
-// deriveAccessControlEnabled is the answer for an install that has never
-// recorded a decision.
+// The probe does not decide the mode. It used to — deriveAccessControlEnabled()
+// answered "this instance has the whole access-controlled substrate, so it must
+// want access control" — and that made who can read the archive a function of
+// what Nextcloud looked like at one instant. A substrate built with `occ`
+// moments earlier may not have reached the web workers this probe asks, so the
+// answer was a race, and it was permanent once recorded.
 //
-// It says true only when the whole access-controlled substrate is already
-// there, and that asymmetry is the point. Every install that exists today was
-// built by the provisioner and satisfies all of it, so it keeps the model it
-// has been running — the alternative would upgrade an access-controlled archive
-// into an org-wide one on the next enable, silently, with no administrator ever
-// being asked. Anything less than the complete substrate resolves to the
-// default model, which is what a fresh install with neither app looks like.
-func (p ncStorageProbe) deriveAccessControlEnabled() bool {
-	ready, _, _ := p.accessControlReady()
-	return ready
-}
+// What replaced it is deliberately duller: the mode comes from the settings file
+// or CASSINI_STORAGE_MODE or nothing, and the probe's only job is sanity() below
+// — does the storage match the mode it was told? A disagreement is reported, not
+// resolved.
 
 // sanity compares a mode against the storage and reports the disagreement.
 //
@@ -354,8 +351,8 @@ func (p ncStorageProbe) sanity(accessControlled bool) (ok bool, step, detail str
 	if p.FolderMounted {
 		return false, storageStepModeMismatch + ":" + storageStepFolderMount,
 			fmt.Sprintf(
-				"access control is off, but a %q Team folder is still mapped to a group. A mounted Team folder wins the %q path, so recordings would be written into the shared folder rather than %q's own home. Switch access control back on, or unmap the Team folder's groups (`occ groupfolders:group <id> <group> --delete`) once its recordings have been moved out",
-				ncRecordingsMount, ncRecordingsMount, ncRecordingsOwner)
+				"access control is off, but a %q Team folder is still mapped to a group. A mounted Team folder wins the %q path, so recordings would be written into the shared folder rather than %q's own home. This is also what an access-controlled installation looks like to a Cassini that has not been told which mode it is in: if that is this instance, turn access control on in the Setup tab, or set %s=%s and re-enable the app. Otherwise unmap the Team folder's groups (`occ groupfolders:group <id> <group> --delete`) once its recordings have been moved out",
+				ncRecordingsMount, ncRecordingsMount, ncRecordingsOwner, envStorageMode, storageModeAccessControlled)
 	}
 	return true, "", ""
 }

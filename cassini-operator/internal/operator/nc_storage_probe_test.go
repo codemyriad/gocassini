@@ -31,19 +31,22 @@ func readyProbe() ncStorageProbe {
 	}
 }
 
-// The derivation is the upgrade latch. Every install that exists today was
-// built by the provisioner, so it has to resolve to access control — anything
-// else turns a restricted archive into an org-wide one on the next enable, with
-// nobody ever being asked.
-func TestDeriveKeepsAccessControlForAnInstallThatAlreadyHasIt(t *testing.T) {
-	if !readyProbe().deriveAccessControlEnabled() {
-		t.Fatal("a fully provisioned instance must derive access control ON")
+// A fully provisioned instance can run the access-controlled model.
+//
+// Note what this does NOT say: nothing here decides the MODE. The mode comes
+// from storage_settings.json, or CASSINI_STORAGE_MODE, or the default — never
+// from the instance. This is the sanity gate, which answers a different
+// question: given a mode, is this storage able to serve it?
+func TestAccessControlIsReadyOnAFullyProvisionedInstance(t *testing.T) {
+	if ready, step, detail := readyProbe().accessControlReady(); !ready {
+		t.Fatalf("a fully provisioned instance is not ready: %s — %s", step, detail)
 	}
 }
 
-// The spec's own list, one row per bullet: each of these makes the derived
-// default `false`.
-func TestDeriveFallsBackToDefaultWhenAnythingIsMissing(t *testing.T) {
+// The spec's own list, one row per bullet: each of these makes the
+// access-controlled model unusable, and each must SAY so rather than being
+// silently downgraded to the open model.
+func TestAccessControlIsNotReadyWhenAnythingIsMissing(t *testing.T) {
 	cases := []struct {
 		name  string
 		mutan func(*ncStorageProbe)
@@ -82,8 +85,12 @@ func TestDeriveFallsBackToDefaultWhenAnythingIsMissing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			probe := readyProbe()
 			tc.mutan(&probe)
-			if probe.deriveAccessControlEnabled() {
-				t.Fatalf("derived access control ON with %s", tc.name)
+			ready, step, _ := probe.accessControlReady()
+			if ready {
+				t.Fatalf("reported ready for access control with %s", tc.name)
+			}
+			if step == "" {
+				t.Fatalf("%s was refused without naming a step", tc.name)
 			}
 		})
 	}
