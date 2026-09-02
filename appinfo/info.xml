@@ -195,9 +195,10 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            ADMIN like the rest of the operator API — the blockers name accounts
            and folder ids, and the PUT relocates the archive.
 
-           One route, three verbs, on purpose: AppAPI learns an ExApp's routes
-           at registration time, so a separate path would 404 on every install
-           that predates it. -->
+           One route rather than three paths, because AppAPI matches url AND
+           verb: either way an install that predates this manifest has to be
+           re-registered before the new surface is reachable, so the only thing
+           left to choose is which is tidier to read. -->
       <route>
         <url>^operator\/storage\/?$</url>
         <verb>GET,POST,PUT</verb>

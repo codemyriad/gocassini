@@ -55,6 +55,13 @@ type ncStorageProbe struct {
 	// prerequisite BOTH models need: every WebDAV write acts as it, in a Team
 	// folder and in a private home alike.
 	ServiceAccount bool
+	// OwnerGroup is true when the narrow `cassini` group exists. Tracked apart
+	// from the account because the two can genuinely come apart — an
+	// administrator who ran `occ user:add` without `--group` has one and not the
+	// other — and the Team folder's write mapping is onto the GROUP, so a plan
+	// that inferred the group from the account would emit a mapping step for a
+	// group that does not exist.
+	OwnerGroup bool
 	// EveryoneGroup is true when the virtual all-users group is present. Only
 	// checked when group_everyone is enabled — an ordinary group of that name
 	// would be a trap, not a substitute (see nc_provision.go step 1).
@@ -168,6 +175,12 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 		logger.Printf("nc storage: check service account %q: %v", ncRecordingsOwner, err)
 	} else {
 		probe.ServiceAccount = exists
+	}
+
+	if exists, err := c.groupExists(ctx, client, ncRecordingsOwnerGroup); err != nil {
+		logger.Printf("nc storage: check owner group %q: %v", ncRecordingsOwnerGroup, err)
+	} else {
+		probe.OwnerGroup = exists
 	}
 
 	if prereqEnabled(prereqs, ncAppEveryoneGroup) {
@@ -353,6 +366,7 @@ func summarizeProbe(p ncStorageProbe) string {
 	fields := []string{
 		fmt.Sprintf("admin=%s", p.AdminUser),
 		fmt.Sprintf("service_account=%t", p.ServiceAccount),
+		fmt.Sprintf("owner_group=%t", p.OwnerGroup),
 		fmt.Sprintf("native_apps=%t", p.NativeApps),
 		fmt.Sprintf("everyone_group=%t", p.EveryoneGroup),
 		fmt.Sprintf("folder_probed=%t", p.FolderProbed),

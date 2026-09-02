@@ -153,14 +153,25 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		}
 	}
 
+	// The preflight runs on a context the client cannot cancel.
+	//
+	// It WRITES the deployment's recorded health, and its failure path records
+	// `unavailable`/`degraded` — so a browser that navigates away mid-probe
+	// would leave the operator reporting a broken substrate that is fine, with
+	// publishing and recording refused until the next enable. The request's own
+	// deadline is the wrong lifetime for a side effect that outlives the
+	// request; the probe carries its own.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), ncProvisionTimeout)
+	defer cancel()
+
 	switch in.Action {
 	case storageActionRecheck, "":
 		// An empty body means recheck: it is the harmless action, and the one a
 		// caller reaching for "look again" would guess.
-		c.preflightNCStorage(r.Context(), rt.logger)
+		c.preflightNCStorage(ctx, rt.logger)
 		writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
 	case storageActionInstallApps:
-		installs, err := c.attemptAppInstalls(r.Context(), rt.logger)
+		installs, err := c.attemptAppInstalls(ctx, rt.logger)
 		if err != nil {
 			writeJSONError(w, http.StatusServiceUnavailable, err.Error())
 			return
@@ -168,7 +179,7 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		// Re-probe regardless of the outcome: a partial success has to be
 		// visible, and an install that worked is visible immediately (measured
 		// at 0 s — the writer and the reader are the same worker pool).
-		c.preflightNCStorage(r.Context(), rt.logger)
+		c.preflightNCStorage(ctx, rt.logger)
 		resp := c.storageStatus(rt, nil)
 		resp.Installs = installs
 		writeJSON(w, http.StatusOK, resp)

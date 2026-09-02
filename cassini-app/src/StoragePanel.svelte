@@ -103,9 +103,40 @@
     if (!operatorClient) {
       return;
     }
-    const browserSteps = option.setup.filter((step) => step.browser);
-    const appSteps = option.setup.filter((step) => !step.browser);
+    let plan = option;
 
+    // The apps come FIRST, and the plan is then recomputed. Both halves of that
+    // matter, and getting either wrong breaks the ordinary case — a Nextcloud
+    // with neither app installed.
+    //
+    // Order: everything after the apps is inside them. Creating the Team folder
+    // POSTs to /index.php/apps/groupfolders/…, which simply 404s while
+    // `groupfolders` is not installed, so running the browser steps first
+    // aborts the whole run at the folder.
+    //
+    // Recompute: the operator's probe cannot SEE a Team folder until
+    // `groupfolders` is enabled (nc_storage_probe.go gates that read on it), so
+    // a plan built beforehand says "create the folder" whether or not one
+    // exists. Acting on it would make a second `Cassini` folder.
+    if (plan.setup.some((step) => !step.browser)) {
+      setupProgress = "Installing Nextcloud apps…";
+      // The operator's attempt: it succeeds on releases that predate
+      // Nextcloud's password-confirmation hardening, and where an administrator
+      // set a bypass range. Its per-app outcome comes back on the status.
+      status = await operatorClient.installStorageApps();
+      const refreshed = modeOptionFor(status, plan.mode);
+      if (refreshed && refreshed.setup.some((step) => !step.browser)) {
+        // Still missing. Everything left in the plan lives inside those apps,
+        // so stopping here is the honest outcome — the per-app detail on screen
+        // says what to do, and Nextcloud's Apps page is one click away.
+        return;
+      }
+      if (refreshed) {
+        plan = refreshed;
+      }
+    }
+
+    const browserSteps = plan.setup.filter((step) => step.browser);
     if (browserSteps.length > 0) {
       await runSetupPlan(browserSteps, {
         onProgress: ({ step, index, total }) => {
@@ -113,16 +144,14 @@
         },
       });
     }
-    if (appSteps.length > 0) {
-      setupProgress = "Installing Nextcloud apps…";
-      // The operator's attempt. Its per-app outcome comes back on the status
-      // and is rendered below; a refusal is not an error here, because the
-      // administrator can still finish it in Nextcloud's own Apps page.
-      status = await operatorClient.installStorageApps();
-      return;
-    }
     setupProgress = "Checking…";
     status = await operatorClient.recheckStorage();
+  }
+
+  // modeOptionFor re-reads one mode from a refreshed status, so a plan can be
+  // recomputed rather than reused after something changed underneath it.
+  function modeOptionFor(from: StorageStatus | null, mode: string): StorageModeOption | null {
+    return from?.modes.find((option) => option.mode === mode) ?? null;
   }
 
   async function confirmSwitch() {
@@ -200,6 +229,16 @@
   // Whether this page can act as the administrator at all. False on the
   // standalone build, which has neither Nextcloud's scripts nor its session.
   $: setupAvailable = isSetupAvailable();
+  // Building the access-controlled substrate while the DEFAULT mode is the one
+  // in force hides that mode's archive: the Team folder takes the `Cassini`
+  // path and Nextcloud renames the existing directory out of the way (D-660).
+  // Only worth saying when there is a live archive to hide — which is what an
+  // active, working default mode means.
+  $: strandsArchive =
+    pendingKind === "setup" &&
+    pending?.mode === "access_controlled" &&
+    status?.mode === "default" &&
+    status?.ok === true;
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
@@ -398,6 +437,20 @@
                   Cassini acts as you, so Nextcloud may ask you to confirm your password first. It
                   is asked for by Nextcloud's own dialog and Cassini never sees it.
                 </p>
+                {#if strandsArchive}
+                  <!-- Measured, D-660: a Team folder mounted at `Cassini` takes
+                       that path and Nextcloud renames the service account's
+                       existing directory out of the way. So building the folder
+                       while the default mode is live hides the recordings that
+                       are in it — until the switch, which finds the renamed tree
+                       and moves them. Saying so before the click, because
+                       "my recordings vanished" is the worst way to learn it. -->
+                  <p class="text-xs break-words text-warning">
+                    Recordings published so far will stop being listed once the Team folder exists,
+                    until you switch to access controlled — the switch finds them and moves them
+                    across. Nothing is deleted.
+                  </p>
+                {/if}
               {:else}
                 <p class="text-sm font-semibold">Switch to {pending.label.toLowerCase()}?</p>
                 <p class="text-xs break-words text-base-content/80">{pending.consequence}</p>

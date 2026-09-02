@@ -202,15 +202,50 @@ describe("runSetupPlan", () => {
     expect(calls).toHaveLength(0);
   });
 
-  // An "already exists" is what a re-run after a partial failure looks like,
-  // and a setup flow is re-run more often than it is run clean.
-  it("treats an already-existing group as done", async () => {
+  // An "already there" is what a re-run after a partial failure looks like, and
+  // a setup flow is re-run more often than it is run clean.
+  it("treats an already-existing group or account as done", async () => {
+    stubNextcloud();
+    const { impl } = stubFetch([["/cloud/groups", () => ocsFail(400, 102, "group exists")]]);
+    await expect(runSetupPlan([GROUP_STEP], { fetchImpl: impl })).resolves.toBeUndefined();
+
+    stubNextcloud();
+    const { impl: userImpl } = stubFetch([
+      ["/cloud/users", () => ocsFail(400, 102, "User already exists")],
+    ]);
+    await expect(runSetupPlan([ACCOUNT_STEP], { fetchImpl: userImpl })).resolves.toBeUndefined();
+  });
+
+  // Re-running the whole plan is the ordinary way a partial failure is
+  // recovered, so every browser step has to survive being done twice.
+  it("survives a second run over an instance it already set up", async () => {
     stubNextcloud();
     const { impl } = stubFetch([
       ["/cloud/groups", () => ocsFail(400, 102, "group exists")],
+      ["/cloud/users", () => ocsFail(400, 102, "User already exists")],
+      [
+        "groupfolders/folders?format=json",
+        () => ocsOk({ "3": { id: 3, mount_point: "Cassini" } }),
+      ],
+      // Group Folders answers an already-assigned add with a refusal wearing an
+      // HTTP 200 — the shape that made this worth a test.
+      ["/folders/3/groups?format=json", () => ocsFail(200, 403, "Group already assigned")],
     ]);
 
-    await expect(runSetupPlan([GROUP_STEP], { fetchImpl: impl })).resolves.toBeUndefined();
+    await expect(
+      runSetupPlan(
+        [
+          GROUP_STEP,
+          ACCOUNT_STEP,
+          step({
+            id: "mount:cassini",
+            action: "map_group",
+            args: { mount: "Cassini", group: "cassini", permissions: "31" },
+          }),
+        ],
+        { fetchImpl: impl },
+      ),
+    ).resolves.toBeUndefined();
   });
 
   // A 403 mid-run is almost always the 30-minute confirmation window closing.
@@ -235,6 +270,62 @@ describe("runSetupPlan", () => {
     expect(counters.confirmations).toBe(2);
   });
 
+  // Group Folders answers a refused write with HTTP 200 and the failure only in
+  // the OCS envelope. Keying the denial on the HTTP status left the
+  // re-confirm-and-retry path dead for every Team-folder step — which are
+  // exactly the ones most likely to straddle the 30-minute window, since they
+  // come last.
+  it("re-confirms for a refusal that arrives as an HTTP 200", async () => {
+    const counters = stubNextcloud();
+    let attempts = 0;
+    const { impl } = stubFetch([
+      [
+        "groupfolders/folders?format=json",
+        () => ocsOk({ "3": { id: 3, mount_point: "Cassini" } }),
+      ],
+      [
+        "/folders/3/acl",
+        () => {
+          attempts += 1;
+          return attempts === 1
+            ? ocsFail(200, 403, "Password confirmation is required")
+            : ocsOk();
+        },
+      ],
+    ]);
+
+    await runSetupPlan(
+      [step({ id: "acl", action: "enable_folder_acl", args: { mount: "Cassini" } })],
+      { fetchImpl: impl },
+    );
+
+    expect(attempts).toBe(2);
+    expect(counters.confirmations).toBe(2);
+  });
+
+  // POST /folders has no idempotency of its own: it makes a NEW folder every
+  // time, mount point and all. A re-run would leave two folders called Cassini
+  // and Nextcloud would mount whichever it liked.
+  it("does not create a second Team folder when one already exists", async () => {
+    stubNextcloud();
+    const { calls, impl } = stubFetch([
+      [
+        "groupfolders/folders?format=json",
+        () => ocsOk({ "3": { id: 3, mount_point: "Cassini" } }),
+      ],
+    ]);
+
+    await runSetupPlan(
+      [step({ id: "folder", action: "create_team_folder", args: { mount: "Cassini" } })],
+      { fetchImpl: impl },
+    );
+
+    const creates = calls.filter(
+      (c) => c.method === "POST" && c.url.endsWith("/folders?format=json"),
+    );
+    expect(creates).toHaveLength(0);
+  });
+
   it("gives up on a second denial rather than looping", async () => {
     stubNextcloud();
     const { impl } = stubFetch([
@@ -250,10 +341,18 @@ describe("runSetupPlan", () => {
   // mapping steps name the mount point and the executor resolves it once.
   it("resolves the Team folder by mount point, after creating it", async () => {
     stubNextcloud();
+    // The folder does not exist until the run creates it — which is the whole
+    // point of the step, and what the previous stub (always answering with a
+    // folder) quietly skipped.
+    let created = false;
     const { calls, impl } = stubFetch([
       [
         "groupfolders/folders?format=json",
-        () => ocsOk({ "7": { id: 7, mount_point: "Cassini" } }),
+        () => {
+          const answer = created ? ocsOk({ "7": { id: 7, mount_point: "Cassini" } }) : ocsOk([]);
+          created = true;
+          return answer;
+        },
       ],
     ]);
 
@@ -280,12 +379,14 @@ describe("runSetupPlan", () => {
     expect(urls).toContain("/index.php/apps/groupfolders/folders/7/groups/cassini?format=json");
     expect(urls).toContain("/index.php/apps/groupfolders/folders/7/acl?format=json");
     expect(urls).toContain("/index.php/apps/groupfolders/folders/7/manageACL?format=json");
-    // Resolved once, not once per step that needs it. Filtered by method: the
-    // create POSTs the same URL the lookup GETs.
+    // Two lookups and no more: one to find that the folder is absent (which is
+    // what makes creating it idempotent), one after creating it. The four steps
+    // that map onto the folder share that second answer rather than each asking
+    // again.
     const lookups = calls.filter(
       (c) => c.method === "GET" && c.url.endsWith("/folders?format=json"),
     );
-    expect(lookups).toHaveLength(1);
+    expect(lookups).toHaveLength(2);
   });
 
   it("picks the lowest id when a mount point is duplicated, like the operator does", async () => {

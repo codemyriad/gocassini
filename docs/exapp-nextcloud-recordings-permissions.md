@@ -47,12 +47,20 @@ ones that matter afterwards from Files → Advanced permissions. Opting out move
 everything back into the service account's own home and drops all access rules:
 after it, everyone who can open Cassini can read everything.
 
-> **Cassini sets nothing up for you.** It installs no app, creates no account
-> or group, and creates no Team folder. On every enable it *checks* the instance
-> and reports what is missing with the `occ` command that fixes it — in the app
-> (Setup tab, and the notice on the meeting list) and in
-> `GET /operator/status → recordings_access`. Until the prerequisites for the
-> selected mode are there, recordings are refused rather than captured and lost.
+> **Cassini can set most of this up for you (D-671).** The Setup tab lists what
+> is missing and offers to make it: the `cassini` group and account, the Team
+> folder, its group mappings, advanced ACL, and the ACL-manager delegation. It
+> performs them **as you**, from your browser, after Nextcloud's own password
+> dialog — Cassini never sees, holds or transmits your password.
+>
+> The exception is installing the two Nextcloud apps. Those routes require your
+> password on the request itself, which Cassini will not handle, so it tries via
+> its own backend (which works on some releases) and otherwise sends you to
+> Nextcloud's own Apps page. Everything is also listed as `occ` commands for an
+> administrator who would rather run them.
+>
+> Until the prerequisites for the selected mode are there, recordings are
+> refused rather than captured and lost.
 
 > **Who owns the recordings.** Both modes store them as a dedicated `cassini`
 > service account. It is the only identity that writes recordings and, under
@@ -194,10 +202,11 @@ accordingly.
 
 ## Setup: what you do, and what Cassini does
 
-The prerequisites are **yours**. Cassini creates no account, no group, no Team
-folder and installs no app; it checks and reports. The full recipe for the
-access-controlled mode, in the order the Setup tab lists whatever is still
-missing:
+Open **Cassini → Setup** and press *Set up access controlled*. Cassini lists
+every change first, asks Nextcloud to confirm your password, and then makes them
+as you. It cannot install the two apps — see below — and will say so.
+
+The same recipe by hand, in the order the Setup tab lists whatever is missing:
 
 ```bash
 occ group:add cassini
@@ -213,6 +222,24 @@ occ groupfolders:permissions <id> -m --user cassini
 
 The Setup tab prints only the lines this instance still needs, so it is usually
 shorter than the block above.
+
+### Why Cassini can do all of that except install an app
+
+Nextcloud guards these writes with password confirmation, and it has two
+strengths. The ordinary one is satisfied by a recently confirmed **session** —
+which is what Nextcloud's own dialog produces, and why Cassini can create the
+account, the folder and its permissions from your browser. Installing an app is
+annotated `strict`, and strict requires the password **on the request itself**;
+no session, however recently confirmed, satisfies it. Nextcloud's own Apps page
+meets that by attaching your password to that one request. Cassini declines to
+handle your password at all, so it hands those two steps back to you.
+
+Cassini's *operator* cannot make any of these writes: its requests carry no
+login token, so Nextcloud refuses them outright on every current release. That
+is why the setup happens in your browser and not in the app's backend. It does
+attempt the two app installs from the backend, because that path still works on
+Nextcloud 32.x, 33.0.0–33.0.5 and 34.0.0, and on any release where an
+administrator has set `allowed_no_password_confirmation_ranges`.
 
 Then disable and re-enable the app (setup runs on the AppAPI **enabled** edge,
 not on start), and switch the mode in the Setup tab if it is not already on.
