@@ -19,9 +19,14 @@
 //   only by the encode and the network, which is what makes verifying an upload
 //   against the server's own recording meaningful.
 //
-// Two conditions gate collection, and this file has no third: the administrator
-// switch, which the server answers for and re-answers every thirty seconds, and
-// Talk's own confirmed recording. Cassini stores nothing per participant and
+// Three conditions gate collection, and this file has no fourth: the
+// administrator switch, which the server answers for and re-answers every
+// thirty seconds; Talk's own confirmed recording, which says the ROOM is being
+// recorded; and this participant actually being in the call, which is the
+// publishing connection reaching "connected" with a live track and is the only
+// one of the three that says anything about this browser. Somebody whose page
+// has loaded and whose microphone Talk has opened, but who has not joined, is
+// not recorded. Cassini stores nothing per participant and
 // asks them nothing. Telling a room that it is being recorded is Talk's job —
 // its recording indicator and its recording-consent setting — so there is no
 // browser key here to read, and adding one would put a second, weaker answer
@@ -1378,12 +1383,10 @@ export async function settleBufferedCaptures(): Promise<number> {
   return uploaded;
 }
 
-// finishCapture seals the current official-recording interval and starts its
-// upload. Talk's confirmed recording-off event calls this while the participant
-// remains in the room; peer close and pagehide call it with callEnded=true as
-// an idempotent fallback.
-// finishCapture ends the current recording interval. `disposition` says what
-// happens to the buffer afterwards:
+// finishCapture ends the current recording interval. Talk's confirmed
+// recording-off event calls it while the participant remains in the room; peer
+// close and page teardown call it with callEnded=true as an idempotent
+// fallback. `disposition` says what happens to the buffer afterwards:
 //
 //   "upload"     seal the manifest and send it — a recording that stopped, or a
 //                participant who left the room while the page lives on.

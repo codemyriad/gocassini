@@ -27,9 +27,19 @@ captured at the source or not at all.
 ## The shape
 
 The participant's browser records the track Talk is **sending**, before Opus
-encoding and before the network, while Talk's official recording is active.
-It buffers locally and uploads as soon as Talk confirms recording stopped;
-leaving the room is an idempotent fallback rather than the normal trigger.
+encoding and before the network, while Talk's official recording is active *and*
+that browser is actually in the call. It buffers locally and uploads as soon as
+Talk confirms recording stopped; leaving the room is an idempotent fallback
+rather than the normal trigger.
+
+Being in the call is a condition in its own right, and it is the only one of the
+three that says anything about this browser: Talk's confirmed recording says the
+*room* is being recorded, and the administrator switch says the *installation*
+collects. So the recorder waits for the publishing connection to reach
+`connected` with a live track. The device preview, the lobby, and a page whose
+join never completed are all states in which nothing is recorded — which matters
+because they are exactly the states a participant is in when they do not believe
+they are in a meeting.
 
 ```text
   mic ─▶ Talk's media pipeline ─▶ sender track ─┬─▶ Opus ─▶ network ─▶ SFU ─▶ recorder ─▶ .mkv
