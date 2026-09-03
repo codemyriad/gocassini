@@ -393,12 +393,12 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 4000,
 		Segments: []captureSegment{{Index: 0, AudioName: "segment-0.webm"}},
 	}
-	replaced, err := rt.promoteCapture(prefix, staging, final)
+	outcome, err := rt.promoteCapture(prefix, staging, final)
 	if err != nil {
 		t.Fatalf("promoteCapture: %v", err)
 	}
-	if replaced {
-		t.Fatal("a stale prefix replaced the capture that already held the whole call")
+	if outcome != captureAlreadyStored {
+		t.Fatalf("a stale prefix got outcome %d; it is a subset of what is stored", outcome)
 	}
 	if _, err := os.Stat(filepath.Join(final, "segment-2.webm")); err != nil {
 		t.Fatalf("the post-reload audio was destroyed by a stale prefix upload: %v", err)
@@ -415,12 +415,12 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 			{Index: 2, AudioName: "segment-2.webm"},
 		},
 	}
-	replaced, err = rt.promoteCapture(sameCount, staging, final)
+	outcome, err = rt.promoteCapture(sameCount, staging, final)
 	if err != nil {
 		t.Fatalf("promoteCapture: %v", err)
 	}
-	if replaced {
-		t.Fatal("a stale snapshot with the same segment count replaced a capture holding more of the call")
+	if outcome != captureAlreadyStored {
+		t.Fatalf("a stale snapshot with the same segment count got outcome %d", outcome)
 	}
 
 	// A capture that reaches at least as far but is MISSING one of the stored
@@ -433,23 +433,42 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 			{Index: 1, AudioName: "segment-1.webm"},
 		},
 	}
-	replaced, err = rt.promoteCapture(divergent, staging, final)
+	outcome, err = rt.promoteCapture(divergent, staging, final)
 	if err != nil {
 		t.Fatalf("promoteCapture: %v", err)
 	}
-	if replaced {
-		t.Fatal("an upload missing a stored segment replaced the capture that held it")
+	if outcome != captureAlreadyStored {
+		t.Fatalf("an upload missing a stored segment got outcome %d; it holds nothing new", outcome)
+	}
+
+	// Two racing pages that each hold a segment the other does not. Neither may
+	// replace the other, and accepting either is what makes a browser delete
+	// the only copy of the audio only it has — so this one is refused
+	// retryably rather than answered "accepted".
+	diverged := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9500,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm"},
+			{Index: 3, AudioName: "segment-3.webm"},
+		},
+	}
+	outcome, err = rt.promoteCapture(diverged, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome != captureDiverged {
+		t.Fatalf("a capture holding audio the server does not got outcome %d; accepting it destroys that audio", outcome)
 	}
 
 	// An ordinary re-upload — the same segments, no shorter — still replaces.
 	again := stored
 	again.CallEndWallMS = 9500
-	replaced, err = rt.promoteCapture(&again, staging, final)
+	outcome, err = rt.promoteCapture(&again, staging, final)
 	if err != nil {
 		t.Fatalf("promoteCapture: %v", err)
 	}
-	if !replaced {
-		t.Fatal("an ordinary re-upload of the same call was refused the swap")
+	if outcome != capturePromoted {
+		t.Fatalf("an ordinary re-upload of the same call got outcome %d", outcome)
 	}
 }
 
@@ -484,11 +503,11 @@ func TestPromoteCaptureConsultsTheSetAsideCopy(t *testing.T) {
 		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 4000,
 		Segments: []captureSegment{{Index: 0, AudioName: "segment-0.webm"}},
 	}
-	replaced, err := rt.promoteCapture(prefix, staging, final)
+	outcome, err := rt.promoteCapture(prefix, staging, final)
 	if err != nil {
 		t.Fatalf("promoteCapture: %v", err)
 	}
-	if replaced {
+	if outcome == capturePromoted {
 		t.Fatal("a stale prefix promoted itself over a set-aside capture holding more of the call")
 	}
 	// And the interrupted promotion is finished, so the capture that was kept
