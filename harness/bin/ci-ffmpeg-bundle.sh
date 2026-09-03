@@ -80,8 +80,8 @@ docker run --rm --entrypoint /bin/sh "$IMAGE_REF" -ceu '
   # Exercise the exact portable-pack lifecycle, not only an FFmpeg retag. The
   # multi-track mix filters produce an end-trim-sensitive WebM: FFmpeg 9.0.1
   # normalizes its final Ogg granule by 24 samples on the first metadata remux.
-  # Cassini must converge on that normalized compressed identity, rebuild the
-  # v3 manifest, and verify the tagged output.
+  # Cassini must converge on that normalized compressed identity, build the
+  # published manifest, and verify the tagged output.
   bundle="$tmp/mixed.meeting"
   mkdir -p "$bundle"
   ffmpeg -hide_banner -loglevel error \

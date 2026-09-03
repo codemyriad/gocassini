@@ -167,8 +167,8 @@ func validateReadyMeetingBundleContents(rootDir string) error {
 	}
 
 	// The artifact manifest's `files` map carries both scalar paths (audio,
-	// transcript, ...) and, in v2 multi-tx mode, a structured `transcripts`
-	// array. Decode permissively: validate string entries; recurse into the
+	// transcript, ...) and a structured `transcripts` array. Decode permissively:
+	// validate string entries; recurse into the
 	// transcripts array's `path` fields; ignore any other shape.
 	type transcriptRef struct {
 		Path string `json:"path"`

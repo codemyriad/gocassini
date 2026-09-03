@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { gunzipSync } from "node:zlib";
+
+import { readPortableMeeting } from "./export-static-meetings.mjs";
 
 function main(argv = process.argv.slice(2)) {
   const { audioPath, snippets } = parseArgs(argv);
@@ -64,29 +65,7 @@ function loadPortableManifest(audioPath) {
   if (!existsSync(audioPath)) {
     throw new Error(`audio file not found: ${audioPath}`);
   }
-  const report = JSON.parse(execFileSync(
-    "ffprobe",
-    ["-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", audioPath],
-    { encoding: "utf8" },
-  ));
-  const tags = { ...(report.format?.tags || {}) };
-  for (const stream of report.streams || []) {
-    Object.assign(tags, stream.tags || {});
-  }
-  const chunkCount = Number(tags.CASSINI_PAYLOAD_CHUNK_COUNT || 0);
-  if (!Number.isInteger(chunkCount) || chunkCount <= 0) {
-    throw new Error("missing or invalid CASSINI_PAYLOAD_CHUNK_COUNT");
-  }
-  let encoded = "";
-  for (let index = 0; index < chunkCount; index += 1) {
-    const key = `CASSINI_PAYLOAD_${String(index).padStart(3, "0")}`;
-    const chunk = tags[key];
-    if (!chunk) {
-      throw new Error(`missing payload chunk ${key}`);
-    }
-    encoded += chunk;
-  }
-  return JSON.parse(gunzipSync(Buffer.from(encoded, "base64url")).toString("utf8"));
+  return readPortableMeeting(audioPath).manifest;
 }
 
 function inspectSnippet(manifest, snippet) {
@@ -196,23 +175,12 @@ function describeTokenSource(manifest, token) {
   if (!item || typeof item.text !== "string") {
     return `generated[segment=${segmentIndex} word=${wordIndex}]`;
   }
-  const words = item.text.trim().split(/\s+/).filter(Boolean);
-  const span = Math.max(0, Number(item.endMs || 0) - Number(item.startMs || 0));
-  const synthetic = words.length > 1;
-  const expectedStart = words.length <= 1
-    ? Number(item.startMs || 0)
-    : Number(item.startMs || 0) + Math.floor((span * wordIndex) / words.length);
-  const expectedEnd = words.length <= 1
-    ? Number(item.endMs || 0)
-    : Number(item.startMs || 0) + Math.floor((span * (wordIndex + 1)) / words.length);
-  const wordText = words[wordIndex] ?? "";
   return [
-    synthetic ? "synthetic-even-split" : "single-word-item",
+    "word-item",
     `segment=${segmentIndex}`,
-    `word=${wordIndex}/${Math.max(0, words.length - 1)}`,
-    `segmentSpan=${item.startMs}-${item.endMs}`,
-    `slot=${expectedStart}-${expectedEnd}`,
-    wordText ? `wordText=${JSON.stringify(wordText)}` : "",
+    `word=${wordIndex}`,
+    `span=${item.startMs}-${item.endMs}`,
+    item.text.trim() ? `wordText=${JSON.stringify(item.text.trim())}` : "",
   ].filter(Boolean).join(" ");
 }
 

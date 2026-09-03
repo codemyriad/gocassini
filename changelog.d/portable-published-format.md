@@ -1,6 +1,9 @@
 ### Added
 - The `scripted` transcript role, for authored text a recording is a performance of: a read script, a song's words. It is not a transcription, so it never names a source transcript.
 
+### Changed
+- Portable meeting producers and readers now implement only the published version 1 contract. Transcript bodies contain word items, the media digest comes from `integrity.opusAudioSha256`, and unsupported shapes are not repaired or upgraded.
+
 ### Fixed
 - A portable `.opus` whose transcript body cannot be read is no longer called a broken file. That transcript is unavailable, named in a warning, and the meeting, the speakers and the other transcripts still read. `cassini inspect` still exits non-zero.
 - A repeated load-bearing tag now stops `cassini inspect` from printing any part of the manifest. It used to declare the metadata invalid and then print the title, the meeting id, the speakers and every descriptor anyway.
