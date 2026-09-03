@@ -150,9 +150,11 @@ both switches off and says why — a switch answering yes with no companion behi
 it is worse than one answering no, and calls still running with a payload from
 an earlier deploy stop within about thirty seconds. With nothing collected there
 is nothing to ingest either, which is why both go rather than only capture.
-`CASSINI_SOURCE_CAPTURE=0` also disables an enabled companion, which is what
-backing the feature out completely requires; a deploy that cannot disable it
-fails rather than reporting success.
+`CASSINI_SOURCE_CAPTURE=0` also disables an enabled companion, and a deploy that
+cannot disable it fails rather than reporting success. To back the feature out
+completely, set `CASSINI_SOURCE_AUDIO_INGEST=0` as well: capture off stops new
+uploads but leaves the ones already on disk until the retention sweep reaches
+them, and a build running in the meantime would still transcribe from them.
 
 From GitHub, the `Deploy Sandbox` workflow has no inputs for either switch: pass
 an `image_tag` and both are on. With capture on, every authenticated participant

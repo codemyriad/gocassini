@@ -350,6 +350,16 @@ register_cassini() {
   docker cp "$WORK_DIR/gocassini-info.xml" "$AIO_NEXTCLOUD:/tmp/gocassini-info.xml"
   docker exec -u root "$AIO_NEXTCLOUD" chown www-data:www-data /tmp/gocassini-info.xml
 
+  # The container this deploy is replacing, if any. Registration below tolerates
+  # its own failure, so this is the only way to tell "registered" from "the old
+  # one is still running": AppAPI recreates the ExApp container when it
+  # registers, so an id that did not change means nothing was deployed. Every
+  # later check — the resolved switches, the manifest, the companion — reasons
+  # about the running container as though it were this deploy's, and is only
+  # sound once that is established.
+  local container_before
+  container_before="$(docker inspect -f '{{.Id}}' "nc_app_$CASSINI_APPSTORE_ID" 2>/dev/null || true)"
+
   # A stale registration holds a secret the freshly-deployed container no longer
   # shares, which 401s at /init. Unregister first (keep the data volume).
   if occ app_api:app:list 2>/dev/null | grep -qi "$CASSINI_APPSTORE_ID"; then
@@ -365,6 +375,16 @@ register_cassini() {
     --wait-finish || true
   # --wait-finish can outlive its window on first deploy; ensure enabled.
   occ app_api:app:enable "$CASSINI_APPSTORE_ID" || true
+
+  # Registration's own exit code is not the signal — --wait-finish can outlive
+  # its window on a perfectly good first deploy, which is why it is tolerated.
+  # Whether a new container exists is the signal.
+  local container_after
+  container_after="$(docker inspect -f '{{.Id}}' "nc_app_$CASSINI_APPSTORE_ID" 2>/dev/null || true)"
+  [[ -n "$container_after" ]] \
+    || die "Registration left no 'nc_app_$CASSINI_APPSTORE_ID' container. Check the HaRP daemon and 'occ app_api:app:list'."
+  [[ "$container_after" != "$container_before" ]] \
+    || die "Registration did not replace the running ExApp: 'nc_app_$CASSINI_APPSTORE_ID' is the same container as before this deploy. Nothing here was applied to it — not the image, not the manifest, and not the source-audio switches — so the host is still running whatever the previous deploy left. Check 'occ app_api:app:list' and the HaRP daemon, then re-run."
 }
 
 # cassini_recording_secret reads the recording secret Cassini generated and
@@ -528,7 +548,16 @@ verify() {
   if capture_on; then
     companion_enabled \
       || die "Capture is on but $CAPTURE_COMPANION_ID is not enabled: no Talk page will carry the payload, so nothing would be captured."
-    printf "  ok   %s enabled; capture follows Talk's recording per docs/source-audio-capture.md \"Trying it\"\n" "$CAPTURE_COMPANION_ID"
+    # The companion does not read the ExApp's environment. It reads this value
+    # out of AppAPI's ExApp config store, which the operator writes on the
+    # lifecycle edge, and it is what decides the initial state every Talk page
+    # is built with. An enabled companion beside a stale or unwritten "false"
+    # is a deploy that reports capture on and captures nothing.
+    local synced
+    synced="$(occ app_api:app:config:get "$CASSINI_APPSTORE_ID" source_capture_enabled 2>/dev/null | tr -d '[:space:]')"
+    [[ "$synced" == "true" || "$synced" == "1" ]] \
+      || die "Capture is on and $CAPTURE_COMPANION_ID is enabled, but AppAPI's source_capture_enabled for $CASSINI_APPSTORE_ID reads '$synced'. That value, not the container's environment, is what the companion injects into Talk's pages, so every call would be told capture is off. Disable and re-enable $CASSINI_APPSTORE_ID to make the operator write it again."
+    printf "  ok   %s enabled and source_capture_enabled synced; capture follows Talk's recording per docs/source-audio-capture.md \"Trying it\"\n" "$CAPTURE_COMPANION_ID"
   elif companion_enabled; then
     die "Capture is off but $CAPTURE_COMPANION_ID is still enabled: Talk pages are still being given the capture payload. Disable it by hand before treating this host as capture-free."
   fi

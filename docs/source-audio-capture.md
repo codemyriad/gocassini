@@ -329,12 +329,21 @@ unset, so a registration that says nothing about it collects. The ExApp mirrors
 the value into Nextcloud app config, which is what the companion reads while
 building the call page's initial state — the operator logs
 `source capture: synchronized companion initial state enabled=true` when that
-lands. There are two opt-outs, and they are alternatives, not steps. To collect
-nothing at all, pass `CASSINI_SOURCE_CAPTURE=0` as a deploy option at
-registration (`app_api:app:register … --env`). To keep collecting but keep what
+lands. There are two opt-outs, and which you want depends on what you are
+backing out of.
+
+To stop collecting, pass `CASSINI_SOURCE_CAPTURE=0` as a deploy option at
+registration (`app_api:app:register … --env`). To go on collecting but keep what
 is collected out of transcripts, leave capture alone and pass
-`CASSINI_SOURCE_AUDIO_INGEST=0` instead — with capture off there are no uploads
-for it to exclude.
+`CASSINI_SOURCE_AUDIO_INGEST=0` instead.
+
+To back the feature out completely, pass **both**. Capture off stops new
+uploads, but it does not erase the ones already on disk: they stay until the
+retention sweep reaches them (`CASSINI_CAPTURE_MAX_AGE_HOURS`), and while
+ingestion is on, a build that runs in the meantime — a deferred job, or a rerun
+of an older recording — will still transcribe from them. Disable the
+`cassini_capture` companion as well, so Talk pages stop carrying the payload at
+all.
 
 On the demo sandbox, steps 1 and 2 are one command or one workflow dispatch:
 `sandbox/wire-cassini.sh --image …`, or the `Deploy Sandbox` workflow with an
