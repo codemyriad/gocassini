@@ -318,21 +318,28 @@ test("a buffered capture from another account is neither resumed nor uploaded", 
     "alice's audio was uploaded under bob's authenticated identity",
   ).toHaveLength(0);
 
-  // It is not stranded either. Alice signs back in on this machine and her own
-  // buffer goes, under her own name, on the ordinary retry path.
-  await setOfficialRecording(page, 0);
+  // It is not stranded either. Alice signs back in on this machine, resumes her
+  // own buffer, and it goes under her own name when the recording stops.
+  //
+  // The navigation is what ends Bob's page, and a page on its way out seals
+  // without uploading — so nothing of Bob's is ever in flight here, and an
+  // upload of his could only have come from Alice's page.
+  const bobDir = names.find((name) => name !== aliceDir)!;
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
-  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBeGreaterThan(0);
+  await page.waitForTimeout(2600);
+  await setOfficialRecording(page, 0);
+
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
   expect(
-    server.uploads.some((upload) => upload.sidecar?.participantId === "alice"),
-    "alice's own buffer never reached the server",
-  ).toBe(true);
-  // And the rule holds in the other direction: bob's buffer is still bob's.
+    server.uploads[0].sidecar!.participantId,
+    "the upload was not alice's own capture",
+  ).toBe("alice");
+  // And bob's buffer is still sitting there, untouched by anybody but bob.
   expect(
-    server.uploads.every((upload) => upload.sidecar?.participantId !== "bob"),
-    "alice's page uploaded bob's capture",
-  ).toBe(true);
+    (await captureDirs(page)).map((dir) => dir.name),
+    "alice's page uploaded or deleted bob's capture",
+  ).toEqual([bobDir]);
 });
 
 // R1, from the other side. Talk holds the microphone open in its device
