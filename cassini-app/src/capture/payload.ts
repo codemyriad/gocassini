@@ -1097,37 +1097,58 @@ export async function settleBufferedCaptures(): Promise<number> {
       names.push(dirName);
     }
   }
-  const roomToken = roomTokenFromPath(location.pathname);
-  let uploaded = 0;
+  // Every manifest is read before anything is decided. Reading is local and
+  // fast; the decision has to be made against all of them at once, because
+  // which capture is held cannot depend on the order OPFS happened to list
+  // them in.
+  const sealed: SealedCapture[] = [];
   for (const dirName of names) {
     // Belt and braces against the snapshot above: never touch the directory a
     // capture is recording into, or one already held for adoption.
     if (state?.dirName === dirName || adoptable?.dirName === dirName) {
       continue;
     }
-    let sealed: SealedCapture | null = null;
     try {
-      sealed = await readSealedCapture(root, dirName);
+      const found = await readSealedCapture(root, dirName);
+      if (found !== null) {
+        sealed.push(found);
+      }
     } catch {
-      sealed = null;
+      // Absent or unreadable. A directory with no usable manifest is left
+      // alone: the page that made it died before its first checkpoint, and a
+      // future repair tool has more to work with than an empty slot.
     }
-    if (sealed === null) {
-      continue;
+  }
+  const roomToken = roomTokenFromPath(location.pathname);
+  // Exactly one capture is ever held, and it is the FRESHEST one this room can
+  // resume. An older buffer for the same room belongs to an earlier recording,
+  // not to the front of this one.
+  if (adoptable === null && state === null) {
+    let best: SealedCapture | null = null;
+    for (const candidate of sealed) {
+      if (!captureIsAdoptable(candidate, roomToken)) {
+        continue;
+      }
+      if (best === null || candidate.sidecar.callEndWallMs > best.sidecar.callEndWallMs) {
+        best = candidate;
+      }
     }
-    // Only one capture is ever held. A second buffer for the same room is a
-    // previous reload's, and belongs on the server rather than spliced onto
-    // the front of this one.
-    if (adoptable === null && state === null && captureIsAdoptable(sealed, roomToken)) {
-      adoptable = sealed;
+    if (best !== null) {
+      adoptable = best;
       clearAdoptDeadline();
       adoptDeadline = setTimeout(() => {
         console.info("Cassini source capture: nothing resumed the buffered capture; uploading it");
         releaseAdoptableCapture();
       }, ADOPT_DECISION_TIMEOUT_MS) as unknown as number;
+    }
+  }
+  let uploaded = 0;
+  for (const candidate of sealed) {
+    if (adoptable?.dirName === candidate.dirName) {
       continue;
     }
     try {
-      await uploadCapture(sealed.sidecar, dirName, false);
+      await uploadCapture(candidate.sidecar, candidate.dirName, false);
       uploaded += 1;
     } catch {
       // Left in place so a later page load can retry; nothing is lost to a
