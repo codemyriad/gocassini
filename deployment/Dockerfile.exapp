@@ -96,12 +96,14 @@ RUN set -eux; \
 # (pnpm migration tracked in D-499.)
 FROM node:22-bookworm AS web-builder
 WORKDIR /src
-# Manifests first for install-layer caching. No root lockfile yet (D-499), so
-# `npm install` resolves the workspace and links cassini-viewer into cassini-app.
-COPY package.json ./
-COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./cassini-viewer/
-COPY cassini-app/package.json cassini-app/package-lock.json ./cassini-app/
-RUN npm install
+# Manifests first for install-layer caching. The root lockfile is authoritative
+# for the workspace; the per-package lockfiles are pre-workspace relics and
+# feeding them to npm alongside the root manifest crashes resolution
+# ("Cannot read properties of null (reading 'edgesOut')").
+COPY package.json package-lock.json ./
+COPY cassini-viewer/package.json ./cassini-viewer/
+COPY cassini-app/package.json ./cassini-app/
+RUN npm ci
 COPY cassini-viewer/ ./cassini-viewer/
 COPY cassini-app/ ./cassini-app/
 # VITE_BASE=./ keeps standalone asset URLs relative (served at /viewer/ by the
