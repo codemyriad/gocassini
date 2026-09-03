@@ -2,26 +2,37 @@ package transcribe
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"strings"
+
+	"gocassini/internal/insight/workflows"
 )
 
-//go:embed templates/summary.v0.md
-var summaryV0Template string
+// The summary step's prompt is the registry's `summarise` workflow, read from
+// the package that owns every prompt this product ships rather than embedded a
+// second time here (D-718).
+//
+// It used to be two //go:embed directives over internal/transcribe/templates/.
+// Moving the files was the point: this package links the cgo speech recogniser,
+// so prompt bytes embedded here could only be hashed and gated where a speech
+// toolchain is installed — and the drift gate has to run in lint.yml, the one
+// workflow a prompt-only pull request actually triggers. The bytes are
+// unchanged, the splice is unchanged, and the prompt this step sends is now
+// literally the prompt `cassini insight run --workflow summarise` sends.
+var (
+	summaryV0Prompt   = workflows.SummarisePromptV0()
+	summaryV0Template = workflows.SummariseTemplateV0()
+)
 
-//go:embed templates/summary-prompt.v0.md
-var summaryV0Prompt string
-
-// summaryTemplatePlaceholder is the literal token in summary-prompt.v0.md
+// summaryTemplatePlaceholder is the literal token in the summarise prompt
 // where the V0 structure template is spliced in at runtime. If the prompt
 // file ever stops containing this token, summarySystemPrompt becomes a no-op
 // for the template and the existing TestSummarySystemPromptPinsTemplateAndRules
 // test will fail because the headings disappear from the prompt.
 const summaryTemplatePlaceholder = "{{TEMPLATE}}"
 
-// The one workflow this product ships, named and versioned so that a document
-// produced by it can say which prompt produced it (D-656).
+// The workflow the pipeline's summary step runs, named and versioned so that a
+// document produced by it can say which prompt produced it (D-656).
 //
 // SummaryWorkflowVersion matches the v0 in the two file names, and is the same
 // string already written into a packed meeting's "templateVersion" field. A
@@ -29,20 +40,12 @@ const summaryTemplatePlaceholder = "{{TEMPLATE}}"
 // files — because two documents claiming the same version and disagreeing is
 // worse than either of them.
 const (
-	SummaryWorkflowID      = "summarise"
-	SummaryWorkflowVersion = "v0"
+	SummaryWorkflowID      = workflows.SummariseID
+	SummaryWorkflowVersion = workflows.SummariseVersion
 )
 
-// SummaryPromptV0 and SummaryTemplateV0 hand out the two halves of that prompt.
-//
-// They exist so the insight seam can hash and splice the exact bytes the
-// pipeline sends, rather than keeping a second copy of them. Go's embed cannot
-// read outside its own package directory, so the only alternative was a copy
-// under internal/insight — and a copy of a prompt is precisely the drift the
-// content hash exists to catch, installed deliberately.
-//
-// The splice happens in the caller: SummaryPromptV0 still carries the
-// {{TEMPLATE}} token.
+// SummaryPromptV0 and SummaryTemplateV0 hand out the two halves of that prompt,
+// still carrying the {{TEMPLATE}} token: the splice happens in the caller.
 func SummaryPromptV0() string   { return summaryV0Prompt }
 func SummaryTemplateV0() string { return summaryV0Template }
 

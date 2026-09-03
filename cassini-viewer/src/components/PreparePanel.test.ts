@@ -82,4 +82,17 @@ describe("PreparePanel", () => {
   it("is not fixed to the viewport", () => {
     expect(preparePanelSource).not.toContain("position: fixed");
   });
+
+  it("takes the readiness of the deployment as a slot, and decides none of it", () => {
+    // Whether this deployment has anything to ask a question of is a fact about
+    // an operator, and the viewing layer has none — a standalone export has no
+    // operator at all. So the panel holds a place for the answer and never
+    // reaches for one: an empty slot is silence, which is the honest reading of
+    // a question nobody could ask, and a viewer that guessed would be a second
+    // answer free to disagree with /setup.
+    expect(preparePanelSource).toContain('<slot name="readiness" />');
+    expect(preparePanelSource).not.toContain("features");
+    expect(preparePanelSource).not.toContain("fetch(");
+    expect(preparePanelSource).not.toContain("administrator");
+  });
 });

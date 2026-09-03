@@ -33,6 +33,14 @@ import (
 type LLMSettings struct {
 	Providers []LLMProvider `json:"providers"`
 	Summary   LLMStep       `json:"summary"`
+	// Insight is the endpoint an ad-hoc insight runs on. Off here does not
+	// mean "no insights": the recorder layers INSIGHT_* over SUMMARY_*, so an
+	// insight step with no endpoint of its own runs on the summary one. That
+	// fallback is the point — a deployment that only ever configured a summary
+	// endpoint must not lose the ability to ask a question of its meetings.
+	// Turning insights off is removing the endpoint, exactly as it is for the
+	// summary (D-719).
+	Insight LLMStep `json:"insight"`
 }
 
 // LLMProvider is one OpenAI-compatible chat-completions endpoint.
@@ -57,6 +65,13 @@ type LLMStep struct {
 	Enabled  bool   `json:"enabled"`
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
+	// Template is the workflow this step runs, by id. Empty means the
+	// shipped default for the step, which is what every install written
+	// before this field existed reads as. The recorder owns the registry that
+	// resolves an id, so the operator stores the string and checks only its
+	// shape — it cannot know the set, and guessing would make adding a
+	// workflow a two-repo change (D-719).
+	Template string `json:"template,omitempty"`
 }
 
 const (
@@ -71,6 +86,7 @@ const (
 	envLLMMaxTokens     = "CASSINI_LLM_MAX_TOKENS"
 
 	llmStepSummary = "SUMMARY"
+	llmStepInsight = "INSIGHT"
 
 	openRouterBaseURL = "https://openrouter.ai/api/v1"
 
@@ -82,9 +98,21 @@ const (
 
 var llmProviderIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// llmStepEnv names the per-step variables the recorder reads for one step.
-func llmStepEnv(step string) (baseURL, apiKey, model string) {
-	return step + "_BASE_URL", step + "_API_KEY", step + "_MODEL"
+// llmTemplateIDPattern bounds a step's workflow id. The operator deliberately
+// does not know the registry — it lives in the recorder, and duplicating the
+// set here would make adding a workflow a two-repo change — so it validates the
+// shape and nothing else. The shape still matters: the id ends up on a
+// `cassini insight run --workflow` command line (D-719).
+var llmTemplateIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// llmStepEnv names every variable the recorder reads for one step. The request
+// bounds are per step rather than the shared CASSINI_LLM_* pair because two
+// steps can now sit on two endpoints, and the whole point of putting the bounds
+// on the endpoint is that a CPU-bound local model needs a longer leash than a
+// hosted API — one shared number cannot say both (D-719).
+func llmStepEnv(step string) (baseURL, apiKey, model, timeoutSec, maxTokens string) {
+	return step + "_BASE_URL", step + "_API_KEY", step + "_MODEL",
+		step + "_TIMEOUT_SEC", step + "_MAX_TOKENS"
 }
 
 // inheritedLLMEnv is every LLM variable ChildEnv strips from the inherited
@@ -98,8 +126,10 @@ func inheritedLLMEnv() map[string]bool {
 		// kill switch and its per-step wire (the cleanup step was removed).
 		envReadableDisabled: true, "READABLE_BASE_URL": true, "READABLE_API_KEY": true, "READABLE_MODEL": true,
 	}
-	b, k, m := llmStepEnv(llmStepSummary)
-	drop[b], drop[k], drop[m] = true, true, true
+	for _, step := range []string{llmStepSummary, llmStepInsight} {
+		b, k, m, t, n := llmStepEnv(step)
+		drop[b], drop[k], drop[m], drop[t], drop[n] = true, true, true, true, true
+	}
 	return drop
 }
 
@@ -137,8 +167,14 @@ func llmProviderNameFor(base string) string {
 
 // SeedLLMSettings derives the first-start policy from the deploy environment,
 // mirroring what the recorder would have read by hand: the shared endpoint
-// becomes the one provider and both steps run on it unless their kill-switch
-// is set. With no endpoint the policy is empty and both steps are off.
+// becomes the one provider and the summary runs on it unless its kill-switch is
+// set. With no endpoint the policy is empty and nothing runs.
+//
+// The insight step is deliberately seeded empty rather than pointed at the same
+// provider. Empty means "inherit the summary endpoint", which is exactly what a
+// hand-run `cassini insight run` would have read from this same environment; a
+// copy would instead freeze today's endpoint and silently stop tracking the
+// summary one (D-719).
 func SeedLLMSettings(getenv func(string) string) LLMSettings {
 	s := LLMSettings{Providers: []LLMProvider{}}
 	key := strings.TrimSpace(getenv(envLLMAPIKey))
@@ -264,14 +300,24 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 	if s.Summary, err = normalizeLLMStep("summary", s.Summary, ids); err != nil {
 		return s, err
 	}
+	if s.Insight, err = normalizeLLMStep("insight", s.Insight, ids); err != nil {
+		return s, err
+	}
 	return s, nil
 }
 
 func normalizeLLMStep(name string, step LLMStep, providers map[string]struct{}) (LLMStep, error) {
 	step.Provider = strings.TrimSpace(step.Provider)
 	step.Model = strings.TrimSpace(step.Model)
+	step.Template = strings.TrimSpace(step.Template)
 	if utf8.RuneCountInString(step.Model) > maxLLMFieldRunes {
 		return step, fmt.Errorf("%s: model exceeds %d characters", name, maxLLMFieldRunes)
+	}
+	if step.Template != "" && !llmTemplateIDPattern.MatchString(step.Template) {
+		return step, fmt.Errorf("%s: template %q must be letters, digits, '.', '_' or '-'", name, step.Template)
+	}
+	if utf8.RuneCountInString(step.Template) > maxLLMFieldRunes {
+		return step, fmt.Errorf("%s: template exceeds %d characters", name, maxLLMFieldRunes)
 	}
 	if _, ok := providers[step.Provider]; !ok {
 		if step.Enabled {
@@ -328,6 +374,10 @@ func (s LLMSettings) provider(step LLMStep) (LLMProvider, bool) {
 // would otherwise inherit — and each step gets its own fully resolved
 // endpoint, or nothing at all when it is off. The recorder's kill-switches are
 // never emitted: "off" is simply the absence of an endpoint.
+//
+// An insight step that is off is the one case where absence is not silence:
+// the recorder layers INSIGHT_* over SUMMARY_*, so emitting nothing here leaves
+// insights running on the summary endpoint (D-719).
 func (s LLMSettings) ChildEnv(base []string) []string {
 	drop := inheritedLLMEnv()
 	out := make([]string, 0, len(base)+8)
@@ -342,6 +392,7 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 		out = append(out, kv)
 	}
 	out = s.appendStepEnv(out, llmStepSummary, s.Summary)
+	out = s.appendStepEnv(out, llmStepInsight, s.Insight)
 	return out
 }
 
@@ -350,7 +401,7 @@ func (s LLMSettings) appendStepEnv(out []string, name string, step LLMStep) []st
 	if !ok {
 		return out
 	}
-	baseKey, keyKey, modelKey := llmStepEnv(name)
+	baseKey, keyKey, modelKey, timeoutKey, tokensKey := llmStepEnv(name)
 	out = append(out, baseKey+"="+p.BaseURL)
 	if p.APIKey != "" {
 		out = append(out, keyKey+"="+p.APIKey)
@@ -359,10 +410,10 @@ func (s LLMSettings) appendStepEnv(out []string, name string, step LLMStep) []st
 		out = append(out, modelKey+"="+step.Model)
 	}
 	if p.TimeoutSec > 0 {
-		out = append(out, envLLMTimeoutSec+"="+strconv.Itoa(p.TimeoutSec))
+		out = append(out, timeoutKey+"="+strconv.Itoa(p.TimeoutSec))
 	}
 	if p.MaxTokens > 0 {
-		out = append(out, envLLMMaxTokens+"="+strconv.Itoa(p.MaxTokens))
+		out = append(out, tokensKey+"="+strconv.Itoa(p.MaxTokens))
 	}
 	return out
 }
@@ -408,15 +459,22 @@ type llmEffectiveStep struct {
 	BaseURL          string `json:"base_url"`
 	Model            string `json:"model,omitempty"`
 	APIKeyConfigured bool   `json:"api_key_configured"`
+	// Inherited says this step has no endpoint of its own and is running on
+	// another step's. It is not cosmetic: an inherited endpoint changes when
+	// that other step is repointed, and a reader who cannot see the difference
+	// cannot predict that (D-719).
+	Inherited bool `json:"inherited"`
 }
 
 type llmEffective struct {
 	Summary *llmEffectiveStep `json:"summary"`
+	Insight *llmEffectiveStep `json:"insight"`
 }
 
 type llmSettingsResponse struct {
 	Providers []llmProviderView `json:"providers"`
 	Summary   LLMStep           `json:"summary"`
+	Insight   LLMStep           `json:"insight"`
 	Effective llmEffective      `json:"effective"`
 }
 
@@ -431,8 +489,26 @@ func (s LLMSettings) view() llmSettingsResponse {
 	return llmSettingsResponse{
 		Providers: providers,
 		Summary:   s.Summary,
-		Effective: llmEffective{Summary: s.effectiveStep(s.Summary)},
+		Insight:   s.Insight,
+		Effective: llmEffective{Summary: s.effectiveStep(s.Summary), Insight: s.effectiveInsight()},
 	}
+}
+
+// effectiveInsight is the endpoint an insight run will actually reach. An
+// insight step with no endpoint of its own does not mean no insights: the
+// recorder layers INSIGHT_* over SUMMARY_*, so the summary endpoint answers.
+// Reporting that as null would tell an administrator insights are off when they
+// are not (D-719).
+func (s LLMSettings) effectiveInsight() *llmEffectiveStep {
+	if step := s.effectiveStep(s.Insight); step != nil {
+		return step
+	}
+	step := s.effectiveStep(s.Summary)
+	if step == nil {
+		return nil
+	}
+	step.Inherited = true
+	return step
 }
 
 func (s LLMSettings) effectiveStep(step LLMStep) *llmEffectiveStep {
@@ -459,6 +535,7 @@ type llmProviderUpdate struct {
 type llmSettingsUpdate struct {
 	Providers *[]llmProviderUpdate `json:"providers"`
 	Summary   *LLMStep             `json:"summary"`
+	Insight   *LLMStep             `json:"insight"`
 }
 
 func (rt *Runtime) llmSettingsHandler(w http.ResponseWriter, r *http.Request) {
@@ -538,6 +615,9 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 	}
 	if in.Summary != nil {
 		updated.Summary = *in.Summary
+	}
+	if in.Insight != nil {
+		updated.Insight = *in.Insight
 	}
 	updated, err = normalizeLLMSettings(updated)
 	if err != nil {

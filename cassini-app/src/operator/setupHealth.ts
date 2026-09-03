@@ -23,11 +23,33 @@
 //	                /setup, the USER-readable half that carries the verdict
 //	                and none of the detail.
 
+import type { OperatorPanel } from "../surfaceRouting";
+
 // SetupHealth is GET <base>/setup — readable by any logged-in Nextcloud user.
 export interface SetupHealth {
   ok: boolean;
   state: string;
+  // What this deployment's AI configuration allows, or null when the operator
+  // did not say — an install older than D-722, or a build serving no operator
+  // at all. Null is a THIRD state and not a default: silence must read as
+  // "unknown", never as "not configured", exactly as the catalog's hasSummary
+  // does. Nothing renders an unconfigured notice from a question that was
+  // never answered.
+  features: SetupFeatures | null;
 }
+
+// SetupFeatures is the readiness signal (D-722): the two questions every
+// "not configured yet" state in the app reduces to. Both are one bit — the
+// endpoint, the model and the key are ADMIN-only and stay that way.
+export interface SetupFeatures {
+  // A recording will be summarised: the step is on and still resolves to an
+  // endpoint.
+  summaries: boolean;
+  // At least one endpoint exists, which is all insight creation needs.
+  insights: boolean;
+}
+
+export type SetupFeature = "summaries" | "insights";
 
 // RecordingsAccess is the `recordings_access` block of GET <base>/status —
 // ADMIN-only, and the only place the actionable detail exists.
@@ -114,6 +136,12 @@ export async function fetchSetupHealth(
     const response = await fetchImpl(url, {
       method: "GET",
       headers: { Accept: "application/json" },
+      // Same reason catalog.json is fetched this way: AppAPI caches a proxied
+      // GET for an hour, and both answers here change the moment an
+      // administrator acts — finishing setup, or configuring an endpoint. A
+      // cached one would leave the app telling everyone the deployment is
+      // still broken long after it was fixed.
+      cache: "no-store",
     });
     if (response.status !== 200) {
       return null;
@@ -128,7 +156,17 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
   if (!isRecord(body) || typeof body.ok !== "boolean" || typeof body.state !== "string") {
     return null;
   }
-  return { ok: body.ok, state: body.state };
+  return { ok: body.ok, state: body.state, features: readSetupFeatures(body.features) };
+}
+
+// readSetupFeatures insists on both booleans or neither. A half-answer is an
+// operator this build does not understand, and guessing the missing half is how
+// a deployment that summarises perfectly well ends up told it does not.
+export function readSetupFeatures(value: unknown): SetupFeatures | null {
+  if (!isRecord(value) || typeof value.summaries !== "boolean" || typeof value.insights !== "boolean") {
+    return null;
+  }
+  return { summaries: value.summaries, insights: value.insights };
 }
 
 // readRecordingsAccess pulls the admin-only detail out of a /status body.
@@ -358,6 +396,66 @@ function describeApps(ids: string[]): string {
     return described[0];
   }
   return `${described.slice(0, -1).join(", ")} and ${described[described.length - 1]}`;
+}
+
+// --- The unconfigured states (D-722) ---
+//
+// Same discipline as buildSetupNotice above, and for the same reason: the copy
+// is the part worth testing, .svelte files are not unit-tested in this repo, and
+// a wrong sentence about what leaves this deployment is a worse failure than a
+// missing one. NeedsSetupCard renders this and decides nothing.
+
+export interface FeatureNotice {
+  title: string;
+  summary: string;
+  // panel is the operator panel that fixes it, and actionLabel the link to it.
+  // BOTH are empty for anyone who is not an administrator — that panel is ADMIN
+  // at the proxy and its PUT would 403, so offering the control would be
+  // offering a way to fail. They get the fact and who can act on it, which is
+  // the whole of the remedy available to them.
+  panel: OperatorPanel | "";
+  actionLabel: string;
+}
+
+// The one panel behind both facts: providers and the summarise step are edited
+// together in AI providers (Settings.svelte maps `endpoints` -> LLMSettingsPanel).
+const AI_PANEL: OperatorPanel = "endpoints";
+
+// Only an administrator can act, and only they are told there is somewhere to
+// go — see FeatureNotice.panel.
+const ADMIN_ACTION = "Open AI providers";
+const NOT_YOURS_TO_FIX = " Only a Nextcloud administrator can change that, and there is nothing " +
+  "wrong with your account.";
+
+// buildFeatureNotice returns what to say about a capability this deployment does
+// not have, or null when there is nothing to say — which is BOTH "it is
+// configured" and "nobody answered". A standalone export has no operator to ask,
+// and absence there must not read as "not configured": it is the same three-state
+// rule the catalog's hasSummary follows.
+export function buildFeatureNotice(options: {
+  features: SetupFeatures | null;
+  feature: SetupFeature;
+  isAdmin: boolean;
+}): FeatureNotice | null {
+  const { features, feature, isAdmin } = options;
+  if (features === null || features[feature]) {
+    return null;
+  }
+  const summary =
+    feature === "insights"
+      ? "Asking a question of a set of meetings needs an AI endpoint, and this deployment has " +
+        "none it can reach — either none is configured, or none is switched on for a step. " +
+        "Recording and transcription are unaffected: they run here, and need no endpoint."
+      : "A summary needs an AI endpoint and the summarise step switched on, and this deployment " +
+        "does not have both. Transcripts are unaffected: they are produced here, and need " +
+        "neither.";
+  return {
+    title:
+      feature === "insights" ? "No AI endpoint is available" : "Meetings are not being summarised",
+    summary: isAdmin ? summary : summary + NOT_YOURS_TO_FIX,
+    panel: isAdmin ? AI_PANEL : "",
+    actionLabel: isAdmin ? ADMIN_ACTION : "",
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

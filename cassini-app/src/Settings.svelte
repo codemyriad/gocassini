@@ -36,7 +36,7 @@
   {:else if panel === "pipeline"}
     <SettingsPanel {operatorClient} />
   {:else if panel === "templates"}
-    <InsightTemplatesPanel />
+    <InsightTemplatesPanel {operatorClient} />
   {:else}
     <!-- Unreachable: the operator surface renders the run console itself and
          only mounts this host for a Settings panel. Saying so beats a blank

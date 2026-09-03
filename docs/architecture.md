@@ -59,7 +59,7 @@ These are the artifact contracts that components share. Treat them as the stable
 | Multitrack meeting MKV (Cassini MKV-v1) | recorder | [cassini-go-recorder/docs/mkv-format.md](../cassini-go-recorder/docs/mkv-format.md) |
 | `.rtplog` packet log + session artifact | recorder | [cassini-go-recorder/docs/formats.md](../cassini-go-recorder/docs/formats.md) |
 | Meeting artifact bundle (`meeting.webm`, `transcript.words.v1.json`, optional `transcript.readable.v1.json`, `captions.vtt`, optional `summary.md`, `manifest.json`) | recorder (`internal/transcribe`) | [cassini-go-recorder/docs/transcription-pipeline.md](../cassini-go-recorder/docs/transcription-pipeline.md) |
-| V0 summary template (Markdown sections the summary generator must fill) | recorder (`internal/transcribe/templates/summary.v0.md`) | the file itself |
+| V0 summary template (Markdown sections the summary generator must fill) | recorder (`internal/insight/workflows/prompts/summarise-template.v0.md`) | the file itself |
 | Portable `.opus` meeting file | recorder (`internal/portable`) | [docs/portable-meeting-format.md](portable-meeting-format.md) |
 | Viewer-loaded transcript JSON (`transcript.words.v1`, `transcript.readable.v1`) | recorder (produced) / viewer (validated) | [cassini-viewer/schema/](../cassini-viewer/schema/) |
 

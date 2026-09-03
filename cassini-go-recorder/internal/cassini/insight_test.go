@@ -527,3 +527,261 @@ func TestInsightRunWarnsAboutAnEarlierRunsDocument(t *testing.T) {
 		t.Errorf("the earlier document was not left alone: %v %s", err, kept)
 	}
 }
+
+// D-718's "done when", the CLI half: the registry is listable, and every
+// workflow it lists can be named on a run. The panel reads this same listing
+// through the operator, so a workflow that is offered is a workflow that runs.
+func TestInsightWorkflowsListsTheRegistry(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"insight", "workflows"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	registry, err := insightWorkflows()
+	if err != nil {
+		t.Fatalf("insightWorkflows: %v", err)
+	}
+	listing := stdout.String()
+	for _, id := range registry.IDs() {
+		workflow, _ := registry.Lookup(id)
+		// Id, version and hash on one line: the three fields an insight
+		// document records, so a document and this listing can be compared.
+		want := "workflow=" + id + " version=" + workflow.Version + " sha256=" + workflow.SHA256
+		if !strings.Contains(listing, want) {
+			t.Errorf("the listing does not carry %q:\n%s", want, listing)
+		}
+	}
+	if !strings.Contains(listing, "asks=") || !strings.Contains(listing, "name=") {
+		t.Errorf("the listing does not say what each workflow is called or asks:\n%s", listing)
+	}
+}
+
+// --json is what the operator shells out to, so its shape is the shape of
+// GET operator/settings/workflows. The instruction it carries is the spliced
+// system prompt verbatim: the settings panel shows the bytes rather than a
+// description of them, and nothing can guarantee a description tracks bytes.
+func TestInsightWorkflowsJSONCarriesTheInstructionItSends(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"insight", "workflows", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	var entries []struct {
+		ID          string `json:"id"`
+		Version     string `json:"version"`
+		SHA256      string `json:"sha256"`
+		Name        string `json:"name"`
+		Question    string `json:"question"`
+		Description string `json:"description"`
+		Origin      string `json:"origin"`
+		Instruction string `json:"instruction"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &entries); err != nil {
+		t.Fatalf("decode the listing: %v\n%s", err, stdout.String())
+	}
+
+	registry, err := insightWorkflows()
+	if err != nil {
+		t.Fatalf("insightWorkflows: %v", err)
+	}
+	if len(entries) != len(registry.IDs()) {
+		t.Fatalf("the listing has %d workflows, the registry %d", len(entries), len(registry.IDs()))
+	}
+	for _, entry := range entries {
+		workflow, known := registry.Lookup(entry.ID)
+		if !known {
+			t.Errorf("the listing offers %q, which cannot be run", entry.ID)
+			continue
+		}
+		if entry.Instruction != workflow.SystemPrompt() {
+			t.Errorf("workflow %q: the listed instruction is not the prompt a run would send", entry.ID)
+		}
+		if entry.SHA256 != workflow.SHA256 || entry.Version != workflow.Version {
+			t.Errorf("workflow %q: listing says %s/%s, registry says %s/%s", entry.ID, entry.Version, entry.SHA256, workflow.Version, workflow.SHA256)
+		}
+		if entry.Name == "" || entry.Question == "" || entry.Description == "" || entry.Origin == "" {
+			t.Errorf("workflow %q is listed without everything the panel renders: %+v", entry.ID, entry)
+		}
+	}
+}
+
+// Naming a workflow other than the default runs that workflow's bytes, and the
+// document says which. Until D-718 the registry held one entry, so "the record
+// names the workflow that ran" and "the record names the only workflow" were
+// the same assertion.
+func TestInsightRunNamesTheWorkflowItWasAskedFor(t *testing.T) {
+	dir := t.TempDir()
+	bundle := writeContextBundle(t, filepath.Join(dir, "a.json"), insightMeeting("mtg_a", "Monday", "rm_one", "Planning"))
+	recordPath := filepath.Join(dir, "insight.json")
+
+	summaryLLMEnv(t, "http://model.invalid/v1")
+	provider := &stubInsightProvider{reply: "# To-dos — Monday\n\nNothing recorded.\n"}
+	useInsightProvider(t, provider)
+
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"insight", "run",
+		"--context", bundle,
+		"--workflow", "todos",
+		"--out", filepath.Join(dir, "Todos.md"),
+		"--record", recordPath,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+
+	registry, err := insightWorkflows()
+	if err != nil {
+		t.Fatalf("insightWorkflows: %v", err)
+	}
+	todos, ok := registry.Lookup("todos")
+	if !ok {
+		t.Fatal("the registry has no todos workflow")
+	}
+	if provider.system != todos.SystemPrompt() {
+		t.Error("the prompt sent is not the todos workflow's own, spliced")
+	}
+
+	raw, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatalf("read the record: %v", err)
+	}
+	var record insight.Record
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatalf("decode the record: %v", err)
+	}
+	if record.Workflow.ID != "todos" || record.Workflow.Version != todos.Version || record.Workflow.SHA256 != todos.SHA256 {
+		t.Errorf("the record names %+v, want todos/%s/%s", record.Workflow, todos.Version, todos.SHA256)
+	}
+}
+
+// "The summary is an insight like any other, so it names the template it runs."
+// That claim is only true if the pipeline's summary step and the registry's
+// summarise workflow are the same bytes — which they now are by construction,
+// because internal/transcribe reads its prompt from the registry's package
+// rather than embedding a second copy (D-718). This is the assertion that
+// notices if that ever stops being so.
+func TestSummariseWorkflowIsThePipelinesOwnPrompt(t *testing.T) {
+	registry, err := insightWorkflows()
+	if err != nil {
+		t.Fatalf("insightWorkflows: %v", err)
+	}
+	summarise, ok := registry.Lookup(transcribe.SummaryWorkflowID)
+	if !ok {
+		t.Fatalf("the registry has no %q workflow, which the pipeline's summary step runs", transcribe.SummaryWorkflowID)
+	}
+	if summarise.Version != transcribe.SummaryWorkflowVersion {
+		t.Errorf("the registry ships %s %s, the pipeline claims %s", summarise.ID, summarise.Version, transcribe.SummaryWorkflowVersion)
+	}
+	spliced := strings.Replace(transcribe.SummaryPromptV0(), "{{TEMPLATE}}", transcribe.SummaryTemplateV0(), 1)
+	if summarise.SystemPrompt() != spliced {
+		t.Error("the registry's summarise prompt is not the one the publish pipeline sends")
+	}
+}
+
+// The operator gives the insight step its own endpoint by exporting INSIGHT_*
+// beside SUMMARY_* (D-719). This command has to read that layer, or the whole
+// second step is a variable nothing consumes: an administrator would point
+// insights at a larger model, save, and every question would still go to the
+// endpoint that writes each meeting's summary — with nothing anywhere saying
+// so.
+func TestInsightRunPrefersTheInsightEndpointOverTheSummaryOne(t *testing.T) {
+	dir := t.TempDir()
+	bundle := writeContextBundle(t, filepath.Join(dir, "a.json"), insightMeeting("mtg_a", "Monday", "rm_one", "Planning"))
+
+	var summaryHits, insightHits int
+	var askedModel string
+	summary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		summaryHits++
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"wrong endpoint"}}]}`))
+	}))
+	t.Cleanup(summary.Close)
+	insightEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		insightHits++
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		askedModel = body.Model
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": "# Answer\n\nIt shipped.\n"}}},
+		})
+	}))
+	t.Cleanup(insightEndpoint.Close)
+
+	summaryLLMEnv(t, summary.URL)
+	t.Setenv("INSIGHT_BASE_URL", insightEndpoint.URL)
+	t.Setenv("INSIGHT_MODEL", "the-larger-one")
+
+	outPath := filepath.Join(dir, "Insight.md")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{
+		"insight", "run", "--context", bundle, "--out", outPath,
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if insightHits != 1 || summaryHits != 0 {
+		t.Fatalf("insight endpoint hit %d times, summary endpoint %d; want 1 and 0", insightHits, summaryHits)
+	}
+	if askedModel != "the-larger-one" {
+		t.Errorf("model asked for = %q, want the insight step's own", askedModel)
+	}
+	document, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read the insight: %v", err)
+	}
+	if !strings.Contains(string(document), "It shipped.") {
+		t.Errorf("the answer did not reach the document:\n%s", document)
+	}
+}
+
+// With no endpoint of its own an insight runs on the summary one, so a
+// deployment that only ever configured summaries keeps the ability to ask a
+// question of its meetings without configuring a second thing (D-719).
+func TestInsightRunFallsBackToTheSummaryEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	bundle := writeContextBundle(t, filepath.Join(dir, "a.json"), insightMeeting("mtg_a", "Monday", "rm_one", "Planning"))
+
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"# Answer\n\nInherited.\n"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	summaryLLMEnv(t, "http://shared.invalid/v1")
+	t.Setenv("SUMMARY_BASE_URL", srv.URL)
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{
+		"insight", "run", "--context", bundle, "--out", filepath.Join(dir, "Insight.md"),
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr: %s", code, stderr.String())
+	}
+	if hits != 1 {
+		t.Fatalf("summary endpoint hit %d times, want 1", hits)
+	}
+}
+
+// CASSINI_SUMMARY_DISABLED means "publish meetings without a summary", not
+// "refuse a document somebody asked for by name". An insight is asked for; the
+// switch does not reach it (D-719), and the help text says so.
+func TestInsightRunIgnoresTheSummaryKillSwitch(t *testing.T) {
+	dir := t.TempDir()
+	bundle := writeContextBundle(t, filepath.Join(dir, "a.json"), insightMeeting("mtg_a", "Monday", "rm_one", "Planning"))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"# Answer\n\nStill answered.\n"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	summaryLLMEnv(t, srv.URL)
+	t.Setenv("CASSINI_SUMMARY_DISABLED", "1")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{
+		"insight", "run", "--context", bundle, "--out", filepath.Join(dir, "Insight.md"),
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit = %d, want 0 — the summary kill switch must not refuse an insight\nstderr: %s", code, stderr.String())
+	}
+}

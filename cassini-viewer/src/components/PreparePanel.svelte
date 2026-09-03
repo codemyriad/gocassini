@@ -232,7 +232,15 @@
       {status?.text ?? ""}
     </p>
 
-    <!-- 3. The in-app Generate card lands here (D-700). It is a section of this
+    <!-- 3. Whether this deployment can be asked a question at all (D-722).
+         Empty in every build that has no operator to ask — a standalone export
+         says nothing here rather than claiming "not configured", which it has
+         no way to know. The shell fills it: the sentence, who may act on it and
+         where the fix lives are all things only the shell knows, and a viewer
+         that decided them would be a second answer to drift from /setup. -->
+    <slot name="readiness" />
+
+    <!-- 4. The in-app Generate card lands here (D-700). It is a section of this
          panel rather than a screen of its own, because asking a question of
          these meetings is the next thing you do with the set you just reviewed
          — so the slot exists now and the layout does not have to be rebuilt

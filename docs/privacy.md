@@ -109,6 +109,32 @@ Controls:
 See [Summarisation & the privacy caveat](./README.md#summarisation--the-privacy-caveat)
 and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
 
+### Checking it, without being an administrator
+
+"Nothing leaves your infrastructure unless an endpoint is configured" is a claim
+the people whose meetings are being recorded should be able to check, and until
+now only an administrator could: the AI settings are ADMIN-only, as they must be,
+because they carry the endpoint and its key.
+
+So `GET <cassini>/setup`, which any logged-in Nextcloud user may read, answers it
+directly:
+
+```json
+{ "ok": true, "state": "provisioned", "features": { "summaries": false, "insights": false } }
+```
+
+- `features.summaries` — a recorded meeting will be summarised, so its transcript
+  is sent to the configured endpoint. `false` means no transcript is sent for a
+  summary, whoever recorded the meeting.
+- `features.insights` — a question asked of a set of meetings will reach a
+  configured endpoint, so that is possible on this deployment. `false` means no
+  endpoint is configured, or none is switched on for a step to use.
+
+Both are one bit. Neither reports the endpoint, the model, or the key, and no
+other AI setting is readable without being an administrator. The Cassini app uses
+these same two bits to explain itself rather than offering a control the reader
+could not use.
+
 ## What is _not_ sent anywhere
 
 - **Transcription is 100% local.** Speech-to-text runs in-process using local

@@ -13,8 +13,8 @@ This document describes the post-recording transcription pipeline that turns a f
 | Audio + STT | `internal/transcribe/audio.go`, `models.go`, `stt.go` | ffmpeg probe/mix, model download/cache, sherpa-onnx recognizer |
 | Segmentation + format | `internal/transcribe/format.go` | Segment assembly, JSON/VTT emitters, manifest writer |
 | LLM integration | `internal/transcribe/llm.go` | OpenAI-compatible HTTP client for the summary call |
-| Summary generation (V4) | `internal/transcribe/summary.go` | Embedded V0 template, system prompt, transcript flattening |
-| Template (V0 contract) | `internal/transcribe/templates/summary.v0.md` | The summary's section structure — single source of truth |
+| Summary generation (V4) | `internal/transcribe/summary.go` | System prompt assembly and transcript flattening; the prompt bytes come from the workflow registry |
+| Template (V0 contract) | `internal/insight/workflows/prompts/summarise-template.v0.md` | The summary's section structure — single source of truth |
 
 ## End-to-end flow
 
@@ -107,7 +107,7 @@ type BuildConfig struct {
 
 V4 introduces step 9 — meeting summary generation — and nothing else in the pipeline shape. Specifically:
 
-- **No new artifact contract.** `summary.md` is plain markdown. The contract is the V0 template in `internal/transcribe/templates/summary.v0.md`, embedded into the system prompt at compile time via `go:embed` so edits to the template propagate without code changes.
+- **No new artifact contract.** `summary.md` is plain markdown. The contract is the V0 template in `internal/insight/workflows/prompts/summarise-template.v0.md`, which the summary step reads from the workflow registry (D-718) rather than embedding a second copy — so the bytes the pipeline sends and the bytes `cassini insight workflows` lists are the same file, and a change to it is caught by the prompt gate in `lint.yml`.
 - **No new dependencies.** Reuses `chatCompletion` from `llm.go`.
 - **No manifest schema change.** `manifest.json` does not currently list `summary.md` or summary provenance — see Followups for V6.
 - **No new CLI flags.** Operators set an endpoint (`LLM_BASE_URL`, or `OPENROUTER_API_KEY` which implies the OpenRouter one) and optionally `SUMMARY_MODEL`, and the summary path turns on automatically. With no endpoint, step 9 is skipped silently along with step 8; `CASSINI_SUMMARY_DISABLED=1` skips step 9 alone.
@@ -117,7 +117,7 @@ The acceptance criteria from D-242 map to:
 
 | AC | Where it lives |
 |---|---|
-| Pipeline produces summary in V0 template format | `summary.go` → `summarySystemPrompt` embeds `summary.v0.md`; tests pin both ends |
+| Pipeline produces summary in V0 template format | `summary.go` → `summarySystemPrompt` splices the registry's `summarise` prompt (`internal/insight/workflows/prompts/summarise*.v0.md`); tests pin both ends |
 | Summary renders correctly in V3 viewer | `summary.md` written next to other artifacts; viewer's optional-sidecar logic at `cassini-viewer/scripts/demo-data-pull.mjs:144` already handles it |
 | Disabling summary generation does not break pipeline | `SummaryLLM.IsConfigured()` gate in `writeSummaryArtifact`; warn-and-skip on errors |
 | Summary written alongside transcript artifacts | `os.WriteFile(filepath.Join(outputDir, "summary.md"), …)` in `writeSummaryArtifact` |
@@ -128,5 +128,5 @@ The acceptance criteria from D-242 map to:
 2. `internal/transcribe/transcribe.go` — the orchestrator, top-to-bottom
 3. `internal/transcribe/format.go` — the artifact contracts (transcript JSON, captions, manifest)
 4. `internal/transcribe/llm.go` — the LLM HTTP layer
-5. `internal/transcribe/summary.go` + `templates/summary.v0.md` — step 9 (V4)
+5. `internal/transcribe/summary.go` + `internal/insight/workflows/prompts/summarise*.v0.md` — step 9 (V4)
 6. `internal/portable/manifest.go` — the portable `.opus` manifest schema, which downstream code packs into a single file

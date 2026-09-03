@@ -344,7 +344,7 @@ func Run(ctx context.Context, req Request) (Artifact, error) {
 
 // assemblePrompt resolves the template and the question into the system prompt.
 func assemblePrompt(workflow Workflow, question string) (string, error) {
-	system := workflow.systemPrompt()
+	system := workflow.SystemPrompt()
 	switch {
 	case workflow.TakesQuestion() && question == "":
 		return "", Failf(ReasonBadRequest, "workflow %q asks a question of the meetings and none was given", workflow.ID)

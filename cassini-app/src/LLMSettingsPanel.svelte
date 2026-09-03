@@ -2,7 +2,14 @@
   import { onMount } from "svelte";
   import { Bot, Plus, RefreshCw, Trash2 } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
-  import type { LLMModel, LLMProviderUpdate, LLMSettings, LLMStep } from "./operator/types";
+  import type {
+    InsightWorkflow,
+    LLMEffectiveStep,
+    LLMModel,
+    LLMProviderUpdate,
+    LLMSettings,
+    LLMStep,
+  } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
 
@@ -25,8 +32,13 @@
 
   let settings: LLMSettings | null = null;
   let providers: ProviderRow[] = [];
-  let summary: LLMStep = { enabled: false, provider: "", model: "" };
+  let summary: LLMStep = emptyStep();
+  let insight: LLMStep = emptyStep();
   let snapshot = "";
+
+  function emptyStep(): LLMStep {
+    return { enabled: false, provider: "", model: "", template: "" };
+  }
 
   let loading = true;
   let saving = false;
@@ -38,6 +50,17 @@
   let modelsByProvider: Record<string, LLMModel[]> = {};
   let modelsError = "";
   let loadingModelsFor = "";
+
+  // The workflows this build actually ships (D-718's GET /settings/workflows).
+  // A step stores its workflow as a plain id and the operator validates only
+  // the shape of it — it is a separate Go module and cannot see the registry —
+  // so this panel is the only place a typo can be caught before it is saved.
+  // The list is advisory, not a gate: the field stays free text so an id from a
+  // newer recorder image can still be typed, and a failed fetch must not stop
+  // an administrator configuring an endpoint. It only lets the panel say when
+  // an id will not resolve.
+  let knownWorkflows: InsightWorkflow[] = [];
+  let workflowsKnown = false;
 
   onMount(() => {
     void load();
@@ -57,7 +80,42 @@
     } finally {
       loading = false;
     }
+    void loadWorkflows();
   }
+
+  async function loadWorkflows() {
+    if (!operatorClient) {
+      return;
+    }
+    try {
+      knownWorkflows = await operatorClient.listInsightWorkflows();
+      workflowsKnown = true;
+    } catch {
+      // Swallowed on purpose. Not knowing the registry costs the warning below
+      // and nothing else; reporting it beside the endpoint errors would put a
+      // failure in front of an administrator who came here to fix a different
+      // one.
+      workflowsKnown = false;
+    }
+  }
+
+  // Empty means "the workflow Cassini ships", which is what every policy
+  // written before the field existed reads as, so it is never unknown.
+  function unknownWorkflow(id: string, known: InsightWorkflow[], answered: boolean): boolean {
+    return answered && id.trim() !== "" && !known.some((w) => w.id === id.trim());
+  }
+
+  // Reactive rather than called from the markup: the registry arrives after the
+  // settings do, and a template expression naming only `summary` would never be
+  // re-evaluated when it lands.
+  $: summaryWorkflowUnknown = unknownWorkflow(summary.template, knownWorkflows, workflowsKnown);
+  $: insightWorkflowUnknown = unknownWorkflow(insight.template, knownWorkflows, workflowsKnown);
+
+  // Named ids rather than "unknown workflow": the remedy is one of them, and
+  // an administrator should not have to open another panel to find out which.
+  $: unknownWorkflowWarning =
+    `This build ships no workflow with that id, so a run naming it would refuse to start. ` +
+    `It ships: ${knownWorkflows.map((w) => w.id).join(", ")}.`;
 
   function apply(next: LLMSettings) {
     settings = next;
@@ -72,7 +130,8 @@
       maxTokens: p.max_tokens > 0 ? p.max_tokens : null,
     }));
     summary = { ...next.summary };
-    snapshot = JSON.stringify({ providers, summary });
+    insight = { ...next.insight };
+    snapshot = JSON.stringify({ providers, summary, insight });
   }
 
   function newProviderId(): string {
@@ -103,6 +162,9 @@
     // would reject it; disable it and forget the reference instead.
     if (summary.provider === id) {
       summary = { ...summary, provider: "", enabled: false };
+    }
+    if (insight.provider === id) {
+      insight = { ...insight, provider: "", enabled: false };
     }
   }
 
@@ -150,6 +212,7 @@
             return update;
           }),
           summary,
+          insight,
         }),
       );
     } catch (error) {
@@ -166,25 +229,45 @@
     return error instanceof Error ? error.message : String(error);
   }
 
-  function effectiveLabel(): string {
+  function endpointLabel(effective: LLMEffectiveStep): string {
+    return `${effective.base_url} · ${effective.model || "endpoint default model"}`;
+  }
+
+  function summaryEffectiveLabel(): string {
     const effective = settings?.effective.summary;
     if (!effective) {
       return "Currently off — meetings publish without a summary.";
     }
-    return `Currently: ${effective.base_url} · ${effective.model || "endpoint default model"}`;
+    return `Currently: ${endpointLabel(effective)}`;
   }
 
-  $: current = JSON.stringify({ providers, summary });
+  // Three outcomes, not two. An insight step with no endpoint of its own is
+  // not off — the recorder layers INSIGHT_* over SUMMARY_* — and an admin who
+  // cannot tell the inherited case from the owned one cannot predict what
+  // happens when the summary endpoint is repointed (D-719).
+  function insightEffectiveLabel(): string {
+    const effective = settings?.effective.insight;
+    if (!effective) {
+      return "No endpoint configured — an insight has nothing to ask.";
+    }
+    if (effective.inherited) {
+      return `Inherits the meeting-summary endpoint: ${endpointLabel(effective)} — and moves with it.`;
+    }
+    return `Currently: ${endpointLabel(effective)}`;
+  }
+
+  $: current = JSON.stringify({ providers, summary, insight });
   $: isDirty = settings !== null && current !== snapshot;
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
   <header class="flex items-center justify-between gap-3 px-4 py-3">
     <div>
-      <h2 class="font-semibold">Meeting summaries</h2>
+      <h2 class="font-semibold">AI providers</h2>
       <p class="text-xs text-base-content/60">
-        Which model endpoint writes each meeting's summary. The full transcript is sent to that
-        endpoint; with summaries off, meetings publish without one.
+        Which model endpoint each step runs on. The full transcript is sent to that endpoint;
+        summaries and insights can use different ones, so a small local model can write every
+        meeting's summary while a larger one answers a question you ask by hand.
       </p>
     </div>
     <div class="flex items-center gap-2">
@@ -372,7 +455,109 @@
             {/each}
           </datalist>
         </label>
-        <p class="text-xs text-base-content/60">{effectiveLabel()}</p>
+        <label class="flex w-full flex-col gap-1">
+          <span class="text-xs font-medium text-base-content/70">Workflow</span>
+          <input
+            bind:value={summary.template}
+            type="text"
+            class="input input-sm w-full border-base-300 shadow-none"
+            placeholder="summarise (the one Cassini ships)"
+            list="llm-workflows"
+          />
+          {#if summaryWorkflowUnknown}
+            <span class="text-xs text-warning">{unknownWorkflowWarning}</span>
+          {/if}
+          <!-- The field is saved and served; the publish pipeline does not read
+               it back yet. Saying so beats a control that silently does nothing
+               — delete this line when the pipeline resolves it (D-719). -->
+          <span class="text-xs text-base-content/50">
+            Saved with the policy. The publish pipeline still runs the workflow Cassini ships.
+          </span>
+        </label>
+        <p class="text-xs text-base-content/60">{summaryEffectiveLabel()}</p>
+      </section>
+
+      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
+        <label class="flex cursor-pointer items-center gap-2">
+          <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={insight.enabled} />
+          <h3 class="text-sm font-semibold">Insights</h3>
+        </label>
+        <p class="text-xs text-base-content/60">
+          A question asked of several meetings at once. Off means insights run on the meeting-summary
+          endpoint above; turn it on to send them somewhere else — a larger model, or one you are
+          willing to wait longer for. There is no setting here that stops insights running: that is
+          removing the endpoint.
+        </p>
+        {#if insight.enabled}
+          <label class="flex w-full flex-col gap-1">
+            <span class="text-xs font-medium text-base-content/70">Endpoint</span>
+            <select bind:value={insight.provider} class="select select-sm w-full border-base-300 shadow-none">
+              <option value="">— none —</option>
+              {#each providers as p (p.id)}
+                <option value={p.id}>{p.name || p.baseUrl || p.id}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="flex w-full flex-col gap-1">
+            <span class="text-xs font-medium text-base-content/70">Model</span>
+            <div class="flex w-full items-center gap-1">
+              <input
+                bind:value={insight.model}
+                type="text"
+                class="input input-sm w-full border-base-300 shadow-none"
+                placeholder="endpoint default"
+                list="llm-models-insight"
+              />
+              <button
+                class="btn btn-ghost btn-sm shrink-0"
+                type="button"
+                disabled={insight.provider === "" || loadingModelsFor !== ""}
+                on:click={() => loadModels(insight.provider)}
+              >
+                {#if loadingModelsFor !== "" && loadingModelsFor === insight.provider}
+                  <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+                {:else}
+                  Load models
+                {/if}
+              </button>
+            </div>
+            <datalist id="llm-models-insight">
+              {#each modelsByProvider[insight.provider] ?? [] as model (model.id)}
+                <option value={model.id}>{model.name ?? model.id}</option>
+              {/each}
+            </datalist>
+          </label>
+        {/if}
+        <label class="flex w-full flex-col gap-1">
+          <span class="text-xs font-medium text-base-content/70">Workflow</span>
+          <input
+            bind:value={insight.template}
+            type="text"
+            class="input input-sm w-full border-base-300 shadow-none"
+            placeholder="summarise (the one Cassini ships)"
+            list="llm-workflows"
+          />
+          {#if insightWorkflowUnknown}
+            <span class="text-xs text-warning">{unknownWorkflowWarning}</span>
+          {/if}
+          <!-- Same caveat as the summary step's, and for the same reason:
+               nothing runs an insight from here yet, so the field is stored and
+               served and read by nobody. Delete this line when the operator
+               spawns a run. -->
+          <span class="text-xs text-base-content/50">
+            Saved with the policy. Nothing runs an insight from the Operator yet; `cassini insight
+            run --workflow` names one on the command line.
+          </span>
+        </label>
+        <!-- One list for both steps: the registry is what the recorder ships,
+             not a property of a step. Insight templates renders the same set in
+             full, with each one's instruction. -->
+        <datalist id="llm-workflows">
+          {#each knownWorkflows as workflow (workflow.id)}
+            <option value={workflow.id}>{workflow.name}</option>
+          {/each}
+        </datalist>
+        <p class="text-xs text-base-content/60">{insightEffectiveLabel()}</p>
       </section>
       {#if modelsError}
         <div class="alert alert-warning text-sm">{modelsError}</div>

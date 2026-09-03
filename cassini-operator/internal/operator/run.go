@@ -739,6 +739,10 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/setup", rt.setupHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
+	// A sibling of the /settings/ prefix rather than another branch inside the
+	// LLM settings handler: the workflow registry is not LLM policy, it is what
+	// the recorder ships, and an exact pattern wins over the prefix (D-718).
+	api.HandleFunc("/settings/workflows", rt.settingsWorkflowsHandler)
 	api.HandleFunc("/settings/", rt.llmSettingsHandler)
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 

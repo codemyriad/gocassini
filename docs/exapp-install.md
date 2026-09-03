@@ -393,13 +393,20 @@ read it is what makes you an administrator here.
 | Everyone else | That Cassini is not set up, that it is not their account, and a link to this Cassini page to hand to an administrator — who, opening it, gets the row above. Nothing names an app, a step or a command. |
 
 The verdict behind this comes from `GET /operator/setup`, which is USER-level
-and carries `ok` and `state` only:
+and carries `ok`, `state` and two capability bits:
 
 ```bash
 curl -sS -u alice:<pass> \
   "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/setup"
-# {"ok":false,"state":"unavailable"}
+# {"ok":false,"state":"unavailable","features":{"summaries":false,"insights":false}}
 ```
+
+`features.summaries` is true when a published meeting will actually be
+summarised — the step is on *and* still resolves to an endpoint — and
+`features.insights` is true when a question asked of a set of meetings will
+reach one. One bit each: no URL, no model, no key. They are here so a person
+who is not an administrator can find out why nothing is being summarised,
+rather than guessing (D-722).
 
 It answers **200 in every state**, including the broken ones: the caller is a
 browser deciding what to render, and it has to be able to tell "Cassini is not
@@ -748,7 +755,7 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
 | `/operator/settings` | ADMIN | STT-quality settings (read + update) |
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
-| `/operator/setup` | USER | Whether recordings can be served at all — `{"ok":…,"state":…}` and nothing else |
+| `/operator/setup` | USER | Whether recordings can be served at all, plus two AI capability bits — `{"ok":…,"state":…,"features":{"summaries":…,"insights":…}}` and nothing else |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
 | `/ui/viewer.js`, `/ui/viewer.css` | USER | Bootstrap script + stylesheet behind the **Cassini** navigation entry |
@@ -765,8 +772,9 @@ fetch 404s. See
 `/operator/setup` is the one deliberate exception to "the operator API is
 ADMIN", and it is USER for a reason: without it, the only thing a non-admin
 could learn about an unfinished install was the viewer failing to load. It
-carries the `recordings_access` **verdict** — `ok` and `state` — and nothing
-else. No step, no administrator, no paths, no versions; the diagnosis stays on
+carries the `recordings_access` **verdict** — `ok` and `state` — and the two
+`features` booleans, and nothing else. No step, no administrator, no paths, no
+versions, no endpoint, no model, no key; the diagnosis stays on
 `/operator/status`. See [What people see when setup is not
 finished](#what-people-see-when-setup-is-not-finished).
 

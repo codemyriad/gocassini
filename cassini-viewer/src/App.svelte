@@ -727,7 +727,14 @@
           gaps={selectionGaps}
           loadBundle={loadSelectedBundle}
           on:close={() => (prepareOpen = false)}
-        />
+        >
+          <!-- Forwarded, not decided (D-722). Whether this deployment can be
+               asked a question is a fact about the operator behind it, and the
+               viewing layer has none: the shell passes the answer through, and
+               a build with no shell — the standalone export — passes nothing,
+               which is the honest reading of a question nobody could ask. -->
+          <slot name="prepare-readiness" slot="readiness" />
+        </PreparePanel>
       </aside>
     {/if}
   </div>

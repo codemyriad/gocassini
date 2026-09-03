@@ -981,8 +981,120 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
 		t.Fatalf("decode setup response: %v", err)
 	}
-	if len(fields) != 2 {
-		t.Fatalf("setup must answer with ok+state only, got %#v", fields)
+	if len(fields) != 3 {
+		t.Fatalf("setup must answer with ok+state+features only, got %#v", fields)
+	}
+	features, ok := fields["features"].(map[string]any)
+	if !ok {
+		t.Fatalf("setup features = %#v, want an object", fields["features"])
+	}
+	// One bit each, by name. An endpoint, a model or a key reaching a non-admin
+	// through the readiness signal would undo the whole reason it is a boolean.
+	if len(features) != 2 {
+		t.Fatalf("setup features must be two booleans, got %#v", features)
+	}
+	for _, name := range []string{"summaries", "insights"} {
+		if _, isBool := features[name].(bool); !isBool {
+			t.Fatalf("setup features[%q] = %#v, want a boolean", name, features[name])
+		}
+	}
+}
+
+// The readiness signal (D-722). Every "not configured yet" state in the app
+// reduces to these two bits, and this is the only route that answers them for
+// somebody who is not an administrator.
+func TestSetupReportsWhichAICapabilitiesAreConfigured(t *testing.T) {
+	provider := LLMProvider{ID: "p-1", Name: "local", BaseURL: "http://127.0.0.1:11434/v1"}
+	for _, tc := range []struct {
+		name          string
+		llm           LLMSettings
+		wantSummaries bool
+		wantInsights  bool
+	}{
+		{
+			// The out-of-the-box deployment: the transcript is complete and
+			// nothing is summarised, which the app has to be able to say.
+			name: "no endpoint at all",
+		},
+		{
+			// A provider row nothing points at is not an endpoint anything can
+			// reach: ChildEnv emits a step's variables only when that step
+			// resolves, and strips the shared ones, so the recorder is handed
+			// nothing and an insight run exits "no model endpoint is
+			// configured". Saying "insights" here would offer a question whose
+			// every answer is that error.
+			name: "an endpoint, but no step points at it",
+			llm:  LLMSettings{Providers: []LLMProvider{provider}},
+		},
+		{
+			// Insight creation needs less than summarising does — an endpoint
+			// it can reach, and nothing else — so it is available here while
+			// summaries are not.
+			name:         "an endpoint the insight step alone uses",
+			llm:          LLMSettings{Providers: []LLMProvider{provider}, Insight: LLMStep{Enabled: true, Provider: provider.ID}},
+			wantInsights: true,
+		},
+		{
+			// The insight step has no endpoint of its own and inherits the
+			// summary one, which is a configuration an insight will reach.
+			name:          "an endpoint, summarising on",
+			llm:           LLMSettings{Providers: []LLMProvider{provider}, Summary: LLMStep{Enabled: true, Provider: provider.ID}},
+			wantSummaries: true,
+			wantInsights:  true,
+		},
+		{
+			// A step enabled against an endpoint that has since been deleted
+			// will not run. Reporting it as on would have the app promise a
+			// summary that never arrives — and there is nothing left for an
+			// insight to inherit either.
+			name: "summarising on, its endpoint gone",
+			llm:  LLMSettings{Providers: []LLMProvider{provider}, Summary: LLMStep{Enabled: true, Provider: "p-deleted"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, cleanup := newTestRuntime(t)
+			defer cleanup()
+			rt.setLLMSettings(tc.llm)
+
+			rec := httptest.NewRecorder()
+			rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+
+			var resp setupResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode setup response: %v", err)
+			}
+			if resp.Features.Summaries != tc.wantSummaries || resp.Features.Insights != tc.wantInsights {
+				t.Fatalf("setup features = %#v, want summaries=%v insights=%v",
+					resp.Features, tc.wantSummaries, tc.wantInsights)
+			}
+		})
+	}
+}
+
+// The readiness signal must survive a deployment that cannot serve recordings
+// at all: the two facts are independent, and an unset-up install is exactly
+// where somebody is trying to work out what is missing.
+func TestSetupReportsFeaturesEvenWhenNotSetUp(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.setLLMSettings(LLMSettings{
+		Providers: []LLMProvider{{ID: "p-1", Name: "local", BaseURL: "http://127.0.0.1:11434/v1"}},
+		Summary:   LLMStep{Enabled: true, Provider: "p-1"},
+	})
+
+	rec := httptest.NewRecorder()
+	rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+
+	var resp setupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode setup response: %v", err)
+	}
+	if resp.OK || !resp.Features.Insights {
+		t.Fatalf("setup = %#v, want ok=false with insights still reported", resp)
 	}
 }
 

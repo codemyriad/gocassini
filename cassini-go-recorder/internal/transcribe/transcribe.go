@@ -533,27 +533,53 @@ func sanitizeTranscriptID(id string) string {
 	return out
 }
 
+// sharedLLMConfig resolves the deploy-wide endpoint every LLM step starts from:
+// the shared trio and the shared request bounds, as a host that runs the
+// recorder by hand configures them. A step then layers its own endpoint over it
+// with applyStepEndpoint.
+func sharedLLMConfig() LLMConfig {
+	cfg := DefaultLLMConfig()
+	cfg.APIKey = os.Getenv("OPENROUTER_API_KEY")
+	cfg.BaseURL = os.Getenv("OPENROUTER_BASE_URL")
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = os.Getenv("LLM_BASE_URL")
+	}
+	if cfg.BaseURL == "" && cfg.APIKey != "" {
+		cfg.BaseURL = "https://openrouter.ai/api/v1"
+	}
+	if model := os.Getenv("LLM_MODEL"); model != "" {
+		cfg.Model = model
+	}
+	if sec := envInt("CASSINI_LLM_TIMEOUT_SEC"); sec > 0 {
+		cfg.TimeoutSec = sec
+	}
+	if n := envInt("CASSINI_LLM_MAX_TOKENS"); n > 0 {
+		cfg.MaxTokens = n
+	}
+	return cfg
+}
+
+// DefaultInsightLLMConfig resolves the endpoint an ad-hoc insight run uses:
+// the shared endpoint, then the summary step's, then the insight step's. The
+// summary layer is the fallback that matters — a deployment which only ever
+// configured a summary endpoint must not lose the ability to ask a question of
+// its meetings — and INSIGHT_* on top is how an insight gets a larger model
+// than the one that writes each meeting's summary (D-719).
+//
+// CASSINI_SUMMARY_DISABLED is deliberately not read here. It says "publish
+// meetings without a summary", not "refuse a document someone asked for by
+// name"; turning insights off is removing the endpoint.
+func DefaultInsightLLMConfig() LLMConfig {
+	cfg := sharedLLMConfig()
+	applyStepEndpoint(&cfg, "SUMMARY")
+	applyStepEndpoint(&cfg, "INSIGHT")
+	return cfg
+}
+
 // DefaultBuildConfig returns a BuildConfig populated from standard environment
 // variables. The caller should override Device and CacheDir as needed.
 func DefaultBuildConfig() BuildConfig {
-	summaryLLM := DefaultLLMConfig()
-	summaryLLM.APIKey = os.Getenv("OPENROUTER_API_KEY")
-	summaryLLM.BaseURL = os.Getenv("OPENROUTER_BASE_URL")
-	if summaryLLM.BaseURL == "" {
-		summaryLLM.BaseURL = os.Getenv("LLM_BASE_URL")
-	}
-	if summaryLLM.BaseURL == "" && summaryLLM.APIKey != "" {
-		summaryLLM.BaseURL = "https://openrouter.ai/api/v1"
-	}
-	if model := os.Getenv("LLM_MODEL"); model != "" {
-		summaryLLM.Model = model
-	}
-	if sec := envInt("CASSINI_LLM_TIMEOUT_SEC"); sec > 0 {
-		summaryLLM.TimeoutSec = sec
-	}
-	if n := envInt("CASSINI_LLM_MAX_TOKENS"); n > 0 {
-		summaryLLM.MaxTokens = n
-	}
+	summaryLLM := sharedLLMConfig()
 	applyStepEndpoint(&summaryLLM, "SUMMARY")
 	summaryLLM.Disabled = envBool("CASSINI_SUMMARY_DISABLED")
 
@@ -587,10 +613,16 @@ func DefaultBuildConfig() BuildConfig {
 }
 
 // applyStepEndpoint layers a step's own endpoint over the shared LLM config:
-// {STEP}_BASE_URL, {STEP}_API_KEY and {STEP}_MODEL. An endpoint override brings
-// its own key — the shared key is never sent to a different host — while a
-// model override alone keeps the shared endpoint. The operator emits these from
-// its persisted settings.
+// {STEP}_BASE_URL, {STEP}_API_KEY, {STEP}_MODEL and the request bounds
+// {STEP}_TIMEOUT_SEC / {STEP}_MAX_TOKENS. An endpoint override brings its own
+// key — the shared key is never sent to a different host — while a model or a
+// bound alone keeps the shared endpoint. The operator emits these from its
+// persisted settings.
+//
+// The bounds are per step because two steps can sit on two endpoints, and they
+// describe the host: a CPU-bound local model needs a far longer leash than a
+// hosted API, so the shared CASSINI_LLM_TIMEOUT_SEC cannot speak for both
+// (D-719).
 func applyStepEndpoint(cfg *LLMConfig, step string) {
 	if base := strings.TrimSpace(os.Getenv(step + "_BASE_URL")); base != "" {
 		cfg.BaseURL = base
@@ -598,6 +630,12 @@ func applyStepEndpoint(cfg *LLMConfig, step string) {
 	}
 	if model := strings.TrimSpace(os.Getenv(step + "_MODEL")); model != "" {
 		cfg.Model = model
+	}
+	if sec := envInt(step + "_TIMEOUT_SEC"); sec > 0 {
+		cfg.TimeoutSec = sec
+	}
+	if n := envInt(step + "_MAX_TOKENS"); n > 0 {
+		cfg.MaxTokens = n
 	}
 }
 

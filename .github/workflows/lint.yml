@@ -145,6 +145,30 @@ jobs:
           done
           exit "$rc"
 
+      # The prompt gate (D-718). These are the bytes Cassini sends to a model,
+      # and they are markdown — which means ci.yml never sees a change to them:
+      # its paths-ignore denies '**/*.md', so a pull request editing only a
+      # prompt runs zero Go tests there while changing what the product does,
+      # through go:embed. This job is not path-filtered and is required, so the
+      # gate belongs here.
+      #
+      # What it asserts: each shipped workflow's content hash is the pinned one
+      # (a prompt is immutable — a change is a new version, never an edit in
+      # place), every embedded prompt file is claimed by exactly one workflow,
+      # and — once skills/ exists — the copy under skills/ that
+      # `npx skills add codemyriad/gocassini` installs is byte-identical to the
+      # copy the binary runs.
+      #
+      # internal/insight and its workflows package depend on the standard
+      # library alone, which is what makes this affordable here: no cgo, no
+      # speech toolchain, no model endpoint. Keep it that way, or this step
+      # turns into the full unit-test job.
+      - name: prompt registry (hashes, and skills/ mirror drift)
+        run: |
+          set -euo pipefail
+          cd cassini-go-recorder
+          go test ./internal/insight/...
+
       - name: actionlint (all workflows)
         run: |
           set -euo pipefail

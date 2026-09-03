@@ -2,18 +2,21 @@
   import { onDestroy, onMount } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
   import { AppDataProvider } from "./appDataProvider";
+  import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
   import SetupNotice from "./SetupNotice.svelte";
   import { loadConfig } from "./operator/config";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
   import {
+    buildFeatureNotice,
     buildSetupNotice,
     fetchSetupHealth,
     readRecordingsAccess,
     shareableAppUrl,
+    type SetupFeatures,
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
-  import { applySurface, readSurface, type Surface } from "./surfaceRouting";
+  import { applySurface, readSurface, type OperatorPanel, type Surface } from "./surfaceRouting";
 
   // The Cassini in-Nextcloud shell (D-420). It hosts role-gated surfaces fed
   // through the DataProvider seam: everyone gets "browse" (cassini-viewer's App
@@ -65,6 +68,30 @@
   // check itself could not be made) leaves the shell exactly as it was.
   let setupNotice: SetupNoticeContent | null = null;
 
+  // What this deployment's AI configuration allows (D-722), from the same
+  // USER-level /setup call. Null until it answers, and null forever on an
+  // operator too old to say — a third state, not a default: the app says
+  // nothing at all rather than telling a working deployment it is unconfigured.
+  //
+  // It is fetched HERE, once, because it is a fact about the deployment rather
+  // than about anything the browse surface is showing, and because the only
+  // route that carries it is the one the shell already calls at mount.
+  let setupFeatures: SetupFeatures | null = null;
+
+  // The unconfigured state the browse surface can meet: a selection of meetings
+  // on a deployment with no endpoint to ask. It rides into the viewing layer
+  // through a slot rather than a prop because the sentence, the admin/non-admin
+  // split and the deep link are all shell knowledge — the viewer has no idea
+  // there is an operator surface, and a standalone export has no operator at
+  // all.
+  $: insightsNotice = buildFeatureNotice({
+    features: setupFeatures,
+    feature: "insights",
+    // The same probe that decides whether there is an operator surface at all.
+    // There is no second notion of admin here to drift from the first.
+    isAdmin: operatorAvailable,
+  });
+
   // The daisyUI theme tokens (colors AND --radius-box/--border etc.) are emitted
   // on [data-theme=…], not on :host — so any surface NOT inside a data-theme'd
   // element gets no theme in the embedded shadow build. The viewer's App carries
@@ -108,16 +135,75 @@
     if (next === surface) {
       return;
     }
+    const previous = surface;
     surface = next;
     // Fragment-only pushState — same mechanism the viewer uses; gives history /
     // back-forward + deep links without a pathname router (see surfaceRouting).
     // applySurface preserves the viewer's meeting/tx/t so switching surfaces
     // doesn't drop a meeting deep-link.
     window.history.pushState({}, "", locationWithHash(applySurface(window.location.hash, next)));
+    refreshFeaturesOnLeavingOperator(previous);
   }
 
   function handlePopState(): void {
+    const previous = surface;
     applySurfaceFromLocation();
+    refreshFeaturesOnLeavingOperator(previous);
+  }
+
+  // Coming back from the operator surface is the return leg of the trip
+  // NeedsSetupCard's own link sends an administrator on: browse -> "Open AI
+  // providers" -> configure an endpoint -> Back. setupFeatures is otherwise
+  // read once at mount and never again, so without this the card that sent them
+  // still says "No AI endpoint is available" and still offers the link to the
+  // panel they have just fixed — only a full page reload clears it. That is the
+  // same staleness `cache: "no-store"` keeps out of the HTTP layer
+  // (setupHealth.ts), one level up in app state (D-722).
+  //
+  // Deliberately only the features: setupNotice is derived from the ADMIN probe
+  // as well, and re-running that on every surface switch would be a second,
+  // heavier question asked for a fact that cannot change without a restart.
+  function refreshFeaturesOnLeavingOperator(previous: Surface): void {
+    if (previous !== "operator" || surface === "operator") {
+      return;
+    }
+    void refreshSetupFeatures();
+  }
+
+  async function refreshSetupFeatures(): Promise<void> {
+    try {
+      const { operatorBasePath } = loadConfig();
+      const health = await fetchSetupHealth(operatorBasePath);
+      // Only an answer that arrived may change what the app claims: null is
+      // "nobody said" — a failed re-check, or an operator too old to say — and
+      // letting it through would retract what the mount-time call established
+      // and accuse a working deployment of being unconfigured.
+      if (health) {
+        setupFeatures = health.features;
+      }
+    } catch (error) {
+      // Degrade, but not silently — the same rule the mount path follows.
+      console.warn("Cassini: the setup re-check failed.", error);
+    }
+  }
+
+  // Following an unconfigured state's link to the panel that fixes it. The card
+  // built the address from the CURRENT fragment, so the viewer's meeting/tx/t
+  // survive the trip and the back button returns to exactly the meeting that
+  // was open.
+  function handleOpenPanel(event: CustomEvent<{ panel: OperatorPanel; href: string }>): void {
+    // The card only offers the link to an administrator; this is the second
+    // guard, because the cost of being wrong is a surface whose every request
+    // 403s at the proxy.
+    if (!operatorAvailable) {
+      return;
+    }
+    window.history.pushState({}, "", event.detail.href);
+    // pushState notifies nobody, and the surface, the operator's panel nav and
+    // the viewer each read the fragment through popstate. Announcing it once
+    // makes a deep link behave like a navigation, instead of three independent
+    // updates that can disagree about where we are.
+    window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
   onMount(async () => {
@@ -142,6 +228,7 @@
         fetchSetupHealth(operatorBasePath),
       ]);
       operatorAvailable = probe.available;
+      setupFeatures = health?.features ?? null;
       // Which setup message you get is decided by the SAME probe that decides
       // whether the operator surface exists — being able to read the ADMIN-gated
       // /status IS being an administrator, so there is no second notion of admin
@@ -169,6 +256,7 @@
       // base bug (D-420 V3).
       operatorAvailable = false;
       setupNotice = null;
+      setupFeatures = null;
       console.error("Cassini: operator availability check failed.", error);
     }
     // Reconcile the active surface with the probe result (e.g. an optimistic
@@ -234,7 +322,9 @@
            hidden while the operator surface is active; the operator mounts only
            when active so its SSE stream + polling don't run in the background. -->
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-        <ViewerApp {ncMode} {dataProvider} />
+        <ViewerApp {ncMode} {dataProvider}>
+          <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+        </ViewerApp>
       </div>
     {/if}
     {#if surface === "operator"}
@@ -274,11 +364,15 @@
       </div>
     </div>
     <div class="cassini-shell-surface">
-      <ViewerApp {ncMode} {dataProvider} />
+      <ViewerApp {ncMode} {dataProvider}>
+        <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+      </ViewerApp>
     </div>
   </div>
 {:else}
-  <ViewerApp {ncMode} {dataProvider} />
+  <ViewerApp {ncMode} {dataProvider}>
+    <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+  </ViewerApp>
 {/if}
 
 <style>

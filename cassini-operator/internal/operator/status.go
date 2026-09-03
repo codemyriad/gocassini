@@ -217,7 +217,8 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // setupResponse is the USER-readable half of /status: whether this deployment
-// can serve recordings at all, and nothing else.
+// can serve recordings at all, and — since D-722 — which of the two AI-backed
+// capabilities are configured. Never any of the detail behind either.
 //
 // /status is ADMIN through the proxy, which is right — it carries the version,
 // the resolved administrator, the storage paths and every step name. But that
@@ -229,9 +230,10 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 // available to them.
 //
 // So this reports the same verdict in the same words, with none of the detail:
-// the state, and whether it is working. No step, no administrator, no paths, no
-// versions — nothing an unprivileged caller could not have guessed from the app
-// failing in front of them.
+// the state, whether it is working, and two booleans for what is configured. No
+// step, no administrator, no paths, no versions, no endpoint, no model, no key —
+// nothing an unprivileged caller could not have guessed from the app failing in
+// front of them.
 type setupResponse struct {
 	// OK is false whenever recordings cannot be served, for any reason.
 	OK bool `json:"ok"`
@@ -239,6 +241,43 @@ type setupResponse struct {
 	// unavailable / not_applicable / unknown) so the UI branches on the same
 	// vocabulary the admin-facing report and the docs already use.
 	State string `json:"state"`
+	// Features is the readiness signal behind every "not configured yet" state
+	// in the app (D-722). It rides here rather than on a route of its own
+	// because a NEW route only reaches AppAPI at registration time, and whether
+	// an in-place upgrade refreshes route declarations is unverified
+	// (docs/exapp-update-constraints.md §5a) — a field on an already-declared
+	// route costs nothing.
+	Features setupFeatures `json:"features"`
+}
+
+// setupFeatures answers the two questions every unconfigured state reduces to:
+// does an AI endpoint exist at all, and is the summarise step switched on. Both
+// are already computed for the admin settings view; the point of repeating them
+// here is that /settings/llm is ADMIN, so until now nobody but an administrator
+// could find out why the product was quiet about summaries.
+//
+// One bit each, and deliberately no more: no URL, no model, no key, nothing an
+// unprivileged caller could not have inferred from a meeting that never got a
+// summary. docs/privacy.md promises nothing leaves this deployment without an
+// endpoint configured — a claim the person relying on it should be able to
+// check, which takes exactly these two booleans.
+type setupFeatures struct {
+	// Summaries is true when a recording will be summarised: the step is
+	// enabled AND still resolves to a provider. A step pointed at a deleted
+	// endpoint is off, whatever it says it is.
+	Summaries bool `json:"summaries"`
+	// Insights is true when a question asked of a set of meetings will reach an
+	// endpoint. That is a weaker condition than Summaries — an insight step
+	// switched on with summarising deliberately off satisfies it — but it is
+	// NOT "a provider row exists". ChildEnv strips every inherited LLM variable
+	// and re-emits only the steps that resolve to a provider, so a configured
+	// endpoint no step points at reaches the recorder as nothing at all and
+	// `cassini insight run` exits "no model endpoint is configured". Promising
+	// insights there would have the app offer a question every answer to which
+	// is an error (D-719 gave this an answer to read: the insight step falls
+	// back to the summary one, so effective.insight is exactly "an insight will
+	// reach an endpoint").
+	Insights bool `json:"insights"`
 }
 
 // setupHandler answers GET <base>/setup for any logged-in Nextcloud user.
@@ -258,7 +297,18 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
-	writeJSON(w, http.StatusOK, setupResponse{OK: access.OK, State: access.State})
+	// Read through the same view() the ADMIN settings endpoint serves, rather
+	// than off the stored struct: the two answers must not be able to drift,
+	// and "the step is on" is not the same fact as "the step will run".
+	llm := rt.currentLLMSettings().view()
+	writeJSON(w, http.StatusOK, setupResponse{
+		OK:    access.OK,
+		State: access.State,
+		Features: setupFeatures{
+			Summaries: llm.Effective.Summary != nil,
+			Insights:  llm.Effective.Insight != nil,
+		},
+	})
 }
 
 // Ping verifies the job store answers queries.

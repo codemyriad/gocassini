@@ -2,6 +2,7 @@ package cassini
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"gocassini/internal/insight"
+	"gocassini/internal/insight/workflows"
 	"gocassini/internal/meetingcontext"
 	"gocassini/internal/transcribe"
 )
@@ -89,21 +91,13 @@ func classifyLLMFailure(err error) error {
 
 // insightWorkflows is the registry of workflows a run may name.
 //
-// One entry, hashed from the bytes the pipeline itself sends. Populating it is
-// D-718's job; what is fixed here is that every workflow is identified by id,
-// version and content hash, because an artifact written before those exist can
-// never be told apart from one written by a later edit of the same prompt.
+// The set and its bytes belong to internal/insight/workflows, which embeds the
+// prompt files and hashes them; this command only names one. Every workflow is
+// identified by id, version and content hash, because an artifact written
+// before those exist can never be told apart from one written by a later edit
+// of the same prompt.
 func insightWorkflows() (insight.Registry, error) {
-	summarise, err := insight.NewWorkflow(insight.WorkflowSpec{
-		ID:       transcribe.SummaryWorkflowID,
-		Version:  transcribe.SummaryWorkflowVersion,
-		System:   transcribe.SummaryPromptV0(),
-		Template: transcribe.SummaryTemplateV0(),
-	})
-	if err != nil {
-		return insight.Registry{}, err
-	}
-	return insight.NewRegistry(summarise)
+	return workflows.Registry()
 }
 
 // repeatedPath collects a flag that may be given more than once, keeping the
@@ -132,6 +126,8 @@ func runInsight(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return 0
 	case "run":
 		return runInsightRun(ctx, args[1:], stdout, stderr)
+	case "workflows":
+		return runInsightWorkflows(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown insight command %q\n\n", args[0])
 		printInsightUsage(stderr)
@@ -146,10 +142,85 @@ Usage:
   cassini insight run --context ./ctx.json
   cassini insight run --context ./a.json --context ./b.json --out ./Insight.md
   cassini insight run --context ./ctx.json --record ./insight.json
+  cassini insight workflows
 
 Commands:
-  run  Run one workflow over one or more context bundles
+  run        Run one workflow over one or more context bundles
+  workflows  List the workflows this build ships, with their versions and hashes
 `+"\n")
+}
+
+// runInsightWorkflows prints the registry.
+//
+// It exists so that "which prompts will this deployment actually send?" has an
+// answer that does not involve reading the source of the binary you happen to
+// have. The operator's GET operator/settings/workflows is this command with
+// --json: cassini-operator is a separate Go module and cannot import the
+// registry, so the CLI is the only bridge, and one implementation behind both
+// is what keeps the panel and the runner from describing different sets.
+func runInsightWorkflows(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cassini insight workflows", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	asJSON := fs.Bool("json", false, "emit the registry as JSON, including each workflow's full instruction")
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), `Usage:
+  cassini insight workflows
+  cassini insight workflows --json
+
+List the workflows this build ships. Each one is a prompt compiled into this
+binary, identified by id, version and the SHA-256 of the exact bytes it sends —
+which is what an insight document records, so a document and this listing can be
+compared rather than assumed to match.
+
+--json adds each workflow's instruction verbatim: the system prompt with its
+template already spliced in, byte for byte as the model receives it.
+
+Naming one on `+"`cassini insight run --workflow <id>`"+` runs it. A workflow
+whose bytes do not resolve is not listed and cannot be named, which is the
+point: an id you can select is an id that will run.
+
+`+"\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintf(stderr, "insight workflows takes no positional arguments, got: %v\n", fs.Args())
+		return 2
+	}
+
+	entries, err := workflows.Catalog()
+	if err != nil {
+		fmt.Fprintf(stderr, "insight workflows failed: %v\n", err)
+		return 1
+	}
+
+	if *asJSON {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(entries); err != nil {
+			fmt.Fprintf(stderr, "insight workflows failed: write JSON: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	// One record per line, as the rest of the CLI prints: a field whose value
+	// holds spaces is the last thing on its line, so the output stays readable
+	// by eye and by cut -d= -f2-.
+	fmt.Fprintf(stdout, "workflows=%d\n", len(entries))
+	for _, entry := range entries {
+		fmt.Fprintf(stdout, "\nworkflow=%s version=%s sha256=%s origin=%q\n", entry.ID, entry.Version, entry.SHA256, entry.Origin)
+		fmt.Fprintf(stdout, "name=%s\n", entry.Name)
+		fmt.Fprintf(stdout, "asks=%s\n", entry.Question)
+		fmt.Fprintf(stdout, "about=%s\n", entry.Description)
+	}
+	fmt.Fprintf(stdout, "\nnote=--json adds each workflow's instruction, the exact bytes this build sends to the model\n")
+	return 0
 }
 
 func runInsightRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -157,7 +228,7 @@ func runInsightRun(ctx context.Context, args []string, stdout, stderr io.Writer)
 	fs := flag.NewFlagSet("cassini insight run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Var(&contexts, "context", "path to a cassini.meetings.context.v1 JSON bundle; repeat for several")
-	workflowID := fs.String("workflow", transcribe.SummaryWorkflowID, "workflow to run")
+	workflowID := fs.String("workflow", workflows.SummariseID, "workflow to run; `cassini insight workflows` lists them")
 	model := fs.String("model", "", "override the model the configured endpoint is asked for")
 	outPath := fs.String("out", "", "write the insight to this .md file instead of stdout")
 	recordPath := fs.String("record", "", "also write the run record to this .json file")
@@ -177,10 +248,14 @@ it was produced from, which workflow version and content hash, which endpoint
 and model answered, and when. --record writes the same record as JSON beside it,
 so a grading harness reads one pair rather than parsing the document.
 
-The endpoint comes from the environment exactly as for `+"`cassini build`"+`:
-LLM_BASE_URL (or OPENROUTER_API_KEY for OpenRouter), with SUMMARY_BASE_URL /
-SUMMARY_MODEL overriding it, and CASSINI_SUMMARY_DISABLED turning it off. --model
-overrides the model for this run alone.
+The endpoint comes from the same environment as `+"`cassini build`"+`, resolved in
+layers: LLM_BASE_URL (or OPENROUTER_API_KEY for OpenRouter), then SUMMARY_BASE_URL
+/ SUMMARY_MODEL, then INSIGHT_BASE_URL / INSIGHT_MODEL. An insight therefore runs
+on the summary endpoint unless it is given one of its own, which is how a
+deployment answers a question on a larger model than the one writing every
+meeting's summary. CASSINI_SUMMARY_DISABLED does NOT apply: it means "publish
+meetings without a summary", not "refuse a document somebody asked for by name".
+--model overrides the model for this run alone.
 
 Exit codes say what happened, because a document you asked for and did not get
 is not a warning:
@@ -230,15 +305,18 @@ is not a warning:
 
 	// The same environment `cassini build` reads, resolved the same way, so a
 	// host that publishes summaries can run insights without a second thing to
-	// configure. An insight step with its own endpoint is D-718's; until then a
-	// deployment has one model.
-	cfg := transcribe.DefaultBuildConfig().SummaryLLM
+	// configure — and then INSIGHT_* on top, so a deployment that wants a larger
+	// model for an ad-hoc question can say so without moving the summary step
+	// (D-719). Resolving it here rather than reading SummaryLLM keeps the
+	// fallback rule stated in one place, and it is what makes the operator's
+	// insight endpoint reach this command at all.
+	cfg := transcribe.DefaultInsightLLMConfig()
 	if trimmed := strings.TrimSpace(*model); trimmed != "" {
 		cfg.Model = trimmed
 	}
 	if !cfg.IsConfigured() {
 		fmt.Fprintln(stderr, "insight run failed: no model endpoint is configured, so there is nothing to ask")
-		fmt.Fprintln(stderr, "hint=set LLM_BASE_URL to an OpenAI-compatible endpoint (or OPENROUTER_API_KEY for OpenRouter), optionally SUMMARY_BASE_URL / SUMMARY_MODEL, and make sure CASSINI_SUMMARY_DISABLED is not set")
+		fmt.Fprintln(stderr, "hint=set LLM_BASE_URL to an OpenAI-compatible endpoint (or OPENROUTER_API_KEY for OpenRouter); SUMMARY_BASE_URL / SUMMARY_MODEL and then INSIGHT_BASE_URL / INSIGHT_MODEL override it, the last giving insights an endpoint of their own")
 		return exitInsightNoProvider
 	}
 

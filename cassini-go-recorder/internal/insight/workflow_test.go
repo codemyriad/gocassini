@@ -21,8 +21,8 @@ func TestWorkflowHashesTheSplicedPrompt(t *testing.T) {
 	}
 
 	spliced := "Rules.\n\nTemplate:\n\n# Meeting Summary\n\n"
-	if workflow.systemPrompt() != spliced {
-		t.Fatalf("spliced prompt = %q", workflow.systemPrompt())
+	if workflow.SystemPrompt() != spliced {
+		t.Fatalf("spliced prompt = %q", workflow.SystemPrompt())
 	}
 	digest := sha256.Sum256([]byte(spliced))
 	if workflow.SHA256 != hex.EncodeToString(digest[:]) {

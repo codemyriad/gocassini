@@ -139,7 +139,10 @@ func TestChatCompletionFallsBackToDefaultMaxTokens(t *testing.T) {
 func clearStepEndpointEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"SUMMARY_BASE_URL", "SUMMARY_API_KEY", "SUMMARY_MODEL", "CASSINI_SUMMARY_DISABLED",
+		"SUMMARY_BASE_URL", "SUMMARY_API_KEY", "SUMMARY_MODEL",
+		"SUMMARY_TIMEOUT_SEC", "SUMMARY_MAX_TOKENS", "CASSINI_SUMMARY_DISABLED",
+		"INSIGHT_BASE_URL", "INSIGHT_API_KEY", "INSIGHT_MODEL",
+		"INSIGHT_TIMEOUT_SEC", "INSIGHT_MAX_TOKENS",
 	} {
 		t.Setenv(key, "")
 	}
@@ -181,5 +184,105 @@ func TestDefaultBuildConfigSummaryEndpointAloneConfigures(t *testing.T) {
 
 	if !cfg.SummaryLLM.IsConfigured() || cfg.SummaryLLM.BaseURL != "http://qwen.internal:8000/v1" || cfg.SummaryLLM.APIKey != "local-key" {
 		t.Fatalf("summary should be configured from its own endpoint, got %+v", cfg.SummaryLLM)
+	}
+}
+
+// --- D-719: the insight step's own endpoint ---
+
+// A deployment that only ever configured a summary endpoint must keep its
+// ability to run an insight, so SUMMARY_* is the fallback INSIGHT_* layers over.
+func TestDefaultInsightLLMConfigFallsBackToTheSummaryEndpoint(t *testing.T) {
+	clearStepEndpointEnv(t)
+	t.Setenv("OPENROUTER_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("SUMMARY_BASE_URL", "http://qwen.internal:8000/v1")
+	t.Setenv("SUMMARY_API_KEY", "local-key")
+	t.Setenv("SUMMARY_MODEL", "qwen3-8b")
+	t.Setenv("SUMMARY_TIMEOUT_SEC", "3600")
+
+	cfg := DefaultInsightLLMConfig()
+
+	if !cfg.IsConfigured() || cfg.BaseURL != "http://qwen.internal:8000/v1" || cfg.APIKey != "local-key" {
+		t.Fatalf("insight = %+v, want the summary endpoint", cfg)
+	}
+	if cfg.Model != "qwen3-8b" || cfg.TimeoutSec != 3600 {
+		t.Fatalf("insight = %+v, want the summary model and leash", cfg)
+	}
+}
+
+func TestDefaultInsightLLMConfigOwnEndpointBringsItsOwnKey(t *testing.T) {
+	clearStepEndpointEnv(t)
+	t.Setenv("OPENROUTER_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+	t.Setenv("OPENROUTER_API_KEY", "hosted-key")
+	t.Setenv("SUMMARY_BASE_URL", "https://summary.example/v1")
+	t.Setenv("SUMMARY_API_KEY", "summary-key")
+	t.Setenv("INSIGHT_BASE_URL", "http://qwen.internal:8000/v1")
+	t.Setenv("INSIGHT_MODEL", "qwen3-30b")
+	t.Setenv("INSIGHT_TIMEOUT_SEC", "7200")
+	t.Setenv("INSIGHT_MAX_TOKENS", "32768")
+
+	cfg := DefaultInsightLLMConfig()
+
+	if cfg.BaseURL != "http://qwen.internal:8000/v1" || cfg.Model != "qwen3-30b" {
+		t.Fatalf("insight = %+v, want its own endpoint and model", cfg)
+	}
+	// Two keys were in scope and neither may follow the step to a third host.
+	if cfg.APIKey != "" {
+		t.Fatalf("a key the insight endpoint was not given followed it: %q", cfg.APIKey)
+	}
+	if cfg.TimeoutSec != 7200 || cfg.MaxTokens != 32768 {
+		t.Fatalf("insight bounds = %d/%d, want 7200/32768", cfg.TimeoutSec, cfg.MaxTokens)
+	}
+}
+
+// A model override alone keeps the endpoint it is layered over — the same rule
+// the summary step has always had.
+func TestDefaultInsightLLMConfigModelAloneKeepsTheEndpoint(t *testing.T) {
+	clearStepEndpointEnv(t)
+	t.Setenv("OPENROUTER_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "http://qwen.internal:8000/v1")
+	t.Setenv("OPENROUTER_API_KEY", "shared-key")
+	t.Setenv("INSIGHT_MODEL", "qwen3-30b")
+
+	cfg := DefaultInsightLLMConfig()
+
+	if cfg.BaseURL != "http://qwen.internal:8000/v1" || cfg.APIKey != "shared-key" {
+		t.Fatalf("insight = %+v, want the shared endpoint and its key", cfg)
+	}
+	if cfg.Model != "qwen3-30b" {
+		t.Fatalf("model = %q, want the insight override", cfg.Model)
+	}
+}
+
+// CASSINI_SUMMARY_DISABLED says "publish meetings without a summary", not
+// "refuse a document someone asked for by name".
+func TestDefaultInsightLLMConfigIgnoresTheSummaryKillSwitch(t *testing.T) {
+	clearStepEndpointEnv(t)
+	t.Setenv("OPENROUTER_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "http://qwen.internal:8000/v1")
+	t.Setenv("CASSINI_SUMMARY_DISABLED", "1")
+
+	if cfg := DefaultBuildConfig(); cfg.SummaryLLM.IsConfigured() {
+		t.Fatalf("summary should be off, got %+v", cfg.SummaryLLM)
+	}
+	if cfg := DefaultInsightLLMConfig(); !cfg.IsConfigured() {
+		t.Fatalf("insight should still be configured, got %+v", cfg)
+	}
+}
+
+func TestDefaultBuildConfigSummaryStepBounds(t *testing.T) {
+	clearStepEndpointEnv(t)
+	t.Setenv("OPENROUTER_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "http://qwen.internal:8000/v1")
+	t.Setenv("CASSINI_LLM_TIMEOUT_SEC", "900")
+	t.Setenv("CASSINI_LLM_MAX_TOKENS", "4096")
+	t.Setenv("SUMMARY_TIMEOUT_SEC", "3600")
+	t.Setenv("SUMMARY_MAX_TOKENS", "16384")
+
+	cfg := DefaultBuildConfig().SummaryLLM
+	if cfg.TimeoutSec != 3600 || cfg.MaxTokens != 16384 {
+		t.Fatalf("summary bounds = %d/%d, want the step's own 3600/16384", cfg.TimeoutSec, cfg.MaxTokens)
 	}
 }

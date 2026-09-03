@@ -137,7 +137,7 @@ describe("llm settings client", () => {
     expect(settings.providers[0]?.timeout_sec).toBe(1800);
     expect(settings.providers[0]?.max_tokens).toBe(0);
     expect(settings.summary.enabled).toBe(true);
-    expect(settings.effective).toEqual({ summary: null });
+    expect(settings.effective).toEqual({ summary: null, insight: null });
   });
 
   it("omits api_key when unchanged and sends an empty string to clear it", async () => {

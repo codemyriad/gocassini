@@ -528,9 +528,12 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	return w.out.Write(p)
 }
 
-// truncatingBuffer keeps the first n bytes and swallows the rest, for a child's
-// stderr: it is a diagnostic, so losing the tail of a runaway one costs
-// nothing.
+// truncatingBuffer keeps the first n bytes and swallows the rest. For a child's
+// stderr that costs nothing — it is a diagnostic, and the tail of a runaway one
+// is not worth holding. For a child's stdout that a caller then decodes
+// (settings_workflows.go) the truncation is the point: past the cap the bytes
+// stop being parseable JSON, so an unbounded child fails loudly instead of
+// being silently believed.
 type truncatingBuffer struct {
 	buf       bytes.Buffer
 	remaining int

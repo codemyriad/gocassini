@@ -9,10 +9,10 @@ import (
 )
 
 // TemplatePlaceholder is the token a workflow's system prompt carries where
-// its output template is spliced in. It is the token the one shipped prompt
-// already uses (internal/transcribe/templates/summary-prompt.v0.md), because a
-// second splice grammar would mean the same prompt bytes render differently
-// depending on which caller sent them.
+// its output template is spliced in. It is the token every shipped prompt
+// already uses (internal/insight/workflows/prompts/), because a second splice
+// grammar would mean the same prompt bytes render differently depending on
+// which caller sent them.
 const TemplatePlaceholder = "{{TEMPLATE}}"
 
 // QuestionPlaceholder is the token a freeform workflow carries where the
@@ -21,18 +21,19 @@ const TemplatePlaceholder = "{{TEMPLATE}}"
 // A workflow either takes a question or it does not, and Run refuses the
 // mismatch in both directions: a question handed to a workflow with no slot
 // would be silently dropped, and an empty slot would ask the model to answer a
-// question that is not there. Nothing ships with this token today — the one
-// workflow is `summarise` — but the record has a place for the question, so
-// the mechanism that fills it has to exist rather than be implied.
+// question that is not there. No shipped workflow carries this token yet: the
+// prototype's "Ask your own question" is the caller's own text at run time and
+// has no authored prompt behind it (D-718). The record has a place for the
+// question, so the mechanism that fills it exists rather than being implied.
 const QuestionPlaceholder = "{{QUESTION}}"
 
 // Workflow is one prompt this product will run, identified well enough that a
 // document produced by it can be traced back to the exact bytes that produced
 // it.
 //
-// The set is one today. The shape is fixed here anyway, because a registry of
-// one and a registry of five are the same struct (D-718 populates it), and
-// because the field that costs something to add later is SHA256: an artifact
+// Which prompts exist is internal/insight/workflows' business, not this
+// package's. What is fixed here is the identity every one of them carries, and
+// in particular the field that costs something to add later is SHA256: an artifact
 // written without it can never be told apart from an artifact written by a
 // later edit of the same named version.
 //
@@ -60,10 +61,11 @@ type Workflow struct {
 // WorkflowSpec is what a caller has before a workflow is validated and hashed.
 //
 // It exists so that the prompt bytes stay where they are compiled in. Go's
-// embed cannot escape its own package directory, so the alternative to passing
-// the bytes in is a second copy of them under internal/insight — and two copies
-// of a prompt is the drift the content hash exists to detect, installed on
-// purpose.
+// embed cannot escape its own package directory, so a package that embedded
+// prompts here would be a second copy of bytes that live somewhere already —
+// and two copies of a prompt is the drift the content hash exists to detect,
+// installed on purpose. internal/insight/workflows owns the files and passes
+// them in.
 type WorkflowSpec struct {
 	ID       string
 	Version  string
@@ -103,14 +105,16 @@ func NewWorkflow(spec WorkflowSpec) (Workflow, error) {
 		System:   spec.System,
 		Template: spec.Template,
 	}
-	digest := sha256.Sum256([]byte(workflow.systemPrompt()))
+	digest := sha256.Sum256([]byte(workflow.SystemPrompt()))
 	workflow.SHA256 = hex.EncodeToString(digest[:])
 	return workflow, nil
 }
 
-// systemPrompt resolves the template into the system prompt. It is what the
-// hash is taken over and what Run sends, so the two can never disagree.
-func (w Workflow) systemPrompt() string {
+// SystemPrompt resolves the template into the system prompt. It is what the
+// hash is taken over and what Run sends, so the two can never disagree — which
+// is also why the settings panel shows this and not a description of it
+// (D-718): the bytes on the screen are the bytes SHA256 names.
+func (w Workflow) SystemPrompt() string {
 	if w.Template == "" {
 		return w.System
 	}
@@ -130,8 +134,8 @@ func (w Workflow) Ref() WorkflowRef {
 // Registry is the set of workflows a run may name.
 //
 // It is a lookup and nothing else on purpose: which workflows exist, and where
-// their bytes come from, is the caller's business (D-718 gives that an owner
-// and an HTTP surface). What belongs here is the guarantee that two workflows
+// their bytes come from, belongs to internal/insight/workflows, which owns the
+// files and serves them. What belongs here is the guarantee that two workflows
 // can never share an id, because an artifact record naming one would then be
 // ambiguous about which prompt produced it.
 type Registry struct {

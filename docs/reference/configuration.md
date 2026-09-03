@@ -39,11 +39,46 @@ Optional capability pass-through:
 The base URL is what enables these steps; the API key is optional, so a
 self-hosted OpenAI-compatible endpoint with no authentication works.
 
+### Per-step endpoints
+
+Each LLM step can be pointed at its own endpoint, overriding the shared
+variables above. The steps are `SUMMARY` (the summary written when a meeting
+publishes) and `INSIGHT` (`cassini insight run`):
+
+| Variable | Purpose |
+|---|---|
+| `<STEP>_BASE_URL` | this step's endpoint, replacing the shared one |
+| `<STEP>_API_KEY` | this step's key |
+| `<STEP>_MODEL` | this step's model |
+| `<STEP>_TIMEOUT_SEC` | this step's request timeout, replacing `CASSINI_LLM_TIMEOUT_SEC` |
+| `<STEP>_MAX_TOKENS` | this step's response token limit, replacing `CASSINI_LLM_MAX_TOKENS` |
+
+An endpoint override brings its own key: setting `<STEP>_BASE_URL` without
+`<STEP>_API_KEY` sends no key at all rather than the shared one, because a key
+must never travel to a host it was not issued for. A model or a bound on its
+own keeps whatever endpoint it is layered over.
+
+`INSIGHT_*` layers over `SUMMARY_*`, not just over the shared variables, so a
+deployment that only ever configured a summary endpoint can still run insights
+— they simply run on the summary endpoint. Set `INSIGHT_BASE_URL` when insights
+should go elsewhere, which is the case worth having: a small local model can
+write every meeting's summary while a larger hosted one answers a question you
+ask by hand. The bounds are per step for the same reason — a CPU-bound local
+model needs a far longer leash than a hosted API.
+
+`CASSINI_SUMMARY_DISABLED` turns off the summary written at publish time. It
+does not affect `cassini insight run`: that is a document someone asked for by
+name, and turning insights off means removing the endpoint.
+
 When the recorder is run by the operator, these LLM variables only seed the
 operator's own LLM settings on its first start (`llm-settings.json` beside the
 job database; `GET`/`PUT /settings/llm`). After that the persisted settings —
 not the environment — are what every build receives, so endpoints and models
-change without a redeploy.
+change without a redeploy. The operator emits the per-step variables itself
+from that file; an insight step with no endpoint of its own emits nothing,
+which is how the fallback above takes effect. Each step also names the workflow
+it runs (`summary.template` / `insight.template`); empty means the workflow
+Cassini ships.
 
 Those capability variables affect optional build layers. They are not required just to bring the base stack up.
 
