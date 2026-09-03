@@ -1048,6 +1048,29 @@ function captureIsAdoptable(sealed: SealedCapture, roomToken: string | null): bo
   return sealed.sidecar.callEndWallMs > 0 && age >= 0 && age <= ADOPT_MAX_AGE_MS;
 }
 
+// captureFilesArePresent checks that every segment a manifest names is still on
+// disk.
+//
+// Only adoption asks. Uploading a manifest whose file has vanished fails and
+// leaves the buffer for a later retry, which is survivable; ADOPTING one is
+// not, because the missing file would be carried into the merged sidecar and
+// make the whole capture — the audio recorded after the reload included —
+// unuploadable for as long as it exists.
+async function captureFilesArePresent(
+  root: FileSystemDirectoryHandle,
+  sealed: SealedCapture,
+): Promise<boolean> {
+  try {
+    const dir = await root.getDirectoryHandle(sealed.dirName);
+    for (const segment of sealed.sidecar.segments) {
+      await dir.getFileHandle(segment.audioName);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // releaseAdoptableCapture uploads a held capture, because this page is not
 // going to continue it: Talk says the recording is over, or nothing started
 // recording before the deadline.
@@ -1133,6 +1156,11 @@ export async function settleBufferedCaptures(): Promise<number> {
         best = candidate;
       }
     }
+    if (best !== null && !(await captureFilesArePresent(root, best))) {
+      // Uploaded on the loop below instead, where a failure costs only this
+      // capture.
+      best = null;
+    }
     if (best !== null) {
       adoptable = best;
       clearAdoptDeadline();
@@ -1142,9 +1170,18 @@ export async function settleBufferedCaptures(): Promise<number> {
       }, ADOPT_DECISION_TIMEOUT_MS) as unknown as number;
     }
   }
+  // Remembered rather than re-read from `adoptable` below. Each upload is a
+  // network round trip, and beginCapture can adopt the held capture during one
+  // of them — which clears `adoptable` and would let a later iteration upload
+  // the directory a recorder is now writing into, and then DELETE it on
+  // success. The name is decided once, here.
+  const heldDirName = adoptable?.dirName ?? null;
   let uploaded = 0;
   for (const candidate of sealed) {
-    if (adoptable?.dirName === candidate.dirName) {
+    // state is re-read every iteration for the same reason from the other
+    // side: whichever way the race falls, a live capture's directory is never
+    // uploaded out from under it.
+    if (candidate.dirName === heldDirName || candidate.dirName === state?.dirName) {
       continue;
     }
     try {
