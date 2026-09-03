@@ -56,7 +56,7 @@ vi.mock("./catalog", () => ({
   loadMeetingCatalog,
 }));
 
-import { StaticCatalogProvider } from "./dataProvider";
+import { StaticCatalogProvider, resolvePublishedUrl } from "./dataProvider";
 
 function entry(overrides: Partial<MeetingCatalogEntry>): MeetingCatalogEntry {
   return {
@@ -165,6 +165,14 @@ describe("StaticCatalogProvider", () => {
     expect(loadBundledArtifact).toHaveBeenCalledTimes(1);
   });
 
+  it("does not offer a context bundle, because there is no operator behind a static export", () => {
+    // The absence IS the contract (D-626): App.svelte reads it as "this build
+    // cannot Prepare" and hides the affordance, rather than the provider
+    // assembling a client-side lookalike of a document the CLI publishes.
+    const provider: Record<string, unknown> = new StaticCatalogProvider() as never;
+    expect(provider.loadContextBundle).toBeUndefined();
+  });
+
   it("gives each provider instance its own store so cache state is not shared", async () => {
     const providerA = new StaticCatalogProvider();
     const providerB = new StaticCatalogProvider();
@@ -176,5 +184,33 @@ describe("StaticCatalogProvider", () => {
     expect(storeA).toBeInstanceOf(FakePortableMeetingStore);
     expect(storeB).toBeInstanceOf(FakePortableMeetingStore);
     expect(storeA).not.toBe(storeB);
+  });
+});
+
+describe("resolvePublishedUrl", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("resolves against the captured AppAPI proxy base when embedded", () => {
+    // Same rule catalog.ts applies to catalog.json: the published archive is
+    // served by the operator under the proxy base, NOT relative to the
+    // Nextcloud embedded page's own pathname.
+    vi.stubGlobal("window", {
+      __CASSINI_VIEWER_BASE__: "/index.php/apps/app_api/proxy/gocassini/",
+      location: { href: "https://cloud.example/index.php/apps/app_api/embedded/gocassini/viewer" },
+    });
+
+    expect(resolvePublishedUrl("meetings-context")).toBe(
+      "https://cloud.example/index.php/apps/app_api/proxy/gocassini/published/meetings-context",
+    );
+  });
+
+  it("falls back to the SPA's own base outside the embedded build", () => {
+    vi.stubGlobal("window", { location: { href: "https://example.com/site/index.html" } });
+
+    expect(resolvePublishedUrl("meetings-context")).toBe(
+      "https://example.com/published/meetings-context",
+    );
   });
 });

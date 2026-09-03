@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -101,9 +102,9 @@ func TestChatCompletionOmitsAuthorizationWhenKeyless(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			cfg := LLMConfig{BaseURL: srv.URL, Model: "test-model", APIKey: tc.apiKey, MaxTokens: 123}
-			got, err := chatCompletion(cfg, "sys", "usr")
+			got, err := ChatCompletion(context.Background(), cfg, "sys", "usr")
 			if err != nil {
-				t.Fatalf("chatCompletion: %v", err)
+				t.Fatalf("ChatCompletion: %v", err)
 			}
 			if got != "ok" {
 				t.Fatalf("content = %q, want %q", got, "ok")
@@ -127,8 +128,8 @@ func TestChatCompletionFallsBackToDefaultMaxTokens(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	if _, err := chatCompletion(LLMConfig{BaseURL: srv.URL, Model: "m"}, "sys", "usr"); err != nil {
-		t.Fatalf("chatCompletion: %v", err)
+	if _, err := ChatCompletion(context.Background(), LLMConfig{BaseURL: srv.URL, Model: "m"}, "sys", "usr"); err != nil {
+		t.Fatalf("ChatCompletion: %v", err)
 	}
 	if n, ok := gotBody["max_tokens"].(float64); !ok || int(n) != defaultLLMMaxTokens {
 		t.Errorf("max_tokens = %v, want %d", gotBody["max_tokens"], defaultLLMMaxTokens)

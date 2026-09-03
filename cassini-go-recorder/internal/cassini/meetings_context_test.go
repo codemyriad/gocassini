@@ -911,3 +911,270 @@ func TestSplitLeadingMeetingIDsKeepsTheCallersOrder(t *testing.T) {
 		})
 	}
 }
+
+// roomedMeetingCatalog is bundlableMeetingCatalog with rooms on both entries.
+// The room is the one field an id run reads from the catalog rather than from
+// the file, so a byte-identity test that leaves it out proves nothing about the
+// half of the document a local run has to be handed.
+const roomedMeetingCatalog = `{
+  "version": "cassini.viewer.catalog.v1",
+  "meetings": [
+    {"id": "MEETING1", "title": "Daily Standup", "dateLabel": "2026-08-11 10:32",
+     "audioPath": "./meetings/MEETING1.opus", "speakerCount": 1, "segmentCount": 2,
+     "roomId": "rm_9f2a1c3d4e5b6a70", "roomName": "Weekly Sync"},
+    {"id": "MEETING2", "title": "Backlog Review", "dateLabel": "2026-08-18 09:00",
+     "audioPath": "./meetings/MEETING2.opus", "speakerCount": 1, "segmentCount": 2,
+     "roomId": "rm_11bb22cc33dd44ee", "roomName": "Backlog"}
+  ]
+}`
+
+// serveMeetingsCatalogAndOpus answers the catalog route with catalog and every
+// meetings/<id>.opus route with the same published bytes. The meetings stay
+// distinguishable because a bundle takes each meeting's id from the caller,
+// never from the file.
+func serveMeetingsCatalogAndOpus(catalog string, opusBody []byte) func(w http.ResponseWriter, r *http.Request) {
+	const assetPrefix = "/index.php/apps/app_api/proxy/gocassini/published/meetings/"
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == meetingsTestCatalogPath:
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cassini-Meeting-Source", "nextcloud-files")
+			fmt.Fprint(w, catalog)
+		case strings.HasPrefix(r.URL.Path, assetPrefix) && strings.HasSuffix(r.URL.Path, ".opus"):
+			w.Header().Set("Content-Type", "audio/ogg")
+			w.Header().Set("X-Cassini-Meeting-Source", "nextcloud-files")
+			_, _ = w.Write(opusBody)
+		default:
+			http.NotFound(w, r)
+		}
+	}
+}
+
+// stageLocalMeetingFiles writes the published bytes as <dir>/<id>.opus for each
+// id, the way the operator stages a caller's downloads before rendering them,
+// and returns the paths in the order the ids were given.
+func stageLocalMeetingFiles(t *testing.T, dir string, published []byte, ids ...string) []string {
+	t.Helper()
+	paths := make([]string, 0, len(ids))
+	for _, id := range ids {
+		path := filepath.Join(dir, id+".opus")
+		if err := os.WriteFile(path, published, 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+// The load-bearing claim of --local (D-717): the operator serves a bundle by
+// downloading each meeting as the caller and rendering the files, so the
+// document it serves must be the document `cassini meetings context <ids>`
+// produces. Not "equivalent" — the same bytes.
+func TestMeetingsContextLocalFilesMatchTheIDRunByteForByte(t *testing.T) {
+	requireFFMediaTools(t)
+	published := packedOpusForContext(t)
+	fake := newMeetingsFakeNextcloud(t, serveMeetingsCatalogAndOpus(roomedMeetingCatalog, published))
+
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog.json")
+	if err := os.WriteFile(catalogPath, []byte(roomedMeetingCatalog), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+	// Asked for in reverse catalog order, because the document's order is the
+	// caller's order on both paths or neither.
+	paths := stageLocalMeetingFiles(t, dir, published, "MEETING2", "MEETING1")
+
+	for _, mode := range []struct {
+		name  string
+		flags []string
+	}{
+		{"markdown", nil},
+		{"json", []string{"--json"}},
+		{"markdown with timestamps", []string{"--timestamps"}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			byID := append([]string{"context", "MEETING2", "MEETING1"}, mode.flags...)
+			code, remote, stderr := runMeetingsCLI(t, fake.server.URL, byID...)
+			if code != 0 {
+				t.Fatalf("id run exit=%d stderr=%q", code, stderr)
+			}
+
+			byFile := append([]string{"meetings", "context", "--local", "--catalog", catalogPath}, mode.flags...)
+			byFile = append(byFile, paths...)
+			code, local, stderr := runMeetingsCLIRaw(t, byFile...)
+			if code != 0 {
+				t.Fatalf("local run exit=%d stderr=%q", code, stderr)
+			}
+
+			if local != remote {
+				t.Errorf("a local run and an id run over the same meetings produced different documents.\n--- by id ---\n%s\n--- by file ---\n%s", remote, local)
+			}
+			if !strings.Contains(remote, "rm_11bb22cc33dd44ee") {
+				t.Errorf("the fixture no longer exercises the catalog's room, so this proves nothing:\n%s", remote)
+			}
+		})
+	}
+}
+
+// A local run must need none of the connection flags: the operator has no app
+// password of the caller's, which is the entire reason this mode exists.
+func TestMeetingsContextLocalNeedsNoNextcloudConfiguration(t *testing.T) {
+	requireFFMediaTools(t)
+	for _, name := range []string{"CASSINI_NC_URL", "CASSINI_NC_USER", "CASSINI_NC_APP_PASSWORD"} {
+		t.Setenv(name, "")
+	}
+	published := packedOpusForContext(t)
+	paths := stageLocalMeetingFiles(t, t.TempDir(), published, "MEETING1")
+
+	code, stdout, stderr := runMeetingsCLIRaw(t, "meetings", "context", "--local", paths[0])
+
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "- Meeting id: `MEETING1`") {
+		t.Errorf("the meeting id comes from the file name:\n%s", stdout)
+	}
+	// Without a catalog there is no room to state, and inventing one from the
+	// file would contradict what an id run reports for the same meeting.
+	if strings.Contains(stdout, "- Room:") {
+		t.Errorf("a local run with no --catalog must not claim a room:\n%s", stdout)
+	}
+}
+
+func TestMeetingsContextLocalUsageErrors(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog.json")
+	if err := os.WriteFile(catalogPath, []byte(roomedMeetingCatalog), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+	other := t.TempDir()
+
+	cases := []struct {
+		name       string
+		args       []string
+		wantCode   int
+		wantStderr string
+	}{
+		{
+			name:       "no files",
+			args:       []string{"meetings", "context", "--local"},
+			wantCode:   2,
+			wantStderr: "at least one portable .opus meeting file",
+		},
+		{
+			name:       "not a .opus",
+			args:       []string{"meetings", "context", "--local", filepath.Join(dir, "MEETING1.md")},
+			wantCode:   2,
+			wantStderr: "is not a .opus file",
+		},
+		{
+			// The likelier mistake than a repeated argument: the same recording
+			// staged into two directories is still one meeting.
+			name:       "the same meeting from two directories",
+			args:       []string{"meetings", "context", "--local", filepath.Join(dir, "MEETING1.opus"), filepath.Join(other, "MEETING1.opus")},
+			wantCode:   2,
+			wantStderr: `are both meeting "MEETING1"`,
+		},
+		{
+			name:       "--keep-opus downloads nothing to keep",
+			args:       []string{"meetings", "context", "--local", "--keep-opus", filepath.Join(dir, "kept.opus"), filepath.Join(dir, "MEETING1.opus")},
+			wantCode:   2,
+			wantStderr: "--local downloads nothing",
+		},
+		{
+			// A second catalog could contradict the one Nextcloud filtered for
+			// this caller, which is the only one an id run is allowed to read.
+			name:       "--catalog without --local",
+			args:       []string{"meetings", "context", "--catalog", catalogPath, "MEETING1"},
+			wantCode:   2,
+			wantStderr: "--catalog reads the room for meetings named as local files",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, stderr := runMeetingsCLIRaw(t, tc.args...)
+			if code != tc.wantCode {
+				t.Fatalf("exit=%d, want %d (stderr=%q)", code, tc.wantCode, stderr)
+			}
+			if !strings.Contains(stderr, tc.wantStderr) {
+				t.Errorf("stderr=%q, want %q", stderr, tc.wantStderr)
+			}
+		})
+	}
+}
+
+// A --catalog that does not list a named meeting is mismatched inputs, not a
+// meeting without a room: rendering it roomless would quietly produce a
+// document that differs from the same meeting read by id.
+func TestMeetingsContextLocalRefusesAMeetingTheCatalogDoesNotList(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog.json")
+	if err := os.WriteFile(catalogPath, []byte(roomedMeetingCatalog), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+	paths := stageLocalMeetingFiles(t, dir, []byte("not really an opus"), "SOMEONE-ELSES")
+
+	code, stdout, stderr := runMeetingsCLIRaw(t, "meetings", "context", "--local", "--catalog", catalogPath, paths[0])
+
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1 (stderr=%q)", code, stderr)
+	}
+	if !strings.Contains(stderr, `no entry for meeting "SOMEONE-ELSES"`) {
+		t.Errorf("stderr=%q, want it to name the meeting the catalog does not list", stderr)
+	}
+	if strings.Contains(stdout, meetingContextVersion) {
+		t.Errorf("no document may be emitted:\n%s", stdout)
+	}
+}
+
+// The version gate is the same one a fetched catalog goes through: a file this
+// build cannot read is refused rather than read as a catalog with nothing in
+// it, which would render every meeting roomless and say nothing about why.
+func TestMeetingsContextLocalRefusesAnUnreadableCatalog(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog.json")
+	if err := os.WriteFile(catalogPath, []byte(`{"version":"cassini.viewer.catalog.v2","meetings":[]}`), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+	paths := stageLocalMeetingFiles(t, dir, []byte("not really an opus"), "MEETING1")
+
+	code, _, stderr := runMeetingsCLIRaw(t, "meetings", "context", "--local", "--catalog", catalogPath, paths[0])
+
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1 (stderr=%q)", code, stderr)
+	}
+	if !strings.Contains(stderr, "declares version") {
+		t.Errorf("stderr=%q, want the catalog version to be named", stderr)
+	}
+}
+
+// The size cap is the same one a fetched catalog goes through, and it has to
+// bound the read rather than measure what was already read: --catalog is a path
+// this process was handed, and a file of unbounded length must not be pulled
+// into memory before anyone asks how big it was.
+func TestMeetingsContextLocalRefusesAnOversizedCatalogFile(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog.json")
+	file, err := os.Create(catalogPath)
+	if err != nil {
+		t.Fatalf("create catalog: %v", err)
+	}
+	// Sparse: one byte past the cap is what proves the limit, and writing 32 MiB
+	// of real bytes to prove it would only slow the suite down.
+	if err := file.Truncate(int64(maxCatalogBytes) + 1); err != nil {
+		t.Fatalf("size catalog: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close catalog: %v", err)
+	}
+	paths := stageLocalMeetingFiles(t, dir, []byte("not really an opus"), "MEETING1")
+
+	code, _, stderr := runMeetingsCLIRaw(t, "meetings", "context", "--local", "--catalog", catalogPath, paths[0])
+
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1 (stderr=%q)", code, stderr)
+	}
+	if !strings.Contains(stderr, "larger than") {
+		t.Errorf("stderr=%q, want the size refusal rather than a parse error", stderr)
+	}
+}

@@ -364,6 +364,55 @@ func TestRunStartupReportsResolvedExAppPublishSink(t *testing.T) {
 	}
 }
 
+// The published read surface shells out to the CLI, and ExAppConfig is loaded
+// before --cassini-bin is resolved, so the binary reaches it by assignment in
+// Run. Without that assignment a deployment configured only by flag serves no
+// published/meetings-context at all — and does so quietly, since the route is
+// simply not mounted rather than mounted and broken (D-717).
+func TestRunMountsMeetingsContextWithTheFlagResolvedCassiniBin(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	dataRoot := t.TempDir()
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv(envAppID, "gocassini")
+	t.Setenv(envAppVersion, "test")
+	t.Setenv(envAppSecret, "test-app-secret")
+	t.Setenv(envNextcloudURL, "https://cloud.example.test")
+	t.Setenv(envAppHost, "")
+	t.Setenv(envAppPort, "")
+	t.Setenv(envAppPersistentStorage, "")
+	t.Setenv(envAppAPIRequired, "false")
+	t.Setenv(envViewerDist, "")
+	t.Setenv(envPublishSinkName, "")
+	t.Setenv(envSTTCUDACapable, "0")
+	t.Setenv("CASSINI_TALK_RECORDING_SECRET", "test-recording-secret")
+	t.Setenv(envTalkSignalingInternalSecret, "test-signaling-secret")
+	// The point of the test: the image env the ExApp images bake is absent, so
+	// the flag is the only source of the path.
+	t.Setenv(envCassiniBin, "")
+
+	cassiniBin := filepath.Join(repoRoot, "bin", "cassini")
+	args := []string{
+		"--bind", "127.0.0.1:0",
+		"--db", filepath.Join(dataRoot, "jobs.sqlite3"),
+		"--work-root", filepath.Join(dataRoot, "jobs"),
+		"--site-root", filepath.Join(dataRoot, "site"),
+		"--cassini-bin", cassiniBin,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	if code := Run(ctx, args, &stdout, &stderr); code != 0 {
+		t.Fatalf("Run() = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if logs := stderr.String(); strings.Contains(logs, "no cassini binary configured") {
+		t.Fatalf("published/meetings-context was not mounted even though --cassini-bin was given\nlogs:\n%s", logs)
+	}
+}
+
 func TestLoadConfigUsesCassiniPrefixedWorkerEnvAndBasePath(t *testing.T) {
 	repoRoot := makeFakeOperatorRepoRoot(t)
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)

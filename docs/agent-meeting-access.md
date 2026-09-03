@@ -13,7 +13,7 @@ Give an agent the three things it needs to reason about your meetings:
 | `cassini meetings rooms` | Which conversations does this account have recordings from? |
 | `cassini meetings list` | Which meetings may this account read — optionally only a room's, or a date range's? |
 | `cassini meetings fetch <id>` | Give me that meeting's single portable file. |
-| `cassini meetings context <id>` | Give me that meeting as text I can read. |
+| `cassini meetings context <id> [<id> ...]` | Give me those meetings as one document I can read. |
 
 ## How it works
 
@@ -34,7 +34,8 @@ authorization and Cassini keeps no separate list of who may see what.
   Cassini app ── PROPFIND / GET Nextcloud Files AS THAT USER
         │
         ├── catalog.json  filtered to what the caller may read
-        └── meetings/<id>.opus   ... or 404
+        ├── meetings/<id>.opus   ... or 404
+        └── meetings-context?id=…&id=…   the same document `meetings context` prints
 ```
 
 Three consequences worth internalising before you build on this:
@@ -234,16 +235,31 @@ A trailing note may report meetings that carry **no room at all** — a non-Talk
 job, or an old recording whose file holds no usable room name either. They are
 real, `list` shows them, and no `--room` value reaches them.
 
-## 3. Read one meeting as context
+## 3. Read meetings as context
 
 ```bash
 ./bin/cassini meetings context 01JZ8K3M4N5P6Q7R8S9T0VWXYZ
+./bin/cassini meetings context 01JZ8K3M… 01K2R4N7… 01K5T9P2…
 ```
 
-Expected: a markdown document on stdout — the meeting's identity and duration,
-the summary if one was generated, and the transcript as speaker-attributed
-paragraphs. Use `--out FILE` to write it to a file instead, or `--json` for the
-structured form (`cassini.meetings.context.v1`).
+Expected: a markdown document on stdout — for each meeting, its identity and
+duration, the summary if one was generated, and the transcript as
+speaker-attributed paragraphs. Use `--out FILE` to write it to a file instead,
+or `--json` for the structured form (`cassini.meetings.context.v1`).
+
+**Several ids produce one document**, holding the meetings in the order you
+named them and separated by a `---` rule. In `--json` they arrive as a
+`meetings` array whose every entry is exactly the single-meeting document the
+command has always produced; one id is still that bare document, unwrapped. The
+whole run is fetched against a single view of what you may read, and **an id you
+cannot read fails all of it** — a bundle that quietly dropped a meeting would
+answer a question asked of all of them using only some of them, and look right
+doing it. The failing id is named on stderr, because the 404 wording cannot be.
+
+`--timestamps` cites each passage's start time beside the speaker, as `MM:SS` or
+`H:MM:SS` past an hour. Off by default, because it changes bytes consumers have
+pinned. Use it when the answer has to point at where something was said; the
+`--json` form always carries the raw timings whether or not it is set.
 
 **Read this before quoting the transcript.** The transcript is *assembled from
 the recording's word timings*, and both output modes label it
@@ -256,7 +272,61 @@ If the meeting has no summary you get `_No summary was generated for this
 meeting._` and a note on stderr. That is normal, not a failure: summaries are
 generated only when the deployment has a summariser configured.
 
-## 4. Download the meeting file itself
+`--keep-opus FILE` keeps the download for one meeting; it is refused for several,
+because one file cannot hold them. So is the same id given twice.
+
+### Reading meeting files you already have
+
+```bash
+./bin/cassini meetings context --local ./meetings/01JZ8K3M….opus
+./bin/cassini meetings context --local --catalog ./catalog.json ./meetings/*.opus
+```
+
+`--local` reads portable `.opus` files off disk instead of fetching ids from
+Nextcloud, and needs none of the connection settings above. It is the same
+reader, the same prose derivation and the same document — the file is simply
+already there.
+
+Two things follow from that, and both matter if you want the two paths to agree:
+
+- **A meeting's id is its file's basename without the `.opus`.** That is how a
+  published archive names a recording (`meetings/<id>.opus`), so files kept by
+  `meetings fetch --out "<id>.opus"` keep the archive's ids for free.
+- **The room is not in the file.** A catalog entry's room id is what the
+  operator keeps current, and a room's display name lives only in the catalog
+  because a name is editable and a sealed recording is not. `--catalog` points
+  at a `catalog.json` to read both from, matched on the id, and a local run with
+  one produces the same bytes as an id run over the same meetings. Without it a
+  meeting renders with whatever room id its file was tagged with and no room
+  name. A `--catalog` that does not list a named meeting is refused rather than
+  quietly rendering it roomless.
+
+## 4. The same document, served to the Cassini app
+
+```text
+GET published/meetings-context?id=<id>&id=<id>[&format=json][&timestamps=true]
+```
+
+The app needs the same bundle the CLI prints, and "the same" is only true by
+construction if there is one implementation. So the operator does not assemble
+one: it resolves what you may read exactly as it resolves `catalog.json`,
+fetches each recording from Nextcloud Files **as you**, and runs
+`cassini meetings context --local` over the files — the CLI's own bytes, relayed.
+
+It is a sibling of `catalog.json` under the same USER-level `published/` route,
+so it is `GET`/`HEAD` only and needs no new server route.
+
+| Answer | Means |
+|---|---|
+| `200` | The document, as `text/markdown` or `application/json` |
+| `400` | The query is wrong — no ids, a repeated id, more than 20, or an unreadable `format`/`timestamps`. Nothing was fetched. |
+| `404` | One of the ids is not in your readable set. Absent and denied are the same answer, as everywhere else here. |
+| `502` | The request could not be answered: Nextcloud Files was unreachable, the caller could not be identified, or the render failed. **Never** an empty document. |
+
+At most 20 meetings per request, because every id costs a whole recording
+download and an uncapped set is a way to make the operator pull the archive.
+
+## 5. Download the meeting file itself
 
 ```bash
 ./bin/cassini meetings fetch 01JZ8K3M4N5P6Q7R8S9T0VWXYZ --out "./Daily Standup.opus"
@@ -335,8 +405,14 @@ not a Cassini portable `.opus`. Keep it with `--keep-opus FILE` and run
 `cassini inspect` on it to see what arrived.
 
 **`ffprobe … executable file not found`** — `meetings context` needs `ffprobe` on
-`PATH` to read the meeting's metadata. `meetings list` and `meetings fetch` do
-not. Install ffmpeg, or use `fetch` and inspect elsewhere.
+`PATH` to read the meeting's metadata, on both the id path and `--local`.
+`meetings list` and `meetings fetch` do not. Install ffmpeg, or use `fetch` and
+inspect elsewhere.
+
+**`context failed on meeting id "…"; a bundle is all N of its meetings or none`**
+— one id of several could not be read, so no document was produced. It is absent
+or it belongs to someone else; these are answered identically on purpose. Drop
+it, or run `meetings list` to see what this account can read.
 
 ## Related
 

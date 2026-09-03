@@ -2,6 +2,7 @@ package cassini
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,12 +33,16 @@ func runMeetingsContext(ctx context.Context, args []string, stdout, stderr io.Wr
 	asJSON := fs.Bool("json", false, "emit JSON instead of markdown")
 	keepOpus := fs.String("keep-opus", "", "also keep the downloaded portable .opus at this path")
 	timestamps := fs.Bool("timestamps", false, "cite each passage's start time in the markdown as MM:SS, or H:MM:SS past an hour (the JSON always carries the raw timings)")
+	local := fs.Bool("local", false, "read portable .opus files named on the command line instead of fetching meeting ids from Nextcloud")
+	catalogPath := fs.String("catalog", "", "with --local, the catalog.json to read each meeting's room from (matched on the meeting id)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini meetings context <meeting-id>
   cassini meetings context <meeting-id> <meeting-id> [<meeting-id> ...]
   cassini meetings context <meeting-id> --json
   cassini meetings context <meeting-id> --out ./context.md
+  cassini meetings context --local ./meetings/<meeting-id>.opus [...]
+  cassini meetings context --local --catalog ./catalog.json ./meetings/*.opus
 
 Print one or more meetings as context an agent can read: the transcript as
 speaker-attributed prose, plus the generated summary when the meeting has one.
@@ -46,6 +51,14 @@ Several ids produce ONE document, holding the meetings in the order you named
 them, separated by a --- rule. An id you cannot read fails the whole run: a
 bundle that quietly dropped a meeting would answer a question asked of all of
 them using only some of them, and look right doing it.
+
+--local reads portable .opus files already on disk instead of fetching ids from
+Nextcloud, the way `+"`cassini meetings summarize`"+` does, and needs none of the
+connection flags. Each meeting's id is its file's basename without the .opus,
+which is how a published archive names one (meetings/<meeting-id>.opus). The
+room is not in the file — the catalog owns it — so pass --catalog to read it
+from a catalog.json; without one a meeting renders with whatever room id its
+file carries and no room name.
 
 The transcript is derived from the recording's word timings — a published
 meeting carries no separately cleaned-up transcript — so it is labelled
@@ -64,10 +77,10 @@ Requires ffprobe on PATH to read each meeting file's metadata.
 		}
 		return 2
 	}
-	// Anything flag-shaped left over is a flag the caller put after an id, where
-	// Go's flag package stops parsing. Refusing it is not pedantry: taken as an
-	// id it would be echoed back in a failure line, and the likeliest such flag
-	// is --app-password.
+	// Anything flag-shaped left over is a flag the caller put after a positional
+	// argument, where Go's flag package stops parsing. Refusing it is not
+	// pedantry: taken as an id it would be echoed back in a failure line, and the
+	// likeliest such flag is --app-password.
 	if meetingsArgsLookLikeFlagsAfterPositional(fs.Args()) {
 		fmt.Fprintf(stderr, "context takes meeting ids, but %d argument(s) after the ids could not be read as ids: %v\n",
 			fs.NArg(), redactMeetingsArgs(fs.Args()))
@@ -75,72 +88,24 @@ Requires ffprobe on PATH to read each meeting file's metadata.
 		fs.Usage()
 		return 2
 	}
-	ids, err := meetingContextIDs(append(leading, fs.Args()...))
-	if err != nil {
-		fmt.Fprintf(stderr, "context configuration error: %v\n", err)
-		fs.Usage()
-		return 2
-	}
-	if len(ids) == 0 {
-		fmt.Fprintf(stderr, "context takes at least one meeting id, got none\n")
-		fs.Usage()
-		return 2
-	}
-	if err := resolveMeetingsConfig(fs, &cfg); err != nil {
-		fmt.Fprintf(stderr, "context configuration error: %v\n", err)
-		return 2
-	}
-	warnAboutInsecureTLS(stderr, cfg)
+	positional := append(leading, fs.Args()...)
 
 	// Trim once and use the trimmed values everywhere: gating the file open on a
 	// trimmed path but the "wrote it" line on the raw one made `--out " "` print
 	// the payload to stdout AND claim a file had been written.
 	outFile := strings.TrimSpace(*outPath)
 	keepOpusPath := strings.TrimSpace(*keepOpus)
-	if keepOpusPath != "" && len(ids) > 1 {
-		fmt.Fprintf(stderr, "context configuration error: --keep-opus names one file and cannot hold %d meetings; ask for one meeting id, or use `cassini meetings fetch`\n", len(ids))
-		return 2
+	catalogFile := strings.TrimSpace(*catalogPath)
+
+	var bundle meetingcontext.Bundle
+	var code int
+	if *local {
+		bundle, code = localMeetingContexts(fs, positional, catalogFile, keepOpusPath, stderr)
+	} else {
+		bundle, code = remoteMeetingContexts(ctx, fs, &cfg, positional, catalogFile, keepOpusPath, stderr)
 	}
-
-	// One catalog fetch for the whole bundle, not one per id. That is the
-	// semantics as much as the saving: a bundle is a set of meetings resolved
-	// against a single view of what this caller may read, so it cannot be
-	// assembled half out of one catalog and half out of a later one.
-	client := newMeetingsClient(cfg)
-	listing, err := client.fetchCatalog(ctx)
-	warnAboutMeetingsSource(stderr, listing)
-	if err != nil {
-		return reportMeetingsError(stderr, "context", cfg, err)
-	}
-
-	bundle := meetingcontext.Bundle{Meetings: make([]meetingContext, 0, len(ids))}
-	for _, meetingID := range ids {
-		audioURL, entry, err := client.resolveMeetingIn(listing, meetingID)
-		if err != nil {
-			noteMeetingContextFailure(stderr, ids, meetingID)
-			return reportMeetingsError(stderr, "context", cfg, err)
-		}
-
-		// The portable reader needs a filesystem path: it shells out to ffprobe to
-		// read the OpusTags. Stage the download in a temp file — and remove it on
-		// every path, since cassini has leaked temp files before. The cleanup is
-		// called rather than deferred because a bundle stages its meetings in
-		// turn, and deferring would keep every download on disk until the whole
-		// command finished — N whole meetings, for a command whose output is text.
-		opusPath, cleanup, err := client.stageMeetingOpus(ctx, audioURL, keepOpusPath)
-		if err != nil {
-			noteMeetingContextFailure(stderr, ids, meetingID)
-			return reportMeetingsError(stderr, "context", cfg, err)
-		}
-		meeting, extractErr := inspectpkg.ExtractMeeting(opusPath)
-		cleanup()
-		if extractErr != nil {
-			noteMeetingContextFailure(stderr, ids, meetingID)
-			fmt.Fprintf(stderr, "context failed: read the downloaded meeting: %v\n", extractErr)
-			return 1
-		}
-
-		bundle.Meetings = append(bundle.Meetings, buildMeetingContext(meetingID, meeting, entry))
+	if code != 0 {
+		return code
 	}
 
 	out, closeOut, err := openMeetingsOutput(outFile, stdout)
@@ -162,6 +127,238 @@ Requires ffprobe on PATH to read each meeting file's metadata.
 		fmt.Fprintf(stdout, "meeting_context -> %s\n", outFile)
 	}
 	return 0
+}
+
+// remoteMeetingContexts builds the bundle by fetching each meeting id from
+// Nextcloud as the calling user, which is what every other `cassini meetings`
+// verb does.
+//
+// The non-zero int is the process exit code, already reported to stderr.
+func remoteMeetingContexts(ctx context.Context, fs *flag.FlagSet, cfg *meetingsConfig, args []string, catalogFile, keepOpusPath string, stderr io.Writer) (meetingcontext.Bundle, int) {
+	// A catalog on disk is meaningless here: the caller's own filtered catalog is
+	// what an id is resolved against, and reading the room out of a second one
+	// would let a stale file contradict it.
+	if catalogFile != "" {
+		fmt.Fprintf(stderr, "context configuration error: --catalog reads the room for meetings named as local files; without --local the room comes from the catalog Nextcloud serves you\n")
+		return meetingcontext.Bundle{}, 2
+	}
+	ids, err := meetingContextIDs(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "context configuration error: %v\n", err)
+		fs.Usage()
+		return meetingcontext.Bundle{}, 2
+	}
+	if len(ids) == 0 {
+		fmt.Fprintf(stderr, "context takes at least one meeting id, got none\n")
+		fs.Usage()
+		return meetingcontext.Bundle{}, 2
+	}
+	if err := resolveMeetingsConfig(fs, cfg); err != nil {
+		fmt.Fprintf(stderr, "context configuration error: %v\n", err)
+		return meetingcontext.Bundle{}, 2
+	}
+	warnAboutInsecureTLS(stderr, *cfg)
+	if keepOpusPath != "" && len(ids) > 1 {
+		fmt.Fprintf(stderr, "context configuration error: --keep-opus names one file and cannot hold %d meetings; ask for one meeting id, or use `cassini meetings fetch`\n", len(ids))
+		return meetingcontext.Bundle{}, 2
+	}
+
+	// One catalog fetch for the whole bundle, not one per id. That is the
+	// semantics as much as the saving: a bundle is a set of meetings resolved
+	// against a single view of what this caller may read, so it cannot be
+	// assembled half out of one catalog and half out of a later one.
+	client := newMeetingsClient(*cfg)
+	listing, err := client.fetchCatalog(ctx)
+	warnAboutMeetingsSource(stderr, listing)
+	if err != nil {
+		return meetingcontext.Bundle{}, reportMeetingsError(stderr, "context", *cfg, err)
+	}
+
+	bundle := meetingcontext.Bundle{Meetings: make([]meetingContext, 0, len(ids))}
+	for _, meetingID := range ids {
+		audioURL, entry, err := client.resolveMeetingIn(listing, meetingID)
+		if err != nil {
+			noteMeetingContextFailure(stderr, ids, meetingID)
+			return meetingcontext.Bundle{}, reportMeetingsError(stderr, "context", *cfg, err)
+		}
+
+		// The portable reader needs a filesystem path: it shells out to ffprobe to
+		// read the OpusTags. Stage the download in a temp file — and remove it on
+		// every path, since cassini has leaked temp files before. The cleanup is
+		// called rather than deferred because a bundle stages its meetings in
+		// turn, and deferring would keep every download on disk until the whole
+		// command finished — N whole meetings, for a command whose output is text.
+		opusPath, cleanup, err := client.stageMeetingOpus(ctx, audioURL, keepOpusPath)
+		if err != nil {
+			noteMeetingContextFailure(stderr, ids, meetingID)
+			return meetingcontext.Bundle{}, reportMeetingsError(stderr, "context", *cfg, err)
+		}
+		meeting, extractErr := inspectpkg.ExtractMeeting(opusPath)
+		cleanup()
+		if extractErr != nil {
+			noteMeetingContextFailure(stderr, ids, meetingID)
+			fmt.Fprintf(stderr, "context failed: read the downloaded meeting: %v\n", extractErr)
+			return meetingcontext.Bundle{}, 1
+		}
+
+		bundle.Meetings = append(bundle.Meetings, buildMeetingContext(meetingID, meeting, entry))
+	}
+	return bundle, 0
+}
+
+// localMeetingContexts builds the bundle from portable .opus files already on
+// disk, reading no Nextcloud at all — the same shape `cassini meetings
+// summarize` has, and for a related reason: the file is the input, and getting
+// it there is somebody else's job.
+//
+// It exists because the operator serves the app a context bundle over
+// `published/meetings-context` (D-717). The operator can fetch a recording from
+// Nextcloud Files as the caller — that is how the read proxy already works —
+// but it holds no app password of the caller's, so the id path is closed to it.
+// This is the seam that keeps one implementation of the document instead of a
+// second one written in the operator's module, which could not import this one.
+//
+// A meeting's id is its file's basename without the .opus, because that is how
+// a published archive names a recording (meetings/<id>.opus), so a caller that
+// downloaded the archive's files keeps the archive's ids for free.
+//
+// The room is deliberately NOT read from the file: a catalog entry's room id is
+// kept current by the operator and a room's mutable display name lives only in
+// the catalog (D-640), which is why an id run reads both from there. --catalog
+// hands this run the same entry, so a local run over an archive's files
+// produces the same bytes as an id run over the same meetings. Without it a
+// meeting renders with the room id its file was tagged with and no room name —
+// exactly what an id run produces for a meeting whose catalog entry says
+// nothing about the room.
+func localMeetingContexts(fs *flag.FlagSet, paths []string, catalogFile, keepOpusPath string, stderr io.Writer) (meetingcontext.Bundle, int) {
+	if keepOpusPath != "" {
+		fmt.Fprintf(stderr, "context configuration error: --keep-opus keeps a downloaded meeting, and --local downloads nothing\n")
+		return meetingcontext.Bundle{}, 2
+	}
+	if len(paths) == 0 {
+		fmt.Fprintf(stderr, "context --local takes at least one portable .opus meeting file, got none\n")
+		fs.Usage()
+		return meetingcontext.Bundle{}, 2
+	}
+	for _, path := range paths {
+		if !isPortableMeetingOutput(strings.TrimSpace(path)) {
+			fmt.Fprintf(stderr, "context configuration error: %s is not a .opus file\n", path)
+			return meetingcontext.Bundle{}, 2
+		}
+	}
+	ids, err := meetingContextFileIDs(paths)
+	if err != nil {
+		fmt.Fprintf(stderr, "context configuration error: %v\n", err)
+		return meetingcontext.Bundle{}, 2
+	}
+
+	entries := map[string]meetingsCatalogEntry{}
+	if catalogFile != "" {
+		entries, err = loadMeetingsCatalogFile(catalogFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "context failed: %v\n", err)
+			return meetingcontext.Bundle{}, 1
+		}
+	}
+
+	bundle := meetingcontext.Bundle{Meetings: make([]meetingContext, 0, len(paths))}
+	for i, path := range paths {
+		meetingID := ids[i]
+		entry, known := entries[meetingID]
+		// A --catalog that does not name a meeting is a mismatched pair of
+		// inputs, not a meeting without a room: the run would silently produce a
+		// document that differs from the same meeting read by id, and nothing in
+		// it would say so.
+		if catalogFile != "" && !known {
+			fmt.Fprintf(stderr, "context failed: %s has no entry for meeting %q, so its room cannot be read; pass the catalog that lists it, or drop --catalog\n", catalogFile, meetingID)
+			return meetingcontext.Bundle{}, 1
+		}
+		meeting, extractErr := inspectpkg.ExtractMeeting(strings.TrimSpace(path))
+		if extractErr != nil {
+			noteMeetingContextFailure(stderr, ids, meetingID)
+			fmt.Fprintf(stderr, "context failed: read %s: %v\n", path, extractErr)
+			return meetingcontext.Bundle{}, 1
+		}
+		bundle.Meetings = append(bundle.Meetings, buildMeetingContext(meetingID, meeting, entry))
+	}
+	return bundle, 0
+}
+
+// meetingContextFileIDs derives each local file's meeting id from its name, in
+// the order the caller named the files.
+//
+// The same id twice is refused for the reason meetingContextIDs refuses it —
+// the same transcript twice is context spent twice on one meeting while reading
+// as coverage of two — and here it also catches the likelier mistake of naming
+// the same recording out of two directories.
+func meetingContextFileIDs(paths []string) ([]string, error) {
+	ids := make([]string, 0, len(paths))
+	seen := make(map[string]string, len(paths))
+	for _, raw := range paths {
+		path := strings.TrimSpace(raw)
+		id := strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+		if id == "" {
+			return nil, fmt.Errorf("%q has no meeting id in its name; a meeting file is named <meeting-id>.opus", raw)
+		}
+		if first, repeated := seen[id]; repeated {
+			return nil, fmt.Errorf("%s and %s are both meeting %q; a bundle carries each meeting once", first, path, id)
+		}
+		seen[id] = path
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// loadMeetingsCatalogFile reads a catalog.json off disk and indexes it by
+// meeting id, so a --local run can read each meeting's room from the same place
+// an id run reads it from.
+//
+// It goes through the same version gate and the same entry decoding as a
+// fetched catalog: a file this cannot read is refused rather than treated as a
+// catalog with nothing in it, which would render every meeting roomless and say
+// nothing about why.
+func loadMeetingsCatalogFile(path string) (map[string]meetingsCatalogEntry, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("read catalog %s: %w", path, err)
+	}
+	defer file.Close()
+
+	// Bounded while reading, not measured afterwards: a --catalog is a path
+	// somebody handed this process, and a cap applied to bytes already in memory
+	// is not a cap at all. One byte past it, like the fetched catalog, so hitting
+	// the limit stays detectable instead of surfacing as truncated JSON.
+	body, err := io.ReadAll(io.LimitReader(file, maxCatalogBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read catalog %s: %w", path, err)
+	}
+	if len(body) > maxCatalogBytes {
+		return nil, fmt.Errorf("catalog %s is larger than %d MiB, which no real meeting list is", path, maxCatalogBytes>>20)
+	}
+	var catalog meetingsCatalog
+	if err := json.Unmarshal(body, &catalog); err != nil {
+		return nil, fmt.Errorf("parse catalog %s: %w", path, err)
+	}
+	if catalog.Version != meetingsCatalogVersion {
+		return nil, fmt.Errorf("catalog %s declares version %q (this build reads %q)", path, catalog.Version, meetingsCatalogVersion)
+	}
+	entries := make(map[string]meetingsCatalogEntry, len(catalog.Meetings))
+	for i, raw := range catalog.Meetings {
+		var entry meetingsCatalogEntry
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return nil, fmt.Errorf("parse catalog entry %d of %s: %w", i, path, err)
+		}
+		entry.ID = strings.TrimSpace(entry.ID)
+		if entry.ID == "" {
+			continue
+		}
+		// First wins, matching the fetched catalog's find(): ids are producer
+		// data and nothing guarantees they are unique.
+		if _, taken := entries[entry.ID]; !taken {
+			entries[entry.ID] = entry
+		}
+	}
+	return entries, nil
 }
 
 // splitLeadingMeetingIDs takes the run of meeting ids off the front of the

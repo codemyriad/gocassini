@@ -65,6 +65,7 @@ const (
 	envAppAPIRequired       = "CASSINI_APPAPI_REQUIRED"
 	envViewerDist           = "CASSINI_VIEWER_DIST"
 	envNextcloudURL         = "NEXTCLOUD_URL"
+	envCassiniBin           = "CASSINI_BIN"
 	defaultExAppBindHost    = "0.0.0.0"
 	defaultExAppBindPort    = "8080"
 	viewerURLPrefix         = "/viewer"
@@ -176,7 +177,14 @@ type ExAppConfig struct {
 	// the nextcloud-files sink nothing is ever written to PublishedDir, so
 	// mounting a file server over it would only ever serve staleness.
 	PublishSink string
-	onEnabled   func(bool)
+	// CassiniBin is the Cassini CLI the published routes shell out to, for the
+	// one read surface that renders rather than relays: published/meetings-context
+	// (D-717). Seeded from CASSINI_BIN, which the ExApp images bake, and meant
+	// to be overwritten with the operator's own resolved --cassini-bin — this
+	// struct is loaded before that value exists. Empty means the route is not
+	// served at all rather than served by a binary that may not be there.
+	CassiniBin string
+	onEnabled  func(bool)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -191,6 +199,7 @@ func LoadExAppConfig() (ExAppConfig, error) {
 		AppSecret:    os.Getenv(envAppSecret),
 		NextcloudURL: strings.TrimSpace(os.Getenv(envNextcloudURL)),
 		ViewerDist:   strings.TrimSpace(os.Getenv(envViewerDist)),
+		CassiniBin:   strings.TrimSpace(os.Getenv(envCassiniBin)),
 	}
 	cfg.Active = strings.TrimSpace(cfg.AppSecret) != ""
 	required, err := parseBoolEnv(envAppAPIRequired)
@@ -310,7 +319,7 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 		root.Handle(viewerURLPrefix+"/", viewer)
 	}
 	if localArchive != "" || ncProxy != nil {
-		root.Handle(publishedURLPrefix+"/", publishedHandler(localArchive, publishedURLPrefix, logger, ncProxy))
+		root.Handle(publishedURLPrefix+"/", publishedHandler(localArchive, publishedURLPrefix, logger, ncProxy, c.meetingsContextHandler(logger)))
 	}
 }
 
@@ -695,7 +704,11 @@ func serveSPAIndex(w http.ResponseWriter, r *http.Request, indexPath string, log
 
 // publishedHandler serves files from `dir` under urlPrefix. No SPA fallback —
 // missing files 404. Used for the published meeting archive.
-func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc) http.Handler {
+//
+// meetingsContext is the one archive path that is rendered rather than relayed
+// (published/meetings-context, D-717); nil where this deployment cannot serve
+// it, in which case the path falls through and 404s like any other miss.
+func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc, meetingsContext http.Handler) http.Handler {
 	// nil when no sink writes a local archive. Everything outside the archive
 	// paths — including the site manifest cassini.json, which carries meeting
 	// counts and job ids — then 404s instead of being served off disk.
@@ -714,6 +727,13 @@ func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFiles
 		// the archive source only outside AppAPI (D-529).
 		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
 		relPath = strings.TrimPrefix(relPath, "/")
+		// Checked before the proxy arm: meetings-context is a sibling of
+		// catalog.json, not a file under meetings/, and nothing in Nextcloud
+		// Files answers it.
+		if relPath == meetingsContextPath && meetingsContext != nil {
+			meetingsContext.ServeHTTP(w, r)
+			return
+		}
 		if ncProxy != nil && (relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/")) {
 			if ncProxy(w, r, relPath) {
 				return

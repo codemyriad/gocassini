@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
-  import { StaticCatalogProvider } from "cassini-viewer/dataProvider";
+  import { AppDataProvider } from "./appDataProvider";
   import Operator from "./Operator.svelte";
   import SetupNotice from "./SetupNotice.svelte";
   import { loadConfig } from "./operator/config";
@@ -35,7 +35,11 @@
   // here to drift from the first.
   export let ncMode: boolean = false;
 
-  const dataProvider = new StaticCatalogProvider();
+  // The shell's provider is the static one plus the context bundle (D-626):
+  // here, and only here, there is an operator behind the published archive that
+  // can assemble one. A standalone export gets StaticCatalogProvider, which
+  // cannot, and its browse surface offers no Prepare at all.
+  const dataProvider = new AppDataProvider();
 
   // Browse is always available; operator is added only when the boundary probe
   // confirms admin access. The tab bar renders only when the operator surface

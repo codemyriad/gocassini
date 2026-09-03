@@ -28,11 +28,27 @@
   export let themeMode: "saturn-light" | "saturn-dark" = "saturn-light";
   export let errorMessage = "";
 
+  // Which meetings are PICKED for a context bundle (D-626) — a different
+  // question from selectedMeetingId, which is the one that is OPEN. Both are
+  // owned by the shell; the row renders them side by side and never lets one
+  // stand in for the other.
+  export let pickedIds: ReadonlySet<string> = new Set();
+  // Whether picking is offered at all. False wherever nothing can assemble a
+  // bundle — a standalone export has no operator behind it — because a checkbox
+  // that leads to no action is a promise the build cannot keep.
+  export let selectable = false;
+  // Something floats over the bottom of the list (the selection bar), so the
+  // last rows need room to clear it. The list does not know what it is; it only
+  // knows not to hide its own last row under it.
+  export let bottomOverlay = false;
+
   // The filter is list-local state — no other surface reads it.
   let filter = "";
 
   const dispatch = createEventDispatcher<{
     select: MeetingCatalogEntry;
+    pick: MeetingCatalogEntry;
+    visible: MeetingCatalogEntry[];
     clearRoom: void;
     openRooms: void;
     toggleTheme: void;
@@ -45,6 +61,11 @@
   $: visibleMeetings = filterMeetingCatalogEntries(meetings, filter);
   $: monthGroups = groupMeetingsByMonth(visibleMeetings);
   $: trimmedFilter = filter.trim();
+  // The text filter is list-local by design, so the shell cannot compute what
+  // the list is actually showing — and it has to, to say how many picked
+  // meetings this narrowing hides (D-626). Reported rather than moved: the
+  // filter belongs to the list.
+  $: dispatch("visible", visibleMeetings);
 </script>
 
 <section
@@ -118,7 +139,10 @@
     </div>
   </header>
 
-  <div class="list-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable">
+  <div
+    class="list-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable"
+    class:list-scroll-inset={bottomOverlay}
+  >
     {#if totalCount === 0}
       <div class="list-empty">
         <strong>No meetings yet</strong>
@@ -154,30 +178,54 @@
       {#each monthGroups as group (group.key)}
         <h3 class="group-head">{group.label}</h3>
         {#each group.meetings as meeting (meeting.id)}
-          <button
-            type="button"
+          <!-- The row is a container, not a control, so that picking and
+               opening can sit side by side: a checkbox cannot live inside a
+               button, and demoting the whole row to a click-handling div would
+               cost it keyboard focus. `.meeting-row` and aria-current stay on
+               THIS element because that pair is what the row's open state is
+               styled from, in this file and in app.css's Nextcloud-theme
+               override; the open button repeats aria-current because that is
+               the element a screen reader lands on. -->
+          <div
             class="meeting-row"
+            class:row-pickable={selectable}
             aria-current={meeting.id === selectedMeetingId ? "page" : undefined}
-            on:click={() => dispatch("select", meeting)}
           >
-            <span class="row-main">
-              <span class="row-title">{meeting.title}</span>
-              <span class="row-meta">
-                <span>{formatMeetingDateShort(meeting.dateLabel)}</span>
-                <span class="dot" aria-hidden="true"></span>
-                <span class="row-room">{roomLabelOf(meeting)}</span>
-                {#if typeof meeting.speakerCount === "number"}
-                  <span class="dot" aria-hidden="true"></span>
-                  <span>{meeting.speakerCount} speakers</span>
-                {/if}
-              </span>
-            </span>
-            {#if typeof meeting.digestDurationMs === "number"}
-              <span class="row-duration">
-                {formatMeetingDuration(meeting.digestDurationMs)}
-              </span>
+            {#if selectable}
+              <label class="row-pick">
+                <input
+                  type="checkbox"
+                  checked={pickedIds.has(meeting.id)}
+                  aria-label={`Select ${meeting.title}`}
+                  on:change={() => dispatch("pick", meeting)}
+                />
+              </label>
             {/if}
-          </button>
+            <button
+              type="button"
+              class="row-open"
+              aria-current={meeting.id === selectedMeetingId ? "page" : undefined}
+              on:click={() => dispatch("select", meeting)}
+            >
+              <span class="row-main">
+                <span class="row-title">{meeting.title}</span>
+                <span class="row-meta">
+                  <span>{formatMeetingDateShort(meeting.dateLabel)}</span>
+                  <span class="dot" aria-hidden="true"></span>
+                  <span class="row-room">{roomLabelOf(meeting)}</span>
+                  {#if typeof meeting.speakerCount === "number"}
+                    <span class="dot" aria-hidden="true"></span>
+                    <span>{meeting.speakerCount} speakers</span>
+                  {/if}
+                </span>
+              </span>
+              {#if typeof meeting.digestDurationMs === "number"}
+                <span class="row-duration">
+                  {formatMeetingDuration(meeting.digestDurationMs)}
+                </span>
+              {/if}
+            </button>
+          </div>
         {/each}
       {/each}
     {/if}
@@ -342,19 +390,87 @@
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
 
+  /* Room for whatever floats over the bottom of the list, so its last row can
+     be scrolled clear of it rather than sitting permanently underneath. */
+  .list-scroll-inset {
+    padding-bottom: 96px;
+  }
+
   .meeting-row {
     position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    width: 100%;
+    padding: 9px 20px;
+    color: var(--color-base-content);
+  }
+  /* Only when picking is offered: without the checkbox the row keeps exactly
+     the geometry it had before D-626. */
+  .row-pickable {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  /* The open action fills the rest of the row, so a click anywhere but the
+     checkbox still opens the meeting — the two never compete for the same
+     pixel. */
+  .row-open {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.75rem;
     width: 100%;
-    padding: 9px 20px;
+    padding: 0;
     text-align: left;
     cursor: pointer;
     background: none;
     border: 0;
-    color: var(--color-base-content);
+    color: inherit;
+  }
+  /* The button sits inside the row's padding, so its own box stops 20px short
+     of each side and 9px short of top and bottom. Before D-626 the row WAS the
+     button and all of that opened the meeting; without this the strip only
+     lights up on hover and does nothing when clicked. Stretched over the padded
+     row (which is the positioned ancestor) rather than moved onto the button,
+     so the row keeps one geometry in both the pickable and plain layouts. */
+  .row-open::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+
+  .row-pick {
+    display: flex;
+    flex: none;
+    align-items: center;
+    /* Above the open action's hit area: the checkbox keeps its own pixels, and
+       the two still never compete for the same one. */
+    position: relative;
+    z-index: 1;
+    /* Padding, not a bigger box: the hit target has to be thumb-sized without
+       pushing the title off its baseline. */
+    padding: 6px;
+    margin: -6px 0;
+    cursor: pointer;
+  }
+  .row-pick input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--color-primary);
+  }
+  .row-pick input:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  /* The open row is a solid primary fill under Nextcloud theming (app.css), so
+     a primary checkbox would vanish into it. currentColor is whatever that
+     row's text resolved to — primary-content there, base-content in the
+     viewer's own themes, where the open row is only a tint. */
+  .meeting-row[aria-current="page"] .row-pick input {
+    accent-color: currentColor;
   }
   /* Inset to the row's padding so the rule separates rows rather than cutting
      the column edge to edge. */
@@ -365,6 +481,9 @@
     right: 20px;
     bottom: 0;
     height: 1px;
+    /* Decoration: it is painted over the open action's hit area, and a rule
+       that swallowed a click would put a dead line across every row. */
+    pointer-events: none;
     background-color: var(--color-base-300);
   }
   .meeting-row:hover {

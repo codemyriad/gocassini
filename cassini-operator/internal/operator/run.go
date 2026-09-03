@@ -320,6 +320,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	exappCfg.PublishedDir = cfg.SiteRoot
 	exappCfg.PublishSink = sink.Name()
+	// The CLI the published routes shell out to is the one loadConfig already
+	// resolved and checked is executable (D-717). LoadExAppConfig only seeds it
+	// from CASSINI_BIN, because it runs before that value exists; leaving the
+	// seed in place would mean a deployment configured with --cassini-bin
+	// silently does not serve published/meetings-context, and one configured
+	// with a relative CASSINI_BIN serves it via a path nothing validated.
+	exappCfg.CassiniBin = cfg.CassiniBin
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{

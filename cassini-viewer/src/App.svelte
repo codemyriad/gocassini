@@ -16,9 +16,24 @@
     filterMeetingsByRoom,
     type RoomBucket,
   } from "./viewer/rooms";
+  import {
+    EMPTY_SELECTION,
+    acknowledgeDropped,
+    clearSelection,
+    countHiddenByView,
+    describeSelectionGaps,
+    reconcileSelection,
+    selectedEntries,
+    shouldShowSelectionBar,
+    summarizeSelection,
+    toggleSelected,
+    type MeetingSelection,
+  } from "./viewer/selectionModel";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
+  import PreparePanel from "./components/PreparePanel.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
+  import SelectionBar from "./components/SelectionBar.svelte";
 
   // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
   // is selected, which meeting is open, the `meeting` hash param, theme, and
@@ -79,6 +94,18 @@
   let selectedRoomKey: string | null = null;
   // Narrow viewports only: whether the rail is slid in over the list.
   let railOpen = false;
+
+  // Which meetings are PICKED for a context bundle, and whether the Prepare
+  // panel is open over the list (D-626). Transient UI state, deliberately not
+  // routed: the hash router rebuilds the fragment from {meeting, tx, timeMs} on
+  // every viewer navigation, so anything else put there is destroyed by the
+  // next click — and a selection is a thing you are doing, not a place you are.
+  let selection: MeetingSelection = EMPTY_SELECTION;
+  let prepareOpen = false;
+  // What the list is actually showing, reported by MeetingList: its text filter
+  // is list-local, so this is the only way the shell can say how many picked
+  // meetings the current narrowing hides.
+  let visibleMeetings: MeetingCatalogEntry[] = [];
 
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
@@ -180,8 +207,50 @@
     selectedRoomKey = event.detail;
   }
 
-  // Escape closes the topmost layer: the rooms drawer if it is over the sheet,
-  // otherwise the sheet. It deliberately does NOT fire while MeetingView's
+  // Picking is not opening: a picked meeting stays picked while another one is
+  // open, while the room chip changes, and while the search narrows past it.
+  function handlePick(event: CustomEvent<MeetingCatalogEntry>) {
+    selection = toggleSelected(selection, event.detail.id);
+    if (selection.ids.length === 0) {
+      // Nothing left to prepare; the panel would be describing an empty set.
+      prepareOpen = false;
+    }
+  }
+
+  function handleClearSelection() {
+    selection = clearSelection();
+    prepareOpen = false;
+  }
+
+  // syncSelectionToCatalog is called from a reactive statement rather than
+  // being one: reconcileSelection reads and writes `selection`, and a `$:` that
+  // did both would re-run on its own assignment. It returns the same object
+  // when nothing changed, so the common path invalidates nothing.
+  function syncSelectionToCatalog(meetings: MeetingCatalogEntry[]) {
+    const next = reconcileSelection(selection, meetings);
+    if (next !== selection) {
+      selection = next;
+      if (selection.ids.length === 0) {
+        prepareOpen = false;
+      }
+    }
+  }
+
+  // The bundle is assembled by whoever is behind the provider — the operator,
+  // through one implementation shared with the CLI. The viewer never assembles
+  // one itself, so a provider without the capability offers no Prepare at all
+  // rather than a lookalike (see dataProvider.ts).
+  function loadSelectedBundle(): Promise<string> {
+    const provider = dataProvider;
+    if (!provider.loadContextBundle) {
+      return Promise.reject(new Error("This build cannot assemble a context bundle."));
+    }
+    return provider.loadContextBundle(pickedMeetings);
+  }
+
+  // Escape closes the topmost layer, in the order they stack: the rooms drawer,
+  // then Prepare, then the meeting sheet. It deliberately does NOT fire while
+  // MeetingView's
   // shortcuts <dialog> is open — a native modal already answers Escape, and
   // closing the meeting out from under it would be a second, unasked-for action.
   function handleShellKeydown(event: KeyboardEvent) {
@@ -193,6 +262,10 @@
     }
     if (railOpen) {
       railOpen = false;
+      return;
+    }
+    if (prepareOpen) {
+      prepareOpen = false;
       return;
     }
     if (selectedMeetingId) {
@@ -397,6 +470,23 @@
     null;
   $: roomMeetings = filterMeetingsByRoom(catalogMeetings, selectedRoomKey);
 
+  // A picked meeting can leave the archive under a 15-second refresh; run this
+  // against every catalog the shell observes.
+  $: syncSelectionToCatalog(catalogMeetings);
+  $: pickedIds = new Set(selection.ids);
+  $: pickedMeetings = selectedEntries(selection, catalogMeetings);
+  $: selectionTotals = summarizeSelection(pickedMeetings);
+  $: selectionGaps = describeSelectionGaps(selectionTotals);
+  $: hiddenSelectedCount = countHiddenByView(selection, visibleMeetings);
+  // Not `selection.ids.length > 0`: the bar is the only surface that reports a
+  // meeting having left the archive, so it has to survive a loss that took the
+  // last pick with it (selectionModel.shouldShowSelectionBar).
+  $: selectionBarUp = shouldShowSelectionBar(selection);
+  // Prepare exists only where something can produce the bundle. The standalone
+  // export's provider says it cannot by not implementing the method, and the
+  // whole affordance — checkbox, bar and panel — goes with it.
+  $: canPrepare = typeof dataProvider.loadContextBundle === "function";
+
   $: selectedMeeting = selectedMeetingId
     ? catalogMeetings.find((entry) => entry.id === selectedMeetingId) ?? null
     : null;
@@ -561,14 +651,32 @@
       totalCount={catalogMeetings.length}
       {selectedRoomName}
       {selectedMeetingId}
+      {pickedIds}
+      selectable={canPrepare}
+      bottomOverlay={selectionBarUp}
       {ncMode}
       {themeMode}
       errorMessage={listError}
       on:select={(event) => loadCatalogMeeting(event.detail)}
+      on:pick={handlePick}
+      on:visible={(event) => (visibleMeetings = event.detail)}
       on:clearRoom={() => (selectedRoomKey = null)}
       on:openRooms={() => (railOpen = true)}
       on:toggleTheme={toggleTheme}
     />
+
+    {#if selectionBarUp}
+      <div class="selection-dock">
+        <SelectionBar
+          count={selection.ids.length}
+          hiddenCount={hiddenSelectedCount}
+          droppedCount={selection.dropped.length}
+          on:clear={handleClearSelection}
+          on:prepare={() => (prepareOpen = true)}
+          on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
+        />
+      </div>
+    {/if}
 
     {#if railOpen}
       <button
@@ -603,6 +711,25 @@
         />
       </aside>
     {/if}
+
+    {#if prepareOpen}
+      <button
+        type="button"
+        class="shell-scrim prepare-scrim"
+        aria-label="Close Prepare"
+        transition:fade={scrimFade()}
+        on:click={() => (prepareOpen = false)}
+      ></button>
+      <aside class="prepare-sheet" transition:sheetSlide={{}}>
+        <PreparePanel
+          entries={pickedMeetings}
+          totals={selectionTotals}
+          gaps={selectionGaps}
+          loadBundle={loadSelectedBundle}
+          on:close={() => (prepareOpen = false)}
+        />
+      </aside>
+    {/if}
   </div>
 {/if}
 </div><!-- /.cassini-root -->
@@ -634,6 +761,10 @@
   .sheet-scrim {
     z-index: 20;
   }
+  /* Above the meeting sheet: Prepare opens over whatever is already on screen. */
+  .prepare-scrim {
+    z-index: 34;
+  }
   /* Above the sheet: with both open, the drawer is the layer on top, so its
      scrim has to cover the sheet too. */
   .rail-scrim {
@@ -654,11 +785,55 @@
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
   }
 
+  /* The selection bar floats over the list it belongs to — inset past the rail
+     track, and absolute against the shell rather than fixed to the viewport,
+     for exactly the reason the sheet is (see the note in the script). 288px is
+     the rail's 268px plus the bar's own margin. */
+  .selection-dock {
+    position: absolute;
+    left: 288px;
+    right: 20px;
+    bottom: 14px;
+    z-index: 15;
+  }
+
+  /* Narrower than the meeting sheet: a review step, not a reading surface. */
+  .prepare-sheet {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 35;
+    width: min(460px, 100%);
+    display: flex;
+    flex-direction: column;
+    background-color: var(--color-base-100);
+    border-left: 1px solid var(--color-base-300);
+    box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
+  }
+
   @media (max-width: 720px) {
     /* The rail is out of flow down here (it is the drawer), so the list gets
        the whole shell rather than being squeezed beside an empty track. */
     .browse-shell {
       grid-template-columns: minmax(0, 1fr);
+    }
+    /* No rail track to clear. */
+    .selection-dock {
+      left: 12px;
+      right: 12px;
+    }
+    .prepare-sheet {
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 92%;
+      border-left: 0;
+      border-top: 1px solid var(--color-base-300);
+      border-radius: var(--radius-box, 1rem) var(--radius-box, 1rem) 0 0;
+      box-shadow: 0 -8px 30px oklch(0% 0 0 / 0.22);
     }
     /* A side drawer on a phone leaves the content it covers unreachable and
        reads as a page; a bottom sheet reads as a layer over the list. */

@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,7 +60,32 @@ type Segment struct {
 	Words     []Word
 }
 
-func chatCompletion(cfg LLMConfig, system, user string) (string, error) {
+// APIError is the endpoint's own refusal: it answered, and the answer was no.
+//
+// Typed rather than formatted into a string because a caller has to be able to
+// tell "the provider said no" — a missing key, a quota, a model that does not
+// exist — from "the call never completed", which is a timeout or a dead host.
+// Those need different words in front of a user and, for `cassini insight run`,
+// different exit codes. The message is unchanged from the fmt.Errorf it
+// replaced, so nothing that reads the text sees a difference.
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API returned %d: %s", e.StatusCode, e.Body)
+}
+
+// ChatCompletion sends one system and user message to the configured
+// OpenAI-compatible endpoint and returns the reply.
+//
+// Exported because the meeting summary is no longer the only caller: the
+// insight seam (D-656) assembles its own prompt from a context bundle and has
+// no transcript structs to hand BuildMeetingSummary. Sending prompt text is the
+// smallest thing that seam needs from this package, so it is the only thing it
+// gets.
+func ChatCompletion(ctx context.Context, cfg LLMConfig, system, user string) (string, error) {
 	maxTokens := cfg.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = defaultLLMMaxTokens
@@ -86,7 +112,7 @@ func chatCompletion(cfg LLMConfig, system, user string) (string, error) {
 	client := &http.Client{Timeout: timeout}
 
 	url := strings.TrimRight(cfg.BaseURL, "/") + "/chat/completions"
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
 	if err != nil {
 		return "", err
 	}
@@ -107,7 +133,7 @@ func chatCompletion(cfg LLMConfig, system, user string) (string, error) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API returned %d: %s", resp.StatusCode, truncate(string(body), 400))
+		return "", &APIError{StatusCode: resp.StatusCode, Body: truncate(string(body), 400)}
 	}
 
 	var result struct {

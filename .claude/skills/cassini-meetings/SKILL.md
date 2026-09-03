@@ -1,6 +1,6 @@
 ---
 name: cassini-meetings
-description: Read Cassini meeting recordings — list the rooms, list meetings (filtered by room and date), pull one meeting's transcript and summary as context, or download its portable .opus — using the `cassini meetings` CLI against a Nextcloud instance. Use when the user asks what was said or decided in a meeting, asks you to turn a recorded conversation into a plan, issues, notes or a summary, asks which rooms or conversations have recordings, asks for the meetings from a particular room or between two dates, or refers to "the recording", "the call", "last week's meeting", "the standup", or a meeting by name, room or date.
+description: Read Cassini meeting recordings — list the rooms, list meetings (filtered by room and date), pull one meeting's transcript and summary as context, pull several meetings as one document, or download a portable .opus — using the `cassini meetings` CLI against a Nextcloud instance. Use when the user asks what was said or decided in a meeting, asks you to turn a recorded conversation into a plan, issues, notes or a summary, asks which rooms or conversations have recordings, asks for the meetings from a particular room or between two dates, or refers to "the recording", "the call", "last week's meeting", "the standup", or a meeting by name, room or date.
 ---
 
 # Read Cassini meeting recordings
@@ -174,6 +174,54 @@ inline:
 Add `--json` for the structured form (`cassini.meetings.context.v1`) when you
 need the per-segment timings.
 
+### Several meetings, one question
+
+When the user's question is about a *set* of meetings — "what did we decide
+about X across the last three standups?" — name them all in one command rather
+than reading each and stitching the answers together:
+
+```bash
+./bin/cassini meetings context <id-1> <id-2> <id-3> --out /tmp/meetings.md
+```
+
+One document, the meetings in the order you named them, separated by a `---`
+rule; in `--json`, a `meetings` array whose every entry is the same
+single-meeting document. It is resolved against one view of what the account may
+read, so the set is coherent.
+
+**A set is all of its meetings or none.** If one id cannot be read the whole run
+fails with exit 1 and names that id on stderr — deliberately, because a bundle
+that quietly dropped a meeting would let you answer a question asked of three
+using two, confidently. Do not retry without it and present the result as the
+answer to the original question: say which meeting is missing, or ask.
+
+Keep the set small. Each id is a whole recording fetched and read, and three or
+four long meetings of transcript is already a lot of context for one question.
+
+### Pointing at where something was said
+
+```bash
+./bin/cassini meetings context <meeting-id> --timestamps
+```
+
+Adds `[MM:SS]` (or `[H:MM:SS]` past an hour) beside each passage's speaker. Off
+by default. Use it whenever the user will want to check you against the
+recording — a contested decision, a quote, anything you are asked to cite. It is
+cheaper than reading `--json` segments to find a timing.
+
+### Meeting files you already have
+
+```bash
+./bin/cassini meetings context --local ./Meeting.opus
+```
+
+`--local` reads portable `.opus` files off disk instead of fetching ids, and
+needs none of the environment variables above. Use it for a file the user handed
+you directly. Two caveats: the meeting id shown is the file's name without the
+`.opus`, and the document carries **no room name**, because the room lives in
+the catalog and not in the file. Say so rather than reporting the meeting as
+roomless. (`--catalog ./catalog.json` supplies it, if a catalog is at hand.)
+
 To keep the meeting file itself — to play the audio, or to inspect it:
 
 ```bash
@@ -204,8 +252,11 @@ say the summary was absent; do not report it as an error.
 
 **Ground every claim.** When you produce a plan, issues or notes from a meeting,
 cite the meeting id, and for anything contested cite the speaker and the
-approximate timestamp from `--json` segments. A reader must be able to check you
-against the recording.
+approximate timestamp — `--timestamps` puts those in the markdown, and `--json`
+segments carry them either way. A reader must be able to check you against the
+recording. With several meetings in one document, say which meeting each claim
+came from: the meetings are separated by a `---` rule and each one restates its
+id, so there is never a reason to guess.
 
 ## The weekly ritual: a conversation into a plan
 
@@ -215,7 +266,9 @@ shaped plan and tracked issues:
 1. `meetings rooms`, then `meetings list --room <room> --from <date>` → identify
    the conversation. Narrow before you list; confirm the choice with the user if
    more than one plausibly matches.
-2. `meetings context <id> --out /tmp/meeting.md` → read it.
+2. `meetings context <id> [<id> ...] --out /tmp/meeting.md` → read it. Name every
+   meeting the question spans, in one command, so the answer is drawn from one
+   coherent set. Add `--timestamps` when you will be citing passages.
 3. Extract, keeping them separate: **decisions taken**, **open questions**, and
    **work implied**. A decision someone stated and a suggestion someone floated
    are not the same thing; do not promote the second into the first.
@@ -242,13 +295,19 @@ shaped plan and tracked issues:
 | `source=unknown` or `source=unrecognised` | The response did not come from Nextcloud Files, so per-caller access control was not applied — probably a development operator. Warned on stderr by all three commands. | Say so before treating the results as access-controlled. |
 | `refusing to follow a redirect` / `points outside the Nextcloud you configured` | The CLI refused to send the credentials somewhere other than the instance you named. | Do not work around it. Report it: it is either a misconfiguration or an attempt to harvest the app password. |
 | `is empty (0 bytes)` | The published recording has no content. | Report it as a broken recording; retrying will not help. |
-| `ffprobe … not found` | `meetings context` needs `ffprobe` on `PATH`. | Ask the user to install ffmpeg. `list` and `fetch` still work. |
+| `context failed on meeting id "…"; a bundle is all N of its meetings or none` | One id of a set could not be read, so no document was produced at all. | Report which meeting is missing before answering from the rest — or ask whether to answer without it. Never silently re-run with the id dropped. |
+| `ffprobe … not found` | `meetings context` needs `ffprobe` on `PATH`, on both the id path and `--local`. | Ask the user to install ffmpeg. `list` and `fetch` still work. |
 
 Exit `0` means success — including a `list` that found nothing. Exit `2` is a
 usage error on your part. Exit `1` is a runtime failure; read the message before
 retrying, since most of these are not worth retrying at all.
 
 ## Boundaries
+
+The Cassini app reads exactly the same documents through the operator's own
+`published/meetings-context` route, which shells out to this CLI — so there is
+one implementation, and what you read is what the app shows. There is nothing
+for you to call there; it is named here so you do not build a second reader.
 
 This surface is **read-only**. There is no command here to start, stop, delete or
 re-run a recording, and there is no way to read a meeting the account may not
