@@ -1,72 +1,63 @@
 # Retrospective formats
 
-Read this when the user names a specific retrospective format. Everything in
-`SKILL.md` still applies — the `said` / `observed` split, the citations, the rule
-that criticism is about the work and attributed to whoever voiced it. Only the
-section headings change.
+Read this only when the user names an alternate format. Changing headings does
+not change the evidence contract:
 
-The material does not change either. The same observation lands in a different
-box depending on the format; it does not become a different observation, and it
-does not stop needing a speaker and a timestamp.
+- State whether the retrospective is **Held** or **Derived**, and ground that
+  mode in the request or recording rather than the number of bundles.
+- Cite every item with its meeting id. Label the draft's inferences as
+  `observed by this draft` with their reasoning.
+- Write about work and systems, not people. Do not infer tone or engagement.
+- Keep model-authored recommendations separate under `Suggested experiments`;
+  never present them as participant commitments.
+- Retain `Left unresolved` as its own final section.
 
 ## Start / Stop / Continue
 
-Three sections. Every item is a proposed **change of behaviour**, which makes
-this the format that most tempts you to invent things — a team that named no
-changes leaves sections empty, and `None.` is the honest entry.
+Use participant statements about behaviour:
 
-| Section | What goes in it |
+| Section | Supported content |
 |---|---|
-| Start | Something the team is not doing and someone proposed doing |
-| Stop | Something the team is doing that someone said is not worth it |
-| Continue | Something working that someone said should be kept, not merely something that did not fail |
+| Start | Something participants proposed beginning |
+| Stop | Something participants proposed ending |
+| Continue | Something participants explicitly said should be retained |
 
-`Continue` is the trap: an absence of complaints is not an endorsement. Only put
-an item there when someone actually said it was worth keeping.
+Do not turn a proposal into an agreement. Mark whether each item was proposed or
+committed, with a speaker citation and meeting id. An absence of complaints is
+not evidence for Continue. Leave unsupported sections as `None.`
 
 ## 4Ls — Liked / Learned / Lacked / Longed for
 
-| Section | What goes in it |
+| Section | Supported content |
 |---|---|
-| Liked | What people said went well |
-| Learned | What is now understood that was not before |
-| Lacked | What was missing — a tool, information, a decision, time |
-| Longed for | What someone wished had been available or true |
+| Liked | What participants said went well |
+| Learned | What they came to understand |
+| Lacked | A tool, fact, decision, or time they said was missing |
+| Longed for | A wish participants expressed |
 
-`Lacked` and `Longed for` split cleanly on tense and reality: `Lacked` is a gap
-that existed, `Longed for` is a wish that may never be met. When an item could go
-in either, it is usually `Lacked`.
+Do not infer a wish from a gap. In Derived mode, a cross-meeting pattern can
+appear only when it is explicitly labelled as the draft's inference.
 
 ## Mad / Sad / Glad
 
-Emotional register, and therefore the format this material supports worst. Tone
-does not survive transcription: sarcasm, warmth and joking all read as flat
-assertions, and the transcript is inferred ASR output rather than edited text.
-
-Use it only when the user asks for it by name, sort strictly on **what people
-said about how they felt** rather than on how a line reads to you, and say in the
-document that emotional intensity is not recoverable from a transcript. An item
-you are placing by vibe belongs in the default structure instead.
+Use this format only when requested by name. Sort on emotions participants
+explicitly stated, never on how ASR text sounds. State that emotional intensity
+is not recoverable from a transcript. If the source does not name an emotion,
+leave the corresponding section as `None.`
 
 ## Timeline
 
-One section per period — week, sprint, or the meetings themselves in order — with
-what happened and what it cost. This is the only format where chronology is the
-point rather than a distraction, so it suits a derived retro over a run of
-meetings better than it suits a single recorded retro.
+Use one section per requested period or meeting. Head each entry with its meeting
+id and date, then preserve direct-statement and inference labels on every item.
+Chronology changes presentation only; it does not make an earlier problem current
+after a later meeting explicitly resolves it.
 
-Head each entry with the meeting id and date so a reader can go back to the
-recording, and keep the `said` / `observed` labelling inside each period.
+## Trailing sections
 
-## Mapping any format back to the default
+Handle trailing sections as follows:
 
-Whatever the headings, the document still needs the three things that make a
-retro checkable rather than decorative:
-
-- **The provenance line** — which meetings, over what range, and whether this is
-  a retro the team held or one derived from the recordings.
-- **`Left unresolved`** — keep it as its own section in every format. The thing
-  raised repeatedly and never settled is the most valuable finding, and every
-  themed format above will happily scatter it across three boxes.
-- **Attribution on every line** — speaker and timestamp for `said`, the meeting
-  ids and an explicit inference label for `observed`.
+- `## Suggested experiments` only when the user requests model recommendations.
+  Ground each suggestion in cited observations and keep it separate from
+  participant commitments.
+- `## Left unresolved` — sourced issues or proposals the meetings did not settle;
+  otherwise `None.`

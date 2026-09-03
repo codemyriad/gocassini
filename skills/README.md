@@ -1,8 +1,8 @@
 # Cassini agent skills
 
 Skills an agent installs to work with Cassini meeting recordings: one that reads
-them, and four that turn what it read into something — a summary, a per-person
-to-do list, a shaping draft, a retrospective.
+them, and four that turn what it read into something — a summary, grounded
+commitments, a shaping draft, or a retrospective.
 
 A **skill** is a folder with a `SKILL.md` in it, in the format described by the
 [Agent Skills specification](https://agentskills.io/specification). Roughly every
@@ -21,7 +21,7 @@ coding agent now reads them, and the same folder works across all of them.
             summary              todos             shaping              retro
                 │                  │                  │                  │
                 ▼                  ▼                  ▼                  ▼
-          a summary        to-dos per person   a shaping draft    a retrospective
+          a summary          commitments       a shaping draft    a retrospective
 ```
 
 Every skill in the second column consumes the same thing — a **context bundle**,
@@ -69,10 +69,10 @@ Later: `npx skills update <name>`, `npx skills list`, `npx skills remove <name>`
 | Skill | What it does |
 |---|---|
 | [`cassini-meetings`](./cassini-meetings/) | Lists rooms and meetings, pulls one meeting's transcript and summary as a context bundle, or downloads its portable `.opus`. Start here — the other four take its output. |
-| [`cassini-meeting-summary`](./cassini-meeting-summary/) | The meeting as a fixed-shape summary: overview, key points, decisions, action items, open questions, next step. |
-| [`cassini-meeting-todos`](./cassini-meeting-todos/) | A to-do list grouped by participant, every item traced to the moment it was taken on, with what nobody claimed kept separately. |
-| [`cassini-meeting-shaping`](./cassini-meeting-shaping/) | A shaping draft from a recorded design discussion: problem, numbered requirements with evidence, the shapes the room floated, a fit check, and what it left open. |
-| [`cassini-meeting-retro`](./cassini-meeting-retro/) | A retrospective, from one recorded retro or from a run of meetings across a period. |
+| [`cassini-meeting-summary`](./cassini-meeting-summary/) | A focused answer or fixed-shape summary grounded in the final state of one or more meetings. |
+| [`cassini-meeting-todos`](./cassini-meeting-todos/) | Explicit commitments grouped by transcribed speaker, with unconfirmed assignments and unowned work kept separate. |
+| [`cassini-meeting-shaping`](./cassini-meeting-shaping/) | A meeting-grounded shaping draft: problem, evidenced requirements, discussed shapes, a fit check and unresolved questions. |
+| [`cassini-meeting-retro`](./cassini-meeting-retro/) | A retrospective participants held, or retrospective analysis explicitly derived from ordinary work meetings. |
 
 ## Prerequisites
 
@@ -98,9 +98,9 @@ Nextcloud user and sees exactly the recordings that account may read.
 ```text
 skills/<name>/
 ├── SKILL.md            # the agent-facing procedure. Loaded when the skill triggers.
-├── prompts/            # the single-shot bytes the product runs. Not read by the agent.
-│   ├── <workflow>.v0.md
-│   └── <workflow>-template.v0.md
+├── prompts/            # versioned single-shot contracts. Not read by the agent.
+│   ├── <workflow>.v<version>.md
+│   └── <workflow>-template.v<version>.md
 └── references/         # loaded on demand, when SKILL.md names the trigger to load it
 ```
 
@@ -110,46 +110,51 @@ some clients. `name` must equal the directory name.
 
 ### Why `prompts/` exists
 
-Each of the four workflows runs in two places, and they must not drift:
+Each artifact workflow has an agent procedure and a single-shot contract. Their
+shared artifact semantics must not drift:
 
 ```text
    AUTHORING HOME                RESOLUTION                RUNTIME
    skills/<name>/prompts/  ──►   pinned copy, by      ──►  the product runs the
-   <workflow>.v0.md              content hash              pinned bytes and records
+   <workflow>.v<version>.md      content hash              selected pinned bytes
                                                            which ones it ran
         │                                                         ▲
-        └──────────────── the evals grade these ──────────────────┘
+        └────────── the current eval design grades v0 only ───────┘
 ```
 
-The prompt files are the authoring home. A workflow is authored, versioned and
-evaluated here; the product resolves it to a pinned, content-hashed copy — a
-vendored dependency, not a prompt store — so an artifact can record exactly which
-bytes produced it. **There is no prompt editor in the product, and adding one is
-not a feature that is waiting to be built.**
+The prompt files are the authoring home for single-shot contracts. The product
+resolves a selected version to a pinned, content-hashed copy — a vendored
+dependency, not a prompt store — so an artifact can record exactly which bytes
+produced it. Prompt versions are immutable: improve a contract by adding a new
+versioned pair, then deliberately update its consumers and evals. **There is no
+prompt editor in the product, and adding one is not a feature that is waiting to
+be built.**
 
-`cassini-meeting-summary/prompts/summarise.v0.md` and its template are byte-
+`cassini-meeting-summary/prompts/summarise.v0.md` and its template remain byte-
 identical to what the transcription pipeline embeds today
-(`cassini-go-recorder/internal/transcribe/templates/`); the other three await the
-insight-run seam. Improve a workflow by editing the prompt file and cutting a new
-version — `v1` alongside `v0` — never by editing prose in `SKILL.md` and hoping
-the two agree.
+(`cassini-go-recorder/internal/transcribe/templates/`). The tightened contracts
+live in the four `v1` pairs; product adoption is a separate, explicit version
+change, and the other three workflows still await the insight-run seam. Change a
+workflow by adding a new prompt version alongside the old one, never by editing
+only `SKILL.md` and hoping the two agree.
 
 ## Evals
 
 The eval design — fixtures, what is checked deterministically, what needs a
 judge, and how two models get compared honestly — is
 [`docs/proposals/workflow-skill-evals.md`](../docs/proposals/workflow-skill-evals.md).
-No eval has been run yet; the proposal says so where it matters.
+Its behavioural catalogue is explicitly pinned to the preserved `v0` contracts;
+the `v1` pairs need versioned checks and golds before they can claim comparable
+model results. No eval has been run yet; the proposal says so where it matters.
 
 ## Contributing a skill
 
 - Directory name, and the `name` in frontmatter, are the same lowercase-hyphen
   string. Prefix it `cassini-`: on a consumer's machine every skill they have
   installed shares one flat namespace.
-- `description` says what it does **and when to use it**, in the third person,
-  under 1024 characters, and names the sibling skill to use instead when the
-  request is really one of theirs. All five of these match on "meeting" — without
-  that clause they cross-trigger.
+- `description` says what the skill does **and when to use it**, in the third
+  person and under 1024 characters. Keep it concise and discriminating; name a
+  sibling only when that boundary prevents likely cross-triggering.
 - Keep `SKILL.md` under 500 lines and put anything longer in `references/`,
   naming in `SKILL.md` the condition under which to read it. A generic "see
   references/" does not get read.
