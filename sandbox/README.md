@@ -129,11 +129,11 @@ sandbox/wire-cassini.sh --register-only                                      # r
 ### Source capture on the sandbox
 
 Participant source-audio capture ([docs/source-audio-capture.md](../docs/source-audio-capture.md))
-is **on** on every `--image` deploy from this branch — that is the point of the
-branch — and both of its switches are passed to AppAPI explicitly each time, so
-whatever this deploy says is what the host ends up with. A store deploy is the
-one exception: it cannot build a matching companion, so it registers capture off
-(see below).
+is **on by default** on an `--image` deploy from this branch — that is the point
+of the branch — and both of its switches are passed to AppAPI explicitly each
+time, so whatever this deploy says is what the host ends up with. A store deploy
+is the one case where the default does not hold: it cannot build a matching
+companion, so it registers capture off (see below).
 
 ```bash
 sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha>   # collect and ingest

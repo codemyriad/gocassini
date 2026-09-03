@@ -486,14 +486,29 @@ verify() {
   # real outcome — and it is precisely the one where an opt-out deploy reports
   # success while a payload already loaded in somebody's browser goes on
   # capturing and uploading.
-  local exapp_container="nc_app_$CASSINI_APPSTORE_ID" exapp_env
+  #
+  # Asymmetric on purpose. Turning a switch ON requires the value to be there:
+  # AppAPI silently drops an --env the deployed manifest does not declare, and a
+  # release cut before these variables existed declares neither, so an absent
+  # value means this deploy did not get what it asked for. Turning one OFF is
+  # satisfied by anything that is not an explicit "1" — a registered 0, or a
+  # release old enough not to know the variable, which is also old enough to
+  # have no capture code behind it.
+  local exapp_container="nc_app_$CASSINI_APPSTORE_ID" exapp_env switch
   exapp_env="$(docker inspect "$exapp_container" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)" \
-    || die "Could not read the environment of '$exapp_container', so which source-capture switch is actually running is unknown. Registration may have failed; re-run the deploy."
-  grep -qx "CASSINI_SOURCE_CAPTURE=$CASSINI_SOURCE_CAPTURE" <<<"$exapp_env" \
-    || die "The running ExApp does not carry CASSINI_SOURCE_CAPTURE=$CASSINI_SOURCE_CAPTURE. A container from an earlier deploy survived registration and is still answering with its own switch; re-run the deploy before trusting this host's capture state."
-  grep -qx "CASSINI_SOURCE_AUDIO_INGEST=$CASSINI_SOURCE_AUDIO_INGEST" <<<"$exapp_env" \
-    || die "The running ExApp does not carry CASSINI_SOURCE_AUDIO_INGEST=$CASSINI_SOURCE_AUDIO_INGEST. A container from an earlier deploy survived registration; re-run the deploy."
-  printf '  ok   ExApp carries CASSINI_SOURCE_CAPTURE=%s CASSINI_SOURCE_AUDIO_INGEST=%s\n' \
+    || die "Could not read the environment of '$exapp_container', so which source-capture switches are actually running is unknown. Registration may have failed; re-run the deploy."
+  for switch in CASSINI_SOURCE_CAPTURE CASSINI_SOURCE_AUDIO_INGEST; do
+    # Written as if/elif, not `grep && die`: a `grep && die` whose grep finds
+    # nothing leaves the loop — and so this function — returning 1, which under
+    # set -e ends the deploy silently on the path where everything is fine.
+    if [[ "${!switch}" == "1" ]]; then
+      grep -qx "$switch=1" <<<"$exapp_env" \
+        || die "The running ExApp does not carry $switch=1. Either registration did not take — a container from an earlier deploy survived it — or the deployed manifest does not declare $switch and AppAPI dropped it. Re-run the deploy, from an image built from this checkout."
+    elif grep -qx "$switch=1" <<<"$exapp_env"; then
+      die "This deploy registered $switch=0, but the running ExApp still carries $switch=1: a container from an earlier deploy survived registration and is still capturing. Re-run the deploy before treating this host as opted out."
+    fi
+  done
+  printf '  ok   ExApp agrees with collect=%s ingest=%s\n' \
     "$CASSINI_SOURCE_CAPTURE" "$CASSINI_SOURCE_AUDIO_INGEST"
 
   # resolve_capture_switches has already ruled out "capture on without a
