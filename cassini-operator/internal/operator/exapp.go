@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cassini-operator/internal/operator/appapi"
@@ -257,6 +258,44 @@ func parseBoolEnv(name string) (bool, error) {
 		return false, fmt.Errorf("invalid %s=%q: %w", name, raw, err)
 	}
 	return b, nil
+}
+
+// parseBoolEnvDefault reads a boolean env var whose default is not necessarily
+// false — the shape a switch takes when an installation turns it OFF rather
+// than on.
+//
+// Unset or blank yields def. Anything strconv.ParseBool understands yields
+// that value, so "0"/"false" is always an opt-out whatever the default is.
+// Anything else is a typo, and yields false rather than def: a switch nobody
+// can read should land on the setting that collects nothing and publishes
+// nothing, which is the same fail-closed reading parseBoolEnv's callers get
+// from its error. A typo is otherwise entirely silent, so it is logged — once
+// per distinct value, because these switches are read per request and per
+// build and one repeated typo would bury the log.
+func parseBoolEnvDefault(name string, def bool) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		logInvalidBoolEnvOnce(name, raw)
+		return false
+	}
+	return b
+}
+
+// invalidBoolEnvLogged remembers the name=value pairs already reported. Keyed
+// on the value and not just the name, so a corrected — or newly broken —
+// setting is reported again, which is what makes the message useful to
+// somebody editing the deployment env and re-reading the log.
+var invalidBoolEnvLogged sync.Map
+
+func logInvalidBoolEnvOnce(name, raw string) {
+	if _, seen := invalidBoolEnvLogged.LoadOrStore(name+"="+raw, struct{}{}); seen {
+		return
+	}
+	log.Printf("invalid %s=%q: not a boolean; treating it as off", name, raw)
 }
 
 // applyToBindAddr returns the bind address the operator should listen on,
