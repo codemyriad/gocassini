@@ -473,6 +473,15 @@ func TestPromoteCaptureConsultsTheSetAsideCopy(t *testing.T) {
 	if replaced {
 		t.Fatal("a stale prefix promoted itself over a set-aside capture holding more of the call")
 	}
+	// And the interrupted promotion is finished, so the capture that was kept
+	// is one a build can actually find: discovery ignores the `.superseded`
+	// name by design, and a capture left there is retained and unreachable.
+	if _, err := os.Stat(filepath.Join(final, captureSidecarName)); err != nil {
+		t.Fatalf("the set-aside capture was kept where no build can discover it: %v", err)
+	}
+	if _, err := os.Stat(setAside); !os.IsNotExist(err) {
+		t.Fatalf("the set-aside directory survived its own restoration (err=%v)", err)
+	}
 }
 
 // The name promoteCapture gives a set-aside upload is a cross-module contract.

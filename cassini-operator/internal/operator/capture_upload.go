@@ -342,6 +342,28 @@ func captureIsAShorterRetelling(incoming *captureSidecar, final string) bool {
 	return stored > 0 && incoming.CallEndWallMS < stored
 }
 
+// restoreInterruptedPromotion completes a promotion that stopped between its
+// two renames.
+//
+// promoteCapture moves the previous capture aside and then renames staging into
+// place. A crash, or a failed second rename whose recovery also failed, can
+// leave the set-aside copy holding the ONLY copy of that participant's audio
+// with nothing at the live path. Discovery ignores that name by design, so the
+// capture is on disk and unreachable; moving it back is the whole of the fix,
+// and doing it here means the next upload for that call is judged against it.
+func restoreInterruptedPromotion(final string) {
+	setAside := final + captureSupersededSuffix
+	if _, err := os.Stat(setAside); err != nil {
+		return
+	}
+	if _, err := os.Stat(final); err == nil {
+		// A live capture exists; the set-aside copy is the older one the sweep
+		// removes. Nothing to restore.
+		return
+	}
+	_ = os.Rename(setAside, final)
+}
+
 // promoteCapture swaps a completed staging directory into its final path
 // without destroying a previous good upload until the new one is in place.
 //
@@ -357,6 +379,13 @@ func captureIsAShorterRetelling(incoming *captureSidecar, final string) bool {
 func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string) (bool, error) {
 	capturePromotionMu.Lock()
 	defer capturePromotionMu.Unlock()
+
+	// An interrupted promotion left the whole capture aside and nothing at the
+	// live path. Finish it before deciding anything: a capture under
+	// `.superseded` is one discovery deliberately ignores, so "kept" would
+	// otherwise mean retained on disk and invisible to every build — the audio
+	// preserved and never used, which is not what the set-aside is for.
+	restoreInterruptedPromotion(final)
 
 	if captureIsAShorterRetelling(sidecar, final) {
 		return false, nil
