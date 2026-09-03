@@ -85,10 +85,13 @@ type StreamPlan struct {
 }
 
 type segmentArtifact struct {
-	Stream           session.PacketStream
-	Kind             string
-	TempPath         string
-	FirstNS          uint64
+	Stream   session.PacketStream
+	Kind     string
+	TempPath string
+	FirstNS  uint64
+	// FirstTimelineNS is where the first packet sits on the OUTPUT timeline,
+	// in nanoseconds from the earliest stream. It is not the receive clock:
+	// FirstRecvNS keeps that.
 	FirstTimelineNS  int64
 	TimelineAdjustNS int64
 	TimelineProfile  timelineProfile
@@ -461,6 +464,21 @@ func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned 
 		participantDisplayByID[participant.PID] = participant.Display
 	}
 
+	// The output timeline starts at the earliest stream, exactly as PlanMerge
+	// placed them. first_timeline_ns in the MKV must be a position on THAT
+	// timeline, because source-audio ingestion pairs it with
+	// first_packet_wall_ms to learn the wall instant of timeline zero
+	// (internal/transcribe/sourceaudio.go, recordingWallWindow). Writing the
+	// raw receive clock here made that subtraction come out negative on every
+	// real recording, so no upload was ever found.
+	var timelineBaseNS int64
+	for i, item := range planned {
+		start := effectiveTimelineStartNS(item.StreamInput)
+		if i == 0 || start < timelineBaseNS {
+			timelineBaseNS = start
+		}
+	}
+
 	out := make([]StreamPlan, 0, len(planned))
 	for _, item := range planned {
 		seg, ok := segmentsByID[item.StreamID]
@@ -482,7 +500,7 @@ func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned 
 			PT:                     seg.Stream.PT,
 			RTPPackets:             seg.Packets,
 			FirstRecvNS:            seg.FirstNS,
-			FirstTimelineNS:        seg.FirstTimelineNS,
+			FirstTimelineNS:        effectiveTimelineStartNS(item.StreamInput) - timelineBaseNS,
 			TimelineAdjustNS:       seg.TimelineAdjustNS,
 			FirstRTPTimestamp:      seg.TimelineProfile.FirstRTPTimestamp,
 			FirstRTPSet:            seg.TimelineProfile.FirstRTPSet,

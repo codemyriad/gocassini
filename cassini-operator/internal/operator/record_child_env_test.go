@@ -10,7 +10,8 @@ import (
 // which since D-447 may be one the operator generated itself: the child must
 // receive it even though the operator's own environment never carried it.
 func TestRecordChildEnvCarriesTheResolvedTalkSecret(t *testing.T) {
-	t.Setenv(talkRecordingSecretEnv, "")
+	t.Setenv(talkRecordingSecretEnv, "") // registers the restore
+	os.Unsetenv(talkRecordingSecretEnv)
 	rt := &Runtime{cfg: Config{TalkSharedSecret: "generated-secret"}}
 	if got := lookupEnv(rt.recordChildEnv(), talkRecordingSecretEnv); got != "generated-secret" {
 		t.Fatalf("recorder env %s = %q, want the resolved secret", talkRecordingSecretEnv, got)
@@ -28,6 +29,31 @@ func TestRecordChildEnvKeepsOneCopyOfAnExplicitSecret(t *testing.T) {
 	}
 	if n := countEnv(env, talkRecordingSecretEnv); n != 1 {
 		t.Fatalf("recorder env carries %s %d times, want once", talkRecordingSecretEnv, n)
+	}
+}
+
+// The resolved secret wins over a stale copy in the environment: the operator
+// is the one that registered a secret in Talk, so its value is the one Talk
+// will check.
+func TestRecordChildEnvReplacesAStaleEnvironmentSecret(t *testing.T) {
+	t.Setenv(talkRecordingSecretEnv, "stale-secret")
+	rt := &Runtime{cfg: Config{TalkSharedSecret: "resolved-secret"}}
+	env := rt.recordChildEnv()
+	if got := lookupEnv(env, talkRecordingSecretEnv); got != "resolved-secret" {
+		t.Fatalf("recorder env %s = %q, want resolved-secret", talkRecordingSecretEnv, got)
+	}
+	if n := countEnv(env, talkRecordingSecretEnv); n != 1 {
+		t.Fatalf("recorder env carries %s %d times, want once", talkRecordingSecretEnv, n)
+	}
+}
+
+// A whitespace-only secret is no secret.
+func TestRecordChildEnvTreatsWhitespaceAsNoSecret(t *testing.T) {
+	t.Setenv(talkRecordingSecretEnv, "") // registers the restore
+	os.Unsetenv(talkRecordingSecretEnv)
+	rt := &Runtime{cfg: Config{TalkSharedSecret: "   "}}
+	if n := countEnv(rt.recordChildEnv(), talkRecordingSecretEnv); n != 0 {
+		t.Fatalf("recorder env carries %s %d times, want none", talkRecordingSecretEnv, n)
 	}
 }
 

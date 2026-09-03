@@ -319,7 +319,7 @@ func (rt *Runtime) runRecordDoctor() error {
 // talkRecordingSecretEnv is how the recorder learns the Talk recording secret.
 const talkRecordingSecretEnv = "CASSINI_TALK_RECORDING_SECRET"
 
-// recordChildEnv is the environment of the recorder and of its doctor. The
+// recordChildEnv is the environment of the recorder. The
 // recorder authenticates to Talk with CASSINI_TALK_RECORDING_SECRET, and an
 // administrator may never have set it: since D-447 the operator generates and
 // persists a secret when the variable is absent, and only the operator's own
@@ -334,13 +334,7 @@ func (rt *Runtime) recordChildEnv() []string {
 	if secret == "" {
 		return env
 	}
-	out := make([]string, 0, len(env)+1)
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, talkRecordingSecretEnv+"=") {
-			out = append(out, kv)
-		}
-	}
-	return append(out, talkRecordingSecretEnv+"="+secret)
+	return setEnvKey(env, talkRecordingSecretEnv, secret)
 }
 
 // runRecordDoctorContext runs `cassini doctor --target record` bounded by ctx
@@ -351,7 +345,9 @@ func (rt *Runtime) runRecordDoctorContext(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "doctor", "--target", "record")
 	cmd.Stdout = writerOrDiscard(rt.stdout)
 	cmd.Stderr = writerOrDiscard(rt.stderr)
-	cmd.Env = rt.recordChildEnv()
+	// The doctor checks disk and directories only; it has no use for the
+	// Talk secret, so it does not get one.
+	cmd.Env = rt.currentSettings().ChildEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
