@@ -86,20 +86,57 @@ func TestPackPrefersManifestTitleOverFileName(t *testing.T) {
 		t.Errorf("packed TITLE = %q, want manifest title %q", got, "Daily Meeting")
 	}
 	manifest := decodePortableManifestFromOpus(t, outPath)
-	if manifest.Version != 3 || manifest.Integrity.MatchPolicy != portable.AudioMatchPolicy {
-		t.Fatalf("packed integrity contract = v%d/%q, want v3/%q", manifest.Version, manifest.Integrity.MatchPolicy, portable.AudioMatchPolicy)
+	if manifest.Version != portable.WireVersion || manifest.Integrity.MatchPolicy != portable.AudioMatchPolicy {
+		t.Fatalf("packed integrity contract = v%d/%q, want v%d/%q", manifest.Version, manifest.Integrity.MatchPolicy, portable.WireVersion, portable.AudioMatchPolicy)
 	}
-	if len(manifest.Integrity.OpusSHA256) != 64 || manifest.Integrity.PCMSHA256 != "" {
-		t.Fatalf("packed integrity = %+v, want compressed Opus digest and no PCM digest", manifest.Integrity)
+	if len(manifest.Integrity.OpusSHA256) != 64 {
+		t.Fatalf("packed integrity = %+v, want compressed Opus digest", manifest.Integrity)
 	}
-	if got := readOpusTag(t, outPath, "CASSINI_FORMAT"); got != portable.FormatV3 {
-		t.Errorf("CASSINI_FORMAT = %q, want %q", got, portable.FormatV3)
+	if got := readOpusTag(t, outPath, "CASSINI_FORMAT"); got != portable.Format {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", got, portable.Format)
 	}
 	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_OPUS_SHA256"); got != manifest.Integrity.OpusSHA256 {
 		t.Errorf("CASSINI_AUDIO_OPUS_SHA256 = %q, manifest says %q", got, manifest.Integrity.OpusSHA256)
 	}
-	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_PCM_SHA256"); got != "" {
-		t.Errorf("CASSINI_AUDIO_PCM_SHA256 = %q, want absent on v3", got)
+}
+
+// TestPackEmitsThePublishedWireVersionAndSchema pins what a packed file tells
+// the outside world it is: format tag org.cassini.portable-meeting/1, manifest
+// version 1, and the schema URL that resolves.
+func TestPackEmitsThePublishedWireVersionAndSchema(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "01KWEKPZVEJWP9BYBPBX9ZRNDQ.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	outPath := filepath.Join(tmp, "01KWEKPZVEJWP9BYBPBX9ZRNDQ.opus")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"pack", bundleDir, "--out", outPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	if got, want := readOpusTag(t, outPath, "CASSINI_FORMAT"), "org.cassini.portable-meeting/1"; got != want {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", got, want)
+	}
+	wantSchema := "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json"
+	if got := readOpusTag(t, outPath, "CASSINI_PAYLOAD_SCHEMA"); got != wantSchema {
+		t.Errorf("CASSINI_PAYLOAD_SCHEMA = %q, want %q", got, wantSchema)
+	}
+	if got := readOpusTag(t, outPath, "CASSINI_PAYLOAD_SCHEMA"); strings.Contains(got, "cassini.local") {
+		t.Errorf("CASSINI_PAYLOAD_SCHEMA = %q, still points at the placeholder host", got)
+	}
+
+	manifest := decodePortableManifestFromOpus(t, outPath)
+	if manifest.Version != 1 {
+		t.Errorf("manifest version = %d, want 1", manifest.Version)
+	}
+	if len(manifest.Transcripts) == 0 {
+		t.Errorf("packed manifest carries no transcripts index: %+v", manifest)
+	}
+	if got, want := manifest.Integrity.MatchPolicy, portable.AudioMatchPolicy; got != want {
+		t.Errorf("integrity.matchPolicy = %q, want %q", got, want)
 	}
 }
 
@@ -113,8 +150,8 @@ func TestPackStabilizesMixedWebMOpusIdentity(t *testing.T) {
 
 	// Mirror MixDownToWebM's multi-track path. FFmpeg 9.0.1 writes a final
 	// granule 24 samples lower on the first Ogg -> Ogg metadata remux for this
-	// exact one-second shape. Compressed packets remain identical, but v3 also
-	// binds playable end trim, so packing must normalize and rebuild its
+	// exact one-second shape. Compressed packets remain identical, but the
+	// integrity contract also binds playable end trim, so packing must rebuild its
 	// manifest rather than publishing the first, now-stale digest.
 	output, err := exec.Command(
 		"ffmpeg", "-y", "-v", "error",

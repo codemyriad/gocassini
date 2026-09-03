@@ -766,34 +766,33 @@ harness_http_ok_with_retry() {
   return 1
 }
 
-# /operator/status is aggregate readiness, so a GPU-less capture-only host
-# correctly answers 503 even though its AppAPI routes, Talk adapter, database,
-# and recording storage are usable. Keep that distinction explicit: normal
-# generic local stack startup accepts either a ready GPU image or that narrow
-# capture-only state. Contract tests set the expectation to 0 (require 200) or
-# 1 (require sole-STT 503) so an unexpected execution mode fails loudly.
+# /operator/status is aggregate readiness. A host without a GPU is READY: it
+# transcribes on the CPU (D-702), so it answers 200 with stt.device == "cpu".
+# A 503 now means something is actually wrong — an unsatisfiable explicit CUDA
+# override, an unexecutable stored device, or broken DB/storage — and is never
+# an accepted steady state. Contract tests set the expectation to 0 (require a
+# CUDA-ready operator) or 1 (require a CPU-ready one) so an unexpected execution
+# mode fails loudly instead of passing as "some kind of ready".
 harness_operator_status_matches() {
   local code="$1" body="$2" expectation="${CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE:-auto}"
   [[ "$expectation" == "auto" || "$expectation" == "0" || "$expectation" == "1" ]] \
     || return 1
-  if [[ "$expectation" != "1" && "$code" == "200" ]]; then
-    jq -e '.ok == true' <<<"$body" >/dev/null 2>&1
-    return
-  fi
-  if [[ "$expectation" != "0" && "$code" == "503" ]]; then
-    jq -e '
-      .ok == false
-      and .stt.device == "cuda"
-      and .stt.device_usable == false
-      and (.stt.detail | type == "string" and length > 0)
-      and .db.ok == true
-      and .storage.work_root.ok == true
-      and .storage.site_root.ok == true
-      and .recordings_access.ok == true
-    ' <<<"$body" >/dev/null 2>&1
-    return
-  fi
-  return 1
+  [[ "$code" == "200" ]] || return 1
+  local device_filter='true'
+  case "$expectation" in
+    0) device_filter='.stt.device == "cuda"' ;;
+    1) device_filter='.stt.device == "cpu"' ;;
+  esac
+  jq -e "
+    .ok == true
+    and $device_filter
+    and .stt.device_usable == true
+    and (.stt.detail | type == \"string\" and length > 0)
+    and .db.ok == true
+    and .storage.work_root.ok == true
+    and .storage.site_root.ok == true
+    and .recordings_access.ok == true
+  " <<<"$body" >/dev/null 2>&1
 }
 
 harness_operator_status_with_retry() {

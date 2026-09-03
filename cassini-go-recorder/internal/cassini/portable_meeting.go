@@ -1,19 +1,14 @@
 package cassini
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,10 +27,9 @@ type portablePackOptions struct {
 	// public conversation, so what lands in the manifest is a one-way derivation
 	// of it (portable.RoomIDForMeeting) and the token itself stops here.
 	//
-	// RoomName is an INPUT ONLY as of D-640: it feeds the name-domain
-	// derivation for a meeting with no token, and is embedded as the Title,
-	// but it is no longer written to the manifest's roomName. See
-	// portable.Meeting.RoomName for why.
+	// RoomName is input only: it feeds the name-domain derivation for a meeting
+	// with no token and is embedded as the Title. The mutable current room name
+	// belongs in the catalog, not the immutable meeting payload.
 	RoomToken string
 	RoomName  string
 	// JobID and AttemptNumber record which operator job and attempt produced
@@ -56,19 +50,20 @@ type portableMeetingSource struct {
 	Artifact           portableMeetingArtifact
 	// AdditionalTranscripts is populated when the bundle's manifest.json
 	// includes files.transcripts[]. Each entry already has its file loaded
-	// off disk. Empty in v1 bundles.
+	// off disk. It is empty for single-transcript bundles.
 	AdditionalTranscripts []portableNamedTranscript
 }
 
 // portableNamedTranscript pairs a loaded transcript file with the multi-track metadata
 // the producer needs (id, role, default, provenance).
 type portableNamedTranscript struct {
-	ID         string
-	Role       string
-	Default    bool
-	Language   string
-	Provenance *portable.ProcessingStep
-	Transcript portableTranscriptArtifact
+	ID                 string
+	Role               string
+	Default            bool
+	Language           string
+	SourceTranscriptID string
+	Provenance         *portable.ProcessingStep
+	Transcript         portableTranscriptArtifact
 }
 
 type portableMeetingArtifact struct {
@@ -93,16 +88,17 @@ type portableMeetingArtifact struct {
 
 // portableMeetingTranscriptInputFile describes one transcript file in a
 // multi-transcript bundle. Present in manifest.json under `files.transcripts`.
-// When this list is non-empty the packer emits a v3 portable-meeting file with
-// one entry per element; the singular `files.transcript` is ignored. When the
-// list is empty, a v3 file with one synthesized raw-asr entry is emitted.
+// When this list is non-empty the packer emits one entry per element and
+// ignores the singular `files.transcript`. When it is empty, the packer emits
+// one synthesized raw-asr entry.
 type portableMeetingTranscriptInputFile struct {
-	ID         string                   `json:"id"`
-	Path       string                   `json:"path"`
-	Role       string                   `json:"role"`
-	Default    bool                     `json:"default,omitempty"`
-	Language   string                   `json:"language,omitempty"`
-	Provenance *portable.ProcessingStep `json:"provenance,omitempty"`
+	ID                 string                   `json:"id"`
+	Path               string                   `json:"path"`
+	Role               string                   `json:"role"`
+	Default            bool                     `json:"default,omitempty"`
+	Language           string                   `json:"language,omitempty"`
+	SourceTranscriptID string                   `json:"sourceTranscriptId,omitempty"`
+	Provenance         *portable.ProcessingStep `json:"provenance,omitempty"`
 }
 
 type portableTranscriptArtifact struct {
@@ -141,7 +137,6 @@ type portableAudioIntegrity struct {
 	SampleCount int64
 	DurationMS  int64
 	OpusSHA256  string
-	PCMSHA256   string
 }
 
 // maxPortableMeetingIdentityPasses bounds metadata remux convergence. FFmpeg
@@ -250,7 +245,7 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 		if err != nil {
 			return err
 		}
-		opusTags, err := buildPortableMeetingV3TagsFromSource(manifest, source)
+		opusTags, err := buildPortableMeetingTagsFromSource(manifest, source)
 		if err != nil {
 			return err
 		}
@@ -357,11 +352,11 @@ func loadPortableMeetingSource(meetingDir string) (portableMeetingSource, error)
 		return portableMeetingSource{}, fmt.Errorf("parse transcript artifact: %w", err)
 	}
 
-	readableTranscript, err := loadPortableReadableTranscript(rootDir, artifact.Files.ReadableTranscript)
+	readableTranscript, err := loadPortableJSONArtifact(rootDir, artifact.Files.ReadableTranscript, "transcript.readable.v1.json", "readable transcript")
 	if err != nil {
 		return portableMeetingSource{}, err
 	}
-	displayTranscript, err := loadPortableDisplayTranscript(rootDir, artifact.Files.DisplayTranscript)
+	displayTranscript, err := loadPortableJSONArtifact(rootDir, artifact.Files.DisplayTranscript, "transcript.display.v1.json", "display transcript")
 	if err != nil {
 		return portableMeetingSource{}, err
 	}
@@ -406,15 +401,38 @@ func loadPortableAdditionalTranscripts(rootDir string, entries []portableMeeting
 			return nil, fmt.Errorf("parse transcript file %s: %w", path, err)
 		}
 		loaded = append(loaded, portableNamedTranscript{
-			ID:         entry.ID,
-			Role:       entry.Role,
-			Default:    entry.Default,
-			Language:   entry.Language,
-			Provenance: entry.Provenance,
-			Transcript: transcript,
+			ID:                 entry.ID,
+			Role:               entry.Role,
+			Default:            entry.Default,
+			Language:           entry.Language,
+			SourceTranscriptID: entry.SourceTranscriptID,
+			Provenance:         entry.Provenance,
+			Transcript:         transcript,
 		})
 	}
 	return loaded, nil
+}
+
+func loadPortableJSONArtifact(rootDir, artifactPath, defaultName, label string) (map[string]any, error) {
+	name := strings.TrimSpace(artifactPath)
+	if name == "" {
+		if _, err := os.Stat(filepath.Join(rootDir, defaultName)); err == nil {
+			name = defaultName
+		} else if os.IsNotExist(err) {
+			return nil, nil
+		} else {
+			return nil, fmt.Errorf("stat %s artifact: %w", label, err)
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(rootDir, name))
+	if err != nil {
+		return nil, fmt.Errorf("read %s artifact: %w", label, err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, fmt.Errorf("parse %s artifact: %w", label, err)
+	}
+	return document, nil
 }
 
 func loadPortableSummaryMarkdown(rootDir string, artifactPath string) ([]byte, error) {
@@ -433,56 +451,6 @@ func loadPortableSummaryMarkdown(rootDir string, artifactPath string) ([]byte, e
 		return nil, fmt.Errorf("read summary artifact: %w", err)
 	}
 	return raw, nil
-}
-
-func loadPortableReadableTranscript(rootDir string, artifactPath string) (map[string]any, error) {
-	readableName := strings.TrimSpace(artifactPath)
-	if readableName == "" {
-		defaultPath := filepath.Join(rootDir, "transcript.readable.v1.json")
-		if _, err := os.Stat(defaultPath); err == nil {
-			readableName = "transcript.readable.v1.json"
-		} else if os.IsNotExist(err) {
-			return nil, nil
-		} else {
-			return nil, fmt.Errorf("stat readable transcript artifact: %w", err)
-		}
-	}
-
-	rawReadable, err := os.ReadFile(filepath.Join(rootDir, readableName))
-	if err != nil {
-		return nil, fmt.Errorf("read readable transcript artifact: %w", err)
-	}
-
-	var readable map[string]any
-	if err := json.Unmarshal(rawReadable, &readable); err != nil {
-		return nil, fmt.Errorf("parse readable transcript artifact: %w", err)
-	}
-	return readable, nil
-}
-
-func loadPortableDisplayTranscript(rootDir string, artifactPath string) (map[string]any, error) {
-	displayName := strings.TrimSpace(artifactPath)
-	if displayName == "" {
-		defaultPath := filepath.Join(rootDir, "transcript.display.v1.json")
-		if _, err := os.Stat(defaultPath); err == nil {
-			displayName = "transcript.display.v1.json"
-		} else if os.IsNotExist(err) {
-			return nil, nil
-		} else {
-			return nil, fmt.Errorf("stat display transcript artifact: %w", err)
-		}
-	}
-
-	rawDisplay, err := os.ReadFile(filepath.Join(rootDir, displayName))
-	if err != nil {
-		return nil, fmt.Errorf("read display transcript artifact: %w", err)
-	}
-
-	var display map[string]any
-	if err := json.Unmarshal(rawDisplay, &display); err != nil {
-		return nil, fmt.Errorf("parse display transcript artifact: %w", err)
-	}
-	return display, nil
 }
 
 func computePortableAudioIntegrity(audioPath string) (portableAudioIntegrity, error) {
@@ -506,7 +474,6 @@ func computePortableAudioIntegrity(audioPath string) (portableAudioIntegrity, er
 }
 
 func buildPortableMeetingManifest(source portableMeetingSource, audio portableAudioIntegrity, outPath string, opts portablePackOptions) (portable.Manifest, error) {
-	items := flattenPortableTranscriptItems(source.Transcript)
 	title := strings.TrimSpace(opts.Title)
 	if title == "" {
 		title = titleFromOutputPath(outPath)
@@ -536,7 +503,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	}
 	processedAtUTC := strings.TrimSpace(source.Artifact.GeneratedAt)
 
-	manifest := portable.NormalizeManifestV3(portable.Manifest{
+	manifest := portable.NormalizePublishedManifest(portable.Manifest{
 		Meeting: portable.Meeting{
 			ID:              portable.MeetingIDFromAudioHash(audio.OpusSHA256),
 			Title:           title,
@@ -569,20 +536,9 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			SampleCount: audio.SampleCount,
 			DurationMS:  audio.DurationMS,
 		},
-		Speakers: source.Transcript.Speakers,
-		Transcript: portable.Transcript{
-			Format:    "cassini.words.v1",
-			WordCount: len(items),
-			Items:     items,
-		},
+		Speakers:   source.Transcript.Speakers,
 		Provenance: source.Artifact.Provenance,
 	})
-	if source.ReadableTranscript != nil {
-		manifest.ReadableTranscript = source.ReadableTranscript
-	}
-	if source.DisplayTranscript != nil {
-		manifest.DisplayTranscript = source.DisplayTranscript
-	}
 	if len(source.SummaryMarkdown) > 0 {
 		manifest.Summary = buildPortableSummaryMetadata(source.Artifact.Provenance)
 		manifest.Attachments = append(manifest.Attachments, map[string]any{
@@ -607,17 +563,11 @@ func buildPortableSummaryMetadata(prov *portable.Provenance) map[string]any {
 	return meta
 }
 
-func flattenPortableTranscriptItems(transcript portableTranscriptArtifact) []portable.TranscriptItem {
+func flattenPortableTranscriptItems(transcript portableTranscriptArtifact) ([]portable.TranscriptItem, error) {
 	items := make([]portable.TranscriptItem, 0)
-	for _, segment := range transcript.Segments {
+	for segmentIndex, segment := range transcript.Segments {
 		if len(segment.Words) == 0 && strings.TrimSpace(segment.Text) != "" {
-			items = append(items, portable.TranscriptItem{
-				Speaker: segment.Speaker,
-				StartMS: segment.StartMS,
-				EndMS:   segment.EndMS,
-				Text:    segment.Text,
-			})
-			continue
+			return nil, fmt.Errorf("segment %d has text but no word timings", segmentIndex)
 		}
 		for _, word := range segment.Words {
 			if strings.TrimSpace(word.Text) == "" {
@@ -633,7 +583,7 @@ func flattenPortableTranscriptItems(transcript portableTranscriptArtifact) []por
 			})
 		}
 	}
-	return items
+	return items, nil
 }
 
 func titleFromOutputPath(path string) string {
@@ -697,52 +647,15 @@ func createPortableStagePath(outPath string) (string, error) {
 
 func verifyPortableMeetingFile(path string, manifest portable.Manifest) error {
 	policy := strings.ToLower(strings.TrimSpace(manifest.Integrity.MatchPolicy))
-	if policy == "" {
-		if manifest.Integrity.OpusSHA256 != "" {
-			policy = portable.AudioMatchPolicy
-		} else {
-			policy = portable.LegacyAudioMatchPolicyPCM
-		}
-	}
-
-	var (
-		audio portableAudioIntegrity
-		err   error
-	)
-	switch policy {
-	case portable.AudioMatchPolicy:
-		audio, err = computePortableAudioIntegrity(path)
-		if err != nil {
-			return fmt.Errorf("verify portable meeting file: %w", err)
-		}
-		return verifyPortableOpusIntegrity(audio, manifest.Integrity)
-	case portable.LegacyAudioMatchPolicyPCM:
-		if manifest.Integrity.PCMFormat != "" && !strings.EqualFold(manifest.Integrity.PCMFormat, portable.AudioPCMFormat) {
-			return fmt.Errorf("verify portable meeting file: unsupported pcm format %q", manifest.Integrity.PCMFormat)
-		}
-		audio, err = computeLegacyPortablePCMIntegrity(path, manifest.Integrity.SampleRate, manifest.Integrity.Channels)
-		if err == nil && audio.PCMSHA256 != manifest.Integrity.PCMSHA256 {
-			return fmt.Errorf("verify portable meeting file: decoded PCM sha256 mismatch")
-		}
-	default:
+	if policy != portable.AudioMatchPolicy {
 		return fmt.Errorf("verify portable meeting file: unsupported audio match policy %q", policy)
 	}
+
+	audio, err := computePortableAudioIntegrity(path)
 	if err != nil {
 		return fmt.Errorf("verify portable meeting file: %w", err)
 	}
-	if audio.SampleRate != manifest.Integrity.SampleRate {
-		return fmt.Errorf("verify portable meeting file: sample rate mismatch")
-	}
-	if audio.Channels != manifest.Integrity.Channels {
-		return fmt.Errorf("verify portable meeting file: channel mismatch")
-	}
-	if audio.SampleCount != manifest.Integrity.SampleCount {
-		return fmt.Errorf("verify portable meeting file: sample count mismatch")
-	}
-	if audio.DurationMS != manifest.Integrity.DurationMS {
-		return fmt.Errorf("verify portable meeting file: duration mismatch")
-	}
-	return nil
+	return verifyPortableOpusIntegrity(audio, manifest.Integrity)
 }
 
 func verifyPortableOpusIntegrity(audio portableAudioIntegrity, integrity portable.Integrity) error {
@@ -770,56 +683,4 @@ func verifyPortableOpusIntegrity(audio portableAudioIntegrity, integrity portabl
 		return fmt.Errorf("verify portable meeting file: duration mismatch")
 	}
 	return nil
-}
-
-// computeLegacyPortablePCMIntegrity exists only for checking v1/v2 files.
-// New files use ComputeOpusAudioIntegrity and never decode their recording for
-// identity. Stream stdout into the digest so inspecting a long legacy meeting
-// does not buffer hours of PCM in memory.
-func computeLegacyPortablePCMIntegrity(path string, sampleRate, channels int) (portableAudioIntegrity, error) {
-	if sampleRate <= 0 || channels <= 0 {
-		return portableAudioIntegrity{}, fmt.Errorf("legacy PCM integrity needs a positive sample rate and channel count")
-	}
-
-	cmd := exec.Command(
-		"ffmpeg",
-		"-v", "error",
-		"-i", path,
-		"-map", "0:a:0",
-		"-f", "s16le",
-		"-acodec", "pcm_s16le",
-		"-ar", strconv.Itoa(sampleRate),
-		"-ac", strconv.Itoa(channels),
-		"-",
-	)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return portableAudioIntegrity{}, fmt.Errorf("open ffmpeg PCM output: %w", err)
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return portableAudioIntegrity{}, fmt.Errorf("start ffmpeg PCM decode: %w", err)
-	}
-	digest := sha256.New()
-	byteCount, copyErr := io.Copy(digest, stdout)
-	waitErr := cmd.Wait()
-	if copyErr != nil {
-		return portableAudioIntegrity{}, fmt.Errorf("read ffmpeg PCM output: %w", copyErr)
-	}
-	if waitErr != nil {
-		return portableAudioIntegrity{}, fmt.Errorf("ffmpeg decode meeting audio: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
-	}
-	bytesPerSampleFrame := int64(2 * channels)
-	if byteCount%bytesPerSampleFrame != 0 {
-		return portableAudioIntegrity{}, fmt.Errorf("ffmpeg produced %d PCM bytes, not a whole number of %d-byte frames", byteCount, bytesPerSampleFrame)
-	}
-	sampleCount := byteCount / bytesPerSampleFrame
-	return portableAudioIntegrity{
-		SampleRate:  sampleRate,
-		Channels:    channels,
-		SampleCount: sampleCount,
-		DurationMS:  sampleCount * 1000 / int64(sampleRate),
-		PCMSHA256:   hex.EncodeToString(digest.Sum(nil)),
-	}, nil
 }

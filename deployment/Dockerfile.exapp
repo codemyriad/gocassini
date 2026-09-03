@@ -20,12 +20,17 @@ ARG FRP_VERSION=0.61.1
 ARG FFMPEG_VERSION=latest
 ARG FFMPEG_BUILD_JOBS=2
 
-# Default bundled model for the CPU image. The CUDA variant overrides these in
-# Dockerfile.exapp.cuda (per PR #32). Keep the model id in sync with
-# transcribe.ModelParakeet06BV3Int8 — that is what the recorder will look for
-# at runtime under ${CASSINI_CACHE_ROOT}/models/${CASSINI_BUNDLED_MODEL_ID}/.
+# The model this image bakes: the one its default quality tier loads. A CPU host
+# runs "balanced" by default, so the portable image carries the 0.6B int8 model
+# and nothing else. Fast and Best download once into the persistent model cache
+# when an administrator selects them (D-704), which keeps this image small
+# without removing a tier. The URLs and per-model file lists live in
+# deployment/models/fetch-models.sh.
+ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-0.6b-v3-int8"
+# The CASSINI_STT_MODEL default baked into the runtime stage, for direct CLI use
+# inside the container. Operator-managed builds never see it: the operator
+# strips CASSINI_STT_MODEL from the child env so the quality tier decides.
 ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3-int8
-ARG CASSINI_BUNDLED_MODEL_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
 
 # "latest" is an uncached-build fallback. Repository build entry points resolve
 # the newest stable version before invoking Docker and pass the concrete value,
@@ -44,37 +49,22 @@ RUN FFMPEG_BUILD_JOBS="${FFMPEG_BUILD_JOBS}" \
     /tmp/cassini-ffmpeg-build/build.sh "${FFMPEG_VERSION}" /out/ffmpeg
 
 FROM debian:bookworm-slim AS model-fetcher
-ARG CASSINI_BUNDLED_MODEL_ID
-ARG CASSINI_BUNDLED_MODEL_URL
+ARG CASSINI_BUNDLED_MODELS
 ARG SILERO_VAD_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl tar bzip2 \
  && rm -rf /var/lib/apt/lists/*
-# Download + extract in a single layer so the archive never lands in the
-# final image's filesystem. Files copied to /out/<id>/ get COPY'd into the
-# runtime stage as their own layer.
+COPY deployment/models /tmp/cassini-models
+# Download + extract in a single layer so the archives never land in the final
+# image's filesystem. Files under /out/models/<id>/ get COPY'd into the runtime
+# stage as their own layer.
 RUN set -eux; \
- model_dir="/out/models/${CASSINI_BUNDLED_MODEL_ID}"; \
- mkdir -p "$model_dir" /out/vad; \
- curl -fSL "${CASSINI_BUNDLED_MODEL_URL}" -o /tmp/model.tar.bz2; \
- tar -xjf /tmp/model.tar.bz2 -C /tmp; \
- src_dir=$(find /tmp -maxdepth 1 -type d -name 'sherpa-onnx-*' | head -n1); \
- test -n "$src_dir" || (echo "no extracted dir found under /tmp:" >&2; ls /tmp >&2; exit 1); \
- for f in encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt; do \
-   test -f "$src_dir/$f" || (echo "missing $f in extracted archive" >&2; exit 1); \
-   cp "$src_dir/$f" "$model_dir/"; \
- done; \
- rm -rf /tmp/model.tar.bz2 "$src_dir"; \
- printf '%s\n' \
-   "NeMo Parakeet TDT 0.6B v3 int8 (sherpa-onnx repack)" \
-   "Source: ${CASSINI_BUNDLED_MODEL_URL}" \
-   "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" \
-   "Bundled in: ghcr.io/codemyriad/gocassini" \
-   > "$model_dir/NOTICE"; \
- # Bundle the Silero VAD model alongside the STT model (~630 KB) so the
+ /tmp/cassini-models/fetch-models.sh /out ${CASSINI_BUNDLED_MODELS}; \
+ mkdir -p /out/vad; \
+ # Bundle the Silero VAD model alongside the STT models (~630 KB) so the
  # recorder doesn't need to dial out at first run.
  curl -fSL "${SILERO_VAD_URL}" -o /out/vad/silero_vad.onnx; \
- ls -la "$model_dir/" /out/vad/
+ ls -la /out/models /out/vad/
 
 FROM golang:1.24-bookworm AS go-builder
 WORKDIR /src
@@ -106,12 +96,15 @@ RUN set -eux; \
 # (pnpm migration tracked in D-499.)
 FROM node:22-bookworm AS web-builder
 WORKDIR /src
-# Manifests first for install-layer caching. No root lockfile yet (D-499), so
-# `npm install` resolves the workspace and links cassini-viewer into cassini-app.
-COPY package.json ./
+# Manifests first for install-layer caching. The root lockfile pins the whole
+# workspace and `npm ci` installs exactly what it says. Resolving fresh with
+# `npm install` made every build depend on the registry's state of the day:
+# on 2026-09-03 that tripped npm 10.9's "Cannot read properties of null
+# (reading 'edgesOut')" on an unchanged tree.
+COPY package.json package-lock.json ./
 COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./cassini-viewer/
 COPY cassini-app/package.json cassini-app/package-lock.json ./cassini-app/
-RUN npm install
+RUN npm ci
 COPY cassini-viewer/ ./cassini-viewer/
 COPY cassini-app/ ./cassini-app/
 # VITE_BASE=./ keeps standalone asset URLs relative (served at /viewer/ by the
@@ -147,9 +140,13 @@ RUN set -eux; \
  /out/frpc --version
 
 FROM node:22-bookworm-slim
+ARG CASSINI_BUNDLED_MODELS
 ARG CASSINI_BUNDLED_MODEL_ID
 ARG FFMPEG_VERSION
 LABEL io.gocassini.ffmpeg.requested-version=${FFMPEG_VERSION}
+# The models this image actually carries, for tests and diagnostics: the runtime
+# forbids downloads, so this is exactly the set of quality tiers it can execute.
+ENV CASSINI_BUNDLED_MODELS="${CASSINI_BUNDLED_MODELS}"
 ENV CASSINI_STT_MODEL=${CASSINI_BUNDLED_MODEL_ID}
 RUN apt-get update \
  && apt-get install -y --no-install-recommends bash ca-certificates curl libopus0 tini \
@@ -177,7 +174,7 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_APPAPI_REQUIRED=true \
     CASSINI_STT_CUDA_CAPABLE=0 \
     CASSINI_STT_DEVICE=cpu \
-    CASSINI_DISALLOW_MODEL_DOWNLOAD=1
+    CASSINI_BUNDLED_MODEL_ROOT=/opt/cassini/cache
 ENV PATH=/opt/cassini/ffmpeg/bin:${PATH}
 
 # AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api

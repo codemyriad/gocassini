@@ -1,5 +1,5 @@
 <script module lang="ts">
-  import type { Job } from "./operator/types";
+  import type { Job, JobAttempt } from "./operator/types";
 
   type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before">;
   type RerunnableJob = Pick<Job, "stage" | "state" | "artifact_run_path">;
@@ -11,21 +11,184 @@
     publish: "Publish",
   };
 
-  export function isBuildWaitingForGPU(job: JobStatus): boolean {
+  const FAILURE_STOP_REASONS = new Set([
+    "join_failed",
+    "signaling_connection_error",
+    "record_process_exit_nonzero",
+  ]);
+
+  export interface RequestMetadata {
+    url?: string;
+    baseURL?: string;
+    roomToken?: string;
+    guestName?: string;
+    platform?: string;
+  }
+
+  export function parseRequestJSON(requestJSON: string): RequestMetadata {
+    if (!requestJSON || typeof requestJSON !== "string") {
+      return {};
+    }
+    try {
+      const payload = JSON.parse(requestJSON);
+      if (payload && typeof payload === "object") {
+        return {
+          url: typeof payload.url === "string" && payload.url.trim() !== "" ? payload.url.trim() : undefined,
+          baseURL: typeof payload.baseURL === "string" && payload.baseURL.trim() !== "" ? payload.baseURL.trim() : undefined,
+          roomToken: typeof payload.roomToken === "string" && payload.roomToken.trim() !== "" ? payload.roomToken.trim() : undefined,
+          guestName: typeof payload.guestName === "string" && payload.guestName.trim() !== "" ? payload.guestName.trim() : undefined,
+          platform: typeof payload.platform === "string" && payload.platform.trim() !== "" ? payload.platform.trim() : undefined,
+        };
+      }
+    } catch {
+      // Ignore invalid JSON payload
+    }
+    return {};
+  }
+
+  export function requestUrlLabel(requestJSON: string): string {
+    const meta = parseRequestJSON(requestJSON);
+    if (meta.url) {
+      return meta.url;
+    }
+    if (meta.baseURL && meta.roomToken) {
+      return `${meta.baseURL.replace(/\/+$/, "")}/call/${meta.roomToken}`;
+    }
+    if (meta.baseURL) {
+      return meta.baseURL;
+    }
+    if (meta.roomToken) {
+      return `Call ${meta.roomToken}`;
+    }
+    return "—";
+  }
+
+  /**
+   * Names a job. The Talk conversation's own display name wins where the
+   * operator has it (D-646); everything below is the fallback for a non-Talk
+   * job, a job whose room-name lookup never completed, and every job recorded
+   * before the operator promoted the room to a column — none of which say
+   * which conversation it was, only which room token it used.
+   */
+  export function meetingLabel(requestJSON: string, fallbackId?: string, roomName?: string | null): string {
+    const room = roomName?.trim();
+    if (room) {
+      return room;
+    }
+    const meta = parseRequestJSON(requestJSON);
+    if (meta.url) {
+      try {
+        const token = new URL(meta.url).pathname.split("/").filter(Boolean).pop();
+        if (token && token.toLowerCase() !== "call") {
+          return `Call ${token}`;
+        }
+        return meta.url;
+      } catch {
+        return meta.url;
+      }
+    }
+    if (meta.roomToken) {
+      return `Call ${meta.roomToken}`;
+    }
+    if (fallbackId && typeof fallbackId === "string" && fallbackId.trim() !== "") {
+      const cleanId = fallbackId.trim();
+      const shortId = cleanId.length > 10 ? cleanId.slice(0, 8) : cleanId;
+      return `Recording ${shortId}`;
+    }
+    return "Recording";
+  }
+
+  export function hasJobError(
+    item:
+      | Pick<Job, "error" | "state" | "record_exit_code" | "stop_reason">
+      | Pick<JobAttempt, "error" | "state" | "record_exit_code" | "stop_reason">,
+  ): boolean {
+    if (item.error != null && item.error.trim() !== "") return true;
+    if (item.state === "failed" || item.state === "interrupted") return true;
+    if (item.record_exit_code != null && item.record_exit_code !== 0) return true;
+    if (item.stop_reason && FAILURE_STOP_REASONS.has(item.stop_reason)) return true;
+    return false;
+  }
+
+  export function formatStopReason(reason: string | null | undefined): string {
+    if (!reason || typeof reason !== "string" || reason.trim() === "") return "—";
+    const trimmed = reason.trim();
+    switch (trimmed) {
+      case "operator_requested":
+        return "Stopped by operator";
+      case "room_empty":
+        return "Room empty";
+      case "duration_limit":
+        return "Duration limit reached";
+      case "signaling_connection_error":
+        return "Signaling connection error";
+      case "join_failed":
+        return "Failed to join room";
+      case "record_process_exit_nonzero":
+        return "Process exited with error";
+      default:
+        return trimmed.replace(/_/g, " ");
+    }
+  }
+
+  export function cleanStopDetail(
+    detail: string | null | undefined,
+    exitCode?: number | null,
+    isError?: boolean,
+  ): string | null {
+    if (!detail || typeof detail !== "string") return null;
+    const trimmed = detail.trim();
+    if (!trimmed) return null;
+    if (trimmed.toLowerCase() === "context canceled" && (!isError || exitCode === 0 || exitCode === null)) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  export function formatDuration(
+    startStr: string | null | undefined,
+    endStr: string | null | undefined,
+  ): string | null {
+    if (!startStr || !endStr) return null;
+    const start = Date.parse(startStr);
+    const end = Date.parse(endStr);
+    if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
+    const totalSeconds = Math.round((end - start) / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const remSeconds = totalSeconds % 60;
+    if (totalMinutes < 60) {
+      return remSeconds > 0 ? `${totalMinutes}m ${remSeconds}s` : `${totalMinutes}m`;
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const remMinutes = totalMinutes % 60;
+    return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
+  }
+
+  export function isHttpUrl(value: string | null | undefined): boolean {
+    if (!value) return false;
+    return value.startsWith("http://") || value.startsWith("https://");
+  }
+
+  // A deferred or blocked build is a resource decision, not necessarily a GPU
+  // one: since D-702 a build can also wait on host RAM, or block because an
+  // explicit CUDA override cannot be satisfied. The job's own error message
+  // says which; these labels must not assert a cause they do not know.
+  export function isBuildWaitingForResources(job: JobStatus): boolean {
     return job.stage === "build" && job.state === "queued" && job.build_retry_not_before != null;
   }
 
-  export function isBuildGPUBlocked(job: JobStatus): boolean {
+  export function isBuildBlocked(job: JobStatus): boolean {
     return job.stage === "build" && job.state === "blocked";
   }
 
-  export function hasGPUResourceNotice(job: JobStatus): boolean {
-    return isBuildWaitingForGPU(job) || isBuildGPUBlocked(job);
+  export function hasResourceNotice(job: JobStatus): boolean {
+    return isBuildWaitingForResources(job) || isBuildBlocked(job);
   }
 
   export function jobStatusLabel(job: JobStatus): string {
-    if (isBuildGPUBlocked(job)) return "GPU unavailable";
-    if (isBuildWaitingForGPU(job)) return "Waiting for GPU";
+    if (isBuildBlocked(job)) return "Build blocked";
+    if (isBuildWaitingForResources(job)) return "Waiting for resources";
     if (job.state === "failed") return "Failed";
     if (job.state === "stopped") return "Stopped";
     if (job.state === "interrupted") return "Interrupted";
@@ -39,7 +202,7 @@
   }
 
   export function jobStatusToneClass(job: JobStatus): string {
-    if (hasGPUResourceNotice(job) || job.state === "stopped") return "text-warning";
+    if (hasResourceNotice(job) || job.state === "stopped") return "text-warning";
     if (job.state === "failed" || job.state === "interrupted") return "text-error";
     if (job.state === "succeeded") return "text-success";
     return "text-base-content/70";
@@ -65,7 +228,7 @@
     type OperatorStateChangeEvent,
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
-  import { meetingLabel, requestUrlLabel, shouldShowDetailLoading } from "./operator/viewState";
+  import { shouldShowDetailLoading } from "./operator/viewState";
   import { applyJob, readJob } from "./surfaceRouting";
   import SettingsPanel from "./SettingsPanel.svelte";
 
@@ -470,8 +633,8 @@
   }
 
   function stageProgress(job: Job | JobAttempt): Array<{ label: string; status: StageStatus }> {
-    const gpuBlocked = isBuildGPUBlocked(job);
-    const halted = gpuBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
+    const buildBlocked = isBuildBlocked(job);
+    const halted = buildBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
     let lastTouched = -1;
     const times = STAGES.map((stage, index) => {
       const t = stageTimes(job, stage.key);
@@ -491,7 +654,7 @@
         status = "queued";
       }
       if (halted && index === lastTouched) {
-        status = gpuBlocked ? "blocked" : "failed";
+        status = buildBlocked ? "blocked" : "failed";
       }
       return { label: stage.label, status };
     });
@@ -586,7 +749,7 @@
   $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
   $: stopApplies = selectedJob?.job.stage === "record" && selectedJob?.job.state === "running";
   $: jobFinished = selectedJob?.job.stage === "done";
-  $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildGPUBlocked(selectedJob.job));
+  $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
   $: rerunBlockedReason =
     rerunVisible && !selectedJob?.job.artifact_run_path
@@ -728,7 +891,7 @@
                     <div class="card-body min-w-0 gap-1 p-3">
                       <div class="flex min-w-0 items-start justify-between gap-2">
                         <p class="min-w-0 flex-1 truncate text-sm font-medium" title={requestUrlLabel(job.request_json)}>
-                          {meetingLabel(job)}
+                          {meetingLabel(job.request_json, job.id, job.room_name)}
                         </p>
                         {#if job.current_attempt_number > 1}
                           <span class="badge badge-outline badge-sm shrink-0 border-base-content/20 text-base-content"
@@ -740,15 +903,18 @@
                         <p class="truncate">
                           <span class={jobStatusToneClass(job)}>{jobStatusLabel(job)}</span>
                           <span class="text-base-content/50"> · {relativeTime(job.updated_at)}</span>
+                          {#if formatDuration(job.record_started_at, job.record_finished_at)}
+                            <span class="text-base-content/50"> · {formatDuration(job.record_started_at, job.record_finished_at)}</span>
+                          {/if}
                         </p>
-                        {#if isBuildWaitingForGPU(job)}
+                        {#if isBuildWaitingForResources(job)}
                           <p class="truncate text-warning" title={formatTimestamp(job.build_retry_not_before)}>
                             Next retry {formatTimestamp(job.build_retry_not_before)} · {job.build_deferral_count}
                             {job.build_deferral_count === 1 ? "deferral" : "deferrals"}
                           </p>
                         {/if}
                         {#if job.error}
-                          <p class="truncate {hasGPUResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
+                          <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
                             {job.error}
                           </p>
                         {/if}
@@ -848,7 +1014,7 @@
                 <section class="grid gap-3 rounded-box border border-base-300 bg-base-200 p-4">
                   <div class="min-w-0">
                     <h3 class="truncate text-lg font-semibold" title={requestUrlLabel(selectedJob.job.request_json)}>
-                      {meetingLabel(selectedJob.job)}
+                      {meetingLabel(selectedJob.job.request_json, selectedJob.job.id, selectedJob.job.room_name)}
                     </h3>
                     <p class="text-sm {jobStatusToneClass(selectedJob.job)}">
                       {jobStatusLabel(selectedJob.job)}
@@ -876,7 +1042,7 @@
                       {/each}
                     </div>
                   </div>
-                  {#if hasGPUResourceNotice(selectedJob.job)}
+                  {#if hasResourceNotice(selectedJob.job)}
                     <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3">
                       <div class="flex items-center gap-2 text-warning">
                         <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
@@ -886,25 +1052,27 @@
                         <p class="text-xs break-words text-base-content/75">{selectedJob.job.error}</p>
                       {/if}
                       <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                        {#if isBuildWaitingForGPU(selectedJob.job)}
+                        {#if isBuildWaitingForResources(selectedJob.job)}
                           <div class="flex gap-1">
                             <dt class="text-base-content/50">Next retry</dt>
                             <dd>{formatTimestamp(selectedJob.job.build_retry_not_before)}</dd>
                           </div>
                         {/if}
                         <div class="flex gap-1">
-                          <dt class="text-base-content/50">GPU deferrals</dt>
+                          <dt class="text-base-content/50">Resource deferrals</dt>
                           <dd>{selectedJob.job.build_deferral_count}</dd>
                         </div>
                       </dl>
                     </div>
-                  {:else if selectedJob.job.error || selectedJob.job.stop_reason || selectedJob.job.record_stop_detail}
+                  {:else if hasJobError(selectedJob.job)}
                     <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">
                       {#if selectedJob.job.error}
                         <p class="text-sm font-medium text-error">{selectedJob.job.error}</p>
+                      {:else}
+                        <p class="text-sm font-medium text-error">{jobStatusLabel(selectedJob.job)}</p>
                       {/if}
-                      {#if selectedJob.job.record_stop_detail}
-                        <p class="text-xs break-words text-base-content/70">{selectedJob.job.record_stop_detail}</p>
+                      {#if cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, true)}
+                        <p class="text-xs break-words text-base-content/70">{cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, true)}</p>
                       {/if}
                       <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                         {#if selectedJob.job.record_exit_code !== null}
@@ -916,9 +1084,26 @@
                         {#if selectedJob.job.stop_reason}
                           <div class="flex gap-1">
                             <dt class="text-base-content/50">Reason</dt>
-                            <dd class="font-mono">{selectedJob.job.stop_reason}</dd>
+                            <dd class="font-mono">{formatStopReason(selectedJob.job.stop_reason)}</dd>
                           </div>
                         {/if}
+                        {#if selectedJob.job.stop_requested_at}
+                          <div class="flex gap-1">
+                            <dt class="text-base-content/50">Stop requested</dt>
+                            <dd>{formatTimestamp(selectedJob.job.stop_requested_at)}</dd>
+                          </div>
+                        {/if}
+                      </dl>
+                    </div>
+                  {:else if selectedJob.job.state === "stopped"}
+                    <div class="grid gap-1 rounded-box border border-warning/40 bg-warning/10 p-3">
+                      <p class="text-sm font-medium text-warning">
+                        {selectedJob.job.stop_reason ? formatStopReason(selectedJob.job.stop_reason) : "Recording stopped"}
+                      </p>
+                      {#if cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}
+                        <p class="text-xs break-words text-base-content/70">{cleanStopDetail(selectedJob.job.record_stop_detail, selectedJob.job.record_exit_code, false)}</p>
+                      {/if}
+                      <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                         {#if selectedJob.job.stop_requested_at}
                           <div class="flex gap-1">
                             <dt class="text-base-content/50">Stop requested</dt>
@@ -935,7 +1120,20 @@
                     </div>
                     <div class="min-w-0">
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting URL</dt>
-                      <dd class="text-sm break-all">{requestUrlLabel(selectedJob.job.request_json)}</dd>
+                      <dd class="text-sm break-all">
+                        {#if isHttpUrl(requestUrlLabel(selectedJob.job.request_json))}
+                          <a
+                            class="link link-hover text-primary"
+                            href={requestUrlLabel(selectedJob.job.request_json)}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                          >
+                            {requestUrlLabel(selectedJob.job.request_json)}
+                          </a>
+                        {:else}
+                          {requestUrlLabel(selectedJob.job.request_json)}
+                        {/if}
+                      </dd>
                     </div>
                     <div class="min-w-0">
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
@@ -953,6 +1151,24 @@
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Interrupted</dt>
                       <dd class="text-sm">{formatTimestamp(selectedJob.job.interrupted_at)}</dd>
                     </div>
+                    {#if selectedJob.job.stop_reason}
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop reason</dt>
+                        <dd class="text-sm">{formatStopReason(selectedJob.job.stop_reason)}</dd>
+                      </div>
+                    {/if}
+                    {#if formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record duration</dt>
+                        <dd class="text-sm">{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</dd>
+                      </div>
+                    {/if}
+                    {#if selectedJob.job.stop_requested_at}
+                      <div>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop requested</dt>
+                        <dd class="text-sm">{formatTimestamp(selectedJob.job.stop_requested_at)}</dd>
+                      </div>
+                    {/if}
                   </dl>
 
                   <div class="my-2 h-px w-full bg-base-content/12" aria-hidden="true"></div>
@@ -991,15 +1207,18 @@
                             aria-hidden="true"
                           />
                           <span class="min-w-0 flex-1 truncate text-xs text-base-content/60">
-                            <span class="text-sm font-medium text-base-content">Attempt {attempt.attempt_number}</span
-                            ><span class="ml-2 capitalize">{attempt.trigger_kind}</span><span
-                              class="mx-1.5 text-base-content/40">·</span
-                            ><span class={jobStatusToneClass(attempt)}>{jobStatusLabel(attempt)}</span>
+                            <span class="text-sm font-medium text-base-content">Attempt {attempt.attempt_number}</span>
+                            <span class="ml-2 capitalize">{attempt.trigger_kind}</span>
+                            <span class="mx-1.5 text-base-content/40">·</span>
+                            <span class={jobStatusToneClass(attempt)}>{jobStatusLabel(attempt)}</span>
+                            {#if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
+                              <span class="text-base-content/50"> · {formatDuration(attempt.record_started_at, attempt.record_finished_at)}</span>
+                            {/if}
                           </span>
                         </summary>
 
                         <div class="grid gap-3 bg-base-200 px-3 pt-3 pb-3">
-                          {#if hasGPUResourceNotice(attempt)}
+                          {#if hasResourceNotice(attempt)}
                             <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3">
                               <div class="flex items-center gap-2 text-warning">
                                 <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
@@ -1009,25 +1228,27 @@
                                 <p class="text-xs break-words text-base-content/75">{attempt.error}</p>
                               {/if}
                               <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                                {#if isBuildWaitingForGPU(attempt)}
+                                {#if isBuildWaitingForResources(attempt)}
                                   <div class="flex gap-1">
                                     <dt class="text-base-content/50">Next retry</dt>
                                     <dd>{formatTimestamp(attempt.build_retry_not_before)}</dd>
                                   </div>
                                 {/if}
                                 <div class="flex gap-1">
-                                  <dt class="text-base-content/50">GPU deferrals</dt>
+                                  <dt class="text-base-content/50">Resource deferrals</dt>
                                   <dd>{attempt.build_deferral_count}</dd>
                                 </div>
                               </dl>
                             </div>
-                          {:else if attempt.error || attempt.stop_reason || attempt.record_stop_detail}
+                          {:else if hasJobError(attempt)}
                             <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">
                               {#if attempt.error}
                                 <p class="text-sm font-medium text-error">{attempt.error}</p>
+                              {:else}
+                                <p class="text-sm font-medium text-error">{jobStatusLabel(attempt)}</p>
                               {/if}
-                              {#if attempt.record_stop_detail}
-                                <p class="text-xs break-words text-base-content/70">{attempt.record_stop_detail}</p>
+                              {#if cleanStopDetail(attempt.record_stop_detail, attempt.record_exit_code, true)}
+                                <p class="text-xs break-words text-base-content/70">{cleanStopDetail(attempt.record_stop_detail, attempt.record_exit_code, true)}</p>
                               {/if}
                               <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                                 {#if attempt.record_exit_code !== null}
@@ -1039,10 +1260,19 @@
                                 {#if attempt.stop_reason}
                                   <div class="flex gap-1">
                                     <dt class="text-base-content/50">Reason</dt>
-                                    <dd class="font-mono">{attempt.stop_reason}</dd>
+                                    <dd class="font-mono">{formatStopReason(attempt.stop_reason)}</dd>
                                   </div>
                                 {/if}
                               </dl>
+                            </div>
+                          {:else if attempt.state === "stopped"}
+                            <div class="grid gap-1 rounded-box border border-warning/40 bg-warning/10 p-3">
+                              <p class="text-sm font-medium text-warning">
+                                {attempt.stop_reason ? formatStopReason(attempt.stop_reason) : "Recording stopped"}
+                              </p>
+                              {#if cleanStopDetail(attempt.record_stop_detail, attempt.record_exit_code, false)}
+                                <p class="text-xs break-words text-base-content/70">{cleanStopDetail(attempt.record_stop_detail, attempt.record_exit_code, false)}</p>
+                              {/if}
                             </div>
                           {/if}
 
@@ -1065,7 +1295,7 @@
                             </div>
                           </div>
 
-                          <dl class="grid gap-x-6 gap-y-3 grid-cols-2">
+                          <dl class="grid gap-x-6 gap-y-3 grid-cols-2 sm:grid-cols-3">
                             <div>
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Queued</dt>
                               <dd class="text-sm">{formatTimestamp(attempt.record_queued_at)}</dd>
@@ -1074,6 +1304,18 @@
                               <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
                               <dd class="text-sm">{formatTimestamp(attempt.completed_at)}</dd>
                             </div>
+                            {#if attempt.stop_reason}
+                              <div>
+                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Stop reason</dt>
+                                <dd class="text-sm">{formatStopReason(attempt.stop_reason)}</dd>
+                              </div>
+                            {/if}
+                            {#if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
+                              <div>
+                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record duration</dt>
+                                <dd class="text-sm">{formatDuration(attempt.record_started_at, attempt.record_finished_at)}</dd>
+                              </div>
+                            {/if}
                           </dl>
 
                           {#if attempt.artifact_run_path || attempt.artifact_meeting_path || attempt.artifact_opus_path || attempt.artifact_site_path || attempt.record_log_path || attempt.build_log_path || attempt.seal_log_path || attempt.publish_log_path}

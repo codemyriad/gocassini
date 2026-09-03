@@ -6,7 +6,7 @@
 #
 # This is the e2e that exercises the WHOLE merged stack:
 #   - PR #22 (Talk recording-backend HMAC adapter)
-#   - PR #24 + #26 (v2 multi-transcript format + producer)
+#   - portable transcript production and extraction
 #   - PR #30 (ExApp install handshake)
 #   - PR #32 (bundled v3 model image)
 # The ci-e2e-v3-transcript-verify.sh smoke verifies cassini build + model
@@ -653,7 +653,7 @@ phase 9 "Levenshtein-check transcript vs scenario expected text"
 # from the build bundle. This proves the published artifact actually EMBEDS the
 # expected transcript (D-429): `cassini inspect --transcript` reads the default
 # words transcript from the portable .opus's CASSINI_TX_<id>_PAYLOAD_* tags and
-# emits transcript.words.v1.json — the exact inverse of the v2 transcript
+# emits transcript.words.v1.json — the exact inverse of the transcript
 # packer. The Levenshtein check below then runs against THAT .opus-derived
 # transcript.
 TRANSCRIPT_HOST="$LOG_DIR/transcript.words.v1.json"

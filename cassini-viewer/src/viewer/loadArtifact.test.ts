@@ -24,6 +24,8 @@ import {
 } from "../core/overlap";
 import type { TranscriptWordsV1 } from "../core/types";
 
+const OPUS_AUDIO_SHA256 = "a".repeat(64);
+
 const transcriptFixture = {
   version: "transcript.words.v1",
   media: {
@@ -255,27 +257,36 @@ describe("loadArtifactFromDirectory", () => {
         protocol: "http:",
       },
     } as Window;
-    const portableFixture = {
+    const manifest = {
+      kind: "cassini-portable-meeting",
+      version: 1,
+      profile: "ogg-opus",
       meeting: {
         durationMs: 3000,
       },
       audio: {
-        sha256: "abc123",
+        container: "ogg",
+        codec: "opus",
+        sampleRate: 48_000,
+        channels: 1,
+        sampleCount: 144_000,
+        durationMs: 3000,
       },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [{ id: "spk_1", label: "Alice" }],
-      transcript: {
-        items: [
-          {
-            id: "seg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 1500,
-            text: "hello there",
-          },
-        ],
-      },
     };
-    const portableBytes = buildPortableOpusFixture(portableFixture);
+    const rawTranscript = {
+      format: "cassini.words.v1",
+      wordCount: 1,
+      items: [{
+        id: "seg_1",
+        speaker: "spk_1",
+        startMs: 1000,
+        endMs: 1500,
+        text: "hello",
+      }],
+    };
+    const portableBytes = buildPortableOpusFixture({ manifest, rawTranscript });
     globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith(".opus")) {
@@ -302,7 +313,7 @@ describe("loadArtifactFromDirectory", () => {
 
     expect(artifact.audioSrc).toBe("http://127.0.0.1:8765/daily-meeting-2026-03-18--12:30.opus");
     expect(artifact.transcript.segments).toHaveLength(1);
-    expect(artifact.transcript.segments[0]?.text).toBe("hello there");
+    expect(artifact.transcript.segments[0]?.text).toBe("hello");
     expect(artifact.readableTranscript?.segments).toHaveLength(1);
     expect(artifact.displayTranscript?.blocks).toHaveLength(1);
   });
@@ -322,16 +333,13 @@ describe("loadArtifactFromDirectory", () => {
         recordedAtLocal: "2026-03-10T12:30:00",
         processedAtUtc: "2026-03-19T09:43:13Z",
       },
-      audio: {
-        codec: "opus",
-        sampleRate: 48_000,
-        channels: 1,
-        sha256: "abc123",
-      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       provenance: {
         speechToText: {
-          backend: "sherpa-onnx",
-          model: "parakeet-tdt-0.6b-v2-int8",
+          "raw-asr": {
+            backend: "sherpa-onnx",
+            model: "parakeet-tdt-0.6b-v2-int8",
+          },
         },
       },
       speakers: [
@@ -345,12 +353,13 @@ describe("loadArtifactFromDirectory", () => {
             speaker: "spk_chris",
             startMs: 1000,
             endMs: 1500,
-            text: "hello there",
+            text: "hello",
           },
         ],
       },
     };
-    const portableBytes = buildPortableOpusFixture(portableFixture);
+    const { transcript: rawTranscript, ...manifest } = portableFixture;
+    const portableBytes = buildPortableOpusFixture({ manifest, rawTranscript });
     globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith(".opus")) {
@@ -403,9 +412,7 @@ describe("loadArtifactFromDirectory", () => {
       meeting: {
         durationMs: 3000,
       },
-      audio: {
-        sha256: "abc123",
-      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [{ id: "spk_1", label: "Alice" }],
       transcript: {
         items: [
@@ -414,7 +421,7 @@ describe("loadArtifactFromDirectory", () => {
             speaker: "spk_1",
             startMs: 1000,
             endMs: 1500,
-            text: "hello there",
+            text: "hello",
           },
         ],
       },
@@ -457,7 +464,12 @@ describe("loadArtifactFromDirectory", () => {
         ],
       },
     };
-    const portableBytes = buildPortableOpusFixture(portableFixture);
+    const {
+      transcript: rawTranscript,
+      displayTranscript,
+      ...manifest
+    } = portableFixture;
+    const portableBytes = buildPortableOpusFixture({ manifest, rawTranscript, displayTranscript });
     globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith(".opus")) {
@@ -497,19 +509,19 @@ describe("loadArtifactFromDirectory", () => {
       meeting: {
         durationMs: 5000,
       },
-      audio: {
-        sha256: "abc123",
-      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [{ id: "spk_1", label: "Alice" }],
       transcript: {
         items: [
-          {
-            id: "seg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-          },
+          { speaker: "spk_1", startMs: 1000, endMs: 1200, text: "And" },
+          { speaker: "spk_1", startMs: 1200, endMs: 1400, text: "I" },
+          { speaker: "spk_1", startMs: 1400, endMs: 1800, text: "think" },
+          { speaker: "spk_1", startMs: 1800, endMs: 2200, text: "they'll" },
+          { speaker: "spk_1", startMs: 2200, endMs: 2400, text: "be" },
+          { speaker: "spk_1", startMs: 2400, endMs: 2800, text: "very" },
+          { speaker: "spk_1", startMs: 2800, endMs: 3300, text: "happy" },
+          { speaker: "spk_1", startMs: 3300, endMs: 3600, text: "with" },
+          { speaker: "spk_1", startMs: 3600, endMs: 4000, text: "it." },
         ],
       },
       readableTranscript: {
@@ -537,7 +549,12 @@ describe("loadArtifactFromDirectory", () => {
         ],
       },
     };
-    const portableBytes = buildPortableOpusFixture(portableFixture);
+    const {
+      transcript: rawTranscript,
+      readableTranscript,
+      ...manifest
+    } = portableFixture;
+    const portableBytes = buildPortableOpusFixture({ manifest, rawTranscript, readableTranscript });
     globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith(".opus")) {
@@ -590,7 +607,8 @@ describe("loadArtifactFromDirectory", () => {
         ],
       },
     };
-    const portableBytes = buildPortableOpusFixture(portableFixture);
+    const { transcript: rawTranscript, ...manifest } = portableFixture;
+    const portableBytes = buildPortableOpusFixture({ manifest, rawTranscript });
     globalThis.fetch = vi.fn(async (input: string | URL) => {
       const url = String(input);
       if (url.endsWith(".opus")) {
@@ -649,10 +667,22 @@ describe("switchPortableTranscript", () => {
     };
     const parakeetPayload = encodeBodyForOpusTags(parakeetBody, "CASSINI_TX_PARAKEET_PAYLOAD_");
     const canaryPayload = encodeBodyForOpusTags(canaryBody, "CASSINI_TX_CANARY_PAYLOAD_");
+    const displayBody = (text: string) => ({
+      ...displayFixture,
+      blocks: [{ ...displayFixture.blocks[0], text }],
+    });
+    const parakeetDisplay = encodeBodyForOpusTags(
+      displayBody("Parakeet display."),
+      "CASSINI_TX_DISPLAY_PARAKEET_PAYLOAD_",
+    );
+    const canaryDisplay = encodeBodyForOpusTags(
+      displayBody("Canary display."),
+      "CASSINI_TX_DISPLAY_CANARY_PAYLOAD_",
+    );
     const indexManifest = {
-      version: 2,
+      version: 1,
       meeting: { durationMs: 3000 },
-      audio: { sha256: "abc" },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [{ id: "spk_1", label: "Alice" }],
       transcripts: [
         {
@@ -669,6 +699,23 @@ describe("switchPortableTranscript", () => {
           payloadRef: canaryPayload.payloadRef,
         },
       ],
+      readableTranscripts: [
+        {
+          id: "display-parakeet",
+          role: "display",
+          format: "transcript.display.v1",
+          sourceTranscriptId: "parakeet",
+          payloadRef: parakeetDisplay.payloadRef,
+        },
+        {
+          id: "display-canary",
+          role: "display",
+          default: true,
+          format: "transcript.display.v1",
+          sourceTranscriptId: "canary",
+          payloadRef: canaryDisplay.payloadRef,
+        },
+      ],
       provenance: {
         speechToText: {
           parakeet: { engine: "Parakeet" },
@@ -676,8 +723,13 @@ describe("switchPortableTranscript", () => {
         },
       },
     };
-    const extraTags = { ...parakeetPayload.tags, ...canaryPayload.tags };
-    return buildPortableOpusFixture(indexManifest, extraTags);
+    const extraTags = {
+      ...parakeetPayload.tags,
+      ...canaryPayload.tags,
+      ...parakeetDisplay.tags,
+      ...canaryDisplay.tags,
+    };
+    return buildPortableOpusFixture({ manifest: indexManifest, extraTags });
   }
 
   function mockFetchReturning(bytes: Uint8Array) {
@@ -692,52 +744,55 @@ describe("switchPortableTranscript", () => {
 
   it("loads the producer-default transcript and exposes available transcripts", async () => {
     globalThis.window = {
-      location: { href: "http://127.0.0.1:8765/?meeting=v2-fixture", protocol: "http:" },
+      location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture", protocol: "http:" },
     } as Window;
     globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture());
 
-    const artifact = await loadPortableArtifactFromAudioPath("./v2-fixture.opus");
+    const artifact = await loadPortableArtifactFromAudioPath("./portable-fixture.opus");
 
     expect(artifact.currentTranscriptId).toBe("canary");
     expect(artifact.availableTranscripts.map((t) => t.id)).toEqual(["parakeet", "canary"]);
     expect(artifact.transcript.segments[0]?.text).toBe("canary");
+    expect(artifact.displayTranscript?.blocks[0]?.text).toBe("Canary display.");
   });
 
   it("switches to an alternate transcript and caches the body on round-trip", async () => {
     globalThis.window = {
-      location: { href: "http://127.0.0.1:8765/?meeting=v2-fixture-switch", protocol: "http:" },
+      location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-switch", protocol: "http:" },
     } as Window;
     const fixture = buildDualTranscriptFixture();
     const fetchMock = mockFetchReturning(fixture);
     globalThis.fetch = fetchMock;
 
-    await loadPortableArtifactFromAudioPath("./v2-fixture-switch.opus");
+    await loadPortableArtifactFromAudioPath("./portable-fixture-switch.opus");
     const fetchCountAfterLoad = (fetchMock as unknown as { mock: { calls: unknown[] } }).mock.calls
       .length;
 
-    const switched = await switchPortableTranscript("./v2-fixture-switch.opus", "parakeet");
+    const switched = await switchPortableTranscript("./portable-fixture-switch.opus", "parakeet");
     expect(switched.currentTranscriptId).toBe("parakeet");
     expect(switched.transcript.segments[0]?.text).toBe("parakeet");
+    expect(switched.displayTranscript?.blocks[0]?.text).toBe("Parakeet display.");
     // No additional fetch — body decoded from cached tags map.
     expect((fetchMock as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(
       fetchCountAfterLoad,
     );
 
-    const back = await switchPortableTranscript("./v2-fixture-switch.opus", "canary");
+    const back = await switchPortableTranscript("./portable-fixture-switch.opus", "canary");
     expect(back.currentTranscriptId).toBe("canary");
     expect(back.transcript.segments[0]?.text).toBe("canary");
+    expect(back.displayTranscript?.blocks[0]?.text).toBe("Canary display.");
   });
 
   it("throws for an unknown transcript id", async () => {
     globalThis.window = {
-      location: { href: "http://127.0.0.1:8765/?meeting=v2-fixture-unknown", protocol: "http:" },
+      location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-unknown", protocol: "http:" },
     } as Window;
     globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture());
 
-    await loadPortableArtifactFromAudioPath("./v2-fixture-unknown.opus");
+    await loadPortableArtifactFromAudioPath("./portable-fixture-unknown.opus");
 
     await expect(
-      switchPortableTranscript("./v2-fixture-unknown.opus", "whisper"),
+      switchPortableTranscript("./portable-fixture-unknown.opus", "whisper"),
     ).rejects.toThrow(/no transcript with id "whisper"/);
   });
 
@@ -752,7 +807,7 @@ describe("switchPortableTranscript", () => {
 
   it("surfaces a sha256 mismatch on the alternate body so the UI can show it", async () => {
     globalThis.window = {
-      location: { href: "http://127.0.0.1:8765/?meeting=v2-fixture-sha", protocol: "http:" },
+      location: { href: "http://127.0.0.1:8765/?meeting=portable-fixture-sha", protocol: "http:" },
     } as Window;
     // Build a fixture where the alternate (parakeet) payloadRef carries a
     // bogus sha256 so the integrity check fails when we try to switch to it.
@@ -769,7 +824,7 @@ describe("switchPortableTranscript", () => {
     const parakeetPayload = encodeBodyForOpusTags(parakeetBody, "CASSINI_TX_PARAKEET_PAYLOAD_");
     const canaryPayload = encodeBodyForOpusTags(canaryBody, "CASSINI_TX_CANARY_PAYLOAD_");
     const manifest = {
-      version: 2,
+      version: 1,
       meeting: { durationMs: 3000 },
       speakers: [{ id: "spk_1", label: "Alice" }],
       transcripts: [
@@ -788,35 +843,72 @@ describe("switchPortableTranscript", () => {
         },
       ],
     };
-    const fixture = buildPortableOpusFixture(manifest, {
-      ...parakeetPayload.tags,
-      ...canaryPayload.tags,
+    const fixture = buildPortableOpusFixture({
+      manifest,
+      extraTags: {
+        ...parakeetPayload.tags,
+        ...canaryPayload.tags,
+      },
     });
     globalThis.fetch = mockFetchReturning(fixture);
 
-    await loadPortableArtifactFromAudioPath("./v2-fixture-sha.opus");
+    await loadPortableArtifactFromAudioPath("./portable-fixture-sha.opus");
 
     await expect(
-      switchPortableTranscript("./v2-fixture-sha.opus", "parakeet"),
+      switchPortableTranscript("./portable-fixture-sha.opus", "parakeet"),
     ).rejects.toThrow(/sha256 mismatch/);
   });
 
   it("rejects a portable file whose main manifest digest is stale", async () => {
     globalThis.window = {
-      location: { href: "http://127.0.0.1:8765/?meeting=v2-main-sha", protocol: "http:" },
+      location: { href: "http://127.0.0.1:8765/?meeting=portable-main-sha", protocol: "http:" },
     } as Window;
-    const fixture = buildPortableOpusFixture(
-      {
-        version: 2,
+    const fixture = buildPortableOpusFixture({
+      manifest: {
+        version: 1,
         meeting: { durationMs: 3000 },
         transcripts: [],
       },
-      { CASSINI_PAYLOAD_SHA256: "0".repeat(64) },
-    );
+      extraTags: { CASSINI_PAYLOAD_SHA256: "0".repeat(64) },
+    });
     globalThis.fetch = mockFetchReturning(fixture);
 
-    await expect(loadPortableArtifactFromAudioPath("./v2-main-sha.opus")).rejects.toThrow(
+    await expect(loadPortableArtifactFromAudioPath("./portable-main-sha.opus")).rejects.toThrow(
       /portable manifest sha256 mismatch/,
+    );
+  });
+
+  it("rejects an unsupported portable format tag", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=unsupported-format", protocol: "http:" },
+    } as Window;
+    const fixture = buildPortableOpusFixture({
+      manifest: { meeting: { durationMs: 3000 } },
+      rawTranscript: { items: [] },
+      extraTags: { CASSINI_FORMAT: "org.example.unsupported/9" },
+    });
+    globalThis.fetch = mockFetchReturning(fixture);
+
+    await expect(loadPortableArtifactFromAudioPath("./unsupported-format.opus")).rejects.toThrow(
+      /unsupported CASSINI_FORMAT/,
+    );
+  });
+
+  it("rejects unsupported manifest shapes", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=unsupported-manifest", protocol: "http:" },
+    } as Window;
+    const fixture = buildPortableOpusFixture({
+      manifest: {
+        version: 7,
+        meeting: { durationMs: 3000 },
+        transcripts: [],
+      },
+    });
+    globalThis.fetch = mockFetchReturning(fixture);
+
+    await expect(loadPortableArtifactFromAudioPath("./unsupported-manifest.opus")).rejects.toThrow(
+      /unsupported manifest version 7/,
     );
   });
 });
@@ -861,7 +953,7 @@ describe("loose-file vs packed `.opus` parity", () => {
   // assigns these ids when items carry none (as the producer's items do).
   const sourceTranscript: TranscriptWordsV1 = {
     version: "transcript.words.v1",
-    media: { src: "meeting.opus", durationMs: 6000, sha256: "deadbeef" },
+    media: { src: "meeting.opus", durationMs: 6000, sha256: OPUS_AUDIO_SHA256 },
     speakers: [
       { id: "spk_1", label: "Alice" },
       { id: "spk_2", label: "Bob" },
@@ -891,13 +983,6 @@ describe("loose-file vs packed `.opus` parity", () => {
     const items: Array<{ speaker: string; startMs: number; endMs: number; text: string }> = [];
     for (const segment of transcript.segments) {
       const words = Array.isArray(segment.words) ? segment.words : [];
-      if (words.length === 0) {
-        const text = (segment.text ?? "").trim();
-        if (text) {
-          items.push({ speaker: segment.speaker ?? "", startMs: segment.startMs, endMs: segment.endMs, text });
-        }
-        continue;
-      }
       for (const word of words) {
         const text = (word.text ?? "").trim();
         if (!text) {
@@ -939,13 +1024,24 @@ describe("loose-file vs packed `.opus` parity", () => {
   async function loadViaPackedOpus(): Promise<LoadedArtifact> {
     const portableManifest = {
       meeting: { durationMs: sourceTranscript.media.durationMs },
-      audio: { sha256: sourceTranscript.media.sha256 },
+      integrity: { opusAudioSha256: sourceTranscript.media.sha256 },
       speakers: sourceTranscript.speakers,
       transcript: { items: flattenPortableTranscriptItems(sourceTranscript) },
       readableTranscript: sharedReadable,
       displayTranscript: sharedDisplay,
     };
-    const portableBytes = buildPortableOpusFixture(portableManifest);
+    const {
+      transcript: rawTranscript,
+      readableTranscript,
+      displayTranscript,
+      ...manifest
+    } = portableManifest;
+    const portableBytes = buildPortableOpusFixture({
+      manifest,
+      rawTranscript,
+      readableTranscript,
+      displayTranscript,
+    });
     globalThis.fetch = vi.fn(async (input: string | URL) => {
       const url = String(input);
       if (url.endsWith(".opus")) {
@@ -987,7 +1083,7 @@ describe("loose-file vs packed `.opus` parity", () => {
     expect(packed.transcript).toEqual(buildTranscriptWordsFromPortable(
       {
         meeting: { durationMs: sourceTranscript.media.durationMs },
-        audio: { sha256: sourceTranscript.media.sha256 },
+        integrity: { opusAudioSha256: sourceTranscript.media.sha256 },
         speakers: sourceTranscript.speakers as unknown[],
         transcript: { items: flattenPortableTranscriptItems(sourceTranscript) },
       },
@@ -1078,7 +1174,7 @@ describe("portable attribution end-to-end (crosstalk badge judgement)", () => {
     } as Window;
     const portableFixture = {
       meeting: { durationMs: 4000 },
-      audio: { sha256: "abc123" },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
       speakers: [
         { id: "spk_ana", label: "Ana" },
         { id: "spk_ben", label: "Ben" },
@@ -1129,7 +1225,8 @@ describe("portable attribution end-to-end (crosstalk badge judgement)", () => {
         ],
       },
     };
-    serveOpus(buildPortableOpusFixture(portableFixture));
+    const { transcript: rawTranscript, readableTranscript, ...manifest } = portableFixture;
+    serveOpus(buildPortableOpusFixture({ manifest, rawTranscript, readableTranscript }));
 
     const artifact = await loadPortableArtifactFromAudioPath("./attributed.opus");
 
@@ -1169,12 +1266,14 @@ describe("portable attribution end-to-end (crosstalk badge judgement)", () => {
     } as Window;
     serveOpus(
       buildPortableOpusFixture({
-        meeting: { durationMs: 2000 },
-        speakers: [
-          { id: "spk_ana", label: "Ana" },
-          { id: "spk_ben", label: "Ben" },
-        ],
-        transcript: {
+        manifest: {
+          meeting: { durationMs: 2000 },
+          speakers: [
+            { id: "spk_ana", label: "Ana" },
+            { id: "spk_ben", label: "Ben" },
+          ],
+        },
+        rawTranscript: {
           items: [
             { speaker: "spk_ana", startMs: 0, endMs: 500, text: "hi" },
             {
@@ -1206,7 +1305,7 @@ describe("portable attribution end-to-end (crosstalk badge judgement)", () => {
   });
 });
 
-describe("word-timing provenance (does the legacy repair still apply?)", () => {
+describe("word-timing provenance (does the fallback repair apply?)", () => {
   const originalWindow = globalThis.window;
   const originalFetch = globalThis.fetch;
 
@@ -1222,8 +1321,8 @@ describe("word-timing provenance (does the legacy repair still apply?)", () => {
     } as Window;
   }
 
-  function servePortable(manifest: object) {
-    const bytes = buildPortableOpusFixture(manifest);
+  function servePortable(fixture: Parameters<typeof buildPortableOpusFixture>[0]) {
+    const bytes = buildPortableOpusFixture(fixture);
     globalThis.fetch = vi.fn(async (input: string | URL) => {
       if (!String(input).endsWith(".opus")) {
         return { ok: false } as Response;
@@ -1237,32 +1336,35 @@ describe("word-timing provenance (does the legacy repair still apply?)", () => {
     }) as typeof fetch;
   }
 
-  const portableBase = {
+  const portableBaseManifest = {
     meeting: { durationMs: 5000 },
-    audio: { sha256: "abc123" },
+    integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
     speakers: [{ id: "spk_1", label: "Alice" }],
-    transcript: {
-      items: [
-        {
-          id: "seg_1",
-          speaker: "spk_1",
-          startMs: 1000,
-          endMs: 1500,
-          text: "hello",
-          words: [{ id: "w_1", text: "hello", startMs: 1000, endMs: 1500 }],
-        },
-      ],
-    },
+  };
+  const portableBaseTranscript = {
+    items: [
+      {
+        id: "seg_1",
+        speaker: "spk_1",
+        startMs: 1000,
+        endMs: 1500,
+        text: "hello",
+        words: [{ id: "w_1", text: "hello", startMs: 1000, endMs: 1500 }],
+      },
+    ],
   };
 
   it("reads the marker off a portable manifest so the viewer stands the repair down", async () => {
     stubWindow();
     servePortable({
-      ...portableBase,
-      provenance: {
-        speechToText: { engine: "sherpa-onnx" },
-        wordTimings: { endsBoundedByAudio: true },
+      manifest: {
+        ...portableBaseManifest,
+        provenance: {
+          speechToText: { "raw-asr": { engine: "sherpa-onnx" } },
+          wordTimings: { endsBoundedByAudio: true },
+        },
       },
+      rawTranscript: portableBaseTranscript,
     });
 
     const artifact = await loadPortableArtifactFromAudioPath("./bounded.opus");
@@ -1273,8 +1375,11 @@ describe("word-timing provenance (does the legacy repair still apply?)", () => {
   it("shows the reader that this artifact's word ends were measured", async () => {
     stubWindow();
     servePortable({
-      ...portableBase,
-      provenance: { wordTimings: { endsBoundedByAudio: true } },
+      manifest: {
+        ...portableBaseManifest,
+        provenance: { wordTimings: { endsBoundedByAudio: true } },
+      },
+      rawTranscript: portableBaseTranscript,
     });
 
     const artifact = await loadPortableArtifactFromAudioPath("./bounded.opus");
@@ -1288,9 +1393,15 @@ describe("word-timing provenance (does the legacy repair still apply?)", () => {
 
   it("leaves the repair running for a portable meeting with no marker", async () => {
     stubWindow();
-    servePortable({ ...portableBase, provenance: { speechToText: { engine: "sherpa-onnx" } } });
+    servePortable({
+      manifest: {
+        ...portableBaseManifest,
+        provenance: { speechToText: { "raw-asr": { engine: "sherpa-onnx" } } },
+      },
+      rawTranscript: portableBaseTranscript,
+    });
 
-    const artifact = await loadPortableArtifactFromAudioPath("./legacy.opus");
+    const artifact = await loadPortableArtifactFromAudioPath("./unmarked.opus");
     const processing = artifact.metadata?.sections.find((section) => section.title === "Processing");
 
     expect(artifact.wordEndsBoundedByAudio).toBe(false);
@@ -1299,14 +1410,20 @@ describe("word-timing provenance (does the legacy repair still apply?)", () => {
 
   it("leaves the repair running for a portable meeting with no provenance at all", async () => {
     stubWindow();
-    servePortable(portableBase);
+    servePortable({ manifest: portableBaseManifest, rawTranscript: portableBaseTranscript });
 
     expect((await loadPortableArtifactFromAudioPath("./ancient.opus")).wordEndsBoundedByAudio).toBe(false);
   });
 
   it("refuses anything but the literal boolean, so a stray string cannot disarm the repair", async () => {
     stubWindow();
-    servePortable({ ...portableBase, provenance: { wordTimings: { endsBoundedByAudio: "true" } } });
+    servePortable({
+      manifest: {
+        ...portableBaseManifest,
+        provenance: { wordTimings: { endsBoundedByAudio: "true" } },
+      },
+      rawTranscript: portableBaseTranscript,
+    });
 
     expect((await loadPortableArtifactFromAudioPath("./odd.opus")).wordEndsBoundedByAudio).toBe(false);
   });
@@ -1366,11 +1483,11 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     vi.restoreAllMocks();
   });
 
-  function servePortableMeeting(manifest: object) {
+  function servePortableMeeting(fixture: Parameters<typeof buildPortableOpusFixture>[0]) {
     globalThis.window = {
       location: { href: "http://127.0.0.1:8765/", protocol: "http:" },
     } as Window;
-    const bytes = buildPortableOpusFixture(manifest);
+    const bytes = buildPortableOpusFixture(fixture);
     globalThis.fetch = vi.fn(async (input: string | URL) => {
       if (!String(input).endsWith(".opus")) {
         return { ok: false } as Response;
@@ -1403,7 +1520,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
 
   /**
    * Ten ordinary 240 ms words and one that the producer MEASURED at 1.44 s.
-   * Against a 240 ms median the legacy budget is max(1000, 4 × 240) = 1000 ms,
+   * Against a 240 ms median the fallback budget is max(1000, 4 × 240) = 1000 ms,
    * so the display-time repair would clip "held." to 5400 — undoing, in the
    * viewer, the fix the producer just made.
    */
@@ -1420,15 +1537,17 @@ describe("the display pipeline MeetingView runs, end to end", () => {
 
   it("keeps a measured 1.44 s word intact all the way to the rendered spans", async () => {
     // The fp32 evidence. "held." runs 1.44 s against a 240 ms median, which is
-    // four times the legacy budget's reference and would be clipped to 1 s by
+    // four times the fallback budget's reference and would be clipped to 1 s by
     // the display-time repair — undoing, in the viewer, the fix the producer
     // just made.
     servePortableMeeting({
-      meeting: { durationMs: 6000 },
-      audio: { sha256: "abc123" },
-      speakers: [{ id: "spk_1", label: "Alice" }],
-      provenance: { wordTimings: { endsBoundedByAudio: true } },
-      transcript: { items: heldWordItems },
+      manifest: {
+        meeting: { durationMs: 6000 },
+        integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
+        speakers: [{ id: "spk_1", label: "Alice" }],
+        provenance: { wordTimings: { endsBoundedByAudio: true } },
+      },
+      rawTranscript: { items: heldWordItems },
     });
 
     const artifact = await loadPortableArtifactFromAudioPath("./measured-word-end.opus");
@@ -1446,10 +1565,12 @@ describe("the display pipeline MeetingView runs, end to end", () => {
 
   it("clips that same word when the artifact carries no marker", async () => {
     servePortableMeeting({
-      meeting: { durationMs: 6000 },
-      audio: { sha256: "abc123" },
-      speakers: [{ id: "spk_1", label: "Alice" }],
-      transcript: { items: heldWordItems },
+      manifest: {
+        meeting: { durationMs: 6000 },
+        integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
+        speakers: [{ id: "spk_1", label: "Alice" }],
+      },
+      rawTranscript: { items: heldWordItems },
     });
 
     const artifact = await loadPortableArtifactFromAudioPath("./unmarked-word-end.opus");
@@ -1465,24 +1586,11 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     expect(segments[0]?.endMs).toBe(5400);
   });
 
-  /**
-   * The shape the deleted readable splitter used to act on, and the only shape
-   * it COULD act on: a legacy portable meeting with no baked display transcript
-   * (so the viewer rebuilds one at runtime) whose readable segments carry their
-   * own timed words (the splitter's precondition), with another speaker landing
-   * in the middle of one paragraph.
-   *
-   * Inventory of every portable meeting and artifact directory in the repo's
-   * export tree — 36 packed `.opus` files and 54 loose artifact directories —
-   * found this combination ZERO times: all 36 packed meetings carry readable
-   * words AND an embedded display transcript, and the 3 directories with no
-   * display transcript carry no readable words. So the splitter never fired,
-   * and this test pins what the reader gets instead of a prose split: the
-   * paragraph stays whole and the interjection is labelled as having happened
-   * during it — an affordance the splitter destroyed, because after cutting A
-   * in two neither half contained B any more.
+  /** A published readable body may omit a display body. In that case the
+   * viewer builds the display while preserving the readable paragraph and its
+   * word-level overlap evidence.
    */
-  it("keeps a rebuilt legacy paragraph whole and marks what landed inside it", async () => {
+  it("keeps a rebuilt paragraph whole and marks what landed inside it", async () => {
     const hostWords = [
       { text: "So", startMs: 1000, endMs: 1700 },
       { text: "the", startMs: 1700, endMs: 2400 },
@@ -1496,22 +1604,27 @@ describe("the display pipeline MeetingView runs, end to end", () => {
       { text: "out.", startMs: 7300, endMs: 8000 },
     ];
     servePortableMeeting({
-      meeting: { durationMs: 9000 },
-      audio: { sha256: "abc123" },
-      speakers: [
-        { id: "spk_1", label: "Alice" },
-        { id: "spk_2", label: "Bob" },
-      ],
-      // Segment-level canonical items, so the readable words are the only
-      // per-word timing in this fixture — the shape the splitter needed. The
-      // packed meetings in this repo's export tree are not like this: their
-      // items are word-level AND their readable segments carry words, so both
-      // pools are timed there.
-      transcript: {
+      manifest: {
+        meeting: { durationMs: 9000 },
+        integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
+        speakers: [
+          { id: "spk_1", label: "Alice" },
+          { id: "spk_2", label: "Bob" },
+        ],
+      },
+      rawTranscript: {
         items: [
-          { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 4500, text: "So the installer is finished" },
-          { id: "seg_2", speaker: "spk_2", startMs: 4000, endMs: 4600, text: "Right." },
-          { id: "seg_3", speaker: "spk_1", startMs: 4500, endMs: 8000, text: "and the documentation went out." },
+          ...hostWords.slice(0, 5).map((word, index) => ({
+            id: `host_${index}`,
+            speaker: "spk_1",
+            ...word,
+          })),
+          { id: "aside_0", speaker: "spk_2", startMs: 4000, endMs: 4600, text: "Right." },
+          ...hostWords.slice(5).map((word, index) => ({
+            id: `host_${index + 5}`,
+            speaker: "spk_1",
+            ...word,
+          })),
         ],
       },
       readableTranscript: {
@@ -1527,7 +1640,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
             startMs: 1000,
             endMs: 8000,
             text: hostWords.map((word) => word.text).join(" "),
-            sourceSegmentIds: ["seg_1", "seg_3"],
+            sourceSegmentIds: hostWords.map((_, index) => `host_${index}`),
             words: hostWords,
           },
           {
@@ -1536,20 +1649,18 @@ describe("the display pipeline MeetingView runs, end to end", () => {
             startMs: 4000,
             endMs: 4600,
             text: "Right.",
-            sourceSegmentIds: ["seg_2"],
+            sourceSegmentIds: ["aside_0"],
             words: [{ text: "Right.", startMs: 4000, endMs: 4600 }],
           },
         ],
       },
     });
 
-    const artifact = await loadPortableArtifactFromAudioPath("./legacy-readable-words.opus");
+    const artifact = await loadPortableArtifactFromAudioPath("./readable-words.opus");
     const segments = displaySegmentsFor(artifact);
     const analysis = analyzeOverlap(segments);
 
-    // The precondition the splitter needed is present in this fixture: the
-    // ONLY word timing in the file rides on the readable segments, so a timed
-    // display token proves the splitter's input was there.
+    // The display builder used the published readable word timing.
     expect(segments[0]?.tokens[0]).toMatchObject({ text: "So", startMs: 1000, endMs: 1700 });
     // The paragraph is not cut, and no prose is redistributed by word count.
     expect(segments).toHaveLength(2);
@@ -1601,11 +1712,72 @@ function encodeBodyForOpusTags(
   };
 }
 
-function buildPortableOpusFixture(
-  manifest: object,
-  extraTags: Record<string, string> = {},
-): Uint8Array {
-  const rawJson = Buffer.from(JSON.stringify(manifest), "utf8");
+function buildPortableOpusFixture({
+  manifest,
+  rawTranscript,
+  readableTranscript,
+  displayTranscript,
+  extraTags = {},
+}: {
+  manifest: object;
+  rawTranscript?: unknown;
+  readableTranscript?: unknown;
+  displayTranscript?: unknown;
+  extraTags?: Record<string, string>;
+}): Uint8Array {
+  const wire = structuredClone(manifest) as Record<string, any>;
+  const bodyTags: Record<string, string> = {};
+  const rawTranscriptId = "raw-asr";
+  if (rawTranscript !== undefined) {
+    const encoded = encodeBodyForOpusTags(rawTranscript, "CASSINI_TX_RAW_ASR_PAYLOAD_");
+    Object.assign(bodyTags, encoded.tags);
+    wire.transcripts = [{
+      id: rawTranscriptId,
+      role: "raw-asr",
+      default: true,
+      format: String((rawTranscript as any)?.format ?? (rawTranscript as any)?.version ?? "cassini.words.v1"),
+      language: typeof (rawTranscript as any)?.language === "string" ? (rawTranscript as any).language : undefined,
+      wordCount: Array.isArray((rawTranscript as any)?.items) ? (rawTranscript as any).items.length : 0,
+      payloadRef: encoded.payloadRef,
+    }];
+  }
+
+  const derivedEntries = Array.isArray(wire.readableTranscripts)
+    ? [...wire.readableTranscripts]
+    : [];
+  for (const [body, id, role] of [
+    [readableTranscript, "readable", "readable-cleanup"],
+    [displayTranscript, "display", "display"],
+  ] as const) {
+    if (!body) {
+      continue;
+    }
+    const prefix = `CASSINI_TX_${id.toUpperCase()}_PAYLOAD_`;
+    const encoded = encodeBodyForOpusTags(body, prefix);
+    Object.assign(bodyTags, encoded.tags);
+    derivedEntries.push({
+      id,
+      role,
+      default: true,
+      format: String(body.format ?? body.version ?? `cassini.${role}.v1`),
+      sourceTranscriptId: rawTranscriptId,
+      payloadRef: encoded.payloadRef,
+    });
+  }
+  if (derivedEntries.length > 0) {
+    wire.readableTranscripts = derivedEntries;
+  }
+
+  wire.kind ??= "cassini-portable-meeting";
+  wire.version ??= 1;
+  wire.profile ??= "ogg-opus";
+  wire.integrity = {
+    matchPolicy: "exact-opus-audio-v1",
+    opusAudioSha256: "a".repeat(64),
+    ...((wire.integrity as object | undefined) ?? {}),
+  };
+
+  const rawJson = Buffer.from(JSON.stringify(wire), "utf8");
   const compressed = gzipSync(rawJson);
   const encoded = compressed
     .toString("base64")
@@ -1613,11 +1785,22 @@ function buildPortableOpusFixture(
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
   const tags = {
+    CASSINI_FORMAT: "org.cassini.portable-meeting/1",
+    CASSINI_PROFILE: "ogg-opus",
+    CASSINI_PAYLOAD_MIME: "application/vnd.cassini.portable-meeting+json",
+    CASSINI_PAYLOAD_ENCODING: "base64url+gzip+utf8json",
+    CASSINI_PAYLOAD_SCHEMA:
+      "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+    CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
+    CASSINI_AUDIO_OPUS_SHA256: String(
+      (wire.integrity as { opusAudioSha256?: string }).opusAudioSha256,
+    ),
     CASSINI_PAYLOAD_CHUNK_COUNT: "1",
     CASSINI_PAYLOAD_SHA256: createHash("sha256").update(rawJson).digest("hex"),
     CASSINI_PAYLOAD_RAW_BYTES: String(rawJson.byteLength),
     CASSINI_PAYLOAD_GZIP_BYTES: String(compressed.byteLength),
     CASSINI_PAYLOAD_000: encoded,
+    ...bodyTags,
     ...extraTags,
   };
   const opusHead = buildOpusHeadPacket();

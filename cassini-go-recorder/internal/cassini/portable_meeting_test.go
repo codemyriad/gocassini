@@ -5,10 +5,25 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testing.T) {
+func TestFlattenPortableTranscriptItemsRequiresWordTimings(t *testing.T) {
+	_, err := flattenPortableTranscriptItems(portableTranscriptArtifact{
+		Segments: []portableTranscriptSegment{{
+			Speaker: "spk_1",
+			StartMS: 0,
+			EndMS:   500,
+			Text:    "hello world",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "text but no word timings") {
+		t.Fatalf("flattenPortableTranscriptItems error = %v, want missing word timings", err)
+	}
+}
+
+func TestLoadPortableMeetingSource(t *testing.T) {
 	root := t.TempDir()
 
 	if err := os.WriteFile(filepath.Join(root, "meeting.webm"), []byte("audio"), 0o644); err != nil {
@@ -39,54 +54,12 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 		},
 	})
 	writePortableJSONFixture(t, filepath.Join(root, "transcript.readable.v1.json"), map[string]any{
-		"version": "transcript.readable.v1",
-		"segments": []map[string]any{
-			{"speaker": "speaker-1", "text": "Hello world."},
-		},
+		"version":  "transcript.readable.v1",
+		"segments": []map[string]any{{"id": "readable-1", "text": "hello world"}},
 	})
 	writePortableJSONFixture(t, filepath.Join(root, "transcript.display.v1.json"), map[string]any{
 		"version": "transcript.display.v1",
-		"media": map[string]any{
-			"src":        "meeting.webm",
-			"durationMs": 1234,
-		},
-		"speakers": []map[string]any{
-			{"id": "speaker-1", "label": "Speaker 1"},
-		},
-		"blocks": []map[string]any{
-			{
-				"id":               "block-1",
-				"speaker":          "speaker-1",
-				"speakerLabel":     "Speaker 1",
-				"startMs":          0,
-				"endMs":            1000,
-				"text":             "Hello world.",
-				"sourceSegmentIds": []string{"seg_1"},
-				"wordCount":        2,
-				"timedWordCount":   2,
-				"timingCoverage":   1,
-				"tokens": []map[string]any{
-					{
-						"text":          "Hello",
-						"spaceBefore":   false,
-						"kind":          "word",
-						"sourceWordIds": []string{"seg_1:w_0"},
-						"startMs":       0,
-						"endMs":         500,
-						"alignment":     "source",
-					},
-					{
-						"text":          "world",
-						"spaceBefore":   true,
-						"kind":          "word",
-						"sourceWordIds": []string{"seg_1:w_1"},
-						"startMs":       500,
-						"endMs":         1000,
-						"alignment":     "source",
-					},
-				},
-			},
-		},
+		"blocks":  []map[string]any{{"id": "display-1", "text": "hello world"}},
 	})
 	writePortableJSONFixture(t, filepath.Join(root, "manifest.json"), map[string]any{
 		"generatedAt": "2026-03-11T00:00:00Z",
@@ -110,10 +83,8 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 			},
 		},
 		"files": map[string]any{
-			"audio":              "meeting.webm",
-			"transcript":         "transcript.words.v1.json",
-			"readableTranscript": "transcript.readable.v1.json",
-			"displayTranscript":  "transcript.display.v1.json",
+			"audio":      "meeting.webm",
+			"transcript": "transcript.words.v1.json",
 		},
 		"speakerCount": 1,
 		"wordCount":    2,
@@ -123,13 +94,6 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 	if err != nil {
 		t.Fatalf("loadPortableMeetingSource: %v", err)
 	}
-	if got := source.ReadableTranscript["version"]; got != "transcript.readable.v1" {
-		t.Fatalf("expected readable transcript to load, got %v", got)
-	}
-	if got := source.DisplayTranscript["version"]; got != "transcript.display.v1" {
-		t.Fatalf("expected display transcript to load, got %v", got)
-	}
-
 	manifest, err := buildPortableMeetingManifest(source, portableAudioIntegrity{
 		SampleRate:  48000,
 		Channels:    1,
@@ -143,12 +107,6 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 	if err != nil {
 		t.Fatalf("buildPortableMeetingManifest: %v", err)
 	}
-	if got := manifest.ReadableTranscript["version"]; got != "transcript.readable.v1" {
-		t.Fatalf("expected readable transcript in manifest, got %v", got)
-	}
-	if got := manifest.DisplayTranscript["version"]; got != "transcript.display.v1" {
-		t.Fatalf("expected display transcript in manifest, got %v", got)
-	}
 	if manifest.Provenance == nil || manifest.Provenance.SpeechToText == nil {
 		t.Fatalf("expected provenance to be carried into portable manifest")
 	}
@@ -160,6 +118,12 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 	}
 	if got := manifest.Meeting.ProcessedAtUTC; got != "2026-03-11T00:00:00Z" {
 		t.Fatalf("expected processedAtUtc in portable manifest, got %q", got)
+	}
+	if got := source.ReadableTranscript["version"]; got != "transcript.readable.v1" {
+		t.Fatalf("readable transcript version = %v", got)
+	}
+	if got := source.DisplayTranscript["version"]; got != "transcript.display.v1" {
+		t.Fatalf("display transcript version = %v", got)
 	}
 }
 

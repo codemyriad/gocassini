@@ -3,10 +3,12 @@ package inspect
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,9 +17,7 @@ import (
 
 func TestInspectPathPlainOpusFallsBackToPlainAudio(t *testing.T) {
 	requireFFMediaTools(t)
-
-	tmp := t.TempDir()
-	path := createTestOpus(t, filepath.Join(tmp, "plain.opus"))
+	path := createTestOpus(t, filepath.Join(t.TempDir(), "plain.opus"))
 
 	var out bytes.Buffer
 	if err := InspectPath(&out, path); err != nil {
@@ -28,111 +28,35 @@ func TestInspectPathPlainOpusFallsBackToPlainAudio(t *testing.T) {
 	}
 }
 
-func TestInspectPathPortableMeetingOpus(t *testing.T) {
+func TestInspectPathPublishedMeetingReadsChunkedTranscript(t *testing.T) {
 	requireFFMediaTools(t)
-
-	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting.opus"), portableFixtureOptions{})
+	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+	path := createPortableOpusFixture(t, filepath.Join(t.TempDir(), "meeting.opus"), portableFixtureOptions{words: words})
 
 	var out bytes.Buffer
 	if err := InspectPath(&out, path); err != nil {
 		t.Fatalf("inspect portable opus: %v", err)
-	}
-	if !strings.Contains(out.String(), "portable_meeting="+path) {
-		t.Fatalf("expected portable meeting summary, got %q", out.String())
-	}
-	if !strings.Contains(out.String(), "cassini=ok") {
-		t.Fatalf("expected integrity ok, got %q", out.String())
-	}
-	if !strings.Contains(out.String(), "payload encoding=base64url+gzip+utf8json") {
-		t.Fatalf("expected gzip payload encoding, got %q", out.String())
-	}
-	if !strings.Contains(out.String(), "speech_to_text backend=local-whisper engine=faster-whisper model=large-v3") {
-		t.Fatalf("expected speech-to-text provenance, got %q", out.String())
-	}
-	if strings.Contains(out.String(), "meeting_summary ") {
-		t.Errorf("did not expect meeting_summary line when summary absent, got %q", out.String())
-	}
-	if strings.Contains(out.String(), "summary ") {
-		t.Errorf("did not expect summary metadata line when summary absent, got %q", out.String())
-	}
-	if strings.Contains(out.String(), "attachment ") {
-		t.Errorf("did not expect attachment line when summary absent, got %q", out.String())
-	}
-	// A file packed by hand genuinely has no origin, and a row of dashes would
-	// read like a lookup that failed rather than like nothing to report.
-	if strings.Contains(out.String(), "origin ") {
-		t.Errorf("did not expect an origin line when the meeting has no room or job, got %q", out.String())
-	}
-}
-
-func TestInspectPathPortableV3UsesCompressedOpusIntegrity(t *testing.T) {
-	requireFFMediaTools(t)
-
-	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting-v3.opus"), portableFixtureOptions{version3: true})
-
-	var out bytes.Buffer
-	if err := InspectPath(&out, path); err != nil {
-		t.Fatalf("inspect portable v3 opus: %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "cassini=ok") || !strings.Contains(got, "opus_sha256=") {
-		t.Fatalf("expected compressed Opus integrity success, got %q", got)
-	}
-	if strings.Contains(got, "pcm_sha256=") {
-		t.Fatalf("v3 unexpectedly decoded PCM: %q", got)
-	}
-}
-
-func TestLegacyPCMPolicyWithoutDigestFailsClosed(t *testing.T) {
-	requireFFMediaTools(t)
-
-	path := createTestOpus(t, filepath.Join(t.TempDir(), "missing-pcm-digest.opus"))
-	meta, err := probePortableAudio(path)
-	if err != nil {
-		t.Fatalf("probe fixture: %v", err)
-	}
-	if len(meta.Streams) == 0 {
-		t.Fatal("fixture has no audio stream")
-	}
-	_, err = verifyPortableLegacyPCMIntegrity(path, meta.Streams[0], nil, portable.Manifest{
-		Integrity: portable.Integrity{MatchPolicy: portable.LegacyAudioMatchPolicyPCM},
-	})
-	if err == nil || !strings.Contains(err.Error(), "has no pcmSha256") {
-		t.Fatalf("missing legacy digest error = %v", err)
+	for _, want := range []string{
+		"portable_meeting=" + path,
+		" words=5 ",
+		"cassini=ok",
+		"opus_sha256=",
+		"payload encoding=base64url+gzip+utf8json",
+		"transcript id=raw-asr role=raw-asr default=yes",
+		"speech_to_text backend=local-asr engine=asr-engine model=meeting-model",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inspect output lacks %q:\n%s", want, got)
+		}
 	}
 }
 
-// `cassini inspect` is what the docs point people at to check by hand that a
-// recording carries its room. Until D-640 it decoded the room and dropped it, so
-// the only way to verify the producer chain was a raw ffprobe against tag names
-// the docs did not list — a poor answer then, and a worse one now that a
-// maintenance tool can rewrite these fields and an operator has to confirm the
-// rewrite landed.
-func TestInspectPathPortableMeetingOpusSurfacesTheOrigin(t *testing.T) {
+func TestInspectPathPublishedMeetingSurfacesOriginAndSummary(t *testing.T) {
 	requireFFMediaTools(t)
-
-	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "with-origin.opus"), portableFixtureOptions{
-		withOrigin: true,
-	})
-
-	var out bytes.Buffer
-	if err := InspectPath(&out, path); err != nil {
-		t.Fatalf("inspect portable opus: %v", err)
-	}
-	if !strings.Contains(out.String(), "origin room_id=rm_9f2a1c3d4e5b6a70 room_name=- job_id=01K3Q7W8ZC9F0MJXQ2NB8V4RTD attempt=2\n") {
-		t.Errorf("expected an origin line naming the room and the job, got %q", out.String())
-	}
-}
-
-func TestInspectPathPortableMeetingOpusSurfacesSummary(t *testing.T) {
-	requireFFMediaTools(t)
-
-	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "with-summary.opus"), portableFixtureOptions{
-		withSummary: true,
+	path := createPortableOpusFixture(t, filepath.Join(t.TempDir(), "meeting.opus"), portableFixtureOptions{
+		words: []string{"Hello", "team"}, withOrigin: true, withSummary: true,
 	})
 
 	var out bytes.Buffer
@@ -140,186 +64,157 @@ func TestInspectPathPortableMeetingOpusSurfacesSummary(t *testing.T) {
 		t.Fatalf("inspect portable opus: %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "meeting_summary backend=openai-compatible") {
-		t.Errorf("expected meeting_summary provenance line, got %q", got)
-	}
-	if !strings.Contains(got, "model=summary-model") {
-		t.Errorf("expected summary model in meeting_summary line, got %q", got)
-	}
-	if !strings.Contains(got, "summary format=markdown model=summary-model templateVersion=v0\n") {
-		t.Errorf("expected summary metadata line with sorted keys, got %q", got)
-	}
-	if !strings.Contains(got, "attachment name=summary.md mime=text/markdown bytes=") {
-		t.Errorf("expected attachment line for summary.md, got %q", got)
+	for _, want := range []string{
+		"origin room_id=rm_9f2a1c3d4e5b6a70 job_id=01K3Q7W8ZC9F0MJXQ2NB8V4RTD attempt=2",
+		"meeting_summary backend=openai-compatible",
+		"summary format=markdown model=summary-model templateVersion=v0",
+		"attachment name=summary.md mime=text/markdown bytes=18",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inspect output lacks %q:\n%s", want, got)
+		}
 	}
 }
 
-func TestInspectPathPortableMeetingOpusDetectsStaleAudio(t *testing.T) {
+func TestInspectPathPublishedMeetingDetectsStaleAudio(t *testing.T) {
 	requireFFMediaTools(t)
-
-	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "stale.opus"), portableFixtureOptions{stale: true})
+	path := createPortableOpusFixture(t, filepath.Join(t.TempDir(), "stale.opus"), portableFixtureOptions{
+		words: []string{"Hello"}, stale: true,
+	})
 
 	var out bytes.Buffer
 	if err := InspectPath(&out, path); err != nil {
 		t.Fatalf("inspect stale portable opus: %v", err)
 	}
-	if !strings.Contains(out.String(), "cassini=stale-audio") {
-		t.Fatalf("expected stale-audio status, got %q", out.String())
-	}
-	if !strings.Contains(out.String(), "fallback=plain-audio") {
-		t.Fatalf("expected plain-audio fallback, got %q", out.String())
+	if got := out.String(); !strings.Contains(got, "cassini=stale-audio") || !strings.Contains(got, "fallback=plain-audio") {
+		t.Fatalf("expected stale-audio fallback, got %q", got)
 	}
 }
 
-func TestExtractTranscriptWordsFromV2Opus(t *testing.T) {
-	requireFFMediaTools(t)
-
-	tmp := t.TempDir()
-	wantWords := []string{"Hello", "team", "lantern", "festival", "tonight"}
-	path := createPortableV2OpusFixture(t, filepath.Join(tmp, "v2.opus"), wantWords)
-
-	extracted, err := ExtractTranscriptWords(path)
-	if err != nil {
-		t.Fatalf("ExtractTranscriptWords: %v", err)
+func TestDecodePortableMeetingRejectsUnsupportedFormats(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(map[string]string)
+		want string
+	}{
+		{
+			name: "format tag",
+			edit: func(tags map[string]string) { tags["CASSINI_FORMAT"] = "org.example.unsupported/9" },
+			want: "unsupported CASSINI_FORMAT",
+		},
+		{
+			name: "manifest version",
+			edit: func(tags map[string]string) {
+				rewriteMainManifest(t, tags, func(doc map[string]any) { doc["version"] = float64(portable.WireVersion + 1) })
+			},
+			want: "unsupported payload version",
+		},
+		{
+			name: "missing transcript index",
+			edit: func(tags map[string]string) {
+				rewriteMainManifest(t, tags, func(doc map[string]any) { delete(doc, "transcripts") })
+			},
+			want: "transcripts must contain",
+		},
+		{
+			name: "integrity policy",
+			edit: func(tags map[string]string) {
+				rewriteMainManifest(t, tags, func(doc map[string]any) {
+					doc["integrity"].(map[string]any)["matchPolicy"] = "unsupported-policy"
+				})
+			},
+			want: "unsupported audio integrity",
+		},
 	}
-	if extracted.TranscriptID != portable.RoleRawASR {
-		t.Errorf("expected default transcript id %q, got %q", portable.RoleRawASR, extracted.TranscriptID)
-	}
-	got := make([]string, 0, len(extracted.Words))
-	for _, w := range extracted.Words {
-		got = append(got, w.Text)
-	}
-	if strings.Join(got, " ") != strings.Join(wantWords, " ") {
-		t.Fatalf("recovered words %v, want %v", got, wantWords)
-	}
-
-	var rendered bytes.Buffer
-	if err := WriteTranscriptWordsV1JSON(&rendered, extracted); err != nil {
-		t.Fatalf("WriteTranscriptWordsV1JSON: %v", err)
-	}
-	if !strings.Contains(rendered.String(), `"version": "transcript.words.v1"`) {
-		t.Fatalf("expected transcript.words.v1 doc, got %q", rendered.String())
-	}
-	for _, w := range wantWords {
-		if !strings.Contains(rendered.String(), `"text": "`+w+`"`) {
-			t.Fatalf("rendered transcript missing word %q: %s", w, rendered.String())
-		}
-	}
-}
-
-// portableV2FixtureOptions varies a v2 portable fixture beyond the plain
-// single-speaker word list: an explicit per-word speaker assignment (so speaker
-// changes can be exercised) and an attached summary.md.
-type portableV2FixtureOptions struct {
-	words []string
-	// speakerOf assigns a speaker id per word index. Nil means every word is
-	// spoken by spk1.
-	speakerOf func(index int) string
-	// speakers declares the speaker roster. Nil means the spk1/Silvio default.
-	speakers    []portable.Speaker
-	withSummary bool
-	summaryBody string
-}
-
-func createPortableV2OpusFixture(t *testing.T, outPath string, words []string) string {
-	t.Helper()
-	return createPortableV2OpusFixtureWith(t, outPath, portableV2FixtureOptions{words: words})
-}
-
-func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portableV2FixtureOptions) string {
-	t.Helper()
-	words := opts.words
-	speakerOf := opts.speakerOf
-	if speakerOf == nil {
-		speakerOf = func(int) string { return "spk1" }
-	}
-	speakers := opts.speakers
-	if speakers == nil {
-		speakers = []portable.Speaker{{ID: "spk1", Label: "Silvio"}}
-	}
-
-	basePath := createTestOpus(t, filepath.Join(filepath.Dir(outPath), "base-v2.opus"))
-	audioIdentity := readTestOpusIntegrity(t, basePath)
-	sampleRate := audioIdentity.SampleRate
-	channels := audioIdentity.Channels
-	pcmSHA, pcmByteCount, err := hashDecodedAudioPCM(basePath, sampleRate, channels)
-	if err != nil {
-		t.Fatalf("hash decoded PCM: %v", err)
-	}
-	sampleCount := pcmByteCount / int64(2*channels)
-	durationMS := sampleCount * 1000 / int64(sampleRate)
-
-	items := make([]portable.TranscriptItem, 0, len(words))
-	for i, w := range words {
-		items = append(items, portable.TranscriptItem{
-			Speaker: speakerOf(i),
-			StartMS: int64(i * 100),
-			EndMS:   int64(i*100 + 80),
-			Text:    w,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tags := buildPublishedPortableTags(t, portableFixtureOptions{words: []string{"Hello", "team"}}, nil)
+			tc.edit(tags)
+			if _, _, err := decodePortableMeeting(tags); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want message containing %q", err, tc.want)
+			}
 		})
 	}
-	manifest := portable.NormalizeManifest(portable.Manifest{
-		Meeting: portable.Meeting{
-			ID:           "meeting-v2",
-			Title:        "Lantern Festival",
-			CreatedAtUTC: "2026-03-11T08:30:00Z",
-			DurationMS:   durationMS,
-			Language:     "en",
-		},
-		Audio: portable.Audio{
-			Container:   "ogg",
-			Codec:       "opus",
-			SampleRate:  sampleRate,
-			Channels:    channels,
-			SampleCount: sampleCount,
-			DurationMS:  durationMS,
-		},
-		Integrity: portable.Integrity{
-			MatchPolicy: portable.LegacyAudioMatchPolicyPCM,
-			PCMFormat:   portable.AudioPCMFormat,
-			PCMSHA256:   pcmSHA,
-			SampleRate:  sampleRate,
-			Channels:    channels,
-			SampleCount: sampleCount,
-			DurationMS:  durationMS,
-		},
-		Speakers: speakers,
-	})
-	if opts.withSummary {
-		body := opts.summaryBody
-		if body == "" {
-			body = "# Meeting Summary\n"
-		}
-		manifest.Summary = map[string]any{
-			"model":           "summary-model",
-			"format":          "markdown",
-			"templateVersion": "v0",
-		}
-		manifest.Attachments = append(manifest.Attachments, map[string]any{
-			"name":          "summary.md",
-			"mime":          "text/markdown",
-			"contentBase64": base64.StdEncoding.EncodeToString([]byte(body)),
-		})
+}
+
+func TestPublishedTranscriptChunkSetIsReadAndHolesFailClosed(t *testing.T) {
+	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+	tags := buildPublishedPortableTags(t, portableFixtureOptions{words: words}, nil)
+	_, manifest, err := decodePortableMeeting(tags)
+	if err != nil {
+		t.Fatalf("decodePortableMeeting: %v", err)
 	}
 
-	input := portable.TranscriptInput{
-		ID:       portable.RoleRawASR,
-		Role:     portable.RoleRawASR,
-		Default:  true,
-		Language: "en",
-		Body: portable.TranscriptBody{
-			Format:    "cassini.words.v1",
-			Language:  "en",
-			WordCount: len(items),
-			Items:     items,
-		},
+	bodies := readPortableTranscriptBodies(tags, manifest)
+	if got := bodies.WordCounts[portable.RoleRawASR]; got != len(words) {
+		t.Fatalf("decoded word count = %d, want %d", got, len(words))
 	}
-	encoded, err := portable.EncodeManifestV2(manifest, []portable.TranscriptInput{input}, 256)
+	if len(bodies.Unreadable) != 0 {
+		t.Fatalf("whole chunk set reported unreadable: %v", bodies.Unreadable)
+	}
+
+	prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+	count, _ := strconv.Atoi(tags[prefix+"CHUNK_COUNT"])
+	delete(tags, fmt.Sprintf("%s%03d", prefix, count-1))
+	bodies = readPortableTranscriptBodies(tags, manifest)
+	if len(bodies.Unreadable) != 1 || bodies.Unreadable[0] != portable.RoleRawASR {
+		t.Fatalf("Unreadable = %v, want [raw-asr]", bodies.Unreadable)
+	}
+	if err := bodies.err("meeting.opus"); err == nil {
+		t.Fatal("missing transcript chunk was accepted")
+	}
+}
+
+func TestPublishedDerivedTranscriptChunkSetIsReadAndHolesFailClosed(t *testing.T) {
+	tags := buildPublishedPortableTags(t, portableFixtureOptions{
+		words:       []string{"Hello", "team"},
+		withDerived: true,
+	}, nil)
+	_, manifest, err := decodePortableMeeting(tags)
 	if err != nil {
-		t.Fatalf("encode v2 manifest: %v", err)
+		t.Fatalf("decodePortableMeeting: %v", err)
 	}
-	tags := portable.BuildOpusTagsV2(manifest, encoded, portable.RoleRawASR)
+	if len(manifest.ReadableTranscripts) != 1 {
+		t.Fatalf("readable transcripts = %d, want 1", len(manifest.ReadableTranscripts))
+	}
+
+	bodies := readPortableTranscriptBodies(tags, manifest)
+	if len(bodies.Unreadable) != 0 {
+		t.Fatalf("whole derived chunk set reported unreadable: %v", bodies.Unreadable)
+	}
+
+	entry := manifest.ReadableTranscripts[0]
+	prefix := portable.TranscriptIDToTagPrefix(entry.ID)
+	delete(tags, fmt.Sprintf("%s%03d", prefix, entry.PayloadRef.ChunkCount-1))
+	bodies = readPortableTranscriptBodies(tags, manifest)
+	if len(bodies.Unreadable) != 1 || bodies.Unreadable[0] != entry.ID {
+		t.Fatalf("Unreadable = %v, want [%s]", bodies.Unreadable, entry.ID)
+	}
+}
+
+type portableFixtureOptions struct {
+	words                      []string
+	stale                      bool
+	withSummary                bool
+	withOrigin                 bool
+	withDerived                bool
+	dropLastTranscriptChunk    bool
+	repeatFirstTranscriptChunk bool
+}
+
+func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
+	t.Helper()
+	basePath := createTestOpus(t, outPath+".audio.opus")
+	audio := readTestOpusIntegrity(t, basePath)
+	tags := buildPublishedPortableTags(t, opts, &audio)
+	prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+	if opts.dropLastTranscriptChunk {
+		delete(tags, fmt.Sprintf("%s%03d", prefix, parseIntOrZero(tags[prefix+"CHUNK_COUNT"])-1))
+	}
+	if opts.repeatFirstTranscriptChunk {
+		key := prefix + "000"
+		tags[key] = tags[key] + ";" + tags[key]
+	}
 
 	args := []string{"-y", "-v", "error", "-i", basePath, "-map", "0:a:0", "-c", "copy"}
 	for key, value := range tags {
@@ -327,9 +222,139 @@ func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portable
 	}
 	args = append(args, outPath)
 	if err := runCommand("ffmpeg", args...); err != nil {
-		t.Fatalf("write v2 portable opus tags: %v", err)
+		t.Fatalf("write portable Opus tags: %v", err)
 	}
 	return outPath
+}
+
+const portableTestChunkSize = 64
+
+func buildPublishedPortableTags(t *testing.T, opts portableFixtureOptions, audio *portable.OpusAudioIntegrity) map[string]string {
+	t.Helper()
+	if len(opts.words) == 0 {
+		opts.words = []string{"Hello", "team"}
+	}
+	identity := portable.OpusAudioIntegrity{
+		SHA256: strings.Repeat("a", 64), SampleRate: 48000, Channels: 1,
+		SampleCount: 9600, DurationMS: 200,
+	}
+	if audio != nil {
+		identity = *audio
+	}
+	if opts.stale {
+		identity.SHA256 = strings.Repeat("0", 64)
+	}
+	items := make([]portable.TranscriptItem, 0, len(opts.words))
+	for i, word := range opts.words {
+		items = append(items, portable.TranscriptItem{
+			Speaker: "spk1", StartMS: int64(i * 100), EndMS: int64(i*100 + 80), Text: word,
+		})
+	}
+	manifest := portable.NormalizePublishedManifest(portable.Manifest{
+		Meeting: portable.Meeting{
+			ID: "mtg_" + strings.Repeat("c", 64), Title: "Weekly Sync",
+			CreatedAtUTC: "2026-03-11T08:30:00Z", DurationMS: identity.DurationMS, Language: "en",
+		},
+		Audio: portable.Audio{
+			Container: "ogg", Codec: "opus", SampleRate: identity.SampleRate, Channels: identity.Channels,
+			SampleCount: identity.SampleCount, DurationMS: identity.DurationMS,
+		},
+		Integrity: portable.Integrity{
+			MatchPolicy: portable.AudioMatchPolicy, OpusSHA256: identity.SHA256,
+			SampleRate: identity.SampleRate, Channels: identity.Channels,
+			SampleCount: identity.SampleCount, DurationMS: identity.DurationMS,
+		},
+		Speakers: []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
+		Provenance: &portable.Provenance{SpeechToText: &portable.ProcessingStep{
+			Backend: "local-asr", Engine: "asr-engine", Model: "meeting-model", Device: "cpu", Language: "en",
+		}},
+	})
+	if opts.withOrigin {
+		manifest.Meeting.RoomID = "rm_9f2a1c3d4e5b6a70"
+		manifest.Meeting.JobID = "01K3Q7W8ZC9F0MJXQ2NB8V4RTD"
+		manifest.Meeting.AttemptNumber = 2
+	}
+	if opts.withSummary {
+		manifest.Provenance.MeetingSummary = &portable.ProcessingStep{Backend: "openai-compatible", Model: "summary-model"}
+		manifest.Summary = map[string]any{"model": "summary-model", "format": "markdown", "templateVersion": "v0"}
+		manifest.Attachments = []map[string]any{{
+			"name": "summary.md", "mime": "text/markdown",
+			"contentBase64": base64.StdEncoding.EncodeToString([]byte("# Meeting Summary\n")),
+		}}
+	}
+	inputs := []portable.TranscriptInput{{
+		ID: portable.RoleRawASR, Role: portable.RoleRawASR, Default: true,
+		Language: "en", Provenance: manifest.Provenance.SpeechToText,
+		Body: portable.TranscriptBody{
+			Format: "cassini.words.v1", Language: "en", WordCount: len(items), Items: items,
+		},
+	}}
+	if opts.withDerived {
+		inputs = append(inputs, portable.TranscriptInput{
+			ID:                 "readable",
+			Role:               portable.RoleReadableCleanup,
+			Default:            true,
+			Format:             "transcript.readable.v1",
+			SourceTranscriptID: portable.RoleRawASR,
+			Body: map[string]any{
+				"version": "transcript.readable.v1",
+				"segments": []any{map[string]any{
+					"id": "readable-1", "text": strings.Join(opts.words, " "),
+				}},
+			},
+		})
+	}
+	encoded, err := portable.EncodePublishedManifest(manifest, inputs, portableTestChunkSize)
+	if err != nil {
+		t.Fatalf("encode published manifest: %v", err)
+	}
+	return portable.BuildPublishedOpusTags(manifest, encoded, portable.RoleRawASR)
+}
+
+func rewriteMainManifest(t *testing.T, tags map[string]string, mutate func(map[string]any)) {
+	t.Helper()
+	payload, _, err := decodePortableMeeting(tags)
+	if err != nil {
+		t.Fatalf("decode fixture manifest: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(payload.JSON, &document); err != nil {
+		t.Fatalf("parse fixture manifest: %v", err)
+	}
+	mutate(document)
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("encode modified manifest: %v", err)
+	}
+	encoded, err := portable.EncodePayloadBytes(raw, portableTestChunkSize)
+	if err != nil {
+		t.Fatalf("encode modified payload: %v", err)
+	}
+	for key := range tags {
+		if isNumberedPayloadChunk(key) {
+			delete(tags, key)
+		}
+	}
+	tags["CASSINI_PAYLOAD_CHUNK_COUNT"] = strconv.Itoa(len(encoded.Chunks))
+	tags["CASSINI_PAYLOAD_SHA256"] = encoded.SHA256
+	tags["CASSINI_PAYLOAD_RAW_BYTES"] = strconv.Itoa(encoded.RawBytes)
+	tags["CASSINI_PAYLOAD_GZIP_BYTES"] = strconv.Itoa(encoded.CompressedBytes)
+	for i, chunk := range encoded.Chunks {
+		tags[fmt.Sprintf("CASSINI_PAYLOAD_%03d", i)] = chunk
+	}
+}
+
+func isNumberedPayloadChunk(key string) bool {
+	const prefix = "CASSINI_PAYLOAD_"
+	if !strings.HasPrefix(key, prefix) {
+		return false
+	}
+	suffix := strings.TrimPrefix(key, prefix)
+	if suffix == "" {
+		return false
+	}
+	_, err := strconv.Atoi(suffix)
+	return err == nil
 }
 
 func requireFFMediaTools(t *testing.T) {
@@ -344,183 +369,9 @@ func requireFFMediaTools(t *testing.T) {
 
 func createTestOpus(t *testing.T, outPath string) string {
 	t.Helper()
-	if err := runCommand("ffmpeg",
-		"-y",
-		"-v", "error",
-		"-f", "lavfi",
-		"-i", "sine=frequency=880:sample_rate=48000:duration=0.2",
-		"-c:a", "libopus",
-		"-application", "voip",
-		outPath,
-	); err != nil {
-		t.Fatalf("create test opus: %v", err)
-	}
-	return outPath
-}
-
-type portableFixtureOptions struct {
-	stale       bool
-	withSummary bool
-	withOrigin  bool
-	version3    bool
-}
-
-func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
-	t.Helper()
-
-	basePath := createTestOpus(t, filepath.Join(filepath.Dir(outPath), "base.opus"))
-	audioIdentity := readTestOpusIntegrity(t, basePath)
-	sampleRate := audioIdentity.SampleRate
-	channels := audioIdentity.Channels
-	sampleCount := audioIdentity.SampleCount
-	durationMS := audioIdentity.DurationMS
-	integrity := portable.Integrity{
-		MatchPolicy: portable.AudioMatchPolicy,
-		OpusSHA256:  audioIdentity.SHA256,
-		SampleRate:  sampleRate,
-		Channels:    channels,
-		SampleCount: sampleCount,
-		DurationMS:  durationMS,
-	}
-	if !opts.version3 {
-		pcmSHA, pcmByteCount, err := hashDecodedAudioPCM(basePath, sampleRate, channels)
-		if err != nil {
-			t.Fatalf("hash decoded PCM: %v", err)
-		}
-		sampleCount = pcmByteCount / int64(2*channels)
-		durationMS = sampleCount * 1000 / int64(sampleRate)
-		integrity = portable.Integrity{
-			MatchPolicy: portable.LegacyAudioMatchPolicyPCM,
-			PCMFormat:   portable.AudioPCMFormat,
-			PCMSHA256:   pcmSHA,
-			SampleRate:  sampleRate,
-			Channels:    channels,
-			SampleCount: sampleCount,
-			DurationMS:  durationMS,
-		}
-	}
-	if opts.stale {
-		if opts.version3 {
-			integrity.OpusSHA256 = strings.Repeat("0", 64)
-		} else {
-			integrity.PCMSHA256 = strings.Repeat("0", 64)
-		}
-	}
-
-	manifest := portable.Manifest{
-		Meeting: portable.Meeting{
-			ID:           "meeting-20260311-weekly-sync",
-			Title:        "Weekly Sync",
-			CreatedAtUTC: "2026-03-11T08:30:00Z",
-			DurationMS:   durationMS,
-			Language:     "en",
-		},
-		Audio: portable.Audio{
-			Container:   "ogg",
-			Codec:       "opus",
-			SampleRate:  sampleRate,
-			Channels:    channels,
-			SampleCount: sampleCount,
-			DurationMS:  durationMS,
-		},
-		Integrity: integrity,
-		Speakers: []portable.Speaker{
-			{ID: "spk1", Label: "Silvio"},
-		},
-		Transcript: portable.Transcript{
-			Format:    "cassini.words.v1",
-			Language:  "en",
-			WordCount: 2,
-			Items: []portable.TranscriptItem{
-				{Speaker: "spk1", StartMS: 0, EndMS: 120, Text: "Hello"},
-				{Speaker: "spk1", StartMS: 140, EndMS: 260, Text: "team"},
-			},
-		},
-		Provenance: &portable.Provenance{
-			SpeechToText: &portable.ProcessingStep{
-				Backend:  "local-whisper",
-				Engine:   "faster-whisper",
-				Model:    "large-v3",
-				Device:   "cuda",
-				Language: "en",
-			},
-			ReadableCleanup: &portable.ProcessingStep{
-				Backend: "local-llama-cli",
-				Engine:  "llama.cpp",
-				Model:   "model-Q4_K_M.gguf",
-				Source:  "generated",
-			},
-		},
-	}
-	if opts.version3 {
-		manifest = portable.NormalizeManifestV3(manifest)
-	} else {
-		manifest = portable.NormalizeManifest(manifest)
-	}
-	if opts.withOrigin {
-		manifest.Meeting.RoomID = "rm_9f2a1c3d4e5b6a70"
-		manifest.Meeting.JobID = "01K3Q7W8ZC9F0MJXQ2NB8V4RTD"
-		manifest.Meeting.AttemptNumber = 2
-	}
-	if opts.withSummary {
-		manifest.Provenance.MeetingSummary = &portable.ProcessingStep{
-			Backend: "openai-compatible",
-			Model:   "summary-model",
-		}
-		manifest.Summary = map[string]any{
-			"model":           "summary-model",
-			"format":          "markdown",
-			"templateVersion": "v0",
-		}
-		manifest.Attachments = append(manifest.Attachments, map[string]any{
-			"name":          "summary.md",
-			"mime":          "text/markdown",
-			"contentBase64": base64.StdEncoding.EncodeToString([]byte("# Meeting Summary\n")),
-		})
-	}
-	args := []string{
-		"-y",
-		"-v", "error",
-		"-i", basePath,
-		"-map", "0:a:0",
-		"-c", "copy",
-		"-metadata", "TITLE=Weekly Sync",
-		"-metadata", "DESCRIPTION=Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON.",
-	}
-	tags := map[string]string{}
-	if opts.version3 {
-		input := portable.TranscriptInput{
-			ID:         portable.RoleRawASR,
-			Role:       portable.RoleRawASR,
-			Default:    true,
-			Language:   manifest.Transcript.Language,
-			Provenance: manifest.Provenance.SpeechToText,
-			Body: portable.TranscriptBody{
-				Format:    manifest.Transcript.Format,
-				Language:  manifest.Transcript.Language,
-				WordCount: manifest.Transcript.WordCount,
-				Items:     manifest.Transcript.Items,
-			},
-		}
-		encoded, err := portable.EncodeManifestV3(manifest, []portable.TranscriptInput{input}, 256)
-		if err != nil {
-			t.Fatalf("encode v3 manifest: %v", err)
-		}
-		tags = portable.BuildOpusTagsV3(manifest, encoded, portable.RoleRawASR)
-	} else {
-		payload, err := portable.EncodeManifest(manifest, 256)
-		if err != nil {
-			t.Fatalf("encode v1 manifest: %v", err)
-		}
-		tags = portable.BuildOpusTags(manifest, payload)
-	}
-	for key, value := range tags {
-		args = append(args, "-metadata", fmt.Sprintf("%s=%s", key, value))
-	}
-	args = append(args, outPath)
-
-	if err := runCommand("ffmpeg", args...); err != nil {
-		t.Fatalf("write portable opus tags: %v", err)
+	if err := runCommand("ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+		"sine=frequency=880:sample_rate=48000:duration=0.2", "-c:a", "libopus", "-application", "voip", outPath); err != nil {
+		t.Fatalf("create test Opus: %v", err)
 	}
 	return outPath
 }

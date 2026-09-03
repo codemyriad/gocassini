@@ -2437,6 +2437,9 @@ func newCLITestRuntimeWithContext(t *testing.T, ctx context.Context) (*Runtime, 
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	// A test that wants a different capability must set it AFTER this helper —
+	// setting it before is silently overwritten here, which made one CPU-path
+	// assertion pass on a laptop and fail on a GPU host.
 	t.Setenv(envSTTCUDACapable, "1")
 
 	tmp := t.TempDir()
@@ -2585,6 +2588,9 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	// A test that wants a different capability must set it AFTER this helper —
+	// setting it before is silently overwritten here, which made one CPU-path
+	// assertion pass on a laptop and fail on a GPU host.
 	t.Setenv(envSTTCUDACapable, "1")
 
 	tmp := t.TempDir()
