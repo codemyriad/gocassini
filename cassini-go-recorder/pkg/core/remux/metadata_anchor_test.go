@@ -94,3 +94,16 @@ func TestBuildStreamPlansWritesTimelinePositionNotReceiveClock(t *testing.T) {
 		t.Fatalf("receive clock must stay absolute, got %d", plans[1].FirstRecvNS)
 	}
 }
+
+// A single stream is not shifted by planInputs, so its first packet stays at
+// its own source start; first_timeline_ns must say so rather than claim 0.
+func TestBuildStreamPlansSingleStreamKeepsItsSourceStart(t *testing.T) {
+	const base = uint64(1_788_464_999_367_062_628)
+	segments := []segmentArtifact{{Stream: session.PacketStream{StreamID: "s_1", LTID: "p:a:audio:janus"}, FirstNS: base, FirstTimelineNS: int64(base)}}
+	planned := PlanMerge([]StreamInput{{StreamID: "s_1", LTID: "p:a:audio:janus", Kind: "audio", FirstRecvNS: base, FirstTimelineNS: int64(base), SourceStart: -0.08}})
+	planned[0].OffsetSeconds = 0 // what planInputs does for a lone stream
+	plans := buildStreamPlans(session.Session{}, segments, planned)
+	if len(plans) != 1 || plans[0].FirstTimelineNS != -80_000_000 {
+		t.Fatalf("single-stream timeline position = %+v, want -80000000", plans)
+	}
+}
