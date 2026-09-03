@@ -291,6 +291,37 @@ func writeFileSynced(path string, body []byte) error {
 	return f.Close()
 }
 
+// captureIsAShorterRetelling reports whether `incoming` describes strictly less
+// of the same call than the sidecar already stored at `final`.
+//
+// A re-upload for one call replaces what is stored, and that is right for the
+// case it was built for: a client offering the same capture again. It is wrong
+// for the case a reload introduces. A browser that reloads mid-recording
+// resumes its buffer, so a later upload for that call describes MORE of it —
+// and if a stale copy of the earlier prefix reaches this endpoint afterwards
+// (a second tab, a request the network reordered), last-writer-wins would
+// replace the whole recording with its own first half and the sweep would
+// delete the rest.
+//
+// Fewer segments AND an earlier end is the shape only a prefix has. It is
+// deliberately conservative: a re-upload that is the same length or longer, or
+// that changed a segment's content without shortening the call, still replaces
+// as before.
+func captureIsAShorterRetelling(incoming *captureSidecar, final string) bool {
+	raw, err := os.ReadFile(filepath.Join(final, captureSidecarName))
+	if err != nil {
+		return false
+	}
+	var stored captureSidecar
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return false
+	}
+	if stored.CallStartWallMS != incoming.CallStartWallMS || stored.RoomToken != incoming.RoomToken {
+		return false
+	}
+	return len(incoming.Segments) < len(stored.Segments) && incoming.CallEndWallMS < stored.CallEndWallMS
+}
+
 // promoteCapture swaps a completed staging directory into its final path
 // without destroying a previous good upload until the new one is in place.
 //
@@ -298,16 +329,24 @@ func writeFileSynced(path string, body []byte) error {
 // the rename then fails — the participant's audio is gone and they have already
 // deleted their local copy. Moving the old aside first means the worst case is
 // a leftover directory, not a lost recording.
-func (rt *Runtime) promoteCapture(staging, final string) error {
+//
+// Returns false when the stored capture was kept because the incoming one is a
+// strictly shorter retelling of it. The upload is still accepted — the client's
+// bytes are already on the server, inside the longer capture — so it deletes
+// its buffer rather than re-offering a body that will never win.
+func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string) (bool, error) {
 	capturePromotionMu.Lock()
 	defer capturePromotionMu.Unlock()
 
+	if captureIsAShorterRetelling(sidecar, final) {
+		return false, nil
+	}
 	superseded := ""
 	if _, err := os.Stat(final); err == nil {
 		superseded = final + ".superseded"
 		_ = os.RemoveAll(superseded)
 		if err := os.Rename(final, superseded); err != nil {
-			return fmt.Errorf("set aside previous capture: %w", err)
+			return false, fmt.Errorf("set aside previous capture: %w", err)
 		}
 	}
 	if err := os.Rename(staging, final); err != nil {
@@ -315,12 +354,12 @@ func (rt *Runtime) promoteCapture(staging, final string) error {
 			// Put the previous upload back rather than leaving nothing.
 			_ = os.Rename(superseded, final)
 		}
-		return fmt.Errorf("promote staging: %w", err)
+		return false, fmt.Errorf("promote staging: %w", err)
 	}
 	if superseded != "" {
 		_ = os.RemoveAll(superseded)
 	}
-	return nil
+	return true, nil
 }
 
 // captureEnabledHandler tells a running client whether collection is still
@@ -633,16 +672,34 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
-		if err := rt.promoteCapture(staging, final); err != nil {
+		replaced, err := rt.promoteCapture(sidecar, staging, final)
+		if err != nil {
 			logger.Printf("capture upload: promote %s -> %s: %v", staging, final, err)
 			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
-		promoted = true
+		promoted = replaced
 
 		var total int64
 		for _, n := range written {
 			total += n
+		}
+		if !replaced {
+			// Accepted, and deliberately not stored: what is already here holds
+			// this call's audio and more of it. Saying so is worth a log line,
+			// because "the upload arrived and the bytes on disk did not change"
+			// is otherwise indistinguishable from a bug.
+			logger.Printf("capture upload: room=%s owner=%s kept the stored capture; this upload describes %d segments of a call already stored with more",
+				sidecar.RoomToken, owner, len(sidecar.Segments))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":   "accepted",
+				"room":     sidecar.RoomToken,
+				"segments": len(sidecar.Segments),
+				"bytes":    total,
+			})
+			return
 		}
 		logger.Printf("capture upload: room=%s owner=%s segments=%d bytes=%d", sidecar.RoomToken, owner, len(sidecar.Segments), total)
 		w.Header().Set("Content-Type", "application/json")
