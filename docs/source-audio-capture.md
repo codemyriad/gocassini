@@ -233,11 +233,23 @@ directory, the same call start, segment numbering continuing past the highest
 index already there. The reload becomes a segment boundary, which is a seam the
 pipeline already understands because a mid-call microphone change produces one,
 and the recorder places both sides from their own wall-clock windows. Holding is
-bounded by the room, by two minutes of staleness, and by a sixty-second deadline
-after which the buffer is uploaded after all.
+bounded four ways: the same room, the same account, a minute of staleness, and a
+sixty-second deadline after which the buffer is uploaded after all.
+
+Browser storage belongs to the origin, not to the signed-in session, so on a
+shared machine a buffer one person's dead page left behind is still there when
+the next person signs in. It is neither resumed nor uploaded by them: the upload
+endpoint stamps the *authenticated caller* as the owner, so sending it would
+publish one person's voice under another's name. It waits for its own account to
+open Talk on that machine again.
 
 What a reload still costs is the tail of the current `MediaRecorder` chunk, at
-most about two seconds.
+most about two seconds. And if the storage read that makes this decision has not
+finished within five seconds — which on a healthy browser it does in
+milliseconds — the capture starts anyway rather than holding the participant's
+microphone hostage to it. The reload then files two captures instead of one;
+both reach the server and the recorder splices both, so what is lost is the
+tidiness, not the audio.
 
 ## Intake and trust
 
