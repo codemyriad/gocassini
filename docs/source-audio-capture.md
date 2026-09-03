@@ -341,7 +341,7 @@ occ app_api:app:config:get gocassini source_capture_enabled   # want: true
 
 If it is missing or `false` while capture is meant to be on, disable and
 re-enable the ExApp once (`occ app_api:app:disable gocassini` then
-`app_api:app:enable`) and check again; the operator logs
+`occ app_api:app:enable gocassini`) and check again; the operator logs
 `source capture: synchronized companion initial state enabled=true` when it
 lands. `sandbox/wire-cassini.sh` does this for you.
 
