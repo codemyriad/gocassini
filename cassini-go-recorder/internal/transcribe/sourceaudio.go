@@ -686,6 +686,10 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 					segment.Index, decodedMS, segmentMS, segmentMS+segmentOverrunSlackMS))
 				samples = samples[:limit]
 			}
+			// Recomputed after any clamp above, so the report counts the audio
+			// that was actually laid over the recorded track rather than
+			// everything the file decoded to.
+			decodedMS = int64(float64(len(samples)) * 1000 / float64(sampleRate))
 			from, to := overlayOntoTimeline(out, samples, sampleRate, placement)
 			if to <= from {
 				skip(segment, "places entirely outside the %d ms recording", timelineMS)

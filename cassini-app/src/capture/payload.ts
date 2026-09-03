@@ -1547,7 +1547,9 @@ export async function settleBufferedCaptures(): Promise<number> {
   // the worker recording into it. A snapshot cannot see a directory that did
   // not exist when the page loaded.
   const names: string[] = [];
-  for await (const [dirName, handle] of root.entries()) {
+  for await (const [dirName, handle] of (
+    root as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }
+  ).entries()) {
     if (handle.kind === "directory" && dirName.startsWith("capture-")) {
       names.push(dirName);
     }

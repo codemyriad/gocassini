@@ -523,7 +523,7 @@ func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string
 	}
 	superseded := ""
 	if _, err := os.Stat(final); err == nil {
-		superseded = final + ".superseded"
+		superseded = final + captureSupersededSuffix
 		_ = os.RemoveAll(superseded)
 		if err := os.Rename(final, superseded); err != nil {
 			return capturePromoted, fmt.Errorf("set aside previous capture: %w", err)

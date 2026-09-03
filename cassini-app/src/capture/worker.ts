@@ -339,11 +339,16 @@ async function closeSegment(
   if (!segment) {
     return;
   }
-  try {
-    segment.handle.flush();
-  } catch (error) {
-    segment.failed = true;
-    self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+  if (!segment.preexisting) {
+    // A segment refused because its file already held audio never opened a
+    // handle this interval owns: it was closed at the refusal, and flushing it
+    // only raises an error about a state that is correct.
+    try {
+      segment.handle.flush();
+    } catch (error) {
+      segment.failed = true;
+      self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+    }
   }
   try {
     // Closed even when the flush threw. A sync access handle holds an
