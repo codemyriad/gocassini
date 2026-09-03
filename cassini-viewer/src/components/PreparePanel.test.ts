@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import preparePanelSource from "./PreparePanel.svelte?raw";
+import appSource from "../App.svelte?raw";
 
 // Source-level assertions, for the reason MeetingView.transcript.test.ts gives:
 // the suite runs in node with no DOM harness. What is asserted here is what a
@@ -75,8 +76,37 @@ describe("PreparePanel", () => {
     expect(preparePanelSource).not.toContain("hasSummary");
   });
 
-  it("leaves a slot for the Generate card that lands here later", () => {
-    expect(preparePanelSource).toContain('<slot name="generate" />');
+  it("hands the Generate card the meetings it is describing", () => {
+    // The card is the shell's — only the shell knows there is an operator to
+    // ask — but the set it asks about is this panel's subject, in pick order.
+    // A card that re-derived the selection from somewhere else would be a
+    // second answer to what "in this bundle" means, free to disagree with the
+    // list printed directly above it.
+    expect(preparePanelSource).toContain('<slot name="generate" {entries} />');
+  });
+
+  // The slot only exists if somebody forwards it. Both halves of this were
+  // green on their own while the card rendered nowhere: PreparePanel exposed
+  // `generate`, the shell filled `prepare-generate` at all three call sites,
+  // and the viewer's own App — the level in between, which neither unit owned —
+  // forwarded only `readiness`. Nothing failed, because an unfilled slot
+  // renders nothing.
+  it("has its generate slot forwarded by the App that mounts it", () => {
+    expect(appSource).toContain('<svelte:fragment slot="generate" let:entries>');
+    expect(appSource).toContain('<slot name="prepare-generate" {entries} />');
+    // The readiness slot beside it, so a change that drops one is visible here
+    // rather than as a card that silently stops appearing.
+    expect(appSource).toContain('<slot name="prepare-readiness" slot="readiness" />');
+  });
+
+  it("knows nothing about what the card does with them", () => {
+    // The slot is the whole of the seam: creating an insight is a POST to an
+    // operator, and the viewing layer has neither. A standalone export fills
+    // this slot with nothing and offers no card at all, which is the same
+    // three-state discipline the readiness slot follows.
+    expect(preparePanelSource).not.toContain("insight");
+    expect(preparePanelSource).not.toContain("workflow");
+    expect(preparePanelSource).not.toContain("POST");
   });
 
   it("is not fixed to the viewport", () => {

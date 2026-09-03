@@ -426,10 +426,13 @@ never consults the setup record.
 
 An administrator keeps the **Operator** tab throughout.
 
-> This route reaches AppAPI at **registration** time. An app installed before
-> this version has to be re-registered (an app update does this) before
-> `/operator/setup` exists; until then the panel does not appear and the viewer
-> behaves as it did before.
+> This route reaches AppAPI at **registration** time, and so does every other
+> declared route. An app installed before this version has to pick the new
+> manifest up before `/operator/setup` exists; until then the panel does not
+> appear and the viewer behaves as it did before. An update delivers it, as
+> long as the release bumped `<version>` — which every Cassini release does.
+> Measured, with the evidence, in
+> [`exapp-update-constraints.md` §5a](./exapp-update-constraints.md#5a-routes-are-not-creation-time--an-in-place-update-rewrites-them-provided-the-release-bumps-version).
 
 ## Step 4 — Verify the install (before touching Talk)
 
@@ -758,6 +761,9 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/setup` | USER | Whether recordings can be served at all, plus two AI capability bits — `{"ok":…,"state":…,"features":{"summaries":…,"insights":…}}` and nothing else |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
+| `/insights` | USER | Insight runs: create one (`POST`), list the caller's own (`GET`) |
+| `/insights/<id>` | USER | One run and, once it succeeds, its document |
+| `/insights/<id>/retry` | USER | Retry a run that failed (`POST`) |
 | `/ui/viewer.js`, `/ui/viewer.css` | USER | Bootstrap script + stylesheet behind the **Cassini** navigation entry |
 | `/img/app.svg` | USER | Navigation icon |
 | `/api/v1/welcome`, `/api/v1/room/*` | PUBLIC | Talk recording-backend protocol (HMAC-authenticated by Talk itself) |
@@ -768,6 +774,18 @@ recording **as the individual caller**, so Nextcloud Files enforces that
 meeting's advanced ACL — a non-participant sees no catalog entry and a direct
 fetch 404s. See
 [Managing recording permissions](./exapp-nextcloud-recordings-permissions.md).
+
+`/insights/*` are the app's **first mutating USER routes** — every other route a
+non-admin can reach is `GET`/`HEAD`. They are USER rather than ADMIN because a
+run acts only within what the caller could already do by hand: it reads the
+meetings they asked for, staged **as them**, so a meeting they cannot open is not
+in the bundle and cannot be asked about; and it writes the resulting document
+into their **own** Nextcloud home, never beside the recordings, which are
+read-only to everyone but the `cassini` service account. What is *not* per-caller
+is the model call: it uses the endpoint and key configured for the instance, so
+the request arrives at your LLM provider attributable to this deployment rather
+than to the person who asked. See [Data processing &
+privacy](./privacy.md#what-leaves-your-infrastructure-and-when).
 
 `/operator/setup` is the one deliberate exception to "the operator API is
 ADMIN", and it is USER for a reason: without it, the only thing a non-admin

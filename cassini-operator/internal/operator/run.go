@@ -758,6 +758,15 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
 	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
+	// beside /published/ rather than under BasePath, because that is where
+	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
+	// mutating routes at that level. Nil, and therefore unmounted, wherever a run
+	// could not be performed at all (no AppAPI identity, no Nextcloud sink, no
+	// CLI): a route that always fails is worse than a route that is not there.
+	if insights := newInsightService(rt, exappCfg, logger); insights != nil {
+		insights.register(root)
+	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
 

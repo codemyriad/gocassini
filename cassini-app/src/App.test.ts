@@ -34,6 +34,46 @@ describe("the shell's setup features", () => {
     );
   });
 
+  it("drives the readiness card and the Generate card from the same bit", () => {
+    // buildFeatureNotice returns non-null exactly when `insights` is false, so
+    // these two are mutually exclusive by construction rather than by two
+    // conditions someone has to keep in step (D-700). Both read setupFeatures
+    // and neither invents a second source of truth.
+    expect(appSource).toContain("$: insightsReady = setupFeatures?.insights === true;");
+    expect(appSource).toContain("{#if insightsReady}");
+    expect(appSource).not.toContain("insightsReady = true");
+  });
+
+  it("says nothing at all until the deployment has answered", () => {
+    // `setupFeatures` is null for a standalone export and for an operator too
+    // old to say. Neither card renders there: absence must not read as "not
+    // configured", the same three-state rule the catalog's hasSummary follows.
+    // `=== true` is what makes null a third state rather than a falsy default.
+    expect(appSource).toMatch(/setupFeatures\?\.insights === true/);
+  });
+
+  it("fills both Prepare slots wherever the browse surface is mounted", () => {
+    // Three call sites — with the operator tab, under an advisory setup strip,
+    // and bare — and a reader who picks meetings gets the same panel in all of
+    // them. A slot filled in two of the three is a card that appears only for
+    // some readers, with nothing on screen to explain why.
+    const readiness = appSource.match(/slot="prepare-readiness"/g) ?? [];
+    const generate = appSource.match(/slot="prepare-generate"/g) ?? [];
+    expect(readiness).toHaveLength(3);
+    expect(generate).toHaveLength(3);
+  });
+
+  it("builds the template client from the probe, never from the admin hint", () => {
+    // The hint (OC.isUserAdmin) exists to stop the operator tab flashing in.
+    // `operator/settings/workflows` is ADMIN at the proxy, so acting on the
+    // hint here would put a template picker in front of someone whose request
+    // for it 403s.
+    expect(appSource).toContain(
+      "operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;",
+    );
+    expect(appSource).not.toMatch(/isLikelyAdminHint[^\n]*operatorClient/);
+  });
+
   it("lets a failed re-check leave the last answer standing", () => {
     // fetchSetupHealth answers null for a failed or unparseable check, and
     // null is "nobody said" rather than "no". Assigning it would retract what

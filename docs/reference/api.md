@@ -221,6 +221,87 @@ A restart mid-pipeline resolves like this:
     /running
 ```
 
+## Insights
+
+Ask one question of several meetings and keep the answer.
+
+These are the operator's only **USER** routes with a body: every logged-in
+Nextcloud account may call them, and each call acts only on meetings that caller
+can already read. They also sit at the container root, not under the operator
+base path — `/insights`, the same shape as `/published/*`, not `/operator/…`.
+
+### Create a run
+
+```http
+POST /insights
+Content-Type: application/json
+
+{
+  "meetingIds": ["..."],
+  "workflow": "summarise",
+  "question": "What did we decide about pricing?"
+}
+```
+
+Behavior:
+
+- requires at least one `meetingIds` entry
+- `workflow` is optional — it falls back to the configured insight template, then
+  to the shipped default. `cassini insight workflows --json` lists the registry
+- `question` is optional
+- returns `201` with the run
+
+### List the caller's runs
+
+```http
+GET /insights
+```
+
+Returns `{"insights": [ ... ]}` — the runs that caller created, newest first,
+and nobody else's.
+
+### Get one run
+
+```http
+GET /insights/:id
+```
+
+Returns the run plus `document`, the finished markdown, once it has succeeded.
+
+### Retry a failed run
+
+```http
+POST /insights/:id/retry
+```
+
+Valid only for a run in `failed`. The id is stable across attempts; each retry
+increments `attemptNumber`.
+
+### The run object
+
+```json
+{ "id": "ins_0123456789abcdef", "status": "queued",
+  "createdBy": "alice", "attemptNumber": 1,
+  "workflowId": "summarise", "workflowVersion": "v0", "workflowSha256": "...",
+  "meetingIds": ["..."], "roomIds": ["..."], "question": "",
+  "provider": "", "model": "", "documentPath": "", "error": "",
+  "createdAt": "RFC3339", "updatedAt": "RFC3339" }
+```
+
+`status` is `queued`, `running`, `succeeded` or `failed` — the same four words
+the `cassini insight` CLI uses, deliberately not the job pipeline's five.
+
+### Status codes
+
+| Code | When |
+|---|---|
+| `400` | A request that cannot be run: no meetings, too many, an unknown workflow, a malformed id. Refused before any Nextcloud call |
+| `404` | A meeting, or a run, the caller may not read — indistinguishable from one that does not exist |
+| `409` | A retry against a run that is `queued` or `running` |
+| `502` | A scan that failed, or a request with no caller identity |
+
+A failure is never an empty `200`.
+
 ## What the API does not try to be
 
 The current API is not:
@@ -228,6 +309,7 @@ The current API is not:
 - a viewer content API
 - a direct filesystem browser
 - a durable work-queue API
-- a multi-user workflow API
 
-It is the operator’s control and inspection surface.
+It is the operator’s control and inspection surface. The one exception is
+`/insights`: it is per-caller and multi-user by construction, which is why it
+lives outside the ADMIN operator surface rather than beside `/jobs`.

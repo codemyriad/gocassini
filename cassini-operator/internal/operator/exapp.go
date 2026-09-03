@@ -47,6 +47,7 @@ import (
 //   ├── /init                          lifecycle (AppAPI direct call)
 //   ├── /viewer, /viewer/*                 Cassini SPA static (USER per manifest)
 //   ├── /published/*                       site archive       (USER per manifest)
+//   ├── /insights, /insights/*             insight runs       (USER per manifest)
 //   ├── /ui/viewer.js, /ui/viewer.css       embedded Cassini build (USER per manifest)
 //   ├── /img/app.svg                        navigation icon    (USER per manifest)
 //   └── <BasePath>/jobs, /jobs/, /events   operator JSON API  (ADMIN per manifest)

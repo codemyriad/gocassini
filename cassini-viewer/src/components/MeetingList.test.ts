@@ -13,7 +13,7 @@ describe("MeetingList rows", () => {
     // click-handling div would cost it keyboard focus. So the row is a
     // container holding both: an input, and a button that still opens the
     // meeting from anywhere else on the row.
-    expect(meetingListSource).toContain('<input\n                  type="checkbox"');
+    expect(meetingListSource).toMatch(/<input\n\s+type="checkbox"/);
     expect(meetingListSource).toContain('class="row-open"');
     expect(meetingListSource).toContain('dispatch("select", meeting)');
     expect(meetingListSource).toContain('dispatch("pick", meeting)');
@@ -56,5 +56,59 @@ describe("MeetingList rows", () => {
     // The shell cannot otherwise say how many picked meetings the current
     // narrowing hides — the text filter never leaves this component.
     expect(meetingListSource).toContain('dispatch("visible", visibleMeetings)');
+  });
+});
+
+describe("MeetingList insights", () => {
+  it("puts insight cards in the same stream as the meeting rows", () => {
+    // Not a separate tab and not a second list: an insight belongs beside the
+    // conversations it summarises, under the same month headings.
+    expect(meetingListSource).toContain("{#each feedGroups as group (group.key)}");
+    expect(meetingListSource).toContain("{#each group.items as item (item.key)}");
+    expect(meetingListSource).toContain("<InsightCard");
+  });
+
+  it("never lets an insight card be picked into a bundle", () => {
+    // A context bundle is made of meetings. The checkbox lives inside the
+    // meeting branch, and the insight branch has no pick control at all.
+    const insightBranch = meetingListSource.slice(
+      meetingListSource.indexOf('{#if item.kind === "insight"}'),
+      meetingListSource.indexOf("{@const meeting = item.meeting}"),
+    );
+    expect(insightBranch).not.toContain("<input");
+    expect(insightBranch).not.toContain('dispatch("pick"');
+    expect(insightBranch).toContain('dispatch("openInsight", item.insight)');
+  });
+
+  it("offers no type filter where insights cannot exist", () => {
+    // A standalone export's provider cannot list insights, so the shell passes
+    // insightsOffered=false and the list is exactly what it was before D-721.
+    expect(meetingListSource).toContain("export let insightsOffered = false;");
+    expect(meetingListSource).toMatch(/\{#if insightsOffered\}[\s\S]{0,200}class="typefilter"/);
+  });
+
+  it("cannot be narrowed down to showing nothing at all", () => {
+    // Everything hidden is indistinguishable on screen from nothing being here.
+    expect(meetingListSource).toContain('disabled={isLastBrowseType(types, "meetings")}');
+    expect(meetingListSource).toContain('disabled={isLastBrowseType(types, "insights")}');
+  });
+
+  it("tells a failed listing apart from an empty one", () => {
+    // Three states, and none of them is the other two: a count once a listing
+    // has come back, the failure when it did not, and nothing while the first
+    // is still in flight.
+    expect(meetingListSource).toContain("{#if insightsError}");
+    expect(meetingListSource).toContain("Insights could not be listed:");
+    expect(meetingListSource).toMatch(
+      /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
+    );
+  });
+
+  it("counts an insight's sources with a number the shell resolved", () => {
+    // Not insight.meetingIds.length: a source this caller may not read is
+    // absent, and a count would disclose that it exists.
+    expect(meetingListSource).toContain(
+      "sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}",
+    );
   });
 });

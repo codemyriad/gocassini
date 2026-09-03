@@ -6,8 +6,10 @@ what (if anything) leaves your infrastructure, and what happens on deletion.
 
 Cassini records Nextcloud Talk meetings, transcribes them, optionally summarizes
 them, and publishes a readable archive. Recording and transcription happen
-entirely within your own infrastructure. Exactly one step sends data to a third
-party. It is optional, off by default, and enabled only when you set an API key.
+entirely within your own infrastructure. The only steps that send data to a third
+party are the ones that call a language model — the automatic meeting summary,
+and an insight somebody asks for in the app. Both are optional, both are off
+until you configure an LLM endpoint, and both send text, never audio.
 
 ## Summary
 
@@ -17,11 +19,13 @@ party. It is optional, off by default, and enabled only when you set an API key.
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
 | Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
 | Meeting summary                | LLM endpoint — **only if one is configured**              | **Yes, when enabled**            |
+| Insight (a question asked of several meetings) | LLM endpoint — **only if one is configured**, and only when somebody asks | **Yes, when asked for**          |
 | Publishing the archive         | Nextcloud Files, on your servers                          | No                               |
 
 **Without an LLM endpoint: nothing leaves your infrastructure.** The local
-transcript is still produced and published; only the summary is skipped. A
-self-hosted endpoint keeps summaries on your own network too.
+transcript is still produced and published; the summary is skipped, and the app
+offers no way to ask a question of a meeting. A self-hosted endpoint keeps both
+on your own network too.
 
 ## What Cassini stores
 
@@ -36,6 +40,10 @@ artifacts:
 - **Captions** — a `captions.vtt` subtitle track.
 - **Summaries** — an optional `summary.md`, produced only when the LLM step is
   enabled.
+- **Insight runs** — one row per question asked of a set of meetings: who asked,
+  which meetings, which workflow, the status, and where the answer was written.
+  The answer itself is an ordinary file in the asker's Nextcloud Files, not an
+  artifact on the app volume.
 - **Manifests** — internal bundle descriptors (`cassini.json`, `manifest.json`)
   recording each artifact's kind, state, and integrity hashes.
 - **Logs** — per-attempt operator logs (`record.log`, `build.log`, `seal.log`,
@@ -83,28 +91,61 @@ Nextcloud Files deletes that copy.
 
 ## What leaves your infrastructure, and when
 
-The only step that transmits data off your infrastructure is optional LLM
-transcript cleanup and summarization. It runs **only when `OPENROUTER_API_KEY` is
-set**, and it is unset by default.
+Two steps can transmit data off your infrastructure. Both are the same act — one
+call to the configured LLM endpoint — and neither happens unless an endpoint is
+configured. Nothing is configured by default.
 
-When it is enabled, after a meeting is transcribed locally, the full local
-transcript text is sent to the configured endpoint — OpenRouter
-(`https://openrouter.ai/api/v1`) by default, or whatever `LLM_BASE_URL` points at
-— to produce the readable transcript and the summary. That third party then
-processes the transcript under its own terms; review them before enabling this.
+**1. The meeting summary**, produced automatically after a meeting is
+transcribed locally. The transcript text is sent to the configured endpoint —
+OpenRouter (`https://openrouter.ai/api/v1`) by default, or whatever
+`LLM_BASE_URL` points at — and the summary comes back and is sealed into the
+published meeting. Nobody asks for it; it is part of the pipeline, and it is
+skipped when there is no endpoint or when the summary step is switched off.
 
-Call audio and the recording are **never** sent off your infrastructure for the
-sake of this step. Only the text transcript is transmitted, and only for
-post-processing.
+**2. An insight**, when somebody in the Cassini app picks meetings and asks a
+question of them. This is the first thing in Cassini that sends transcripts to a
+model **on a person's command, from inside the app**, and it is worth stating
+plainly rather than leaving to be discovered:
+
+- **What is sent** is the same bundle the app's Prepare panel would hand that
+  person to copy: the transcript and summary text of the meetings they picked,
+  in order, plus the question they typed. It is assembled **as them** — a
+  meeting they cannot open in Nextcloud is not in the bundle and cannot be asked
+  about — so an insight can never widen what somebody may read.
+- **Who it is attributable to.** The call uses the endpoint and API key
+  configured for the **instance**, not credentials belonging to the asker. At
+  your LLM provider the request therefore arrives as this deployment, and the
+  provider cannot distinguish which of your people asked it. Cassini's own
+  records do: each run stores who created it. If your provider's terms or your
+  own policy require per-person attribution to a third party, this feature does
+  not give it to you.
+- **Where the answer lands.** The document is written into the asker's **own**
+  Nextcloud Files, under their account, and follows Nextcloud's access controls
+  from there. It is not written beside the recordings — that folder is read-only
+  to everyone but the `cassini` service account — and it is not shared with
+  anyone by Cassini.
+
+That third party processes whatever it receives under its own terms; review them
+before configuring an endpoint. Call audio and the recording itself are **never**
+sent off your infrastructure for either step: only text, and only the text of
+meetings the request is entitled to.
 
 Controls:
 
-- **Leave `OPENROUTER_API_KEY` unset** — no external calls at all; the raw local
-  transcript is still published.
-- **`LLM_BASE_URL`** — point cleanup/summaries at a self-hosted or alternative
-  OpenAI-compatible endpoint instead of OpenRouter.
-- **`CASSINI_SUMMARY_DISABLED`** — keep readable-transcript cleanup but skip the
-  summary.
+- **Configure no LLM endpoint** — no external calls at all, from either step.
+  Transcripts are still produced and published locally; summaries are skipped
+  and the app offers no way to ask a question.
+- **`LLM_BASE_URL`** — point summaries and insights at a self-hosted or
+  alternative OpenAI-compatible endpoint instead of OpenRouter. A keyless
+  self-hosted endpoint is enough; `OPENROUTER_API_KEY` is needed only when the
+  endpoint requires one.
+- **Per-step endpoints in the app's AI settings** — summaries and insights each
+  resolve their own endpoint, so one can be switched off, or pointed at a
+  local model, without the other.
+- **`CASSINI_SUMMARY_DISABLED`** — keep the endpoint configured but stop
+  summarising meetings. It means "publish meetings without a summary" and so
+  does not disable insights; leave the endpoint unset if the intent is that
+  nothing calls a model at all.
 
 See [Summarisation & the privacy caveat](./README.md#summarisation--the-privacy-caveat)
 and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
@@ -154,6 +195,9 @@ could not use.
 - **A delivered attempt's staging copy is removed once Nextcloud accepts it**, so
   the full recording does not linger on the app volume outside the Nextcloud
   access model.
+- **Insight documents are ordinary Nextcloud files** in the account that asked
+  for them. Deleting one deletes the answer; the run row on the app volume
+  remains, recording that the question was asked, until the volume is deleted.
 - **Published recordings persist in Nextcloud Files** independently of Cassini.
   Removing or disabling the Cassini app does not delete them; they are managed as
   ordinary Nextcloud files.

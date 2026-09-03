@@ -2,9 +2,11 @@
   import { onDestroy, onMount } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
   import { AppDataProvider } from "./appDataProvider";
+  import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
   import SetupNotice from "./SetupNotice.svelte";
+  import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
   import {
@@ -91,6 +93,26 @@
     // There is no second notion of admin here to drift from the first.
     isAdmin: operatorAvailable,
   });
+
+  // The configured state, from the SAME field (D-700). insightsNotice is
+  // non-null exactly when `insights` is false, so these two are mutually
+  // exclusive by construction rather than by two conditions kept in step: the
+  // readiness card OR the Generate card, and — while /setup has not answered,
+  // or on a build with no operator to ask — neither. A standalone export must
+  // not read absence as "not configured", the same three-state rule the
+  // catalog's hasSummary follows.
+  $: insightsReady = setupFeatures?.insights === true;
+
+  // The operator API client the Generate card lists templates with, or null for
+  // anyone the probe denied. `operator/settings/workflows` is ADMIN at the
+  // proxy, so a non-admin's request for the template registry would 403 —
+  // null is that fact, and the card offers the deployment's configured template
+  // instead of a picker that fails when opened.
+  //
+  // Built from the probe RESULT and never from the optimistic admin hint: the
+  // hint exists to avoid a tab flashing in, and the cost of being wrong here is
+  // a control that 403s.
+  let operatorClient: OperatorClient | null = null;
 
   // The daisyUI theme tokens (colors AND --radius-box/--border etc.) are emitted
   // on [data-theme=…], not on :host — so any surface NOT inside a data-theme'd
@@ -228,6 +250,7 @@
         fetchSetupHealth(operatorBasePath),
       ]);
       operatorAvailable = probe.available;
+      operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;
       setupFeatures = health?.features ?? null;
       // Which setup message you get is decided by the SAME probe that decides
       // whether the operator surface exists — being able to read the ADMIN-gated
@@ -255,6 +278,7 @@
       // surface with zero trace, which is exactly what hid the embedded-page
       // base bug (D-420 V3).
       operatorAvailable = false;
+      operatorClient = null;
       setupNotice = null;
       setupFeatures = null;
       console.error("Cassini: operator availability check failed.", error);
@@ -324,6 +348,16 @@
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
         <ViewerApp {ncMode} {dataProvider}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+          <!-- Its opposite, driven by the same bit (D-700): the readiness card
+               says a question cannot be asked here, this one asks it. The Prepare
+               panel hands down the meetings it is describing; whether there is an
+               endpoint to ask, and whether this reader may pick a template, are
+               the shell's to know and neither is a fact the viewing layer has. -->
+          <svelte:fragment slot="prepare-generate" let:entries>
+            {#if insightsReady}
+              <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+            {/if}
+          </svelte:fragment>
         </ViewerApp>
       </div>
     {/if}
@@ -366,12 +400,22 @@
     <div class="cassini-shell-surface">
       <ViewerApp {ncMode} {dataProvider}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+        <svelte:fragment slot="prepare-generate" let:entries>
+          {#if insightsReady}
+            <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+          {/if}
+        </svelte:fragment>
       </ViewerApp>
     </div>
   </div>
 {:else}
   <ViewerApp {ncMode} {dataProvider}>
     <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+    <svelte:fragment slot="prepare-generate" let:entries>
+      {#if insightsReady}
+        <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+      {/if}
+    </svelte:fragment>
   </ViewerApp>
 {/if}
 

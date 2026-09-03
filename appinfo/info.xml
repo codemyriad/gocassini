@@ -236,6 +236,48 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       </route>
 
       <!--
+        USER: insights. Four operations over three paths — create a run
+        (POST insights), list the caller's own runs (GET insights), read one
+        with its document (GET insights/<id>), retry a failed one
+        (POST insights/<id>/retry).
+
+        Declared as one block, and deliberately not folded into
+        `^published\/.+$`, because create and retry are the app's FIRST
+        mutating USER routes. Every other USER route is GET/HEAD, and
+        `published` is declared GET,HEAD on purpose; slipping a POST under a
+        prefix whose declaration says GET would hide the change that matters.
+
+        USER is right even though these mutate. A run only reads meetings the
+        caller can already read — the operator stages them as the caller, so
+        Nextcloud's own file ACL decides what is in the bundle — and it writes
+        only into that caller's own Nextcloud home. Nothing another account
+        owns is reachable through them, so ADMIN would say "insights are an
+        administrator feature", which is not what was built.
+
+        The id pattern must not swallow the retry path: `[^\/]+` cannot cross a
+        `/`, so `^insights\/[^\/]+\/?$` matches `insights/ins_0123…` and leaves
+        `insights/ins_0123…/retry` to the route below it. See
+        docs/exapp-update-constraints.md §5a for the command that checks a
+        pattern against the paths it must and must not match — and for why a
+        release that changes this block must bump <version>.
+      -->
+      <route>
+        <url>^insights\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^insights\/[^\/]+\/?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^insights\/[^\/]+\/retry\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+
+      <!--
         PUBLIC: Talk recording-backend protocol. Lets the "Start recording"
         button in Talk reach Cassini through the AppAPI proxy when Cassini
         is deployed as an ExApp. Authentication is Talk's own HMAC over

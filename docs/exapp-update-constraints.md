@@ -118,6 +118,94 @@ keys are **silently dropped** — the install succeeds and the feature is dead.
 `exapp_assert_manifest_declares` in `ops/deploy/lib/exapp-register.sh` fails the
 deploy instead.
 
+### 5a. Routes are NOT creation-time — an in-place update rewrites them, provided the release bumps `<version>`
+
+Rule 5 is about deploy **env**, and env is creation-time. `<routes>` is not, and
+the difference is the sentence worth remembering: **an update cannot add an
+environment variable, but it can and does add a route.**
+
+This was an open question for a while, and two shipped changes depended on the
+answer. The AI-provider settings surface widened `^operator\/settings\/?$` to
+`^operator\/settings(\/.*)?$` so `/settings/llm/...` is reachable at all, and
+insights declares the app's first mutating USER routes (`^insights\/…`). Had the
+allowlist been creation-time like env, every in-place-upgraded install would 404
+on both surfaces — and a 404 through the proxy says nothing about its cause.
+
+**The answer**, measured on 2026-09-03 against a real Nextcloud with AppAPI
+34.0.0: `app_api:app:update` **does** rewrite AppAPI's route allowlist, but only
+when the manifest it is handed carries a **new `<version>`**. Handed the same
+version it short-circuits on *"ExApp gocassini is already updated"* and the
+allowlist is left exactly as it was.
+
+The check registers the app with the real manifest **minus one real route**
+(`^operator\/setup\/?$` — a route that exists, is served, and is USER-level),
+proves the proxy refuses that path, then tries each update form and reads
+**AppAPI's own `oc_ex_apps_routes` rows** after every one. Reading the database
+rather than the proxy is load-bearing: an earlier run of the same experiment
+concluded "does not refresh" from a proxy 401 that was really the container
+failing its post-update init handshake.
+
+The manifest carried 17 routes on the day this ran; the row counts below are of
+that manifest, not of today's.
+
+| Step | route rows for the app | withheld route present? | what AppAPI said |
+|---|---|---|---|
+| register with 16 of 17 routes (**negative control**) | 16 | no — the proxy 404s that path, while a declared one 200s | — |
+| `app_api:app:update` bare | 16 | no | `Failed to get app info for gocassini from the Appstore` — a manual install is not in the store |
+| `app_api:app:update --json-info`, **same** `<version>` | 16 | no | `ExApp gocassini is already updated (0.2.0-beta.6)` |
+| `app_api:app:update --json-info`, **bumped** `<version>` | **17** | **yes** | `update successfully deployed` — and then the `/init` 401 below |
+| re-register with the full manifest (**positive control**) | 17 | yes — proxy 200 | — |
+
+**The rule that follows** is already the first line of the release checklist:
+`scripts/bump-exapp-version.sh` bumps `<version>` and `<image-tag>` together, and
+that bump is precisely what makes a route change deliverable. Stated as the
+failure it prevents: *a release that changes `<routes>` without bumping
+`<version>` ships a manifest nobody applies.* Nothing new to do — but a manifest
+edited by hand, without the script, is now a release-blocking mistake rather than
+a cosmetic one.
+
+**One caveat, and it is about the harness rather than about routing.** After the
+version-bumped update the proxy answered 401, not 200. The redeploy rotates the
+app secret, and on a **manual-install** daemon AppAPI cannot recreate a
+hand-started container, so the post-update `POST /init` handshake failed against
+a container still holding the old secret. Restarting the container with AppAPI's
+current secret gave 200 on both the withheld route and the control. That is why
+the check reads the database: on a real deploy daemon the container is recreated
+with the new secret and the question never arises, but on this harness the proxy
+reading is not trustworthy and the route rows are.
+
+Re-run it with `harness/bin/check-route-refresh.sh` (see `harness/README.md`); it
+needs a Nextcloud stack and a built ExApp image, and it writes its verdict as a
+transcript of every reading.
+
+**Checking a pattern before you ship it.** Declaring a route is only useful if
+its PCRE matches the paths it must and none that it must not — and the two traps
+documented in `<routes>` (no leading slash, every internal `/` escaped as `\/`)
+produce a PHP *"Unknown modifier"* error rather than a clean failure. This prints
+which declared route, if any, accepts a given method and path, the same way
+AppAPI's `passesExAppProxyRoutesChecks` does:
+
+```bash
+python3 - <<'PY'
+import re, xml.etree.ElementTree as ET
+routes = [(r.findtext('url'), r.findtext('verb'))
+          for r in ET.parse('appinfo/info.xml').getroot().findall('./external-app/routes/route')]
+for verb, path in [('POST', 'insights'),
+                   ('GET',  'insights/ins_0123456789abcdef'),
+                   ('POST', 'insights/ins_0123456789abcdef/retry'),
+                   ('GET',  'insights/ins_0123456789abcdef/retry'),
+                   ('POST', 'insights/ins_0123456789abcdef'),
+                   ('POST', 'published/catalog.json')]:
+    hits = [u for u, v in routes if re.search(u, path, re.I) and verb in v.split(',')]
+    print(f'{verb:5} {path:38} {hits or "NO ROUTE -> proxy 404"}')
+PY
+```
+
+For the insights block the first three lines must each name exactly one route and
+the last three must say `NO ROUTE`: `[^\/]+` cannot cross a `/`, so
+`^insights\/[^\/]+\/?$` reads one run and leaves `…/retry` to the route declared
+after it.
+
 ### 6. Moving an app between daemons is not an update — the volume does not follow
 
 Re-registering Cassini against a different daemon creates a **new** container on
@@ -181,7 +269,8 @@ curling `/exapps/…`, which returns 502 whether the route is right or wrong.
 - [ ] Published `X.Y.Z` **and** `X.Y.Z-cuda` verified pullable, child manifests
       included — a dangling `-cuda` downgrades every GPU install to CPU silently
 - [ ] Route or access-level changes reviewed: the manifest's `<routes>` is the
-      enforcement point
+      enforcement point, and an installed app only picks the block up because
+      the release bumped `<version>` (rule 5a) — the first line of this list
 
 ## Related
 

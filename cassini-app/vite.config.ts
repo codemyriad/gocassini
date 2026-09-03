@@ -47,14 +47,23 @@ function createOperatorProxy(operatorBasePath: string, operatorProxyTarget: stri
     return {};
   }
 
+  // /insights is a SIBLING of the operator's base path and never under it
+  // (D-700): the insight routes are mounted on the container's root mux, beside
+  // /published/, because that is where appinfo/info.xml declares them. A dev
+  // proxy that forwarded only operatorBasePath would therefore 404 every
+  // Generate against CASSINI_OPERATOR_URL, in both shapes.
+  const insights = { "/insights": directOperatorProxy(operatorProxyTarget) };
+
   if (operatorBasePath === "/") {
     return {
+      ...insights,
       "/jobs": directOperatorProxy(operatorProxyTarget),
       "/events": directOperatorProxy(operatorProxyTarget),
     };
   }
 
   return {
+    ...insights,
     [operatorBasePath]: directOperatorProxy(operatorProxyTarget),
   };
 }

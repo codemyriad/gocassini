@@ -173,6 +173,16 @@ describe("StaticCatalogProvider", () => {
     expect(provider.loadContextBundle).toBeUndefined();
   });
 
+  it("does not offer insights, because a static export has nowhere to have stored one", () => {
+    // Same contract-by-absence (D-721), and the distinction it protects: a
+    // build that cannot list insights must not be shown as a build with none.
+    // App.svelte reads these as "no insight surface at all" and the type filter
+    // never appears.
+    const provider: Record<string, unknown> = new StaticCatalogProvider() as never;
+    expect(provider.listInsights).toBeUndefined();
+    expect(provider.loadInsightDocument).toBeUndefined();
+  });
+
   it("gives each provider instance its own store so cache state is not shared", async () => {
     const providerA = new StaticCatalogProvider();
     const providerB = new StaticCatalogProvider();

@@ -1,8 +1,11 @@
 import {
   StaticCatalogProvider,
   resolvePublishedUrl,
+  type InsightRecord,
   type MeetingCatalogEntry,
 } from "cassini-viewer/dataProvider";
+
+import { listInsights as fetchInsightRuns, readInsight } from "./insights/client";
 
 // The in-Nextcloud shell's data provider (D-626).
 //
@@ -47,6 +50,31 @@ export class AppDataProvider extends StaticCatalogProvider {
       throw new Error(await describeBundleFailure(response));
     }
     return response.text();
+  }
+
+  // GET insights — this caller's own runs, newest first (D-721/D-700).
+  //
+  // The same capability rule as loadContextBundle, and the stronger case for
+  // it: an insight is a stored run, and a standalone export has nowhere for one
+  // to have been stored. StaticCatalogProvider therefore implements neither
+  // method, and the browse list reads that absence as "this build has no
+  // insights" rather than rendering an empty shelf.
+  //
+  // It relays what the operator served and does not filter, sort or hide a
+  // status: a queued or running insight belongs in the list too, which is the
+  // whole point of a record that exists before its content does.
+  async listInsights(): Promise<InsightRecord[]> {
+    return fetchInsightRuns();
+  }
+
+  // GET insights/<id>, for the `document` half of it.
+  //
+  // Separate from listInsights because listing N insights must not carry N
+  // documents. The bytes are relayed untouched — the operator wrote them, and a
+  // second opinion about markdown here would be a second implementation of a
+  // published format.
+  async loadInsightDocument(id: string): Promise<string> {
+    return (await readInsight(id)).document;
   }
 }
 

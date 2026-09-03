@@ -244,8 +244,20 @@
          panel rather than a screen of its own, because asking a question of
          these meetings is the next thing you do with the set you just reviewed
          — so the slot exists now and the layout does not have to be rebuilt
-         around it later. -->
-    <slot name="generate" />
+         around it later.
+
+         The picked meetings ride down with it, in pick order. The card is the
+         shell's — only the shell knows there is an operator to ask — but the
+         set it asks about is this panel's subject, and a card that re-derived
+         the selection from somewhere else would be a second answer to what "in
+         this bundle" means, free to disagree with the list printed above it.
+
+         It is a section of this scrolling body and not an overlay of its own,
+         for the reason the whole panel is positioned against the browse shell
+         rather than the viewport: this app mounts into a shadow root inside
+         Nextcloud's page, where viewport-anchored chrome escapes the app and
+         covers Nextcloud's own (see App.svelte). -->
+    <slot name="generate" {entries} />
   </div>
 </aside>
 

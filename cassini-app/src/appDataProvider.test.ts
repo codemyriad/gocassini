@@ -130,3 +130,50 @@ describe("AppDataProvider.loadContextBundle", () => {
     );
   });
 });
+
+describe("AppDataProvider insights", () => {
+  // The DataProvider seam is how the browse list learns that this build has an
+  // operator behind it (D-721). Everything about the request itself lives in
+  // insights/client.ts, so what is asserted here is only that these two are
+  // wired to it and relay what it returns.
+
+  it("lists the caller's runs from the insight routes, whatever their status", () => {
+    const fetchMock = respondWith(
+      JSON.stringify({
+        insights: [
+          { id: "ins_0123456789abcdef", status: "running", meetingIds: ["a"] },
+          { id: "ins_00000000000000ff", status: "succeeded", meetingIds: ["b"] },
+        ],
+      }),
+    );
+
+    return new AppDataProvider().listInsights().then((insights) => {
+      expect(new URL(fetchMock.mock.calls[0][0] as string).pathname).toBe(
+        `${new URL(PROXY_BASE).pathname}insights`,
+      );
+      // A queued or running run belongs in the list too: it is a record that
+      // exists before its content does, and dropping it would put the card back
+      // to materialising out of nowhere a minute later.
+      expect(insights.map((insight) => insight.status)).toEqual(["running", "succeeded"]);
+    });
+  });
+
+  it("fetches one insight's document on its own", async () => {
+    // Not part of the listing: N insights must not carry N documents over the
+    // wire.
+    const fetchMock = respondWith(
+      JSON.stringify({
+        id: "ins_0123456789abcdef",
+        status: "succeeded",
+        document: "# What we decided\n",
+      }),
+    );
+
+    await expect(
+      new AppDataProvider().loadInsightDocument("ins_0123456789abcdef"),
+    ).resolves.toBe("# What we decided\n");
+    expect(new URL(fetchMock.mock.calls[0][0] as string).pathname).toBe(
+      `${new URL(PROXY_BASE).pathname}insights/ins_0123456789abcdef`,
+    );
+  });
+});

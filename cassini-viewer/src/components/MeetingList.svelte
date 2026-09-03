@@ -7,11 +7,23 @@
     formatMeetingDuration,
     type MeetingCatalogEntry,
   } from "../viewer/catalog";
-  import { groupMeetingsByMonth, roomLabelOf } from "../viewer/rooms";
+  import { roomLabelOf } from "../viewer/rooms";
+  import {
+    ALL_BROWSE_TYPES,
+    buildBrowseFeed,
+    filterInsights,
+    groupBrowseFeedByMonth,
+    isLastBrowseType,
+    toggleBrowseType,
+    type BrowseTypeFilter,
+    type InsightRecord,
+  } from "../viewer/insights";
+  import InsightCard from "./InsightCard.svelte";
 
-  // The browse list (D-420 V1, room-grouped in D-654). Presentational: the
-  // shell owns the catalog, the room selection and which meeting is open; this
-  // owns only its text filter and how the rows are laid out.
+  // The browse list (D-420 V1, room-grouped in D-654, insights folded in for
+  // D-721). Presentational: the shell owns the catalog, the insights, the room
+  // selection and which of them is open; this owns only its text filter, which
+  // kinds it is showing, and how the rows are laid out.
 
   // Already narrowed to the selected room by the shell. The room filter is NOT
   // applied here, because the rail and the result-line chip both need to agree
@@ -42,12 +54,40 @@
   // knows not to hide its own last row under it.
   export let bottomOverlay = false;
 
+  // The insights drawn from the meetings in this room (D-721) — already
+  // narrowed by the shell, for the same reason the meetings are: the room
+  // filter has to agree with the rail, which is not inside this component.
+  export let insights: InsightRecord[] = [];
+  // Every insight this caller has, for the denominator, the way totalCount is
+  // the archive rather than the room.
+  export let totalInsightCount = 0;
+  // Whether this build has insights at all. False for a standalone export,
+  // whose provider cannot list them — and then there is no type filter,
+  // because a control that narrows to a kind of thing which cannot exist here
+  // is a promise the build cannot keep.
+  export let insightsOffered = false;
+  // Whether a listing has ever come back. A count of zero that was never loaded
+  // reads as "there are none", which is the one thing it does not know.
+  export let insightsLoaded = false;
+  // Non-empty when the last listing failed. A failed fetch and an empty list
+  // are different facts, and neither of them is "there are no insights here".
+  export let insightsError = "";
+  export let selectedInsightId = "";
+  // How many of each insight's sources this caller can read, resolved by the
+  // shell against the WHOLE catalog — not against this room's meetings, which
+  // would undercount an insight that spans rooms, which most of them do.
+  export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
+
   // The filter is list-local state — no other surface reads it.
   let filter = "";
+  // Which kinds the list is showing. List-local for the same reason: unlike the
+  // room, nothing outside this component narrows by it.
+  let types: BrowseTypeFilter = ALL_BROWSE_TYPES;
 
   const dispatch = createEventDispatcher<{
     select: MeetingCatalogEntry;
     pick: MeetingCatalogEntry;
+    openInsight: InsightRecord;
     visible: MeetingCatalogEntry[];
     clearRoom: void;
     openRooms: void;
@@ -59,8 +99,37 @@
   // reach into transcript text: a hit the list cannot show is a hit that looks
   // like a bug.
   $: visibleMeetings = filterMeetingCatalogEntries(meetings, filter);
-  $: monthGroups = groupMeetingsByMonth(visibleMeetings);
+  // Both kinds are narrowed by the same search box, and both counts are
+  // computed whether or not their kind is being shown: the count is what
+  // answers "is there anything behind that switch?".
+  $: visibleInsights = insightsOffered ? filterInsights(insights, filter) : [];
+  // A build with no insights must not be left narrowed to insights: the control
+  // that would put the meetings back is not rendered there.
+  $: if (!insightsOffered) {
+    types = ALL_BROWSE_TYPES;
+  }
+  $: feedItems = buildBrowseFeed({
+    meetings: visibleMeetings,
+    insights: visibleInsights,
+    types,
+  });
+  $: feedGroups = groupBrowseFeedByMonth(feedItems);
   $: trimmedFilter = filter.trim();
+  // The one narrowing that can empty the list without the search doing it.
+  $: insightsOnly = insightsOffered && types.insights && !types.meetings;
+  // The empty state names what it looked for, so a list showing both kinds
+  // does not report that no MEETING matched while an insight was hidden by the
+  // same search.
+  $: matchNoun = insightsOnly
+    ? "insight"
+    : insightsOffered && types.insights
+      ? "meeting or insight"
+      : "meeting";
+  $: matchNounPlural = insightsOnly
+    ? "insights"
+    : insightsOffered && types.insights
+      ? "meetings or insights"
+      : "meetings";
   // The text filter is list-local by design, so the shell cannot compute what
   // the list is actually showing — and it has to, to say how many picked
   // meetings this narrowing hides (D-626). Reported rather than moved: the
@@ -112,10 +181,50 @@
       {/if}
     </div>
 
+    <!-- The two kinds in the list, and which of them it is showing. Only where
+         insights exist at all: a static export has none and gets the list it
+         has always had. The prototype puts this in the rooms rail; it lives
+         here because the rail is one narrowing of the archive and this is
+         another one of the same list, beside the search that already narrows
+         it the same way. -->
+    {#if insightsOffered}
+      <div class="typefilter" role="group" aria-label="Show">
+        <button
+          type="button"
+          class="type-toggle"
+          aria-pressed={types.meetings}
+          disabled={isLastBrowseType(types, "meetings")}
+          on:click={() => (types = toggleBrowseType(types, "meetings"))}
+        >
+          Meetings
+        </button>
+        <button
+          type="button"
+          class="type-toggle"
+          aria-pressed={types.insights}
+          disabled={isLastBrowseType(types, "insights")}
+          on:click={() => (types = toggleBrowseType(types, "insights"))}
+        >
+          Insights
+        </button>
+      </div>
+    {/if}
+
     <!-- Fixed height: a chip appearing must not push the list down under the
          pointer. -->
     <div class="resultline" role="status">
       <span>{visibleMeetings.length} of {totalCount} meetings</span>
+      <!-- Three states, and none of them is the other two: a count once a
+           listing has come back, the fact that it did not when it failed, and
+           nothing at all while the first one is still in flight. A "0" that was
+           never loaded would be a claim nobody made. -->
+      {#if insightsOffered && insightsLoaded}
+        <span class="dot" aria-hidden="true"></span>
+        <span>{visibleInsights.length} of {totalInsightCount} insights</span>
+      {:else if insightsOffered && insightsError}
+        <span class="dot" aria-hidden="true"></span>
+        <span>insights unavailable</span>
+      {/if}
       {#if selectedRoomName !== null}
         <span class="chip">
           {selectedRoomName}
@@ -143,21 +252,34 @@
     class="list-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable"
     class:list-scroll-inset={bottomOverlay}
   >
-    {#if totalCount === 0}
+    <!-- Stated here rather than swallowed: the list below is complete for
+         meetings and incomplete for insights, and only one of those two things
+         went wrong. -->
+    {#if insightsError}
+      <p class="list-note" role="status">
+        Insights could not be listed: {insightsError} The meetings are unaffected.
+      </p>
+    {/if}
+    {#if totalCount === 0 && totalInsightCount === 0}
       <div class="list-empty">
         <strong>No meetings yet</strong>
         <span>Published recordings appear here.</span>
       </div>
-    {:else if visibleMeetings.length === 0}
+    {:else if feedItems.length === 0 && insightsOnly && !trimmedFilter}
+      <div class="list-empty">
+        <strong>No insights yet</strong>
+        <span>Pick some meetings, ask one question of them, and the answer is kept here beside them.</span>
+      </div>
+    {:else if feedItems.length === 0}
       <div class="list-empty">
         <strong>Nothing matches</strong>
         <span>
           {#if selectedRoomName !== null && trimmedFilter}
-            No meeting in {selectedRoomName} matches that search.
+            No {matchNoun} in {selectedRoomName} matches that search.
           {:else if selectedRoomName !== null}
-            {selectedRoomName} has no meetings.
+            {selectedRoomName} has no {matchNounPlural}.
           {:else}
-            No meeting matches that search.
+            No {matchNoun} matches that search.
           {/if}
         </span>
         {#if trimmedFilter}
@@ -175,57 +297,70 @@
         {/if}
       </div>
     {:else}
-      {#each monthGroups as group (group.key)}
+      {#each feedGroups as group (group.key)}
         <h3 class="group-head">{group.label}</h3>
-        {#each group.meetings as meeting (meeting.id)}
-          <!-- The row is a container, not a control, so that picking and
-               opening can sit side by side: a checkbox cannot live inside a
-               button, and demoting the whole row to a click-handling div would
-               cost it keyboard focus. `.meeting-row` and aria-current stay on
-               THIS element because that pair is what the row's open state is
-               styled from, in this file and in app.css's Nextcloud-theme
-               override; the open button repeats aria-current because that is
-               the element a screen reader lands on. -->
-          <div
-            class="meeting-row"
-            class:row-pickable={selectable}
-            aria-current={meeting.id === selectedMeetingId ? "page" : undefined}
-          >
-            {#if selectable}
-              <label class="row-pick">
-                <input
-                  type="checkbox"
-                  checked={pickedIds.has(meeting.id)}
-                  aria-label={`Select ${meeting.title}`}
-                  on:change={() => dispatch("pick", meeting)}
-                />
-              </label>
-            {/if}
-            <button
-              type="button"
-              class="row-open"
+        {#each group.items as item (item.key)}
+          {#if item.kind === "insight"}
+            <!-- No checkbox, ever: a context bundle is made of meetings, and an
+                 insight is what came out of one. It opens in the same sheet a
+                 meeting does. -->
+            <InsightCard
+              insight={item.insight}
+              sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}
+              selected={item.insight.id === selectedInsightId}
+              on:open={() => dispatch("openInsight", item.insight)}
+            />
+          {:else}
+            {@const meeting = item.meeting}
+            <!-- The row is a container, not a control, so that picking and
+                 opening can sit side by side: a checkbox cannot live inside a
+                 button, and demoting the whole row to a click-handling div would
+                 cost it keyboard focus. `.meeting-row` and aria-current stay on
+                 THIS element because that pair is what the row's open state is
+                 styled from, in this file and in app.css's Nextcloud-theme
+                 override; the open button repeats aria-current because that is
+                 the element a screen reader lands on. -->
+            <div
+              class="meeting-row"
+              class:row-pickable={selectable}
               aria-current={meeting.id === selectedMeetingId ? "page" : undefined}
-              on:click={() => dispatch("select", meeting)}
             >
-              <span class="row-main">
-                <span class="row-title">{meeting.title}</span>
-                <span class="row-meta">
-                  <span>{formatMeetingDateShort(meeting.dateLabel)}</span>
-                  <span class="dot" aria-hidden="true"></span>
-                  <span class="row-room">{roomLabelOf(meeting)}</span>
-                  {#if typeof meeting.speakerCount === "number"}
-                    <span class="dot" aria-hidden="true"></span>
-                    <span>{meeting.speakerCount} speakers</span>
-                  {/if}
-                </span>
-              </span>
-              {#if typeof meeting.digestDurationMs === "number"}
-                <span class="row-duration">
-                  {formatMeetingDuration(meeting.digestDurationMs)}
-                </span>
+              {#if selectable}
+                <label class="row-pick">
+                  <input
+                    type="checkbox"
+                    checked={pickedIds.has(meeting.id)}
+                    aria-label={`Select ${meeting.title}`}
+                    on:change={() => dispatch("pick", meeting)}
+                  />
+                </label>
               {/if}
-            </button>
-          </div>
+              <button
+                type="button"
+                class="row-open"
+                aria-current={meeting.id === selectedMeetingId ? "page" : undefined}
+                on:click={() => dispatch("select", meeting)}
+              >
+                <span class="row-main">
+                  <span class="row-title">{meeting.title}</span>
+                  <span class="row-meta">
+                    <span>{formatMeetingDateShort(meeting.dateLabel)}</span>
+                    <span class="dot" aria-hidden="true"></span>
+                    <span class="row-room">{roomLabelOf(meeting)}</span>
+                    {#if typeof meeting.speakerCount === "number"}
+                      <span class="dot" aria-hidden="true"></span>
+                      <span>{meeting.speakerCount} speakers</span>
+                    {/if}
+                  </span>
+                </span>
+                {#if typeof meeting.digestDurationMs === "number"}
+                  <span class="row-duration">
+                    {formatMeetingDuration(meeting.digestDurationMs)}
+                  </span>
+                {/if}
+              </button>
+            </div>
+          {/if}
         {/each}
       {/each}
     {/if}
@@ -374,6 +509,60 @@
   }
   .chip button:hover {
     color: var(--color-primary);
+  }
+
+  .resultline .dot {
+    flex: none;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background-color: currentColor;
+  }
+
+  .typefilter {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-top: 0.5rem;
+  }
+  /* Pressed is the ON state, and the resting state is legible rather than
+     greyed: both kinds are shown by default, so "off" is the exception the eye
+     should catch. */
+  .type-toggle {
+    padding: 3px 10px;
+    cursor: pointer;
+    background: none;
+    border: 1px solid var(--color-base-300);
+    border-radius: 20px;
+    font-size: 0.71875rem;
+    font-weight: 550;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .type-toggle:hover:not(:disabled) {
+    border-color: color-mix(in oklch, var(--color-base-content) 35%, transparent);
+  }
+  .type-toggle[aria-pressed="true"] {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 25%, transparent);
+    color: var(--color-base-content);
+  }
+  /* The last kind standing cannot be switched off; it stays legible because it
+     is still reporting what the list is showing. */
+  .type-toggle:disabled {
+    cursor: default;
+  }
+
+  /* An incomplete list says so where the list is, not in the footer with the
+     catalog's own errors: the two failures are independent and either one can
+     happen without the other. */
+  .list-note {
+    margin: 0.75rem 1.25rem 0;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    background-color: color-mix(in oklch, var(--color-warning) 20%, transparent);
+    border-radius: var(--radius-field, 0.5rem);
+    color: var(--color-base-content);
   }
 
   .group-head {
