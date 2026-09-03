@@ -3,7 +3,6 @@
   import ViewerApp from "cassini-viewer/App.svelte";
   import { StaticCatalogProvider } from "cassini-viewer/dataProvider";
   import Operator from "./Operator.svelte";
-  import Settings from "./Settings.svelte";
   import SetupNotice from "./SetupNotice.svelte";
   import { loadConfig } from "./operator/config";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
@@ -20,6 +19,10 @@
   // through the DataProvider seam: everyone gets "browse" (cassini-viewer's App
   // = MeetingList + MeetingView); admins additionally get the "operator"
   // surface (recording control). V3 adds the top nav + the operator surface.
+  //
+  // There are exactly TWO surfaces, and configuration is not one of them
+  // (D-723): it is a left nav inside Operator, so there is one admin boundary
+  // to probe and one place an administrator looks for a knob.
   //
   // The operator JSON API stays ADMIN in info.xml (the REAL boundary). The
   // shell only decides whether to *show* the operator by probing that boundary
@@ -85,9 +88,9 @@
 
   function applySurfaceFromLocation(): void {
     const next = readSurface(window.location.hash);
-    // A non-admin deep-linking an admin surface falls back to browse (the
-    // operator API would 403 anyway). Settings is gated by the same probe:
-    // everything it touches is an ADMIN route.
+    // A non-admin deep-linking the operator surface falls back to browse (the
+    // operator API would 403 anyway). Its settings panels are gated by the same
+    // probe: everything they touch is an ADMIN route.
     surface = next !== "browse" && !operatorAvailable ? "browse" : next;
   }
 
@@ -195,14 +198,6 @@
       >
         Operator
       </button>
-      <button
-        type="button"
-        class="cassini-shell-tab"
-        aria-current={surface === "settings" ? "page" : undefined}
-        on:click={() => selectSurface("settings")}
-      >
-        Settings
-      </button>
     </nav>
 
     {#if setupNotice && !setupNotice.blocking}
@@ -236,15 +231,6 @@
            when active so its SSE stream + polling don't run in the background. -->
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
         <ViewerApp {ncMode} {dataProvider} />
-      </div>
-    {/if}
-    {#if surface === "settings"}
-      <!-- Same scroll/theming contract as the operator surface below. Mounted
-           only while active, so its settings fetches happen on entry. -->
-      <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
-        <div class="cassini-root" data-theme={themeMode}>
-          <Settings />
-        </div>
       </div>
     {/if}
     {#if surface === "operator"}

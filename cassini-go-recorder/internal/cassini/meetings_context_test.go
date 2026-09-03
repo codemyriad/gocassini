@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
 	inspectpkg "gocassini/internal/inspect"
+	"gocassini/internal/meetingcontext"
 	"gocassini/internal/portable"
 )
 
@@ -80,7 +87,7 @@ func TestBuildMeetingContextCarriesTheRoomFromTheCatalogEntry(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := writeMeetingContext(&buf, bundle, false); err != nil {
+	if err := writeOneMeetingContext(&buf, bundle, false); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	// The id is what `meetings list --room` accepts and the name is not, so the
@@ -116,7 +123,7 @@ func TestBuildMeetingContextOmitsTheRoomLineWhenThereIsNoRoom(t *testing.T) {
 	// and must not render as an empty or dashed field.
 	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""), meetingsCatalogEntry{})
 	var buf bytes.Buffer
-	if err := writeMeetingContext(&buf, bundle, false); err != nil {
+	if err := writeOneMeetingContext(&buf, bundle, false); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	if strings.Contains(buf.String(), "- Room:") {
@@ -180,7 +187,7 @@ func TestWriteMeetingContextMarkdown(t *testing.T) {
 	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), "# Summary\n\n- Ship it.\n"), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
-	if err := writeMeetingContext(&out, bundle, false); err != nil {
+	if err := writeOneMeetingContext(&out, bundle, false); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	got := out.String()
@@ -209,7 +216,7 @@ func TestWriteMeetingContextMarkdownSaysWhenThereIsNoSummary(t *testing.T) {
 	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
-	if err := writeMeetingContext(&out, bundle, false); err != nil {
+	if err := writeOneMeetingContext(&out, bundle, false); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	if !strings.Contains(out.String(), "_No summary was generated for this meeting._") {
@@ -221,7 +228,7 @@ func TestWriteMeetingContextMarkdownHandlesASilentMeeting(t *testing.T) {
 	bundle := buildMeetingContext("M1", extractedMeetingFixture(nil, ""), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
-	if err := writeMeetingContext(&out, bundle, false); err != nil {
+	if err := writeOneMeetingContext(&out, bundle, false); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	if !strings.Contains(out.String(), "_This meeting has no transcribed speech._") {
@@ -233,7 +240,7 @@ func TestWriteMeetingContextJSON(t *testing.T) {
 	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), "# Summary\n"), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
-	if err := writeMeetingContext(&out, bundle, true); err != nil {
+	if err := writeOneMeetingContext(&out, bundle, true); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 
@@ -265,7 +272,7 @@ func TestWriteMeetingContextMarkdownNestsTheSummarysOwnHeadings(t *testing.T) {
 	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), summary), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
-	if err := writeMeetingContext(&out, bundle, false); err != nil {
+	if err := writeOneMeetingContext(&out, bundle, false); err != nil {
 		t.Fatalf("writeMeetingContext: %v", err)
 	}
 	got := out.String()
@@ -282,46 +289,6 @@ func TestWriteMeetingContextMarkdownNestsTheSummarysOwnHeadings(t *testing.T) {
 	// markdown rendering nests it.
 	if bundle.Summary.Markdown != summary {
 		t.Errorf("Summary.Markdown = %q, want it unmodified", bundle.Summary.Markdown)
-	}
-}
-
-func TestDemoteMarkdownHeadings(t *testing.T) {
-	cases := []struct {
-		name  string
-		in    string
-		under int
-		want  string
-	}{
-		{"h2 under h2 becomes h3", "## Decisions", 2, "### Decisions"},
-		{"relative depth is preserved", "## A\n### B", 2, "### A\n#### B"},
-		{"an h1 summary is demoted from its own level", "# Title\n## Sub", 2, "### Title\n#### Sub"},
-		{"already deep enough is untouched", "#### Deep", 2, "#### Deep"},
-		{"no headings is untouched", "just prose\n- a bullet", 2, "just prose\n- a bullet"},
-		{"a hash without a space is not a heading", "#hashtag", 2, "#hashtag"},
-		{"h6 is not pushed past the maximum", "###### Six\n###### Also six", 5, "###### Six\n###### Also six"},
-		{"hashes inside a fence are left alone", "## Real\n\n```sh\n# a comment\n```", 2, "### Real\n\n```sh\n# a comment\n```"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := demoteMarkdownHeadings(tc.in, tc.under); got != tc.want {
-				t.Errorf("demoteMarkdownHeadings(%q, %d) =\n%q\nwant\n%q", tc.in, tc.under, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestFormatMeetingDuration(t *testing.T) {
-	cases := map[int64]string{
-		0:         "0:00",
-		9_000:     "0:09",
-		65_000:    "1:05",
-		600_000:   "10:00",
-		3_725_000: "1:02:05",
-	}
-	for ms, want := range cases {
-		if got := formatMeetingDuration(ms); got != want {
-			t.Errorf("formatMeetingDuration(%d) = %q, want %q", ms, got, want)
-		}
 	}
 }
 
@@ -471,8 +438,13 @@ func TestMeetingsContextUsageErrors(t *testing.T) {
 		args       []string
 		wantStderr string
 	}{
-		{"no id", []string{"context"}, "exactly one meeting id"},
-		{"two ids", []string{"context", "A", "B"}, "exactly one meeting id"},
+		{"no id", []string{"context"}, "at least one meeting id"},
+		{"an empty id", []string{"context", "   "}, "must not be empty"},
+		// A repeated id is a mistake worth refusing: the same transcript twice
+		// spends the context budget on one meeting while reading as two.
+		{"the same id twice", []string{"context", "A", "A"}, "was given more than once"},
+		// --keep-opus names one file, so it cannot hold a bundle.
+		{"--keep-opus with several ids", []string{"context", "A", "B", "--keep-opus", "/tmp/x.opus"}, "cannot hold 2 meetings"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -506,58 +478,6 @@ func TestMeetingsContextRejectsAWhitespaceOutPath(t *testing.T) {
 	_ = stderr
 }
 
-// Content inside a fenced code block must never be rewritten, whichever fence
-// marker and length the summary uses.
-func TestDemoteMarkdownHeadingsLeavesFencedContentAlone(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{
-			name: "a shorter inner fence does not close a longer one",
-			in:   "# Title\n\n````\n```\n# not a heading\n```\n````\n\n## After",
-			want: "### Title\n\n````\n```\n# not a heading\n```\n````\n\n#### After",
-		},
-		{
-			name: "a tilde run does not close a backtick block",
-			in:   "# Title\n```\n# inside\n~~~\n## still inside\n```\n## after",
-			want: "### Title\n```\n# inside\n~~~\n## still inside\n```\n#### after",
-		},
-		{
-			name: "indented fence still counts",
-			in:   "## Real\n\n  ```sh\n  # a comment\n  ```",
-			want: "### Real\n\n  ```sh\n  # a comment\n  ```",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := demoteMarkdownHeadings(tc.in, 2); got != tc.want {
-				t.Errorf("got:\n%q\nwant:\n%q", got, tc.want)
-			}
-		})
-	}
-}
-
-// Clamping at h6 must apply one shift to every heading. Clamping per line left a
-// child shallower than its parent, inverting the nesting.
-func TestDemoteMarkdownHeadingsNeverInvertsNesting(t *testing.T) {
-	got := demoteMarkdownHeadings("# Title\n#### Deep\n##### Deeper", 2)
-
-	levels := make([]int, 0, 3)
-	for _, line := range strings.Split(got, "\n") {
-		levels = append(levels, markdownHeadingLevel(line))
-	}
-	for i := 1; i < len(levels); i++ {
-		if levels[i] < levels[i-1] && i == 2 {
-			t.Errorf("nesting inverted: %v\n%s", levels, got)
-		}
-	}
-	if levels[1] > levels[2] {
-		t.Errorf("child %d is shallower than parent %d: %v\n%s", levels[2], levels[1], levels, got)
-	}
-}
-
 // A speaker id padded with whitespace must still find its declared label.
 func TestBuildMeetingContextMatchesSpeakerLabelsDespiteWhitespace(t *testing.T) {
 	meeting := extractedMeetingFixture(wordsAt(" spk1 ", 0, 200, "hello", "there"), "")
@@ -573,8 +493,421 @@ func TestBuildMeetingContextMatchesSpeakerLabelsDespiteWhitespace(t *testing.T) 
 	}
 }
 
-func TestFormatMeetingDurationClampsNegatives(t *testing.T) {
-	if got := formatMeetingDuration(-3661000); got != "0:00" {
-		t.Errorf("formatMeetingDuration(-3661000) = %q, want 0:00", got)
+// updateContextGolden rewrites the fixtures under testdata/context instead of
+// comparing against them. Regenerate with:
+//
+//	go test ./internal/cassini -run Golden -update-golden
+//
+// A diff in those files is the review signal that the published
+// cassini.meetings.context.v1 bytes changed — the version string is what
+// consumers pin, and until these fixtures existed nothing made a change to the
+// shape visible.
+var updateContextGolden = flag.Bool("update-golden", false, "rewrite the context golden fixtures from the current output")
+
+// goldenContextFixture is the representative meeting the golden files pin.
+//
+// It is its own fixture rather than a reuse of standupWords(): the goldens
+// define "the v1 bytes did not change", so what they cover must not drift when
+// an unrelated test wants different words. It carries every optional field the
+// render can emit — room, created-at, duration, a speaker roster, a summary
+// with its own headings to demote — plus a segment past the hour mark, which is
+// the only way the H:MM:SS citation form gets exercised.
+func goldenContextFixture() meetingContext {
+	words := wordsAt("spk1", 5_000, 200, "we", "should", "ship", "the", "agent", "surface")
+	words = append(words, wordsAt("spk2", 12_400, 200, "agreed", "let's", "do", "it")...)
+	words = append(words, wordsAt("spk1", 3_642_000, 200, "then", "we", "are", "done")...)
+	summary := "## Decisions\n\n- Ship the agent surface.\n\n## Actions\n\n- Erlich: open the PR.\n"
+	return buildMeetingContext("MEETING-GOLDEN-1", extractedMeetingFixture(words, summary), meetingsCatalogEntry{
+		RoomID: "rm_9f2a1c3d4e5b6a70", RoomName: "Weekly Sync",
+	})
+}
+
+func TestMeetingContextGoldenMarkdown(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeOneMeetingContext(&out, goldenContextFixture(), false); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	assertContextGolden(t, "context/single-meeting.md", out.Bytes())
+}
+
+func TestMeetingContextGoldenJSON(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeOneMeetingContext(&out, goldenContextFixture(), true); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	assertContextGolden(t, "context/single-meeting.json", out.Bytes())
+}
+
+func assertContextGolden(t *testing.T, name string, got []byte) {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if *updateContextGolden {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, got, 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		t.Logf("wrote %s (%d bytes)", path, len(got))
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v\nregenerate with `go test ./internal/cassini -run Golden -update-golden`", path, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("%s no longer matches the published bytes.\n--- pinned ---\n%s\n--- produced ---\n%s", path, want, got)
+	}
+}
+
+// writeOneMeetingContext renders a single meeting the way the command does when
+// it is given one id, so the assertions above stay about the bytes rather than
+// about bundle plumbing.
+func writeOneMeetingContext(out io.Writer, bundle meetingContext, asJSON bool) error {
+	return writeMeetingContext(out, meetingcontext.Bundle{Meetings: []meetingContext{bundle}}, asJSON, meetingcontext.RenderOpts{})
+}
+
+// goldenContextBundle is the many-meeting document the bundle goldens pin.
+//
+// The silent meeting sits in the middle on purpose: its rendering ends on a
+// line of text rather than a blank line, and "---" written directly beneath a
+// line of text is a setext heading, not a rule. Putting it last would never
+// exercise the separator that mistake lives in.
+func goldenContextBundle() meetingcontext.Bundle {
+	silent := extractedMeetingFixture(nil, "")
+	silent.Manifest.Meeting.Title = "Silent Retro"
+	silent.Manifest.Meeting.CreatedAtUTC = "2026-08-18T09:00:00Z"
+	silent.Manifest.Meeting.DurationMS = 60_000
+
+	review := extractedMeetingFixture(wordsAt("spk2", 900, 200, "different", "meeting", "same", "room"), "# Backlog\n\n- Cut the stale cards.\n")
+	review.Manifest.Meeting.Title = "Backlog Review"
+	review.Manifest.Meeting.CreatedAtUTC = "2026-08-25T14:05:00Z"
+	review.Manifest.Meeting.DurationMS = 1_500_000
+
+	return meetingcontext.Bundle{Meetings: []meetingContext{
+		goldenContextFixture(),
+		buildMeetingContext("MEETING-GOLDEN-2", silent, meetingsCatalogEntry{}),
+		buildMeetingContext("MEETING-GOLDEN-3", review, meetingsCatalogEntry{RoomID: "rm_9f2a1c3d4e5b6a70", RoomName: "Weekly Sync"}),
+	}}
+}
+
+// The citation form is off by default because it changes bytes consumers have
+// pinned; this golden is what --timestamps produces when it is on.
+func TestMeetingContextGoldenMarkdownWithTimestamps(t *testing.T) {
+	rendered, err := meetingcontext.RenderMarkdown(
+		meetingcontext.Bundle{Meetings: []meetingContext{goldenContextFixture()}},
+		meetingcontext.RenderOpts{Timestamps: true},
+	)
+	if err != nil {
+		t.Fatalf("RenderMarkdown: %v", err)
+	}
+	assertContextGolden(t, "context/single-meeting-timestamps.md", []byte(rendered))
+}
+
+func TestMeetingContextBundleGoldenMarkdown(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeMeetingContext(&out, goldenContextBundle(), false, meetingcontext.RenderOpts{}); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	assertContextGolden(t, "context/three-meetings.md", out.Bytes())
+}
+
+func TestMeetingContextBundleGoldenJSON(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeMeetingContext(&out, goldenContextBundle(), true, meetingcontext.RenderOpts{}); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	assertContextGolden(t, "context/three-meetings.json", out.Bytes())
+}
+
+// A one-meeting bundle must still be the bare v1 document, not a one-element
+// container: that is the shape every existing consumer parses, and the golden
+// above is only meaningful while this holds.
+func TestMeetingContextSingleMeetingJSONIsNotWrapped(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeOneMeetingContext(&out, goldenContextFixture(), true); err != nil {
+		t.Fatalf("writeOneMeetingContext: %v", err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(out.Bytes(), &document); err != nil {
+		t.Fatalf("parse JSON: %v\n%s", err, out.String())
+	}
+	if _, wrapped := document["meetings"]; wrapped {
+		t.Errorf("a single meeting must not gain a meetings array:\n%s", out.String())
+	}
+	if _, ok := document["meeting"]; !ok {
+		t.Errorf("a single meeting must stay the bare v1 document:\n%s", out.String())
+	}
+}
+
+// TestContextBundleKeysAreDeclaredBySchema is the guard against the one drift
+// this format cannot absorb: adding a field to the bundle and forgetting the
+// published schema, which is declared with "additionalProperties": false and so
+// is invalidated by any key it does not name.
+//
+// It is the same guard the portable manifest has, for the same reason: the
+// schema is a document nothing else in CI validates, so drift would be found by
+// a consumer rather than by us. It reads the real schema file and a really
+// produced bundle rather than comparing against a list, which would be a third
+// thing to keep in step.
+func TestContextBundleKeysAreDeclaredBySchema(t *testing.T) {
+	schemaPath := "../../../spec/cassini-meetings-context-v1.schema.json"
+	raw, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", schemaPath, err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("parse %s: %v", schemaPath, err)
+	}
+
+	var out bytes.Buffer
+	if err := writeMeetingContext(&out, goldenContextBundle(), true, meetingcontext.RenderOpts{}); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(out.Bytes(), &document); err != nil {
+		t.Fatalf("parse the produced bundle: %v", err)
+	}
+	assertSchemaDeclares(t, schema, schemaPath, "multiMeetingDocument", document)
+
+	var container struct {
+		Meetings []map[string]json.RawMessage `json:"meetings"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &container); err != nil {
+		t.Fatalf("parse the produced meetings: %v", err)
+	}
+	if len(container.Meetings) == 0 {
+		t.Fatal("the produced bundle has no meetings")
+	}
+	for _, meeting := range container.Meetings {
+		assertSchemaDeclares(t, schema, schemaPath, "meetingContext", meeting)
+		assertNestedSchemaDeclares(t, schema, schemaPath, "meeting", meeting["meeting"])
+		assertNestedSchemaDeclares(t, schema, schemaPath, "summary", meeting["summary"])
+		for _, key := range []struct{ field, def string }{{"speakers", "speaker"}, {"segments", "segment"}} {
+			var items []json.RawMessage
+			if body, ok := meeting[key.field]; ok {
+				if err := json.Unmarshal(body, &items); err != nil {
+					t.Fatalf("parse %s: %v", key.field, err)
+				}
+			}
+			for _, item := range items {
+				assertNestedSchemaDeclares(t, schema, schemaPath, key.def, item)
+			}
+		}
+	}
+}
+
+func assertNestedSchemaDeclares(t *testing.T, schema map[string]any, schemaPath, def string, body json.RawMessage) {
+	t.Helper()
+	if len(body) == 0 {
+		return
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil {
+		t.Fatalf("parse the produced %s: %v", def, err)
+	}
+	assertSchemaDeclares(t, schema, schemaPath, def, object)
+}
+
+func assertSchemaDeclares(t *testing.T, schema map[string]any, schemaPath, def string, object map[string]json.RawMessage) {
+	t.Helper()
+	declaredBy := nested(schema, "$defs", def)
+	if declaredBy == nil {
+		t.Fatalf("%s has no $defs/%s", schemaPath, def)
+	}
+	// The check only means anything while this is false; if it is ever relaxed,
+	// this test should be reconsidered rather than silently pass.
+	if additional, ok := declaredBy["additionalProperties"].(bool); !ok || additional {
+		t.Fatalf("%s: %s.additionalProperties is not false; this test assumes it is", schemaPath, def)
+	}
+	declared, _ := declaredBy["properties"].(map[string]any)
+	var undeclared []string
+	for key := range object {
+		if _, ok := declared[key]; !ok {
+			undeclared = append(undeclared, key)
+		}
+	}
+	sort.Strings(undeclared)
+	if len(undeclared) > 0 {
+		t.Errorf("%s does not declare %s field(s) a produced bundle emits: %v", schemaPath, def, undeclared)
+	}
+}
+
+const bundlableMeetingCatalog = `{
+  "version": "cassini.viewer.catalog.v1",
+  "meetings": [
+    {"id": "MEETING1", "title": "Daily Standup", "dateLabel": "2026-08-11 10:32",
+     "audioPath": "./meetings/MEETING1.opus", "speakerCount": 1, "segmentCount": 2},
+    {"id": "MEETING2", "title": "Backlog Review", "dateLabel": "2026-08-18 09:00",
+     "audioPath": "./meetings/MEETING2.opus", "speakerCount": 1, "segmentCount": 2}
+  ]
+}`
+
+// serveTwoMeetings answers both meetings' asset routes with the same published
+// bytes. What these tests exercise is the bundling, not the audio, and the two
+// stay distinguishable because the bundle takes each meeting's id from the
+// catalog rather than from the file.
+func serveTwoMeetings(opusBody []byte) func(w http.ResponseWriter, r *http.Request) {
+	const assetPrefix = "/index.php/apps/app_api/proxy/gocassini/published/meetings/"
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case meetingsTestCatalogPath:
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cassini-Meeting-Source", "nextcloud-files")
+			fmt.Fprint(w, bundlableMeetingCatalog)
+		case assetPrefix + "MEETING1.opus", assetPrefix + "MEETING2.opus":
+			w.Header().Set("Content-Type", "audio/ogg")
+			w.Header().Set("X-Cassini-Meeting-Source", "nextcloud-files")
+			_, _ = w.Write(opusBody)
+		default:
+			http.NotFound(w, r)
+		}
+	}
+}
+
+// packedOpusForContext packs the shared meeting fixture once and returns its
+// published bytes.
+func packedOpusForContext(t *testing.T) []byte {
+	t.Helper()
+	meetingDir := filepath.Join(t.TempDir(), "good.meeting")
+	if err := writeReadyMeetingBundleFixture(meetingDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
+	sourceOpus := filepath.Join(t.TempDir(), "published.opus")
+	if err := packMeetingBundle(context.Background(), meetingDir, sourceOpus, portablePackOptions{Title: "Daily Standup"}); err != nil {
+		t.Fatalf("pack meeting bundle: %v", err)
+	}
+	published, err := os.ReadFile(sourceOpus)
+	if err != nil {
+		t.Fatalf("read packed opus: %v", err)
+	}
+	return published
+}
+
+// The bundle is the artifact the insight feature is built on: several meetings,
+// one document, one question asked of all of them.
+func TestMeetingsContextBundlesSeveralMeetingsIntoOneDocument(t *testing.T) {
+	requireFFMediaTools(t)
+	fake := newMeetingsFakeNextcloud(t, serveTwoMeetings(packedOpusForContext(t)))
+
+	// Asked for in reverse catalog order, because the document's order is the
+	// caller's order — that is what makes a bundle reproducible from the command
+	// line that produced it.
+	t.Run("markdown", func(t *testing.T) {
+		code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "context", "MEETING2", "MEETING1")
+		if code != 0 {
+			t.Fatalf("exit=%d stderr=%q", code, stderr)
+		}
+		if want := 1; strings.Count(stdout, "\n\n---\n\n") != want {
+			t.Errorf("expected %d separator between two meetings:\n%s", want, stdout)
+		}
+		second, first := strings.Index(stdout, "- Meeting id: `MEETING2`"), strings.Index(stdout, "- Meeting id: `MEETING1`")
+		if second < 0 || first < 0 {
+			t.Fatalf("both meetings should be in the document:\n%s", stdout)
+		}
+		if second > first {
+			t.Errorf("the document is not in the order the ids were given:\n%s", stdout)
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "context", "MEETING2", "MEETING1", "--json")
+		if code != 0 {
+			t.Fatalf("exit=%d stderr=%q", code, stderr)
+		}
+		// Decoding through the published contract rather than a local struct is
+		// the point: what the command writes is what a consumer package reads.
+		bundle, err := meetingcontext.DecodeJSON([]byte(stdout))
+		if err != nil {
+			t.Fatalf("DecodeJSON: %v\n%s", err, stdout)
+		}
+		if len(bundle.Meetings) != 2 {
+			t.Fatalf("got %d meetings, want 2", len(bundle.Meetings))
+		}
+		if bundle.Meetings[0].Meeting.ID != "MEETING2" || bundle.Meetings[1].Meeting.ID != "MEETING1" {
+			t.Errorf("ids = %q, %q; want MEETING2, MEETING1", bundle.Meetings[0].Meeting.ID, bundle.Meetings[1].Meeting.ID)
+		}
+	})
+
+	t.Run("--timestamps cites each passage", func(t *testing.T) {
+		cited := regexp.MustCompile(`\[\d\d:\d\d\]`)
+
+		_, plain, _ := runMeetingsCLI(t, fake.server.URL, "context", "MEETING1")
+		if cited.MatchString(plain) {
+			t.Errorf("citations must be off by default:\n%s", plain)
+		}
+
+		code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "context", "MEETING1", "--timestamps")
+		if code != 0 {
+			t.Fatalf("exit=%d stderr=%q", code, stderr)
+		}
+		if !cited.MatchString(stdout) {
+			t.Errorf("--timestamps produced no MM:SS citation:\n%s", stdout)
+		}
+	})
+}
+
+// A bundle is all of its meetings or none. Dropping the one id the caller
+// cannot read would answer a question asked of two meetings using one, and look
+// right doing it.
+func TestMeetingsContextFailsTheWholeRunWhenOneIDIsUnreadable(t *testing.T) {
+	requireFFMediaTools(t)
+	fake := newMeetingsFakeNextcloud(t, serveTwoMeetings(packedOpusForContext(t)))
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "context", "MEETING1", "SOMEONE-ELSES", "MEETING2")
+
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1 (stderr=%q)", code, stderr)
+	}
+	if strings.Contains(stdout, meetingContextVersion) || strings.Contains(stdout, "# ") {
+		t.Errorf("no document may be emitted when the set is incomplete:\n%s", stdout)
+	}
+	// Which id failed has to be said out loud: the 404 wording is deliberately
+	// the same for "absent" and "you may not read it", so it names no id itself.
+	if !strings.Contains(stderr, `"SOMEONE-ELSES"`) {
+		t.Errorf("stderr does not name the failing id: %q", stderr)
+	}
+}
+
+// The document's order is the caller's order, whichever side of the flags each
+// id was written on. Rotating a run of ids past the flags — what the shared
+// one-positional helper does — would silently reverse them, and a bundle whose
+// meetings came back in a different order than they were asked for is not
+// reproducible from the command line that produced it.
+func TestSplitLeadingMeetingIDsKeepsTheCallersOrder(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"ids first", []string{"A", "B", "--json"}, []string{"A", "B"}},
+		{"flags first", []string{"--json", "A", "B"}, []string{"A", "B"}},
+		{"ids on both sides of a flag", []string{"A", "--json", "B"}, []string{"A", "B"}},
+		{"no ids at all", []string{"--json"}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			leading, rest := splitLeadingMeetingIDs(tc.args)
+
+			fs := flag.NewFlagSet("context", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			fs.Bool("json", false, "")
+			if err := fs.Parse(rest); err != nil {
+				t.Fatalf("parse %v: %v", rest, err)
+			}
+			got, err := meetingContextIDs(append(leading, fs.Args()...))
+			if err != nil {
+				t.Fatalf("meetingContextIDs: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
 	}
 }

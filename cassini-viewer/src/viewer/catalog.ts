@@ -35,6 +35,20 @@ export interface MeetingCatalogEntry {
   // convention of one publish path.
   jobId?: string;
   attemptNumber?: number;
+  // What the meeting holds, so the list and a selection can be described
+  // without fetching a single .opus (D-716): whether the producer sealed a
+  // summary into the file, and how many words its default transcript carries —
+  // the same count `cassini meetings context` reports, so a selection's total
+  // matches the bundle an agent is later handed.
+  //
+  // Both are optional, and their absence is a THIRD state, not a default. An
+  // archive published before these fields existed says nothing about either,
+  // and that silence must read as "unknown" — never as "no summary", never as
+  // "0 words". `undefined` is what carries it: a consumer that reaches for
+  // `entry.hasSummary` as a boolean, or `entry.wordCount` as a number, has to
+  // narrow it first, so the distinction cannot be lost by accident.
+  hasSummary?: boolean;
+  wordCount?: number;
 }
 
 export interface MeetingCatalog {
@@ -167,7 +181,31 @@ function validateMeetingCatalogEntry(
     roomName: optionalRoomString(value.roomName),
     jobId: optionalRoomString(value.jobId),
     attemptNumber: optionalPositiveInteger(value.attemptNumber),
+    // Read leniently for the same reason, and with one extra: a value that is
+    // not a flag or not a count reads as unrecorded rather than as a fact, so
+    // a hand-edited catalog cannot talk the list into claiming a summary that
+    // is not there (D-716).
+    hasSummary: optionalBoolean(value.hasSummary),
+    wordCount: optionalWordCount(value.wordCount),
   };
+}
+
+// optionalBoolean reads an optional flag. Only a real boolean is an answer;
+// everything else — missing, null, the string "false" — means "not recorded",
+// which for hasSummary is the unknown state and not the negative one.
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+// optionalWordCount reads an optional transcript length. Zero is kept, unlike
+// the 1-based ordinal above: a meeting whose transcript came back empty really
+// does have no words, and that is a different statement from an entry that
+// never carried a count at all.
+function optionalWordCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return undefined;
+  }
+  return value;
 }
 
 // optionalPositiveInteger reads an optional 1-based ordinal. Anything that is

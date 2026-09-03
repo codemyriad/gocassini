@@ -2,7 +2,6 @@ package cassini
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,80 +12,16 @@ import (
 	"strings"
 
 	inspectpkg "gocassini/internal/inspect"
+	"gocassini/internal/meetingcontext"
 )
 
-// meetingContextVersion identifies the context bundle's shape. Bumping it is a
-// breaking change for every consumer, so it is versioned from the start.
-const meetingContextVersion = "cassini.meetings.context.v1"
+// The cassini.meetings.context.v1 contract lives in internal/meetingcontext so
+// that consumers outside this CLI — the published read surface, the insight run
+// seam — can name the type they are specified to consume (D-715). These aliases
+// keep this package's own code and tests reading the way they did.
+type meetingContext = meetingcontext.MeetingContext
 
-// meetingContext is one meeting rendered as agent-readable context: what the
-// meeting was, who spoke, the transcript as prose, and the summary if one was
-// generated.
-type meetingContext struct {
-	Version  string                  `json:"version"`
-	Meeting  meetingContextMeeting   `json:"meeting"`
-	Speakers []meetingContextSpeaker `json:"speakers,omitempty"`
-
-	// TranscriptSource says how the prose was produced. Always
-	// "derived-from-words" today, and deliberately explicit: an
-	// operator-published .opus carries no LLM-cleaned readable transcript at
-	// all — only raw-ASR words — so a consumer must not present this text as
-	// one. (Re-exported copies in the static-site export tree do carry a
-	// readable transcript; this command reads the default raw-ASR entry
-	// regardless.)
-	TranscriptSource string `json:"transcriptSource"`
-	// SourceTranscriptID and SourceTranscriptFormat identify the transcript the
-	// prose was derived from, so a claim can be traced back to the file.
-	SourceTranscriptID     string `json:"sourceTranscriptId,omitempty"`
-	SourceTranscriptFormat string `json:"sourceTranscriptFormat,omitempty"`
-	Language               string `json:"language,omitempty"`
-	WordCount              int    `json:"wordCount"`
-
-	Segments []meetingContextSegment `json:"segments"`
-	Summary  meetingContextSummary   `json:"summary"`
-}
-
-type meetingContextMeeting struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
-	CreatedAtUTC string `json:"createdAtUtc,omitempty"`
-	DurationMS   int64  `json:"durationMs,omitempty"`
-	// RoomID and RoomName say which conversation this meeting came out of
-	// (D-640). Both optional — a meeting with no room is an ordinary state —
-	// and both read from the CATALOG entry rather than from the file, because
-	// the room's current name lives only in the catalog.
-	//
-	// They are here because "which room was this?" is a question an agent
-	// summarising a meeting routinely needs answered, and the command the docs
-	// point it at for reading a meeting used to hand back a document that could
-	// not answer it.
-	RoomID   string `json:"roomId,omitempty"`
-	RoomName string `json:"roomName,omitempty"`
-}
-
-type meetingContextSpeaker struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-}
-
-type meetingContextSegment struct {
-	Speaker      string `json:"speaker,omitempty"`
-	SpeakerLabel string `json:"speakerLabel,omitempty"`
-	StartMS      int64  `json:"startMs"`
-	EndMS        int64  `json:"endMs"`
-	Text         string `json:"text"`
-}
-
-// meetingContextSummary carries the generated summary. Present is explicit so a
-// consumer can tell "no summary was generated" from "the summary was empty" —
-// summaries are LLM-gated, and a deployment with no summariser configured
-// publishes transcripts without them.
-type meetingContextSummary struct {
-	Present  bool   `json:"present"`
-	Format   string `json:"format,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Markdown string `json:"markdown,omitempty"`
-}
+const meetingContextVersion = meetingcontext.Version
 
 func runMeetingsContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var cfg meetingsConfig
@@ -96,42 +31,59 @@ func runMeetingsContext(ctx context.Context, args []string, stdout, stderr io.Wr
 	outPath := fs.String("out", "", "write to this file instead of stdout")
 	asJSON := fs.Bool("json", false, "emit JSON instead of markdown")
 	keepOpus := fs.String("keep-opus", "", "also keep the downloaded portable .opus at this path")
+	timestamps := fs.Bool("timestamps", false, "cite each passage's start time in the markdown as MM:SS, or H:MM:SS past an hour (the JSON always carries the raw timings)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini meetings context <meeting-id>
+  cassini meetings context <meeting-id> <meeting-id> [<meeting-id> ...]
   cassini meetings context <meeting-id> --json
   cassini meetings context <meeting-id> --out ./context.md
 
-Print one meeting as context an agent can read: the transcript as
+Print one or more meetings as context an agent can read: the transcript as
 speaker-attributed prose, plus the generated summary when the meeting has one.
+
+Several ids produce ONE document, holding the meetings in the order you named
+them, separated by a --- rule. An id you cannot read fails the whole run: a
+bundle that quietly dropped a meeting would answer a question asked of all of
+them using only some of them, and look right doing it.
 
 The transcript is derived from the recording's word timings — a published
 meeting carries no separately cleaned-up transcript — so it is labelled
 derived-from-words and must not be presented as edited text.
 
-Requires ffprobe on PATH to read the meeting file's metadata.
+Requires ffprobe on PATH to read each meeting file's metadata.
 
 `+"\n")
 		fs.PrintDefaults()
 	}
 
-	if err := fs.Parse(meetingsParseArgs(args)); err != nil {
+	leading, rest := splitLeadingMeetingIDs(args)
+	if err := fs.Parse(rest); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
 	}
-	if fs.NArg() != 1 {
-		fmt.Fprintf(stderr, "context takes exactly one meeting id, got %d arguments: %v\n", fs.NArg(), redactMeetingsArgs(fs.Args()))
-		if meetingsArgsLookLikeFlagsAfterPositional(fs.Args()) {
-			fmt.Fprintf(stderr, "hint=flags must come before the meeting id, or the id must come last\n")
-		}
+	// Anything flag-shaped left over is a flag the caller put after an id, where
+	// Go's flag package stops parsing. Refusing it is not pedantry: taken as an
+	// id it would be echoed back in a failure line, and the likeliest such flag
+	// is --app-password.
+	if meetingsArgsLookLikeFlagsAfterPositional(fs.Args()) {
+		fmt.Fprintf(stderr, "context takes meeting ids, but %d argument(s) after the ids could not be read as ids: %v\n",
+			fs.NArg(), redactMeetingsArgs(fs.Args()))
+		fmt.Fprintf(stderr, "hint=flags must come before the meeting ids, or the ids must come last\n")
 		fs.Usage()
 		return 2
 	}
-	meetingID := strings.TrimSpace(fs.Arg(0))
-	if meetingID == "" {
-		fmt.Fprintf(stderr, "context configuration error: the meeting id must not be empty\n")
+	ids, err := meetingContextIDs(append(leading, fs.Args()...))
+	if err != nil {
+		fmt.Fprintf(stderr, "context configuration error: %v\n", err)
+		fs.Usage()
+		return 2
+	}
+	if len(ids) == 0 {
+		fmt.Fprintf(stderr, "context takes at least one meeting id, got none\n")
+		fs.Usage()
 		return 2
 	}
 	if err := resolveMeetingsConfig(fs, &cfg); err != nil {
@@ -145,48 +97,58 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 	// the payload to stdout AND claim a file had been written.
 	outFile := strings.TrimSpace(*outPath)
 	keepOpusPath := strings.TrimSpace(*keepOpus)
+	if keepOpusPath != "" && len(ids) > 1 {
+		fmt.Fprintf(stderr, "context configuration error: --keep-opus names one file and cannot hold %d meetings; ask for one meeting id, or use `cassini meetings fetch`\n", len(ids))
+		return 2
+	}
 
+	// One catalog fetch for the whole bundle, not one per id. That is the
+	// semantics as much as the saving: a bundle is a set of meetings resolved
+	// against a single view of what this caller may read, so it cannot be
+	// assembled half out of one catalog and half out of a later one.
 	client := newMeetingsClient(cfg)
-	audioURL, listing, err := client.resolveMeeting(ctx, meetingID)
+	listing, err := client.fetchCatalog(ctx)
 	warnAboutMeetingsSource(stderr, listing)
 	if err != nil {
 		return reportMeetingsError(stderr, "context", cfg, err)
 	}
 
-	// The portable reader needs a filesystem path: it shells out to ffprobe to
-	// read the OpusTags. Stage the download in a temp file — and remove it on
-	// every path, since cassini has leaked temp files before.
-	opusPath, cleanup, err := client.stageMeetingOpus(ctx, audioURL, keepOpusPath)
-	if err != nil {
-		return reportMeetingsError(stderr, "context", cfg, err)
-	}
-	defer cleanup()
+	bundle := meetingcontext.Bundle{Meetings: make([]meetingContext, 0, len(ids))}
+	for _, meetingID := range ids {
+		audioURL, entry, err := client.resolveMeetingIn(listing, meetingID)
+		if err != nil {
+			noteMeetingContextFailure(stderr, ids, meetingID)
+			return reportMeetingsError(stderr, "context", cfg, err)
+		}
 
-	meeting, err := inspectpkg.ExtractMeeting(opusPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "context failed: read the downloaded meeting: %v\n", err)
-		return 1
-	}
+		// The portable reader needs a filesystem path: it shells out to ffprobe to
+		// read the OpusTags. Stage the download in a temp file — and remove it on
+		// every path, since cassini has leaked temp files before. The cleanup is
+		// called rather than deferred because a bundle stages its meetings in
+		// turn, and deferring would keep every download on disk until the whole
+		// command finished — N whole meetings, for a command whose output is text.
+		opusPath, cleanup, err := client.stageMeetingOpus(ctx, audioURL, keepOpusPath)
+		if err != nil {
+			noteMeetingContextFailure(stderr, ids, meetingID)
+			return reportMeetingsError(stderr, "context", cfg, err)
+		}
+		meeting, extractErr := inspectpkg.ExtractMeeting(opusPath)
+		cleanup()
+		if extractErr != nil {
+			noteMeetingContextFailure(stderr, ids, meetingID)
+			fmt.Fprintf(stderr, "context failed: read the downloaded meeting: %v\n", extractErr)
+			return 1
+		}
 
-	// The room reaches the bundle from the CATALOG entry, not from the file
-	// (D-640). The artifact carries a room id and no name — a display name is
-	// editable and a sealed recording is not — so the entry is the only place
-	// both halves exist. resolveMeeting already found it; look it up again
-	// rather than widen its signature, and treat a miss as "no room": it cannot
-	// happen after a successful resolve, and an agent reading a transcript is
-	// the wrong caller to fail over a label.
-	var entry meetingsCatalogEntry
-	if found, err := listing.find(meetingID); err == nil {
-		entry = found
+		bundle.Meetings = append(bundle.Meetings, buildMeetingContext(meetingID, meeting, entry))
 	}
-	bundle := buildMeetingContext(meetingID, meeting, entry)
 
 	out, closeOut, err := openMeetingsOutput(outFile, stdout)
 	if err != nil {
 		fmt.Fprintf(stderr, "context failed: %v\n", err)
 		return 1
 	}
-	writeErr := writeMeetingContext(out, bundle, *asJSON)
+	writeErr := writeMeetingContext(out, bundle, *asJSON, meetingcontext.RenderOpts{Timestamps: *timestamps})
 	if closeErr := closeOut(); writeErr == nil {
 		writeErr = closeErr
 	}
@@ -195,13 +157,101 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 		return 1
 	}
 
-	if !bundle.Summary.Present {
-		fmt.Fprintf(stderr, "note=this meeting has no generated summary; the transcript is included on its own\n")
-	}
+	noteMissingSummaries(stderr, bundle)
 	if outFile != "" {
 		fmt.Fprintf(stdout, "meeting_context -> %s\n", outFile)
 	}
 	return 0
+}
+
+// splitLeadingMeetingIDs takes the run of meeting ids off the front of the
+// arguments, so `context A B --json` and `context --json A B` both parse.
+//
+// It replaces meetingsParseArgs for this one command. That helper rotates a
+// single leading positional to the end, which is right for the verbs that take
+// one — but rotating a run of them past the flags reverses `context A --json B`
+// into B, A, and this command's document order is the caller's order. Splitting
+// instead keeps every id where the caller put it.
+func splitLeadingMeetingIDs(args []string) (leading, rest []string) {
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			return args[:i:i], args[i:]
+		}
+	}
+	return args[:len(args):len(args)], nil
+}
+
+// meetingContextIDs validates the ids the caller asked for and returns them in
+// the order they were given, which is the order the document holds them in.
+//
+// A repeated id is refused rather than fetched twice: a bundle is a set of
+// distinct meetings, and the same transcript twice is context spent twice on
+// one meeting while reading as coverage of two.
+func meetingContextIDs(args []string) ([]string, error) {
+	ids := make([]string, 0, len(args))
+	seen := make(map[string]struct{}, len(args))
+	for _, arg := range args {
+		id := strings.TrimSpace(arg)
+		if id == "" {
+			return nil, errors.New("the meeting id must not be empty")
+		}
+		if _, repeated := seen[id]; repeated {
+			return nil, fmt.Errorf("meeting id %q was given more than once; a bundle carries each meeting once", id)
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// noteMeetingContextFailure names which meeting of a bundle failed, before the
+// error itself is reported.
+//
+// A bundle is all of its meetings or none. Without this line the 404 wording —
+// deliberately identical for "absent" and "you may not read it" — does not say
+// which of the ids it is about. Silent for a single id, where the id is already
+// the whole command line.
+func noteMeetingContextFailure(stderr io.Writer, ids []string, meetingID string) {
+	if len(ids) < 2 {
+		return
+	}
+	fmt.Fprintf(stderr, "context failed on meeting id %q; a bundle is all %d of its meetings or none\n", meetingID, len(ids))
+}
+
+// noteMissingSummaries says, per meeting, that the transcript arrived without
+// one — summaries are LLM-gated, so their absence is an ordinary state a caller
+// should still be told about rather than left to infer.
+func noteMissingSummaries(stderr io.Writer, bundle meetingcontext.Bundle) {
+	for _, meeting := range bundle.Meetings {
+		if meeting.Summary.Present {
+			continue
+		}
+		if len(bundle.Meetings) == 1 {
+			fmt.Fprintf(stderr, "note=this meeting has no generated summary; the transcript is included on its own\n")
+			continue
+		}
+		fmt.Fprintf(stderr, "note=meeting %s has no generated summary; its transcript is included on its own\n", meeting.Meeting.ID)
+	}
+}
+
+// resolveMeetingIn resolves one id against a catalog listing already fetched,
+// and hands back the entry as well as the audio URL.
+//
+// The entry is returned rather than looked up a second time because the bundle
+// needs it: the room reaches the document from the catalog, not from the file
+// (D-640) — the artifact carries a room id and no name, since a display name is
+// editable and a sealed recording is not.
+func (c *meetingsClient) resolveMeetingIn(listing meetingsListing, meetingID string) (*url.URL, meetingsCatalogEntry, error) {
+	entry, err := listing.find(meetingID)
+	if err != nil {
+		return nil, meetingsCatalogEntry{}, err
+	}
+	catalogURL, err := c.catalogURL()
+	if err != nil {
+		return nil, entry, err
+	}
+	audioURL, err := resolveMeetingAudioURL(catalogURL, entry)
+	return audioURL, entry, err
 }
 
 // stageMeetingOpus downloads the meeting to a path the portable reader can open.
@@ -230,7 +280,14 @@ func (c *meetingsClient) stageMeetingOpus(ctx context.Context, audioURL *url.URL
 	return opusPath, cleanup, nil
 }
 
-// buildMeetingContext assembles the context bundle from an extracted meeting.
+// buildMeetingContext adapts an extracted meeting and its catalog entry into
+// the published contract.
+//
+// The adaptation lives here, not in internal/meetingcontext, because both
+// inputs are things only this CLI has: inspect.ExtractedMeeting is the product
+// of shelling out to ffprobe, and the catalog entry is a shape of the read
+// surface. Keeping them out of the contract package is what lets a consumer
+// decode and render a bundle with no media tooling at all.
 //
 // catalogID is the id the caller asked for; it wins over the manifest's own
 // meeting id so the bundle can be correlated with the catalog entry it came
@@ -248,33 +305,29 @@ func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting, 
 	if roomID == "" {
 		roomID = strings.TrimSpace(meeting.Manifest.Meeting.RoomID)
 	}
-	roomName := strings.TrimSpace(entry.RoomName)
 
-	bundle := meetingContext{
-		Version: meetingContextVersion,
-		Meeting: meetingContextMeeting{
-			ID:           catalogID,
-			Title:        strings.TrimSpace(meeting.Manifest.Meeting.Title),
-			CreatedAtUTC: strings.TrimSpace(meeting.Manifest.Meeting.CreatedAtUTC),
-			DurationMS:   meeting.Manifest.Meeting.DurationMS,
-			RoomID:       roomID,
-			RoomName:     roomName,
-		},
-		TranscriptSource:       transcriptSourceDerived,
+	input := meetingcontext.BuildInput{
+		ID:                     catalogID,
+		Title:                  meeting.Manifest.Meeting.Title,
+		CreatedAtUTC:           meeting.Manifest.Meeting.CreatedAtUTC,
+		DurationMS:             meeting.Manifest.Meeting.DurationMS,
+		RoomID:                 roomID,
+		RoomName:               entry.RoomName,
 		SourceTranscriptID:     meeting.Transcript.TranscriptID,
 		SourceTranscriptFormat: meeting.Transcript.Format,
 		Language:               meeting.Transcript.Language,
 		WordCount:              meeting.Transcript.WordCount,
-		Segments:               make([]meetingContextSegment, 0, len(segments)),
+		Speakers:               make([]meetingcontext.Speaker, 0, len(meeting.Manifest.Speakers)),
+		Segments:               make([]meetingcontext.Segment, 0, len(segments)),
 	}
 	for _, speaker := range meeting.Manifest.Speakers {
-		bundle.Speakers = append(bundle.Speakers, meetingContextSpeaker{
+		input.Speakers = append(input.Speakers, meetingcontext.Speaker{
 			ID:    speaker.ID,
 			Label: speakerLabel(speaker.ID, labels),
 		})
 	}
 	for _, segment := range segments {
-		bundle.Segments = append(bundle.Segments, meetingContextSegment{
+		input.Segments = append(input.Segments, meetingcontext.Segment{
 			Speaker:      segment.Speaker,
 			SpeakerLabel: segment.SpeakerLabel,
 			StartMS:      segment.StartMS,
@@ -283,231 +336,24 @@ func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting, 
 		})
 	}
 	if len(meeting.SummaryMarkdown) > 0 {
-		bundle.Summary = meetingContextSummary{
+		input.Summary = meetingcontext.Summary{
 			Present:  true,
 			Format:   meeting.SummaryFormat(),
 			Model:    meeting.SummaryModel(),
 			Markdown: string(meeting.SummaryMarkdown),
 		}
 	}
-	return bundle
+	return meetingcontext.Build(input)
 }
 
-func writeMeetingContext(out io.Writer, bundle meetingContext, asJSON bool) error {
+func writeMeetingContext(out io.Writer, bundle meetingcontext.Bundle, asJSON bool, opts meetingcontext.RenderOpts) error {
 	if asJSON {
-		encoder := json.NewEncoder(out)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(bundle)
+		return meetingcontext.EncodeJSON(out, bundle)
 	}
-	return writeMeetingContextMarkdown(out, bundle)
-}
-
-// writeMeetingContextMarkdown renders the bundle as markdown, the shape an agent
-// reads directly.
-func writeMeetingContextMarkdown(out io.Writer, bundle meetingContext) error {
-	title := bundle.Meeting.Title
-	if title == "" {
-		title = bundle.Meeting.ID
+	rendered, err := meetingcontext.RenderMarkdown(bundle, opts)
+	if err != nil {
+		return err
 	}
-	buf := &strings.Builder{}
-	fmt.Fprintf(buf, "# %s\n\n", title)
-
-	fmt.Fprintf(buf, "- Meeting id: `%s`\n", bundle.Meeting.ID)
-	// The room, when there is one. Named as "Room" with the id in backticks
-	// beside it, because the id is what `meetings list --room` takes and the
-	// name is not — an agent that copies the label instead of the id gets an
-	// empty list and no explanation.
-	if bundle.Meeting.RoomID != "" || bundle.Meeting.RoomName != "" {
-		switch {
-		case bundle.Meeting.RoomName != "" && bundle.Meeting.RoomID != "":
-			fmt.Fprintf(buf, "- Room: %s (`%s`)\n", bundle.Meeting.RoomName, bundle.Meeting.RoomID)
-		case bundle.Meeting.RoomID != "":
-			fmt.Fprintf(buf, "- Room: `%s`\n", bundle.Meeting.RoomID)
-		default:
-			fmt.Fprintf(buf, "- Room: %s\n", bundle.Meeting.RoomName)
-		}
-	}
-	if bundle.Meeting.CreatedAtUTC != "" {
-		fmt.Fprintf(buf, "- Recorded (UTC): %s\n", bundle.Meeting.CreatedAtUTC)
-	}
-	if bundle.Meeting.DurationMS > 0 {
-		fmt.Fprintf(buf, "- Duration: %s\n", formatMeetingDuration(bundle.Meeting.DurationMS))
-	}
-	if len(bundle.Speakers) > 0 {
-		labels := make([]string, 0, len(bundle.Speakers))
-		for _, speaker := range bundle.Speakers {
-			labels = append(labels, speaker.Label)
-		}
-		fmt.Fprintf(buf, "- Speakers: %s\n", strings.Join(labels, ", "))
-	}
-	fmt.Fprintf(buf, "- Words: %d\n", bundle.WordCount)
-	fmt.Fprintf(buf, "- Transcript source: `%s`\n\n", bundle.TranscriptSource)
-
-	fmt.Fprint(buf, "## Summary\n\n")
-	if bundle.Summary.Present {
-		// The summary is authored markdown with its own headings. Demote them so
-		// they nest under this section instead of reading as siblings of
-		// "## Summary" and "## Transcript" — a consumer splitting the document on
-		// h2 would otherwise take the summary's own sections for top-level ones.
-		fmt.Fprintf(buf, "%s\n", demoteMarkdownHeadings(strings.TrimRight(bundle.Summary.Markdown, "\n"), 2))
-	} else {
-		fmt.Fprint(buf, "_No summary was generated for this meeting._\n")
-	}
-
-	fmt.Fprint(buf, "\n## Transcript\n\n")
-	fmt.Fprint(buf, "_Assembled from the recording's word timings, not from an edited transcript._\n\n")
-	if len(bundle.Segments) == 0 {
-		fmt.Fprint(buf, "_This meeting has no transcribed speech._\n")
-	}
-	for _, segment := range bundle.Segments {
-		if segment.SpeakerLabel != "" {
-			fmt.Fprintf(buf, "**%s:** %s\n\n", segment.SpeakerLabel, segment.Text)
-			continue
-		}
-		fmt.Fprintf(buf, "%s\n\n", segment.Text)
-	}
-
-	_, err := io.WriteString(out, buf.String())
+	_, err = io.WriteString(out, rendered)
 	return err
-}
-
-// maxMarkdownHeadingLevel is the deepest heading markdown defines; a heading
-// already this deep is left alone rather than gaining a seventh "#", which
-// renders as literal text.
-const maxMarkdownHeadingLevel = 6
-
-// demoteMarkdownHeadings pushes every ATX heading in body down so the shallowest
-// one sits just below under. Relative depth is preserved, and text inside fenced
-// code blocks is left untouched.
-func demoteMarkdownHeadings(body string, under int) string {
-	lines := strings.Split(body, "\n")
-
-	shallowest, deepest := 0, 0
-	fence := markdownFence{}
-	for _, line := range lines {
-		if fence.toggles(line) {
-			continue
-		}
-		if fence.open() {
-			continue
-		}
-		if level := markdownHeadingLevel(line); level > 0 {
-			if shallowest == 0 || level < shallowest {
-				shallowest = level
-			}
-			if level > deepest {
-				deepest = level
-			}
-		}
-	}
-	if shallowest == 0 {
-		return body
-	}
-	// One shift for every heading, clamped so the deepest still fits. Clamping
-	// per line instead would leave a child shallower than its parent, inverting
-	// the nesting this exists to preserve.
-	shift := under + 1 - shallowest
-	if headroom := maxMarkdownHeadingLevel - deepest; shift > headroom {
-		shift = headroom
-	}
-	if shift <= 0 {
-		return body
-	}
-
-	fence = markdownFence{}
-	for i, line := range lines {
-		if fence.toggles(line) {
-			continue
-		}
-		if fence.open() {
-			continue
-		}
-		if markdownHeadingLevel(line) == 0 {
-			continue
-		}
-		lines[i] = strings.Repeat("#", shift) + line
-	}
-	return strings.Join(lines, "\n")
-}
-
-// markdownFence tracks whether the current line sits inside a fenced code block.
-//
-// It records the opening fence's marker and length, because per CommonMark only a
-// run of the same character at least as long closes it. Treating any ``` or ~~~
-// as a toggle got this wrong twice: a nested shorter fence inside a longer one
-// closed the block early, and a ~~~ was accepted as the closer of a ``` block —
-// either way the code inside was then rewritten as if it were prose.
-type markdownFence struct {
-	marker rune
-	length int
-}
-
-func (f *markdownFence) open() bool { return f.length > 0 }
-
-// toggles reports whether line is a fence delimiter, updating the state if so.
-func (f *markdownFence) toggles(line string) bool {
-	marker, length := markdownFenceRun(line)
-	if length == 0 {
-		return false
-	}
-	if !f.open() {
-		f.marker, f.length = marker, length
-		return true
-	}
-	if marker == f.marker && length >= f.length {
-		f.marker, f.length = 0, 0
-		return true
-	}
-	// A different or shorter run inside an open block is content, not a closer.
-	return false
-}
-
-// markdownFenceRun returns the fence character and run length of a fence line,
-// or a zero length when the line is not one.
-func markdownFenceRun(line string) (rune, int) {
-	trimmed := strings.TrimLeft(line, " ")
-	for _, marker := range []rune{'`', '~'} {
-		length := 0
-		for _, r := range trimmed {
-			if r != marker {
-				break
-			}
-			length++
-		}
-		if length >= 3 {
-			return marker, length
-		}
-	}
-	return 0, 0
-}
-
-// markdownHeadingLevel returns the ATX heading level of line, or 0 when it is
-// not a heading. A run of "#" must be followed by a space to be a heading.
-func markdownHeadingLevel(line string) int {
-	level := 0
-	for level < len(line) && line[level] == '#' {
-		level++
-	}
-	if level == 0 || level > maxMarkdownHeadingLevel {
-		return 0
-	}
-	if level == len(line) || line[level] != ' ' {
-		return 0
-	}
-	return level
-}
-
-// formatMeetingDuration renders milliseconds as h:mm:ss or m:ss, whichever fits.
-func formatMeetingDuration(durationMS int64) string {
-	if durationMS < 0 {
-		durationMS = 0
-	}
-	totalSeconds := durationMS / 1000
-	hours := totalSeconds / 3600
-	minutes := (totalSeconds % 3600) / 60
-	seconds := totalSeconds % 60
-	if hours > 0 {
-		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
-	}
-	return fmt.Sprintf("%d:%02d", minutes, seconds)
 }

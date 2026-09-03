@@ -9,10 +9,12 @@ import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
 import {
+  artifactContentFields,
   buildDisplayTranscriptFromArtifacts,
   describeMeeting,
   describeSpeechToTextVariant,
   preferredPortableTitle,
+  portableContentFields,
   portableRoomFields,
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
@@ -25,6 +27,10 @@ function writePublishedPortableProbeFixture(
   sourceDir: string,
   meetingId: string,
   meeting: Record<string, unknown>,
+  // What the file holds, for the tests that care: the transcript's words and
+  // the summary the producer sealed in. Both default to what a minimal fixture
+  // has always had — an empty transcript and no summary.
+  contents: { words?: string[]; summaryMarkdown?: string } = {},
 ) {
   const encode = (value: unknown) => {
     const raw = Buffer.from(JSON.stringify(value), "utf8");
@@ -36,7 +42,17 @@ function writePublishedPortableProbeFixture(
       gzipBytes: gzip.byteLength,
     };
   };
-  const body = encode({ format: "cassini.words.v1", wordCount: 0, items: [] });
+  const words = contents.words ?? [];
+  const body = encode({
+    format: "cassini.words.v1",
+    wordCount: words.length,
+    items: words.map((text, index) => ({
+      id: `w_${index}`,
+      text,
+      startMs: index * 500,
+      endMs: index * 500 + 400,
+    })),
+  });
   const manifest = encode({
     kind: "cassini-portable-meeting",
     version: 1,
@@ -51,6 +67,7 @@ function writePublishedPortableProbeFixture(
       role: "raw-asr",
       default: true,
       format: "cassini.words.v1",
+      wordCount: words.length,
       payloadRef: {
         prefix: "CASSINI_TX_RAW_ASR_PAYLOAD_",
         chunkCount: 1,
@@ -61,6 +78,13 @@ function writePublishedPortableProbeFixture(
         encoding: "base64url+gzip+utf8json",
       },
     }],
+    ...(contents.summaryMarkdown === undefined ? {} : {
+      attachments: [{
+        name: "summary.md",
+        mime: "text/markdown",
+        contentBase64: Buffer.from(contents.summaryMarkdown, "utf8").toString("base64"),
+      }],
+    }),
   });
   writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
   writeFileSync(
@@ -288,6 +312,162 @@ describe("portableRoomFields", () => {
     }
   });
 
+});
+
+describe("portableContentFields", () => {
+  const summaryAttachment = (markdown: string) => ({
+    name: "summary.md",
+    mime: "text/markdown",
+    contentBase64: Buffer.from(markdown, "utf8").toString("base64"),
+  });
+
+  const withWords = (count: number) => ({
+    transcripts: [{ id: "raw-asr", role: "raw-asr", default: true, wordCount: count }],
+  });
+
+  it("reports the sealed summary and the default transcript's word count", () => {
+    expect(
+      portableContentFields({
+        ...withWords(3468),
+        attachments: [summaryAttachment("# Weekly Sync\n\n- Ship it.\n")],
+      }),
+    ).toEqual({ hasSummary: true, wordCount: 3468 });
+  });
+
+  it("says false, not nothing, when the file carries no summary", () => {
+    // The exporter read the file, so "no summary" is a fact it can state. Only
+    // an archive published before D-716 has nothing to say, and it says that by
+    // having no key at all.
+    expect(portableContentFields(withWords(12))).toEqual({ hasSummary: false, wordCount: 12 });
+    expect(portableContentFields({ ...withWords(12), attachments: [] })).toEqual({
+      hasSummary: false,
+      wordCount: 12,
+    });
+  });
+
+  it("treats an empty or undecodable summary attachment as no summary", () => {
+    // Matches readPortableSummaryMarkdown: a damaged attachment costs the
+    // summary, not the export.
+    for (const attachment of [
+      summaryAttachment("   \n"),
+      { name: "summary.md", contentBase64: "////" },
+      { name: "summary.md", contentBase64: 7 },
+      { name: "notes.md", contentBase64: Buffer.from("# Notes").toString("base64") },
+      null,
+    ]) {
+      expect(portableContentFields({ ...withWords(1), attachments: [attachment] })).toEqual({
+        hasSummary: false,
+        wordCount: 1,
+      });
+    }
+  });
+
+  it("matches the summary attachment by name, case-insensitively", () => {
+    expect(
+      portableContentFields({
+        ...withWords(1),
+        attachments: [{ name: " Summary.MD ", contentBase64: Buffer.from("# S").toString("base64") }],
+      }),
+    ).toEqual({ hasSummary: true, wordCount: 1 });
+  });
+
+  it("counts the decoded body when the manifest entry declares no wordCount", () => {
+    // The packer writes wordCount with omitempty, so a genuinely empty
+    // transcript and an unstated count look the same on the wire; the decoded
+    // items settle it.
+    expect(
+      portableContentFields({
+        transcripts: [{ id: "raw-asr", role: "raw-asr", default: true }],
+        transcript: { items: [{ text: "one" }, { text: "two" }] },
+      }),
+    ).toEqual({ hasSummary: false, wordCount: 2 });
+    expect(
+      portableContentFields({
+        transcripts: [{ id: "raw-asr", role: "raw-asr", default: true }],
+        transcript: { items: [] },
+      }),
+    ).toEqual({ hasSummary: false, wordCount: 0 });
+  });
+
+  it("counts the body, not the index entry, when the two disagree", () => {
+    // The only case where the choice matters. Every decoded item is one word
+    // and becomes one segment, so the entry's own segmentCount is already this
+    // number — publishing the declared one would put two answers to the same
+    // question in one catalog entry, and contradict the bundle the agent gets.
+    expect(
+      portableContentFields({
+        transcripts: [{ id: "raw-asr", role: "raw-asr", default: true, wordCount: 1200 }],
+        transcript: { items: [{ text: "one" }, { text: "two" }] },
+      }),
+    ).toEqual({ hasSummary: false, wordCount: 2 });
+  });
+
+  it("counts the DEFAULT transcript, not the first or the longest", () => {
+    // The count has to be the one `cassini meetings context` reports for the
+    // same meeting, or a Prepare total disagrees with the bundle it produces.
+    expect(
+      portableContentFields({
+        transcripts: [
+          { id: "canary", role: "raw-asr", wordCount: 900 },
+          { id: "parakeet", role: "raw-asr", default: true, wordCount: 1200 },
+        ],
+      }),
+    ).toEqual({ hasSummary: false, wordCount: 1200 });
+  });
+
+  it("omits wordCount entirely when nothing states one", () => {
+    // Absent means unknown. A 0 here would tell the Prepare panel this meeting
+    // contributes nothing to the total, which is a different claim.
+    expect(portableContentFields({ transcripts: [{ id: "raw-asr", role: "raw-asr" }] })).toEqual({
+      hasSummary: false,
+    });
+    expect(portableContentFields({})).toEqual({ hasSummary: false });
+    expect(portableContentFields(null)).toEqual({ hasSummary: false });
+  });
+
+  it("ignores a wordCount that is not a count", () => {
+    for (const wordCount of ["1200", -3, 1.5, null]) {
+      expect(
+        portableContentFields({
+          transcripts: [{ id: "raw-asr", role: "raw-asr", default: true, wordCount }],
+        }),
+      ).toEqual({ hasSummary: false });
+    }
+  });
+});
+
+describe("artifactContentFields", () => {
+  it("reads both facts out of a directory pack's manifest.json", () => {
+    expect(
+      artifactContentFields({
+        files: { audio: "meeting.webm", summary: "summary.md" },
+        wordCount: 3468,
+      }),
+    ).toEqual({ hasSummary: true, wordCount: 3468 });
+  });
+
+  it("says no summary when the pack never generated one", () => {
+    // files.summary is written only when a summary exists
+    // (internal/transcribe/format.go), so its absence is an answer.
+    expect(artifactContentFields({ files: { audio: "meeting.webm" }, wordCount: 0 })).toEqual({
+      hasSummary: false,
+      wordCount: 0,
+    });
+  });
+
+  it("omits wordCount for a manifest that states none", () => {
+    expect(artifactContentFields({ files: { audio: "meeting.webm" } })).toEqual({
+      hasSummary: false,
+    });
+  });
+
+  it("claims nothing about a pack it found no manifest for", () => {
+    // readManifest returns {} when there is no manifest.json, and "we have no
+    // metadata" must not be published as "this meeting has no summary".
+    expect(artifactContentFields({})).toEqual({});
+    expect(artifactContentFields(null)).toEqual({});
+    expect(artifactContentFields({ wordCount: 12 })).toEqual({ wordCount: 12 });
+  });
 });
 
 describe("preferredPortableTitle", () => {
@@ -1345,6 +1525,66 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
       expect("roomName" in withoutRoom).toBe(false);
       // The version must be untouched: five unlinked readers check it for exact
       // equality, so the new fields have to be purely additive.
+      expect(catalog.version).toBe("cassini.viewer.catalog.v1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // D-716: the browse list and the Prepare panel size and gap-check a whole
+  // selection. If those two facts are not in the catalog, answering "which of
+  // these have a summary, and how many words is this selection" costs one
+  // ranged fetch per meeting — which is the cost the catalog exists to avoid.
+  it("carries summary presence and word count from the .opus into the catalog entry", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-content-"));
+    try {
+      const distDir = join(root, "dist");
+      mkdirSync(distDir, { recursive: true });
+
+      const stubBinDir = join(root, "bin");
+      mkdirSync(stubBinDir, { recursive: true });
+      const stubPath = join(stubBinDir, "ffprobe");
+      writeFileSync(stubPath, '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nexec cat "${last}.ffprobe.json"\n');
+      chmodSync(stubPath, 0o755);
+
+      const sourceDir = join(root, "source");
+      mkdirSync(sourceDir, { recursive: true });
+      writePublishedPortableProbeFixture(
+        sourceDir,
+        "01JZ8K3M4N5P6Q7R8S9T0VWXYZ",
+        { id: "01JZ8K3M4N5P6Q7R8S9T0VWXYZ", title: "Weekly Sync", createdAtUtc: "2026-08-11T10:32:00Z" },
+        { words: ["ship", "it", "today"], summaryMarkdown: "# Weekly Sync\n\n- Ship it.\n" },
+      );
+      writePublishedPortableProbeFixture(
+        sourceDir,
+        "01JZ8K3M4N5P6Q7R8S9T0VWXZZ",
+        { id: "01JZ8K3M4N5P6Q7R8S9T0VWXZZ", title: "Weekly Sync", createdAtUtc: "2026-08-12T10:32:00Z" },
+        { words: ["nobody", "summarised", "this", "one"] },
+      );
+
+      const outputDir = join(root, "out");
+      execFileSync(
+        process.execPath,
+        [scriptPath, "--source-dir", sourceDir, "--output-dir", outputDir, "--recordings-base-url", "https://example.test/"],
+        {
+          env: { ...process.env, CASSINI_VIEWER_DIST_DIR: distDir, PATH: `${stubBinDir}:${process.env.PATH}` },
+          encoding: "utf8",
+        },
+      );
+
+      const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
+      const byId = new Map(catalog.meetings.map((meeting: { id: string }) => [meeting.id, meeting]));
+      expect(byId.get("01JZ8K3M4N5P6Q7R8S9T0VWXYZ")).toMatchObject({
+        hasSummary: true,
+        wordCount: 3,
+      });
+      // Unlike the room fields, "no summary" IS shipped: the exporter opened
+      // the file, so it can state the negative. Absence is reserved for an
+      // archive published before the field existed.
+      expect(byId.get("01JZ8K3M4N5P6Q7R8S9T0VWXZZ")).toMatchObject({
+        hasSummary: false,
+        wordCount: 4,
+      });
       expect(catalog.version).toBe("cassini.viewer.catalog.v1");
     } finally {
       rmSync(root, { recursive: true, force: true });

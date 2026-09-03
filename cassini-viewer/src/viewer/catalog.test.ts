@@ -157,6 +157,87 @@ describe("validateMeetingCatalog", () => {
     }
   });
 
+  it("carries whether a meeting has a summary and how many words it holds", () => {
+    // Same trap as the room and lineage fields above: the entry is rebuilt from
+    // an explicit literal, so a field missing there is dropped at load with no
+    // error even though the browser just fetched it (D-716).
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
+          audioPath: "./meetings/01K3Q7W8ZC9F0MJXQ2NB8V4RTD.opus",
+          title: "Weekly Sync",
+          dateLabel: "2026-08-11 10:32",
+          hasSummary: true,
+          wordCount: 3468,
+        },
+      ],
+    });
+
+    expect(catalog.meetings[0]?.hasSummary).toBe(true);
+    expect(catalog.meetings[0]?.wordCount).toBe(3468);
+  });
+
+  it("keeps 'no summary' and 'no words' distinct from 'we do not know'", () => {
+    // The whole point of the pair. An archive published before these fields
+    // existed carries neither, and the browse list must show that as unknown
+    // rather than as a meeting with no summary; a meeting the exporter did read
+    // states false and 0 outright.
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "stated",
+          audioPath: "./meetings/stated.opus",
+          title: "Silent room",
+          dateLabel: "2026-08-11 10:32",
+          hasSummary: false,
+          wordCount: 0,
+        },
+        {
+          id: "legacy",
+          audioPath: "./meetings/legacy.opus",
+          title: "Published before D-716",
+          dateLabel: "2026-01-04 09:00",
+        },
+      ],
+    });
+
+    expect(catalog.meetings[0]?.hasSummary).toBe(false);
+    expect(catalog.meetings[0]?.wordCount).toBe(0);
+    expect(catalog.meetings[1]?.hasSummary).toBeUndefined();
+    expect(catalog.meetings[1]?.wordCount).toBeUndefined();
+  });
+
+  it("reads a bad summary flag or word count as not recorded", () => {
+    // Lenient like the room fields: one stray value in a hand-edited or
+    // third-party catalog must not take down the whole meeting list, and a
+    // coerced one would invent a fact — "false" is a non-empty string.
+    for (const [hasSummary, wordCount] of [
+      ["true", "3468"],
+      [1, -1],
+      [null, 1.5],
+      [undefined, null],
+    ]) {
+      const catalog = validateMeetingCatalog({
+        version: "cassini.viewer.catalog.v1",
+        meetings: [
+          {
+            id: "meeting-a",
+            audioPath: "./meetings/meeting-a.opus",
+            title: "Weekly Sync",
+            dateLabel: "2026-08-11 10:32",
+            hasSummary,
+            wordCount,
+          },
+        ],
+      });
+      expect(catalog.meetings[0]?.hasSummary).toBeUndefined();
+      expect(catalog.meetings[0]?.wordCount).toBeUndefined();
+    }
+  });
+
   it("rejects invalid catalog versions", () => {
     expect(() =>
       validateMeetingCatalog({

@@ -184,6 +184,10 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       // Spread last and conditionally, so a meeting with no room ships no room
       // keys at all rather than two empty strings.
       ...portableRoomFields(portable),
+      // What the file holds, read out of the manifest we already decoded, so
+      // the list can say which meetings have a summary and a selection can be
+      // sized without fetching one .opus (D-716).
+      ...portableContentFields(portable),
     };
   }
 
@@ -204,6 +208,7 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       speakerCount: manifest.speakerCount ?? 0,
       segmentCount: manifest.segmentCount ?? 0,
       digestDurationMs: manifest.digestDurationMs ?? 0,
+      ...artifactContentFields(manifest),
     };
   }
 
@@ -222,6 +227,7 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
     speakerCount: targetManifest.speakerCount ?? 0,
     segmentCount: targetManifest.segmentCount ?? 0,
     digestDurationMs: targetManifest.digestDurationMs ?? 0,
+    ...artifactContentFields(targetManifest),
   };
 }
 
@@ -1233,6 +1239,114 @@ export function portableRoomFields(portable) {
   }
   if (typeof attemptNumber === "number" && Number.isInteger(attemptNumber) && attemptNumber > 0) {
     fields.attemptNumber = attemptNumber;
+  }
+  return fields;
+}
+
+// summaryAttachmentName is what the packer files the generated meeting summary
+// under (internal/cassini/portable_meeting.go), and what every reader — the Go
+// one in internal/inspect, readPortableSummaryMarkdown in src/viewer/portable.ts
+// — matches on.
+const summaryAttachmentName = "summary.md";
+
+// portableContentFields returns what a catalog entry needs to describe a
+// meeting's contents without anyone fetching the file (D-716): whether the
+// producer sealed a summary into it, and how long its transcript is.
+//
+// These two questions are asked of a SET of meetings — the browse list marks
+// which have a summary, and the Prepare panel totals the words across a
+// selection and discloses the gaps in it — so answering them per meeting would
+// mean a ranged fetch of every .opus in the archive to read facts that are
+// already in an index we hold.
+//
+// A field is omitted, never guessed. An entry that carries no wordCount says
+// "unknown", which is what an archive published before this existed honestly
+// knows; `wordCount: 0` would be a claim that the meeting has no words.
+//
+// The count is the DEFAULT raw transcript's, which is the same one
+// `cassini meetings context` reports (internal/inspect/extract_meeting.go), so
+// a Prepare total matches the bundle the agent is eventually handed.
+//
+// It is counted from the decoded body, not read from the index entry's declared
+// `wordCount`. The body is what everything else here publishes: every item is
+// one word (buildTranscriptWordsFromPortable rejects the file otherwise) and
+// becomes one segment, so the entry's own `segmentCount` is already this
+// number. A declared count that disagreed would put two different answers to
+// one question in the same catalog entry, and contradict the bundle above.
+//
+// The declared count is the fallback for a caller holding only the index — the
+// body settles the empty-transcript question directly, so the `> 0` guard that
+// works around the packer's `omitempty` is needed only there.
+export function portableContentFields(portable) {
+  const fields = { hasSummary: portableSummaryPresent(portable) };
+  const items = portable?.transcript?.items;
+  if (Array.isArray(items)) {
+    fields.wordCount = items.length;
+    return fields;
+  }
+  const declared = pickPortableEntry(portable?.transcripts, "", "")?.wordCount;
+  if (typeof declared === "number" && Number.isInteger(declared) && declared > 0) {
+    fields.wordCount = declared;
+  }
+  return fields;
+}
+
+// portableSummaryPresent reports whether the file carries a usable summary,
+// matching readPortableSummaryMarkdown in src/viewer/portable.ts: named
+// summary.md, case-insensitively, and decoding to something other than
+// whitespace. A damaged or empty attachment is no summary rather than an
+// export failure — the catalog says what a reader would find.
+function portableSummaryPresent(portable) {
+  const attachments = Array.isArray(portable?.attachments) ? portable.attachments : [];
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") {
+      continue;
+    }
+    const name = typeof attachment.name === "string" ? attachment.name.trim().toLowerCase() : "";
+    if (name !== summaryAttachmentName || typeof attachment.contentBase64 !== "string") {
+      continue;
+    }
+    let text;
+    try {
+      // base64.StdEncoding, unlike the base64url the CASSINI_PAYLOAD_* chunks
+      // use — Node's decoder accepts either alphabet. fatal:true so undecodable
+      // bytes fall through to "no summary" instead of yielding replacement
+      // characters that would pass the emptiness test.
+      text = new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.from(attachment.contentBase64, "base64"),
+      );
+    } catch {
+      continue;
+    }
+    if (text.trim() !== "") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// artifactContentFields is portableContentFields for a pre-portable directory
+// pack, whose manifest.json states both facts outright: a top-level wordCount,
+// and files.summary written only when a summary was actually generated
+// (internal/transcribe/format.go). The legacy format gains no fields, but these
+// two are already in the metadata this branch reads, and a browse list that
+// said "unknown" for a meeting it can see the answer for would be needlessly
+// worse.
+//
+// A pack with no manifest.json at all reads back as {} (readManifest), and
+// "there is no metadata" is not the same claim as "there is no summary" — the
+// one thing this must never say. So hasSummary is stated only when there is a
+// files map that could have named a summary and did not.
+export function artifactContentFields(manifest) {
+  const files = manifest?.files;
+  const fields = {};
+  if (files && typeof files === "object") {
+    const summaryFile = typeof files.summary === "string" ? files.summary.trim() : "";
+    fields.hasSummary = summaryFile !== "";
+  }
+  const wordCount = manifest?.wordCount;
+  if (typeof wordCount === "number" && Number.isInteger(wordCount) && wordCount >= 0) {
+    fields.wordCount = wordCount;
   }
   return fields;
 }

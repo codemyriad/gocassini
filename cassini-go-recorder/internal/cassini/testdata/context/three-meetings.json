@@ -1,0 +1,129 @@
+{
+  "version": "cassini.meetings.context.v1",
+  "meetings": [
+    {
+      "version": "cassini.meetings.context.v1",
+      "meeting": {
+        "id": "MEETING-GOLDEN-1",
+        "title": "Daily Standup",
+        "createdAtUtc": "2026-08-11T10:32:00Z",
+        "durationMs": 3725000,
+        "roomId": "rm_9f2a1c3d4e5b6a70",
+        "roomName": "Weekly Sync"
+      },
+      "speakers": [
+        {
+          "id": "spk1",
+          "label": "Erlich"
+        },
+        {
+          "id": "spk2",
+          "label": "Monica"
+        }
+      ],
+      "transcriptSource": "derived-from-words",
+      "sourceTranscriptId": "raw-asr",
+      "sourceTranscriptFormat": "cassini.words.v1",
+      "language": "en",
+      "wordCount": 14,
+      "segments": [
+        {
+          "speaker": "spk1",
+          "speakerLabel": "Erlich",
+          "startMs": 5000,
+          "endMs": 6100,
+          "text": "we should ship the agent surface"
+        },
+        {
+          "speaker": "spk2",
+          "speakerLabel": "Monica",
+          "startMs": 12400,
+          "endMs": 13100,
+          "text": "agreed let's do it"
+        },
+        {
+          "speaker": "spk1",
+          "speakerLabel": "Erlich",
+          "startMs": 3642000,
+          "endMs": 3642700,
+          "text": "then we are done"
+        }
+      ],
+      "summary": {
+        "present": true,
+        "format": "markdown",
+        "model": "summary-model",
+        "markdown": "## Decisions\n\n- Ship the agent surface.\n\n## Actions\n\n- Erlich: open the PR.\n"
+      }
+    },
+    {
+      "version": "cassini.meetings.context.v1",
+      "meeting": {
+        "id": "MEETING-GOLDEN-2",
+        "title": "Silent Retro",
+        "createdAtUtc": "2026-08-18T09:00:00Z",
+        "durationMs": 60000
+      },
+      "speakers": [
+        {
+          "id": "spk1",
+          "label": "Erlich"
+        },
+        {
+          "id": "spk2",
+          "label": "Monica"
+        }
+      ],
+      "transcriptSource": "derived-from-words",
+      "sourceTranscriptId": "raw-asr",
+      "sourceTranscriptFormat": "cassini.words.v1",
+      "language": "en",
+      "wordCount": 0,
+      "segments": [],
+      "summary": {
+        "present": false
+      }
+    },
+    {
+      "version": "cassini.meetings.context.v1",
+      "meeting": {
+        "id": "MEETING-GOLDEN-3",
+        "title": "Backlog Review",
+        "createdAtUtc": "2026-08-25T14:05:00Z",
+        "durationMs": 1500000,
+        "roomId": "rm_9f2a1c3d4e5b6a70",
+        "roomName": "Weekly Sync"
+      },
+      "speakers": [
+        {
+          "id": "spk1",
+          "label": "Erlich"
+        },
+        {
+          "id": "spk2",
+          "label": "Monica"
+        }
+      ],
+      "transcriptSource": "derived-from-words",
+      "sourceTranscriptId": "raw-asr",
+      "sourceTranscriptFormat": "cassini.words.v1",
+      "language": "en",
+      "wordCount": 4,
+      "segments": [
+        {
+          "speaker": "spk2",
+          "speakerLabel": "Monica",
+          "startMs": 900,
+          "endMs": 1600,
+          "text": "different meeting same room"
+        }
+      ],
+      "summary": {
+        "present": true,
+        "format": "markdown",
+        "model": "summary-model",
+        "markdown": "# Backlog\n\n- Cut the stale cards.\n"
+      }
+    }
+  ]
+}

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import operatorSource from "./Operator.svelte?raw";
+import settingsSource from "./Settings.svelte?raw";
+import { OPERATOR_PANELS } from "./surfaceRouting";
 import {
   cleanStopDetail,
   formatDuration,
@@ -14,6 +17,7 @@ import {
   jobStatusLabel,
   jobStatusToneClass,
   meetingLabel,
+  OPERATOR_NAV,
   parseRequestJSON,
   requestUrlLabel,
 } from "./Operator.svelte";
@@ -250,3 +254,64 @@ describe("Operator recording duration formatting", () => {
   });
 });
 
+describe("Operator left nav (D-723)", () => {
+  // Restated locally because a .svelte module's exports carry no types across
+  // this import; it is also the shape these assertions are about.
+  const navGroups: { label: string; items: { id: string; label: string }[] }[] = OPERATOR_NAV;
+  const navPanels = navGroups.flatMap((group) => group.items.map((item) => item.id));
+
+  it("groups the rows as Console then Settings, in the prototype's order", () => {
+    expect(navGroups.map((group) => group.label)).toEqual(["Console", "Settings"]);
+    expect(navPanels).toEqual(["recordings", "endpoints", "pipeline", "templates"]);
+    expect(navGroups[1].items.map((item) => item.label)).toEqual([
+      "AI providers",
+      "Publish pipeline",
+      "Insight templates",
+    ]);
+  });
+
+  it("offers every routable panel exactly once", () => {
+    // A panel with a route and no row is unreachable; a row with no route
+    // cannot be deep-linked, which is the whole point of the panel param.
+    expect([...navPanels].sort()).toEqual([...OPERATOR_PANELS].sort());
+    expect(new Set(navPanels).size).toBe(navPanels.length);
+  });
+
+  it("renders a panel for every Settings row, and the console for the Console row", () => {
+    for (const item of navGroups[1].items) {
+      expect(settingsSource).toContain(`panel === "${item.id}"`);
+    }
+    // Recordings is the operator's own markup, not something the settings host
+    // knows how to draw.
+    expect(settingsSource).not.toContain('panel === "recordings"');
+    expect(operatorSource).toContain('class:cassini-op-panel-inactive={panel !== "recordings"}');
+  });
+
+  it("mirrors the rail as a select where there is no room for a rail", () => {
+    // Four rows of pills under the shell's own tab bar read as a second tab
+    // bar, so below 721px the nav collapses to one control.
+    expect(operatorSource).toContain('class="select select-sm w-full min-[721px]:hidden"');
+    expect(operatorSource).toContain("<optgroup label={group.label}>");
+    expect(operatorSource).toContain("min-[721px]:grid-cols-[268px_minmax(0,1fr)]");
+  });
+
+  it("splits the run console on the console's width, not the window's", () => {
+    // A viewport query cannot see the 268px rail beside the console, nor
+    // Nextcloud's sidebar in the embedded build, so it claimed "desktop" for
+    // windows that leave the detail pane a few hundred pixels wide.
+    expect(operatorSource).not.toContain("matchMedia");
+    expect(operatorSource).toContain('class="@container mt-6" bind:clientWidth={consoleWidth}');
+    // The CSS split and the JS "which panes exist" gate have to read the same
+    // box: both panes rendering into a one-pane console is the broken state.
+    expect(operatorSource).toContain("const CONSOLE_SPLIT_MIN_WIDTH = 981;");
+    expect(operatorSource).toContain("isDesktop = consoleWidth >= CONSOLE_SPLIT_MIN_WIDTH;");
+    expect(operatorSource).not.toMatch(/[^@]min-\[981px\]:/);
+  });
+
+  it("starts each panel at its own top", () => {
+    // The scroll pane belongs to the shell, so the reset has to reach it —
+    // scrolling the operator's own root would be a no-op.
+    expect(operatorSource).toContain('shellElement?.closest(".cassini-shell-scroll")');
+    expect(operatorSource).toContain("scroller.scrollTop = 0;");
+  });
+});

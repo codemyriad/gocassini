@@ -1,5 +1,38 @@
 <script module lang="ts">
   import type { Job, JobAttempt } from "./operator/types";
+  import type { OperatorPanel } from "./surfaceRouting";
+
+  // The operator surface's left nav (D-723). Configuration is not a surface of
+  // its own: Console and Settings are two groups of ONE surface, so there is a
+  // single admin boundary to probe and a single place to look for a knob.
+  //
+  // Exported because this list and surfaceRouting's OPERATOR_PANELS have to stay
+  // the same set — a panel with a route and no nav row is unreachable, and a row
+  // with no route cannot be deep-linked. Operator.test.ts holds them together.
+  export interface OperatorNavItem {
+    id: OperatorPanel;
+    label: string;
+  }
+
+  export interface OperatorNavGroup {
+    label: string;
+    items: OperatorNavItem[];
+  }
+
+  export const OPERATOR_NAV: OperatorNavGroup[] = [
+    {
+      label: "Console",
+      items: [{ id: "recordings", label: "Recordings" }],
+    },
+    {
+      label: "Settings",
+      items: [
+        { id: "endpoints", label: "AI providers" },
+        { id: "pipeline", label: "Publish pipeline" },
+        { id: "templates", label: "Insight templates" },
+      ],
+    },
+  ];
 
   type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before">;
   type RerunnableJob = Pick<Job, "stage" | "state" | "artifact_run_path">;
@@ -218,7 +251,8 @@
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
   import { shouldShowDetailLoading } from "./operator/viewState";
-  import { applyJob, readJob } from "./surfaceRouting";
+  import Settings from "./Settings.svelte";
+  import { applyJob, applyPanel, isOperatorPanel, readJob, readPanel } from "./surfaceRouting";
 
   const POLL_INTERVAL_MS = 2000;
   // If the SSE stream doesn't reach "open" within this window, assume the
@@ -259,17 +293,42 @@
   let pollTimer = 0;
   let streamOpenTimer = 0;
 
-  const DESKTOP_MEDIA_QUERY = "(min-width: 981px)";
+  // The run console splits into list + detail when the CONSOLE is wide enough,
+  // not when the window is. It used to ask a viewport media query, which cannot
+  // see anything taking width away from the console: not the 268px nav rail
+  // added beside it (D-723), and not Nextcloud's own sidebar in the embedded
+  // build — the shell mounts in a shadow root inside NC's page, so a 1400px
+  // window can leave the app ~1050px wide while "(min-width: 981px)" still says
+  // desktop. Both panes then render into a console with room for one, and the
+  // detail pane's stage bars, action row and provenance line get squeezed to a
+  // few hundred pixels.
+  //
+  // consoleWidth is the console wrapper's own border box; the wrapper carries a
+  // matching @container query for the CSS half of the split, so the same number
+  // decides both. Nothing is measured before the first paint, so the console
+  // starts single-pane and widens on the first observation, exactly as it did
+  // when isDesktop was seeded in onMount.
+  const CONSOLE_SPLIT_MIN_WIDTH = 981;
+  let consoleWidth = 0;
   let isDesktop = false;
-  let viewportMedia: MediaQueryList | null = null;
+  // A width of 0 is "not laid out" — before the first observation, and again
+  // every time a settings panel hides the console — not "very narrow". Reading
+  // it as narrow would collapse the split for one frame each time the console
+  // comes back, which the container query itself never does.
+  $: if (consoleWidth > 0) {
+    isDesktop = consoleWidth >= CONSOLE_SPLIT_MIN_WIDTH;
+  }
+
+  // Which nav row is showing. The run console stays mounted underneath a
+  // settings panel — it holds list scroll, the open run and its expanded
+  // attempts, the same reason the shell keeps browse mounted behind the
+  // operator — so switching rows hides it rather than tearing it down.
+  let panel = readPanel(window.location.hash);
+  let shellElement: HTMLElement | null = null;
 
   onMount(async () => {
-    if (typeof window.matchMedia === "function") {
-      viewportMedia = window.matchMedia(DESKTOP_MEDIA_QUERY);
-      isDesktop = viewportMedia.matches;
-      viewportMedia.addEventListener("change", handleViewportChange);
-    }
     window.addEventListener("popstate", handleJobPopState);
+    window.addEventListener("popstate", handlePanelPopState);
     seedListHistoryEntry();
     try {
       const config = loadConfig();
@@ -287,7 +346,7 @@
     clearPolling();
     closeEventStream();
     window.removeEventListener("popstate", handleJobPopState);
-    viewportMedia?.removeEventListener("change", handleViewportChange);
+    window.removeEventListener("popstate", handlePanelPopState);
   });
 
   function seedListHistoryEntry() {
@@ -394,8 +453,55 @@
     void selectJob(urlJobId, { allowJobsRefresh: false });
   }
 
-  function handleViewportChange(event: MediaQueryListEvent) {
-    isDesktop = event.matches;
+  function panelHref(next: OperatorPanel): string {
+    const url = new URL(window.location.href);
+    url.hash = applyPanel(window.location.hash, next).replace(/^#/, "");
+    return url.toString();
+  }
+
+  function selectPanel(next: OperatorPanel) {
+    if (next === panel) {
+      return;
+    }
+    panel = next;
+    // Fragment-only pushState, exactly as the job deep-link does it, so the
+    // back button walks the nav and a panel can be linked to (D-722).
+    window.history.pushState({}, "", panelHref(next));
+    resetPanelScroll();
+  }
+
+  function handlePanelSelect(event: Event) {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    if (isOperatorPanel(value)) {
+      selectPanel(value);
+    }
+  }
+
+  function handlePanelPopState() {
+    const next = readPanel(window.location.hash);
+    if (next === panel) {
+      return;
+    }
+    panel = next;
+    resetPanelScroll();
+  }
+
+  // "Each panel is its own page, so it starts at its own top" — the design
+  // prototype's rule, and the reason a switch cannot just swap the content: a
+  // long run list leaves the next panel opening halfway down itself.
+  //
+  // The scroll pane belongs to the SHELL, not to the operator (App.svelte: the
+  // operator was authored for page-level scroll, which the fixed-height shell
+  // removes), so the reset has to reach the ancestor that actually scrolls —
+  // scrolling this element would be a no-op. The window fallback is the
+  // standalone build, where there is no shell and the page scrolls itself.
+  function resetPanelScroll() {
+    const scroller = shellElement?.closest(".cassini-shell-scroll");
+    if (scroller instanceof HTMLElement) {
+      scroller.scrollTop = 0;
+      return;
+    }
+    window.scrollTo({ top: 0 });
   }
 
   async function handleStartJob() {
@@ -755,8 +861,73 @@
   />
 </svelte:head>
 
-<div class="flex min-h-full flex-col bg-base-200 text-base-content">
-  <div class="mx-auto flex min-h-full w-full flex-col gap-4 px-4 pt-4 pb-10">
+<!-- Two columns: the nav on the left, one panel on the right. The panels are
+     siblings in the grid rather than nested in a content column, because exactly
+     one of them is ever laid out — the run console is display:none when it is
+     not the active panel, and the settings host does not exist unless it is — so
+     auto-placement puts whichever survives in the second column. -->
+<div
+  class="grid min-h-full grid-cols-1 bg-base-200 text-base-content min-[721px]:grid-cols-[268px_minmax(0,1fr)]"
+  bind:this={shellElement}
+>
+  <!-- Below 721px the two-column layout has nowhere to put a 268px rail, and
+       four rows of pills under the shell's own tab bar read as a second tab bar,
+       so the nav becomes one control instead. -->
+  <!-- The rail stays put while the content scrolls, which is what the prototype
+       asks for. The scroll pane belongs to the SHELL (App.svelte), not to this
+       surface, so the rail cannot be a non-scrolling sibling of a scrolling
+       column without taking overflow off the shared pane — sticky gets the same
+       result and leaves the shell's single-pane contract alone. self-start is
+       load-bearing: a stretched grid item is as tall as its area and has
+       nowhere to stick. It carries the surface background because content now
+       passes underneath it, and none of it applies below 721px, where the nav
+       is one select in its own row rather than a rail. -->
+  <nav
+    class="flex flex-col px-4 pt-4 pb-1 min-[721px]:sticky min-[721px]:top-0 min-[721px]:self-start min-[721px]:bg-base-200 min-[721px]:px-0 min-[721px]:pt-1.5 min-[721px]:pb-3.5"
+    aria-label="Operator sections"
+  >
+    <select
+      class="select select-sm w-full min-[721px]:hidden"
+      aria-label="Operator section"
+      value={panel}
+      on:change={handlePanelSelect}
+    >
+      {#each OPERATOR_NAV as group}
+        <optgroup label={group.label}>
+          {#each group.items as item}
+            <option value={item.id}>{item.label}</option>
+          {/each}
+        </optgroup>
+      {/each}
+    </select>
+    {#each OPERATOR_NAV as group, groupIndex}
+      <div
+        class="hidden h-8 items-center px-4 text-[10px] font-semibold tracking-[0.09em] uppercase text-base-content/45 min-[721px]:flex {groupIndex > 0 ? 'min-[721px]:mt-2.5' : ''}"
+      >
+        {group.label}
+      </div>
+      {#each group.items as item}
+        <!-- The active row is marked the way the viewing layer marks its own
+             selected row (MeetingList's .meeting-row[aria-current]): a 15%
+             primary wash and a 2px primary edge, but NOT primary text. In
+             Nextcloud --color-primary is whatever accent the instance chose, and
+             primary-on-primary-wash is the pair that stops being legible. -->
+        <button
+          type="button"
+          class="hidden w-full items-center gap-2 border-l-2 border-transparent px-4 py-1.5 text-left text-sm text-base-content/80 hover:bg-base-300/60 aria-[current=page]:border-primary aria-[current=page]:bg-primary/15 aria-[current=page]:font-semibold aria-[current=page]:text-base-content min-[721px]:flex"
+          aria-current={panel === item.id ? "page" : undefined}
+          on:click={() => selectPanel(item.id)}
+        >
+          {item.label}
+        </button>
+      {/each}
+    {/each}
+  </nav>
+
+  <div
+    class="mx-auto flex min-h-full w-full flex-col gap-4 px-4 pt-4 pb-10"
+    class:cassini-op-panel-inactive={panel !== "recordings"}
+  >
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex flex-wrap items-center gap-2.5 text-sm">
         <span
@@ -825,10 +996,15 @@
         </section>
       {/if}
 
-      <div class="mt-6 grid rounded-box border border-base-300 bg-base-100 shadow-sm min-[981px]:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+      <!-- A wrapper with no padding or border of its own, so its measured width
+           IS the console's: the @container query below and the isDesktop gate
+           above read the same box, and the CSS split and the JS "which panes
+           exist" decision cannot disagree. -->
+      <div class="@container mt-6" bind:clientWidth={consoleWidth}>
+      <div class="grid rounded-box border border-base-300 bg-base-100 shadow-sm @min-[981px]:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
         {#if isDesktop || !selectedJobId}
         <section class="flex min-w-0 flex-col overflow-hidden">
-          <header class="flex min-h-14 items-center justify-between gap-3 px-4 py-3 min-[981px]:h-14">
+          <header class="flex min-h-14 items-center justify-between gap-3 px-4 py-3 @min-[981px]:h-14">
             <h2 class="font-semibold">Recordings</h2>
             <button class="btn btn-ghost btn-sm" on:click={refreshJobs} type="button" aria-label="Refresh jobs">
               <RefreshCw size={16} aria-hidden="true" />
@@ -856,9 +1032,9 @@
               </div>
             </div>
           {:else}
-            <div class="min-h-0 min-w-0 flex-1 min-[981px]:relative">
+            <div class="min-h-0 min-w-0 flex-1 @min-[981px]:relative">
               <div
-                class="overflow-x-hidden p-3 min-[981px]:absolute min-[981px]:inset-0 min-[981px]:overflow-y-auto"
+                class="overflow-x-hidden p-3 @min-[981px]:absolute @min-[981px]:inset-0 @min-[981px]:overflow-y-auto"
               >
                 <div class="recordings-list grid min-w-0 gap-2">
                 {#each jobs as job (job.id)}
@@ -913,9 +1089,9 @@
 
         {#if isDesktop || selectedJobId}
         <section
-          class="flex min-w-0 flex-col min-[981px]:min-h-[calc(100vh-13rem)] min-[981px]:border-l min-[981px]:border-base-300"
+          class="flex min-w-0 flex-col @min-[981px]:min-h-[calc(100vh-13rem)] @min-[981px]:border-l @min-[981px]:border-base-300"
         >
-          <header class="flex min-h-14 items-center justify-between gap-3 px-4 py-3 min-[981px]:h-14">
+          <header class="flex min-h-14 items-center justify-between gap-3 px-4 py-3 @min-[981px]:h-14">
             <div class="flex min-w-0 flex-1 items-center gap-2">
               {#if !isDesktop}
                 <button
@@ -927,9 +1103,9 @@
                   <ArrowLeft size={16} aria-hidden="true" />
                 </button>
               {/if}
-              <div class="min-w-0 min-[981px]:flex min-[981px]:items-center min-[981px]:gap-2">
-                <h2 class="truncate font-semibold min-[981px]:shrink-0">Run detail</h2>
-                <p class="truncate text-xs text-base-content/60 min-[981px]:min-w-0">
+              <div class="min-w-0 @min-[981px]:flex @min-[981px]:items-center @min-[981px]:gap-2">
+                <h2 class="truncate font-semibold @min-[981px]:shrink-0">Run detail</h2>
+                <p class="truncate text-xs text-base-content/60 @min-[981px]:min-w-0">
                   Status and history for the selected recording
                 </p>
               </div>
@@ -1367,11 +1543,26 @@
         </section>
         {/if}
       </div>
+      </div>
     {/if}
   </div>
+
+  {#if panel !== "recordings"}
+    <!-- Mounted only while its row is selected, so a panel's settings fetch
+         happens on entry — the same contract the shell applies to this surface. -->
+    <Settings {panel} />
+  {/if}
 </div>
 
 <style>
+  /* The run console keeps its DOM while a settings panel is showing (list
+     scroll, the open run, its expanded attempts), so it is hidden rather than
+     unmounted. Scoped CSS, not a utility: display:none has to win against the
+     element's own `flex`, and Svelte's scoping class is what guarantees it. */
+  .cassini-op-panel-inactive {
+    display: none;
+  }
+
   .cassini-tick {
     display: inline-flex;
     animation: cassini-tick var(--cassini-tick, 2000ms) infinite;
