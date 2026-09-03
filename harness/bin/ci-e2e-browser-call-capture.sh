@@ -619,24 +619,23 @@ fi
 pass "build log asserts participant capture splice for Alice and Bob with 0 skipped"
 
 # Assert published meeting manifest records provenance.sourceAudio
-ARTIFACT_MEETING_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+CANONICAL_MEETING="$(jq -r '.job.artifact_meeting_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+ATTEMPT_MEETING="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
   .attempts[] | select(.attempt_number == $att) | .artifact_meeting_path // empty
 ' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
 
-if [[ -z "$ARTIFACT_MEETING_PATH" ]]; then
-  ARTIFACT_MEETING_PATH="$(jq -r '.job.artifact_meeting_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
-fi
-
-if [[ -n "$ARTIFACT_MEETING_PATH" ]] && docker exec "$EXAPP_CONTAINER" test -f "$ARTIFACT_MEETING_PATH/manifest.json"; then
-  docker exec "$EXAPP_CONTAINER" cat "$ARTIFACT_MEETING_PATH/manifest.json" >"$LOG_DIR/meeting-manifest.json"
-else
-  ALT_MANIFEST="/nc_app_gocassini_data/operator/jobs/runs/${JOB_ID}--attempt-$(printf '%03d' "$CURRENT_ATTEMPT").meeting/manifest.json"
-  if docker exec "$EXAPP_CONTAINER" test -f "$ALT_MANIFEST"; then
-    docker exec "$EXAPP_CONTAINER" cat "$ALT_MANIFEST" >"$LOG_DIR/meeting-manifest.json"
-  else
-    fail "meeting manifest.json not found inside container for job $JOB_ID"
+ARTIFACT_MEETING_PATH=""
+for cand in "$CANONICAL_MEETING" "$ATTEMPT_MEETING" \
+  "/nc_app_gocassini_data/operator/jobs/current/${JOB_ID}.meeting" \
+  "/nc_app_gocassini_data/operator/jobs/runs/${JOB_ID}--attempt-$(printf '%03d' "$CURRENT_ATTEMPT").meeting"; do
+  if [[ -n "$cand" ]] && docker exec "$EXAPP_CONTAINER" test -f "$cand/manifest.json"; then
+    ARTIFACT_MEETING_PATH="$cand"
+    break
   fi
-fi
+done
+
+[[ -n "$ARTIFACT_MEETING_PATH" ]] || fail "meeting manifest.json not found inside container for job $JOB_ID"
+docker exec "$EXAPP_CONTAINER" cat "$ARTIFACT_MEETING_PATH/manifest.json" >"$LOG_DIR/meeting-manifest.json"
 
 jq -e --arg alice "$ALICE" --arg bob "$BOB" '
   .provenance.sourceAudio as $sa

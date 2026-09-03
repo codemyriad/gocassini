@@ -652,7 +652,10 @@ try {
   };
   await alicePage.waitForFunction(captureStarted, null, { timeout });
   await bobPage.waitForFunction(captureStarted, null, { timeout });
-  await delay(3_200);
+  // Allow each segment to record enough audio (>=8 seconds) to collect at
+  // least minPlacementAnchors (8 anchors, sampled at 1 per 50 frames / 1s) so
+  // FitPlacement can place every segment rather than keeping the recorded track.
+  await delay(8_500);
   result.bob.duringRecordingOPFS = await opfsSnapshot(bobPage);
   assert(result.bob.duringRecordingOPFS.length === 1,
     `Bob buffered ${result.bob.duringRecordingOPFS.length} captures for one recorded call`);
@@ -664,7 +667,7 @@ try {
   result.alice.microphoneSwitch = await switchMicrophone(alicePage);
   result.alice.mediaImmediatelyAfterSwitch = await mediaSnapshot(alicePage);
   const bytesImmediatelyAfterSwitch = result.alice.mediaImmediatelyAfterSwitch.audioBytesSent;
-  await delay(3_200);
+  await delay(8_500);
   result.alice.mediaAfterSwitch = await waitForAudioFlow(alicePage, "alice", bytesImmediatelyAfterSwitch + 2_000);
   const afterSwitchOPFS = await opfsSnapshot(alicePage);
   const segmentFiles = segmentFilesIn(afterSwitchOPFS);
@@ -701,8 +704,9 @@ try {
     return sealed > before;
   }, segmentFiles.length, { timeout });
   // Keep talking on the far side of the seam, long enough for the rejoined
-  // segment to hold real audio rather than a container header.
-  await delay(4_000);
+  // segment to hold real audio rather than a container header, and to collect
+  // >= 8 placement anchors.
+  await delay(8_500);
   result.alice.duringRecordingOPFS = await opfsSnapshot(alicePage);
   const capturesAfter = result.alice.duringRecordingOPFS.map((capture) => capture.dirName);
   const bytesBefore = segmentBytesIn(afterSwitchOPFS);
