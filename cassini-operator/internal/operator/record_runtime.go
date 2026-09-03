@@ -263,7 +263,7 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	cmd := exec.Command(rt.cfg.CassiniBin, args...)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
-	cmd.Env = rt.currentSettings().ChildEnv(os.Environ())
+	cmd.Env = rt.recordChildEnv()
 	// Run the recorder in its own process group so a hard kill also reaps
 	// ffmpeg children spawned during compose instead of leaking them.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -316,6 +316,33 @@ func (rt *Runtime) runRecordDoctor() error {
 	return rt.runRecordDoctorContext(context.Background())
 }
 
+// talkRecordingSecretEnv is how the recorder learns the Talk recording secret.
+const talkRecordingSecretEnv = "CASSINI_TALK_RECORDING_SECRET"
+
+// recordChildEnv is the environment of the recorder and of its doctor. The
+// recorder authenticates to Talk with CASSINI_TALK_RECORDING_SECRET, and an
+// administrator may never have set it: since D-447 the operator generates and
+// persists a secret when the variable is absent, and only the operator's own
+// process knows that one. Passing the environment through unchanged registered
+// a working backend in Talk and then failed every recording with "talk auth
+// mode hpb-internal requires CASSINI_TALK_RECORDING_SECRET to be set". The
+// resolved secret therefore overrides whatever the environment carries; when
+// it came from the environment the two are the same value.
+func (rt *Runtime) recordChildEnv() []string {
+	env := rt.currentSettings().ChildEnv(os.Environ())
+	secret := strings.TrimSpace(rt.cfg.TalkSharedSecret)
+	if secret == "" {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, talkRecordingSecretEnv+"=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, talkRecordingSecretEnv+"="+secret)
+}
+
 // runRecordDoctorContext runs `cassini doctor --target record` bounded by ctx
 // so callers like the throttled /healthz?check=record probe can enforce an
 // exec timeout on a wedged doctor (D-376). The doctor runs in its own process
@@ -324,7 +351,7 @@ func (rt *Runtime) runRecordDoctorContext(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "doctor", "--target", "record")
 	cmd.Stdout = writerOrDiscard(rt.stdout)
 	cmd.Stderr = writerOrDiscard(rt.stderr)
-	cmd.Env = rt.currentSettings().ChildEnv(os.Environ())
+	cmd.Env = rt.recordChildEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
