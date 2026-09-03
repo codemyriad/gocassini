@@ -737,22 +737,13 @@ try {
     response.request().method() === "POST" && response.url().includes("/operator/capture/upload")
   );
 
-  // Both listeners are armed before either participant leaves. Bob's upload is
-  // normally triggered by his own leave, but if this Talk stops the recording
-  // when the moderator who started it goes, Talk's confirmed recording-off
-  // uploads Bob's capture at that moment instead — and a listener armed after
-  // Alice left would wait out its timeout on an upload that already happened.
+  // Both listeners are armed before either participant leaves.
   const aliceUploadResponse = alicePage.waitForResponse(captureUpload, { timeout: 45_000 });
   const bobUploadResponse = bobPage.waitForResponse(captureUpload, { timeout: 90_000 });
 
-  await leaveCall(alicePage, "alice");
-  aliceLeft = true;
-  const aliceUpload = await aliceUploadResponse;
-  const observedAliceUploads = await persistObservedUploadBodies(alicePage, "alice", aliceUploadEvidence, 1);
-  result.alice.upload = observedAliceUploads.at(-1);
-  assert(result.alice.upload.status === aliceUpload.status(), "alice: page and Playwright disagreed on upload HTTP status");
-  assert(aliceUpload.status() === 202, `alice: source capture upload returned HTTP ${aliceUpload.status()}: ${result.alice.upload.body}`);
-
+  // Bob leaves first while the recording is still running on Alice's side.
+  // Bob's leave triggers his own capture upload and storage drain, ensuring his
+  // capture is fully written to disk before Alice's departure stops the call.
   await leaveCall(bobPage, "bob");
   bobLeft = true;
   const bobUpload = await bobUploadResponse;
@@ -760,9 +751,19 @@ try {
   result.bob.upload = observedBobUploads.at(-1);
   assert(result.bob.upload.status === bobUpload.status(), "bob: page and Playwright disagreed on upload HTTP status");
   assert(bobUpload.status() === 202, `bob: source capture upload returned HTTP ${bobUpload.status()}: ${result.bob.upload.body}`);
-
-  result.alice.afterLeaveOPFS = await waitForDrainedCaptureStorage(alicePage, "alice");
   result.bob.afterLeaveOPFS = await waitForDrainedCaptureStorage(bobPage, "bob");
+
+  // Alice leaves second. As the moderator and final participant, her leave
+  // stops the recording and triggers her own capture upload. Because Bob has
+  // already uploaded, both captures are safely on disk when the operator builds.
+  await leaveCall(alicePage, "alice");
+  aliceLeft = true;
+  const aliceUpload = await aliceUploadResponse;
+  const observedAliceUploads = await persistObservedUploadBodies(alicePage, "alice", aliceUploadEvidence, 1);
+  result.alice.upload = observedAliceUploads.at(-1);
+  assert(result.alice.upload.status === aliceUpload.status(), "alice: page and Playwright disagreed on upload HTTP status");
+  assert(aliceUpload.status() === 202, `alice: source capture upload returned HTTP ${aliceUpload.status()}: ${result.alice.upload.body}`);
+  result.alice.afterLeaveOPFS = await waitForDrainedCaptureStorage(alicePage, "alice");
   // Nothing per participant is stored anywhere in either browser: capture
   // followed Talk's recording and left no trace of its own behind.
   result.alice.captureStorageKeys = await captureStorageKeys(alicePage);

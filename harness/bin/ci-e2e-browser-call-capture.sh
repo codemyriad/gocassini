@@ -280,6 +280,7 @@ export CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE="${CASSINI_HARNESS_EXPECT_GPU_UNAV
 # Pinned rather than left to the default — which is also on — so the assertion
 # below that it reached the container says what this leg needs.
 export CASSINI_SOURCE_CAPTURE=1
+export CASSINI_SOURCE_AUDIO_INGEST=1
 
 SOURCE_IMAGE_ID="$(docker image inspect "$IMAGE_REF" --format '{{.Id}}')" \
   || fail "image does not exist locally: $IMAGE_REF"
@@ -313,6 +314,8 @@ INSTALLED_IMAGE_ID="$(docker inspect "$EXAPP_CONTAINER" --format '{{.Image}}')"
 docker inspect "$EXAPP_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' >"$LOG_DIR/exapp-env.txt"
 grep -qx 'CASSINI_SOURCE_CAPTURE=1' "$LOG_DIR/exapp-env.txt" \
   || fail "CASSINI_SOURCE_CAPTURE=1 did not reach the installed ExApp"
+grep -qx 'CASSINI_SOURCE_AUDIO_INGEST=1' "$LOG_DIR/exapp-env.txt" \
+  || fail "CASSINI_SOURCE_AUDIO_INGEST=1 did not reach the installed ExApp"
 pass "AppAPI/HaRP installed the exact image"
 
 # Fresh harness users otherwise receive Nextcloud's first-run overlay on top of
