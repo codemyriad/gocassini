@@ -1,20 +1,10 @@
-// Per-browser consent and retirement of PR #228's legacy service worker.
+// Retirement of PR #228's legacy service worker.
 //
 // Capture delivery now belongs to the cassini_capture companion app. The
-// Cassini ExApp page only records a participant's explicit opt-in. It never
-// registers a worker or claims a Talk URL scope.
-
-export const CONSENT_STORAGE_KEY = "cassini.sourceCapture.consent";
+// Cassini ExApp page holds no capture state of its own: it never registers a
+// worker, claims a Talk URL scope, or stores anything per participant.
 
 const LEGACY_CAPTURE_WORKER_SUFFIX = "/apps/app_api/proxy/gocassini/ui/capture-sw.js";
-
-export function isEnabled(storage: Pick<Storage, "getItem">): boolean {
-  try {
-    return storage.getItem(CONSENT_STORAGE_KEY) === "granted";
-  } catch {
-    return false;
-  }
-}
 
 function legacyCaptureWorker(registration: ServiceWorkerRegistration): boolean {
   return [registration.active, registration.waiting, registration.installing].some((worker) => {

@@ -31,11 +31,7 @@
 
 import { mount } from "svelte";
 import App from "./App.svelte";
-import {
-  CONSENT_STORAGE_KEY,
-  isEnabled as sourceCaptureEnabled,
-  retireLegacyCaptureWorkers,
-} from "./capture/register";
+import { retireLegacyCaptureWorkers } from "./capture/register";
 // The shell's stylesheet composes the viewing layer's app.css and adds a
 // @source for the shell's own components (nav + operator surface) — D-420 V3.
 import "./app.css";
@@ -245,30 +241,14 @@ function mountEmbeddedShell(): void {
   mount(App, { target: appRoot, props: { ncMode } });
 }
 
-// installSourceCaptureControls exposes the per-user opt-in for source audio
-// capture (see src/capture/). Delivery onto Talk belongs to the separate
-// cassini_capture companion app; this page never claims a Talk worker scope.
-//
-// Capture records a meeting, so it never starts on its own: nothing happens
-// until an explicit grant is stored. The control is on `window` rather than in the
-// shell UI because the opt-in surface is the one piece of this feature not
-// built yet — the plumbing is complete and testable without it, and shipping a
-// half-considered consent dialog would be worse than shipping none.
-export function installSourceCaptureControls(win: Window): void {
+// retireAbandonedCaptureWorker cleans up after the abandoned delivery
+// prototype. A worker it registered survives a 404 at its script URL, so it is
+// retired on every Cassini page load; the companion payload repeats this on
+// Talk pages for users who do not revisit Cassini first. Source capture itself
+// lives entirely in the companion payload — this page neither controls it nor
+// stores anything for it.
+export function retireAbandonedCaptureWorker(): void {
   const container = navigator.serviceWorker as ServiceWorkerContainer | undefined;
-  (win as unknown as { cassiniSourceCapture?: unknown }).cassiniSourceCapture = {
-    isEnabled: () => sourceCaptureEnabled(localStorage),
-    enable: async () => {
-      localStorage.setItem(CONSENT_STORAGE_KEY, "granted");
-    },
-    disable: async () => {
-      localStorage.removeItem(CONSENT_STORAGE_KEY);
-      await retireLegacyCaptureWorkers(container);
-    },
-  };
-  // A worker installed by the abandoned delivery prototype survives a 404 at
-  // its script URL. Retire it on every Cassini page load; the companion payload
-  // repeats this on Talk pages for users who do not revisit Cassini first.
   void retireLegacyCaptureWorkers(container).catch(() => {
     // Cleanup failure cannot stop the shell mounting. The server-side capture
     // gate and the payload's periodic check remain fail-closed.
@@ -279,9 +259,9 @@ function bootstrap(): void {
   captureViewerBase(document, window);
   captureOperatorBase(window);
   try {
-    installSourceCaptureControls(window);
+    retireAbandonedCaptureWorker();
   } catch {
-    // The shell must mount whether or not capture is available.
+    // The shell must mount whether or not the cleanup can run.
   }
   // Wait for the window load event unless already complete: OCA.Theming is
   // populated by a Nextcloud dynamic import that resolves after

@@ -19,6 +19,14 @@
 //   only by the encode and the network, which is what makes verifying an upload
 //   against the server's own recording meaningful.
 //
+// Two conditions gate collection, and this file has no third: the administrator
+// switch, which the server answers for and re-answers every thirty seconds, and
+// Talk's own confirmed recording. Cassini stores nothing per participant and
+// asks them nothing. Telling a room that it is being recorded is Talk's job —
+// its recording indicator and its recording-consent setting — so there is no
+// browser key here to read, and adding one would put a second, weaker answer
+// beside the one Talk already gives everybody in the call.
+//
 // Everything here is defensive. This code runs inside a live call: a throw in
 // the wrong place degrades a real meeting for everyone in it. Every entry point
 // is wrapped, and every failure mode ends in "do not capture", never in "break
@@ -34,12 +42,6 @@ import {
   roomTokenFromPath,
   type CaptureSidecar,
 } from "./protocol";
-
-// CONSENT_STORAGE_KEY records the participant's answer. Capture never starts
-// without an explicit opt-in: this records a meeting, and a recorder that turns
-// itself on silently is not one we are willing to ship regardless of how much
-// the transcript would improve.
-const CONSENT_STORAGE_KEY = "cassini.sourceCapture.consent";
 
 const INITIAL_STATE_APP = "cassini_capture";
 const INITIAL_STATE_KEY = "capture";
@@ -375,15 +377,6 @@ export function pickAudioSender(
   );
 }
 
-export function consentGranted(storage: Pick<Storage, "getItem">): boolean {
-  try {
-    return storage.getItem(CONSENT_STORAGE_KEY) === "granted";
-  } catch {
-    // Private mode, disabled storage: absence of a recorded yes is a no.
-    return false;
-  }
-}
-
 export interface CaptureState {
   roomToken: string;
   dirName: string;
@@ -396,10 +389,11 @@ export interface CaptureState {
   mutePoll: number | null;
   segmentStartWallMs: number;
   finished: boolean;
-  // discarded marks a session whose consent was withdrawn mid-call. It is
-  // terminal: re-granting during the same call does not resurrect audio
-  // recorded while permission was absent, because the person who withdrew it
-  // was not consenting to that stretch.
+  // discarded marks a session the administrator switch turned off mid-call. It
+  // is terminal: switching collection back on during the same call does not
+  // resurrect audio recorded in between, because a switch that is off has to
+  // mean nothing from that stretch is kept, not merely nothing further is
+  // recorded.
   discarded: boolean;
   // pendingChunks chains every ondataavailable hand-off. MediaRecorder emits
   // its final chunk asynchronously AFTER stop() and before onstop, and turning
@@ -792,14 +786,9 @@ function attachTimingTransform(
 }
 
 function pollMute(session: CaptureState, sender: RTCRtpSender): void {
-  // The same tick that watches mute watches consent. Withdrawing it during a
-  // call has to stop the recording then, not merely suppress the upload at the
-  // end — the participant asked for the microphone to be let go.
-  if (!session.discarded && !consentGranted(localStorage)) {
-    session.discarded = true;
-    stopWithoutRestart(session);
-    return;
-  }
+  // A session the administrator switch discarded keeps its poll running until
+  // teardown, but it has no segment left to attribute mute to: recording it
+  // would append intervals to a recording that is never going to be uploaded.
   if (session.discarded) {
     return;
   }
@@ -837,9 +826,10 @@ async function uploadCapture(
   revokedDuringCall: boolean,
 ): Promise<void> {
   const opfsRoot = await navigator.storage.getDirectory();
-  // Consent withdrawn at any point during the call is terminal for that call's
-  // recording, whether or not it was granted again afterwards.
-  if (revokedDuringCall || !consentGranted(localStorage)) {
+  // The administrator switch turned off at any point during the call is
+  // terminal for that call's recording, whether or not it was switched back on
+  // afterwards.
+  if (revokedDuringCall || serverAllowsCapture !== true) {
     await discardCapture(opfsRoot, dirName);
     return;
   }
@@ -866,9 +856,9 @@ async function uploadCapture(
     form.append(`segment_${index}`, await fileHandle.getFile(), segment.audioName);
   }
   // Last check, immediately before the bytes leave: reading the segments back
-  // out of OPFS above is several awaits long, and consent can be withdrawn in
-  // that window.
-  if (!consentGranted(localStorage)) {
+  // out of OPFS above is several awaits long, and the thirty-second poll can
+  // land the administrator's off in that window.
+  if (serverAllowsCapture !== true) {
     await discardCapture(opfsRoot, dirName);
     return;
   }
@@ -947,7 +937,7 @@ function isBufferedCaptureSidecar(value: unknown): value is CaptureSidecar {
 // before recording anything else, which turns reload into two contiguous
 // source sessions rather than a lost first half.
 export async function retryBufferedCaptures(): Promise<number> {
-  if (!consentGranted(localStorage) || serverAllowsCapture !== true) {
+  if (serverAllowsCapture !== true) {
     return 0;
   }
   const root = await navigator.storage.getDirectory();
@@ -1082,10 +1072,10 @@ export function rotateSegment(session: CaptureState, sender: RTCRtpSender): void
   session.rotation = session.rotation
     .then(() => stopSegment(session))
     .then(() => {
-      // Re-checked HERE, not only when the rotation was queued. A session whose
-      // consent was withdrawn must not start recording again because the
-      // participant happened to change microphone afterwards; the upload was
-      // already blocked, but collection has to stop too.
+      // Re-checked HERE, not only when the rotation was queued. A session the
+      // administrator switch discarded must not start recording again because
+      // the participant happened to change microphone afterwards; the upload
+      // was already blocked, but collection has to stop too.
       if (session.discarded || session.finished) {
         return;
       }
@@ -1123,7 +1113,7 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
     return;
   }
   const roomToken = roomTokenFromPath(location.pathname);
-  if (!roomToken || !consentGranted(localStorage)) {
+  if (!roomToken) {
     return;
   }
   talkRoomToken = roomToken;
@@ -1132,7 +1122,8 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   if (serverAllowsCapture !== true) {
     return;
   }
-  // Consent can be given after install, so this may be the first worker.
+  // Usually a no-op: install prepared a worker before Talk loaded. It is not
+  // one when an earlier worker was retired, so ask for one rather than assume.
   prepareTimingWorker();
   const worker = preparedWorker;
   if (worker === null) {
@@ -1142,9 +1133,9 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   }
   preparedWorker = null;
   // Usually a no-op: watchSender attached the transform inside addTrack. This
-  // covers consent granted after the call started, where there was no worker
-  // to attach then — the platform ignores a transform attached this late, so
-  // that capture simply carries no anchors.
+  // covers a session that begins on a sender which had no worker to attach to
+  // then — the platform ignores a transform attached this late, so that capture
+  // simply carries no anchors.
   attachTimingTransform(worker, sender, connection);
   const callStartWallMs = Date.now();
   const session: CaptureState = {
@@ -1198,7 +1189,7 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
   if (capturingSender === null) {
     capturingSender = sender;
     capturingConnection = connection;
-    if (serverAllowsCapture && consentGranted(localStorage)) {
+    if (serverAllowsCapture) {
       prepareTimingWorker();
       if (preparedWorker !== null) {
         attachTimingTransform(preparedWorker, sender, connection);
@@ -1407,15 +1398,13 @@ export function install(config: CaptureDeliveryConfig = captureDeliveryFromIniti
   }
   void retryBufferedCaptures().catch(() => {});
   installTalkRecordingLifecycle();
-  if (consentGranted(localStorage)) {
-    // Here rather than at addTrack, because the readiness deadline runs from
-    // this line and a participant is mute for whatever is left of it. Talk
-    // still has to load its bundle, mount, and ask for the microphone before
-    // the first addTrack — far longer than a few kilobytes of worker takes to
-    // start — so a broken worker is normally caught before the call has
-    // negotiated, and the deadline never costs anybody a spoken word.
-    prepareTimingWorker();
-  }
+  // Here rather than at addTrack, because the readiness deadline runs from this
+  // line and a participant is mute for whatever is left of it. Talk still has
+  // to load its bundle, mount, and ask for the microphone before the first
+  // addTrack — far longer than a few kilobytes of worker takes to start — so a
+  // broken worker is normally caught before the call has negotiated, and the
+  // deadline never costs anybody a spoken word.
+  prepareTimingWorker();
   // A Proxy rather than a wrapper function. A wrapper loses new.target (so
   // `class Mine extends RTCPeerConnection` builds the wrong prototype), drops
   // static members such as generateCertificate, and gives Talk a constructor

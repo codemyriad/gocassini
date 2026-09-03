@@ -46,13 +46,15 @@ var captureAssetFiles = map[string]string{
 // from CASSINI_SOURCE_AUDIO_INGEST (which only decides whether collected audio
 // reaches a transcript). With this off, the browser assets 404 and the upload
 // endpoint refuses: the injected payload is told no, no capture asset loads,
-// nothing is stored, and no disk can be filled. A user opting in
-// client-side achieves nothing an administrator has not allowed.
+// nothing is stored, and no disk can be filled.
 //
-// Off by default. The known residual risks — consent recorded per browser
-// origin rather than per Nextcloud account, and an upload endpoint with no
-// per-participant quota — are acceptable for a deployment whose operator chose
-// to run this prototype, and are not acceptable for one that merely upgraded.
+// Off by default, and it is the ONLY switch: with it on, every authenticated
+// participant of every recorded call is captured, because capture follows
+// Talk's official recording and there is nothing per participant anywhere.
+// Telling the room is Talk's job, through its recording indicator and its own
+// recording-consent setting. That is acceptable for a deployment whose operator
+// chose to run this prototype and configured Talk to match, and is not
+// acceptable for one that merely upgraded.
 func sourceCaptureEnabled() bool {
 	enabled, err := parseBoolEnv(envSourceCaptureEnabled)
 	return err == nil && enabled

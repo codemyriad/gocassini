@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   captureAllowedByServer,
-  consentGranted,
   enabledURLFrom,
   fetchTalkRecordingStatus,
   normalizeCaptureDeliveryConfig,
@@ -113,13 +112,6 @@ describe("pickAudioSender", () => {
 
   it("returns -1 for a receive-only connection", () => {
     expect(pickAudioSender([])).toBe(-1);
-  });
-});
-
-describe("consentGranted", () => {
-  it("defaults to no capture", () => {
-    expect(consentGranted({ getItem: () => null })).toBe(false);
-    expect(consentGranted({ getItem: () => "granted" })).toBe(true);
   });
 });
 
@@ -323,9 +315,9 @@ describe("stopWithoutRestart", () => {
 });
 
 describe("captureAllowedByServer", () => {
-  // The administrator switch is what makes the per-browser consent and the
-  // missing upload quota acceptable, so this check fails CLOSED: the cost of a
-  // false no is a missing transcript improvement, the cost of a false yes is
+  // The administrator switch is the only thing standing between a recorded call
+  // and every participant's microphone, so this check fails CLOSED: the cost of
+  // a false no is a missing transcript improvement, the cost of a false yes is
   // collecting audio an administrator switched off.
   it("records only on an explicit yes", async () => {
     const yes = async () => new Response(JSON.stringify({ enabled: true }), { status: 200 });

@@ -6,7 +6,7 @@
 // test. The harness has no browser at all (its Talk publishers are pion Go
 // clients), so this serves the smallest thing the chain needs to be real:
 //
-//   /                       neutral page used to record browser consent
+//   /                       a neutral same-origin page, outside any call
 //   /call/<token>           the "Talk" call page
 //   /apps/cassini_capture/js/capture-payload.js
 //                           the companion app's ordinary script

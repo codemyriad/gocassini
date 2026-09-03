@@ -33,13 +33,6 @@ test.beforeEach(() => {
   server.state.captureWorker = "ok";
 });
 
-// enableCapture records the participant's opt-in on the same origin. The
-// companion app, not this page, delivers code to Talk.
-async function enableCapture(page: import("@playwright/test").Page) {
-  await page.goto(`${server.origin}/`);
-  await page.evaluate(() => localStorage.setItem("cassini.sourceCapture.consent", "granted"));
-}
-
 async function setOfficialRecording(
   page: import("@playwright/test").Page,
   status: 0 | 1 | 2 | 3 | 4 | 5,
@@ -55,7 +48,6 @@ async function setOfficialRecording(
 }
 
 test("the companion payload runs before Talk negotiates", async ({ page }) => {
-  await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
 
   await page.waitForFunction(
@@ -71,7 +63,6 @@ test("the companion payload runs before Talk negotiates", async ({ page }) => {
 });
 
 test("joining a call does not record locally before Talk recording starts", async ({ page }) => {
-  await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await page.waitForTimeout(1200);
@@ -89,7 +80,6 @@ test("joining a call does not record locally before Talk recording starts", asyn
 });
 
 test("starting states do not capture; confirmed active starts and confirmed off uploads", async ({ page }) => {
-  await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
 
@@ -112,7 +102,6 @@ test("starting states do not capture; confirmed active starts and confirmed off 
 });
 
 test("reloading during an active Talk recording resumes and preserves both sides", async ({ page }) => {
-  await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await setOfficialRecording(page, 2);
@@ -132,7 +121,6 @@ test("reloading during an active Talk recording resumes and preserves both sides
 });
 
 test("leaving the room seals and uploads an active source capture", async ({ page }) => {
-  await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await setOfficialRecording(page, 2);
@@ -144,7 +132,6 @@ test("leaving the room seals and uploads an active source capture", async ({ pag
 });
 
 test("a call started from Talk's index route is instrumented before SPA navigation", async ({ page }) => {
-  await enableCapture(page);
   await page.goto(`${server.origin}/apps/spreed/`);
   await page.waitForFunction(
     () => (window as never as { __talkReady?: unknown }).__talkReady !== undefined,
@@ -158,7 +145,6 @@ test("a call started from Talk's index route is instrumented before SPA navigati
 });
 
 test("disabling the companion stops loading the payload without breaking Talk", async ({ page }) => {
-  await enableCapture(page);
   server.state.companionEnabled = false;
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
@@ -202,8 +188,6 @@ test("the companion retires the abandoned capture worker without touching the ca
 });
 
 test("captures the participant's own audio through a lossy uplink and uploads it", async ({ page }) => {
-  await enableCapture(page);
-
   // 20% of the encoded frames never reach the far side.
   await page.goto(`${server.origin}/call/testroom?loss=0.2`);
   await page.waitForFunction(() => (window as never as { __talkReady?: Promise<boolean> }).__talkReady !== undefined);
@@ -264,37 +248,48 @@ test("captures the participant's own audio through a lossy uplink and uploads it
   expect(muteEnd - muteStart).toBeGreaterThan(500);
 });
 
-test("consent withdrawn mid-call discards that call's recording", async ({ page }) => {
-  await enableCapture(page);
+// participantKeys reads everything the payload left in this browser except its
+// own delivery bookkeeping. cassini.sourceCapture.uploadAttempts counts refusals
+// per buffered capture so a permanently-failing deployment stops re-offering a
+// meeting-sized body forever; it says nothing about a person. Anything else
+// under this prefix would.
+async function participantKeys(page: import("@playwright/test").Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Object.keys(localStorage).filter(
+      (key) => key.startsWith("cassini") && key !== "cassini.sourceCapture.uploadAttempts",
+    ),
+  );
+}
+
+// Capture follows Talk's official recording. Every authenticated participant of
+// a recorded call is captured, and nothing is asked of them or kept for them:
+// telling the room it is being recorded is Talk's job, and a browser key of our
+// own would be a second, weaker answer beside the one Talk already gives.
+test("captures every participant of a recorded call with nothing stored in the browser", async ({ page }) => {
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+
+  expect(
+    await participantKeys(page),
+    "the payload stored something per participant before recording",
+  ).toEqual([]);
+
   await setOfficialRecording(page, 2);
-  await page.waitForTimeout(1500);
-
-  // Turn capture off while the call is still running, then back on before it
-  // ends. The audio recorded in between was captured without permission, and
-  // re-granting must not resurrect it.
-  await page.evaluate(() => localStorage.removeItem("cassini.sourceCapture.consent"));
-  await page.waitForTimeout(1000);
-  await page.evaluate(() => localStorage.setItem("cassini.sourceCapture.consent", "granted"));
-  await page.waitForTimeout(500);
-
-  // And a device change afterwards must not restart collection either: the
-  // upload was already blocked, but a revoked session has to stop recording.
-  await page.evaluate(async () => {
-    const win = window as never as { __replaceTrack?: () => Promise<void> };
-    await win.__replaceTrack?.();
-  });
-  await page.waitForTimeout(800);
-
+  await page.waitForTimeout(2500);
   await setOfficialRecording(page, 0);
-  await page.waitForTimeout(3000);
 
-  expect(server.uploads.length, "a recording made after consent was withdrawn was uploaded").toBe(0);
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
+  expect(server.uploads[0].segments[0].bytes).toBeGreaterThan(1000);
+
+  // An accepted upload leaves no residue either: nothing in this browser records
+  // that this participant was captured.
+  expect(
+    await participantKeys(page),
+    "the payload stored something per participant while capturing",
+  ).toEqual([]);
 });
 
 test("the administrator switch stops a capture already running", async ({ page }) => {
-  await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await setOfficialRecording(page, 2);
@@ -308,9 +303,13 @@ test("the administrator switch stops a capture already running", async ({ page }
   // instead, proving nothing about the client.
   await page.waitForTimeout(2500);
 
-  // Switch it back ON before hanging up, so the upload endpoint would happily
-  // accept. Anything that arrives now is the client having failed to stop.
+  // Switch it back ON before hanging up, and wait for the client's own poll to
+  // hear that, so the upload endpoint would happily accept and so would every
+  // gate the payload keeps in front of it. The discard the switch already
+  // triggered is then the only thing left that can stop this upload; anything
+  // that arrives now is the client having failed to stop.
   server.state.captureEnabled = true;
+  await page.waitForTimeout(1500);
   await setOfficialRecording(page, 0);
   await page.waitForTimeout(3000);
 
@@ -318,20 +317,6 @@ test("the administrator switch stops a capture already running", async ({ page }
     server.uploads.length,
     "the capture kept running after the administrator switched it off; the upload was accepted because the switch was back on",
   ).toBe(0);
-});
-
-test("captures nothing without an explicit opt-in", async ({ page }) => {
-  await enableCapture(page);
-  await page.evaluate(() => localStorage.removeItem("cassini.sourceCapture.consent"));
-
-  await page.goto(`${server.origin}/call/testroom`);
-  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
-  await setOfficialRecording(page, 2);
-  await page.waitForTimeout(2000);
-  await setOfficialRecording(page, 0);
-  await page.waitForTimeout(2000);
-
-  expect(server.uploads.length, "audio was uploaded without consent").toBe(0);
 });
 
 // A broken timing worker must cost the capture and nothing else.
@@ -377,7 +362,6 @@ async function expectStillAudible(page: import("@playwright/test").Page) {
 }
 
 async function joinWithBrokenWorker(page: import("@playwright/test").Page) {
-  await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
 }

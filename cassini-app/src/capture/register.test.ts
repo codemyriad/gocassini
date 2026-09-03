@@ -1,23 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isEnabled, retireLegacyCaptureWorkers } from "./register";
-
-describe("isEnabled", () => {
-  it("requires an explicit grant", () => {
-    expect(isEnabled({ getItem: () => "granted" })).toBe(true);
-    expect(isEnabled({ getItem: () => null })).toBe(false);
-    expect(isEnabled({ getItem: () => "denied" })).toBe(false);
-  });
-
-  it("treats unavailable storage as no consent", () => {
-    expect(
-      isEnabled({
-        getItem: () => {
-          throw new Error("storage disabled");
-        },
-      }),
-    ).toBe(false);
-  });
-});
+import { retireLegacyCaptureWorkers } from "./register";
 
 describe("retireLegacyCaptureWorkers", () => {
   it("removes only Cassini's obsolete worker by script URL", async () => {
