@@ -520,3 +520,134 @@ staging_left="$(docker exec "$EXAPP_CONTAINER" sh -c 'find "$1" -maxdepth 1 -typ
 pass "both browser-produced WebM captures landed byte-plausibly on the ExApp"
 pass "disk paths and server-stamped sidecars attribute each capture to its own authenticated user"
 log "real-browser Talk source-capture seam passed: alice $ALICE_SEGMENT_COUNT segments/$ALICE_BYTES bytes, bob $BOB_SEGMENT_COUNT segments/$BOB_BYTES bytes"
+
+# ============================================================================
+# Assert Talk recording lifecycle: operator job completion and source audio splice
+# ============================================================================
+log "waiting for operator job for room $ROOM_TOKEN to reach stage=done state=succeeded"
+
+JOB_DEADLINE=$(( SECONDS + 300 ))
+JOB_ID=""
+JOB_STAGE=""
+JOB_STATE=""
+JOB_POLL_FILE="$LOG_DIR/jobs-poll.json"
+JOB_DETAIL_FILE="$LOG_DIR/job-detail.json"
+
+while (( SECONDS < JOB_DEADLINE )); do
+  if curl -sS -u admin:admin "$PROXY_URL/operator/jobs" >"$JOB_POLL_FILE" 2>"$LOG_DIR/jobs-poll.err"; then
+    JOB_INFO="$(jq -r --arg room "$ROOM_TOKEN" '
+      [.[] | select((.request_json | test($room)) or ((.request_json | fromjson? | .roomToken // "") == $room))]
+      | sort_by(.created_at) | last // empty
+      | if . then "\(.id) \(.stage) \(.state)" else "" end
+    ' "$JOB_POLL_FILE" 2>/dev/null || true)"
+
+    if [[ -z "$JOB_INFO" ]]; then
+      JOB_INFO="$(jq -r '
+        if length == 1 then "\(.[0].id) \(.[0].stage) \(.[0].state)" else "" end
+      ' "$JOB_POLL_FILE" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$JOB_INFO" ]]; then
+      read -r j_id j_stage j_state <<<"$JOB_INFO"
+      JOB_ID="$j_id"
+      JOB_STAGE="$j_stage"
+      JOB_STATE="$j_state"
+      if [[ "$j_stage" == "done" && "$j_state" == "succeeded" ]]; then
+        break
+      fi
+      if [[ "$j_state" == "failed" || "$j_state" == "interrupted" ]]; then
+        fail "operator job $JOB_ID failed in stage=$j_stage: $(<"$JOB_POLL_FILE")"
+      fi
+    fi
+  fi
+  sleep 3
+done
+
+[[ -n "$JOB_ID" ]] || fail "timed out waiting for operator to register a job for room $ROOM_TOKEN"
+[[ "$JOB_STAGE" == "done" && "$JOB_STATE" == "succeeded" ]] \
+  || fail "operator job $JOB_ID did not reach stage=done state=succeeded within timeout (stage=$JOB_STAGE, state=$JOB_STATE)"
+pass "operator job $JOB_ID reached stage=done state=succeeded"
+
+# Fetch full job detail
+curl -sS -u admin:admin "$PROXY_URL/operator/jobs/$JOB_ID" >"$JOB_DETAIL_FILE" 2>"$LOG_DIR/job-detail.err" \
+  || fail "failed to fetch job detail for $JOB_ID"
+
+CURRENT_ATTEMPT="$(jq -r '.job.current_attempt_number // 1' "$JOB_DETAIL_FILE")"
+BUILD_LOG_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+  .attempts[] | select(.attempt_number == $att) | .build_log_path // empty
+' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+
+if [[ -z "$BUILD_LOG_PATH" ]]; then
+  BUILD_LOG_PATH="$(jq -r '.attempts[0].build_log_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+fi
+
+if [[ -n "$BUILD_LOG_PATH" ]] && docker exec "$EXAPP_CONTAINER" test -f "$BUILD_LOG_PATH"; then
+  docker exec "$EXAPP_CONTAINER" cat "$BUILD_LOG_PATH" >"$LOG_DIR/build.log"
+else
+  CANDIDATE_LOG="/nc_app_gocassini_data/operator/jobs/runs/${JOB_ID}--attempt-$(printf '%03d' "$CURRENT_ATTEMPT").logs/build.log"
+  if docker exec "$EXAPP_CONTAINER" test -f "$CANDIDATE_LOG"; then
+    docker exec "$EXAPP_CONTAINER" cat "$CANDIDATE_LOG" >"$LOG_DIR/build.log"
+  else
+    fail "build.log could not be located inside container for job $JOB_ID attempt $CURRENT_ATTEMPT"
+  fi
+fi
+
+[[ -s "$LOG_DIR/build.log" ]] || fail "build.log is empty for job $JOB_ID"
+
+# Assert build log for Alice
+grep -Eiq "source audio: .*alice.* transcribing from participant capture spliced over [1-9][0-9]* ms of their recorded track \([1-9][0-9]*/[1-9][0-9]* segments, 0 skipped," \
+  "$LOG_DIR/build.log" || {
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "build log does not assert successful splice for Alice with 0 skipped"
+  }
+if grep -Eiq "source audio: .*alice.*keeping the recorded audio" "$LOG_DIR/build.log"; then
+  fail "Alice has 'keeping the recorded audio' in build log"
+fi
+
+# Assert build log for Bob
+grep -Eiq "source audio: .*bob.* transcribing from participant capture spliced over [1-9][0-9]* ms of their recorded track \([1-9][0-9]*/[1-9][0-9]* segments, 0 skipped," \
+  "$LOG_DIR/build.log" || {
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "build log does not assert successful splice for Bob with 0 skipped"
+  }
+if grep -Eiq "source audio: .*bob.*keeping the recorded audio" "$LOG_DIR/build.log"; then
+  fail "Bob has 'keeping the recorded audio' in build log"
+fi
+
+pass "build log asserts participant capture splice for Alice and Bob with 0 skipped"
+
+# Assert published meeting manifest records provenance.sourceAudio
+ARTIFACT_MEETING_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+  .attempts[] | select(.attempt_number == $att) | .artifact_meeting_path // empty
+' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+
+if [[ -z "$ARTIFACT_MEETING_PATH" ]]; then
+  ARTIFACT_MEETING_PATH="$(jq -r '.job.artifact_meeting_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+fi
+
+if [[ -n "$ARTIFACT_MEETING_PATH" ]] && docker exec "$EXAPP_CONTAINER" test -f "$ARTIFACT_MEETING_PATH/manifest.json"; then
+  docker exec "$EXAPP_CONTAINER" cat "$ARTIFACT_MEETING_PATH/manifest.json" >"$LOG_DIR/meeting-manifest.json"
+else
+  ALT_MANIFEST="/nc_app_gocassini_data/operator/jobs/runs/${JOB_ID}--attempt-$(printf '%03d' "$CURRENT_ATTEMPT").meeting/manifest.json"
+  if docker exec "$EXAPP_CONTAINER" test -f "$ALT_MANIFEST"; then
+    docker exec "$EXAPP_CONTAINER" cat "$ALT_MANIFEST" >"$LOG_DIR/meeting-manifest.json"
+  else
+    fail "meeting manifest.json not found inside container for job $JOB_ID"
+  fi
+fi
+
+jq -e --arg alice "$ALICE" --arg bob "$BOB" '
+  .provenance.sourceAudio as $sa
+  | ($sa | type == "array" and length >= 2)
+  and any($sa[]; (.owner == $alice or (.speaker_id | test($alice; "i"))) and .spliced_ms > 0 and .skipped == 0)
+  and any($sa[]; (.owner == $bob or (.speaker_id | test($bob; "i"))) and .spliced_ms > 0 and .skipped == 0)
+' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
+  log "--- meeting manifest.json provenance ---"
+  jq '.provenance // {}' "$LOG_DIR/meeting-manifest.json" || true
+  fail "meeting manifest provenance.sourceAudio does not record successful splice for both Alice and Bob"
+}
+
+pass "meeting manifest provenance.sourceAudio records successful splice for both Alice and Bob"
+
