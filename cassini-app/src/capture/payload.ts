@@ -385,6 +385,10 @@ export function pickAudioSender(
 export interface CaptureState {
   roomToken: string;
   dirName: string;
+  // connection is the publishing peer connection this capture belongs to. It is
+  // kept so the in-call gate can be re-checked whenever a segment is about to
+  // start, not only when the capture began.
+  connection: RTCPeerConnection | null;
   callStartWallMs: number;
   worker: Worker;
   segmentIndex: number;
@@ -945,6 +949,10 @@ async function uploadCapture(
 interface SealedCapture {
   dirName: string;
   sidecar: CaptureSidecar;
+  // release drops the exclusive claim this page took on the directory when it
+  // decided to hold the capture. It is set only on a held capture, and it is
+  // either handed to the capture that adopts it or called when the hold ends.
+  release?: () => void;
   // highestSegmentOnDisk is the largest segment index the directory actually
   // holds a file for, which is not always the largest one the manifest names.
   // The recovery sidecar is a checkpoint, so a segment can have bytes on disk
@@ -1012,15 +1020,16 @@ function finishSettling(): void {
 // treated as this recording's own first half.
 //
 // The page cannot ask Talk which recording a buffer belongs to; there is no
-// recording id in any of this. What it has is "the same room, and a recording
-// is active now", which a buffer from a DIFFERENT recording earlier in the same
-// room would also satisfy. Two minutes is far more than a reload and a rejoin
-// take even on the connection this feature exists for, and far less than the
-// gap between two recordings anybody would confuse. Getting it wrong is not
-// silent corruption either — segments carry their own wall-clock windows, so a
-// wrongly adopted one is placed before this recording began and simply falls
-// outside it — but it is still worth not doing.
-const ADOPT_MAX_AGE_MS = 120_000;
+// recording id in any of this. What it has is "the same room, the same
+// participant, a page that died mid-interval, and a recording active now" —
+// which a buffer from a DIFFERENT recording minutes earlier in the same room
+// would also satisfy. This is measured at page load, so what it has to cover is
+// the dead time of a reload rather than a whole rejoin, and a minute is far
+// more than that. Getting it wrong is not silent corruption — segments carry
+// their own wall-clock windows, so a wrongly adopted one is placed before this
+// recording began and falls outside it — but it does withhold that audio until
+// the current recording stops, which is worth not doing.
+const ADOPT_MAX_AGE_MS = 60_000;
 
 // ADOPT_DECISION_TIMEOUT_MS is how long a held capture waits for this page to
 // start recording before it is uploaded after all.
@@ -1114,6 +1123,20 @@ function captureIsAdoptable(sealed: SealedCapture, roomToken: string | null): bo
     // Another room's buffer has nothing to do with the call this page is on.
     return false;
   }
+  // And another PERSON's buffer has nothing to do with whoever is signed in
+  // now. Browser storage belongs to the origin, not to the session: on a shared
+  // machine the buffer a colleague's dead page left behind is still sitting
+  // there when the next person signs in, and adopting it would splice their
+  // voice into this participant's capture and file it under this participant's
+  // authenticated name. The sidecar's own claim about who recorded it is not
+  // trustworthy for authorisation — the server decides that — but it is exactly
+  // the right thing to compare against here, because both sides are this
+  // browser's own record of who was signed in.
+  const currentUser =
+    (globalThis as { OC?: { getCurrentUser?: () => { uid?: string } } }).OC?.getCurrentUser?.()?.uid ?? "";
+  if ((sealed.sidecar.participantId ?? "") !== currentUser) {
+    return false;
+  }
   if (captureAbandoned) {
     // This page will never record, so it will never adopt anything either.
     return false;
@@ -1203,6 +1226,44 @@ async function claimCaptureDir<T>(dirName: string, work: () => Promise<T>, busy:
   return result;
 }
 
+// claimCaptureDirUntilReleased takes a claim and hands back the function that
+// drops it, or null when another page in this browser holds the directory.
+//
+// The difference from claimCaptureDir is who decides when the claim ends. A
+// buffer held for adoption is held across a decision this page has not made yet
+// — it waits for the participant to rejoin — so the claim has to span the wait,
+// the adoption, the recording that follows and its upload. Releasing it after
+// the READ, and taking a fresh one when the capture eventually starts, left the
+// directory unclaimed for the whole of that wait: two pages loading at once
+// could each hold the same buffer, each compute the same next segment index,
+// and each open the same file.
+function claimCaptureDirUntilReleased(dirName: string): Promise<(() => void) | null> {
+  const locks = captureLocks();
+  if (locks === null) {
+    // Nothing to claim and nothing to release. Browsers without Web Locks get
+    // the behaviour they had before them.
+    return Promise.resolve(() => {});
+  }
+  return new Promise((resolve) => {
+    let granted = false;
+    void locks
+      .request(
+        captureLockName(dirName),
+        { mode: "exclusive", signal: AbortSignal.timeout(CAPTURE_LOCK_WAIT_MS) },
+        () =>
+          new Promise<void>((release) => {
+            granted = true;
+            resolve(() => release());
+          }),
+      )
+      .catch(() => {
+        if (!granted) {
+          resolve(null);
+        }
+      });
+  });
+}
+
 // holdCaptureDir claims a directory for as long as this page records into it.
 // Fire-and-forget by necessity — beginCapture is synchronous, because it runs
 // inside Talk's addTrack — so the claim lands a tick later. The window that
@@ -1253,11 +1314,18 @@ function releaseAdoptableCapture(): void {
   if (held === null) {
     return;
   }
-  void uploadCapture(held.sidecar, held.dirName, false).catch(() => {
-    // Left in OPFS for the next Talk page load, exactly as any other deferred
-    // upload is.
-    console.warn("Cassini source capture: upload deferred; buffered audio remains in browser storage");
-  });
+  void uploadCapture(held.sidecar, held.dirName, false)
+    .catch(() => {
+      // Left in OPFS for the next Talk page load, exactly as any other deferred
+      // upload is.
+      console.warn("Cassini source capture: upload deferred; buffered audio remains in browser storage");
+    })
+    .finally(() => {
+      // Only once the bytes are gone or given up on. The claim is what stops
+      // another page in this browser touching the directory, and the upload is
+      // the last thing that touches it.
+      held.release?.();
+    });
 }
 
 function clearAdoptDeadline(): void {
@@ -1292,10 +1360,12 @@ export async function settleBufferedCaptures(): Promise<number> {
       names.push(dirName);
     }
   }
-  // Every manifest is read before anything is decided. Reading is local and
-  // fast; the decision has to be made against all of them at once, because
-  // which capture is held cannot depend on the order OPFS happened to list
-  // them in.
+  // Every manifest is read before anything is decided, and read WITHOUT a
+  // claim. Reading is local, fast and harmless — even of a directory another
+  // page is recording into — and it has to finish before the decision, because
+  // which capture is held cannot depend on the order OPFS happened to list them
+  // in. Waiting on a lock here would also put a network-scale wait in front of
+  // a capture start, which is the one thing this scan must never do.
   const sealed: SealedCapture[] = [];
   for (const dirName of names) {
     // Belt and braces against the snapshot above: never touch the directory a
@@ -1304,11 +1374,7 @@ export async function settleBufferedCaptures(): Promise<number> {
       continue;
     }
     try {
-      // Claimed while it is read. A directory another Talk page is recording
-      // into looks exactly like a finished one from here — the recovery
-      // sidecar is written as chunks land — so the claim is the only thing
-      // that tells them apart, and a busy one is left entirely alone.
-      const found = await claimCaptureDir(dirName, () => readSealedCapture(root, dirName), null);
+      const found = await readSealedCapture(root, dirName);
       if (found !== null) {
         sealed.push(found);
       }
@@ -1323,27 +1389,33 @@ export async function settleBufferedCaptures(): Promise<number> {
   // resume. An older buffer for the same room belongs to an earlier recording,
   // not to the front of this one.
   if (adoptable === null && state === null) {
-    let best: SealedCapture | null = null;
-    for (const candidate of sealed) {
-      if (!captureIsAdoptable(candidate, roomToken)) {
+    const candidates = sealed
+      .filter((candidate) => captureIsAdoptable(candidate, roomToken))
+      .sort((a, b) => b.sidecar.callEndWallMs - a.sidecar.callEndWallMs);
+    for (const candidate of candidates) {
+      // The claim is taken HERE and held until the capture that adopts it is
+      // uploaded, or until the hold ends. A directory another page holds is
+      // not this page's to resume — that page is recording into it — and it is
+      // left entirely alone rather than tried again below.
+      const release = await claimCaptureDirUntilReleased(candidate.dirName);
+      if (release === null) {
         continue;
       }
-      if (best === null || candidate.sidecar.callEndWallMs > best.sidecar.callEndWallMs) {
-        best = candidate;
+      if (!(await captureFilesArePresent(root, candidate))) {
+        // A manifest naming a file that is gone is not resumable: the missing
+        // file would be carried into the merged sidecar and make the whole
+        // capture unuploadable. Let the loop below offer it instead, where a
+        // failure costs only this capture.
+        release();
+        continue;
       }
-    }
-    if (best !== null && !(await captureFilesArePresent(root, best))) {
-      // Uploaded on the loop below instead, where a failure costs only this
-      // capture.
-      best = null;
-    }
-    if (best !== null) {
-      adoptable = best;
+      adoptable = { ...candidate, release };
       clearAdoptDeadline();
       adoptDeadline = setTimeout(() => {
         console.info("Cassini source capture: nothing resumed the buffered capture; uploading it");
         releaseAdoptableCapture();
       }, ADOPT_DECISION_TIMEOUT_MS) as unknown as number;
+      break;
     }
   }
   // Remembered rather than re-read from `adoptable` below. Each upload is a
@@ -1529,6 +1601,16 @@ export function rotateSegment(session: CaptureState, sender: RTCRtpSender): void
       if (session.discarded || session.finished) {
         return;
       }
+      // And the in-call condition, because a rotation opens a NEW recorder and
+      // every one of them has to answer for itself. `discarded` and `finished`
+      // above already carry the other two — the administrator switch marks the
+      // session discarded, and Talk's recording stopping finishes it — but
+      // nothing marked the session when the participant simply stopped being in
+      // the call, so a microphone replaced after the connection went away would
+      // open a recorder on a page that is no longer in the meeting.
+      if (session.connection && !senderIsInTheCall(sender, session.connection)) {
+        return;
+      }
       startSegment(session, sender);
     })
     .catch(() => {
@@ -1552,10 +1634,18 @@ let serverAllowsCapture = false;
 async function refreshCapturePermission(proxyBase: string): Promise<void> {
   const allowed = await captureAllowedByServer(proxyBase);
   serverAllowsCapture = allowed;
-  if (!allowed && state && !state.discarded) {
+  if (allowed) {
+    return;
+  }
+  if (state && !state.discarded) {
     state.discarded = true;
     stopWithoutRestart(state);
   }
+  // A buffer merely held for adoption is just as much this call's audio, and
+  // the switch being off has to mean nothing from that stretch is kept. This
+  // deletes it rather than uploading it: releaseAdoptableCapture goes through
+  // uploadCapture, which discards outright while collection is off.
+  releaseAdoptableCapture();
 }
 
 // senderIsInTheCall is the whole of "this participant is in the call".
@@ -1635,16 +1725,27 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   const adopted =
     inherited !== null && inherited.sidecar.roomToken === roomToken ? inherited : null;
   if (inherited !== null && adopted === null) {
-    // Held for a room this capture is not for. Upload it rather than drop it.
-    void uploadCapture(inherited.sidecar, inherited.dirName, false).catch(() => {});
+    // Held for a room this capture is not for. Upload it rather than drop it,
+    // and give the directory back once those bytes are gone.
+    void uploadCapture(inherited.sidecar, inherited.dirName, false)
+      .catch(() => {})
+      .finally(() => inherited.release?.());
   }
   const callStartWallMs = adopted?.sidecar.callStartWallMs ?? Date.now();
-  let releaseDirClaim = (): void => {};
-  const dirClaimed = new Promise<void>((resolve) => {
-    releaseDirClaim = resolve;
-  });
+  // An adopted capture already comes with this page's claim on its directory,
+  // taken when the buffer was held. It is handed over rather than re-taken:
+  // asking for the same lock again would queue behind the one this page is
+  // still holding and never be granted.
+  let releaseDirClaim = adopted?.release ?? ((): void => {});
+  let dirClaimed: Promise<void> | null = null;
+  if (adopted === null) {
+    dirClaimed = new Promise<void>((resolve) => {
+      releaseDirClaim = resolve;
+    });
+  }
   const session: CaptureState = {
     releaseDirClaim,
+    connection,
     roomToken,
     dirName: adopted?.dirName ?? captureDirName(roomToken, callStartWallMs),
     callStartWallMs,
@@ -1663,7 +1764,9 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   state = session;
   capturingSender = sender;
   capturingConnection = connection;
-  holdCaptureDir(session.dirName, dirClaimed);
+  if (dirClaimed !== null) {
+    holdCaptureDir(session.dirName, dirClaimed);
+  }
   worker.postMessage({
     type: "capture-start",
     dirName: session.dirName,
