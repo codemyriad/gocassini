@@ -11,21 +11,25 @@
     publish: "Publish",
   };
 
-  export function isBuildWaitingForGPU(job: JobStatus): boolean {
+  // A deferred or blocked build is a resource decision, not necessarily a GPU
+  // one: since D-702 a build can also wait on host RAM, or block because an
+  // explicit CUDA override cannot be satisfied. The job's own error message
+  // says which; these labels must not assert a cause they do not know.
+  export function isBuildWaitingForResources(job: JobStatus): boolean {
     return job.stage === "build" && job.state === "queued" && job.build_retry_not_before != null;
   }
 
-  export function isBuildGPUBlocked(job: JobStatus): boolean {
+  export function isBuildBlocked(job: JobStatus): boolean {
     return job.stage === "build" && job.state === "blocked";
   }
 
-  export function hasGPUResourceNotice(job: JobStatus): boolean {
-    return isBuildWaitingForGPU(job) || isBuildGPUBlocked(job);
+  export function hasResourceNotice(job: JobStatus): boolean {
+    return isBuildWaitingForResources(job) || isBuildBlocked(job);
   }
 
   export function jobStatusLabel(job: JobStatus): string {
-    if (isBuildGPUBlocked(job)) return "GPU unavailable";
-    if (isBuildWaitingForGPU(job)) return "Waiting for GPU";
+    if (isBuildBlocked(job)) return "Build blocked";
+    if (isBuildWaitingForResources(job)) return "Waiting for resources";
     if (job.state === "failed") return "Failed";
     if (job.state === "stopped") return "Stopped";
     if (job.state === "interrupted") return "Interrupted";
@@ -39,7 +43,7 @@
   }
 
   export function jobStatusToneClass(job: JobStatus): string {
-    if (hasGPUResourceNotice(job) || job.state === "stopped") return "text-warning";
+    if (hasResourceNotice(job) || job.state === "stopped") return "text-warning";
     if (job.state === "failed" || job.state === "interrupted") return "text-error";
     if (job.state === "succeeded") return "text-success";
     return "text-base-content/70";
@@ -469,8 +473,8 @@
   }
 
   function stageProgress(job: Job | JobAttempt): Array<{ label: string; status: StageStatus }> {
-    const gpuBlocked = isBuildGPUBlocked(job);
-    const halted = gpuBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
+    const buildBlocked = isBuildBlocked(job);
+    const halted = buildBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
     let lastTouched = -1;
     const times = STAGES.map((stage, index) => {
       const t = stageTimes(job, stage.key);
@@ -490,7 +494,7 @@
         status = "queued";
       }
       if (halted && index === lastTouched) {
-        status = gpuBlocked ? "blocked" : "failed";
+        status = buildBlocked ? "blocked" : "failed";
       }
       return { label: stage.label, status };
     });
@@ -607,7 +611,7 @@
   $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
   $: stopApplies = selectedJob?.job.stage === "record" && selectedJob?.job.state === "running";
   $: jobFinished = selectedJob?.job.stage === "done";
-  $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildGPUBlocked(selectedJob.job));
+  $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildBlocked(selectedJob.job));
   $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
   $: rerunBlockedReason =
     rerunVisible && !selectedJob?.job.artifact_run_path
@@ -756,14 +760,14 @@
                           <span class={jobStatusToneClass(job)}>{jobStatusLabel(job)}</span>
                           <span class="text-base-content/50"> · {relativeTime(job.updated_at)}</span>
                         </p>
-                        {#if isBuildWaitingForGPU(job)}
+                        {#if isBuildWaitingForResources(job)}
                           <p class="truncate text-warning" title={formatTimestamp(job.build_retry_not_before)}>
                             Next retry {formatTimestamp(job.build_retry_not_before)} · {job.build_deferral_count}
                             {job.build_deferral_count === 1 ? "deferral" : "deferrals"}
                           </p>
                         {/if}
                         {#if job.error}
-                          <p class="truncate {hasGPUResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
+                          <p class="truncate {hasResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
                             {job.error}
                           </p>
                         {/if}
@@ -891,7 +895,7 @@
                       {/each}
                     </div>
                   </div>
-                  {#if hasGPUResourceNotice(selectedJob.job)}
+                  {#if hasResourceNotice(selectedJob.job)}
                     <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3">
                       <div class="flex items-center gap-2 text-warning">
                         <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
@@ -901,14 +905,14 @@
                         <p class="text-xs break-words text-base-content/75">{selectedJob.job.error}</p>
                       {/if}
                       <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                        {#if isBuildWaitingForGPU(selectedJob.job)}
+                        {#if isBuildWaitingForResources(selectedJob.job)}
                           <div class="flex gap-1">
                             <dt class="text-base-content/50">Next retry</dt>
                             <dd>{formatTimestamp(selectedJob.job.build_retry_not_before)}</dd>
                           </div>
                         {/if}
                         <div class="flex gap-1">
-                          <dt class="text-base-content/50">GPU deferrals</dt>
+                          <dt class="text-base-content/50">Resource deferrals</dt>
                           <dd>{selectedJob.job.build_deferral_count}</dd>
                         </div>
                       </dl>
@@ -1014,7 +1018,7 @@
                         </summary>
 
                         <div class="grid gap-3 bg-base-200 px-3 pt-3 pb-3">
-                          {#if hasGPUResourceNotice(attempt)}
+                          {#if hasResourceNotice(attempt)}
                             <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3">
                               <div class="flex items-center gap-2 text-warning">
                                 <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
@@ -1024,14 +1028,14 @@
                                 <p class="text-xs break-words text-base-content/75">{attempt.error}</p>
                               {/if}
                               <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                                {#if isBuildWaitingForGPU(attempt)}
+                                {#if isBuildWaitingForResources(attempt)}
                                   <div class="flex gap-1">
                                     <dt class="text-base-content/50">Next retry</dt>
                                     <dd>{formatTimestamp(attempt.build_retry_not_before)}</dd>
                                   </div>
                                 {/if}
                                 <div class="flex gap-1">
-                                  <dt class="text-base-content/50">GPU deferrals</dt>
+                                  <dt class="text-base-content/50">Resource deferrals</dt>
                                   <dd>{attempt.build_deferral_count}</dd>
                                 </div>
                               </dl>

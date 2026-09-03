@@ -8,6 +8,7 @@ import type {
   LLMSettingsUpdate,
   LLMStep,
   Settings,
+  SettingsEffective,
   SettingsQuality,
   SettingsUpdate,
 } from "./types";
@@ -192,14 +193,21 @@ export class OperatorClient {
 // "balanced" so the UI always has a renderable, well-typed shape.
 function normalizeSettings(raw: unknown): Settings {
   const value = (raw ?? {}) as Record<string, unknown>;
-  const effective =
+  const rawEffective =
     value.effective != null && typeof value.effective === "object"
       ? (value.effective as Record<string, unknown>)
       : {};
+  const effective: SettingsEffective = {
+    quality: normalizeQuality(rawEffective.quality),
+    device: asString(rawEffective.device),
+    model: asString(rawEffective.model),
+    model_download_mb: asNumber(rawEffective.model_download_mb),
+    min_free_memory_mb: asNumber(rawEffective.min_free_memory_mb),
+    note: asString(rawEffective.note),
+  };
   return {
     quality: normalizeQuality(value.quality),
     device_override: asString(value.device_override),
-    model_override: asString(value.model_override),
     source: asString(value.source) || "auto",
     detected_gpu: value.detected_gpu === true,
     cores: typeof value.cores === "number" && Number.isFinite(value.cores) ? value.cores : 0,
@@ -212,6 +220,10 @@ function normalizeQuality(value: unknown): SettingsQuality {
   return SETTINGS_QUALITIES.includes(value as SettingsQuality)
     ? (value as SettingsQuality)
     : "balanced";
+}
+
+function asNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function asString(value: unknown): string {

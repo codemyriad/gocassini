@@ -2,6 +2,7 @@ package operator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,6 @@ import (
 type STTSettings struct {
 	Quality             string `json:"quality"`
 	DeviceOverride      string `json:"device_override,omitempty"`
-	ModelOverride       string `json:"model_override,omitempty"`
 	Source              string `json:"source"` // "auto" | "user"
 	HardwareFingerprint string `json:"hardware_fingerprint"`
 	DetectedGPU         bool   `json:"detected_gpu"`
@@ -41,47 +41,38 @@ const (
 	envSTTNumThreads        = "CASSINI_STT_NUM_THREADS"
 	envSTTStreamConcurrency = "CASSINI_STT_STREAM_CONCURRENCY"
 	envSTTAdditionalModels  = "CASSINI_STT_ADDITIONAL_MODELS"
-
-	// auditedCUDAParakeetV3 is currently the only model whose complete
-	// production path has been measured with the bundled CUDA runtime. Add a
-	// model to validCUDAModelOverride only after an equivalent GPU/CPU-fallback
-	// audit; accepting arbitrary model IDs would undermine GPU-only admission.
-	auditedCUDAParakeetV3 = "parakeet-tdt-0.6b-v3"
+	// envCacheRoot points the recorder at the writable model cache. The
+	// operator sets it per build so a tier the image does not bundle downloads
+	// onto the persistent volume (D-704).
+	envCacheRoot = "CASSINI_CACHE_ROOT"
+	// envDisallowModelDownload is stripped from every child: the image used to
+	// forbid all downloads, which is now expressed by declaring the models it
+	// bundles instead. A stale value would block the one-off fetch.
+	envDisallowModelDownload = "CASSINI_DISALLOW_MODEL_DOWNLOAD"
 )
 
-// SettingsMigration describes a persisted STT policy that was accepted by an
-// older operator but cannot be executed under the current GPU-only policy. The
-// loader clears only the unsupported overrides and rewrites settings.json; the
-// remaining user policy stays intact.
+// SettingsMigration describes a persisted STT policy that names a device or
+// model this operator cannot execute. The loader clears only the unsupported
+// overrides and rewrites settings.json; the remaining user policy stays intact.
 //
 // Callers receive this value only after the healed file has been persisted, so
 // logging Message cannot claim a migration that failed to reach disk.
 type SettingsMigration struct {
 	Path                  string
 	ClearedDeviceOverride string
-	ClearedModelOverride  string
 	Quality               string
 	Source                string
 }
 
 // Message is suitable for the operator log. It explains both what changed and
-// how an administrator can restore an explicit, supported override without
-// logging the vocabulary itself.
+// how an administrator can restore an explicit, supported override.
 func (m SettingsMigration) Message() string {
-	cleared := make([]string, 0, 2)
-	if m.ClearedDeviceOverride != "" {
-		cleared = append(cleared, fmt.Sprintf("unsupported device_override=%q", m.ClearedDeviceOverride))
-	}
-	if m.ClearedModelOverride != "" {
-		cleared = append(cleared, fmt.Sprintf("unaudited model_override=%q", m.ClearedModelOverride))
-	}
 	return fmt.Sprintf(
-		"stt_settings migrated %s: cleared %s; preserved quality=%q and source=%q; use Settings to select CUDA or the audited model %q if an explicit override is required",
+		"stt_settings migrated %s: cleared unsupported device_override=%q; preserved quality=%q and source=%q; the policy now auto-selects the device, and Settings can still pin cpu or cuda",
 		m.Path,
-		strings.Join(cleared, " and "),
+		m.ClearedDeviceOverride,
 		m.Quality,
 		m.Source,
-		auditedCUDAParakeetV3,
 	)
 }
 
@@ -90,15 +81,6 @@ func (m SettingsMigration) Message() string {
 // startup use the Runtime logger without coupling this persistence helper to a
 // process-global logger.
 type SettingsMigrationReporter func(SettingsMigration)
-
-func validCUDAModelOverride(model string) bool {
-	switch strings.TrimSpace(model) {
-	case "", auditedCUDAParakeetV3:
-		return true
-	default:
-		return false
-	}
-}
 
 // settingsPath returns the settings.json location: the same persistent dir as
 // the sqlite DB, so the config survives restart + redeploy on the AppAPI
@@ -123,14 +105,23 @@ func detectGPU() bool {
 // default can detect when the hardware changed (GPU added/removed) across
 // restarts and re-derive accordingly.
 func hardwareFingerprint(gpu bool, cores int) string {
-	return fmt.Sprintf("gpu=%t;cores=%d", gpu, cores)
+	// CUDA capability is part of the fingerprint because it changes what a
+	// build does without any hardware changing: swapping the plain image for
+	// the -cuda one on the same host must re-derive an auto policy.
+	return fmt.Sprintf("gpu=%t;cuda=%t;cores=%d", gpu, cudaCapableHost(), cores)
 }
 
-// defaultQualityForHardware picks the auto-default tier: on a GPU fp32 is both
-// the quality ceiling and fast, so "best"; on CPU keep "balanced" (int8) which
-// preserves the historical CPU speed/quality default.
-func defaultQualityForHardware(gpu bool) string {
-	if gpu {
+// defaultQualityForHardware picks the auto-default tier from the device builds
+// will really use. On CUDA fp32 is both the quality ceiling and the fast
+// option, so "best"; otherwise "balanced" (int8), the tier a 4-core host can
+// sustain and whose RAM floor it can meet.
+//
+// This takes effective CUDA capability, not raw device visibility: the plain
+// image installed on a GPU daemon sees /dev/nvidia* but transcribes on the CPU,
+// and defaulting it to "best" would pick the 4.5GiB fp32 tier for a host that
+// wanted balanced.
+func defaultQualityForHardware(cudaCapable bool) string {
+	if cudaCapable {
 		return sttQualityBest
 	}
 	return sttQualityBalanced
@@ -156,7 +147,7 @@ func detectSettings() STTSettings {
 	gpu := detectGPU()
 	cores := runtime.NumCPU()
 	return STTSettings{
-		Quality:             defaultQualityForHardware(gpu),
+		Quality:             defaultQualityForHardware(cudaCapableHost()),
 		Source:              sttSourceAuto,
 		HardwareFingerprint: hardwareFingerprint(gpu, cores),
 		DetectedGPU:         gpu,
@@ -213,15 +204,6 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	}
 	s.DeviceOverride = deviceOverride
 
-	originalModelOverride := s.ModelOverride
-	s.ModelOverride = strings.TrimSpace(s.ModelOverride)
-	if !validCUDAModelOverride(s.ModelOverride) {
-		migration.ClearedModelOverride = originalModelOverride
-		s.ModelOverride = ""
-	}
-	if s.ModelOverride != originalModelOverride {
-		needsRewrite = true
-	}
 	s.Quality = normalizeQuality(s.Quality)
 	if s.Source != sttSourceUser {
 		s.Source = sttSourceAuto
@@ -238,14 +220,14 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			if err := Save(path, s); err != nil {
 				return STTSettings{}, err
 			}
-			if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+			if migration.ClearedDeviceOverride != "" {
 				reportSettingsMigration(report, path, migration, s)
 			}
 		} else if needsRewrite {
 			if err := Save(path, s); err != nil {
 				return STTSettings{}, err
 			}
-			if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+			if migration.ClearedDeviceOverride != "" {
 				reportSettingsMigration(report, path, migration, s)
 			}
 		}
@@ -266,7 +248,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 		if err := Save(path, s); err != nil {
 			return STTSettings{}, err
 		}
-		if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+		if migration.ClearedDeviceOverride != "" {
 			reportSettingsMigration(report, path, migration, s)
 		}
 	} else if displayChanged {
@@ -293,13 +275,9 @@ func Save(path string, s STTSettings) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("settings path must not be empty")
 	}
-	s.ModelOverride = strings.TrimSpace(s.ModelOverride)
-	if !validCUDAModelOverride(s.ModelOverride) {
-		return fmt.Errorf("model_override %q is not an audited CUDA model", s.ModelOverride)
-	}
 	deviceOverride := strings.ToLower(strings.TrimSpace(s.DeviceOverride))
 	if !validDeviceOverride(deviceOverride) {
-		return fmt.Errorf("device_override %q is not supported; operator builds are GPU-only", s.DeviceOverride)
+		return fmt.Errorf("device_override %q is not supported; expected \"\", auto, cpu or cuda", s.DeviceOverride)
 	}
 	if deviceOverride == "auto" {
 		deviceOverride = ""
@@ -344,11 +322,12 @@ func (s STTSettings) ChildEnv(base []string) []string {
 	// override) keeps the result duplicate-free and makes the appended override
 	// the single, authoritative value.
 	drop := map[string]bool{
-		envSTTQuality:          true,
-		envSTTNumThreads:       true,
-		envSTTDevice:           true,
-		envSTTModel:            true,
-		envSTTAdditionalModels: true,
+		envDisallowModelDownload: true,
+		envSTTQuality:            true,
+		envSTTNumThreads:         true,
+		envSTTDevice:             true,
+		envSTTModel:              true,
+		envSTTAdditionalModels:   true,
 		// Retired: preferred spellings fed only the removed readable cleanup.
 		"CASSINI_TRANSCRIPTION_TERMS": true,
 	}
@@ -369,43 +348,112 @@ func (s STTSettings) ChildEnv(base []string) []string {
 	if s.DeviceOverride != "" {
 		out = append(out, envSTTDevice+"="+s.DeviceOverride)
 	}
-	modelOverride := strings.TrimSpace(s.ModelOverride)
-	if modelOverride != "" && validCUDAModelOverride(modelOverride) {
-		out = append(out, envSTTModel+"="+modelOverride)
-	}
 	return out
 }
 
 // effectiveSTT is the resolved, human-readable execution view returned
 // alongside the raw settings on GET. It describes what an admitted operator
-// build will actually receive after the GPU-only governor applies its policy.
+// build will actually receive once the resource governor has applied its
+// policy — the answer to "what will happen if I record right now", which the
+// raw tier alone does not give on a host whose device is auto-selected.
 type effectiveSTT struct {
 	Quality string `json:"quality"`
-	// Device is the concrete device the operator's resource governor injects
-	// into every admitted build. Raw user intent remains available separately
-	// as DeviceOverride.
+	// Device is the concrete device the operator's resource governor will
+	// inject into the next admitted build. Raw user intent remains available
+	// separately as DeviceOverride.
 	Device string `json:"device"`
-	// Model is the concrete CUDA model selected by the recorder after the
-	// governor has forced Device. Raw user intent remains available separately
-	// as ModelOverride.
+	// Model is the concrete model the recorder will load on Device.
 	Model string `json:"model,omitempty"`
-	Note  string `json:"note"`
+	// ModelDownloadMB is the approximate download size when the running image
+	// does not bake Model, and 0 when the build starts without a download. The
+	// first build of such a tier waits for that fetch once (D-704).
+	ModelDownloadMB int `json:"model_download_mb,omitempty"`
+	// MinFreeMemoryMB is the memory that must be free before a build of this
+	// tier starts. An administrator who picks a heavy tier on a small host
+	// otherwise learns the requirement only from a deferred build (D-702).
+	MinFreeMemoryMB int    `json:"min_free_memory_mb,omitempty"`
+	Note            string `json:"note"`
+}
+
+const (
+	noteCUDA = "admitted builds run on CUDA with one recognizer and one host thread"
+	noteCPU  = "no usable GPU on this host: builds run on the CPU, which is correct but much slower — " +
+		"install the matching -cuda image on a GPU deploy daemon for GPU speed"
+	notePinnedCPU    = "device_override=cpu: builds run on the CPU even if a GPU becomes available"
+	noteCUDAUnusable = "device_override=cuda but this host has no usable CUDA runtime or device: builds stay " +
+		"blocked until one is available, or until the override is cleared so they can fall back to the CPU"
+)
+
+// effectiveFor is STTSettings.effective corrected by what this image can
+// actually load: an automatic policy on an image that does not carry the tier's
+// model runs a bundled one instead, and every surface an administrator reads —
+// /settings, /status, the admin panel — must name that same model.
+func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
+	effective := s.effective()
+	admitted, err := rt.admitModelForDevice(s, effective.Device)
+	if err == nil {
+		effective.Model = admitted
+		if rt.modelNeedsDownload(admitted) {
+			effective.ModelDownloadMB = modelDownloadMB(admitted)
+		}
+		effective.MinFreeMemoryMB = resourceLimitsFromEnv().minFreeMemForBuild(effective.Device, admitted)
+		return effective
+	}
+	// Admission refused this policy, so the panel must say why instead of
+	// describing a run that will never happen. This is not an exotic state: any
+	// save sets Source=user, so an administrator who saves settings on an
+	// image that does not carry their tier's model pins it by doing so.
+	var unavailable *resourceUnavailableError
+	if errors.As(err, &unavailable) {
+		effective.Note = unavailable.detail
+	} else {
+		effective.Note = err.Error()
+	}
+	return effective
 }
 
 func (s STTSettings) effective() effectiveSTT {
-	model := strings.TrimSpace(s.ModelOverride)
-	if model == "" {
-		// Every quality tier resolves to the fp32 v3 model on CUDA. Keep this
-		// in step with the recorder's ModelForQuality policy and the resource
-		// governor's forced-CUDA admission rule.
-		model = auditedCUDAParakeetV3
-	}
+	device, note := effectiveDevice(s.DeviceOverride)
 	return effectiveSTT{
 		Quality: normalizeQuality(s.Quality),
-		Device:  "cuda",
-		Model:   model,
-		Note:    "operator builds are GPU-only; admitted builds are forced to CUDA with one recognizer and one host thread",
+		Device:  device,
+		Model:   s.modelForDevice(device),
+		Note:    note,
 	}
+}
+
+// effectiveDevice mirrors Runtime.resolveBuildDevice for display: it answers
+// "which device will the next admitted build use", with one sentence an
+// administrator can act on. It never fails — an unsatisfiable explicit override
+// is reported as the device that was asked for, and /status carries the reason
+// it is not usable.
+func effectiveDevice(override string) (string, string) {
+	cudaUsable := func() bool {
+		capable, _ := imageCUDACapability()
+		return capable && probeNVIDIADevice()
+	}
+	switch strings.ToLower(strings.TrimSpace(override)) {
+	case deviceCPU:
+		return deviceCPU, notePinnedCPU
+	case deviceCUDA:
+		if cudaUsable() {
+			return deviceCUDA, noteCUDA
+		}
+		return deviceCUDA, noteCUDAUnusable
+	default: // "", "auto", anything the loader has already normalised away
+		if cudaUsable() {
+			return deviceCUDA, noteCUDA
+		}
+		return deviceCPU, noteCPU
+	}
+}
+
+// modelForDevice is the model an admitted build will load on device: the
+// quality tier's model for that device. The tier is the only control — a
+// per-model override existed, accepted exactly the three models the tiers
+// already reach, and was removed (D-702).
+func (s STTSettings) modelForDevice(device string) string {
+	return modelForQuality(s.Quality, device)
 }
 
 type settingsResponse struct {
@@ -418,7 +466,6 @@ type settingsResponse struct {
 type settingsUpdate struct {
 	Quality        string  `json:"quality"`
 	DeviceOverride *string `json:"device_override"`
-	ModelOverride  *string `json:"model_override"`
 }
 
 // currentSettings returns a copy of the in-memory STT policy, safe for
@@ -442,12 +489,11 @@ func (rt *Runtime) reportSettingsMigration(migration SettingsMigration) {
 	}
 }
 
-// validDeviceOverride reports whether a device override is permitted by the
-// production operator. Raw recorder tooling can still support CPU explicitly,
-// but operator-managed speech recognition is GPU-only.
+// validDeviceOverride reports whether a device override is one the operator can
+// execute. Empty/auto lets the governor choose; cpu and cuda pin the choice.
 func validDeviceOverride(device string) bool {
 	switch device {
-	case "", "auto", "cuda":
+	case "", "auto", deviceCPU, deviceCUDA:
 		return true
 	default:
 		return false
@@ -480,7 +526,7 @@ func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 	} else {
 		rt.setSettings(s)
 	}
-	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: s.effective()})
+	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
 }
 
 func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
@@ -511,7 +557,7 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if in.DeviceOverride != nil {
 		device := strings.ToLower(strings.TrimSpace(*in.DeviceOverride))
 		if !validDeviceOverride(device) {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("device_override must be one of \"\", auto, cuda; operator builds are GPU-only (got %q)", *in.DeviceOverride))
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("device_override must be one of \"\", auto, cpu, cuda (got %q)", *in.DeviceOverride))
 			return
 		}
 		if device == "auto" {
@@ -519,14 +565,7 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		updated.DeviceOverride = device
 	}
-	if in.ModelOverride != nil {
-		model := strings.TrimSpace(*in.ModelOverride)
-		if !validCUDAModelOverride(model) {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("model_override must be empty or the audited CUDA model %q (got %q)", auditedCUDAParakeetV3, *in.ModelOverride))
-			return
-		}
-		updated.ModelOverride = model
-	}
+
 	// Refresh the host display fields so the persisted record reflects the
 	// current hardware even as the user pins policy.
 	gpu := detectGPU()
@@ -540,5 +579,5 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt.setSettings(updated)
-	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: updated, Effective: updated.effective()})
+	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: updated, Effective: rt.effectiveFor(updated)})
 }

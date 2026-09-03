@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func baseManifestV2() Manifest {
+func baseDraft2Manifest() Manifest {
 	return Manifest{
 		Meeting: Meeting{
 			ID:           "mtg_" + strings.Repeat("a", 64),
@@ -38,8 +38,8 @@ func baseManifestV2() Manifest {
 	}
 }
 
-func baseManifestV3() Manifest {
-	manifest := baseManifestV2()
+func basePublishedManifest() Manifest {
+	manifest := baseDraft2Manifest()
 	manifest.Integrity = Integrity{
 		MatchPolicy: AudioMatchPolicy,
 		OpusSHA256:  strings.Repeat("b", 64),
@@ -80,7 +80,7 @@ func TestValidateTranscriptID(t *testing.T) {
 		{"readable-qwen", false},
 		{"a", false},
 		{"a1", false},
-		{"a_b_c", false},
+		{"a_b_c", true},                 // underscore is not in the published grammar
 		{"PARAKEET", true},              // uppercase rejected
 		{"-leading", true},              // must start with [a-z0-9]
 		{"with space", true},            // no spaces
@@ -181,8 +181,8 @@ func io_ReadAll(r interface{ Read(p []byte) (int, error) }) ([]byte, error) {
 	}
 }
 
-func TestEncodeManifestV2EmitsExpectedShape(t *testing.T) {
-	manifest := baseManifestV2()
+func TestEncodeDraft2ManifestEmitsExpectedShape(t *testing.T) {
+	manifest := baseDraft2Manifest()
 	transcripts := []TranscriptInput{
 		{
 			ID:      "parakeet",
@@ -207,9 +207,9 @@ func TestEncodeManifestV2EmitsExpectedShape(t *testing.T) {
 			},
 		},
 	}
-	encoded, err := EncodeManifestV2(manifest, transcripts, 0)
+	encoded, err := EncodeDraft2Manifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeManifestV2: %v", err)
+		t.Fatalf("EncodeDraft2Manifest: %v", err)
 	}
 	if len(encoded.Transcripts) != 2 {
 		t.Fatalf("expected 2 transcripts encoded, got %d", len(encoded.Transcripts))
@@ -222,7 +222,7 @@ func TestEncodeManifestV2EmitsExpectedShape(t *testing.T) {
 	}
 	gzr, _ := gzip.NewReader(bytes.NewReader(compressed))
 	raw, _ := io_ReadAll(gzr)
-	var wire manifestV2Wire
+	var wire multiTranscriptWire
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		t.Fatalf("unmarshal main manifest: %v", err)
 	}
@@ -248,23 +248,23 @@ func TestEncodeManifestV2EmitsExpectedShape(t *testing.T) {
 	}
 }
 
-func TestEncodeManifestV3UsesCompressedOpusIntegrity(t *testing.T) {
-	manifest := baseManifestV3()
+func TestEncodePublishedManifestUsesCompressedOpusIntegrity(t *testing.T) {
+	manifest := basePublishedManifest()
 	transcripts := []TranscriptInput{{
 		ID: "parakeet", Role: RoleRawASR, Default: true,
 		Body: sampleBody("spk_0", "compressed", "identity"),
 	}}
-	encoded, err := EncodeManifestV3(manifest, transcripts, 0)
+	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeManifestV3: %v", err)
+		t.Fatalf("EncodePublishedManifest: %v", err)
 	}
 
-	var wire manifestV2Wire
+	var wire multiTranscriptWire
 	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
-		t.Fatalf("decode v3 wire: %v", err)
+		t.Fatalf("decode published wire: %v", err)
 	}
-	if wire.Version != 3 {
-		t.Errorf("version = %d, want 3", wire.Version)
+	if wire.Version != WireVersion {
+		t.Errorf("version = %d, want %d", wire.Version, WireVersion)
 	}
 	if wire.Integrity.MatchPolicy != AudioMatchPolicy {
 		t.Errorf("matchPolicy = %q, want %q", wire.Integrity.MatchPolicy, AudioMatchPolicy)
@@ -273,25 +273,25 @@ func TestEncodeManifestV3UsesCompressedOpusIntegrity(t *testing.T) {
 		t.Errorf("opusAudioSha256 = %q", wire.Integrity.OpusSHA256)
 	}
 	if wire.Integrity.PCMSHA256 != "" || wire.Integrity.PCMFormat != "" {
-		t.Errorf("v3 leaked legacy PCM integrity: %+v", wire.Integrity)
+		t.Errorf("published wire leaked legacy PCM integrity: %+v", wire.Integrity)
 	}
 
-	tags := BuildOpusTagsV3(manifest, encoded, "parakeet")
-	if tags["CASSINI_FORMAT"] != FormatV3 {
-		t.Errorf("CASSINI_FORMAT = %q, want %q", tags["CASSINI_FORMAT"], FormatV3)
+	tags := BuildPublishedOpusTags(manifest, encoded, "parakeet")
+	if tags["CASSINI_FORMAT"] != Format {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", tags["CASSINI_FORMAT"], Format)
 	}
 	if tags["CASSINI_AUDIO_OPUS_SHA256"] != strings.Repeat("b", 64) {
 		t.Errorf("CASSINI_AUDIO_OPUS_SHA256 = %q", tags["CASSINI_AUDIO_OPUS_SHA256"])
 	}
 	if _, ok := tags["CASSINI_AUDIO_PCM_SHA256"]; ok {
-		t.Error("v3 emitted CASSINI_AUDIO_PCM_SHA256")
+		t.Error("published wire emitted CASSINI_AUDIO_PCM_SHA256")
 	}
 }
 
-func TestEncodeManifestV3RequiresCompressedDigest(t *testing.T) {
-	manifest := baseManifestV3()
+func TestEncodePublishedManifestRequiresCompressedDigest(t *testing.T) {
+	manifest := basePublishedManifest()
 	manifest.Integrity.OpusSHA256 = ""
-	_, err := EncodeManifestV3(manifest, []TranscriptInput{{
+	_, err := EncodePublishedManifest(manifest, []TranscriptInput{{
 		ID: "parakeet", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "x"),
 	}}, 0)
 	if err == nil || !strings.Contains(err.Error(), "opusAudioSha256") {
@@ -299,8 +299,8 @@ func TestEncodeManifestV3RequiresCompressedDigest(t *testing.T) {
 	}
 }
 
-func TestEncodeManifestV2RejectsBadInputs(t *testing.T) {
-	manifest := baseManifestV2()
+func TestEncodeDraft2ManifestRejectsBadInputs(t *testing.T) {
+	manifest := baseDraft2Manifest()
 	body := sampleBody("spk_0", "x")
 
 	cases := []struct {
@@ -368,7 +368,7 @@ func TestEncodeManifestV2RejectsBadInputs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := EncodeManifestV2(manifest, tc.transcripts, 0)
+			_, err := EncodeDraft2Manifest(manifest, tc.transcripts, 0)
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tc.expectMsg)
 			}
@@ -379,8 +379,8 @@ func TestEncodeManifestV2RejectsBadInputs(t *testing.T) {
 	}
 }
 
-func TestBuildOpusTagsV2EmitsPerTranscriptDescriptorsAndChunks(t *testing.T) {
-	manifest := baseManifestV2()
+func TestBuildDraft2OpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing.T) {
+	manifest := baseDraft2Manifest()
 	manifest.Meeting.RecordedAtLocal = "2026-05-12T12:00:00"
 	transcripts := []TranscriptInput{
 		{
@@ -400,11 +400,11 @@ func TestBuildOpusTagsV2EmitsPerTranscriptDescriptorsAndChunks(t *testing.T) {
 			},
 		},
 	}
-	encoded, err := EncodeManifestV2(manifest, transcripts, 0)
+	encoded, err := EncodeDraft2Manifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeManifestV2: %v", err)
+		t.Fatalf("EncodeDraft2Manifest: %v", err)
 	}
-	tags := BuildOpusTagsV2(manifest, encoded, "canary")
+	tags := BuildDraft2OpusTags(manifest, encoded, "canary")
 
 	mustHave := []string{
 		"CASSINI_FORMAT",
@@ -428,8 +428,8 @@ func TestBuildOpusTagsV2EmitsPerTranscriptDescriptorsAndChunks(t *testing.T) {
 			t.Errorf("missing tag %q", key)
 		}
 	}
-	if got := tags["CASSINI_FORMAT"]; got != FormatV2 {
-		t.Errorf("CASSINI_FORMAT = %q, want %q", got, FormatV2)
+	if got := tags["CASSINI_FORMAT"]; got != FormatDraft2 {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", got, FormatDraft2)
 	}
 	if got := tags["CASSINI_TRANSCRIPT_DEFAULT"]; got != "canary" {
 		t.Errorf("CASSINI_TRANSCRIPT_DEFAULT = %q", got)
@@ -452,19 +452,19 @@ func TestBuildOpusTagsV2EmitsPerTranscriptDescriptorsAndChunks(t *testing.T) {
 	}
 }
 
-func TestBuildOpusTagsV2AndWireCarryTheRoom(t *testing.T) {
-	manifest := baseManifestV2()
+func TestBuildDraft2OpusTagsAndWireCarryTheRoom(t *testing.T) {
+	manifest := baseDraft2Manifest()
 	manifest.Meeting.RoomID = "a7bc3k9x"
 	manifest.Meeting.RoomName = "Weekly Sync"
 	transcripts := []TranscriptInput{
 		{ID: "canary", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "alpha")},
 	}
-	encoded, err := EncodeManifestV2(manifest, transcripts, 0)
+	encoded, err := EncodeDraft2Manifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeManifestV2: %v", err)
+		t.Fatalf("EncodeDraft2Manifest: %v", err)
 	}
 
-	tags := BuildOpusTagsV2(manifest, encoded, "canary")
+	tags := BuildDraft2OpusTags(manifest, encoded, "canary")
 	if got := tags["CASSINI_ROOM_ID"]; got != "a7bc3k9x" {
 		t.Errorf("CASSINI_ROOM_ID = %q, want %q", got, "a7bc3k9x")
 	}
@@ -490,7 +490,7 @@ func TestBuildOpusTagsV2AndWireCarryTheRoom(t *testing.T) {
 	}
 
 	// No room: no tags, and no empty keys in the wire manifest either.
-	plainTags := BuildOpusTagsV2(baseManifestV2(), encoded, "canary")
+	plainTags := BuildDraft2OpusTags(baseDraft2Manifest(), encoded, "canary")
 	for _, key := range []string{"CASSINI_ROOM_ID", "CASSINI_ROOM_NAME"} {
 		if _, ok := plainTags[key]; ok {
 			t.Errorf("%s is present on a meeting with no room, want absent", key)
@@ -498,19 +498,19 @@ func TestBuildOpusTagsV2AndWireCarryTheRoom(t *testing.T) {
 	}
 }
 
-func TestBuildOpusTagsV2AndWireCarryTheProvenance(t *testing.T) {
-	manifest := baseManifestV2()
+func TestBuildDraft2OpusTagsAndWireCarryTheProvenance(t *testing.T) {
+	manifest := baseDraft2Manifest()
 	manifest.Meeting.JobID = "01K3Q7W8ZC9F0MJXQ2NB8V4RTD"
 	manifest.Meeting.AttemptNumber = 2
 	transcripts := []TranscriptInput{
 		{ID: "canary", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "alpha")},
 	}
-	encoded, err := EncodeManifestV2(manifest, transcripts, 0)
+	encoded, err := EncodeDraft2Manifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeManifestV2: %v", err)
+		t.Fatalf("EncodeDraft2Manifest: %v", err)
 	}
 
-	tags := BuildOpusTagsV2(manifest, encoded, "canary")
+	tags := BuildDraft2OpusTags(manifest, encoded, "canary")
 	if got := tags["CASSINI_JOB_ID"]; got != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" {
 		t.Errorf("CASSINI_JOB_ID = %q, want the job id", got)
 	}
@@ -534,7 +534,7 @@ func TestBuildOpusTagsV2AndWireCarryTheProvenance(t *testing.T) {
 			wire.Meeting.JobID, wire.Meeting.AttemptNumber)
 	}
 
-	plainTags := BuildOpusTagsV2(baseManifestV2(), encoded, "canary")
+	plainTags := BuildDraft2OpusTags(baseDraft2Manifest(), encoded, "canary")
 	for _, key := range []string{"CASSINI_JOB_ID", "CASSINI_ATTEMPT_NUMBER"} {
 		if _, ok := plainTags[key]; ok {
 			t.Errorf("%s is present on a meeting with no operator lineage, want absent", key)
@@ -548,7 +548,7 @@ func TestBuildOpusTagsV2AndWireCarryTheProvenance(t *testing.T) {
 // so this record is the only trace the publication keeps of them.
 func TestMultiTranscriptWireCarriesAttributionProvenance(t *testing.T) {
 	threshold := 14.5
-	manifest := baseManifestV3()
+	manifest := basePublishedManifest()
 	manifest.Provenance = &Provenance{
 		Attribution: &AttributionProvenance{
 			Ran:           true,
@@ -563,12 +563,12 @@ func TestMultiTranscriptWireCarriesAttributionProvenance(t *testing.T) {
 		ID: "parakeet", Role: RoleRawASR, Default: true,
 		Body: sampleBody("spk_0", "what", "survived"),
 	}}
-	encoded, err := EncodeManifestV3(manifest, transcripts, 0)
+	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeManifestV3: %v", err)
+		t.Fatalf("EncodePublishedManifest: %v", err)
 	}
 
-	var wire manifestV2Wire
+	var wire multiTranscriptWire
 	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
 		t.Fatalf("decode v3 wire manifest: %v", err)
 	}
@@ -590,9 +590,9 @@ func TestMultiTranscriptWireCarriesAttributionProvenance(t *testing.T) {
 	}
 
 	// An attribution-less manifest must keep omitting provenance entirely.
-	plain, err := EncodeManifestV3(baseManifestV3(), transcripts, 0)
+	plain, err := EncodePublishedManifest(basePublishedManifest(), transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeManifestV3 (plain): %v", err)
+		t.Fatalf("EncodePublishedManifest (plain): %v", err)
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(plain.Main.JSON, &raw); err != nil {

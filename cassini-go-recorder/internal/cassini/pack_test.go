@@ -86,20 +86,68 @@ func TestPackPrefersManifestTitleOverFileName(t *testing.T) {
 		t.Errorf("packed TITLE = %q, want manifest title %q", got, "Daily Meeting")
 	}
 	manifest := decodePortableManifestFromOpus(t, outPath)
-	if manifest.Version != 3 || manifest.Integrity.MatchPolicy != portable.AudioMatchPolicy {
-		t.Fatalf("packed integrity contract = v%d/%q, want v3/%q", manifest.Version, manifest.Integrity.MatchPolicy, portable.AudioMatchPolicy)
+	if manifest.Version != portable.WireVersion || manifest.Integrity.MatchPolicy != portable.AudioMatchPolicy {
+		t.Fatalf("packed integrity contract = v%d/%q, want v%d/%q", manifest.Version, manifest.Integrity.MatchPolicy, portable.WireVersion, portable.AudioMatchPolicy)
 	}
 	if len(manifest.Integrity.OpusSHA256) != 64 || manifest.Integrity.PCMSHA256 != "" {
 		t.Fatalf("packed integrity = %+v, want compressed Opus digest and no PCM digest", manifest.Integrity)
 	}
-	if got := readOpusTag(t, outPath, "CASSINI_FORMAT"); got != portable.FormatV3 {
-		t.Errorf("CASSINI_FORMAT = %q, want %q", got, portable.FormatV3)
+	if got := readOpusTag(t, outPath, "CASSINI_FORMAT"); got != portable.Format {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", got, portable.Format)
 	}
 	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_OPUS_SHA256"); got != manifest.Integrity.OpusSHA256 {
 		t.Errorf("CASSINI_AUDIO_OPUS_SHA256 = %q, manifest says %q", got, manifest.Integrity.OpusSHA256)
 	}
 	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_PCM_SHA256"); got != "" {
-		t.Errorf("CASSINI_AUDIO_PCM_SHA256 = %q, want absent on v3", got)
+		t.Errorf("CASSINI_AUDIO_PCM_SHA256 = %q, want absent", got)
+	}
+}
+
+// TestPackEmitsThePublishedWireVersionAndSchema pins what a packed file tells
+// the outside world it is: format tag org.cassini.portable-meeting/1, manifest
+// version 1, and the schema URL that resolves.
+//
+// The producer wrote /3 and version 3 until the format was published. Those
+// numbers belonged to drafts nobody outside Cassini ever saw, so the first
+// version an outside implementer can write against is 1, and that is what a
+// file has to say. The schema URL used to be under cassini.local, a host that
+// does not exist — a reader that followed it got nothing.
+func TestPackEmitsThePublishedWireVersionAndSchema(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "01KWEKPZVEJWP9BYBPBX9ZRNDQ.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	outPath := filepath.Join(tmp, "01KWEKPZVEJWP9BYBPBX9ZRNDQ.opus")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"pack", bundleDir, "--out", outPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	if got, want := readOpusTag(t, outPath, "CASSINI_FORMAT"), "org.cassini.portable-meeting/1"; got != want {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", got, want)
+	}
+	wantSchema := "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json"
+	if got := readOpusTag(t, outPath, "CASSINI_PAYLOAD_SCHEMA"); got != wantSchema {
+		t.Errorf("CASSINI_PAYLOAD_SCHEMA = %q, want %q", got, wantSchema)
+	}
+	if got := readOpusTag(t, outPath, "CASSINI_PAYLOAD_SCHEMA"); strings.Contains(got, "cassini.local") {
+		t.Errorf("CASSINI_PAYLOAD_SCHEMA = %q, still points at the placeholder host", got)
+	}
+
+	manifest := decodePortableManifestFromOpus(t, outPath)
+	if manifest.Version != 1 {
+		t.Errorf("manifest version = %d, want 1", manifest.Version)
+	}
+	// Version 1 alone no longer says which shape this is, so pin the shape too:
+	// a published file indexes its transcripts and states the Opus match policy.
+	if !manifest.IsMultiTranscript() {
+		t.Errorf("packed manifest carries no transcripts index: %+v", manifest)
+	}
+	if got, want := manifest.Integrity.MatchPolicy, portable.AudioMatchPolicy; got != want {
+		t.Errorf("integrity.matchPolicy = %q, want %q", got, want)
 	}
 }
 

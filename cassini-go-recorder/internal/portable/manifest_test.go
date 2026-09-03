@@ -7,7 +7,7 @@ import (
 )
 
 func TestBuildOpusTagsIncludesProcessingProvenanceSummary(t *testing.T) {
-	manifest := NormalizeManifest(Manifest{
+	manifest := NormalizeDraft1Manifest(Manifest{
 		Meeting: Meeting{
 			ID:              "meeting-1",
 			Title:           "Weekly Sync",
@@ -64,7 +64,7 @@ func TestBuildOpusTagsIncludesProcessingProvenanceSummary(t *testing.T) {
 		CompressedBytes: 45,
 	}
 
-	tags := BuildOpusTags(manifest, payload)
+	tags := BuildDraft1OpusTags(manifest, payload)
 
 	if got := tags["CASSINI_STT_ENGINE"]; got != "faster-whisper" {
 		t.Fatalf("expected CASSINI_STT_ENGINE, got %q", got)
@@ -92,7 +92,7 @@ func roomTagFixture(room Meeting) Manifest {
 	room.ID = "meeting-1"
 	room.CreatedAtUTC = "2026-03-13T10:00:00Z"
 	room.DurationMS = 1000
-	return NormalizeManifest(Manifest{Meeting: room})
+	return NormalizeDraft1Manifest(Manifest{Meeting: room})
 }
 
 func TestBuildOpusTagsEmitsRoomTagsOnlyWhenKnown(t *testing.T) {
@@ -100,7 +100,7 @@ func TestBuildOpusTagsEmitsRoomTagsOnlyWhenKnown(t *testing.T) {
 
 	// The room is already inside the gzipped payload; these plain tags exist so
 	// a shell reader can get at it with one ffprobe call (D-622).
-	withRoom := BuildOpusTags(roomTagFixture(Meeting{
+	withRoom := BuildDraft1OpusTags(roomTagFixture(Meeting{
 		Title: "Weekly Sync", RoomID: "a7bc3k9x", RoomName: "Weekly Sync",
 	}), payload)
 	if got := withRoom["CASSINI_ROOM_ID"]; got != "a7bc3k9x" {
@@ -112,7 +112,7 @@ func TestBuildOpusTagsEmitsRoomTagsOnlyWhenKnown(t *testing.T) {
 
 	// Absent, not empty: an empty id would read as "this meeting has a room
 	// whose id is the empty string".
-	withoutRoom := BuildOpusTags(roomTagFixture(Meeting{Title: "Some File"}), payload)
+	withoutRoom := BuildDraft1OpusTags(roomTagFixture(Meeting{Title: "Some File"}), payload)
 	for _, tag := range []string{"CASSINI_ROOM_ID", "CASSINI_ROOM_NAME"} {
 		if _, ok := withoutRoom[tag]; ok {
 			t.Errorf("%s is present on a meeting with no room, want absent", tag)
@@ -121,7 +121,7 @@ func TestBuildOpusTagsEmitsRoomTagsOnlyWhenKnown(t *testing.T) {
 
 	// A room whose name was resolved but whose token was not (a non-Talk source,
 	// or a recording packed by hand) must still get the half that is known.
-	nameOnly := BuildOpusTags(roomTagFixture(Meeting{Title: "X", RoomName: "Old Standup"}), payload)
+	nameOnly := BuildDraft1OpusTags(roomTagFixture(Meeting{Title: "X", RoomName: "Old Standup"}), payload)
 	if _, ok := nameOnly["CASSINI_ROOM_ID"]; ok {
 		t.Errorf("CASSINI_ROOM_ID is present with no room id, want absent")
 	}
@@ -133,7 +133,7 @@ func TestBuildOpusTagsEmitsRoomTagsOnlyWhenKnown(t *testing.T) {
 func TestBuildOpusTagsEmitsProvenanceTagsOnlyWhenKnown(t *testing.T) {
 	payload := EncodedPayload{Chunks: []string{"abc"}}
 
-	withJob := BuildOpusTags(roomTagFixture(Meeting{
+	withJob := BuildDraft1OpusTags(roomTagFixture(Meeting{
 		Title: "Weekly Sync", JobID: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD", AttemptNumber: 2,
 	}), payload)
 	if got := withJob["CASSINI_JOB_ID"]; got != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" {
@@ -143,7 +143,7 @@ func TestBuildOpusTagsEmitsProvenanceTagsOnlyWhenKnown(t *testing.T) {
 		t.Errorf("CASSINI_ATTEMPT_NUMBER = %q, want %q", got, "2")
 	}
 
-	withoutJob := BuildOpusTags(roomTagFixture(Meeting{Title: "Some File"}), payload)
+	withoutJob := BuildDraft1OpusTags(roomTagFixture(Meeting{Title: "Some File"}), payload)
 	for _, tag := range []string{"CASSINI_JOB_ID", "CASSINI_ATTEMPT_NUMBER"} {
 		if _, ok := withoutJob[tag]; ok {
 			t.Errorf("%s is present on a meeting packed outside the operator, want absent", tag)
@@ -154,7 +154,7 @@ func TestBuildOpusTagsEmitsProvenanceTagsOnlyWhenKnown(t *testing.T) {
 	// value — writing it would assert an attempt that cannot exist. A job id
 	// with no attempt is a real state (a producer that knows one and not the
 	// other), so the two are emitted independently.
-	jobOnly := BuildOpusTags(roomTagFixture(Meeting{Title: "X", JobID: "01ABC", AttemptNumber: 0}), payload)
+	jobOnly := BuildDraft1OpusTags(roomTagFixture(Meeting{Title: "X", JobID: "01ABC", AttemptNumber: 0}), payload)
 	if got := jobOnly["CASSINI_JOB_ID"]; got != "01ABC" {
 		t.Errorf("CASSINI_JOB_ID = %q, want it emitted without an attempt", got)
 	}
@@ -168,7 +168,7 @@ func TestManifestProvenanceSurvivesTheEncodedPayload(t *testing.T) {
 		Title: "Weekly Sync", JobID: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD", AttemptNumber: 3,
 	})
 
-	encoded, err := EncodeManifest(manifest, 0)
+	encoded, err := EncodeDraft1Manifest(manifest, 0)
 	if err != nil {
 		t.Fatalf("encode manifest: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestManifestProvenanceSurvivesTheEncodedPayload(t *testing.T) {
 
 	// omitempty on both: a meeting with no operator lineage must not carry the
 	// keys at all, so a consumer checking presence gets the right answer.
-	bare, err := EncodeManifest(roomTagFixture(Meeting{Title: "Some File"}), 0)
+	bare, err := EncodeDraft1Manifest(roomTagFixture(Meeting{Title: "Some File"}), 0)
 	if err != nil {
 		t.Fatalf("encode bare manifest: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestManifestProvenanceSurvivesTheEncodedPayload(t *testing.T) {
 func TestManifestRoomSurvivesTheEncodedPayload(t *testing.T) {
 	manifest := roomTagFixture(Meeting{Title: "Weekly Sync", RoomID: "a7bc3k9x", RoomName: "Weekly Sync"})
 
-	payload, err := EncodeManifest(manifest, 0)
+	payload, err := EncodeDraft1Manifest(manifest, 0)
 	if err != nil {
 		t.Fatalf("EncodeManifest: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestManifestRoomSurvivesTheEncodedPayload(t *testing.T) {
 
 	// omitempty, so a meeting with no room does not ship two empty strings that
 	// a consumer would have to distinguish from a real value.
-	empty, err := EncodeManifest(roomTagFixture(Meeting{Title: "X"}), 0)
+	empty, err := EncodeDraft1Manifest(roomTagFixture(Meeting{Title: "X"}), 0)
 	if err != nil {
 		t.Fatalf("EncodeManifest: %v", err)
 	}

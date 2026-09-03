@@ -33,11 +33,9 @@
   let settings: Settings | null = null;
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
-  let modelOverride = "";
 
   let savedQuality: SettingsQuality = "balanced";
   let savedDeviceOverride = "";
-  let savedModelOverride = "";
 
   let loading = true;
   let saving = false;
@@ -75,7 +73,6 @@
       const next = await operatorClient.putSettings({
         quality,
         device_override: deviceOverride,
-        model_override: modelOverride,
       });
       applySettings(next);
     } catch (error) {
@@ -89,10 +86,8 @@
     settings = next;
     quality = next.quality;
     deviceOverride = next.device_override;
-    modelOverride = next.model_override;
     savedQuality = next.quality;
     savedDeviceOverride = next.device_override;
-    savedModelOverride = next.model_override;
   }
 
   function asMessage(error: unknown): string {
@@ -100,6 +95,28 @@
       return error.message;
     }
     return error instanceof Error ? error.message : String(error);
+  }
+
+  // deviceLabel names the resolved execution device the way an administrator
+  // thinks about it. The operator speaks "cuda"/"cpu"; the panel should not
+  // make anyone translate.
+  function deviceLabel(device: string): string {
+    if (device === "cuda") {
+      return "GPU (CUDA)";
+    }
+    if (device === "cpu") {
+      return "CPU";
+    }
+    return device || "—";
+  }
+
+  // formatMemory reads a size in MB back to an administrator. Gigabytes are
+  // what a host is described in, so a four-digit MB number is the wrong unit.
+  function formatMemory(mb: number): string {
+    if (mb >= 1024) {
+      return `${(mb / 1024).toFixed(1)} GB`;
+    }
+    return `${mb} MB`;
   }
 
   function sourceLabel(source: string): string {
@@ -112,11 +129,12 @@
     return source || "—";
   }
 
+  $: effectiveDevice = settings?.effective.device ?? "";
+  $: runsOnGPU = effectiveDevice === "cuda";
+
   $: isDirty =
     settings !== null &&
-    (quality !== savedQuality ||
-      deviceOverride !== savedDeviceOverride ||
-      modelOverride !== savedModelOverride);
+    (quality !== savedQuality || deviceOverride !== savedDeviceOverride);
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
@@ -167,6 +185,38 @@
     <div class="flex items-center justify-center p-6 text-sm text-base-content/60">No settings available.</div>
   {:else}
     <div class="grid gap-4 p-4">
+      <!--
+        What the next build will actually do, straight from the operator. The
+        quality tier alone does not answer it: the device is auto-selected, and
+        on a host with no usable GPU that answer is the CPU — slower, but a
+        transcript. Saying so here is what keeps the fallback explicit rather
+        than something an admin discovers from a blocked build (D-702).
+      -->
+      <section class="rounded-box border border-base-300 bg-base-200 p-3">
+        <p class="text-sm">
+          Transcribes on
+          <span class="font-semibold">{deviceLabel(settings.effective.device)}</span>
+          {#if settings.effective.model}
+            using <code class="text-xs">{settings.effective.model}</code>
+          {/if}
+        </p>
+        {#if settings.effective.min_free_memory_mb > 0}
+          <p class="mt-1 text-xs text-base-content/60">
+            A build of this tier starts when {formatMemory(settings.effective.min_free_memory_mb)}
+            of memory is free.
+          </p>
+        {/if}
+        {#if settings.effective.model_download_mb > 0}
+          <p class="mt-1 text-xs text-warning">
+            This image does not carry that model. The first build downloads it once,
+            about {settings.effective.model_download_mb} MB, and later builds start at once.
+          </p>
+        {/if}
+        {#if settings.effective.note}
+          <p class="mt-1 text-xs text-base-content/60">{settings.effective.note}</p>
+        {/if}
+      </section>
+
       <div
         class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.15fr)]"
       >
@@ -210,6 +260,13 @@
             <CircleGauge size={16} aria-hidden="true" />
             <h3 id="stt-quality-heading" class="text-sm font-semibold">Quality</h3>
           </div>
+          <p class="text-xs text-base-content/60">
+            {#if runsOnGPU}
+              Every tier loads the same fp32 model on CUDA — this choice takes effect on CPU builds.
+            {:else}
+              A higher tier loads a larger model: more accurate, and slower on this host.
+            {/if}
+          </p>
           <div class="grid gap-3" role="radiogroup" aria-labelledby="stt-quality-heading">
             {#each QUALITY_OPTIONS as option}
               <label
@@ -239,24 +296,20 @@
         >
           <div class="flex items-center gap-2">
             <SettingsIcon size={16} aria-hidden="true" />
-            <h3 class="text-sm font-semibold">Device model and overrides</h3>
+            <h3 class="text-sm font-semibold">Device</h3>
           </div>
           <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
             <label class="flex w-full flex-col gap-1">
               <span class="text-xs font-medium text-base-content/70">Device override</span>
               <select bind:value={deviceOverride} class="select select-sm w-full border-base-300 shadow-none">
                 <option value="">Auto</option>
+                <option value="cpu">CPU</option>
                 <option value="cuda">CUDA</option>
               </select>
-            </label>
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">Model override</span>
-              <input
-                bind:value={modelOverride}
-                type="text"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="(use default for selected quality)"
-              />
+              <span class="text-xs text-base-content/60">
+                Auto uses the GPU when this host has a usable one. Pinning a device the host
+                cannot provide blocks builds rather than quietly using the other.
+              </span>
             </label>
           </div>
         </section>

@@ -675,7 +675,7 @@ describe("switchPortableTranscript", () => {
     vi.restoreAllMocks();
   });
 
-  function buildDualTranscriptFixture() {
+  function buildDualTranscriptFixture(version = 2) {
     const parakeetBody = {
       version: "transcript.words.v1",
       media: { src: "meeting.opus", durationMs: 3000, sha256: "abc" },
@@ -695,7 +695,7 @@ describe("switchPortableTranscript", () => {
     const parakeetPayload = encodeBodyForOpusTags(parakeetBody, "CASSINI_TX_PARAKEET_PAYLOAD_");
     const canaryPayload = encodeBodyForOpusTags(canaryBody, "CASSINI_TX_CANARY_PAYLOAD_");
     const indexManifest = {
-      version: 2,
+      version,
       meeting: { durationMs: 3000 },
       audio: { sha256: "abc" },
       speakers: [{ id: "spk_1", label: "Alice" }],
@@ -745,6 +745,22 @@ describe("switchPortableTranscript", () => {
 
     expect(artifact.currentTranscriptId).toBe("canary");
     expect(artifact.availableTranscripts.map((t) => t.id)).toEqual(["parakeet", "canary"]);
+    expect(artifact.transcript.segments[0]?.text).toBe("canary");
+  });
+
+  it("loads the published version 1 multi-transcript shape", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=published-v1", protocol: "http:" },
+    } as Window;
+    globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture(1));
+
+    const artifact = await loadPortableArtifactFromAudioPath("./published-v1.opus");
+
+    expect(artifact.currentTranscriptId).toBe("canary");
+    expect(artifact.availableTranscripts.map((transcript) => transcript.id)).toEqual([
+      "parakeet",
+      "canary",
+    ]);
     expect(artifact.transcript.segments[0]?.text).toBe("canary");
   });
 

@@ -189,7 +189,25 @@ func sttModelCacheChecks() []doctorCheck {
 		parentWritableCheck(cacheRoot, "cassini cache root"),
 	}
 
+	// Look in the image's read-only bundled root first, the same order
+	// EnsureModel uses: a tier the image carries is never downloaded, and a
+	// tier it does not carry is fetched once into the writable cache (D-704).
 	modelDir := filepath.Join(cacheRoot, "models", string(modelID))
+	if root := strings.TrimSpace(os.Getenv("CASSINI_BUNDLED_MODEL_ROOT")); root != "" {
+		bundledDir := filepath.Join(root, "models", string(modelID))
+		if check := modelFilesCheck(bundledDir, modelID); check.status == doctorOK {
+			checks = append(checks, check)
+			return append(checks, doctorCheck{
+				status:  doctorOK,
+				summary: fmt.Sprintf("STT model %s is bundled in this image", modelID),
+			})
+		}
+		checks = append(checks, doctorCheck{
+			status: doctorWarn,
+			summary: fmt.Sprintf("STT model %s is not bundled in this image; it downloads once into %s on first use",
+				modelID, modelDir),
+		})
+	}
 	checks = append(checks, modelFilesCheck(modelDir, modelID))
 
 	if info, err := os.Stat(modelDir); err == nil && info.IsDir() {
@@ -209,22 +227,16 @@ func sttModelCacheChecks() []doctorCheck {
 // (CASSINI_DISALLOW_MODEL_DOWNLOAD=1) a missing file is fatal at recorder
 // startup, so doctor surfaces it up front.
 func modelFilesCheck(modelDir string, modelID transcribe.ModelID) doctorCheck {
-	required := []string{
-		"encoder.int8.onnx",
-		"decoder.int8.onnx",
-		"joiner.int8.onnx",
-		"tokens.txt",
-	}
-	if modelID == transcribe.ModelParakeet06BV3 {
-		// fp32 (CUDA) variant ships unsuffixed onnx files plus an external
-		// weights sidecar that the encoder.onnx references via external_data.
-		// Without encoder.weights, sherpa fails to load the encoder.
-		required = []string{
-			"encoder.onnx",
-			"encoder.weights",
-			"decoder.onnx",
-			"joiner.onnx",
-			"tokens.txt",
+	// Ask the model registry which files this bundle needs rather than naming
+	// one architecture's: the 110M "fast" tier is a CTC model shipping a single
+	// model.int8.onnx, and demanding encoder/decoder/joiner of it failed a model
+	// that was present and correct (D-702).
+	required := transcribe.RequiredModelFileNames(modelID)
+	if len(required) == 0 {
+		return doctorCheck{
+			status:  doctorWarn,
+			summary: fmt.Sprintf("unknown STT model %q; cannot verify its files in %s", modelID, modelDir),
+			advice:  "set CASSINI_STT_MODEL to a known model id, or leave it unset to use the quality tier's model",
 		}
 	}
 	missing := []string{}

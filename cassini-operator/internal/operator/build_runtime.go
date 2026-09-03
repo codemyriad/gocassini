@@ -251,21 +251,51 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	}
 
 	// Resource governor: never let a build starve or OOM the host (the ExApp can
-	// run uncapped next to Nextcloud/Talk). Reject a missing CUDA runtime/device
-	// before waiting for RAM: a portable image can never become eligible merely
-	// because host memory frees up. Then wait — bounded — for RAM headroom.
+	// run uncapped next to Nextcloud/Talk). Resolve the device before waiting
+	// for RAM — an unsatisfiable explicit override can never become eligible
+	// merely because host memory frees up — and size the RAM floor for the
+	// device/model pair that resolution produced. Then wait, bounded, for
+	// headroom.
 	limits := resourceLimitsFromEnv()
-	if admissionErr := rt.buildCUDAAdmission(); admissionErr != nil {
+	settings := rt.currentSettings()
+	device, admissionErr := resolveDeviceForSettings(settings)
+	if admissionErr != nil {
 		return meetingPath, admissionErr
 	}
-	if err := limits.waitForMemory(ctx, rt.logger.Printf); err != nil {
+	model, modelErr := rt.admitModelForDevice(settings, device)
+	if modelErr != nil {
+		return meetingPath, modelErr
+	}
+	// Say which device won before any audio is decoded: a CPU build is a
+	// legitimate outcome but a much slower one, and an administrator reading
+	// the attempt log should never have to infer it from the elapsed time.
+	rt.logger.Printf("resource governor: job %s admitted on %s (quality=%s model=%s)",
+		task.JobID, device, normalizeQuality(settings.Quality), model)
+	if rt.modelNeedsDownload(model) {
+		// A one-off fetch of several hundred MB delays the first build of this
+		// tier. Say so, or the build looks stalled.
+		rt.logger.Printf("resource governor: job %s downloads model %s into %s before it transcribes; this happens once",
+			task.JobID, model, rt.cfg.ModelCacheRoot)
+	}
+	if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, model), rt.logger.Printf); err != nil {
 		return meetingPath, err
 	}
 	// Probe free VRAM only after any RAM wait, immediately before launch. That
 	// reading is an admission snapshot; taking it before a long memory wait
 	// would let another workload consume the GPU in between.
 	env := rt.childEnv()
-	buildEnv, err := limits.applyToEnv(env, true)
+	if root := strings.TrimSpace(rt.cfg.ModelCacheRoot); root != "" {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return meetingPath, fmt.Errorf("create model cache root %s: %w", root, err)
+		}
+		env = setEnvKey(env, envCacheRoot, root)
+	}
+	if rt.cfg.DisallowModelDownload {
+		// ChildEnv strips this so an inherited value cannot decide policy. The
+		// operator puts back exactly what the administrator configured.
+		env = setEnvKey(env, envDisallowModelDownload, "1")
+	}
+	buildEnv, err := limits.applyToEnv(env, device, model)
 	if err != nil {
 		return meetingPath, err
 	}

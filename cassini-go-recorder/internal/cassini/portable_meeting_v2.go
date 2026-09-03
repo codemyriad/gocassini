@@ -7,52 +7,56 @@ import (
 	"gocassini/internal/portable"
 )
 
-// buildPortableMeetingV2Tags is the simple case: derive a v2 OpusTag map
-// from a v1-shaped Manifest's single inline transcript. Used by tests and
-// kept as a thin wrapper over the full source-aware builder below.
-func buildPortableMeetingV2Tags(manifest portable.Manifest) (map[string]string, error) {
-	return buildPortableMeetingV2TagsFromSource(manifest, portableMeetingSource{})
+// buildPortableMeetingDraft2Tags is the simple case: derive a draft-2 OpusTag
+// map from a Manifest's single inline transcript. Used by tests and kept as a
+// thin wrapper over the full source-aware builder below.
+func buildPortableMeetingDraft2Tags(manifest portable.Manifest) (map[string]string, error) {
+	return buildPortableMeetingDraft2TagsFromSource(manifest, portableMeetingSource{})
 }
 
-// buildPortableMeetingV2TagsFromSource builds the v2 OpusTag map for a
-// portable meeting bundle. If the bundle has source.AdditionalTranscripts
-// (v2 multi-transcript manifest.json), each entry becomes a separate v2
-// transcript with its own provenance. Otherwise the bundle's single
-// transcript.words.v1.json is synthesized as one raw-asr entry.
-func buildPortableMeetingV2TagsFromSource(manifest portable.Manifest, source portableMeetingSource) (map[string]string, error) {
-	transcripts, defaultID, err := assembleV2TranscriptInputs(manifest, source)
+// buildPortableMeetingDraft2TagsFromSource builds the draft-2 OpusTag map for
+// a portable meeting bundle. Draft 2 is not written any more; this survives
+// for the tests that cover reading a file it produced.
+func buildPortableMeetingDraft2TagsFromSource(manifest portable.Manifest, source portableMeetingSource) (map[string]string, error) {
+	transcripts, defaultID, err := assembleTranscriptInputs(manifest, source)
 	if err != nil {
 		return nil, err
 	}
 
-	encoded, err := portable.EncodeManifestV2(manifest, transcripts, portable.DefaultPayloadChunkSize)
+	encoded, err := portable.EncodeDraft2Manifest(manifest, transcripts, portable.DefaultPayloadChunkSize)
 	if err != nil {
-		return nil, fmt.Errorf("encode portable v2 manifest: %w", err)
+		return nil, fmt.Errorf("encode draft-2 portable manifest: %w", err)
 	}
-	return portable.BuildOpusTagsV2(manifest, encoded, defaultID), nil
+	return portable.BuildDraft2OpusTags(manifest, encoded, defaultID), nil
 }
 
-func buildPortableMeetingV3TagsFromSource(manifest portable.Manifest, source portableMeetingSource) (map[string]string, error) {
-	transcripts, defaultID, err := assembleV2TranscriptInputs(manifest, source)
+// buildPortableMeetingTagsFromSource builds the OpusTag map every packed file
+// gets: the published format, version 1. If the bundle has
+// source.AdditionalTranscripts (a multi-transcript manifest.json), each entry
+// becomes a separate transcript with its own provenance. Otherwise the
+// bundle's single transcript.words.v1.json is synthesized as one raw-asr
+// entry.
+func buildPortableMeetingTagsFromSource(manifest portable.Manifest, source portableMeetingSource) (map[string]string, error) {
+	transcripts, defaultID, err := assembleTranscriptInputs(manifest, source)
 	if err != nil {
 		return nil, err
 	}
 
-	encoded, err := portable.EncodeManifestV3(manifest, transcripts, portable.DefaultPayloadChunkSize)
+	encoded, err := portable.EncodePublishedManifest(manifest, transcripts, portable.DefaultPayloadChunkSize)
 	if err != nil {
-		return nil, fmt.Errorf("encode portable v3 manifest: %w", err)
+		return nil, fmt.Errorf("encode portable meeting manifest: %w", err)
 	}
-	return portable.BuildOpusTagsV3(manifest, encoded, defaultID), nil
+	return portable.BuildPublishedOpusTags(manifest, encoded, defaultID), nil
 }
 
-// assembleV2TranscriptInputs returns the list of transcript inputs plus the
+// assembleTranscriptInputs returns the list of transcript inputs plus the
 // id of the default raw-ASR entry. The default rule: if any input declares
 // Default=true, that's the default; otherwise the first raw-ASR input wins.
-func assembleV2TranscriptInputs(manifest portable.Manifest, source portableMeetingSource) ([]portable.TranscriptInput, string, error) {
+func assembleTranscriptInputs(manifest portable.Manifest, source portableMeetingSource) ([]portable.TranscriptInput, string, error) {
 	additional := source.AdditionalTranscripts
 	if len(additional) == 0 {
-		// v1 single-transcript bundle: synthesize one raw-asr entry from the
-		// inline manifest.Transcript that the v1 builder already populated.
+		// Single-transcript bundle: synthesize one raw-asr entry from the
+		// inline manifest.Transcript the caller already populated.
 		input := portable.TranscriptInput{
 			ID:           portable.RoleRawASR,
 			Role:         portable.RoleRawASR,
@@ -117,7 +121,7 @@ func pickV2DefaultRawID(inputs []portable.TranscriptInput) string {
 
 func isRawRole(role string) bool {
 	switch role {
-	case portable.RoleRawASR, portable.RoleHumanCorrected, portable.RoleTranslation:
+	case portable.RoleRawASR, portable.RoleHumanCorrected, portable.RoleTranslation, portable.RoleScripted:
 		return true
 	default:
 		return false
