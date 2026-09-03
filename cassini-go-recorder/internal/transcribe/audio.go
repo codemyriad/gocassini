@@ -74,6 +74,11 @@ type ffprobeOutput struct {
 			FirstPacketWallMS string `json:"FIRST_PACKET_WALL_MS"`
 			FirstTimelineNS   string `json:"FIRST_TIMELINE_NS"`
 			ClockRate         string `json:"CLOCK_RATE"`
+			// The stream's placement on the output timeline, used to recover
+			// a usable anchor from recordings whose FIRST_TIMELINE_NS is the
+			// raw receive clock (builds before the writer was corrected).
+			OffsetSeconds      string `json:"OFFSET_SECONDS"`
+			SourceStartSeconds string `json:"SOURCE_START_SECONDS"`
 		} `json:"tags"`
 	} `json:"streams"`
 	Format struct {
@@ -85,7 +90,7 @@ type ffprobeOutput struct {
 func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration",
+		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate,offset_seconds,source_start_seconds:format=duration",
 		"-of", "json",
 		mkv,
 	)
@@ -123,7 +128,7 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 		}
 		streams = append(streams, AudioStream{
 			Index:              s.Index,
-			TimeBase:           sourceTimeBaseFromTags(s.Tags.FirstPacketWallMS, s.Tags.FirstTimelineNS, s.Tags.ClockRate),
+			TimeBase:           sourceTimeBaseFromTags(s.Tags.FirstPacketWallMS, s.Tags.FirstTimelineNS, s.Tags.ClockRate, s.Tags.OffsetSeconds, s.Tags.SourceStartSeconds),
 			ParticipantID:      participantID,
 			SpeakerID:          speakerIDFromLabel(speakerIdentity),
 			SpeakerLabel:       label,
@@ -185,12 +190,28 @@ func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
 // each audio stream. All three tags must be present and parseable: a partial
 // base cannot map anything, and silently treating a missing one as zero would
 // place a later caller's audio at a confidently wrong time.
-func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate string) SourceTimeBase {
+// maxPlausibleTimelineNS bounds a FIRST_TIMELINE_NS that is really a position
+// on the meeting timeline: about 11 days. Recordings built before the writer
+// was corrected carry the raw monotonic receive clock there instead, a value
+// on the order of the machine's uptime or of Unix time in nanoseconds; those
+// recordings still carry the stream's placement (OFFSET_SECONDS plus
+// SOURCE_START_SECONDS), which is the same instant on the timeline.
+const maxPlausibleTimelineNS = int64(1_000_000_000_000_000)
+
+func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate, offsetSeconds, sourceStartSeconds string) SourceTimeBase {
 	wallMS, err1 := strconv.ParseInt(strings.TrimSpace(firstPacketWallMS), 10, 64)
 	timelineNS, err2 := strconv.ParseInt(strings.TrimSpace(firstTimelineNS), 10, 64)
 	rate, err3 := strconv.ParseUint(strings.TrimSpace(clockRate), 10, 32)
 	if err1 != nil || err2 != nil || err3 != nil || rate == 0 || wallMS <= 0 {
 		return SourceTimeBase{}
+	}
+	if timelineNS > maxPlausibleTimelineNS {
+		offset, errO := strconv.ParseFloat(strings.TrimSpace(offsetSeconds), 64)
+		sourceStart, errS := strconv.ParseFloat(strings.TrimSpace(sourceStartSeconds), 64)
+		if errO != nil || errS != nil {
+			return SourceTimeBase{}
+		}
+		timelineNS = int64((offset + sourceStart) * 1e9)
 	}
 	return SourceTimeBase{
 		FirstPacketWallMS: wallMS,

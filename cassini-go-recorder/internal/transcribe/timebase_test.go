@@ -33,7 +33,7 @@ func TestSourceTimeBaseFromTags(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sourceTimeBaseFromTags(tc.wallMS, tc.timelineNS, tc.rate)
+			got := sourceTimeBaseFromTags(tc.wallMS, tc.timelineNS, tc.rate, "", "")
 			if got.Known != tc.wantKnown {
 				t.Fatalf("Known = %v, want %v (got %+v)", got.Known, tc.wantKnown, got)
 			}
@@ -53,8 +53,31 @@ func TestSourceTimeBaseFromTags(t *testing.T) {
 // A negative timeline position is legal: a track whose first packet predates
 // the timeline origin sits before zero.
 func TestSourceTimeBaseFromTagsAcceptsNegativeTimeline(t *testing.T) {
-	got := sourceTimeBaseFromTags("1756800000000", "-250000000", "48000")
+	got := sourceTimeBaseFromTags("1756800000000", "-250000000", "48000", "", "")
 	if !got.Known || got.FirstTimelineNS != -250000000 {
 		t.Fatalf("got %+v, want a known base at -250000000ns", got)
+	}
+}
+
+// Recordings built before the writer was corrected carry the raw receive
+// clock in FIRST_TIMELINE_NS (the demo sandbox's, 2026-09-03: 1788464999367062628).
+// Their placement tags give the same instant on the timeline, so the anchor
+// is recovered from those; without them the anchor is unknown, never the epoch.
+func TestSourceTimeBaseRecoversFromReceiveClockTimeline(t *testing.T) {
+	got := sourceTimeBaseFromTags("1788465028236", "1788465028237011600", "48000", "28.869900", "0.000000")
+	if !got.Known {
+		t.Fatalf("anchor with placement tags should be known")
+	}
+	if got.FirstTimelineNS != 28_869_900_000 {
+		t.Fatalf("recovered FirstTimelineNS = %d, want 28869900000 (offset + source start)", got.FirstTimelineNS)
+	}
+	if got.FirstPacketWallMS != 1788465028236 {
+		t.Fatalf("wall anchor changed: %d", got.FirstPacketWallMS)
+	}
+	if bare := sourceTimeBaseFromTags("1788465028236", "1788465028237011600", "48000", "", ""); bare.Known {
+		t.Fatalf("a receive-clock timeline without placement tags must stay unknown, got %+v", bare)
+	}
+	if fine := sourceTimeBaseFromTags("1788465028236", "28869900000", "48000", "999", "999"); fine.FirstTimelineNS != 28_869_900_000 {
+		t.Fatalf("a plausible timeline position must be kept as written, got %d", fine.FirstTimelineNS)
 	}
 }
