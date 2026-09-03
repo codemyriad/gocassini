@@ -310,34 +310,83 @@ func PlausibleOffset(placement Placement, timelineMS int64) bool {
 	return placement.OffsetMS > -slack && placement.OffsetMS < float64(timelineMS)+slack
 }
 
-// RenderOntoTimeline resamples one segment's PCM onto the meeting timeline.
+// overlayOntoTimeline writes one segment's resampled PCM over `dst`, in place,
+// and reports the half-open output window [start, stop) it wrote.
 //
-// Pure, and deliberately not delegated to ffmpeg: the rate correction here is a
-// handful of parts per million, which is fiddly to express as a filter graph
-// and trivial to state directly. Linear interpolation is more than enough at
-// that ratio — the correction moves a sample by a small fraction of a sample.
+// Overlay, not sum. `dst` starts as the participant's RECORDED track, so adding
+// would play both copies of the same words at once; writing over it means the
+// upload replaces the recorded audio exactly where it has audio, and nowhere
+// else. That is the whole safety property of the splice: outside the window the
+// recorded track is left byte-identical, so the result can never be worse than
+// not ingesting at all.
 //
-// Samples outside the segment stay zero. The pipeline already treats a
-// participant's absent spans as digital silence on the shared timeline (see
-// decodeTrackWithSparseGaps), so this matches what the rest of the code expects
-// and keeps the attribution envelope's Present logic honest.
-func RenderOntoTimeline(src []float32, sampleRate int, placement Placement, outSamples int) []float32 {
-	out := make([]float32, outSamples)
-	if len(src) == 0 || sampleRate <= 0 || placement.Rate <= 0 {
-		return out
+// The two boundaries are decided here and nowhere else. The window opens at the
+// first output sample whose position inside the segment is non-negative, and
+// closes at the first one that would need a sample past the end of the segment.
+// So each output sample is written by at most one segment, no instant is
+// represented twice, and none is skipped between the recorded track and the
+// upload. What a seam can still carry is a discontinuity — a click where the
+// two sources disagree about the participant's clock by a few milliseconds —
+// which is the placement error the anchors and the wall-clock offset already
+// determine, not something the overlay adds.
+//
+// Pure arithmetic, deliberately not delegated to ffmpeg: the rate correction is
+// a handful of parts per million, fiddly to express as a filter graph and
+// trivial to state directly. Linear interpolation is more than enough at that
+// ratio — the correction moves a sample by a small fraction of a sample.
+func overlayOntoTimeline(dst, src []float32, sampleRate int, placement Placement) (int, int) {
+	if len(dst) == 0 || len(src) < 2 || sampleRate <= 0 || placement.Rate <= 0 {
+		return 0, 0
 	}
 	msPerSample := 1000.0 / float64(sampleRate)
-	for j := range out {
-		meetingMS := float64(j) * msPerSample
-		localMS := (meetingMS - placement.OffsetMS) / placement.Rate
+	// The first output sample at or after the segment's own start. Ceil rather
+	// than round: rounding down would ask for a source position just before
+	// sample zero, which is audio the segment does not have.
+	start := int(math.Ceil(placement.OffsetMS / msPerSample))
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(dst) {
+		return 0, 0
+	}
+	stop := start
+	for j := start; j < len(dst); j++ {
+		localMS := (float64(j)*msPerSample - placement.OffsetMS) / placement.Rate
 		pos := localMS / msPerSample
-		if pos < 0 || pos >= float64(len(src)-1) {
+		if pos < 0 {
+			// Only reachable when the segment starts before the timeline does;
+			// those samples belong to audio outside the recording.
 			continue
 		}
+		if pos >= float64(len(src)) {
+			break
+		}
 		i := int(pos)
-		frac := float32(pos - float64(i))
-		out[j] = src[i]*(1-frac) + src[i+1]*frac
+		if i >= len(src)-1 {
+			// The last sample has no partner to interpolate towards. Taking it
+			// as it is rather than stopping one short: the window is supposed
+			// to hold every sample the segment decoded, and leaving the final
+			// one to the recorded track underneath is both a dropped sample and
+			// a discontinuity at the seam.
+			dst[j] = src[len(src)-1]
+		} else {
+			frac := float32(pos - float64(i))
+			dst[j] = src[i]*(1-frac) + src[i+1]*frac
+		}
+		stop = j + 1
 	}
+	if stop <= start {
+		return 0, 0
+	}
+	return start, stop
+}
+
+// RenderOntoTimeline places one segment's PCM on an otherwise silent meeting
+// timeline. It is overlayOntoTimeline against silence, kept because "where does
+// this segment land on its own" is the question the placement tests ask.
+func RenderOntoTimeline(src []float32, sampleRate int, placement Placement, outSamples int) []float32 {
+	out := make([]float32, outSamples)
+	overlayOntoTimeline(out, src, sampleRate, placement)
 	return out
 }
 
@@ -444,7 +493,8 @@ func windowsOverlap(aStart, aEnd, bStart, bEnd int64) bool {
 
 // SourceRenderReport records what ingestion did for one speaker, for the build
 // manifest. A transcript built partly from audio the server never received
-// should say so.
+// should say so, and — since ingestion is now a splice over the recorded track
+// rather than a replacement of it — should say how much of it.
 type SourceRenderReport struct {
 	SpeakerID  string  `json:"speaker_id"`
 	Owner      string  `json:"owner"`
@@ -459,135 +509,104 @@ type SourceRenderReport struct {
 	// The two are reported side by side because their ratio is the only signal
 	// that a capture is internally incomplete, and a pilot needs the numbers to
 	// choose a threshold rather than inherit a guessed one.
-	DeclaredMS int64    `json:"declared_ms"`
-	CallMS     int64    `json:"call_ms"`
+	DeclaredMS int64 `json:"declared_ms"`
+	CallMS     int64 `json:"call_ms"`
+	// SplicedMS is how much of the meeting timeline the upload actually
+	// replaced. The rest of this speaker's transcription input is their
+	// recorded track, unchanged, so this is the one number that says how much
+	// of the transcript the capture is answerable for.
+	SplicedMS int64 `json:"spliced_ms"`
+	// Skipped counts segments left out of the splice entirely. Each one costs
+	// nothing but the recorded audio staying where it was.
+	Skipped int `json:"skipped"`
+	// Rejections says what the splice declined to do and why. Every skipped
+	// segment has an entry; so does a segment that was used only across the
+	// window it declared, which is not a skip but is still the splice refusing
+	// part of what arrived.
 	Rejections []string `json:"rejections,omitempty"`
 }
 
-// minCoveredFraction is how much of its own call a capture must account for
-// before its audio may replace a recorded track.
+// minSegmentDecodedFraction is how much of the audio a segment DECLARES it must
+// actually decode to before its audio is used.
 //
-// The hazard is not a capture that fails, which is handled everywhere: it is a
-// capture that succeeds while covering only part of the call it came from.
-// Substitution is whole-track — the render replaces the participant's recorded
-// audio for the entire meeting — so every span the capture does not cover
-// becomes digital silence while the recorded track is suppressed. Words the
-// recorder heard perfectly well disappear, and nothing downstream can tell.
-//
-// A capture can be short of its call for two quite different reasons, and this
-// deliberately does not try to distinguish them, because the consequence is
-// identical. The browser worker drops a segment whose storage write failed and
-// uploads the rest, leaving a self-consistent sidecar whose remaining segments
-// all place cleanly. Or the participant detached their microphone for a minute
-// and the capture legitimately has a hole in it. Either way the audio for that
-// span does not exist, and putting silence there is worse than keeping what the
-// network delivered.
-//
-// The bar is deliberately loose: rotation gaps are sub-second, so a healthy
-// capture sits within a percent or two of its call and anything near this
-// threshold is missing minutes. It is a detector for one condition, not a
-// quality score. The manifest carries the raw figures either way, so a real
-// threshold can be chosen from pilot data rather than guessed here.
-//
-// The right long-term answer is not a threshold at all: splice the capture in
-// only over the spans it covers and leave the recorded track everywhere else.
-// Until that exists this is the guard that keeps whole-track substitution from
-// deleting speech.
-const minCoveredFraction = 0.9
+// Intake validates that a declared file arrived, never that it holds what the
+// sidecar claims. A segment can therefore declare ten minutes and hold one, and
+// the difference would be nine minutes placed from a file that has nothing to
+// put there. The splice bounds the damage — an overlaid window only ever covers
+// the audio that decoded — but a file that disagrees with its own manifest by
+// this much is not a file whose timing claims are worth believing either, so it
+// is left out and the recorded track stands for that stretch.
+const minSegmentDecodedFraction = 0.9
 
-// coveredCallMS is how much of a capture's declared call its segments actually
-// span: the UNION of their windows, clipped to the call.
+// segmentOverrunSlackMS is how far past its declared window a segment's audio
+// may reach and still be laid over the recorded track.
 //
-// Summing durations instead would be wrong in both directions. Two segments
-// that overlap — a rotation that restarted, a sidecar that repeats one — would
-// count the same milliseconds twice and pass while leaving an arbitrarily large
-// hole elsewhere. A segment running past the declared call would inflate the
-// total for time the call did not contain.
-func coveredCallMS(sidecar SourceSidecar) int64 {
-	callStart, callEnd := sidecar.CallStartWallMS, sidecar.CallEndWallMS
-	if callEnd <= callStart {
-		return 0
-	}
-	type span struct{ start, stop int64 }
-	spans := make([]span, 0, len(sidecar.Segments))
-	for _, segment := range sidecar.Segments {
-		start, stop := segment.StartWallMS, segment.StopWallMS
-		if stop <= start {
-			// A backwards or empty window spans nothing.
-			continue
-		}
-		if start < callStart {
-			start = callStart
-		}
-		if stop > callEnd {
-			stop = callEnd
-		}
-		if stop > start {
-			spans = append(spans, span{start, stop})
-		}
-	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+// Some overrun is honest. A page that died mid-recording leaves a manifest
+// written at the last checkpoint, so the file on disk holds everything up to
+// the last chunk after it — bounded by the checkpoint interval plus one chunk.
+// Beyond that the file is not describing itself any more, and the difference is
+// recorded audio the splice would replace with something the sidecar never
+// claimed was there. Only the declared window plus this slack is overlaid; the
+// rest of the file is ignored rather than the whole segment being dropped,
+// because the audio inside the window is still the audio the manifest promised.
+const segmentOverrunSlackMS = 10_000
 
-	var covered int64
-	var cursor int64 = callStart
-	for _, sp := range spans {
-		if sp.stop <= cursor {
-			continue
-		}
-		if sp.start > cursor {
-			cursor = sp.start
-		}
-		covered += sp.stop - cursor
-		cursor = sp.stop
-	}
-	return covered
-}
-
-// coverageIsComplete refuses a capture whose segments do not span the call it
-// declares. It compares the sidecar against itself and makes no assumption
-// about the meeting, so a participant who joined late or left early is not
-// penalised for a recording they were not present for.
-func coverageIsComplete(name string, callMS, coveredMS int64) error {
-	if callMS <= 0 {
-		// Fails CLOSED. Intake accepts a call window of zero length, discovery
-		// can match one through its slack, and a capture that declares no call
-		// would then replace a participant's whole recorded track on the
-		// strength of whatever few seconds it happens to hold.
-		return fmt.Errorf("capture %s declares no call window, so there is nothing its audio can be said to cover", name)
-	}
-	if coveredMS >= 0 && float64(coveredMS) >= float64(callMS)*minCoveredFraction {
-		return nil
-	}
-	return fmt.Errorf(
-		"capture %s spans %d ms of the %d ms call it came from (%.0f%%); the rest has no audio, and substituting it would replace that speech with silence",
-		name, coveredMS, callMS, float64(coveredMS)*100/float64(callMS))
-}
-
-// RenderSourceTrack builds one speaker's timeline-aligned PCM from every
-// capture they uploaded for this recording, or reports why it could not.
+// SpliceSourceTrack builds one speaker's transcription input by laying every
+// placeable segment they uploaded over their own RECORDED track.
 //
-// All or nothing, deliberately. Skipping an unplaceable segment and keeping the
-// rest looked conservative and was the opposite: the caller substitutes this
-// render for the speaker AND drops their recorded streams, so a skipped segment
-// became silence where words had been. Losing speech is the one outcome worse
-// than not using the capture at all, so any segment that cannot be placed
-// fails the whole speaker back to the recorded track.
+// The recorded track is the floor, and that is the whole design. Substitution
+// used to be whole-track — the render replaced the participant for the entire
+// meeting — so every span the upload did not cover became digital silence while
+// the recorded audio was suppressed, and words the recorder had heard perfectly
+// well disappeared. Guarding that with a coverage threshold only decided WHICH
+// participants lost speech; it could not stop the loss, and it refused exactly
+// the people the feature exists for, whose page reloaded on a bad connection
+// and whose capture therefore has a hole in it where they were not in the call
+// at all.
+//
+// Splicing removes the question. Each segment replaces the recorded audio over
+// the window it actually holds audio for, and nowhere else. A reload gap, a
+// late start, a worker that died mid-call, a segment that cannot be placed:
+// all of them simply leave the recorded track standing there, which is exactly
+// what would have been transcribed without any upload. The result can never be
+// worse than not ingesting, so there is nothing left to refuse.
+//
+// A segment that cannot be placed, cannot be decoded, or holds far less audio
+// than it declares is skipped with its reason recorded, not fatal. Only a
+// capture that contributes nothing at all is an error, so the caller can keep
+// the recorded track untouched rather than write a WAV identical to it.
 //
 // Several directories because one participant can legitimately have more than
-// one capture for a single recording — they left and rejoined. Rendering only
-// the newest while suppressing their recorded streams lost the earlier
-// session the same way.
-func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
+// one capture for a single recording — they left and rejoined, or a reload was
+// not adopted into the capture that followed it.
+func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
 	report := SourceRenderReport{}
+	if sampleRate <= 0 || outSamples <= 0 {
+		// An error rather than a division by zero. Production passes 16 kHz and
+		// a measured timeline, but a caller that gets this wrong should be told
+		// so rather than take the build down with a panic.
+		return nil, report, fmt.Errorf("splice needs a positive sample rate and timeline, got %d Hz and %d samples", sampleRate, outSamples)
+	}
+	// A copy, always. The caller's recorded PCM is the fallback for this
+	// speaker and for the assertion that a splice changed only what it claims
+	// to have changed; mutating it in place would destroy both.
 	out := make([]float32, outSamples)
+	copy(out, recorded)
 	timelineMS := int64(outSamples) * 1000 / int64(sampleRate)
 	var totalAnchors int
 	var worstResidual float64
 	var rateSum float64
+	// The output windows each overlaid segment wrote, for the report. Collected
+	// rather than summed: two captures for one recording can overlap (a rejoin
+	// whose windows meet, a page that filed its reload separately), and a later
+	// overlay merely overwrites an earlier one — so adding the lengths would
+	// claim more of the timeline was spliced than exists.
+	type window struct{ from, to int }
+	var windows []window
 
-	// Load every sidecar first and check the arithmetic before decoding
-	// anything. The completeness check below needs no audio, and a capture that
-	// is going to be refused should not cost a meeting's worth of ffmpeg first.
+	// Load every sidecar first, so a capture that cannot even be read costs no
+	// ffmpeg. This IS fatal: an unreadable manifest says nothing about which
+	// windows the rest of the capture may claim.
 	loaded := make([]SourceSidecar, 0, len(dirs))
 	for _, dir := range dirs {
 		sidecar, err := LoadSourceSidecar(dir)
@@ -596,19 +615,20 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 		}
 		report.Owner = sidecar.OwnerUserID
 		report.Segments += len(sidecar.Segments)
-		callMS := sidecar.CallEndWallMS - sidecar.CallStartWallMS
-		coveredMS := coveredCallMS(sidecar)
-		report.CallMS += callMS
-		report.DeclaredMS += coveredMS
-		// Checked PER CAPTURE, not on the totals. A participant who left and
-		// rejoined uploads one capture per session and both are rendered onto
-		// the same timeline, so aggregating first lets a long healthy capture
-		// carry a badly broken short one over the bar — and the interval that
-		// short one lost is still replaced with silence.
-		if err := coverageIsComplete(filepath.Base(dir), callMS, coveredMS); err != nil {
-			return nil, report, err
+		report.CallMS += sidecar.CallEndWallMS - sidecar.CallStartWallMS
+		for _, segment := range sidecar.Segments {
+			if declaredMS := segment.StopWallMS - segment.StartWallMS; declaredMS > 0 {
+				report.DeclaredMS += declaredMS
+			}
 		}
 		loaded = append(loaded, sidecar)
+	}
+
+	skip := func(segment SourceSegment, format string, args ...any) {
+		report.Skipped++
+		report.Rejections = append(report.Rejections,
+			fmt.Sprintf("segment %d: %s; keeping the recorded audio there", segment.Index,
+				fmt.Sprintf(format, args...)))
 	}
 
 	for i, dir := range dirs {
@@ -616,51 +636,92 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 		for _, segment := range sidecar.Segments {
 			placement, err := FitPlacement(segment, base)
 			if err != nil {
-				return nil, report, fmt.Errorf("segment %d: %w", segment.Index, err)
+				skip(segment, "%v", err)
+				continue
 			}
 			if !PlausibleOffset(placement, timelineMS) {
-				return nil, report, fmt.Errorf(
-					"segment %d places at %.0f ms, outside a %d ms recording — the uploader's clock is not usable",
-					segment.Index, placement.OffsetMS, timelineMS)
+				skip(segment, "places at %.0f ms, outside a %d ms recording — the uploader's clock is not usable",
+					placement.OffsetMS, timelineMS)
+				continue
 			}
 			segmentMS := segment.StopWallMS - segment.StartWallMS
+			if segmentMS <= 0 {
+				// A segment declaring no window claims no audio, and both bounds
+				// below are expressed in terms of that window: the too-short
+				// check and the overrun clamp are skipped for it, so a file
+				// holding a minute under a zero-length window would replace a
+				// minute of recorded audio while promising none. Intake accepts
+				// stop == start; the splice will not act on it.
+				skip(segment, "declares no window, so there is nothing its audio can be said to cover")
+				continue
+			}
 			samples, err := decodeSourceSegment(ctx, filepath.Join(dir, segment.AudioName), sampleRate,
 				sourceDecodeTimeout(segmentMS), maxSourceSegmentSamples(segmentMS, sampleRate, outSamples))
 			if err != nil {
-				return nil, report, fmt.Errorf("segment %d: decode: %w", segment.Index, err)
+				skip(segment, "decode: %v", err)
+				continue
 			}
-			placed := RenderOntoTimeline(samples, sampleRate, placement, outSamples)
-			for i := range out {
-				// Segments never overlap in time (each starts when the previous
-				// stopped), so summing is a placement, not a mix.
-				out[i] += placed[i]
+			decodedMS := int64(float64(len(samples)) * 1000 / float64(sampleRate))
+			// The audio against the sidecar, kept from the whole-track design.
+			// Intake validates that a declared file ARRIVED, never that it holds
+			// what was claimed, and a file this far short of its own manifest is
+			// not one whose timing claims are worth believing.
+			if float64(decodedMS) < float64(segmentMS)*minSegmentDecodedFraction {
+				skip(segment, "holds %d ms of the %d ms it declares (%.0f%%); the audio does not match the sidecar",
+					decodedMS, segmentMS, float64(decodedMS)*100/float64(segmentMS))
+				continue
+			}
+			// Only what the segment declared, plus the overrun a checkpointed
+			// manifest can honestly lag by. A file holding a minute of audio
+			// under a one-second window would otherwise replace a minute of
+			// recorded audio, which is exactly the "never worse than the
+			// recorded track" property the splice exists for.
+			// The bound exactly, not expectedPCMSamples: that helper adds a
+			// second of codec-tail allowance to a CAPACITY hint, which is right
+			// for an allocation and wrong for a clamp that says how much
+			// recorded audio may be replaced.
+			if limit := int((segmentMS + segmentOverrunSlackMS) * int64(sampleRate) / 1000); limit > 0 && len(samples) > limit {
+				report.Rejections = append(report.Rejections, fmt.Sprintf(
+					"segment %d holds %d ms under a %d ms window; only the first %d ms of it was used",
+					segment.Index, decodedMS, segmentMS, segmentMS+segmentOverrunSlackMS))
+				samples = samples[:limit]
+			}
+			// Recomputed after any clamp above, so the report counts the audio
+			// that was actually laid over the recorded track rather than
+			// everything the file decoded to.
+			decodedMS = int64(float64(len(samples)) * 1000 / float64(sampleRate))
+			from, to := overlayOntoTimeline(out, samples, sampleRate, placement)
+			if to <= from {
+				skip(segment, "places entirely outside the %d ms recording", timelineMS)
+				continue
 			}
 			report.Placed++
+			windows = append(windows, window{from, to})
+			report.CoverageMS += decodedMS
 			totalAnchors += placement.Anchors
 			rateSum += placement.Rate
 			if placement.ResidualMS > worstResidual {
 				worstResidual = placement.ResidualMS
 			}
-			decodedMS := int64(float64(len(samples)) * 1000 / float64(sampleRate))
-			report.CoverageMS += decodedMS
-			// The window check above trusts the sidecar's arithmetic. This
-			// checks the audio against it: a segment may declare ten minutes
-			// and hold one, and nothing before now would have noticed, because
-			// intake validates that a declared file ARRIVED and not that it
-			// contains what was claimed. Whole-track substitution makes the
-			// difference nine minutes of silence.
-			if declaredMS := segment.StopWallMS - segment.StartWallMS; declaredMS > 0 &&
-				float64(decodedMS) < float64(declaredMS)*minCoveredFraction {
-				return nil, report, fmt.Errorf(
-					"segment %d holds %d ms of the %d ms it declares (%.0f%%); the audio does not match the sidecar",
-					segment.Index, decodedMS, declaredMS, float64(decodedMS)*100/float64(declaredMS))
-			}
 		}
 	}
 
 	if report.Placed == 0 {
-		return nil, report, fmt.Errorf("no segment to place")
+		return nil, report, fmt.Errorf("no segment could be placed")
 	}
+	sort.Slice(windows, func(i, j int) bool { return windows[i].from < windows[j].from })
+	var splicedSamples, cursor int
+	for _, w := range windows {
+		if w.to <= cursor {
+			continue
+		}
+		if w.from > cursor {
+			cursor = w.from
+		}
+		splicedSamples += w.to - cursor
+		cursor = w.to
+	}
+	report.SplicedMS = int64(splicedSamples) * 1000 / int64(sampleRate)
 	report.Anchors = totalAnchors
 	report.ResidualMS = worstResidual
 	report.RatePPM = Placement{Rate: rateSum / float64(report.Placed)}.RatePPMDeviation()
@@ -797,13 +858,29 @@ func writeWAV16(path string, samples []float32, sampleRate int) error {
 
 	body := make([]byte, dataBytes)
 	for i, sample := range samples {
-		v := sample
+		// 32768, matching the decoder, and rounded rather than truncated.
+		//
+		// This file is now a SPLICE: most of it is the participant's recorded
+		// track, decoded by readPCM16LEFloatsBounded as s16/32768 and expected
+		// to survive untouched wherever no upload was laid over it. Scaling
+		// back by 32767 and truncating turned every one of those samples into a
+		// slightly different one — 16384 came back as 16383, and ±1 came back
+		// as zero — so "the recorded audio is unchanged outside the overlaid
+		// windows" was true in memory and false in the file the transcription
+		// pass actually reads. The pair is exact in both directions now, and
+		// only the single value +1.0 has to be clamped because int16 has no
+		// positive counterpart to -32768.
+		v := float64(sample)
 		if v > 1 {
 			v = 1
 		} else if v < -1 {
 			v = -1
 		}
-		s := int16(v * 32767)
+		scaled := math.Round(v * 32768)
+		if scaled > 32767 {
+			scaled = 32767
+		}
+		s := int16(scaled)
 		body[i*2] = byte(uint16(s))
 		body[i*2+1] = byte(uint16(s) >> 8)
 	}
@@ -839,8 +916,41 @@ func writeWAV16(path string, samples []float32, sampleRate int) error {
 	return nil
 }
 
-// ApplySourceAudio replaces each speaker's transcription input with their own
-// browser-captured audio where one was uploaded and can be placed.
+// recordedParticipantFloats decodes everything this participant contributed to
+// the recording, onto the meeting timeline, as the floor the splice lays audio
+// over.
+//
+// EVERY one of their streams, summed, because the splice goes to exactly one of
+// them and the rest are dropped from transcription. Taking only the chosen
+// stream would make a rejoin's second track vanish from the transcript in every
+// window the upload does not cover — which is precisely the loss the splice
+// exists to stop. Their streams are disjoint in time (a rejoin is a new RTP
+// identity for a span the previous one had ended), so summing places rather
+// than mixes.
+func recordedParticipantFloats(mkvPath string, streams []AudioStream, participantID string, sampleRate, outSamples int) ([]float32, error) {
+	out := make([]float32, outSamples)
+	var decoded bool
+	for i := range streams {
+		if streams[i].ParticipantID != participantID {
+			continue
+		}
+		samples, err := ExtractStreamFloatsAt(mkvPath, streams[i], sampleRate)
+		if err != nil {
+			return nil, fmt.Errorf("decode recorded track for %s: %w", streams[i].SpeakerLabel, err)
+		}
+		decoded = true
+		for j := 0; j < len(samples) && j < outSamples; j++ {
+			out[j] += samples[j]
+		}
+	}
+	if !decoded {
+		return nil, fmt.Errorf("no recorded track for %s", participantID)
+	}
+	return out, nil
+}
+
+// ApplySourceAudio splices each speaker's own browser-captured audio over their
+// recorded track, wherever a segment was uploaded and can be placed.
 //
 // It mutates streams in place and returns what it did, for the manifest. Every
 // failure is a skip, never an error: the recorded track is always still there,
@@ -850,8 +960,9 @@ func writeWAV16(path string, samples []float32, sampleRate int) error {
 // A participant with no track in this recording is ignored even if they
 // uploaded. Being a member of the room is what the upload endpoint can check;
 // having actually been in THIS call is what a matching track proves, and that
-// is the check that belongs here.
-func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, roomToken, bundleDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
+// is the check that belongs here — and with a splice it is load-bearing twice
+// over, because a participant with no recorded track has no floor to splice on.
+func ApplySourceAudio(ctx context.Context, mkvPath string, streams []AudioStream, captureRoot, roomToken, bundleDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
 	windowStartMS, windowEndMS := recordingWallWindow(streams, timelineMS)
 	captures, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS)
 	if err != nil {
@@ -878,14 +989,14 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 	}
 	var reports []SourceRenderReport
 	// One participant can own several MKV streams: a rejoin, or a rotation
-	// where the RTP identity changed mid-call. The rendered source track spans
-	// the WHOLE meeting timeline, so handing the same file to each of those
-	// streams would transcribe that participant once per stream and put every
-	// word in the transcript two or three times. It goes to exactly one stream,
-	// and that participant's other streams are dropped from transcription —
-	// their audio is already inside the source render.
+	// where the RTP identity changed mid-call. The spliced track spans the
+	// WHOLE meeting timeline and already contains all of their recorded audio,
+	// so handing the same file to each of those streams would transcribe that
+	// participant once per stream and put every word in the transcript two or
+	// three times. It goes to exactly one stream, and that participant's other
+	// streams are dropped from transcription.
 	used := map[string]bool{}
-	// A participant whose render already failed is not retried per stream: the
+	// A participant whose splice already failed is not retried per stream: the
 	// failure is a property of their capture, not of the stream we happened to
 	// try it on, and re-decoding a meeting's audio to fail identically is pure
 	// cost.
@@ -893,7 +1004,7 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 	// A participant with ANY stream lacking a wall-clock base is refused up
 	// front. Deciding inside the loop made the outcome depend on which of their
 	// streams came first: an anchorless stream seen last was harmless, the same
-	// stream seen first abandoned the substitution.
+	// stream seen first abandoned the splice.
 	for i := range streams {
 		if streams[i].ParticipantID != "" && !streams[i].TimeBase.Known {
 			failed[streams[i].ParticipantID] = true
@@ -910,29 +1021,40 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 		}
 		if used[stream.ParticipantID] {
 			stream.SuppressTranscription = true
-			fmt.Fprintf(stdout, "  source audio: %s has another stream already covered by their capture; not transcribing it twice\n", stream.SpeakerLabel)
+			fmt.Fprintf(stdout, "  source audio: %s has another stream already covered by their spliced track; not transcribing it twice\n", stream.SpeakerLabel)
 			continue
 		}
 		if !stream.TimeBase.Known {
 			// Marked failed, not merely skipped, and decided the same way
-			// whichever order the streams arrive in: anchorlessParticipants was
-			// computed over all of them before this loop began.
+			// whichever order the streams arrive in: the loop above computed it
+			// over all of them before this one began.
 			//
-			// Without it the participant's OTHER stream could still render —
-			// the render spans the whole timeline, including this stream's span
-			// — while this one keeps its recorded audio and is transcribed
-			// alongside it, putting every word said here into the transcript
-			// twice.
+			// Without it the participant's OTHER stream could still splice —
+			// the spliced track spans the whole timeline, including this
+			// stream's span — while this one keeps its recorded audio and is
+			// transcribed alongside it, putting every word said here into the
+			// transcript twice.
 			failed[stream.ParticipantID] = true
 			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no wall-clock base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
 			continue
 		}
-		samples, report, err := RenderSourceTrack(ctx, dirs, stream.TimeBase, sampleRate, outSamples)
+		recorded, err := recordedParticipantFloats(mkvPath, streams, stream.ParticipantID, sampleRate, outSamples)
+		if err != nil {
+			// No floor, no splice. The recorded track is what the transcription
+			// pass would decode for itself anyway, so this costs the upload and
+			// nothing else.
+			failed[stream.ParticipantID] = true
+			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
+			continue
+		}
+		samples, report, err := SpliceSourceTrack(ctx, recorded, dirs, stream.TimeBase, sampleRate, outSamples)
 		report.SpeakerID = stream.SpeakerID
 		if err != nil {
-			// The whole speaker stays on the recorded track, and the reason
-			// travels into the manifest: a transcript that quietly declined to
-			// use somebody's upload should say why.
+			// Nothing could be placed, so the splice would be a byte-for-byte
+			// copy of the recorded track. Leave the stream alone rather than
+			// write one, and let the reason travel into the manifest: a
+			// transcript that quietly declined to use somebody's upload should
+			// say why.
 			report.Rejections = append(report.Rejections, err.Error())
 			failed[stream.ParticipantID] = true
 			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
@@ -949,8 +1071,8 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 		}
 		stream.SourceAudioPath = path
 		used[stream.ParticipantID] = true
-		fmt.Fprintf(stdout, "  source audio: %s transcribing from participant capture (%d/%d segments, %d anchors, %.1f ms residual, %.0f ppm drift)\n",
-			stream.SpeakerLabel, report.Placed, report.Segments, report.Anchors, report.ResidualMS, report.RatePPM)
+		fmt.Fprintf(stdout, "  source audio: %s transcribing from participant capture spliced over %d ms of their recorded track (%d/%d segments, %d skipped, %d anchors, %.1f ms residual, %.0f ppm drift)\n",
+			stream.SpeakerLabel, report.SplicedMS, report.Placed, report.Segments, report.Skipped, report.Anchors, report.ResidualMS, report.RatePPM)
 		reports = append(reports, report)
 	}
 	return reports

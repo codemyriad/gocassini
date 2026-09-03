@@ -37,14 +37,15 @@ type AudioStream struct {
 	// (sourceaudio.go). Zero-valued with Known=false for recordings made before
 	// the remux emitted it.
 	TimeBase SourceTimeBase
-	// SourceAudioPath, when set, is a rendered WAV of this speaker captured in
-	// their own browser and already placed on the meeting timeline. It replaces
-	// the MKV track as the transcription input; see ExtractSpeakerFloats.
+	// SourceAudioPath, when set, is a WAV of this speaker's RECORDED audio with
+	// their browser-captured segments spliced over the windows those segments
+	// cover, already on the meeting timeline. It replaces the MKV track as the
+	// transcription input; see ExtractSpeakerFloats and SpliceSourceTrack.
 	SourceAudioPath string
 	// SuppressTranscription drops this stream from the transcription pass. Set
-	// when the same participant's source capture already covers it on another
-	// stream: the render spans the whole timeline, so transcribing both would
-	// emit every word twice.
+	// when the same participant's spliced track already covers it: that track
+	// spans the whole timeline and already contains this stream's recorded
+	// audio, so transcribing both would emit every word twice.
 	SuppressTranscription bool
 }
 
@@ -200,7 +201,7 @@ func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate string
 }
 
 func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
-	// A rendered source-audio track has already been placed on the meeting
+	// A spliced source-audio track has already been placed on the meeting
 	// timeline (sourceaudio.go), so it is decoded as a plain file — none of the
 	// sparse-gap machinery below applies to it.
 	if stream.SourceAudioPath != "" {
@@ -210,6 +211,16 @@ func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
 		}
 		return samples, nil
 	}
+	return ExtractStreamFloatsAt(mkv, stream, 16000)
+}
+
+// ExtractStreamFloatsAt decodes one MKV audio stream onto the meeting timeline
+// at the requested sample rate, materialising the gaps where the participant
+// was absent or silent. It is what ExtractSpeakerFloats does for the recorded
+// path, and what the source-audio splice needs as its floor: the recorded audio
+// the upload is laid over. It deliberately ignores SourceAudioPath — a caller
+// asking for a recorded track is asking for the recorded track.
+func ExtractStreamFloatsAt(mkv string, stream AudioStream, sampleRate int) ([]float32, error) {
 	durationMS := stream.TimelineDurationMS
 	if durationMS <= 0 {
 		// Preserve the memory bound for direct callers that construct AudioStream
@@ -222,18 +233,18 @@ func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
 		"-y",
 		"-i", mkv,
 	}
-	args = append(args, sparseTimelineDecodeArgs(stream, 16000)...)
+	args = append(args, sparseTimelineDecodeArgs(stream, sampleRate)...)
 	args = append(args,
 		"-vn",
 		"-sn",
 		"-dn",
 		"-ac", "1",
-		"-ar", "16000",
+		"-ar", strconv.Itoa(sampleRate),
 		"-f", "s16le",
 		"pipe:1",
 	)
 	cmd := exec.Command("ffmpeg", args...)
-	samples, err := runPCM16LECommand(cmd, expectedPCMSamples(durationMS, 16000))
+	samples, err := runPCM16LECommand(cmd, expectedPCMSamples(durationMS, sampleRate))
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg extract speaker %d: %w", stream.Index, err)
 	}

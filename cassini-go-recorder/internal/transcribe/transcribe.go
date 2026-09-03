@@ -131,7 +131,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		// is a build with no upload for this room, and that build has to leave
 		// the bundle byte for byte what a build without ingestion would leave —
 		// not an empty _work/sourceaudio to explain to whoever finds it.
-		sourceAudio = ApplySourceAudio(ctx, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, 16000, audioDurationMS, stdout)
+		sourceAudio = ApplySourceAudio(ctx, mkvPath, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, 16000, audioDurationMS, stdout)
 	}
 
 	// --- 3. Download / verify STT model and VAD ---

@@ -291,6 +291,192 @@ func writeFileSynced(path string, body []byte) error {
 	return f.Close()
 }
 
+// captureWindow is one segment's declared span.
+type captureWindow struct{ start, stop int64 }
+
+// covers reports whether this window holds everything `other` does.
+func (w captureWindow) covers(other captureWindow) bool {
+	return w.start <= other.start && w.stop >= other.stop
+}
+
+// storedCapture is what the server already holds for one call: the span of each
+// segment it names, how many bytes of it are on disk, and how far into the call
+// it reaches.
+type storedCapture struct {
+	windows map[string]captureWindow
+	bytes   map[string]int64
+	endsAt  int64
+}
+
+// readStoredCapture reads that. A zero value means there is genuinely nothing
+// there; an error means the question could not be answered, which is NOT the
+// same thing and must not be treated as it.
+func readStoredCapture(dir string, roomToken string, callStartWallMS int64) (storedCapture, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, captureSidecarName))
+	if os.IsNotExist(err) {
+		return storedCapture{}, nil
+	}
+	if err != nil {
+		// A transient read failure here used to read as "no capture stored",
+		// which promotes the incoming upload and deletes the copy that could not
+		// be read. The guard has to survive the storage faults it exists for.
+		return storedCapture{}, fmt.Errorf("read stored capture sidecar: %w", err)
+	}
+	var stored captureSidecar
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		// A manifest that does not parse describes nothing this can be compared
+		// against, and a directory with one is already unusable to the build.
+		return storedCapture{}, nil
+	}
+	if stored.CallStartWallMS != callStartWallMS || stored.RoomToken != roomToken {
+		// A different call. Nothing to compare, and nothing to protect.
+		return storedCapture{}, nil
+	}
+	windows := make(map[string]captureWindow, len(stored.Segments))
+	bytes := make(map[string]int64, len(stored.Segments))
+	for _, segment := range stored.Segments {
+		windows[segment.AudioName] = captureWindow{segment.StartWallMS, segment.StopWallMS}
+		// The file, not just the manifest. Recovery sidecars are checkpointed,
+		// so two uploads for one call can carry the SAME manifest while their
+		// snapshots of a still-growing segment hold different amounts of it —
+		// and metadata that compares equal would let the staler one replace the
+		// fuller. Bytes are the only thing that separates them here.
+		if info, err := os.Stat(filepath.Join(dir, segment.AudioName)); err == nil {
+			bytes[segment.AudioName] = info.Size()
+		}
+	}
+	return storedCapture{windows: windows, bytes: bytes, endsAt: stored.CallEndWallMS}, nil
+}
+
+// captureWouldLoseStoredAudio reports whether promoting `incoming` would drop
+// audio the server already holds for this call.
+//
+// A re-upload for one call replaces what is stored, and that is right for the
+// case it was built for: a client offering the same capture again. It is wrong
+// for the case a reload introduces. A browser that reloads mid-recording
+// resumes its buffer, so a later upload for that call describes MORE of it —
+// and if a stale copy of the earlier prefix reaches this endpoint afterwards
+// (a second tab, a request the network reordered), last-writer-wins would
+// replace the whole recording with its own first half and the sweep would
+// delete the rest.
+//
+// The test is containment, asked three ways, because each of the narrower ones
+// let through exactly the upload this is meant to refuse.
+//
+//   - Segment COUNT is not a measure of audio: a snapshot of a live one-segment
+//     capture has the same count as the finished one and a fraction of its
+//     seconds. That was the first thing tried.
+//   - Segment NAMES alone are not either: the same two names can describe
+//     twenty seconds in one capture and two minutes in another.
+//   - The call's END alone is not: two pages that both resumed one prefix can
+//     diverge, so the one that happens to end later need not hold everything
+//     the other did.
+//   - And no amount of METADATA is: a checkpointed manifest describes a segment
+//     that was still growing, so two uploads can agree on every declared field
+//     and disagree about how much of that segment they actually carry.
+//
+// So an upload may replace what is stored only if it names every segment the
+// stored capture names, each over a window that covers the stored one's and
+// with at least as many bytes, and reaches at least as far into the call. The
+// byte comparison is against the staged file, which is the only description of
+// this upload that is not the client's own account of it.
+//
+// The set-aside copy is consulted too. promoteCapture moves the previous
+// capture to `.superseded` before it swaps, so a crash between those two
+// renames leaves the whole recording THERE and nothing at the live path — and
+// a stale prefix arriving afterwards would find no stored capture to compare
+// against, promote itself, and let the sweep delete the longer copy.
+// capturePromotion is what promoteCapture decided.
+type capturePromotion int
+
+const (
+	// capturePromoted: the incoming upload is now the stored capture.
+	capturePromoted capturePromotion = iota
+	// captureAlreadyStored: the incoming upload names a subset of what is
+	// stored and reaches no further into the call, so its bytes are already
+	// here. Accepted without replacing, and the client stops offering it.
+	captureAlreadyStored
+	// captureDiverged: the two disagree — each holds a segment the other does
+	// not. Neither may replace the other and neither may be thrown away, so the
+	// upload is refused RETRYABLY rather than accepted: accepting it is what
+	// makes the browser delete the only copy of the audio only it has.
+	captureDiverged
+)
+
+func captureWouldLoseStoredAudio(incoming *captureSidecar, final, staging string) (bool, error) {
+	live, err := readStoredCapture(final, incoming.RoomToken, incoming.CallStartWallMS)
+	if err != nil {
+		return false, err
+	}
+	setAside, err := readStoredCapture(final+captureSupersededSuffix, incoming.RoomToken, incoming.CallStartWallMS)
+	if err != nil {
+		return false, err
+	}
+	offered := make(map[string]captureWindow, len(incoming.Segments))
+	for _, segment := range incoming.Segments {
+		offered[segment.AudioName] = captureWindow{segment.StartWallMS, segment.StopWallMS}
+	}
+	// Both copies are compared against, not the "bigger" of them: whichever one
+	// the incoming upload would drop something from is a reason to keep what is
+	// stored.
+	for _, held := range []storedCapture{live, setAside} {
+		if len(held.windows) == 0 {
+			continue
+		}
+		if incoming.CallEndWallMS < held.endsAt {
+			return true, nil
+		}
+		for name, stored := range held.windows {
+			mine, ok := offered[name]
+			if !ok || !mine.covers(stored) {
+				return true, nil
+			}
+			if info, err := os.Stat(filepath.Join(staging, name)); err == nil {
+				if storedBytes, known := held.bytes[name]; known && info.Size() < storedBytes {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+// restoreInterruptedPromotion completes a promotion that stopped between its
+// two renames.
+//
+// promoteCapture moves the previous capture aside and then renames staging into
+// place. A crash, or a failed second rename whose recovery also failed, can
+// leave the set-aside copy holding the ONLY copy of that participant's audio
+// with nothing at the live path. Discovery ignores that name by design, so the
+// capture is on disk and unreachable; moving it back is the whole of the fix,
+// and doing it here means the next upload for that call is judged against it.
+func restoreInterruptedPromotion(final string) error {
+	setAside := final + captureSupersededSuffix
+	if _, err := os.Stat(setAside); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		// "Cannot tell" is not "not there". Carrying on would judge this upload
+		// as if no set-aside copy existed.
+		return fmt.Errorf("stat set-aside capture: %w", err)
+	}
+	if _, err := os.Stat(final); err == nil {
+		// A live capture exists; the set-aside copy is the older one the sweep
+		// removes. Nothing to restore.
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat capture: %w", err)
+	}
+	if err := os.Rename(setAside, final); err != nil {
+		// Reported, not swallowed. Carrying on would judge this upload against a
+		// capture that is still under a name discovery ignores, and could accept
+		// a shorter one — telling the client to delete its buffer while the only
+		// complete copy stays unreachable. A retryable failure keeps both.
+		return fmt.Errorf("restore interrupted promotion: %w", err)
+	}
+	return nil
+}
+
 // promoteCapture swaps a completed staging directory into its final path
 // without destroying a previous good upload until the new one is in place.
 //
@@ -298,16 +484,49 @@ func writeFileSynced(path string, body []byte) error {
 // the rename then fails — the participant's audio is gone and they have already
 // deleted their local copy. Moving the old aside first means the worst case is
 // a leftover directory, not a lost recording.
-func (rt *Runtime) promoteCapture(staging, final string) error {
+//
+// The return says which of the three outcomes above happened; only
+// capturePromoted means the staging directory became the stored capture.
+func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string) (capturePromotion, error) {
 	capturePromotionMu.Lock()
 	defer capturePromotionMu.Unlock()
 
+	// An interrupted promotion left the whole capture aside and nothing at the
+	// live path. Finish it before deciding anything: a capture under
+	// `.superseded` is one discovery deliberately ignores, so "kept" would
+	// otherwise mean retained on disk and invisible to every build — the audio
+	// preserved and never used, which is not what the set-aside is for.
+	if err := restoreInterruptedPromotion(final); err != nil {
+		return capturePromoted, err
+	}
+
+	lossy, err := captureWouldLoseStoredAudio(sidecar, final, staging)
+	if err != nil {
+		// Refused rather than guessed. Promoting on an unanswered question is
+		// what destroys the longer copy.
+		return capturePromoted, err
+	}
+	if lossy {
+		unique, err := captureHasAudioNotStored(sidecar, final)
+		if err != nil {
+			return capturePromoted, err
+		}
+		if unique {
+			// Each holds something the other does not. Answering "accepted"
+			// here is what makes the browser delete the only copy of the
+			// segments only it has, and promoting would delete the only copy
+			// of the ones only the server has. Neither, then: the client keeps
+			// its buffer and an operator gets a log line naming the collision.
+			return captureDiverged, nil
+		}
+		return captureAlreadyStored, nil
+	}
 	superseded := ""
 	if _, err := os.Stat(final); err == nil {
-		superseded = final + ".superseded"
+		superseded = final + captureSupersededSuffix
 		_ = os.RemoveAll(superseded)
 		if err := os.Rename(final, superseded); err != nil {
-			return fmt.Errorf("set aside previous capture: %w", err)
+			return capturePromoted, fmt.Errorf("set aside previous capture: %w", err)
 		}
 	}
 	if err := os.Rename(staging, final); err != nil {
@@ -315,12 +534,41 @@ func (rt *Runtime) promoteCapture(staging, final string) error {
 			// Put the previous upload back rather than leaving nothing.
 			_ = os.Rename(superseded, final)
 		}
-		return fmt.Errorf("promote staging: %w", err)
+		return capturePromoted, fmt.Errorf("promote staging: %w", err)
 	}
 	if superseded != "" {
 		_ = os.RemoveAll(superseded)
 	}
-	return nil
+	return capturePromoted, nil
+}
+
+// captureHasAudioNotStored reports whether the incoming upload names a segment
+// neither stored copy has. Together with captureWouldLoseStoredAudio it tells
+// "this is a subset of what is here" apart from "these two disagree".
+func captureHasAudioNotStored(incoming *captureSidecar, final string) (bool, error) {
+	live, err := readStoredCapture(final, incoming.RoomToken, incoming.CallStartWallMS)
+	if err != nil {
+		return false, err
+	}
+	setAside, err := readStoredCapture(final+captureSupersededSuffix, incoming.RoomToken, incoming.CallStartWallMS)
+	if err != nil {
+		return false, err
+	}
+	for _, segment := range incoming.Segments {
+		mine := captureWindow{segment.StartWallMS, segment.StopWallMS}
+		liveHas := false
+		if stored, ok := live.windows[segment.AudioName]; ok && stored.covers(mine) {
+			liveHas = true
+		}
+		setAsideHas := false
+		if stored, ok := setAside.windows[segment.AudioName]; ok && stored.covers(mine) {
+			setAsideHas = true
+		}
+		if !liveHas && !setAsideHas {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // captureEnabledHandler tells a running client whether collection is still
@@ -634,16 +882,49 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
-		if err := rt.promoteCapture(staging, final); err != nil {
+		outcome, err := rt.promoteCapture(sidecar, staging, final)
+		if err != nil {
 			logger.Printf("capture upload: promote %s -> %s: %v", staging, final, err)
 			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")
 			return
 		}
-		promoted = true
+		if outcome == captureDiverged {
+			// Retryable on purpose. The client keeps its buffer, because the
+			// segments only it has are not on this server and accepting would
+			// make it delete them.
+			logger.Printf("capture upload: room=%s owner=%s diverges from the capture already stored for that call; both copies hold audio the other does not",
+				sidecar.RoomToken, owner)
+			// 409, not 503. The client keeps a buffer either way, but 503 is a
+			// transient failure and counts towards its attempt cap — which
+			// would delete, on the fifth page load, exactly the audio this
+			// refusal exists to preserve. 409 says the disagreement is about
+			// the content, and the client holds on to it without counting.
+			refuseCaptureUpload(w, logger, owner, http.StatusConflict, "diverged_capture",
+				"another capture is stored for this call and neither contains the other")
+			return
+		}
+		promoted = outcome == capturePromoted
 
 		var total int64
 		for _, n := range written {
 			total += n
+		}
+		if outcome == captureAlreadyStored {
+			// Accepted, and deliberately not stored: what is already here holds
+			// this call's audio and more of it. Saying so is worth a log line,
+			// because "the upload arrived and the bytes on disk did not change"
+			// is otherwise indistinguishable from a bug.
+			logger.Printf("capture upload: room=%s owner=%s kept the stored capture; this upload's %d segments are already inside it",
+				sidecar.RoomToken, owner, len(sidecar.Segments))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":   "accepted",
+				"room":     sidecar.RoomToken,
+				"segments": len(sidecar.Segments),
+				"bytes":    total,
+			})
+			return
 		}
 		logger.Printf("capture upload: room=%s owner=%s segments=%d bytes=%d", sidecar.RoomToken, owner, len(sidecar.Segments), total)
 		w.Header().Set("Content-Type", "application/json")
