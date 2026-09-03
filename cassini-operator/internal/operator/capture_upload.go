@@ -431,8 +431,9 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			}
 		}()
 
-		// Created on first upload rather than at startup: a deployment where
-		// nobody has opted in never grows the directory.
+		// Created on first upload rather than at startup: a deployment that
+		// never receives one never grows the directory, whatever the switch
+		// says.
 		if err := os.MkdirAll(rt.cfg.CaptureRoot, 0o750); err != nil {
 			logger.Printf("capture upload: capture root %s: %v", rt.cfg.CaptureRoot, err)
 			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")

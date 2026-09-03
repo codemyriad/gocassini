@@ -366,10 +366,25 @@ capture_on() {
   local value="$CASSINI_SOURCE_CAPTURE"
   value="${value#"${value%%[![:space:]]*}"}"   # trim leading whitespace
   value="${value%"${value##*[![:space:]]}"}"   # trim trailing whitespace
-  case "${value,,}" in
-    ''|1|t|true) return 0 ;;
-    *)           return 1 ;;
+  # Exactly the strings ParseBool accepts as true, and blank for the default.
+  # Deliberately not a case-insensitive match: ParseBool takes "TRUE", "true"
+  # and "True" but rejects "tRUE", and what it rejects is off in the operator,
+  # so it has to be off here too.
+  case "$value" in
+    ''|1|t|T|TRUE|true|True) return 0 ;;
+    *)                       return 1 ;;
   esac
+}
+
+# companion_enabled answers whether Nextcloud currently has the companion app
+# enabled. The listing is taken on its own line, because inside an
+# `if occ ... | grep -q` the shell suspends set -e and an occ that failed would
+# read as "not enabled" — which is the answer that skips the retirement.
+companion_enabled() {
+  local listing
+  listing="$(occ app:list 2>/dev/null)" \
+    || die "Could not read Nextcloud's app list, so whether $CAPTURE_COMPANION_ID is enabled is unknown. Refusing to guess."
+  printf '%s\n' "$listing" | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"
 }
 
 # install_capture_companion installs or retires the native companion app that
@@ -399,7 +414,7 @@ install_capture_companion() {
     # (docs/exapp-install.md): the ExApp learns capture is off first, which
     # reaches calls already in progress through the payload's 30-second poll,
     # and only then does the payload stop being delivered to new page loads.
-    if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
+    if companion_enabled; then
       log "Source capture is off; disabling $CAPTURE_COMPANION_ID so Talk pages stop carrying the payload"
       # Not swallowed. A companion left enabled while capture is being turned
       # off is the one outcome this branch exists to prevent, and a deploy that
@@ -453,15 +468,16 @@ verify() {
   occ app_api:app:list 2>/dev/null | grep -i "$CASSINI_APPSTORE_ID" || true
   # resolve_capture_switches has already ruled out "capture on without a
   # companion", so these two are the only outcomes: on with the companion
-  # enabled, or off with it gone.
+  # enabled, or off with it gone. Either contradiction is one this run just
+  # created and could not repair, so it fails the deploy rather than printing a
+  # FAIL the caller has to read — unlike the welcome check above, whose remedy
+  # is on the host's reverse proxy and not in this script's hands.
   if capture_on; then
-    if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
-      printf "  ok   %s enabled; capture follows Talk's recording per docs/source-audio-capture.md \"Trying it\"\n" "$CAPTURE_COMPANION_ID"
-    else
-      printf '  FAIL %s is not enabled\n' "$CAPTURE_COMPANION_ID" >&2
-    fi
-  elif occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
-    printf '  FAIL capture is off but %s is still enabled; Talk pages are still being given the payload\n' "$CAPTURE_COMPANION_ID" >&2
+    companion_enabled \
+      || die "Capture is on but $CAPTURE_COMPANION_ID is not enabled: no Talk page will carry the payload, so nothing would be captured."
+    printf "  ok   %s enabled; capture follows Talk's recording per docs/source-audio-capture.md \"Trying it\"\n" "$CAPTURE_COMPANION_ID"
+  elif companion_enabled; then
+    die "Capture is off but $CAPTURE_COMPANION_ID is still enabled: Talk pages are still being given the capture payload. Disable it by hand before treating this host as capture-free."
   fi
 }
 
