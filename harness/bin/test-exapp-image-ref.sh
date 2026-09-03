@@ -117,7 +117,16 @@ done
 grep -q 'CASSINI_STT_CUDA_CAPABLE=1' "$PROJECT_ROOT/deployment/Dockerfile.exapp.cuda" \
   || fail "Dockerfile.exapp.cuda does not declare its CUDA-capable runtime"
 
-# 8. Local image builds resolve a concrete newest-stable FFmpeg version before
+# 8. The frontend image build consumes the committed workspace lockfile. Using
+# npm install here both makes the image non-reproducible and has triggered npm's
+# Arborist edgesOut crash when resolving the two copied workspace manifests.
+exapp_dockerfile="$PROJECT_ROOT/deployment/Dockerfile.exapp"
+grep -qF 'COPY package.json package-lock.json ./' "$exapp_dockerfile" \
+  || fail "Dockerfile.exapp does not copy the root workspace lockfile"
+grep -qE '^RUN npm ci$' "$exapp_dockerfile" \
+  || fail "Dockerfile.exapp does not install the frontend from its lockfile"
+
+# 9. Local image builds resolve a concrete newest-stable FFmpeg version before
 # invoking Docker. Passing only the literal value "latest" would allow the
 # Docker cache to retain an older upstream release indefinitely.
 grep -qF 'deployment/ffmpeg/resolve-latest.sh' "$stack_sh" \
