@@ -135,9 +135,9 @@ describe("install", () => {
   // that answer forever unless something deletes it: nothing reads or writes
   // the key any more, so it would simply sit there — a recorded answer to a
   // question this build no longer asks, on a profile whose owner may never open
-  // Cassini again, while docs/privacy.md tells administrators no such answer
-  // exists. Deleting it is the whole point, and it has to happen even where
-  // capture is switched off, which is the one case that returns early.
+  // Cassini again, and no such answer is kept. Deleting it is the whole point,
+  // and it has to happen even where capture is switched off, which is the one
+  // case that returns early.
   it("forgets an older build's opt-in even when capture is disabled", () => {
     const storage = fakeLocalStorage({
       "cassini.sourceCapture.consent": "granted",

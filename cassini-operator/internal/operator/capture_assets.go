@@ -44,20 +44,22 @@ var captureAssetFiles = map[string]string{
 //
 // This is the containment boundary for the whole feature, and it is separate
 // from CASSINI_SOURCE_AUDIO_INGEST (which only decides whether collected audio
-// reaches a transcript). With this off, the browser assets 404 and the upload
-// endpoint refuses: the injected payload is told no, no capture asset loads,
+// reaches a transcript). With this off, the browser assets 404, the upload
+// endpoint refuses, and the companion is told no: no capture asset loads,
 // nothing is stored, and no disk can be filled.
 //
-// Off by default, and it is the ONLY switch: with it on, every authenticated
-// participant of every recorded call is captured, because capture follows
-// Talk's official recording and there is nothing per participant anywhere.
-// Telling the room is Talk's job, through its recording indicator and its own
-// recording-consent setting. That is acceptable for a deployment whose operator
-// chose to run this prototype and configured Talk to match, and is not
-// acceptable for one that merely upgraded.
+// On by default on this branch, which exists to run the feature: set
+// CASSINI_SOURCE_CAPTURE=0 to opt out. An unreadable value is treated as 0.
+//
+// It is also the ONLY switch: with it on, every authenticated participant of
+// every recorded call is captured, because capture follows Talk's official
+// recording and there is nothing per participant anywhere. Telling the room is
+// Talk's job, through its recording indicator and its own recording-consent
+// setting. That is acceptable for a deployment whose operator chose to run this
+// prototype and configured Talk to match, and is not acceptable for one that
+// merely upgraded — which is what the opt-out is for.
 func sourceCaptureEnabled() bool {
-	enabled, err := parseBoolEnv(envSourceCaptureEnabled)
-	return err == nil && enabled
+	return parseBoolEnvDefault(envSourceCaptureEnabled, true)
 }
 
 // serveCaptureAsset streams one built capture bundle from <dist>/capture/.

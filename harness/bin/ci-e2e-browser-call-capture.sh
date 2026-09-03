@@ -277,6 +277,8 @@ assert_fresh_stack_targets
 export GOMEMLIMIT="${GOMEMLIMIT:-2GiB}"
 export GOFLAGS="-p=1"
 export CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE="${CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE:-1}"
+# Pinned rather than left to the default — which is also on — so the assertion
+# below that it reached the container says what this leg needs.
 export CASSINI_SOURCE_CAPTURE=1
 
 SOURCE_IMAGE_ID="$(docker image inspect "$IMAGE_REF" --format '{{.Id}}')" \

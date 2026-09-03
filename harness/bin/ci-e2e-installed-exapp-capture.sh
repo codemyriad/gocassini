@@ -340,7 +340,9 @@ log "payload extracted from image: sha256=$PAYLOAD_SHA"
 # --- 2. stack --------------------------------------------------------------------
 
 # The administrator switch, passed to AppAPI at registration exactly as a
-# production install would (docs/source-audio-capture.md, "Trying it").
+# production install would (docs/source-audio-capture.md, "Trying it"). Pinned
+# rather than left to the default — which is also on — so the assertions below
+# say what this leg needs instead of inheriting it.
 export CASSINI_SOURCE_CAPTURE=1
 STACK_STARTED=1
 if ! PROJECT_NAME="$PROJECT_NAME" NEXTCLOUD_HOST_PORT="$NEXTCLOUD_HOST_PORT" \

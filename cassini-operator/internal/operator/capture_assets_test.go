@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func captureDistWith(t *testing.T, files map[string]string) string {
@@ -114,15 +116,17 @@ func TestUIAssetHandlerServesCaptureBundles(t *testing.T) {
 }
 
 // The administrator gate is the containment boundary for the whole feature.
-// With it off, a user opting in client-side achieves nothing: the ordinary
-// capture scripts disappear and uploads remain forbidden.
-func TestCaptureAssetsAreAbsentUntilAnAdministratorEnablesThem(t *testing.T) {
+// Capture runs by default on this branch, so what has to hold is the opt-out:
+// with CASSINI_SOURCE_CAPTURE=0 a browser that still holds the payload from an
+// earlier page load achieves nothing, because the ordinary capture scripts
+// stop being served and uploads stay forbidden.
+func TestCaptureAssetsDisappearWhenAnAdministratorOptsOut(t *testing.T) {
 	dist := captureDistWith(t, map[string]string{capturePayloadFile: "// payload"})
 	cfg := ExAppConfig{ViewerDist: dist}
 	logger := log.New(io.Discard, "", 0)
 
-	// captureDistWith turned it on; turn it back off for this case.
-	t.Setenv(envSourceCaptureEnabled, "")
+	// captureDistWith pinned it on; take the opt-out for this case.
+	t.Setenv(envSourceCaptureEnabled, "0")
 
 	rec := httptest.NewRecorder()
 	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+capturePayloadFile, nil), capturePayloadFile, logger)
@@ -151,10 +155,112 @@ func TestCaptureEnabledHandlerReportsTheAdministratorSwitch(t *testing.T) {
 		t.Fatalf("Cache-Control = %q, want no-store", cc)
 	}
 
-	t.Setenv(envSourceCaptureEnabled, "")
+	t.Setenv(envSourceCaptureEnabled, "0")
 	rec = httptest.NewRecorder()
 	rt.captureEnabledHandler(rec, httptest.NewRequest(http.MethodGet, "/capture/enabled", nil))
 	if body := strings.TrimSpace(rec.Body.String()); body != `{"enabled":false}` {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+// Both source-audio switches are ON when nothing sets them: this branch exists
+// to run the feature, and an integration deploy that forgot to pass them is
+// meant to capture and ingest, not to quietly do neither.
+//
+// The opt-out is any value strconv.ParseBool reads as false, because that is
+// what an admin writes without thinking about it. A value it cannot read at
+// all is a typo, and a typo lands OFF rather than on the default: a switch
+// nobody can read must not be the one that starts collecting microphones.
+func TestSourceAudioSwitchesDefaultOnAndFailClosedOnATypo(t *testing.T) {
+	switches := []struct {
+		env  string
+		read func() bool
+	}{
+		{envSourceCaptureEnabled, sourceCaptureEnabled},
+		{envSourceAudioIngestEnabled, sourceAudioIngestEnabled},
+	}
+	cases := []struct {
+		name  string
+		set   bool // false: leave the variable unset entirely
+		value string
+		want  bool
+	}{
+		{name: "unset", want: true},
+		{name: "empty", set: true, value: "", want: true},
+		{name: "blank", set: true, value: "   ", want: true},
+		{name: "zero", set: true, value: "0", want: false},
+		{name: "false", set: true, value: "false", want: false},
+		{name: "FALSE", set: true, value: "FALSE", want: false},
+		{name: "one", set: true, value: "1", want: true},
+		{name: "true", set: true, value: "true", want: true},
+		{name: "typo", set: true, value: "ture", want: false},
+		{name: "yes is not a bool", set: true, value: "yes", want: false},
+		{name: "off is not a bool", set: true, value: "off", want: false},
+	}
+	for _, sw := range switches {
+		for _, tc := range cases {
+			t.Run(sw.env+"/"+tc.name, func(t *testing.T) {
+				// Unset means unset: the process may well have inherited a
+				// value from whoever ran the tests.
+				t.Setenv(sw.env, "")
+				if !tc.set {
+					if err := os.Unsetenv(sw.env); err != nil {
+						t.Fatalf("unset %s: %v", sw.env, err)
+					}
+				} else {
+					t.Setenv(sw.env, tc.value)
+				}
+				if got := sw.read(); got != tc.want {
+					t.Fatalf("%s=%q (set=%t) -> %t, want %t", sw.env, tc.value, tc.set, got, tc.want)
+				}
+			})
+		}
+	}
+}
+
+// A typo is otherwise indistinguishable from a deliberate opt-out, so it is
+// reported. Once per distinct value: these switches are read on every
+// /capture/enabled poll and every build, and a log that repeats one typo
+// forever is a log nobody reads.
+func TestParseBoolEnvDefaultReportsAnUnreadableValueOnce(t *testing.T) {
+	var logged strings.Builder
+	previous := log.Writer()
+	flags := log.Flags()
+	log.SetOutput(&logged)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(previous); log.SetFlags(flags) })
+
+	// A name nothing else will use, and a different one on every run: the
+	// dedupe is package-global and outlives one test, so a fixed name would
+	// make this pass once and fail under `go test -count=2`.
+	name := fmt.Sprintf("CASSINI_TEST_UNREADABLE_SWITCH_%d", time.Now().UnixNano())
+	t.Setenv(name, "ture")
+	for i := 0; i < 3; i++ {
+		if parseBoolEnvDefault(name, true) {
+			t.Fatal("an unreadable value was read as the default instead of off")
+		}
+	}
+	if got := strings.Count(logged.String(), name); got != 1 {
+		t.Fatalf("logged %d times, want exactly 1:\n%s", got, logged.String())
+	}
+
+	// A different wrong value is a different mistake and is worth saying.
+	t.Setenv(name, "flase")
+	if parseBoolEnvDefault(name, true) {
+		t.Fatal("a second unreadable value was read as the default instead of off")
+	}
+	if got := strings.Count(logged.String(), name); got != 2 {
+		t.Fatalf("logged %d times after a second bad value, want 2:\n%s", got, logged.String())
+	}
+
+	// The default still applies once the variable is gone.
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatalf("unset: %v", err)
+	}
+	if !parseBoolEnvDefault(name, true) {
+		t.Fatal("unset did not fall back to the default")
+	}
+	if parseBoolEnvDefault(name, false) {
+		t.Fatal("unset did not fall back to a false default")
 	}
 }

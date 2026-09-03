@@ -265,8 +265,8 @@ async function participantKeys(page: import("@playwright/test").Page): Promise<s
 // answer: nothing reads or writes the key any more, so without a deliberate
 // delete it would simply sit there forever — a recorded answer to a question
 // this build no longer asks, on a profile whose owner may never open Cassini
-// again, while docs/privacy.md tells administrators no such answer is kept.
-// Every Talk page load clears it, and clears nothing else.
+// again, and no such answer is kept. Every Talk page load clears it, and clears
+// nothing else.
 test("clears an older build's opt-in from a browser that still has one", async ({ page }) => {
   await page.goto(`${server.origin}/`);
   await page.evaluate(() => {

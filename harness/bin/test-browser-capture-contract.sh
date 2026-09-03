@@ -46,15 +46,15 @@ CONTRACT="$(awk '
 ' "$LEG_SH")"
 [[ -n "$CONTRACT" ]] \
   || fail "could not extract BROWSER_RESULT_CONTRACT from $LEG_SH; the markers around it moved"
-# shellcheck disable=SC2016  # the $ belongs to jq's program text, not the shell
+# shellcheck disable=SC2016  # a literal dollar in a grep pattern matching the leg's own source
 grep -q 'jq -e "\$BROWSER_RESULT_CONTRACT"' "$LEG_SH" \
   || fail "the leg no longer evaluates BROWSER_RESULT_CONTRACT, so this test guards nothing"
 
 # Both participants are subjects of the leg, not one plus a control.
-# shellcheck disable=SC2016  # the $ belongs to jq's program text, not the shell
+# shellcheck disable=SC2016  # a literal dollar in a grep pattern matching the leg's own source
 grep -q 'verify_owner_capture alice "\$ALICE" 2' "$LEG_SH" \
   || fail "the leg no longer verifies Alice's stored multi-segment capture"
-# shellcheck disable=SC2016  # the $ belongs to jq's program text, not the shell
+# shellcheck disable=SC2016  # a literal dollar in a grep pattern matching the leg's own source
 grep -q 'verify_owner_capture bob "\$BOB" 1' "$LEG_SH" \
   || fail "the leg no longer verifies Bob's stored capture"
 if grep -q 'setCaptureConsent' "$DRIVER_MJS"; then

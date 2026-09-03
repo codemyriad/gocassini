@@ -87,6 +87,6 @@ the companion manifest at the same version as `gocassini` so an administrator
 installs a matched pair.
 
 Disabling the companion stops injection on new page loads. To disable collection
-operationally, turn off `CASSINI_SOURCE_CAPTURE` first; that reaches already-open
-calls through the 30-second poll and makes uploads fail closed, then disable the
-companion app.
+operationally, set `CASSINI_SOURCE_CAPTURE=0` first — it is on when unset; that
+reaches already-open calls through the 30-second poll and makes uploads fail
+closed, then disable the companion app.

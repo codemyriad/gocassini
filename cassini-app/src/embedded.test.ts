@@ -80,8 +80,7 @@ describe("retireAbandonedCaptureState", () => {
   // The Cassini page is the other place a leftover opt-in can be reached, and
   // for many people the likelier one: somebody who stopped joining calls still
   // opens the archive. That key is a recorded answer to a question this build
-  // no longer asks, and docs/privacy.md tells administrators no such answer is
-  // kept anywhere, so every page load deletes it.
+  // no longer asks, and no such answer is kept, so every page load deletes it.
   it("forgets an older build's opt-in without touching delivery bookkeeping", () => {
     const entries = new Map<string, string>([
       ["cassini.sourceCapture.consent", "granted"],
