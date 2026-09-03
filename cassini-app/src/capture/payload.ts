@@ -2067,7 +2067,13 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
     talkRoomToken = roomToken;
     void refreshTalkRecordingStatus(roomToken);
   }
-  if (capturingSender === null) {
+  // Taken over when there is no sender yet, and ALSO when the one we have
+  // belongs to a conversation this page has left. Talk changes room without
+  // reloading, so the old publishing connection can still be open when the new
+  // one negotiates; holding on to it meant the new room's sender was ignored
+  // here and never looked at again, and the participant spent the rest of that
+  // recording uncaptured.
+  if (capturingSender === null || (roomToken !== null && capturingRoom !== roomToken)) {
     capturingSender = sender;
     capturingConnection = connection;
     capturingRoom = roomToken;
@@ -2108,6 +2114,15 @@ function applyTalkRecordingStatus(status: number, roomToken: string | null): voi
   talkRecordingRoom = roomToken;
   if (status === TALK_RECORDING_VIDEO || status === TALK_RECORDING_AUDIO) {
     talkRecordingActive = true;
+    if (state && roomToken !== null && state.roomToken !== roomToken) {
+      // The confirmed recording is another room's, and this page has a capture
+      // running for the one it just left. Talk changes conversation without
+      // reloading and the old connection can outlive the change, so without
+      // this the old recorder goes on writing into the old room's capture while
+      // the only confirmation in hand is about a different call.
+      console.info("Cassini source capture: moved to another conversation; sealing the previous capture");
+      void finishCapture(false);
+    }
     if (capturingSender && capturingConnection) {
       beginCapture(capturingSender, capturingConnection);
     }
@@ -2230,10 +2245,18 @@ function installTalkRecordingLifecycle(): void {
     void refreshTalkRecordingStatus(initialRoomToken);
   }
   recordingStatusPoll = setInterval(() => {
-    // External signaling is immediate. Poll only as its missed-event watchdog
-    // while recording, or as the lifecycle source when no socket exists (Talk
-    // installations using internal signaling).
-    if (!signalingSocketObserved || talkRecordingActive) {
+    // External signaling is immediate. Poll as its missed-event watchdog while
+    // recording, as the lifecycle source when no socket exists (Talk
+    // installations using internal signaling), and — the case a reload lands
+    // in — until Talk has answered at all.
+    //
+    // That last one is not a nicety. A page reloading into a recording that is
+    // ALREADY active gets no signalling event, because nothing transitions; the
+    // one bootstrap request is the only thing that would tell it. If that
+    // request fails, and the socket is healthy so the watchdog stays off, the
+    // page never learns it should be recording and the whole post-rejoin stint
+    // is lost.
+    if (!signalingSocketObserved || talkRecordingActive || !recordingStatusAnswered) {
       const roomToken = talkRoomToken ?? roomTokenFromPath(location.pathname);
       if (roomToken) {
         talkRoomToken = roomToken;
