@@ -372,9 +372,9 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 	stored := captureSidecar{
 		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9000,
 		Segments: []captureSegment{
-			{Index: 0, AudioName: "segment-0.webm"},
-			{Index: 1, AudioName: "segment-1.webm"},
-			{Index: 2, AudioName: "segment-2.webm"},
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+			{Index: 1, AudioName: "segment-1.webm", StartWallMS: 4000, StopWallMS: 6000},
+			{Index: 2, AudioName: "segment-2.webm", StartWallMS: 6000, StopWallMS: 9000},
 		},
 	}
 	raw, err := json.Marshal(stored)
@@ -391,7 +391,9 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 	// The prefix: the same call, fewer segments, ending earlier.
 	prefix := &captureSidecar{
 		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 4000,
-		Segments: []captureSegment{{Index: 0, AudioName: "segment-0.webm"}},
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+		},
 	}
 	outcome, err := rt.promoteCapture(prefix, staging, final)
 	if err != nil {
@@ -408,11 +410,13 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 	// one-segment capture has the same count as the finished one and a
 	// fraction of its seconds, so the window is what decides.
 	sameCount := &captureSidecar{
-		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 3000,
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 7000,
 		Segments: []captureSegment{
-			{Index: 0, AudioName: "segment-0.webm"},
-			{Index: 1, AudioName: "segment-1.webm"},
-			{Index: 2, AudioName: "segment-2.webm"},
+			// The sealed segments are identical — a snapshot cuts at the same
+			// boundaries — and only the live one is short.
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+			{Index: 1, AudioName: "segment-1.webm", StartWallMS: 4000, StopWallMS: 6000},
+			{Index: 2, AudioName: "segment-2.webm", StartWallMS: 6000, StopWallMS: 7000},
 		},
 	}
 	outcome, err = rt.promoteCapture(sameCount, staging, final)
@@ -429,8 +433,8 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 	divergent := &captureSidecar{
 		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9500,
 		Segments: []captureSegment{
-			{Index: 0, AudioName: "segment-0.webm"},
-			{Index: 1, AudioName: "segment-1.webm"},
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+			{Index: 1, AudioName: "segment-1.webm", StartWallMS: 4000, StopWallMS: 6000},
 		},
 	}
 	outcome, err = rt.promoteCapture(divergent, staging, final)
@@ -448,8 +452,8 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 	diverged := &captureSidecar{
 		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9500,
 		Segments: []captureSegment{
-			{Index: 0, AudioName: "segment-0.webm"},
-			{Index: 3, AudioName: "segment-3.webm"},
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+			{Index: 3, AudioName: "segment-3.webm", StartWallMS: 9000, StopWallMS: 9500},
 		},
 	}
 	outcome, err = rt.promoteCapture(diverged, staging, final)
@@ -458,6 +462,26 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 	}
 	if outcome != captureDiverged {
 		t.Fatalf("a capture holding audio the server does not got outcome %d; accepting it destroys that audio", outcome)
+	}
+
+	// The same names and a later call end, but one segment covering LESS of the
+	// call than the stored one does. Names and the call window each say this is
+	// a superset; the segment's own span says it is not, and the audio between
+	// the two spans exists only in what is stored.
+	narrower := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9500,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 3000},
+			{Index: 1, AudioName: "segment-1.webm", StartWallMS: 3000, StopWallMS: 6000},
+			{Index: 2, AudioName: "segment-2.webm", StartWallMS: 6000, StopWallMS: 9500},
+		},
+	}
+	outcome, err = rt.promoteCapture(narrower, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome == capturePromoted {
+		t.Fatal("an upload whose segment covers less of the call than the stored one replaced it")
 	}
 
 	// An ordinary re-upload — the same segments, no shorter — still replaces.
@@ -489,7 +513,9 @@ func TestPromoteCaptureConsultsTheSetAsideCopy(t *testing.T) {
 	}
 	whole := captureSidecar{
 		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9000,
-		Segments: []captureSegment{{Index: 0, AudioName: "segment-0.webm"}},
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+		},
 	}
 	raw, err := json.Marshal(whole)
 	if err != nil {
@@ -501,7 +527,9 @@ func TestPromoteCaptureConsultsTheSetAsideCopy(t *testing.T) {
 
 	prefix := &captureSidecar{
 		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 4000,
-		Segments: []captureSegment{{Index: 0, AudioName: "segment-0.webm"}},
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+		},
 	}
 	outcome, err := rt.promoteCapture(prefix, staging, final)
 	if err != nil {

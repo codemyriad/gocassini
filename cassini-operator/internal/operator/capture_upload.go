@@ -291,11 +291,19 @@ func writeFileSynced(path string, body []byte) error {
 	return f.Close()
 }
 
-// storedCapture is what the server already holds for one call: which segments
-// it names, and how far into the call it reaches.
+// captureWindow is one segment's declared span.
+type captureWindow struct{ start, stop int64 }
+
+// covers reports whether this window holds everything `other` does.
+func (w captureWindow) covers(other captureWindow) bool {
+	return w.start <= other.start && w.stop >= other.stop
+}
+
+// storedCapture is what the server already holds for one call: the span of each
+// segment it names, and how far into the call it reaches.
 type storedCapture struct {
-	names  map[string]struct{}
-	endsAt int64
+	windows map[string]captureWindow
+	endsAt  int64
 }
 
 // readStoredCapture reads that. A zero value means there is genuinely nothing
@@ -322,11 +330,11 @@ func readStoredCapture(dir string, roomToken string, callStartWallMS int64) (sto
 		// A different call. Nothing to compare, and nothing to protect.
 		return storedCapture{}, nil
 	}
-	names := make(map[string]struct{}, len(stored.Segments))
+	windows := make(map[string]captureWindow, len(stored.Segments))
 	for _, segment := range stored.Segments {
-		names[segment.AudioName] = struct{}{}
+		windows[segment.AudioName] = captureWindow{segment.StartWallMS, segment.StopWallMS}
 	}
-	return storedCapture{names: names, endsAt: stored.CallEndWallMS}, nil
+	return storedCapture{windows: windows, endsAt: stored.CallEndWallMS}, nil
 }
 
 // captureWouldLoseStoredAudio reports whether promoting `incoming` would drop
@@ -341,15 +349,21 @@ func readStoredCapture(dir string, roomToken string, callStartWallMS int64) (sto
 // replace the whole recording with its own first half and the sweep would
 // delete the rest.
 //
-// The test is two questions, because neither answers alone. Containment by
-// segment NAME: a capture missing any segment the stored one names would be
-// dropping that audio. And the call's END: two captures can name the same
-// segments and hold different amounts of them — a snapshot of a live capture
-// has the same names as the finished one and a fraction of its seconds — so an
-// upload that reaches less far into the call is a retelling of less of it
-// whatever it is called. Segment count answers neither and was the first thing
-// tried. An upload has to be a superset by name AND reach at least as far
-// before it may replace what is stored.
+// The test is containment, asked three ways, because each of the narrower ones
+// let through exactly the upload this is meant to refuse.
+//
+//   - Segment COUNT is not a measure of audio: a snapshot of a live one-segment
+//     capture has the same count as the finished one and a fraction of its
+//     seconds. That was the first thing tried.
+//   - Segment NAMES alone are not either: the same two names can describe
+//     twenty seconds in one capture and two minutes in another.
+//   - The call's END alone is not: two pages that both resumed one prefix can
+//     diverge, so the one that happens to end later need not hold everything
+//     the other did.
+//
+// So an upload may replace what is stored only if it names every segment the
+// stored capture names, each over a window that covers the stored one's, and
+// reaches at least as far into the call.
 //
 // The set-aside copy is consulted too. promoteCapture moves the previous
 // capture to `.superseded` before it swaps, so a crash between those two
@@ -382,22 +396,23 @@ func captureWouldLoseStoredAudio(incoming *captureSidecar, final string) (bool, 
 	if err != nil {
 		return false, err
 	}
-	offered := make(map[string]struct{}, len(incoming.Segments))
+	offered := make(map[string]captureWindow, len(incoming.Segments))
 	for _, segment := range incoming.Segments {
-		offered[segment.AudioName] = struct{}{}
+		offered[segment.AudioName] = captureWindow{segment.StartWallMS, segment.StopWallMS}
 	}
 	// Both copies are compared against, not the "bigger" of them: whichever one
 	// the incoming upload would drop something from is a reason to keep what is
 	// stored.
 	for _, held := range []storedCapture{live, setAside} {
-		if len(held.names) == 0 {
+		if len(held.windows) == 0 {
 			continue
 		}
 		if incoming.CallEndWallMS < held.endsAt {
 			return true, nil
 		}
-		for name := range held.names {
-			if _, ok := offered[name]; !ok {
+		for name, stored := range held.windows {
+			mine, ok := offered[name]
+			if !ok || !mine.covers(stored) {
 				return true, nil
 			}
 		}
@@ -519,9 +534,16 @@ func captureHasAudioNotStored(incoming *captureSidecar, final string) (bool, err
 		return false, err
 	}
 	for _, segment := range incoming.Segments {
-		_, inLive := live.names[segment.AudioName]
-		_, inSetAside := setAside.names[segment.AudioName]
-		if !inLive && !inSetAside {
+		mine := captureWindow{segment.StartWallMS, segment.StopWallMS}
+		liveHas := false
+		if stored, ok := live.windows[segment.AudioName]; ok && stored.covers(mine) {
+			liveHas = true
+		}
+		setAsideHas := false
+		if stored, ok := setAside.windows[segment.AudioName]; ok && stored.covers(mine) {
+			setAsideHas = true
+		}
+		if !liveHas && !setAsideHas {
 			return true, nil
 		}
 	}
