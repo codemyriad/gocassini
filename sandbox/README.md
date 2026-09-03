@@ -133,7 +133,7 @@ is **on by default** on an `--image` deploy from this branch — that is the poi
 of the branch — and both of its switches are passed to AppAPI explicitly each
 time, so whatever this deploy says is what the host ends up with. A store deploy
 is the one case where the default does not hold: it cannot build a matching
-companion, so it registers capture off (see below).
+companion, so it registers both switches off (see below).
 
 ```bash
 sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha>   # collect and ingest
@@ -146,9 +146,10 @@ built around the payload read from the running ExApp container so the two are
 byte-identical. That is why it needs `--image`: the companion must carry the same
 version as the ExApp, and only the checkout that produced the image is guaranteed
 to. A `--from-store` deploy cannot deliver the payload at all, so it registers
-`CASSINI_SOURCE_CAPTURE=0` and says why — a switch answering yes with no
-companion behind it is worse than one answering no, and calls still running with
-a payload from an earlier deploy stop within about thirty seconds.
+both switches off and says why — a switch answering yes with no companion behind
+it is worse than one answering no, and calls still running with a payload from
+an earlier deploy stop within about thirty seconds. With nothing collected there
+is nothing to ingest either, which is why both go rather than only capture.
 `CASSINI_SOURCE_CAPTURE=0` also disables an enabled companion, which is what
 backing the feature out completely requires; a deploy that cannot disable it
 fails rather than reporting success.

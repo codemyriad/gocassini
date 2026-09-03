@@ -115,7 +115,7 @@ jobs:
           # remote environment (docs/source-audio-capture.md). Capture still
           # needs image_tag: the cassini_capture companion is built from the
           # deploying checkout, so a store install has no way to deliver the
-          # payload and wire-cassini.sh registers capture off there.
+          # payload and wire-cassini.sh registers both switches off there.
 
           # The admin password is read from stdin into the remote env so it never
           # appears in the remote process argument list.

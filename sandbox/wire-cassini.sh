@@ -117,9 +117,9 @@ production install would set (docs/source-audio-capture.md):
 
 Installing the cassini_capture companion needs --image: it is built from this
 checkout and must carry the same version as the deployed ExApp. A --from-store
-deploy therefore registers CASSINI_SOURCE_CAPTURE=0 and says so — a switch that
-answers yes with no companion to deliver the payload is worse than one that
-answers no.
+deploy therefore registers both switches off and says so — a switch that answers
+yes with no companion to deliver the payload is worse than one that answers no,
+and with nothing collected there is nothing to ingest either.
 EOF
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -181,11 +181,17 @@ resolve_capture_switches() {
   [[ "$raw_ingest" == "$CASSINI_SOURCE_AUDIO_INGEST" ]] \
     || log "Read CASSINI_SOURCE_AUDIO_INGEST=$(printf '%q' "$raw_ingest") as $CASSINI_SOURCE_AUDIO_INGEST, and that is what will be registered"
 
-  if capture_on && [[ "$CASSINI_INSTALL_SOURCE" != "image" ]]; then
-    log "Source capture is on, but the $CAPTURE_COMPANION_ID companion can only be built from the checkout that produced the image, and this is a store install. Registering CASSINI_SOURCE_CAPTURE=0: nothing would reach Talk's pages anyway, and a switch that says yes with no companion is worse than one that says no. Deploy with --image to capture."
+  if [[ "$CASSINI_INSTALL_SOURCE" != "image" ]] \
+    && { capture_on || [[ "$CASSINI_SOURCE_AUDIO_INGEST" == "1" ]]; }; then
+    log "Source audio is on, but the $CAPTURE_COMPANION_ID companion can only be built from the checkout that produced the image, and this is a store install. Registering both switches off: nothing would reach Talk's pages anyway, so there would be nothing to collect and nothing to ingest, and a switch that says yes with no companion behind it is worse than one that says no. Deploy with --image to capture."
     CASSINI_SOURCE_CAPTURE=0
+    CASSINI_SOURCE_AUDIO_INGEST=0
   fi
 }
+
+# bool_word renders a settled switch the way the operator logs it, so the two
+# can be compared as strings.
+bool_word() { [[ "$1" == "1" ]] && printf 'true' || printf 'false'; }
 
 require_state() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
@@ -480,36 +486,32 @@ verify() {
     printf '         handle /exapps/* { reverse_proxy 127.0.0.1:%s }\n' "$HARP_HTTP_PORT" >&2
   fi
   occ app_api:app:list 2>/dev/null | grep -i "$CASSINI_APPSTORE_ID" || true
-  # What the CONTAINER carries, not what this script decided. Registration
+  # The operator's OWN resolved answer, taken from the line run.go logs at
+  # startup, rather than this script re-deriving one from the container's
+  # environment. That settles both questions at once — whether registration
+  # actually took, and what the delivered value means — and it keeps a second
+  # implementation of Go's boolean parsing out of this file. Registration
   # tolerates its own failure above (--wait-finish can outlive its window on a
-  # first deploy), so a stale container still holding the previous switch is a
-  # real outcome — and it is precisely the one where an opt-out deploy reports
-  # success while a payload already loaded in somebody's browser goes on
-  # capturing and uploading.
-  #
-  # Asymmetric on purpose. Turning a switch ON requires the value to be there:
-  # AppAPI silently drops an --env the deployed manifest does not declare, and a
-  # release cut before these variables existed declares neither, so an absent
-  # value means this deploy did not get what it asked for. Turning one OFF is
-  # satisfied by anything that is not an explicit "1" — a registered 0, or a
-  # release old enough not to know the variable, which is also old enough to
-  # have no capture code behind it.
-  local exapp_container="nc_app_$CASSINI_APPSTORE_ID" exapp_env switch
-  exapp_env="$(docker inspect "$exapp_container" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)" \
-    || die "Could not read the environment of '$exapp_container', so which source-capture switches are actually running is unknown. Registration may have failed; re-run the deploy."
-  for switch in CASSINI_SOURCE_CAPTURE CASSINI_SOURCE_AUDIO_INGEST; do
-    # Written as if/elif, not `grep && die`: a `grep && die` whose grep finds
-    # nothing leaves the loop — and so this function — returning 1, which under
-    # set -e ends the deploy silently on the path where everything is fine.
-    if [[ "${!switch}" == "1" ]]; then
-      grep -qx "$switch=1" <<<"$exapp_env" \
-        || die "The running ExApp does not carry $switch=1. Either registration did not take — a container from an earlier deploy survived it — or the deployed manifest does not declare $switch and AppAPI dropped it. Re-run the deploy, from an image built from this checkout."
-    elif grep -qx "$switch=1" <<<"$exapp_env"; then
-      die "This deploy registered $switch=0, but the running ExApp still carries $switch=1: a container from an earlier deploy survived registration and is still capturing. Re-run the deploy before treating this host as opted out."
-    fi
-  done
-  printf '  ok   ExApp agrees with collect=%s ingest=%s\n' \
-    "$CASSINI_SOURCE_CAPTURE" "$CASSINI_SOURCE_AUDIO_INGEST"
+  # first deploy), so a container from an earlier deploy surviving with the
+  # opposite switch is a real outcome, and it is exactly the one where an
+  # opt-out deploy would otherwise report success while a payload already
+  # loaded in somebody's browser went on capturing.
+  local exapp_container="nc_app_$CASSINI_APPSTORE_ID" resolved want
+  resolved="$(docker logs "$exapp_container" 2>&1 \
+    | sed -n 's/.*source_capture -> collection=\([a-z]*\) ingest=\([a-z]*\) .*/collect=\1 ingest=\2/p' \
+    | tail -n1)"
+  want="collect=$(bool_word "$CASSINI_SOURCE_CAPTURE") ingest=$(bool_word "$CASSINI_SOURCE_AUDIO_INGEST")"
+  if [[ -n "$resolved" ]]; then
+    [[ "$resolved" == "$want" ]] \
+      || die "The running ExApp resolved source audio to '$resolved', not the '$want' this deploy registered. A container from an earlier deploy survived registration; re-run the deploy before trusting this host's capture state."
+    printf '  ok   ExApp resolved %s\n' "$resolved"
+  elif [[ "$want" != "collect=false ingest=false" ]]; then
+    # It was asked for and there is no sign of it. Either registration did not
+    # take, or the deployed release has no source-capture feature to switch on.
+    die "This deploy registered $want, but the running ExApp reports no source-audio state at all. Either registration did not take, or the deployed release predates the feature. Re-run the deploy from an image built from this checkout."
+  else
+    printf '  ok   no source-audio state reported; the deployed release predates the feature and both switches are off\n'
+  fi
 
   # resolve_capture_switches has already ruled out "capture on without a
   # companion", so these two are the only outcomes: on with the companion
