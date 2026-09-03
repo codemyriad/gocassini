@@ -1002,7 +1002,16 @@ let deferredCaptureStart: { sender: RTCRtpSender; connection: RTCPeerConnection 
 // SETTLE_DEADLINE_MS bounds that wait. A capture start is the participant's
 // audio; a storage layer that never answers must cost the adoption, not the
 // recording.
-const SETTLE_DEADLINE_MS = 2_000;
+//
+// The decision reads a directory listing and a few small manifests, so on any
+// healthy browser it lands in milliseconds and this is never reached. It is
+// deliberately far above that rather than close to it, because what expiry
+// costs is the reload filing two captures instead of one — both still reach the
+// server and the recorder still uses both, but the identity the design wants is
+// lost. Five seconds is the point past which the storage layer is not going to
+// answer at all, and holding the participant's microphone hostage to it would
+// be the worse trade.
+const SETTLE_DEADLINE_MS = 5_000;
 
 function finishSettling(): void {
   if (!settlingBufferedCaptures) {
@@ -1116,6 +1125,38 @@ function nextSegmentIndex(sealed: SealedCapture): number {
   return highest + 1;
 }
 
+// currentParticipantId is who this browser is signed in as, as far as the page
+// can tell.
+function currentParticipantId(): string {
+  return (
+    (globalThis as { OC?: { getCurrentUser?: () => { uid?: string } } }).OC?.getCurrentUser?.()?.uid ?? ""
+  );
+}
+
+// captureIsThisParticipants reports whether a buffer was recorded by whoever is
+// signed in now.
+//
+// Browser storage belongs to the ORIGIN, not to the session. On a shared
+// machine the buffer a colleague's dead page left behind is still sitting there
+// when the next person signs in, and this page must neither resume it nor
+// upload it: the operator stamps the AUTHENTICATED caller as the owner, so
+// offering somebody else's audio here files their voice under this
+// participant's name, where it can be spliced onto this participant's track and
+// read by the room as theirs.
+//
+// It is left alone instead. That is a buffer stranded in this browser until its
+// own account next opens Talk on this machine, which is a cost paid in storage
+// on their own disk — and the alternative is a person's speech published as
+// somebody else's.
+//
+// A sidecar that names nobody is not a mismatch. Older builds, and a page whose
+// Talk globals were not ready, record an empty id; those still upload, and the
+// server decides whose they are exactly as it always did.
+function captureIsThisParticipants(sealed: SealedCapture): boolean {
+  const claimed = (sealed.sidecar.participantId ?? "").trim();
+  return claimed === "" || claimed === currentParticipantId();
+}
+
 // captureIsAdoptable decides whether a sealed capture is this recording's own
 // first half rather than a leftover to upload.
 function captureIsAdoptable(sealed: SealedCapture, roomToken: string | null): boolean {
@@ -1123,18 +1164,12 @@ function captureIsAdoptable(sealed: SealedCapture, roomToken: string | null): bo
     // Another room's buffer has nothing to do with the call this page is on.
     return false;
   }
-  // And another PERSON's buffer has nothing to do with whoever is signed in
-  // now. Browser storage belongs to the origin, not to the session: on a shared
-  // machine the buffer a colleague's dead page left behind is still sitting
-  // there when the next person signs in, and adopting it would splice their
-  // voice into this participant's capture and file it under this participant's
-  // authenticated name. The sidecar's own claim about who recorded it is not
-  // trustworthy for authorisation — the server decides that — but it is exactly
-  // the right thing to compare against here, because both sides are this
-  // browser's own record of who was signed in.
-  const currentUser =
-    (globalThis as { OC?: { getCurrentUser?: () => { uid?: string } } }).OC?.getCurrentUser?.()?.uid ?? "";
-  if ((sealed.sidecar.participantId ?? "") !== currentUser) {
+  // Strictly this participant's, for adoption. The looser rule below lets a
+  // sidecar that names nobody still be uploaded, where the server decides whose
+  // it is; resuming one is a different question, and a buffer whose owner
+  // cannot be established is not this page's to continue.
+  const claimed = (sealed.sidecar.participantId ?? "").trim();
+  if (claimed === "" || claimed !== currentParticipantId()) {
     return false;
   }
   if (captureAbandoned) {
@@ -1408,7 +1443,24 @@ export async function settleBufferedCaptures(): Promise<number> {
       if (release === null) {
         continue;
       }
-      if (!(await captureFilesArePresent(root, candidate))) {
+      // Re-read under the claim. Everything decided before it — the manifest,
+      // the highest index on disk, whether the recording is still running,
+      // whether collection is still permitted — was decided BEFORE a wait that
+      // another page could have spent recording into this very directory, or
+      // that Talk could have spent confirming the recording stopped. Committing
+      // to the older snapshot let a resumed capture pick a segment index the
+      // other page had since used, and open that file, and truncate it.
+      const fresh = await readSealedCapture(root, candidate.dirName).catch(() => null);
+      if (
+        fresh === null ||
+        state !== null ||
+        serverAllowsCapture !== true ||
+        !captureIsAdoptable(fresh, roomToken)
+      ) {
+        release();
+        continue;
+      }
+      if (!(await captureFilesArePresent(root, fresh))) {
         // A manifest naming a file that is gone is not resumable: the missing
         // file would be carried into the merged sidecar and make the whole
         // capture unuploadable. Let the loop below offer it instead, where a
@@ -1416,7 +1468,7 @@ export async function settleBufferedCaptures(): Promise<number> {
         release();
         continue;
       }
-      adoptable = { ...candidate, release };
+      adoptable = { ...fresh, release };
       clearAdoptDeadline();
       adoptDeadline = setTimeout(() => {
         console.info("Cassini source capture: nothing resumed the buffered capture; uploading it");
@@ -1446,7 +1498,21 @@ export async function settleBufferedCaptures(): Promise<number> {
       const sent = await claimCaptureDir(
         candidate.dirName,
         async () => {
-          await uploadCapture(candidate.sidecar, candidate.dirName, false);
+          // Re-read under the claim, for the same reason adoption does: the
+          // manifest above was read before a wait, and uploading a stale one
+          // sends a body that does not match the directory it came from.
+          const fresh = await readSealedCapture(root, candidate.dirName);
+          if (fresh === null) {
+            return false;
+          }
+          if (!captureIsThisParticipants(fresh)) {
+            // Somebody else's audio, on a shared browser. The operator stamps
+            // the AUTHENTICATED caller as the owner, so offering it here would
+            // publish their voice under this participant's name. It stays where
+            // it is until its own account opens Talk on this machine.
+            return false;
+          }
+          await uploadCapture(fresh.sidecar, fresh.dirName, false);
           return true;
         },
         false,
@@ -1622,6 +1688,39 @@ export function rotateSegment(session: CaptureState, sender: RTCRtpSender): void
     })
     .catch(() => {
       // A failed rotation costs this segment, not the recording.
+    });
+}
+
+// resumeSegment reopens a segment the in-call gate declined.
+//
+// rotateSegment closes the old recorder BEFORE it decides whether to open the
+// next one, so a microphone replaced while the connection was down — an ICE
+// restart, Talk rebuilding its media pipeline — left the session alive with no
+// recorder. Nothing restarted it: beginCapture returns immediately while a
+// session exists, so capture stayed dead for the rest of the meeting. That is a
+// worse outcome than the one the gate exists to prevent.
+//
+// The index is already correct: rotateSegment's stopSegment advanced it before
+// declining, so this opens the next segment rather than reopening the last.
+// Serialized on the same rotation chain, and gated afresh, so a connection that
+// comes back after the call is really over still starts nothing.
+function resumeSegment(session: CaptureState, sender: RTCRtpSender, connection: RTCPeerConnection): void {
+  session.rotation = session.rotation
+    .then(() => {
+      if (session.discarded || session.finished || session.recorder !== null) {
+        return;
+      }
+      if (!talkRecordingActive || serverAllowsCapture !== true) {
+        return;
+      }
+      if (!senderIsInTheCall(sender, connection)) {
+        return;
+      }
+      startSegment(session, sender);
+      console.info("Cassini source capture: back in the call; recording resumed");
+    })
+    .catch(() => {
+      // A failed resume costs this segment, not the recording.
     });
 }
 
@@ -2000,10 +2099,16 @@ function instrument(pc: RTCPeerConnection): void {
       return;
     }
     if (pc.connectionState === "connected" && capturingSender) {
-      // The participant is now in the call. If Talk's recording was already
-      // active, this is where capture starts: beginCapture refused while the
-      // connection was still negotiating.
-      beginCapture(capturingSender, pc);
+      // The participant is now in the call. Two shapes reach here: a capture
+      // that has not started, because beginCapture refused while the connection
+      // was still negotiating; and one that is running with no recorder,
+      // because a track was replaced while the connection was down and the
+      // gate declined to open the next segment.
+      if (state && !state.finished && !state.discarded && state.recorder === null) {
+        resumeSegment(state, capturingSender, pc);
+      } else {
+        beginCapture(capturingSender, pc);
+      }
     }
   });
   const originalClose = pc.close.bind(pc);
