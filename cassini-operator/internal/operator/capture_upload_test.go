@@ -484,6 +484,36 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 		t.Fatal("an upload whose segment covers less of the call than the stored one replaced it")
 	}
 
+	// The manifests agree on everything and the FILES do not. Recovery sidecars
+	// are checkpointed, so two uploads for one call can carry the same account
+	// of a segment that was still growing; the staler snapshot must not replace
+	// the fuller one on the strength of metadata that compares equal.
+	for name, size := range map[string]int{
+		"segment-0.webm": 4000,
+		"segment-1.webm": 4000,
+		"segment-2.webm": 4000,
+	} {
+		if err := os.WriteFile(filepath.Join(final, name), make([]byte, size), 0o640); err != nil {
+			t.Fatalf("write stored %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(staging, name), make([]byte, size/2), 0o640); err != nil {
+			t.Fatalf("write staged %s: %v", name, err)
+		}
+	}
+	staleSnapshot := stored
+	outcome, err = rt.promoteCapture(&staleSnapshot, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome == capturePromoted {
+		t.Fatal("a staler snapshot of the same segments replaced the fuller stored files")
+	}
+	for name := range map[string]int{"segment-0.webm": 0, "segment-1.webm": 0, "segment-2.webm": 0} {
+		if err := os.Remove(filepath.Join(staging, name)); err != nil {
+			t.Fatalf("clean staged %s: %v", name, err)
+		}
+	}
+
 	// An ordinary re-upload — the same segments, no shorter — still replaces.
 	again := stored
 	again.CallEndWallMS = 9500

@@ -300,9 +300,11 @@ func (w captureWindow) covers(other captureWindow) bool {
 }
 
 // storedCapture is what the server already holds for one call: the span of each
-// segment it names, and how far into the call it reaches.
+// segment it names, how many bytes of it are on disk, and how far into the call
+// it reaches.
 type storedCapture struct {
 	windows map[string]captureWindow
+	bytes   map[string]int64
 	endsAt  int64
 }
 
@@ -331,10 +333,19 @@ func readStoredCapture(dir string, roomToken string, callStartWallMS int64) (sto
 		return storedCapture{}, nil
 	}
 	windows := make(map[string]captureWindow, len(stored.Segments))
+	bytes := make(map[string]int64, len(stored.Segments))
 	for _, segment := range stored.Segments {
 		windows[segment.AudioName] = captureWindow{segment.StartWallMS, segment.StopWallMS}
+		// The file, not just the manifest. Recovery sidecars are checkpointed,
+		// so two uploads for one call can carry the SAME manifest while their
+		// snapshots of a still-growing segment hold different amounts of it —
+		// and metadata that compares equal would let the staler one replace the
+		// fuller. Bytes are the only thing that separates them here.
+		if info, err := os.Stat(filepath.Join(dir, segment.AudioName)); err == nil {
+			bytes[segment.AudioName] = info.Size()
+		}
 	}
-	return storedCapture{windows: windows, endsAt: stored.CallEndWallMS}, nil
+	return storedCapture{windows: windows, bytes: bytes, endsAt: stored.CallEndWallMS}, nil
 }
 
 // captureWouldLoseStoredAudio reports whether promoting `incoming` would drop
@@ -360,10 +371,15 @@ func readStoredCapture(dir string, roomToken string, callStartWallMS int64) (sto
 //   - The call's END alone is not: two pages that both resumed one prefix can
 //     diverge, so the one that happens to end later need not hold everything
 //     the other did.
+//   - And no amount of METADATA is: a checkpointed manifest describes a segment
+//     that was still growing, so two uploads can agree on every declared field
+//     and disagree about how much of that segment they actually carry.
 //
 // So an upload may replace what is stored only if it names every segment the
-// stored capture names, each over a window that covers the stored one's, and
-// reaches at least as far into the call.
+// stored capture names, each over a window that covers the stored one's and
+// with at least as many bytes, and reaches at least as far into the call. The
+// byte comparison is against the staged file, which is the only description of
+// this upload that is not the client's own account of it.
 //
 // The set-aside copy is consulted too. promoteCapture moves the previous
 // capture to `.superseded` before it swaps, so a crash between those two
@@ -387,7 +403,7 @@ const (
 	captureDiverged
 )
 
-func captureWouldLoseStoredAudio(incoming *captureSidecar, final string) (bool, error) {
+func captureWouldLoseStoredAudio(incoming *captureSidecar, final, staging string) (bool, error) {
 	live, err := readStoredCapture(final, incoming.RoomToken, incoming.CallStartWallMS)
 	if err != nil {
 		return false, err
@@ -414,6 +430,11 @@ func captureWouldLoseStoredAudio(incoming *captureSidecar, final string) (bool, 
 			mine, ok := offered[name]
 			if !ok || !mine.covers(stored) {
 				return true, nil
+			}
+			if info, err := os.Stat(filepath.Join(staging, name)); err == nil {
+				if storedBytes, known := held.bytes[name]; known && info.Size() < storedBytes {
+					return true, nil
+				}
 			}
 		}
 	}
@@ -479,7 +500,7 @@ func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string
 		return capturePromoted, err
 	}
 
-	lossy, err := captureWouldLoseStoredAudio(sidecar, final)
+	lossy, err := captureWouldLoseStoredAudio(sidecar, final, staging)
 	if err != nil {
 		// Refused rather than guessed. Promoting on an unanswered question is
 		// what destroys the longer copy.
