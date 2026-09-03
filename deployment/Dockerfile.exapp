@@ -96,13 +96,14 @@ RUN set -eux; \
 # (pnpm migration tracked in D-499.)
 FROM node:22-bookworm AS web-builder
 WORKDIR /src
-# Manifests first for install-layer caching. The root lockfile is authoritative
-# for the workspace; the per-package lockfiles are pre-workspace relics and
-# feeding them to npm alongside the root manifest crashes resolution
-# ("Cannot read properties of null (reading 'edgesOut')").
+# Manifests first for install-layer caching. The root lockfile pins the whole
+# workspace and `npm ci` installs exactly what it says. Resolving fresh with
+# `npm install` made every build depend on the registry's state of the day:
+# on 2026-09-03 that tripped npm 10.9's "Cannot read properties of null
+# (reading 'edgesOut')" on an unchanged tree.
 COPY package.json package-lock.json ./
-COPY cassini-viewer/package.json ./cassini-viewer/
-COPY cassini-app/package.json ./cassini-app/
+COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./cassini-viewer/
+COPY cassini-app/package.json cassini-app/package-lock.json ./cassini-app/
 RUN npm ci
 COPY cassini-viewer/ ./cassini-viewer/
 COPY cassini-app/ ./cassini-app/

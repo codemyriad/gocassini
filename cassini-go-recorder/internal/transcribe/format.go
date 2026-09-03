@@ -236,8 +236,8 @@ type artifactFiles struct {
 	Summary            string                  `json:"summary,omitempty"`
 }
 
-// artifactTranscriptRef matches the v2 portable-meeting consumer's
-// portableMeetingTranscriptInputFile shape under files.transcripts[].
+// artifactTranscriptRef describes an additional transcript artifact that the
+// portable meeting producer embeds under files.transcripts[].
 type artifactTranscriptRef struct {
 	ID         string    `json:"id"`
 	Path       string    `json:"path"`

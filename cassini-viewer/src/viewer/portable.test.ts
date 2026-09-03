@@ -77,144 +77,6 @@ describe("describeMeeting", () => {
 });
 
 describe("buildReadableTranscriptFromPortable", () => {
-  it("accepts historical readable transcripts mislabeled as transcript.words.v1", () => {
-    const portable = {
-      meeting: { durationMs: 4_000 },
-      speakers: [{ id: "spk_1", label: "Alice" }],
-      transcript: {
-        items: [
-          { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 1400, text: "um" },
-          { id: "seg_2", speaker: "spk_1", startMs: 1400, endMs: 1900, text: "hello" },
-          { id: "seg_3", speaker: "spk_1", startMs: 1900, endMs: 2400, text: "there" },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.words.v1",
-        speakers: [{ id: "spk_1", label: "Alice" }],
-        segments: [
-          {
-            id: "rseg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 2400,
-            text: "Hello there.",
-            sourceSegmentIds: ["seg_1", "seg_2", "seg_3"],
-          },
-        ],
-      },
-    };
-    const transcript = {
-      version: "transcript.words.v1" as const,
-      media: { src: "meeting.opus", durationMs: 4_000, sha256: "" },
-      speakers: portable.speakers,
-      segments: portable.transcript.items.map((item) => ({
-        ...item,
-        words: [{ id: `${item.id}:w_0`, text: item.text, startMs: item.startMs, endMs: item.endMs }],
-      })),
-    };
-
-    const readable = buildReadableTranscriptFromPortable(portable as never, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-
-    expect(readable.segments[0]?.text).toBe("Hello there.");
-    expect(display.blocks[0]?.text).toBe("Hello there.");
-  });
-
-  it("leaves multi-word portable transcript items passage-timed instead of faking word timing", () => {
-    const portable = {
-      meeting: { durationMs: 10_000 },
-      speakers: [{ id: "spk_1", label: "Chris" }],
-      transcript: {
-        items: [
-          {
-            id: "seg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-          },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.readable.v1",
-        speakers: [{ id: "spk_1", label: "Chris" }],
-        segments: [
-          {
-            id: "rseg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-            sourceSegmentIds: ["seg_1"],
-          },
-        ],
-      },
-    };
-
-    const transcript = buildTranscriptWordsFromPortable(portable as never);
-    const readable = buildReadableTranscriptFromPortable(portable as never, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const timedWords = display.blocks[0]?.tokens.filter((token) => token.kind === "word" && token.startMs !== undefined);
-
-    expect(transcript.segments[0]?.words).toEqual([]);
-    expect(timedWords).toEqual([]);
-    expect(display.blocks[0]?.timedWordCount).toBe(0);
-    expect(display.blocks[0]?.wordCount).toBe(9);
-    expect(display.blocks[0]?.timingCoverage).toBe(0);
-  });
-
-  it("recovers word timings from readable transcript words embedded in portable manifests", () => {
-    const portable = {
-      meeting: { durationMs: 10_000 },
-      speakers: [{ id: "spk_1", label: "Chris" }],
-      transcript: {
-        items: [
-          {
-            id: "seg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-          },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.readable.v1",
-        speakers: [{ id: "spk_1", label: "Chris" }],
-        segments: [
-          {
-            id: "rseg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-            words: [
-              { text: "And", startMs: 1000, endMs: 1200 },
-              { text: "I", startMs: 1200, endMs: 1400 },
-              { text: "think", startMs: 1400, endMs: 1800 },
-              { text: "they'll", startMs: 1800, endMs: 2200 },
-              { text: "be", startMs: 2200, endMs: 2400 },
-              { text: "very", startMs: 2400, endMs: 2800 },
-              { text: "happy", startMs: 2800, endMs: 3300 },
-              { text: "with", startMs: 3300, endMs: 3600 },
-              { text: "it.", startMs: 3600, endMs: 4000 },
-            ],
-          },
-        ],
-      },
-    };
-
-    const transcript = buildTranscriptWordsFromPortable(portable as never);
-    const readable = buildReadableTranscriptFromPortable(portable as never, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const wordTokens = display.blocks[0]?.tokens.filter((token) => token.kind === "word") ?? [];
-
-    expect(transcript.segments[0]?.words).toEqual([]);
-    expect(display.blocks[0]?.timedWordCount).toBe(9);
-    expect(wordTokens[0]).toMatchObject({ text: "And", startMs: 1000, endMs: 1200 });
-    expect(wordTokens[5]).toMatchObject({ text: "very", startMs: 2400, endMs: 2800 });
-  });
-
   it("synthesizes source word ids for transcript artifact words that omit them", () => {
     const transcript = {
       version: "transcript.words.v1" as const,
@@ -267,94 +129,6 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 
-  it("keeps an interrupted readable block whole instead of splitting it (D-690)", () => {
-    const portable = {
-      meeting: { durationMs: 110_000 },
-      speakers: [
-        { id: "spk_chima", label: "chima" },
-        { id: "spk_silvio", label: "Silvio" },
-      ],
-      transcript: {
-        items: [
-          {
-            id: "seg_chima",
-            speaker: "spk_chima",
-            startMs: 54_981,
-            endMs: 83_541,
-            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
-          },
-          {
-            id: "seg_silvio",
-            speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-          },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.readable.v1",
-        speakers: [
-          { id: "spk_chima", label: "chima" },
-          { id: "spk_silvio", label: "Silvio" },
-        ],
-        segments: [
-          {
-            id: "readable_000002",
-            speaker: "spk_chima",
-            startMs: 54_981,
-            endMs: 83_541,
-            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
-            words: [
-              "Actually,","I","was","wondering","if","I","should","have","pinged","you","in","the","afternoon,","and","I","didn't","because","I","was","busy","doing","something","else.","It's","a","pity,","Chris,","you're","ruining","everything.",
-            ].map((text, index, words) => ({
-              text,
-              startMs: 54_981 + Math.floor(((83_541 - 54_981) * index) / words.length),
-              endMs: 54_981 + Math.floor(((83_541 - 54_981) * (index + 1)) / words.length),
-            })),
-          },
-          {
-            id: "readable_000003",
-            speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-            words: [
-              { text: "Telling", startMs: 64_837, endMs: 65_470 },
-              { text: "Mattia", startMs: 65_470, endMs: 66_102 },
-              { text: "off", startMs: 66_102, endMs: 66_735 },
-              { text: "about", startMs: 66_735, endMs: 67_368 },
-              { text: "homework.", startMs: 67_368, endMs: 68_001 },
-            ],
-          },
-        ],
-      },
-    };
-
-    const transcript = buildTranscriptWordsFromPortable(portable as never);
-    const readable = buildReadableTranscriptFromPortable(portable as never, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
-
-    // The readable splitter was deleted in D-690: it rewrote LLM-cleaned prose
-    // by word count, and when it did fire it emitted blocks out of time order.
-    // It also never fired on a real producer artifact — not for want of readable
-    // words, which every packed meeting carries per readable segment, but
-    // because every packed meeting ALSO carries a baked display transcript, and
-    // the viewer only rebuilds one (and so only reaches the splitter) when that
-    // is missing. Interruptions are now surfaced by src/core/overlap.ts, which
-    // annotates the turn rather than cutting it up.
-    expect(chimaBlocks).toHaveLength(1);
-    expect(chimaBlocks[0]?.text).toContain("Actually, I was wondering");
-    expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
-    expect(display.blocks.map((block) => block.id)).not.toContain(
-      expect.stringContaining("__split_"),
-    );
-    expect(display.blocks.map((block) => block.startMs)).toEqual(
-      [...display.blocks.map((block) => block.startMs)].sort((left, right) => left - right),
-    );
-  });
-
   it("keeps an interrupted block whole even with exact transcript words (D-690)", () => {
     const chimaWords = [
       ["Actually,", 54_981, 55_381],
@@ -403,13 +177,19 @@ describe("buildReadableTranscriptFromPortable", () => {
             endMs,
             text,
           })),
-          {
-            id: "seg_silvio",
+          ...[
+            ["Telling", 64_837, 65_470],
+            ["Mattia", 65_470, 66_102],
+            ["off", 66_102, 66_735],
+            ["about", 66_735, 67_368],
+            ["homework.", 67_368, 68_001],
+          ].map(([text, startMs, endMs], index) => ({
+            id: `seg_silvio_${index}`,
             speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-          },
+            startMs,
+            endMs,
+            text,
+          })),
         ],
       },
       readableTranscript: {
@@ -440,7 +220,7 @@ describe("buildReadableTranscriptFromPortable", () => {
             startMs: 64_837,
             endMs: 78_757,
             text: "Telling Mattia off about homework.",
-            sourceSegmentIds: ["seg_silvio"],
+            sourceSegmentIds: [0, 1, 2, 3, 4].map((index) => `seg_silvio_${index}`),
           },
         ],
       },
@@ -451,8 +231,8 @@ describe("buildReadableTranscriptFromPortable", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
 
-    // See the note on the previous test: the splitter was deleted in D-690, so
-    // exact transcript words no longer cut the block in two either.
+    // Exact transcript words do not cut the readable block in two; the viewer
+    // annotates the interruption without rewriting the cleaned prose.
     expect(chimaBlocks).toHaveLength(1);
     expect(chimaBlocks[0]?.text).toContain("doing something else.");
     expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
@@ -710,7 +490,7 @@ function encodeTranscriptBodyAsTags(
   };
 }
 
-describe("loadPortableTranscriptBody (v2 transport)", () => {
+describe("loadPortableTranscriptBody", () => {
   it("round-trips a transcript body through the chunk set and verifies sha256", async () => {
     const body = {
       format: "cassini.words.v1",
@@ -786,25 +566,26 @@ function makeTranscriptEntry(
 }
 
 describe("listAvailableTranscripts / describeTranscript", () => {
-  it("returns a synthetic single-entry list for v1 manifests", () => {
-    const list = listAvailableTranscripts({} as PortableMeetingManifest);
-    expect(list).toEqual([
-      { id: "default", role: "asr", label: "Transcript", description: "", isDefault: true },
-    ]);
-    expect(getDefaultTranscriptId({} as PortableMeetingManifest)).toBe("default");
+  it("rejects a manifest without transcript descriptors", () => {
+    expect(() => listAvailableTranscripts({} as PortableMeetingManifest)).toThrow(
+      /no transcripts/,
+    );
+    expect(() => getDefaultTranscriptId({} as PortableMeetingManifest)).toThrow(
+      /no transcripts/,
+    );
   });
 
-  it("labels v2 transcripts from the transcript id, not the engine name", () => {
+  it("labels published transcripts from the transcript id, not the engine name", () => {
     const manifest: PortableMeetingManifest = {
-      version: 2,
+      version: 1,
       transcripts: [
         makeTranscriptEntry({ id: "parakeet" }),
         makeTranscriptEntry({ id: "canary", default: true }),
       ],
       provenance: {
         speechToText: {
-          parakeet: { engine: "sherpa-onnx", model: "parakeet-tdt-0.6b-v2-int8" },
-          canary: { engine: "sherpa-onnx", model: "canary-1b-v2" },
+          parakeet: { engine: "sherpa-onnx", model: "parakeet-model" },
+          canary: { engine: "sherpa-onnx", model: "canary-model" },
         },
       } as unknown,
     };
@@ -814,14 +595,14 @@ describe("listAvailableTranscripts / describeTranscript", () => {
     expect(list.map((entry) => entry.label)).toEqual(["Parakeet", "Canary"]);
     // Engine/model/backend land in description for the tooltip.
     expect(list[0]?.description).toContain("sherpa-onnx");
-    expect(list[0]?.description).toContain("parakeet-tdt-0.6b-v2-int8");
-    expect(list[1]?.description).toContain("canary-1b-v2");
+    expect(list[0]?.description).toContain("parakeet-model");
+    expect(list[1]?.description).toContain("canary-model");
     expect(getDefaultTranscriptId(manifest)).toBe("canary");
   });
 
-  it("uses the v2 multi-transcript shape for compressed-integrity v3 manifests", () => {
+  it("uses the published indexed shape", () => {
     const manifest: PortableMeetingManifest = {
-      version: 3,
+      version: 1,
       integrity: {
         matchPolicy: "exact-opus-audio-v1",
         opusAudioSha256: "a".repeat(64),
@@ -836,7 +617,7 @@ describe("listAvailableTranscripts / describeTranscript", () => {
     // Regression: an older version of describeTranscript labeled by engine
     // first, so two sherpa-onnx transcripts both rendered as "sherpa-onnx".
     const manifest: PortableMeetingManifest = {
-      version: 2,
+      version: 1,
       transcripts: [
         makeTranscriptEntry({ id: "tx-a" }),
         makeTranscriptEntry({ id: "tx-b" }),
@@ -855,7 +636,7 @@ describe("listAvailableTranscripts / describeTranscript", () => {
 
   it("humanizes transcript ids that contain hyphens and underscores", () => {
     const entry = makeTranscriptEntry({ id: "whisper-large-v3_en" });
-    const descriptor = describeTranscript(entry, { version: 2 } as PortableMeetingManifest, false);
+    const descriptor = describeTranscript(entry, { version: 1 } as PortableMeetingManifest, false);
     expect(descriptor.label).toBe("Whisper Large V3 En");
     expect(descriptor.description).toBe("");
   });
@@ -918,7 +699,7 @@ describe("readPortableSummaryMarkdown", () => {
 
 describe("pickReadableForTranscript", () => {
   const manifest: PortableMeetingManifest = {
-    version: 2,
+    version: 1,
     readableTranscripts: [
       {
         id: "readable-paired-canary",
@@ -932,6 +713,7 @@ describe("pickReadableForTranscript", () => {
         role: "readable-cleanup",
         format: "cassini.readable.v1",
         default: true,
+        sourceTranscriptId: "parakeet",
         payloadRef: { prefix: "Y_", chunkCount: 1, sha256: "0".repeat(64) },
       },
     ],
@@ -941,8 +723,12 @@ describe("pickReadableForTranscript", () => {
     expect(pickReadableForTranscript(manifest, "canary")?.id).toBe("readable-paired-canary");
   });
 
-  it("falls back to the default-flagged entry", () => {
+  it("matches another transcript to its own readable body", () => {
     expect(pickReadableForTranscript(manifest, "parakeet")?.id).toBe("readable-default");
+  });
+
+  it("does not substitute a body derived from another transcript", () => {
+    expect(pickReadableForTranscript(manifest, "whisper")).toBeNull();
   });
 
   it("returns null when no readable transcripts are present", () => {
@@ -967,6 +753,12 @@ describe("buildTranscriptWordsFromPortable attribution carry", () => {
         item,
       ],
     },
+  });
+
+  it("rejects a transcript body item containing more than one word", () => {
+    expect(() => buildTranscriptWordsFromPortable(
+      manifestWithItem({ speaker: "spk_ben", startMs: 900, endMs: 1400, text: "two words" }) as never,
+    )).toThrow("portable transcript item 1 must contain exactly one word");
   });
 
   it("copies attributionGapDb and lowConfidenceSpeaker from an item onto its word", () => {
@@ -1041,20 +833,6 @@ describe("buildTranscriptWordsFromPortable attribution carry", () => {
     }
   });
 
-  it("does not fabricate flagged words for multi-word items", () => {
-    // Multi-word spans stay word-less (no fabricated timings), flagged or not.
-    const transcript = buildTranscriptWordsFromPortable(
-      manifestWithItem({
-        speaker: "spk_ben",
-        startMs: 900,
-        endMs: 1400,
-        text: "yeah sure",
-        attributionGapDb: 31.7,
-        lowConfidenceSpeaker: true,
-      }) as never,
-    );
-    expect(transcript.segments[1]?.words).toEqual([]);
-  });
 });
 
 // The JSON-directory shape: canonical words already carry ids and flags, and

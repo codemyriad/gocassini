@@ -19,6 +19,7 @@ import {
   getDefaultTranscriptId,
   listAvailableTranscripts,
   loadPortableTranscriptBody,
+  pickDisplayForTranscript,
   pickReadableForTranscript,
   readPortableSummaryMarkdown,
   type ExtractedPortableManifest,
@@ -94,7 +95,7 @@ const DEFAULT_READABLE_TRANSCRIPT_PATH = "./transcript.readable.v1.json";
 const DEFAULT_SUMMARY_PATH = "./summary.md";
 const DEFAULT_CAPTIONS_PATH = "./captions.vtt";
 const DEFAULT_CHAPTERS_PATH = "./chapters.vtt";
-// 1 MB - 1. v2 manifests carry an index + per-transcript chunk sets in the
+// 1 MB - 1. Portable manifests carry an index + per-transcript chunk sets in the
 // OpusTags header; a single transcript runs ~220 KB compressed, so 256 KB
 // stopped covering common cases and was forcing the full-file fallback. 1 MB
 // covers ~4 typical transcripts before the fallback kicks in.
@@ -256,20 +257,6 @@ export async function switchPortableTranscript(
   }
   const { manifest, tags } = await cached;
   const transcripts = Array.isArray(manifest.transcripts) ? manifest.transcripts : [];
-  if (transcripts.length === 0) {
-    if (transcriptId !== "default") {
-      throw new Error(
-        `portable meeting only has a single transcript; cannot switch to "${transcriptId}"`,
-      );
-    }
-    const availableTranscripts = listAvailableTranscripts(manifest);
-    return buildPortableLoadedArtifact({
-      manifest,
-      audioSrc: resolvedAudioPath,
-      availableTranscripts,
-      currentTranscriptId: "default",
-    });
-  }
   const entry = transcripts.find((candidate) => candidate.id === transcriptId);
   if (!entry) {
     throw new Error(`portable meeting has no transcript with id "${transcriptId}"`);
@@ -290,15 +277,21 @@ export async function switchPortableTranscript(
       readableEntry,
     )) as PortableMeetingManifest["readableTranscript"];
   }
+  const displayEntry = pickDisplayForTranscript(manifest, transcriptId);
+  let displayBody: PortableMeetingManifest["displayTranscript"] | undefined;
+  if (displayEntry) {
+    displayBody = (await store.loadBody(
+      resolvedAudioPath,
+      displayEntry.id,
+      tags,
+      displayEntry,
+    )) as PortableMeetingManifest["displayTranscript"];
+  }
   const swappedManifest: PortableMeetingManifest = {
     ...manifest,
     transcript: transcriptBody,
     readableTranscript: readableBody,
-    // The producer's pre-rendered displayTranscript only matches the default
-    // transcript; suppress it when switching so we re-derive from the new body.
-    displayTranscript: transcriptId === getDefaultTranscriptId(manifest)
-      ? manifest.displayTranscript
-      : undefined,
+    displayTranscript: displayBody,
   };
   const availableTranscripts = listAvailableTranscripts(manifest);
   return buildPortableLoadedArtifact({
@@ -343,7 +336,13 @@ function buildPortableLoadedArtifact({
     timingPrecision: classifyArtifactTimingPrecision(transcript, displayTranscript),
     metadata: buildArtifactMetadata(
       "portable-opus",
-      buildPortableMetadataRaw(manifest, transcript, displayTranscript, readableTranscript),
+      buildPortableMetadataRaw(
+        manifest,
+        transcript,
+        displayTranscript,
+        readableTranscript,
+        currentTranscriptId,
+      ),
     ),
     wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest.provenance),
     availableTranscripts,
@@ -585,7 +584,13 @@ function buildPortableMetadataRaw(
   transcript: TranscriptWordsV1,
   displayTranscript: DisplayTranscriptV1 | null,
   readableTranscript: ReadableTranscriptV1 | null,
+  currentTranscriptId: string,
 ): Record<string, unknown> {
+  const provenance = asMaybeObject(portable.provenance);
+  const readableId = pickReadableForTranscript(portable, currentTranscriptId)?.id;
+  const displayId = portable.readableTranscripts?.find(
+    (entry) => entry.role === "display" && entry.sourceTranscriptId === currentTranscriptId,
+  )?.id;
   return {
     meeting: portable.meeting ?? {},
     audio: portable.audio ?? {},
@@ -600,9 +605,24 @@ function buildPortableMetadataRaw(
         readableTranscript?.version ??
         undefined,
     },
-    provenance: portable.provenance ?? {},
+    provenance: provenance
+      ? {
+          ...provenance,
+          speechToText: processingStepForId(provenance.speechToText, currentTranscriptId),
+          readableCleanup: processingStepForId(provenance.readableCleanup, readableId),
+          displayTranscript: processingStepForId(provenance.displayTranscript, displayId),
+        }
+      : {},
     speakers: Array.isArray(portable.speakers) ? portable.speakers : [],
   };
+}
+
+function processingStepForId(value: unknown, id: string | undefined): unknown {
+  const record = asMaybeObject(value);
+  if (!record || !id) {
+    return undefined;
+  }
+  return asMaybeObject(record[id]) ?? undefined;
 }
 
 function buildDirectoryMetadataRaw(
