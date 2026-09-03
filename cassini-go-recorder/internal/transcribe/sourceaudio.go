@@ -564,6 +564,13 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 	var totalAnchors int
 	var worstResidual float64
 	var rateSum float64
+	// The output windows each overlaid segment wrote, for the report. Collected
+	// rather than summed: two captures for one recording can overlap (a rejoin
+	// whose windows meet, a page that filed its reload separately), and a later
+	// overlay merely overwrites an earlier one — so adding the lengths would
+	// claim more of the timeline was spliced than exists.
+	type window struct{ from, to int }
+	var windows []window
 
 	// Load every sidecar first, so a capture that cannot even be read costs no
 	// ffmpeg. This IS fatal: an unreadable manifest says nothing about which
@@ -629,7 +636,7 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 				continue
 			}
 			report.Placed++
-			report.SplicedMS += int64(to-from) * 1000 / int64(sampleRate)
+			windows = append(windows, window{from, to})
 			report.CoverageMS += decodedMS
 			totalAnchors += placement.Anchors
 			rateSum += placement.Rate
@@ -642,6 +649,19 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 	if report.Placed == 0 {
 		return nil, report, fmt.Errorf("no segment could be placed")
 	}
+	sort.Slice(windows, func(i, j int) bool { return windows[i].from < windows[j].from })
+	var splicedSamples, cursor int
+	for _, w := range windows {
+		if w.to <= cursor {
+			continue
+		}
+		if w.from > cursor {
+			cursor = w.from
+		}
+		splicedSamples += w.to - cursor
+		cursor = w.to
+	}
+	report.SplicedMS = int64(splicedSamples) * 1000 / int64(sampleRate)
 	report.Anchors = totalAnchors
 	report.ResidualMS = worstResidual
 	report.RatePPM = Placement{Rate: rateSum / float64(report.Placed)}.RatePPMDeviation()
@@ -778,13 +798,29 @@ func writeWAV16(path string, samples []float32, sampleRate int) error {
 
 	body := make([]byte, dataBytes)
 	for i, sample := range samples {
-		v := sample
+		// 32768, matching the decoder, and rounded rather than truncated.
+		//
+		// This file is now a SPLICE: most of it is the participant's recorded
+		// track, decoded by readPCM16LEFloatsBounded as s16/32768 and expected
+		// to survive untouched wherever no upload was laid over it. Scaling
+		// back by 32767 and truncating turned every one of those samples into a
+		// slightly different one — 16384 came back as 16383, and ±1 came back
+		// as zero — so "the recorded audio is unchanged outside the overlaid
+		// windows" was true in memory and false in the file the transcription
+		// pass actually reads. The pair is exact in both directions now, and
+		// only the single value +1.0 has to be clamped because int16 has no
+		// positive counterpart to -32768.
+		v := float64(sample)
 		if v > 1 {
 			v = 1
 		} else if v < -1 {
 			v = -1
 		}
-		s := int16(v * 32767)
+		scaled := math.Round(v * 32768)
+		if scaled > 32767 {
+			scaled = 32767
+		}
+		s := int16(scaled)
 		body[i*2] = byte(uint16(s))
 		body[i*2+1] = byte(uint16(s) >> 8)
 	}

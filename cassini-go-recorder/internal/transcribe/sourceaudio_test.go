@@ -469,8 +469,54 @@ func TestWriteWAV16RoundTrips(t *testing.T) {
 	if read(0) != 0 {
 		t.Fatalf("sample 0 = %d", read(0))
 	}
-	if read(5) != 32767 || read(6) != -32767 {
+	if read(5) != 32767 || read(6) != -32768 {
 		t.Fatalf("clamping failed: %d, %d", read(5), read(6))
+	}
+	// The scale is the decoder's, exactly. readPCM16LEFloatsBounded produces
+	// s16/32768, and this has to put the same s16 back: the file is mostly the
+	// participant's RECORDED track, and every sample of it outside an overlaid
+	// window is supposed to be untouched. Scaling by 32767 quietly changed all
+	// of them.
+	if read(1) != 16384 || read(2) != -16384 {
+		t.Fatalf("half scale round-tripped to %d and %d, want 16384 and -16384", read(1), read(2))
+	}
+}
+
+// The boundary property has to hold in the FILE the transcription pass reads,
+// not only in the slice the splice returned. An in-memory assertion missed a
+// requantisation that changed every sample of the recorded floor on its way to
+// disk.
+func TestSplicedWAVLeavesTheRecordedFloorBitExact(t *testing.T) {
+	const sampleRate = 16000
+	const outSamples = sampleRate * 4
+
+	// Values chosen to be exactly representable coming back out of a 16-bit
+	// file, and to include the ones a 32767 scale destroys.
+	recorded := make([]float32, outSamples)
+	for i := range recorded {
+		recorded[i] = float32(int16(1+(i%7)*2341)) / 32768
+	}
+
+	path := filepath.Join(t.TempDir(), "spliced.wav")
+	if err := writeWAV16(path, recorded, sampleRate); err != nil {
+		t.Fatalf("writeWAV16: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	back, err := readPCM16LEFloats(bytes.NewReader(raw[44:]), outSamples)
+	if err != nil {
+		t.Fatalf("readPCM16LEFloats: %v", err)
+	}
+	if len(back) != outSamples {
+		t.Fatalf("read back %d samples, want %d", len(back), outSamples)
+	}
+	for i := range recorded {
+		if math.Float32bits(back[i]) != math.Float32bits(recorded[i]) {
+			t.Fatalf("sample %d came back as %v, want %v: the recorded floor is not bit-exact through the WAV",
+				i, back[i], recorded[i])
+		}
 	}
 }
 
