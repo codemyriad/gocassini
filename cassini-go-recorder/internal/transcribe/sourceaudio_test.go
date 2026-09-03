@@ -1034,6 +1034,60 @@ func TestSpliceSkipsASegmentWhoseAudioDoesNotMatchItsSidecar(t *testing.T) {
 	}
 }
 
+// A segment that holds far MORE audio than it declares must not replace the
+// recorded track past the window it claimed. The decoded-versus-declared check
+// only catches a file that is too short, and the decoder's own ceiling allows a
+// generous overrun, so without a clamp a one-second window could overwrite a
+// minute of recorded audio.
+func TestSpliceOverlaysOnlyTheWindowASegmentDeclares(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
+
+	dir := t.TempDir()
+	// Declares twenty seconds and holds sixty.
+	overlong := syntheticSegmentDelayed(0, 20, 1000, 0, 0)
+	overlong.AudioName = "segment-0.webm"
+	writeToneSegment(t, dir, overlong.AudioName, 60, 440)
+	writeSidecar(t, dir, SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: overlong.StartWallMS, CallEndWallMS: overlong.StopWallMS,
+		Segments: []SourceSegment{overlong},
+	})
+
+	recorded := recordedMarker(outSamples, 0.25)
+	original := append([]float32(nil), recorded...)
+	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	if err != nil {
+		t.Fatalf("SpliceSourceTrack: %v", err)
+	}
+	if report.Placed != 1 {
+		t.Fatalf("placed %d segments, want 1", report.Placed)
+	}
+	// Twenty declared seconds plus the checkpoint slack, and not a sample of
+	// the forty seconds beyond that.
+	if report.SplicedMS > 32_000 {
+		t.Fatalf("spliced %d ms over a segment declaring 20000 ms", report.SplicedMS)
+	}
+	for i := sampleRate * 45; i < outSamples; i++ {
+		if math.Float32bits(out[i]) != math.Float32bits(original[i]) {
+			t.Fatalf("sample %d was overwritten by audio outside the segment's declared window", i)
+		}
+	}
+}
+
+// A degenerate call is an error, not a division by zero.
+func TestSpliceRefusesADegenerateTimeline(t *testing.T) {
+	if _, _, err := SpliceSourceTrack(context.Background(), nil, nil, testBase(), 0, 100); err == nil {
+		t.Fatal("a zero sample rate was accepted")
+	}
+	if _, _, err := SpliceSourceTrack(context.Background(), nil, nil, testBase(), 16000, 0); err == nil {
+		t.Fatal("a zero-length timeline was accepted")
+	}
+}
+
 // A capture that contributes nothing is an error rather than a WAV identical to
 // the recorded track, so the caller leaves the stream alone.
 func TestSpliceRefusesWhenNoSegmentCanBePlaced(t *testing.T) {

@@ -525,6 +525,19 @@ type SourceRenderReport struct {
 // is left out and the recorded track stands for that stretch.
 const minSegmentDecodedFraction = 0.9
 
+// segmentOverrunSlackMS is how far past its declared window a segment's audio
+// may reach and still be laid over the recorded track.
+//
+// Some overrun is honest. A page that died mid-recording leaves a manifest
+// written at the last checkpoint, so the file on disk holds everything up to
+// the last chunk after it — bounded by the checkpoint interval plus one chunk.
+// Beyond that the file is not describing itself any more, and the difference is
+// recorded audio the splice would replace with something the sidecar never
+// claimed was there. Only the declared window plus this slack is overlaid; the
+// rest of the file is ignored rather than the whole segment being dropped,
+// because the audio inside the window is still the audio the manifest promised.
+const segmentOverrunSlackMS = 10_000
+
 // SpliceSourceTrack builds one speaker's transcription input by laying every
 // placeable segment they uploaded over their own RECORDED track.
 //
@@ -555,6 +568,12 @@ const minSegmentDecodedFraction = 0.9
 // not adopted into the capture that followed it.
 func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
 	report := SourceRenderReport{}
+	if sampleRate <= 0 || outSamples <= 0 {
+		// An error rather than a division by zero. Production passes 16 kHz and
+		// a measured timeline, but a caller that gets this wrong should be told
+		// so rather than take the build down with a panic.
+		return nil, report, fmt.Errorf("splice needs a positive sample rate and timeline, got %d Hz and %d samples", sampleRate, outSamples)
+	}
 	// A copy, always. The caller's recorded PCM is the fallback for this
 	// speaker and for the assertion that a splice changed only what it claims
 	// to have changed; mutating it in place would destroy both.
@@ -629,6 +648,19 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 				skip(segment, "holds %d ms of the %d ms it declares (%.0f%%); the audio does not match the sidecar",
 					decodedMS, declaredMS, float64(decodedMS)*100/float64(declaredMS))
 				continue
+			}
+			// Only what the segment declared, plus the overrun a checkpointed
+			// manifest can honestly lag by. A file holding a minute of audio
+			// under a one-second window would otherwise replace a minute of
+			// recorded audio, which is exactly the "never worse than the
+			// recorded track" property the splice exists for.
+			if segmentMS > 0 {
+				if limit := expectedPCMSamples(segmentMS+segmentOverrunSlackMS, sampleRate); limit > 0 && len(samples) > limit {
+					report.Rejections = append(report.Rejections, fmt.Sprintf(
+						"segment %d holds %d ms under a %d ms window; only the window it declares was used",
+						segment.Index, decodedMS, segmentMS))
+					samples = samples[:limit]
+				}
 			}
 			from, to := overlayOntoTimeline(out, samples, sampleRate, placement)
 			if to <= from {
