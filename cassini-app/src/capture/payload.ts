@@ -33,7 +33,7 @@
 // Talk".
 
 import { loadState } from "@nextcloud/initial-state";
-import { retireLegacyCaptureWorkers } from "./register";
+import { forgetLegacyConsent, retireLegacyCaptureWorkers } from "./register";
 
 import {
   SOURCE_CAPTURE_FORMAT,
@@ -1385,6 +1385,10 @@ function instrument(pc: RTCPeerConnection): void {
 // ordinary script before Talk's bundle, so every connection the call creates
 // resolves the patched constructor.
 export function install(config: CaptureDeliveryConfig = captureDeliveryFromInitialState()): void {
+  // Before the enabled check, deliberately. An installation that has since
+  // switched capture off must still forget an answer an older build recorded,
+  // and this is the one function every Talk call page reaches.
+  forgetLegacyConsent();
   const normalized = normalizeCaptureDeliveryConfig(config);
   if (!normalized.enabled) {
     return;
@@ -1442,6 +1446,11 @@ if (typeof window !== "undefined") {
     // Retire the abandoned bundle-rewriting worker here as well; this does not
     // delay installation or negotiation.
     void retireLegacyCaptureWorkers(navigator.serviceWorker).catch(() => {});
+    // Also here, not only in install: with the switch off the initial state
+    // says disabled and install is never called, and that browser has just as
+    // much of an old answer to forget as one on an installation still running
+    // the feature.
+    forgetLegacyConsent();
     const config = captureDeliveryFromInitialState();
     if (config.enabled) {
       install(config);

@@ -261,6 +261,34 @@ async function participantKeys(page: import("@playwright/test").Page): Promise<s
   );
 }
 
+// A browser that answered the opt-in an older build asked still holds that
+// answer: nothing reads or writes the key any more, so without a deliberate
+// delete it would simply sit there forever — a recorded answer to a question
+// this build no longer asks, on a profile whose owner may never open Cassini
+// again, while docs/privacy.md tells administrators no such answer is kept.
+// Every Talk page load clears it, and clears nothing else.
+test("clears an older build's opt-in from a browser that still has one", async ({ page }) => {
+  await page.goto(`${server.origin}/`);
+  await page.evaluate(() => {
+    localStorage.setItem("cassini.sourceCapture.consent", "granted");
+    localStorage.setItem("cassini.sourceCapture.uploadAttempts", '{"capture-testroom-1":2}');
+    localStorage.setItem("cassini.viewer.lastRoom", "testroom");
+  });
+
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+
+  const stored = await page.evaluate(() => ({
+    consent: localStorage.getItem("cassini.sourceCapture.consent"),
+    attempts: localStorage.getItem("cassini.sourceCapture.uploadAttempts"),
+    unrelated: localStorage.getItem("cassini.viewer.lastRoom"),
+  }));
+  expect(stored.consent, "an older build's opt-in survived the payload running").toBeNull();
+  // Delivery bookkeeping is still live, and so is everything else on the origin.
+  expect(stored.attempts).toBe('{"capture-testroom-1":2}');
+  expect(stored.unrelated).toBe("testroom");
+});
+
 // Capture follows Talk's official recording. Every authenticated participant of
 // a recorded call is captured, and nothing is asked of them or kept for them:
 // telling the room it is being recorded is Talk's job, and a browser key of our
