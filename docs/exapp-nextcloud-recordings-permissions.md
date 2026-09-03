@@ -9,33 +9,75 @@ every authenticated Nextcloud account. Nextcloud's Team-folder ACLs are the
 authority, and administrators can edit them with the normal Files
 advanced-permissions UI.
 
-This is the only mode. There is no setting that turns it off and no public
-archive to fall back to: an installed Cassini ExApp serves each caller only the
-recordings Nextcloud says they may read (D-554).
+## Two storage modes (D-616)
 
-> **Setup is automatic after two native prerequisites are enabled.** Cassini
-> creates the canonical Team folder and its permissions over HTTP; there is no
-> `occ groupfolders:*` recipe. An ExApp cannot install PHP apps, so an
-> administrator must first enable **Group folders / Team folders** and
-> **Everyone Group** (`group_everyone`). The local harness installs both.
+Access control is one of **two** storage modes, chosen in the Cassini app's
+**Setup** tab. The rest of this document describes the access-controlled one.
 
-> **Who owns the recordings.** The canonical tree is owned by a dedicated
-> `cassini` service account, created automatically when the app is enabled. It
-> is the only identity that writes recordings and manages their permissions.
-> Privileged setup—creating the account, its narrow owner group, and the Team
-> folder—is performed as a separately resolved administrator.
+| | Default | Access controlled |
+|---|---|---|
+| Where recordings live | the `cassini` account's own `Cassini/Recordings` | the `Cassini` Team folder |
+| Who can read one | everyone who can open the Cassini app | the people who were in the meeting |
+| Nextcloud apps needed | none | Team folders + Everyone Group |
+| Other prerequisites | a `cassini` service account | a `cassini` service account, an `everyone` group, and a mapped, ACL-enabled `Cassini` Team folder |
+
+```text
+                        storage_settings.json
+                   {"access_control_enabled": …}
+                                │
+          ┌─────────────────────┴─────────────────────┐
+          ▼                                           ▼
+      DEFAULT                                  ACCESS CONTROLLED
+  write: PUT, no ACLs                     write: reserve → deny → PUT → audience
+  read:  as `cassini`, whole archive      read:  as the CALLER, Nextcloud decides
+  needs: the service account              needs: both apps + the Team folder
+```
+
+**Which one an existing install gets.** The flag is absent until something
+records it. On the first enable after upgrading, Cassini derives it once from
+the instance — and derives `access controlled` only when the *complete*
+substrate is already present, which every install built by earlier versions has.
+An install already restricting recordings therefore keeps doing so. The derived
+value is written to `storage_settings.json` immediately and never derived again.
+
+**Switching.** The Setup tab moves the archive both ways. Opting in moves every
+existing recording into the Team folder and leaves it **readable by every
+account** — Cassini does not guess who was in a past meeting — so narrow the
+ones that matter afterwards from Files → Advanced permissions. Opting out moves
+everything back into the service account's own home and drops all access rules:
+after it, everyone who can open Cassini can read everything.
+
+> **Cassini can set most of this up for you (D-671).** The Setup tab lists what
+> is missing and offers to make it: the `cassini` group and account, the Team
+> folder, its group mappings, advanced ACL, and the ACL-manager delegation. It
+> performs them **as you**, from your browser, after Nextcloud's own password
+> dialog — Cassini never sees, holds or transmits your password.
+>
+> The exception is installing the two Nextcloud apps. Those routes require your
+> password on the request itself, which Cassini will not handle, so it tries via
+> its own backend (which works on some releases) and otherwise sends you to
+> Nextcloud's own Apps page. Everything is also listed as `occ` commands for an
+> administrator who would rather run them.
+>
+> Until the prerequisites for the selected mode are there, recordings are
+> refused rather than captured and lost.
+
+> **Who owns the recordings.** Both modes store them as a dedicated `cassini`
+> service account. It is the only identity that writes recordings and, under
+> access control, manages their permissions. Create it with
+> `occ group:add cassini` and `occ user:add --group=cassini cassini`.
+>
+> Privileged *reads* — which apps are enabled, whether the account exists,
+> whether there is a Team folder — and the group-mapping changes a mode switch
+> makes are performed as a separately resolved administrator.
 >
 > That administrator is *probed*, not looked up: an external app cannot be told
 > who it is, and every API that would reveal one is admin-gated. Cassini tries
 > `CASSINI_NC_ADMIN_USER`, then `admin`, then the instance's own account list
 > (up to a bounded number), and uses the first that turns out to be an
-> administrator. If none is, provisioning stops and says so rather than acting
+> administrator. If none is, the preflight stops and says so rather than acting
 > as an account that may not exist. Set `CASSINI_NC_ADMIN_USER` then — see
 > [the install guide](./exapp-install.md#administrator-discovery).
->
-> The recordings live in shared Team-folder storage rather than a user's home.
-> Changing the acting owner from the earlier administrator identity therefore
-> requires no data migration: existing Team-folder recordings remain in place.
 
 > **Public conversations.** Publicness is read from Talk at record time and
 > frozen with the recording. Making a conversation public later does not widen
@@ -158,18 +200,61 @@ guest-app or external-backend accounts that are allowed to sign in. Installers
 must accept that global behavior or configure Nextcloud's broader sharing policy
 accordingly.
 
-## Automatic setup
+## Setup: what you do, and what Cassini does
 
-On the AppAPI **enabled** edge, Cassini provisions this topology idempotently
-and unconditionally — there is no mode in which only part of it runs:
+Open **Cassini → Setup** and press *Set up access controlled*. Cassini lists
+every change first, asks Nextcloud to confirm your password, and then makes them
+as you. It cannot install the two apps — see below — and will say so.
+
+The same recipe by hand, in the order the Setup tab lists whatever is missing:
+
+```bash
+occ group:add cassini
+occ user:add --group=cassini cassini
+occ app:install groupfolders && occ app:enable groupfolders
+occ app:install group_everyone && occ app:enable group_everyone
+occ groupfolders:create Cassini            # note the id it prints
+occ groupfolders:group <id> cassini read write share delete
+occ groupfolders:group <id> everyone read
+occ groupfolders:permissions <id> --enable
+occ groupfolders:permissions <id> -m --user cassini
+```
+
+The Setup tab prints only the lines this instance still needs, so it is usually
+shorter than the block above.
+
+### Why Cassini can do all of that except install an app
+
+Nextcloud guards these writes with password confirmation, and it has two
+strengths. The ordinary one is satisfied by a recently confirmed **session** —
+which is what Nextcloud's own dialog produces, and why Cassini can create the
+account, the folder and its permissions from your browser. Installing an app is
+annotated `strict`, and strict requires the password **on the request itself**;
+no session, however recently confirmed, satisfies it. Nextcloud's own Apps page
+meets that by attaching your password to that one request. Cassini declines to
+handle your password at all, so it hands those two steps back to you.
+
+Cassini's *operator* cannot make any of these writes: its requests carry no
+login token, so Nextcloud refuses them outright on every current release. That
+is why the setup happens in your browser and not in the app's backend. It does
+attempt the two app installs from the backend, because that path still works on
+Nextcloud 32.x, 33.0.0–33.0.5 and 34.0.0, and on any release where an
+administrator has set `allowed_no_password_confirmation_ranges`.
+
+Then disable and re-enable the app (setup runs on the AppAPI **enabled** edge,
+not on start), and switch the mode in the Setup tab if it is not already on.
+
+On that edge Cassini probes the instance read-only, resolves the storage mode,
+and — only once every prerequisite above is confirmed present — arranges its own
+tree inside the folder you provided, idempotently:
 
 ```text
-  ├── resolve the provisioning administrator              (OCS API)
-  ├── ensure owner group + `cassini` service account       (OCS API)
-  ├── verify virtual group `everyone` exists               (OCS API)
-  ├── ensure Team folder `Cassini`, default-deny           (Team folders API)
-  ├── assign everyone READ + owner group ALL              (Team folders API)
-  ├── enable advanced ACL + delegate owner ACL manager    (Team folders API)
+  ├── resolve the administrator to act as                 (OCS API)
+  ├── check both native apps are enabled                  (OCS API)
+  ├── check the `cassini` account exists                  (OCS API)
+  ├── check the virtual group `everyone` exists            (OCS API)
+  ├── check Team folder `Cassini`: mapped, ACL on,         (Team folders API)
+  │   `cassini` delegated as ACL manager
   ├── temporarily narrow the root to owner ALL            (DAV PROPPATCH)
   ├── migrate/protect every existing recording leaf       (DAV PROPFIND/PROPPATCH)
   │     recording-viewers READ → everyone READ
@@ -181,6 +266,15 @@ and unconditionally — there is no mode in which only part of it runs:
   ├── remove legacy viewer/admin mappings + admin manager (Team folders API)
   └── materialize Cassini/Recordings/meetings             (DAV MKCOL)
 ```
+
+If any check fails, none of the writes below it run. The step is recorded, the
+app shows it with the command that fixes it, and publishing is refused — rather
+than half-building a substrate that later reads as healthy.
+
+In the **default** mode this whole sequence collapses to one thing: MKCOL
+`Cassini/Recordings/meetings` in the service account's own home. There is no
+folder, no floor and no leaf rule, because there is no other account with a path
+to any of it.
 
 The root remains owner-only if leaf or catalog migration fails, preventing a
 partially migrated private file from inheriting broad read. Re-enabling Cassini
@@ -223,12 +317,13 @@ broken prerequisite and fails closed with an empty catalog.
 
 ## Is it on?
 
-Nothing turns it on. Whenever the operator runs as an installed ExApp, its
-recordings are access-controlled and the Team folder is provisioned on the
-enabled edge; the only thing an admin does is enable the two native apps (see
-[Prerequisites](#prerequisites)).
+Open **Cassini → Setup**. The mode in force carries a "Current" badge; the other
+one is either offered as a switch or shows what it is still missing.
 
-To confirm an instance is actually set up, ask the operator:
+Over HTTP, `GET /operator/storage` answers the same question with the mode, its
+source (`configured` when it was recorded, `derived` when Cassini worked it out
+from the instance and wrote it), and per-mode availability. To confirm the
+substrate underneath it is actually there, ask the operator:
 
 ```bash
 curl -sS -u admin:<pass> \
@@ -243,6 +338,8 @@ curl -sS -u admin:<pass> \
   "state": "provisioned",
   "ok": true,
   "admin_user": "admin",
+  "mode": "access_controlled",
+  "mode_source": "configured",
   "prerequisites": [
     { "name": "groupfolders", "state": "enabled" },
     { "name": "group_everyone", "state": "enabled" }
@@ -266,16 +363,36 @@ it rather than matching prose.
 "step": "app_missing:group_everyone"   → install/enable the Everyone Group app
 "step": "app_missing:groupfolders"     → install/enable the Team folders app
 "step": "administrator"                → set CASSINI_NC_ADMIN_USER
-"step": "acl_enable"                   → a call failed; read the nc provision: log
+"step": "owner_account"                → occ user:add --group=cassini cassini
+"step": "universal_group"              → the Everyone Group app produced no group
+"step": "group_folder"                 → occ groupfolders:create Cassini
+"step": "mount_mapping:everyone"       → occ groupfolders:group <id> everyone read
+"step": "group_folder_acl"             → occ groupfolders:permissions <id> --enable
+"step": "group_folder_manager"         → occ groupfolders:permissions <id> -m --user cassini
+"step": "mode_mismatch:group_folder_mount"
+                                       → access control is off but a Cassini Team
+                                         folder is still mapped; pick a mode in
+                                         the Setup tab
+"step": "mode_mismatch:group_folder_unknown"
+                                       → Cassini could not find out whether one is
+                                         mounted, and will not assume there is not
+"step": "acl_enable"                   → a call failed; read the nc storage:
+                                         and nc provision: log lines
 ```
+
+Every `unavailable` step's `detail` carries the exact command, so nothing above
+has to be looked up.
 
 `applicable: false` (reported as `state: not_applicable`) means this deployment
 does not serve recordings from Nextcloud Files — a standalone operator, or an
 ExApp pinned to `CASSINI_PUBLISH_SINK=local` — so there is no substrate to
 expect. `state: unknown` means the container was restarted without the app being
-re-enabled, so setup has not run in this process. Disable and re-enable Cassini —
-publishing is refused until then, because nothing has verified where recordings
-would land.
+re-enabled, so the preflight has not run in this process. Disable and re-enable
+Cassini — publishing is refused until then, because nothing has verified where
+recordings would land, and in the **default** mode reading is too: serving the
+whole archive as its owner is only safe once something has confirmed that no
+Team folder is mounted over the canonical path. Under access control reads are
+unaffected, because Nextcloud is the one deciding.
 
 The full state table and worked examples are in
 [the install guide](./exapp-install.md#verifying-the-recordings-substrate).
@@ -340,27 +457,63 @@ The playback check is the security floor. Catalog scans fail closed to an empty
 list rather than returning the unfiltered owner catalog — a mis-tuned recipe
 degrades to "no meetings", never to "everyone's meetings".
 
-## Upgrading from a pre-access-control install
+## Switching modes on an instance that already has recordings
 
-If a deployment ran before access control was unconditional — when the operator
-served the D-529 public archive — its recordings live in the acting owner's own
-`Cassini/Recordings` **home** folder. Provisioning creates a *Team folder*
-mounted at `Cassini`, and Nextcloud will not mount one over an existing
-same-named home folder: it remaps the mount (e.g. `Cassini (2)`), so the operator
-writes to a different path and the previously delivered recordings are left
-behind in the old one.
+The Setup tab does the move. What it has to work around is a collision, and the
+mechanics below were measured against a live Nextcloud 34 + Group Folders 22
+rather than inferred.
 
-Before upgrading such an instance, move or remove the owner's existing `Cassini`
-home folder (back it up first) so the Team folder can mount at the canonical
-`Cassini` path, then re-enable Cassini. Which account holds that stale home
-folder depends on the version you are coming from — `admin` before D-532,
-`cassini` after it.
+**A mounted Team folder wins the canonical path.** Creating a `Cassini` Team
+folder while the service account already has a `Cassini` home directory does not
+remap the mount — the mount takes `Cassini` and the server **renames the home
+directory**, physically, to a name of its own choosing (`Cassini (1)` in the
+bench; treat the suffix as the server's, not as a contract). There is no
+wrong-tree-write window: DAV mounts are set up per request, so the first request
+after the folder exists already sees both.
 
-Re-enabling provisions the Team folder but does **not** re-deliver the archive
-into it. Cassini used to converge the archive by itself on every enabled edge,
-by re-uploading all of it; that was unbounded work under a fixed deadline and it
-failed by silently freezing the recording list, so it was removed (D-613). Run
-the migration explicitly instead, once, after the Team folder exists:
+So the opt-in does not need you to move anything out of the way first — earlier
+revisions of this document said it did, and had the direction of the rename
+backwards. It needs to *find* the renamed tree, which it does by listing the
+service account's root rather than by assuming a suffix.
+
+```text
+  OPT IN                                      OPT OUT
+  ──────                                      ───────
+  find the stranded `Cassini (N)`/Recordings  make `Cassini-optout`/Recordings
+  MOVE each leaf into the Team folder         PROPPATCH each leaf public
+    (Overwrite: F, never T)                   MOVE each leaf out of the folder
+  PROPPATCH each leaf `everyone: READ`        verify the folder is empty
+  merge the two catalogs                      unmap its `everyone`/`cassini` groups
+  widen the root                              MOVE each leaf back to `Cassini`
+  delete the emptied source                   delete the emptied staging tree
+```
+
+Two properties are load-bearing:
+
+- **`Overwrite` is never `T`.** For a file it destroys the destination's id and
+  with it every ACL row keyed to that id; for a *directory* the server deletes
+  the entire destination tree first. A collision fails as one recording (412)
+  instead of as the archive.
+- **The opt-out empties the folder before unmapping it.** Unmapping removes the
+  mount from every account including the one doing the moving, so a failure
+  after that point would leave the archive unreachable rather than merely
+  unmoved. If anything is still in the folder, the switch stops and says so.
+
+**Migrated recordings are public.** Opting in leaves every moved recording
+readable by every account, deliberately: the room's attendee list today is not
+evidence of who was in a call last quarter, and the archive carries nothing
+better. Narrow the ones that matter from Files → Advanced permissions.
+
+If a switch fails part-way, nothing is lost — the recordings are in the source
+or the staging tree named in the error, and re-running the switch resumes.
+
+### Upgrading from a pre-Nextcloud-Files install
+
+An archive published by a version that kept recordings on the app's own volume
+is not migrated by any of the above. Cassini used to converge it on every
+enabled edge by re-uploading all of it; that was unbounded work under a fixed
+deadline and it failed by silently freezing the recording list, so it was
+removed (D-613). Run the migration explicitly instead, once:
 
 ```bash
 ./scripts/backfill-nc-files.sh --dry-run   # check first
@@ -369,28 +522,29 @@ the migration explicitly instead, once, after the Team folder exists:
 
 It changes nothing when `Cassini/Recordings/` already holds recordings, or when
 there is no older archive on the volume, so it is safe to run when you are
-unsure whether it is needed. Migrated recordings are readable
-only by the `cassini` service account — grant access from the Files UI, or pass
-`--public` to restore the org-wide readability a pre-access-control archive had.
-See [`docs/exapp-install.md`](exapp-install.md) for the full procedure.
-
-There is no way back. `CASSINI_NC_ACCESS_CONTROL` was removed in D-554 and the
-public read path with it, so an instance that upgrades is access-controlled.
+unsure whether it is needed. Under access control, migrated recordings are
+readable only by the `cassini` service account — grant access from the Files UI,
+or pass `--public` to restore the org-wide readability a pre-access-control
+archive had. See [`docs/exapp-install.md`](exapp-install.md) for the full
+procedure.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/operator/status` answers 503 | Provisioning did not complete | Read `recordings_access.state` and `.step`. `unavailable` names a thing to install or set; `degraded` means a call failed — the matching `nc provision:` log line has the detail |
+| `/operator/status` answers 503 | The storage the selected mode needs is not ready | Read `recordings_access.state` and `.step`. `unavailable` names a thing to install or set and carries the command in `.detail`; `degraded` means a call failed — the matching `nc storage:` or `nc provision:` log line has it |
 | `state=unavailable`, `step=app_missing:<id>` | That native app is not enabled | `occ app:install <id> && occ app:enable <id>`, then re-enable Cassini |
 | `state=unavailable`, `step=administrator` | No probed account is an administrator Cassini may act as | Set `CASSINI_NC_ADMIN_USER` to one, then re-enable Cassini |
-| `state=unknown` | The container restarted without the app being re-enabled, so setup has not run in this process (D-541) | Disable and re-enable Cassini |
-| Publishes fail with "the recordings substrate is not provisioned" | Deliberate: writing into the owner's private home would leave recordings nobody can open | Fix the state above, or set `CASSINI_PUBLISH_SINK=local` to keep recordings on the app's own volume |
+| `state=unknown` | The container restarted without the app being re-enabled, so the preflight has not run in this process (D-541) | Disable and re-enable Cassini |
+| Publishes fail with "the recordings storage is not ready" | Deliberate: writing somewhere the read path is not looking would leave recordings nobody can open | Fix the state above, or set `CASSINI_PUBLISH_SINK=local` to keep recordings on the app's own volume |
+| A recording is refused in Talk, with "The recording failed" | A prerequisite of the selected mode is missing, so the call would be captured and then not publishable | Open Cassini → Setup; the missing thing and its command are there |
+| `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | `occ group:add cassini` and `occ user:add --group=cassini cassini`, then re-enable Cassini |
+| `state=unavailable`, `step=mode_mismatch:…` | The recorded storage mode and the instance disagree — e.g. access control is off but a `Cassini` Team folder is still mapped | Pick a mode in Cassini → Setup, which moves the archive to match it |
 | Log says required universal group `everyone` is unavailable | Everyone Group app missing/disabled | Install/enable `group_everyone`, then re-enable Cassini |
-| Service-account setup fails | Administrator discovery is wrong or account/group provisioning was rejected | Inspect `nc provision:` logs; set `CASSINI_NC_ADMIN_USER` to the correct administrator and re-enable Cassini |
-| `ensure group folder` fails | Team folders app missing/disabled | Install/enable `groupfolders`, then re-enable Cassini |
+| The probe cannot see an account or folder you created | Administrator discovery picked the wrong account, so the admin-gated reads answer 401/403 | Inspect `nc storage:` logs; set `CASSINI_NC_ADMIN_USER` to the correct administrator and re-enable Cassini |
+| `step=group_folder` | There is no `Cassini` Team folder; Cassini does not create one | `occ groupfolders:create Cassini`, map its groups and enable its ACL (see Setup), then re-enable Cassini |
 | Fresh user has no Cassini mount | `group_everyone` disabled or Team-folder mapping missing | Confirm `occ user:info <user>` includes `everyone` and `groupfolders:list` assigns `everyone:1` |
-| Root becomes owner-only after upgrade | Legacy leaf/catalog ACL migration failed | Inspect `nc provision:` logs, correct the DAV/ACL error, then re-enable Cassini |
+| Root becomes owner-only after upgrade | Legacy leaf/catalog ACL migration failed | Inspect the `nc provision:` logs, correct the DAV/ACL error, then re-enable Cassini |
 | Everyone sees a private meeting | Leaf lacks an explicit `everyone` deny or ACLs were disabled | Re-enable Cassini to run protection; inspect the leaf's Advanced permissions |
 | Granted user sees an empty list | Caller cannot traverse or leaf ACL was not applied | Confirm advanced ACL, `everyone:1` mount, root read, and the participant allow |
 | Meeting visible to nobody | Non-Talk job or private room with only non-local participants | Share the `.opus` manually |

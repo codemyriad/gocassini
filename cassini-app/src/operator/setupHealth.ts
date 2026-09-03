@@ -36,6 +36,12 @@ export interface RecordingsAccess {
   state: string;
   step: string;
   detail: string;
+  // mode is the storage model this archive is under (D-616): "default",
+  // "access_controlled", or "" when no preflight has resolved one. It decides
+  // which prerequisite is worth naming — the default model needs no Nextcloud
+  // app at all, so telling its administrator to install two would send them
+  // after the wrong thing.
+  mode: string;
   prerequisites: { name: string; state: string }[];
 }
 
@@ -80,6 +86,37 @@ const APP_ID = "gocassini";
 const NATIVE_APP_NAMES: Record<string, string> = {
   groupfolders: "Team folders",
   group_everyone: "Everyone Group",
+};
+
+// The dedicated recordings owner, and the narrow group that gives it a
+// write-capable mount. Both ids are compile-time constants in the operator
+// (webdav_upload.go / nc_provision.go), so they are literals here too.
+const SERVICE_ACCOUNT = "cassini";
+const SERVICE_ACCOUNT_GROUP = "cassini";
+
+// Machine-readable steps this file branches on. They are the operator's own,
+// from nc_storage_probe.go — keyed rather than matched on prose so a reworded
+// message cannot silently change which instructions an administrator gets.
+const SERVICE_ACCOUNT_STEP = "owner_account";
+const MODE_MISMATCH_STEP = "mode_mismatch";
+
+const SERVICE_ACCOUNT_SETUP: SetupNoticeStep = {
+  label: `Create the ${SERVICE_ACCOUNT} account and its group. Cassini does not create accounts for you`,
+  commands: [
+    `occ group:add ${SERVICE_ACCOUNT_GROUP}`,
+    `occ user:add --group=${SERVICE_ACCOUNT_GROUP} ${SERVICE_ACCOUNT}`,
+  ],
+};
+
+// The offer, not the recipe (D-671). Cassini can now perform most of its own
+// setup, as the administrator, using Nextcloud's own password confirmation — so
+// the first thing to say is "there is a button", and the commands become the
+// alternative rather than the only way.
+const SETUP_TAB_OFFER: SetupNoticeStep = {
+  label:
+    "Open the Setup tab above. Cassini can make these changes for you — Nextcloud will ask you " +
+    "to confirm your password, and Cassini never sees it",
+  commands: [],
 };
 
 const RERUN_SETUP: SetupNoticeStep = {
@@ -155,6 +192,7 @@ export function readRecordingsAccess(body: unknown): RecordingsAccess | null {
     state: access.state,
     step: typeof access.step === "string" ? access.step : "",
     detail: typeof access.detail === "string" ? access.detail : "",
+    mode: typeof access.mode === "string" ? access.mode : "",
     prerequisites,
   };
 }
@@ -260,15 +298,49 @@ function adminNotice(
   state: string,
   access: RecordingsAccess | null,
 ): { summary: string; steps: SetupNoticeStep[] } {
+  // The service account is the one prerequisite BOTH storage models need:
+  // every recording is written and read as it, in a Team folder and in a
+  // private home alike. It is checked first because in the default model it is
+  // the ONLY thing that can be missing, and the missing-apps branch below would
+  // otherwise send that administrator to install two apps they do not need
+  // (D-616).
+  if (access?.step === SERVICE_ACCOUNT_STEP) {
+    return {
+      summary:
+        "Cassini stores every recording as a dedicated Nextcloud service account, and that " +
+        "account does not exist on this instance. Nothing can be published or read until it does.",
+      steps: [SETUP_TAB_OFFER, SERVICE_ACCOUNT_SETUP, RERUN_SETUP],
+    };
+  }
+  if (access?.step.startsWith(MODE_MISMATCH_STEP)) {
+    return {
+      summary:
+        "Cassini's storage mode and this Nextcloud disagree about where recordings live, so it " +
+        "will not publish into a place the read side is not looking. " +
+        (access.detail || ""),
+      steps: [
+        {
+          label:
+            "Open the Setup tab above and pick the storage mode you want. Switching moves the recordings that are already published",
+          commands: [],
+        },
+      ],
+    };
+  }
   const missing = missingNativeApps(access);
-  if (missing.length > 0) {
+  if (missing.length > 0 && access?.mode !== "default") {
     return {
       summary:
         "Cassini keeps recordings in Nextcloud Files and shows each person only the meetings " +
         "they were in. It needs two Nextcloud apps to do that, and an external app cannot " +
         "install them for itself. Until they are enabled, recordings reach nobody.",
       steps: [
+        SETUP_TAB_OFFER,
         {
+          // Installing an app is the one step Cassini may not be able to take:
+          // Nextcloud demands the administrator's password on that request
+          // itself, which Cassini does not have and will not ask for. It tries,
+          // and hands off to Nextcloud's own Apps page when it is refused.
           label: `Install and enable ${describeApps(missing)}, either from Apps in Nextcloud or on the server`,
           commands: missing.map((app) => `occ app:install ${app} && occ app:enable ${app}`),
         },

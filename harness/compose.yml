@@ -60,6 +60,11 @@ services:
       # Mounted so AppAPI's "docker-install" daemon can pull images and
       # spawn ExApp containers on the host Docker engine.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Turns off the JIT the stock image enables. Without this, enabling a
+      # Nextcloud app over HTTP and then loading a page segfaults every Apache
+      # worker on PHP 8.5 and the instance stays down until it is restarted.
+      # See the file's own comment for the measurement.
+      - ./php/zz-harness-no-jit.ini:/usr/local/etc/php/conf.d/zz-harness-no-jit.ini:ro
 
   # Internal reverse proxy. Mirrors the production topology HaRP expects:
   # /exapps/<appId>/... goes to HaRP (which forwards over FRP tunnel to

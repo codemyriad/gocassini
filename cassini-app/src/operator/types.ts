@@ -122,3 +122,79 @@ export interface SettingsUpdate {
   device_override: string;
   transcription_terms: string[];
 }
+
+// StorageMode mirrors the operator's storage_settings.json vocabulary (D-616).
+// "" is a third answer, not a missing one: it means no preflight has resolved a
+// mode yet, which the Setup tab has to be able to tell apart from "default".
+export type StorageMode = "" | "default" | "access_controlled";
+
+// StorageModeOption is one of the two models as GET <basePath>/storage
+// describes it. The copy — summary, consequence, blocker, instructions — comes
+// from the operator rather than from this app, because that is the layer that
+// knows the Team folder's id, the group names and which prerequisite is
+// actually absent. The panel renders it and decides nothing.
+export interface StorageModeOption {
+  mode: Exclude<StorageMode, "">;
+  label: string;
+  active: boolean;
+  available: boolean;
+  summary: string;
+  consequence: string;
+  blocker: string;
+  step: string;
+  instructions: string[];
+  // setup is the same recipe as something to EXECUTE (D-671). Empty for a mode
+  // that is already available.
+  setup: StorageSetupStep[];
+}
+
+// StorageSetupStep is one missing prerequisite and how to make it exist.
+// `browser` is the load-bearing field: false means Nextcloud requires the
+// administrator's password on the request itself (a `strict` password
+// confirmation), which no session can satisfy and Cassini will not do — those
+// steps are attempted by the operator instead, and handed off if it is refused.
+export interface StorageSetupStep {
+  id: string;
+  action: string;
+  title: string;
+  args: Record<string, string>;
+  browser: boolean;
+  occ: string;
+  app_url: string;
+}
+
+// AppInstallOutcome is what the operator's own attempt at a `strict` app
+// install produced. The reason is what the UI branches on: `enabled` is done,
+// `password_confirmation_required` needs Nextcloud's Apps page, and
+// `app_store_unavailable` must not be retried for five minutes.
+export interface AppInstallOutcome {
+  app: string;
+  ok: boolean;
+  reason: string;
+  detail: string;
+}
+
+// StorageTransition is what a switch actually did, present only on the PUT that
+// performed one.
+export interface StorageTransition {
+  mode: string;
+  meetings_moved: number;
+  catalog_moved: boolean;
+  source_root: string;
+  destination_root: string;
+  leftover_source: string;
+  unmapped_groups: string[];
+}
+
+export interface StorageStatus {
+  mode: StorageMode;
+  mode_source: string;
+  ok: boolean;
+  state: string;
+  step: string;
+  detail: string;
+  checked_at: string;
+  modes: StorageModeOption[];
+  transition: StorageTransition | null;
+  installs: AppInstallOutcome[];
+}

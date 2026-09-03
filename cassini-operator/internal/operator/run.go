@@ -302,8 +302,36 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncAccessSubstrate.markApplicable()
 	}
 
-	// Provisioning remains tied to the AppAPI enabled edge, but not to the eager
-	// whole-archive uploader removed by D-613.
+	// The storage mode (D-616) is read here, at startup, and not only on the
+	// enabled edge. The edge is what PROVES the mode against Nextcloud; this is
+	// what makes a plain container restart keep serving the archive the way the
+	// administrator chose, instead of falling back to the access-controlled read
+	// path for an instance that has no Team folder to read through. The file is
+	// local, so it costs no round-trip and cannot fail for want of Nextcloud.
+	//
+	// It deliberately does NOT make the substrate usable: publishing still waits
+	// for the edge (nc_access_status.go), because a recorded mode is a decision,
+	// not evidence that the storage behind it is still there.
+	ncStorage.setPath(storageSettingsPath(cfg))
+	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
+		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
+		ncStorage.set(true, storageModeSourceConfigured)
+	} else if settings.Configured() {
+		ncStorage.set(settings.AccessControlled(), storageModeSourceConfigured)
+		logger.Printf("storage_mode -> %s (recorded, source=%s)", settings.Mode(), settings.Source)
+	} else if declared, ok, raw := storageModeFromEnv(os.Getenv); ok {
+		// Declared but not yet recorded: the first enabled edge will persist it.
+		// Logged here so a deployment can see its own setting took, without
+		// waiting for that edge.
+		logger.Printf("storage_mode -> %s (declared by %s=%s; recorded on first enable)", storageModeName(declared), envStorageMode, raw)
+	} else if raw != "" {
+		// Refused at startup rather than only on the enabled edge, because this
+		// is where a deploy option's typo is cheapest to notice.
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and the storage mode derived from the instance instead", envStorageMode, raw, storageModeEnvValues)
+	}
+
+	// The preflight remains tied to the AppAPI enabled edge, but not to the
+	// eager whole-archive uploader removed by D-613.
 	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
@@ -718,6 +746,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/setup", rt.setupHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
+	api.Handle("/storage", exappCfg.storageHandler(rt))
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
@@ -759,6 +788,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/status", api)
 		root.Handle("/setup", api)
 		root.Handle("/settings", api)
+		root.Handle("/storage", api)
 		root.Handle("/talk/provisioning", api)
 		return
 	}

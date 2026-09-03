@@ -220,11 +220,52 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
+| `--storage-mode default|acl-enabled` | `CASSINI_HARNESS_STORAGE_MODE` | `acl-enabled` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). See §2.8.1. |
+| `--debug-skip-storage-scaffold` | `CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1` | off | Build no recordings storage at all. Debug only. See §2.8.1. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |
 | `stack down --suspend` | n/a | false | Down-only; stop containers but keep them. |
 | `stack down --volumes` | n/a | false | Down-only; remove project volumes too. |
 | `stack down --full` | n/a | false | Down-only; remove all known harness resources. |
+
+#### 2.8.1 Recording storage mode
+
+Cassini stores published recordings in one of two models, and which one a stack
+is built for has to be decided rather than inferred. Inferring is what the ExApp
+does when nobody says: it looks at Nextcloud on its first enabled edge and picks
+the model that fits. On a stack still being assembled that is the wrong moment —
+a substrate built with `occ` seconds earlier may not have reached the web
+workers the probe asks — so the harness declares the mode instead.
+
+```text
+  --storage-mode acl-enabled          (default)
+    bootstrap: cassini account + group, groupfolders + group_everyone,
+               a mapped ACL-enabled Cassini Team folder
+    ExApp:     CASSINI_STORAGE_MODE=access_controlled
+    asserts:   recordings_access.ok — this is what the e2e suites require
+
+  --storage-mode default
+    bootstrap: cassini account + group, and nothing else
+    ExApp:     CASSINI_STORAGE_MODE=default
+    note:      no Team folder ON PURPOSE. A mapped folder wins the `Cassini`
+               path, so recordings would land somewhere the default model is
+               not looking — which the operator reports as `mode_mismatch`
+               and refuses to publish under.
+
+  --debug-skip-storage-scaffold       (composes with either mode)
+    bootstrap: no account, no group, neither app, no folder
+    ExApp:     started in whichever mode was selected
+```
+
+The two together — `--storage-mode acl-enabled --debug-skip-storage-scaffold` —
+give you access control selected with none of it built, which is the state a
+production Nextcloud is in before an administrator has set Cassini up and what
+the app's own setup flow exists to fix.
+
+The mode is only the ExApp's *initial* value. It is recorded in the app's
+`storage_settings.json` on the first enable and the Setup tab is what changes it
+afterwards, so re-registering with a different `--storage-mode` over an existing
+app volume changes nothing.
 
 ### 2.9 Supporting environment variables without stack flags
 

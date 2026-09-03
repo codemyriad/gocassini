@@ -266,15 +266,46 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			}
 			return true
 		}
+
+		// Which identity the bytes are fetched as is the whole access model
+		// (D-616):
+		//
+		//	access controlled   read AS THE CALLER. Nextcloud's own advanced
+		//	                    ACLs decide; a meeting they may not read 404s.
+		//	default             read AS THE OWNER. There is no Team folder and
+		//	                    therefore no mount in anybody's home, so reading
+		//	                    as the caller does not restrict the archive — it
+		//	                    hides all of it, from everyone.
+		//
+		// ncStorageServesAsOwner is where the condition lives, because it is not
+		// just "which mode": it also requires the last probe to have AGREED that
+		// nothing is mounted over the canonical path. Everything else here
+		// treats the per-caller path as the default, which is the direction that
+		// fails closed.
+		readAs := caller
+		if ncStorageServesAsOwner() {
+			readAs = ncRecordingsOwner
+		}
+
 		if relPath == "catalog.json" {
+			if readAs != caller {
+				// Default model: every account that may open the Cassini app may
+				// read every recording, so the authoritative catalog IS the
+				// caller's catalog. Nothing is filtered because nothing is
+				// restricted — filtering it against a per-caller scan that can
+				// only 404 would serve an empty archive to the whole instance.
+				c.serveOwnerCatalog(r.Context(), w, client, logger)
+				return true
+			}
 			// The list is built per caller (authoritative catalog filtered
 			// by the caller's own PROPFIND scan), not streamed as-is.
 			c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
 			return true
 		}
-		// meetings/<id>.opus: fetch AS the caller so Nextcloud enforces the
-		// per-file ACL — a non-readable meeting 404s and never leaks.
-		davURL := c.davFileURL(caller, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
+		// meetings/<id>.opus: under access control this fetches AS the caller so
+		// Nextcloud enforces the per-file ACL — a non-readable meeting 404s and
+		// never leaks.
+		davURL := c.davFileURL(readAs, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
 		req, err := http.NewRequestWithContext(r.Context(), r.Method, davURL, nil)
 		if err != nil {
 			if logger != nil {
@@ -283,7 +314,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			http.Error(w, "Nextcloud Files request failed", http.StatusInternalServerError)
 			return true
 		}
-		c.setAppAPIDAVHeadersForUser(req, caller)
+		c.setAppAPIDAVHeadersForUser(req, readAs)
 		if rng := r.Header.Get("Range"); rng != "" {
 			req.Header.Set("Range", rng)
 		}

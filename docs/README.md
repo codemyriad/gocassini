@@ -110,7 +110,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   env is creation-time only, so a release adding a _required_ env var is a
   breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
-- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — how per-participant access control works: what the ExApp provisions automatically on enable, the Team folders + Everyone Group prerequisites, and how to manage who can see each recording.
+- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — the two storage modes and how to switch between them, what per-participant access control needs (Team folders + Everyone Group, a `cassini` service account, a mapped Team folder — none of which Cassini creates for you), and how to manage who can see each recording.
 - **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the one optional step that sends data off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
@@ -214,9 +214,10 @@ Flagged so readers do not mistake intent for current behavior:
 - **The portable `.opus` viewer** renders transcript + metadata; it does not yet
   render an embedded summary from `.opus` (published artifact directories do).
 - **Group folders ACL inheritance is version-sensitive.** Per-recording access
-  control is unconditional and provisioned automatically, but it still requires
-  the Team folders and Everyone Group apps, and it is worth validating traversal
-  on your own instance — the runbook has a checklist.
+  control is one of two storage modes, and the one that requires the Team
+  folders and Everyone Group apps plus a Team folder an administrator sets up.
+  It is worth validating traversal on your own instance — the runbook has a
+  checklist.
 
 ## Fast paths
 

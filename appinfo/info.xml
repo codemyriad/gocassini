@@ -83,12 +83,17 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>CASSINI_NC_ADMIN_USER</name>
         <display-name>Administrator account for setup (optional)</display-name>
-        <description>The Nextcloud account Cassini acts as when it creates its recordings folder, groups and service account. Leave empty to detect an administrator automatically; set it only if detection picks the wrong account. This is used for one-time setup, never for storing or reading recordings — those use the dedicated "cassini" service account.</description>
+        <description>The Nextcloud account Cassini acts as when it checks how this instance is set up (which apps are enabled, whether the "cassini" service account exists, whether there is a Cassini Team folder) and when it moves recordings between storage modes. Leave empty to detect an administrator automatically; set it only if detection picks the wrong account. It is never used for storing or reading recordings — those use the dedicated "cassini" service account.</description>
       </variable>
       <variable>
         <name>CASSINI_PUBLISH_SINK</name>
         <display-name>Where published recordings are stored</display-name>
-        <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app, and the only mode with per-participant access control), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. The nextcloud-files mode needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps enabled first — Cassini provisions the folder and ACL topology itself but cannot install a PHP app. See docs/exapp-nextcloud-recordings-permissions.md.</description>
+        <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. Under nextcloud-files, WHO can read a recording is a separate choice made in the app's Setup tab: the default mode needs only a "cassini" service account and lets everyone who can open Cassini read every recording, while access-controlled mode restricts each recording to the people who were in the meeting and additionally needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps. Cassini installs neither app and creates no account — it reports what is missing and the command that fixes it. See docs/exapp-nextcloud-recordings-permissions.md.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_STORAGE_MODE</name>
+        <display-name>Initial recording storage mode (optional)</display-name>
+        <description>Which storage model a FRESH install starts in: "default" keeps recordings in the "cassini" service account's own folder, readable by everyone who can open Cassini and needing no extra Nextcloud apps; "access_controlled" keeps them in a Cassini Team folder where each recording is readable only by the people who were in the meeting, and additionally needs the Group folders and Everyone Group apps plus a Team folder an administrator sets up. Leave empty and Cassini works it out from the instance — which resolves to access control on an installation that already has that substrate, so an upgrade never widens an existing archive. This only seeds the choice: once made it is recorded, the app's Setup tab is where it is changed afterwards, and changing this variable does not move an archive that already exists.</description>
       </variable>
       <variable>
         <name>CASSINI_ARTIFACT_RETENTION</name>
@@ -186,6 +191,22 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <route>
         <url>^operator\/settings\/?$</url>
         <verb>GET,PUT</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <!-- ADMIN: storage mode (D-616, D-671). GET reports which storage model
+           this archive is under, what the other one would need, and the setup
+           plan for it; POST re-checks the instance or attempts the native app
+           installs; PUT switches modes, which MOVES every published recording.
+           ADMIN like the rest of the operator API — the blockers name accounts
+           and folder ids, and the PUT relocates the archive.
+
+           One route rather than three paths, because AppAPI matches url AND
+           verb: either way an install that predates this manifest has to be
+           re-registered before the new surface is reachable, so the only thing
+           left to choose is which is tidier to read. -->
+      <route>
+        <url>^operator\/storage\/?$</url>
+        <verb>GET,POST,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,

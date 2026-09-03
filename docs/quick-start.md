@@ -55,9 +55,15 @@ The first run is slow — it builds the ExApp image. Later runs without `--build
 reuse the existing image. Keep `--build` when validating changes in the current
 checkout; otherwise the harness deliberately runs the previously built image,
 which may be an older release even though Git is on your feature branch.
-Recordings are access-controlled — there is no other mode. The harness enables
-the Team folders and Everyone Group apps and the ExApp provisions the recordings
-folder and its permissions on enable — see
+The harness plays the administrator: it enables the Team folders and Everyone
+Group apps and creates the `cassini` service account and its Team folder, so a
+harness stack comes up **access-controlled** — each recording readable only by
+the people who were in the meeting. Cassini itself creates none of that; on a
+Nextcloud where an administrator has not, it runs in its **default** mode
+instead, where recordings live in the `cassini` account's own folder and
+everyone who can open the app can read all of them. Which mode an instance is
+in, what the other one still needs, and how to switch between them is in the
+app's **Setup** tab. See
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:
