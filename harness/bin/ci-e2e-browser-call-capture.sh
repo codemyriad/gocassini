@@ -45,7 +45,7 @@ ALICE="alice"
 ALICE_PASSWORD='Tn8mY3qVrJ2x!E2e'
 BOB="bob"
 BOB_PASSWORD='Rk7pW2sLq9Zx!E2e'
-BROWSER_PROCESS_TIMEOUT="${BROWSER_PROCESS_TIMEOUT:-240}"
+BROWSER_PROCESS_TIMEOUT="${BROWSER_PROCESS_TIMEOUT:-340}"
 
 RESULT="failed"
 CLEANUP_RESULT="not-run"
@@ -402,7 +402,13 @@ BROWSER_RESULT_CONTRACT='
   and .alice.microphoneSwitch.mode == "distinct-device"
   and .alice.microphoneSwitch.before.deviceId != .alice.microphoneSwitch.after.deviceId
   and .alice.microphoneSwitch.before.trackId != .alice.microphoneSwitch.after.trackId
-  and ([.alice.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 2
+  and ([.alice.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 3
+  and (.alice.reload.capturesBefore | length) == 1
+  and (.alice.reload.capturesAfter | length) == 1
+  and .alice.reload.capturesAfter[0] == .alice.reload.capturesBefore[0]
+  and .alice.reload.segmentsAfter > .alice.reload.segmentsBefore
+  and .alice.mediaAfterReload.rejoined == true
+  and .alice.mediaAfterReload.audioBytesSent > 2000
   and ([.bob.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 1
   and .alice.upload.status == 202
   and .bob.upload.status == 202
@@ -415,6 +421,7 @@ jq -e "$BROWSER_RESULT_CONTRACT" "$LOG_DIR/browser/result.json" >/dev/null \
 pass "both real browser participants sent SFU audio, captured themselves, and uploaded"
 pass "neither browser stored anything of its own for capture"
 pass "Talk's microphone selection replaced Alice's live sender and cut multiple browser segments"
+pass "Alice reloaded mid-recording, rejoined, and the rejoined page resumed the same capture"
 
 # verify_owner_capture asserts one participant's capture landed whole under
 # their own owner directory and is reconciled byte-for-byte against the upload
@@ -485,7 +492,7 @@ verify_owner_capture() {
     "$(exapp_logs)" || fail "operator log does not account for $owner's browser upload"
 }
 
-verify_owner_capture alice "$ALICE" 2
+verify_owner_capture alice "$ALICE" 3
 ALICE_CALL_START_MS="$OWNER_CALL_START_MS"
 ALICE_SEGMENT_COUNT="$OWNER_SEGMENT_COUNT"
 ALICE_BYTES="$OWNER_BYTES"
