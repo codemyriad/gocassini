@@ -248,14 +248,14 @@ function normalizeLLMSettings(raw: unknown): LLMSettings {
           name: asString(item.name),
           base_url: asString(item.base_url),
           api_key_configured: item.api_key_configured === true,
+          timeout_sec: asNonNegativeNumber(item.timeout_sec),
+          max_tokens: asNonNegativeNumber(item.max_tokens),
         }))
         .filter((item) => item.id !== "")
     : [];
   return {
     providers,
     summary: normalizeLLMStep(value.summary),
-    timeout_sec: asNonNegativeNumber(value.timeout_sec),
-    max_tokens: asNonNegativeNumber(value.max_tokens),
     effective: {
       summary: normalizeLLMEffectiveStep(effective.summary),
     },

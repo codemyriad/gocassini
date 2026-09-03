@@ -66,8 +66,8 @@ func TestSeedLLMSettingsHonoursSwitchAndSummaryModel(t *testing.T) {
 	if s.Summary.Model != "large" {
 		t.Fatalf("summary model = %q, want large", s.Summary.Model)
 	}
-	if s.TimeoutSec != 1800 || s.MaxTokens != 8192 {
-		t.Fatalf("bounds = %d/%d", s.TimeoutSec, s.MaxTokens)
+	if s.Providers[0].TimeoutSec != 1800 || s.Providers[0].MaxTokens != 8192 {
+		t.Fatalf("provider bounds = %d/%d, want 1800/8192", s.Providers[0].TimeoutSec, s.Providers[0].MaxTokens)
 	}
 }
 
@@ -85,11 +85,10 @@ func TestSeedLLMSettingsEmptyWithoutEndpoint(t *testing.T) {
 func TestLLMChildEnvStripsInheritedAndEmitsPerStep(t *testing.T) {
 	s := LLMSettings{
 		Providers: []LLMProvider{
-			{ID: "hosted", Name: "OpenRouter", BaseURL: openRouterBaseURL, APIKey: "sk-or-secret"},
+			{ID: "hosted", Name: "OpenRouter", BaseURL: openRouterBaseURL, APIKey: "sk-or-secret", TimeoutSec: 600},
 			{ID: "local", Name: "Qwen", BaseURL: "http://qwen.internal:8000/v1"},
 		},
-		Summary:    LLMStep{Enabled: true, Provider: "hosted", Model: "big"},
-		TimeoutSec: 600,
+		Summary: LLMStep{Enabled: true, Provider: "hosted", Model: "big"},
 	}
 	base := []string{
 		"PATH=/bin",
@@ -179,7 +178,7 @@ func TestNormalizeLLMSettingsRejectsUnresolvablePolicy(t *testing.T) {
 		"bad scheme":                    {Providers: []LLMProvider{{ID: "x", BaseURL: "ftp://qwen.internal/v1"}}},
 		"not a url":                     {Providers: []LLMProvider{{ID: "x", BaseURL: "qwen"}}},
 		"id with slash":                 {Providers: []LLMProvider{{ID: "a/b", BaseURL: "http://qwen.internal/v1"}}},
-		"negative timeout":              {TimeoutSec: -1},
+		"negative timeout":              {Providers: []LLMProvider{{ID: "x", BaseURL: "http://qwen.internal/v1", TimeoutSec: -1}}},
 	}
 	for name, in := range cases {
 		if _, err := normalizeLLMSettings(in); err == nil {

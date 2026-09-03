@@ -118,6 +118,8 @@ describe("llm settings client", () => {
                 base_url: "https://openrouter.ai/api/v1",
                 api_key_configured: true,
                 api_key: "LEAKED-NEVER-CARRY",
+                timeout_sec: 1800,
+                max_tokens: -3,
               },
             ],
             summary: { enabled: true, provider: "default" },
@@ -132,8 +134,9 @@ describe("llm settings client", () => {
 
     expect(JSON.stringify(settings)).not.toContain("LEAKED-NEVER-CARRY");
     expect(settings.providers[0]?.api_key_configured).toBe(true);
+    expect(settings.providers[0]?.timeout_sec).toBe(1800);
+    expect(settings.providers[0]?.max_tokens).toBe(0);
     expect(settings.summary.enabled).toBe(true);
-    expect(settings.timeout_sec).toBe(0);
     expect(settings.effective).toEqual({ summary: null });
   });
 

@@ -31,10 +31,8 @@ import (
 // recorder's kill-switches) seeds the file once, on first start, and is
 // ignored after that. API keys are persisted here and never served.
 type LLMSettings struct {
-	Providers  []LLMProvider `json:"providers"`
-	Summary    LLMStep       `json:"summary"`
-	TimeoutSec int           `json:"timeout_sec,omitempty"`
-	MaxTokens  int           `json:"max_tokens,omitempty"`
+	Providers []LLMProvider `json:"providers"`
+	Summary   LLMStep       `json:"summary"`
 }
 
 // LLMProvider is one OpenAI-compatible chat-completions endpoint.
@@ -45,6 +43,12 @@ type LLMProvider struct {
 	// APIKey is write-only from the API's point of view: GET reports
 	// api_key_configured instead of the value.
 	APIKey string `json:"api_key,omitempty"`
+	// TimeoutSec and MaxTokens bound each request to this endpoint; 0 means
+	// the recorder default (900s / 4096 tokens). Per endpoint, because they
+	// describe the host: a CPU-bound local model needs a longer leash than a
+	// hosted API.
+	TimeoutSec int `json:"timeout_sec,omitempty"`
+	MaxTokens  int `json:"max_tokens,omitempty"`
 }
 
 // LLMStep is the policy for one LLM step: whether it runs, on which provider,
@@ -136,11 +140,7 @@ func llmProviderNameFor(base string) string {
 // becomes the one provider and both steps run on it unless their kill-switch
 // is set. With no endpoint the policy is empty and both steps are off.
 func SeedLLMSettings(getenv func(string) string) LLMSettings {
-	s := LLMSettings{
-		Providers:  []LLMProvider{},
-		TimeoutSec: envIntFrom(getenv, envLLMTimeoutSec),
-		MaxTokens:  envIntFrom(getenv, envLLMMaxTokens),
-	}
+	s := LLMSettings{Providers: []LLMProvider{}}
 	key := strings.TrimSpace(getenv(envLLMAPIKey))
 	base := strings.TrimSpace(getenv(envLLMBaseURLLegacy))
 	if base == "" {
@@ -152,7 +152,11 @@ func SeedLLMSettings(getenv func(string) string) LLMSettings {
 	if base == "" {
 		return s
 	}
-	provider := LLMProvider{ID: "default", Name: llmProviderNameFor(base), BaseURL: base, APIKey: key}
+	provider := LLMProvider{
+		ID: "default", Name: llmProviderNameFor(base), BaseURL: base, APIKey: key,
+		TimeoutSec: envIntFrom(getenv, envLLMTimeoutSec),
+		MaxTokens:  envIntFrom(getenv, envLLMMaxTokens),
+	}
 	s.Providers = append(s.Providers, provider)
 	summaryModel := strings.TrimSpace(getenv(envSummaryModel))
 	if summaryModel == "" {
@@ -242,6 +246,12 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 		if p.Name == "" {
 			p.Name = llmProviderNameFor(p.BaseURL)
 		}
+		if p.TimeoutSec < 0 {
+			return s, fmt.Errorf("provider %q: timeout_sec must not be negative", p.ID)
+		}
+		if p.MaxTokens < 0 {
+			return s, fmt.Errorf("provider %q: max_tokens must not be negative", p.ID)
+		}
 		for _, f := range []struct{ name, value string }{{"id", p.ID}, {"name", p.Name}, {"base_url", p.BaseURL}} {
 			if utf8.RuneCountInString(f.value) > maxLLMFieldRunes {
 				return s, fmt.Errorf("provider %q: %s exceeds %d characters", p.ID, f.name, maxLLMFieldRunes)
@@ -253,12 +263,6 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 	var err error
 	if s.Summary, err = normalizeLLMStep("summary", s.Summary, ids); err != nil {
 		return s, err
-	}
-	if s.TimeoutSec < 0 {
-		return s, errors.New("timeout_sec must not be negative")
-	}
-	if s.MaxTokens < 0 {
-		return s, errors.New("max_tokens must not be negative")
 	}
 	return s, nil
 }
@@ -338,12 +342,6 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 		out = append(out, kv)
 	}
 	out = s.appendStepEnv(out, llmStepSummary, s.Summary)
-	if s.TimeoutSec > 0 {
-		out = append(out, envLLMTimeoutSec+"="+strconv.Itoa(s.TimeoutSec))
-	}
-	if s.MaxTokens > 0 {
-		out = append(out, envLLMMaxTokens+"="+strconv.Itoa(s.MaxTokens))
-	}
 	return out
 }
 
@@ -359,6 +357,12 @@ func (s LLMSettings) appendStepEnv(out []string, name string, step LLMStep) []st
 	}
 	if step.Model != "" {
 		out = append(out, modelKey+"="+step.Model)
+	}
+	if p.TimeoutSec > 0 {
+		out = append(out, envLLMTimeoutSec+"="+strconv.Itoa(p.TimeoutSec))
+	}
+	if p.MaxTokens > 0 {
+		out = append(out, envLLMMaxTokens+"="+strconv.Itoa(p.MaxTokens))
 	}
 	return out
 }
@@ -393,6 +397,8 @@ type llmProviderView struct {
 	Name             string `json:"name"`
 	BaseURL          string `json:"base_url"`
 	APIKeyConfigured bool   `json:"api_key_configured"`
+	TimeoutSec       int    `json:"timeout_sec"`
+	MaxTokens        int    `json:"max_tokens"`
 }
 
 // llmEffectiveStep is what the recorder will actually receive for a step; nil
@@ -409,24 +415,23 @@ type llmEffective struct {
 }
 
 type llmSettingsResponse struct {
-	Providers  []llmProviderView `json:"providers"`
-	Summary    LLMStep           `json:"summary"`
-	TimeoutSec int               `json:"timeout_sec"`
-	MaxTokens  int               `json:"max_tokens"`
-	Effective  llmEffective      `json:"effective"`
+	Providers []llmProviderView `json:"providers"`
+	Summary   LLMStep           `json:"summary"`
+	Effective llmEffective      `json:"effective"`
 }
 
 func (s LLMSettings) view() llmSettingsResponse {
 	providers := make([]llmProviderView, 0, len(s.Providers))
 	for _, p := range s.Providers {
-		providers = append(providers, llmProviderView{ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, APIKeyConfigured: p.APIKey != ""})
+		providers = append(providers, llmProviderView{
+			ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, APIKeyConfigured: p.APIKey != "",
+			TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens,
+		})
 	}
 	return llmSettingsResponse{
-		Providers:  providers,
-		Summary:    s.Summary,
-		TimeoutSec: s.TimeoutSec,
-		MaxTokens:  s.MaxTokens,
-		Effective:  llmEffective{Summary: s.effectiveStep(s.Summary)},
+		Providers: providers,
+		Summary:   s.Summary,
+		Effective: llmEffective{Summary: s.effectiveStep(s.Summary)},
 	}
 }
 
@@ -441,19 +446,19 @@ func (s LLMSettings) effectiveStep(step LLMStep) *llmEffectiveStep {
 // llmProviderUpdate is one provider in a PUT body. APIKey distinguishes
 // "omitted" (keep the stored key for this id) from "" (clear it).
 type llmProviderUpdate struct {
-	ID      string  `json:"id"`
-	Name    string  `json:"name"`
-	BaseURL string  `json:"base_url"`
-	APIKey  *string `json:"api_key"`
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	BaseURL    string  `json:"base_url"`
+	APIKey     *string `json:"api_key"`
+	TimeoutSec int     `json:"timeout_sec"`
+	MaxTokens  int     `json:"max_tokens"`
 }
 
 // llmSettingsUpdate is the PUT body. Every field is optional; a present
 // providers list replaces the stored one.
 type llmSettingsUpdate struct {
-	Providers  *[]llmProviderUpdate `json:"providers"`
-	Summary    *LLMStep             `json:"summary"`
-	TimeoutSec *int                 `json:"timeout_sec"`
-	MaxTokens  *int                 `json:"max_tokens"`
+	Providers *[]llmProviderUpdate `json:"providers"`
+	Summary   *LLMStep             `json:"summary"`
 }
 
 func (rt *Runtime) llmSettingsHandler(w http.ResponseWriter, r *http.Request) {
@@ -521,7 +526,7 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 			if id == "" {
 				id = newLLMProviderID()
 			}
-			next := LLMProvider{ID: id, Name: p.Name, BaseURL: p.BaseURL}
+			next := LLMProvider{ID: id, Name: p.Name, BaseURL: p.BaseURL, TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens}
 			if p.APIKey != nil {
 				next.APIKey = *p.APIKey
 			} else if old, ok := stored[id]; ok {
@@ -534,13 +539,6 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 	if in.Summary != nil {
 		updated.Summary = *in.Summary
 	}
-	if in.TimeoutSec != nil {
-		updated.TimeoutSec = *in.TimeoutSec
-	}
-	if in.MaxTokens != nil {
-		updated.MaxTokens = *in.MaxTokens
-	}
-
 	updated, err = normalizeLLMSettings(updated)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())

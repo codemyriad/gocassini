@@ -129,6 +129,9 @@ export interface LLMProviderView {
   name: string;
   base_url: string;
   api_key_configured: boolean;
+  // 0 means "use the recorder default" (900s / 4096 tokens).
+  timeout_sec: number;
+  max_tokens: number;
 }
 
 export interface LLMStep {
@@ -147,8 +150,6 @@ export interface LLMEffectiveStep {
 export interface LLMSettings {
   providers: LLMProviderView[];
   summary: LLMStep;
-  timeout_sec: number;
-  max_tokens: number;
   effective: {
     summary: LLMEffectiveStep | null;
   };
@@ -161,13 +162,13 @@ export interface LLMProviderUpdate {
   name: string;
   base_url: string;
   api_key?: string | null;
+  timeout_sec?: number;
+  max_tokens?: number;
 }
 
 export interface LLMSettingsUpdate {
   providers?: LLMProviderUpdate[];
   summary?: LLMStep;
-  timeout_sec?: number;
-  max_tokens?: number;
 }
 
 export interface LLMModel {

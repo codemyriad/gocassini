@@ -18,13 +18,14 @@
     keyConfigured: boolean;
     keyInput: string;
     keyCleared: boolean;
+    // null renders the input empty so the placeholder shows the default.
+    timeoutSec: number | null;
+    maxTokens: number | null;
   }
 
   let settings: LLMSettings | null = null;
   let providers: ProviderRow[] = [];
   let summary: LLMStep = { enabled: false, provider: "", model: "" };
-  let timeoutSec = 0;
-  let maxTokens = 0;
   let snapshot = "";
 
   let loading = true;
@@ -67,11 +68,11 @@
       keyConfigured: p.api_key_configured,
       keyInput: "",
       keyCleared: false,
+      timeoutSec: p.timeout_sec > 0 ? p.timeout_sec : null,
+      maxTokens: p.max_tokens > 0 ? p.max_tokens : null,
     }));
     summary = { ...next.summary };
-    timeoutSec = next.timeout_sec;
-    maxTokens = next.max_tokens;
-    snapshot = JSON.stringify({ providers, summary, timeoutSec, maxTokens });
+    snapshot = JSON.stringify({ providers, summary });
   }
 
   function newProviderId(): string {
@@ -83,7 +84,16 @@
   function addProvider() {
     providers = [
       ...providers,
-      { id: newProviderId(), name: "", baseUrl: "", keyConfigured: false, keyInput: "", keyCleared: false },
+      {
+        id: newProviderId(),
+        name: "",
+        baseUrl: "",
+        keyConfigured: false,
+        keyInput: "",
+        keyCleared: false,
+        timeoutSec: null,
+        maxTokens: null,
+      },
     ];
   }
 
@@ -125,7 +135,13 @@
       apply(
         await operatorClient.putLLMSettings({
           providers: providers.map((row): LLMProviderUpdate => {
-            const update: LLMProviderUpdate = { id: row.id, name: row.name, base_url: row.baseUrl };
+            const update: LLMProviderUpdate = {
+              id: row.id,
+              name: row.name,
+              base_url: row.baseUrl,
+              timeout_sec: row.timeoutSec ?? 0,
+              max_tokens: row.maxTokens ?? 0,
+            };
             if (row.keyCleared) {
               update.api_key = "";
             } else if (row.keyInput !== "") {
@@ -134,8 +150,6 @@
             return update;
           }),
           summary,
-          timeout_sec: Number(timeoutSec) || 0,
-          max_tokens: Number(maxTokens) || 0,
         }),
       );
     } catch (error) {
@@ -160,7 +174,7 @@
     return `Currently: ${effective.base_url} · ${effective.model || "endpoint default model"}`;
   }
 
-  $: current = JSON.stringify({ providers, summary, timeoutSec, maxTokens });
+  $: current = JSON.stringify({ providers, summary });
   $: isDirty = settings !== null && current !== snapshot;
 </script>
 
@@ -291,6 +305,26 @@
                 <Trash2 size={14} aria-hidden="true" />
               </button>
             </div>
+            <label class="flex w-full flex-col gap-1">
+              <span class="text-xs font-medium text-base-content/70">Request timeout (s)</span>
+              <input
+                bind:value={row.timeoutSec}
+                type="number"
+                min="1"
+                class="input input-sm w-full border-base-300 shadow-none"
+                placeholder="900 (default)"
+              />
+            </label>
+            <label class="flex w-full flex-col gap-1">
+              <span class="text-xs font-medium text-base-content/70">Response token limit</span>
+              <input
+                bind:value={row.maxTokens}
+                type="number"
+                min="1"
+                class="input input-sm w-full border-base-300 shadow-none"
+                placeholder="4096 (default)"
+              />
+            </label>
           </div>
         {/each}
       </section>
@@ -343,36 +377,6 @@
       {#if modelsError}
         <div class="alert alert-warning text-sm">{modelsError}</div>
       {/if}
-
-      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
-        <h3 class="text-sm font-semibold">Request bounds</h3>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Timeout (seconds)</span>
-            <input
-              bind:value={timeoutSec}
-              type="number"
-              min="0"
-              class="input input-sm w-full border-base-300 shadow-none"
-              placeholder="900"
-            />
-          </label>
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Response token limit</span>
-            <input
-              bind:value={maxTokens}
-              type="number"
-              min="0"
-              class="input input-sm w-full border-base-300 shadow-none"
-              placeholder="4096"
-            />
-          </label>
-        </div>
-        <p class="text-xs text-base-content/60">
-          0 uses the default (900s / 4096 tokens). Raise the timeout for a CPU-bound self-hosted
-          model.
-        </p>
-      </section>
 
       <button
         class="btn btn-primary w-full text-sm sm:hidden"
