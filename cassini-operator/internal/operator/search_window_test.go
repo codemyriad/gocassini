@@ -42,7 +42,7 @@ func TestBuildSearchWindowsPerturbLocallyWhenAWordIsInserted(t *testing.T) {
 
 	find := func(windows []searchWindow, startMS int64) (searchWindow, bool) {
 		for _, window := range windows {
-			if window.StartMS == startMS {
+			if window.BucketMS == startMS {
 				return window, true
 			}
 		}
@@ -104,7 +104,7 @@ func TestBuildSearchWindowsAreDeterministic(t *testing.T) {
 	}
 	// Ordered by (start, speaker), never by map iteration.
 	for i := 1; i < len(first); i++ {
-		if first[i-1].StartMS > first[i].StartMS {
+		if first[i-1].BucketMS > first[i].BucketMS {
 			t.Fatalf("rows are not ordered by start: %+v", first)
 		}
 	}
@@ -132,8 +132,8 @@ func TestBuildSearchWindowsAtTheStartOfAMeeting(t *testing.T) {
 	if len(windows) != 1 {
 		t.Fatalf("windows = %+v, want exactly one", windows)
 	}
-	if windows[0].StartMS != 0 || windows[0].EndMS != searchWindowWidthMS {
-		t.Errorf("window = [%d,%d), want [0,%d)", windows[0].StartMS, windows[0].EndMS, searchWindowWidthMS)
+	if windows[0].BucketMS != 0 {
+		t.Errorf("bucket = %d, want 0", windows[0].BucketMS)
 	}
 }
 
@@ -145,5 +145,58 @@ func TestBuildSearchWindowsKeepsSpeakerlessWords(t *testing.T) {
 	})
 	if len(windows) != 1 || windows[0].SpeakerID != "" {
 		t.Fatalf("windows = %+v, want one row under the empty speaker id", windows)
+	}
+}
+
+// A row's reference must be the speech inside it, never the bucket's own
+// bounds — otherwise every hit sends the reader to a 30-second haystack that
+// starts wherever the arithmetic landed rather than where anyone spoke.
+func TestBuildSearchWindowsCiteSpeechNotBucketBounds(t *testing.T) {
+	windows := buildSearchWindows([]searchTranscriptWord{
+		{SpeakerID: "S1", StartMS: 20_000, EndMS: 20_400, Text: "acquisition"},
+	})
+	for _, window := range windows {
+		if window.StartMS != 20_000 || window.EndMS != 20_400 {
+			t.Errorf("bucket %d cited [%d,%d], want the speech span [20000,20400]",
+				window.BucketMS, window.StartMS, window.EndMS)
+		}
+		if window.StartMS == window.BucketMS && window.BucketMS != 20_000 {
+			t.Errorf("bucket %d cited its own start instead of the speech", window.BucketMS)
+		}
+	}
+	// The same word lands in two overlapping buckets, and both cite the speech.
+	if len(windows) != 2 {
+		t.Fatalf("windows = %d, want 2 overlapping buckets", len(windows))
+	}
+	if windows[0].BucketMS != 0 || windows[1].BucketMS != 15_000 {
+		t.Errorf("buckets = %d,%d, want 0 and 15000", windows[0].BucketMS, windows[1].BucketMS)
+	}
+}
+
+// A word with no usable end degrades to a point in time rather than being
+// dropped: a reference to an instant is still a true reference.
+func TestBuildSearchWindowsToleratesAMissingWordEnd(t *testing.T) {
+	windows := buildSearchWindows([]searchTranscriptWord{
+		{SpeakerID: "S1", StartMS: 5_000, Text: "unbounded"},
+	})
+	if len(windows) != 1 {
+		t.Fatalf("windows = %+v, want one", windows)
+	}
+	if windows[0].StartMS != 5_000 || windows[0].EndMS != 5_000 {
+		t.Errorf("span = [%d,%d], want the instant [5000,5000]", windows[0].StartMS, windows[0].EndMS)
+	}
+}
+
+// Words are not assumed to arrive in order: the span widens to cover them.
+func TestBuildSearchWindowsWidenTheSpanRegardlessOfWordOrder(t *testing.T) {
+	windows := buildSearchWindows([]searchTranscriptWord{
+		{SpeakerID: "S1", StartMS: 9_000, EndMS: 9_500, Text: "later"},
+		{SpeakerID: "S1", StartMS: 2_000, EndMS: 2_300, Text: "earlier"},
+	})
+	if len(windows) != 1 {
+		t.Fatalf("windows = %+v, want one", windows)
+	}
+	if windows[0].StartMS != 2_000 || windows[0].EndMS != 9_500 {
+		t.Errorf("span = [%d,%d], want [2000,9500]", windows[0].StartMS, windows[0].EndMS)
 	}
 }

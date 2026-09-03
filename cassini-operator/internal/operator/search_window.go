@@ -58,12 +58,30 @@ const (
 type searchTranscriptWord struct {
 	SpeakerID string
 	StartMS   int64
+	EndMS     int64
 	Text      string
 }
 
-// searchWindow is one indexable row: a span of wall-clock time, one speaker,
-// and the words they said inside it.
+// searchWindow is one indexable row: one speaker's words inside one bucket.
+//
+// The distinction between BucketMS and StartMS/EndMS is the point, so it is
+// worth stating rather than leaving to be inferred.
+//
+// BucketMS is the row's IDENTITY — which bucket this is — and it is a pure
+// function of each word's own startMs. It is what makes the row set stable: a
+// re-transcription that inserts a word changes only the buckets that word falls
+// in, and every other bucket keeps the identity it had.
+//
+// StartMS and EndMS are the row's REFERENCE — when someone actually spoke
+// inside it. They are the first word's start and the last word's end, not the
+// bucket's bounds, because the bucket's bounds are an artifact of the indexing
+// scheme and reporting them would send a reader to a 30-second haystack that
+// begins wherever the arithmetic happened to land. A hit should say "they said
+// this at 00:14:32", not "somewhere in the half minute from 00:15:00".
 type searchWindow struct {
+	// BucketMS identifies the bucket: index * searchWindowStrideMS.
+	BucketMS int64
+	// StartMS and EndMS bound the actual speech in this row.
 	StartMS   int64
 	EndMS     int64
 	SpeakerID string
@@ -86,7 +104,12 @@ func buildSearchWindows(words []searchTranscriptWord) []searchWindow {
 		index   int64
 		speaker string
 	}
-	buckets := map[bucketKey][]string{}
+	type bucketValue struct {
+		texts   []string
+		startMS int64
+		endMS   int64
+	}
+	buckets := map[bucketKey]*bucketValue{}
 
 	for _, word := range words {
 		text := strings.TrimSpace(word.Text)
@@ -100,31 +123,50 @@ func buildSearchWindows(words []searchTranscriptWord) []searchWindow {
 			// the artifact does not make.
 			continue
 		}
-		// A word belongs to the window its startMs falls in, and to the previous
-		// one, which still covers it because windows are twice the stride wide.
+		end := word.EndMS
+		if end < start {
+			// A missing or nonsensical end is not a reason to drop a word that
+			// has a usable start; the reference degrades to a point in time.
+			end = start
+		}
+		// A word belongs to the bucket its startMs falls in, and to the previous
+		// one, which still covers it because buckets are twice the stride wide.
 		last := start / searchWindowStrideMS
 		for index := last - 1; index <= last; index++ {
 			if index < 0 {
 				continue
 			}
 			key := bucketKey{index: index, speaker: word.SpeakerID}
-			buckets[key] = append(buckets[key], text)
+			value := buckets[key]
+			if value == nil {
+				value = &bucketValue{startMS: start, endMS: end}
+				buckets[key] = value
+			}
+			value.texts = append(value.texts, text)
+			// Words arrive in whatever order the caller supplies, so the bounds
+			// are widened rather than assumed to be first-and-last.
+			if start < value.startMS {
+				value.startMS = start
+			}
+			if end > value.endMS {
+				value.endMS = end
+			}
 		}
 	}
 
 	windows := make([]searchWindow, 0, len(buckets))
-	for key, texts := range buckets {
-		start := key.index * searchWindowStrideMS
+	for key, value := range buckets {
 		windows = append(windows, searchWindow{
-			StartMS:   start,
-			EndMS:     start + searchWindowWidthMS,
+			BucketMS:  key.index * searchWindowStrideMS,
+			StartMS:   value.startMS,
+			EndMS:     value.endMS,
 			SpeakerID: key.speaker,
-			Text:      strings.Join(texts, " "),
+			Text:      strings.Join(value.texts, " "),
 		})
 	}
 	sort.Slice(windows, func(i, j int) bool {
-		if windows[i].StartMS != windows[j].StartMS {
-			return windows[i].StartMS < windows[j].StartMS
+		if windows[i].BucketMS != windows[j].BucketMS {
+			return windows[i].BucketMS < windows[j].BucketMS
 		}
 		return windows[i].SpeakerID < windows[j].SpeakerID
 	})

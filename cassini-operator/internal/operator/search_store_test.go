@@ -26,7 +26,7 @@ func newTestSearchStore(t *testing.T) *searchStore {
 func matches(t *testing.T, store *searchStore, expression string) []searchWindow {
 	t.Helper()
 	rows, err := store.db.Query(`
-SELECT r.opus_name, r.start_ms, r.end_ms, r.speaker_id
+SELECT r.opus_name, r.bucket_ms, r.start_ms, r.end_ms, r.speaker_id
   FROM window_fts f
   JOIN window_ref r ON r.rowid_ = f.rowid
  WHERE window_fts MATCH ?
@@ -39,7 +39,7 @@ SELECT r.opus_name, r.start_ms, r.end_ms, r.speaker_id
 	for rows.Next() {
 		var name string
 		var window searchWindow
-		if err := rows.Scan(&name, &window.StartMS, &window.EndMS, &window.SpeakerID); err != nil {
+		if err := rows.Scan(&name, &window.BucketMS, &window.StartMS, &window.EndMS, &window.SpeakerID); err != nil {
 			t.Fatalf("scan match: %v", err)
 		}
 		window.Text = name
@@ -53,10 +53,10 @@ func TestSearchStoreIndexesAndResolvesReferences(t *testing.T) {
 	ctx := context.Background()
 
 	windows := buildSearchWindows([]searchTranscriptWord{
-		{SpeakerID: "S1", StartMS: 1_000, Text: "we"},
-		{SpeakerID: "S1", StartMS: 1_400, Text: "discussed"},
-		{SpeakerID: "S1", StartMS: 1_900, Text: "acquisition"},
-		{SpeakerID: "S2", StartMS: 62_000, Text: "roadmap"},
+		{SpeakerID: "S1", StartMS: 1_000, EndMS: 1_200, Text: "we"},
+		{SpeakerID: "S1", StartMS: 1_400, EndMS: 1_700, Text: "discussed"},
+		{SpeakerID: "S1", StartMS: 1_900, EndMS: 1_900, Text: "acquisition"},
+		{SpeakerID: "S2", StartMS: 62_000, EndMS: 62_400, Text: "roadmap"},
 	})
 	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-1", windows); err != nil {
 		t.Fatalf("replace: %v", err)
@@ -69,8 +69,14 @@ func TestSearchStoreIndexesAndResolvesReferences(t *testing.T) {
 	if hits[0].Text != "JOB1.opus" || hits[0].SpeakerID != "S1" {
 		t.Errorf("hit = %+v, want JOB1.opus / S1", hits[0])
 	}
-	if hits[0].StartMS != 0 || hits[0].EndMS != 30_000 {
-		t.Errorf("window = [%d,%d), want [0,30000)", hits[0].StartMS, hits[0].EndMS)
+	// The reference is the real speech span, not the bucket's bounds: the words
+	// ran 1000..1900ms, so that is what a hit must cite.
+	if hits[0].BucketMS != 0 {
+		t.Errorf("bucket = %d, want 0", hits[0].BucketMS)
+	}
+	if hits[0].StartMS != 1_000 || hits[0].EndMS != 1_900 {
+		t.Errorf("speech span = [%d,%d], want [1000,1900] — a hit must not cite bucket bounds",
+			hits[0].StartMS, hits[0].EndMS)
 	}
 	if got := matches(t, store, "roadmap"); len(got) == 0 || got[0].SpeakerID != "S2" {
 		t.Errorf("speaker split lost the second speaker: %+v", got)
@@ -88,7 +94,7 @@ func TestSearchStoreIndexesAndResolvesReferences(t *testing.T) {
 func TestSearchStoreCannotEmitIndexedText(t *testing.T) {
 	store := newTestSearchStore(t)
 	if err := store.ReplaceMeeting(context.Background(), "JOB1.opus", "", []searchWindow{
-		{StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "severance package details"},
+		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "severance package details"},
 	}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
@@ -116,12 +122,12 @@ func TestSearchStoreReplacesRatherThanAppends(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-1", []searchWindow{
-		{StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "original wording"},
+		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "original wording"},
 	}); err != nil {
 		t.Fatalf("first replace: %v", err)
 	}
 	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-2", []searchWindow{
-		{StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "corrected wording"},
+		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "corrected wording"},
 	}); err != nil {
 		t.Fatalf("second replace: %v", err)
 	}
@@ -149,7 +155,7 @@ func TestSearchStoreForgetLeavesNoOrphanedPostings(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "", []searchWindow{
-		{StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "quarterly numbers"},
+		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "quarterly numbers"},
 	}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
@@ -177,7 +183,7 @@ func TestSearchStoreUnavailableDropsRowsAndCoverage(t *testing.T) {
 
 	for _, name := range []string{"JOB1.opus", "JOB2.opus"} {
 		if err := store.ReplaceMeeting(ctx, name, "", []searchWindow{
-			{StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "budget"},
+			{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "budget"},
 		}); err != nil {
 			t.Fatalf("replace %s: %v", name, err)
 		}
@@ -211,7 +217,7 @@ func TestSearchStoreRebuildsOnSchemaVersionMismatch(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	if err := store.ReplaceMeeting(context.Background(), "JOB1.opus", "", []searchWindow{
-		{StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "stale index content"},
+		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "stale index content"},
 	}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
