@@ -438,6 +438,14 @@ let preparedWorker: Worker | null = null;
 // transform offered to a sender carrying a live call.
 let captureAbandoned = false;
 let talkRecordingActive = false;
+// talkRecordingRoom is the room talkRecordingActive is an answer ABOUT.
+//
+// Talk navigates between conversations without reloading, and both the socket
+// event and the room request are answered per room; the flag they set was not.
+// A participant leaving a recorded room for one that is not being recorded —
+// the second room's sender arriving before the second room's status does —
+// would have started a capture on the first room's answer.
+let talkRecordingRoom: string | null = null;
 // recordingStatusAnswered distinguishes "Talk says this room is not being
 // recorded" from "Talk has not answered yet". Only the first is a reason to
 // stop holding a buffered capture for adoption; treating the second as a no
@@ -1020,13 +1028,13 @@ let deferredCaptureStart: { sender: RTCRtpSender; connection: RTCPeerConnection 
 //
 // The decision reads a directory listing and a few small manifests, so on any
 // healthy browser it lands in milliseconds and this is never reached. It is
-// deliberately far above that rather than close to it, because what expiry
-// costs is the reload filing two captures instead of one — both still reach the
-// server and the recorder still uses both, but the identity the design wants is
-// lost. Five seconds is the point past which the storage layer is not going to
-// answer at all, and holding the participant's microphone hostage to it would
-// be the worse trade.
-const SETTLE_DEADLINE_MS = 5_000;
+// bounded BELOW the loss this design promises a reload — about two seconds, the
+// chunk cadence — because a gate that can cost more than that has made the
+// promise false for a reason that has nothing to do with the reload. Expiry
+// costs the reload filing two captures instead of one; both still reach the
+// server and the recorder splices both, so what is lost is the identity, not
+// the audio.
+const SETTLE_DEADLINE_MS = 1_000;
 
 function finishSettling(): void {
   if (!settlingBufferedCaptures) {
@@ -1223,12 +1231,18 @@ function currentParticipantId(): string {
 // on their own disk — and the alternative is a person's speech published as
 // somebody else's.
 //
-// A sidecar that names nobody is not a mismatch. Older builds, and a page whose
-// Talk globals were not ready, record an empty id; those still upload, and the
-// server decides whose they are exactly as it always did.
+// A sidecar that names nobody is nobody's to offer either. It was tempting to
+// let those through — an older build, or a page whose Talk globals were not
+// ready, records an empty id, and stranding them costs their owner an upload.
+// But the server stamps the authenticated caller regardless of what the sidecar
+// says, so "we do not know whose this is" and "send it as this person's" cannot
+// both be right, and the second publishes a person's speech under another name.
+// Every capture this build writes carries an id, because OC.getCurrentUser is
+// there on any Talk call page; what is refused here is the rare one that does
+// not, and it is refused rather than misattributed.
 function captureIsThisParticipants(sealed: SealedCapture): boolean {
   const claimed = (sealed.sidecar.participantId ?? "").trim();
-  return claimed === "" || claimed === currentParticipantId();
+  return claimed !== "" && claimed === currentParticipantId();
 }
 
 // captureIsAdoptable decides whether a sealed capture is this recording's own
@@ -1238,12 +1252,7 @@ function captureIsAdoptable(sealed: SealedCapture, roomToken: string | null): bo
     // Another room's buffer has nothing to do with the call this page is on.
     return false;
   }
-  // Strictly this participant's, for adoption. The looser rule below lets a
-  // sidecar that names nobody still be uploaded, where the server decides whose
-  // it is; resuming one is a different question, and a buffer whose owner
-  // cannot be established is not this page's to continue.
-  const claimed = (sealed.sidecar.participantId ?? "").trim();
-  if (claimed === "" || claimed !== currentParticipantId()) {
+  if (!captureIsThisParticipants(sealed)) {
     return false;
   }
   if (captureAbandoned) {
@@ -1276,6 +1285,14 @@ function captureIsAdoptable(sealed: SealedCapture, roomToken: string | null): bo
 // recording holds it for the whole meeting. So a short wait tells the two
 // apart, and timing out means "leave it alone", never "take it".
 const CAPTURE_LOCK_WAIT_MS = 3_000;
+
+// CAPTURE_ADOPT_LOCK_WAIT_MS is the same wait for the claim taken while a
+// capture start is held back, which is a far tighter budget: every millisecond
+// of it is a millisecond of the participant not being recorded. A same-tab
+// reload releases the previous document's claim as that document is destroyed,
+// so a quarter second is ample for the case this exists for, and a directory
+// another page is really recording into fails fast and is not adopted.
+const CAPTURE_ADOPT_LOCK_WAIT_MS = 250;
 
 type LockManagerLike = {
   request(
@@ -1346,7 +1363,7 @@ async function claimCaptureDir<T>(dirName: string, work: () => Promise<T>, busy:
 // directory unclaimed for the whole of that wait: two pages loading at once
 // could each hold the same buffer, each compute the same next segment index,
 // and each open the same file.
-function claimCaptureDirUntilReleased(dirName: string): Promise<(() => void) | null> {
+function claimCaptureDirUntilReleased(dirName: string, waitMS: number): Promise<(() => void) | null> {
   const locks = captureLocks();
   if (locks === null) {
     // Nothing to claim and nothing to release. Browsers without Web Locks get
@@ -1358,7 +1375,7 @@ function claimCaptureDirUntilReleased(dirName: string): Promise<(() => void) | n
     void locks
       .request(
         captureLockName(dirName),
-        { mode: "exclusive", signal: AbortSignal.timeout(CAPTURE_LOCK_WAIT_MS) },
+        { mode: "exclusive", signal: AbortSignal.timeout(waitMS) },
         () =>
           new Promise<void>((release) => {
             granted = true;
@@ -1519,7 +1536,7 @@ export async function settleBufferedCaptures(): Promise<number> {
       // case anyway: there is nothing here for this page to continue. On a
       // reload the previous document is already gone, so the claim is granted
       // at once.
-      const release = await claimCaptureDirUntilReleased(candidate.dirName);
+      const release = await claimCaptureDirUntilReleased(candidate.dirName, CAPTURE_ADOPT_LOCK_WAIT_MS);
       if (release === null) {
         continue;
       }
@@ -1656,11 +1673,16 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
   await active.rotation.catch(() => {});
   await stopSegment(active);
   if (disposition === "leave-it") {
-    if (active.discarded) {
+    if (active.discarded || serverAllowsCapture !== true) {
       // The administrator switched collection off during this call. That is
       // terminal for the recording, and the buffer must not outlive the page
       // to be uploaded by a later one that finds the switch back on. The marker
       // goes down first, so a delete that fails still leaves it refused.
+      //
+      // serverAllowsCapture as well as the session's own flag: a permission
+      // answer that arrived after this teardown had already detached the
+      // session from the global had nothing left to mark, and the switch being
+      // off is the fact that matters either way.
       const opfsRoot = await navigator.storage.getDirectory();
       await markCaptureRevoked(opfsRoot, active.dirName);
       await discardCapture(opfsRoot, active.dirName);
@@ -1899,6 +1921,13 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   if (!roomToken) {
     return;
   }
+  if (talkRecordingRoom !== roomToken) {
+    // The active recording we know about is another room's. Talk navigates
+    // between conversations without reloading, so arriving here with a stale
+    // answer is ordinary, and starting on it would record a call nobody has
+    // said is being recorded.
+    return;
+  }
   talkRoomToken = roomToken;
   // The administrator switch was injected before this script ran. Anything
   // other than an explicit yes means no recorder or OPFS directory is created.
@@ -2050,9 +2079,10 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
   };
 }
 
-function applyTalkRecordingStatus(status: number): void {
+function applyTalkRecordingStatus(status: number, roomToken: string | null): void {
   // Any of these is an answer, including the ones that change nothing.
   recordingStatusAnswered = true;
+  talkRecordingRoom = roomToken;
   if (status === TALK_RECORDING_VIDEO || status === TALK_RECORDING_AUDIO) {
     talkRecordingActive = true;
     if (capturingSender && capturingConnection) {
@@ -2091,7 +2121,7 @@ async function refreshTalkRecordingStatus(roomToken: string): Promise<void> {
     // than the response and wins. This prevents a slow bootstrap response of
     // OFF from tearing down a recording the socket just confirmed active.
     if (status !== null && revision === recordingStatusRevision) {
-      applyTalkRecordingStatus(status);
+      applyTalkRecordingStatus(status, roomToken);
     }
   } finally {
     recordingStatusFetchInFlight = false;
@@ -2127,7 +2157,7 @@ function watchSignalingSocket(socket: unknown): void {
       return;
     }
     recordingStatusRevision += 1;
-    applyTalkRecordingStatus(status);
+    applyTalkRecordingStatus(status, roomToken);
   });
   // Reconnecting can span a transition. The room resource gives us the
   // current state without guessing which events were missed.
@@ -2216,6 +2246,22 @@ function instrument(pc: RTCPeerConnection): void {
       }
     }
   });
+  // removeTrack takes the sender off the connection without closing anything
+  // and without ending the track, so nothing else here would notice: the
+  // recorder holds its own MediaStream over that track and would go on
+  // recording a participant the room can no longer hear. The mute poll catches
+  // it within its interval; this catches it at the instant it happens.
+  const originalRemoveTrack = pc.removeTrack.bind(pc);
+  pc.removeTrack = (sender: RTCRtpSender) => {
+    try {
+      if (state && sender === capturingSender) {
+        stopWithoutRestart(state);
+      }
+    } catch {
+      // Never let instrumentation break Talk's own removeTrack.
+    }
+    return originalRemoveTrack(sender);
+  };
   const originalClose = pc.close.bind(pc);
   pc.close = () => {
     try {

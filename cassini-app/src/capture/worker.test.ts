@@ -9,7 +9,7 @@
 // reimplementation of one.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SOURCE_CAPTURE_FORMAT, SOURCE_CAPTURE_PENDING_NAME, type CaptureSidecar } from "./protocol";
+import { SOURCE_CAPTURE_FORMAT, SOURCE_CAPTURE_PENDING_NAMES, type CaptureSidecar } from "./protocol";
 
 interface FakeFile {
   bytes: Uint8Array;
@@ -23,6 +23,7 @@ interface FakeFile {
 class FakeOPFS {
   readonly files = new Map<string, FakeFile>();
   failFile: string | null = null;
+  failFileB: string | null = null;
 
   getDirectory = async (): Promise<unknown> => ({
     getDirectoryHandle: async () => this.directory(),
@@ -31,16 +32,22 @@ class FakeOPFS {
   private directory(): unknown {
     return {
       getFileHandle: async (name: string) => {
-        if (name === this.failFile) {
+        if (name === this.failFile || name === this.failFileB) {
           throw new Error(`cannot open ${name}`);
         }
         const file = this.files.get(name) ?? { bytes: new Uint8Array(), writes: 0 };
         this.files.set(name, file);
         return {
           createSyncAccessHandle: async () => ({
+            // The worker refuses to open a segment name that already holds
+            // audio, so the fake has to be able to say that it does.
+            getSize: () => file.bytes.byteLength,
             truncate: (length: number) => {
               file.bytes = file.bytes.slice(0, length);
             },
+            // The real write returns how many bytes it wrote, and the worker
+            // checks it: a short write leaves the slot torn and must not be
+            // reported as a completed checkpoint.
             write: (data: Uint8Array, options: { at: number }) => {
               const end = options.at + data.byteLength;
               const grown = new Uint8Array(Math.max(file.bytes.byteLength, end));
@@ -48,6 +55,7 @@ class FakeOPFS {
               grown.set(data, options.at);
               file.bytes = grown;
               file.writes += 1;
+              return data.byteLength;
             },
             flush: () => {},
             close: () => {},
@@ -99,8 +107,38 @@ async function startCapture(): Promise<void> {
   await send({ type: "segment-start", dirName: DIR, meta: segmentMeta(0, 1_000) });
 }
 
+// The newest recovery generation, chosen the way the payload's reader chooses
+// it: checkpoints alternate between two slots so a torn write can only damage
+// the one being written, and whichever parses with the later call end is the
+// one a reloading page would use.
 function pendingSidecar(): CaptureSidecar {
-  return JSON.parse(opfs.text(SOURCE_CAPTURE_PENDING_NAME)) as CaptureSidecar;
+  let best: CaptureSidecar | null = null;
+  for (const name of SOURCE_CAPTURE_PENDING_NAMES) {
+    try {
+      const parsed = JSON.parse(opfs.text(name)) as CaptureSidecar;
+      if (best === null || parsed.callEndWallMs > best.callEndWallMs) {
+        best = parsed;
+      }
+    } catch {
+      // Absent or torn.
+    }
+  }
+  if (best === null) {
+    throw new Error("no recovery sidecar was written");
+  }
+  return best;
+}
+
+// pendingWrites counts checkpoints across both slots.
+function pendingWrites(): number {
+  return SOURCE_CAPTURE_PENDING_NAMES.reduce(
+    (total, name) => total + (opfs.files.get(name)?.writes ?? 0),
+    0,
+  );
+}
+
+function hasPendingSidecar(): boolean {
+  return SOURCE_CAPTURE_PENDING_NAMES.some((name) => opfs.files.has(name));
 }
 
 beforeEach(async () => {
@@ -136,7 +174,9 @@ describe("recovery sidecar", () => {
 
   it("keeps a segment whose audio was written when the sidecar cannot be", async () => {
     await startCapture();
-    opfs.failFile = SOURCE_CAPTURE_PENDING_NAME;
+    // Both slots, so the checkpoint has nowhere to succeed.
+    opfs.failFile = SOURCE_CAPTURE_PENDING_NAMES[0];
+    opfs.failFileB = SOURCE_CAPTURE_PENDING_NAMES[1];
     vi.setSystemTime(20_000);
     await send({ type: "chunk", index: 0, buffer: new Uint8Array([1, 2, 3]).buffer });
 
@@ -152,6 +192,7 @@ describe("recovery sidecar", () => {
     ]);
 
     opfs.failFile = null;
+    opfs.failFileB = null;
     await send({ type: "segment-stop", index: 0, stopWallMs: 21_000, muteIntervals: [] });
     await send({ type: "finalize", dirName: DIR, base: { ...base, callEndWallMs: 21_000 } });
 
@@ -163,7 +204,7 @@ describe("recovery sidecar", () => {
     await startCapture();
     vi.setSystemTime(20_000);
     await send({ type: "chunk", index: 0, buffer: new Uint8Array([1]).buffer });
-    const afterFirst = opfs.files.get(SOURCE_CAPTURE_PENDING_NAME)?.writes ?? 0;
+    const afterFirst = pendingWrites();
     expect(afterFirst).toBe(1);
 
     // Chunks arrive every two seconds; the sidecar is a full re-serialization
@@ -172,13 +213,13 @@ describe("recovery sidecar", () => {
       vi.setSystemTime(elapsed);
       await send({ type: "chunk", index: 0, buffer: new Uint8Array([1]).buffer });
     }
-    expect(opfs.files.get(SOURCE_CAPTURE_PENDING_NAME)?.writes).toBe(afterFirst);
+    expect(pendingWrites()).toBe(afterFirst);
 
     // Sealing a segment is the point where the sidecar would otherwise be
     // stale about durable audio, so it ignores the throttle.
     vi.setSystemTime(24_500);
     await send({ type: "segment-stop", index: 0, stopWallMs: 24_500, muteIntervals: [] });
-    expect(opfs.files.get(SOURCE_CAPTURE_PENDING_NAME)?.writes).toBe(afterFirst + 1);
+    expect(pendingWrites()).toBe(afterFirst + 1);
     expect(pendingSidecar().segments[0].stopWallMs).toBe(24_500);
   });
 
@@ -186,12 +227,12 @@ describe("recovery sidecar", () => {
     await startCapture();
     vi.setSystemTime(20_000);
     await send({ type: "chunk", index: 0, buffer: new Uint8Array([1, 2]).buffer });
-    expect(opfs.files.has(SOURCE_CAPTURE_PENDING_NAME)).toBe(true);
+    expect(hasPendingSidecar()).toBe(true);
 
     await send({ type: "segment-stop", index: 0, stopWallMs: 21_000, muteIntervals: [] });
     await send({ type: "finalize", dirName: DIR, base: { ...base, callEndWallMs: 21_000 } });
 
-    expect(opfs.files.has(SOURCE_CAPTURE_PENDING_NAME)).toBe(false);
+    expect(hasPendingSidecar()).toBe(false);
     expect(opfs.files.has("capture.json")).toBe(true);
   });
 });

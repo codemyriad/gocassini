@@ -157,6 +157,32 @@ async function openSegment(dirName: string, meta: OpenSegment["meta"]): Promise<
   const dir = await ensureDir(dirName);
   const fileHandle = await dir.getFileHandle(meta.audioName, { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
+  // Never over audio that is already there.
+  //
+  // A resumed capture numbers itself past everything the directory holds, and
+  // the page claims the directory so that a second page cannot be numbering
+  // into it at the same time. Both of those can be wrong at once — a browser
+  // without Web Locks has no claim to take, and a bug in either calculation
+  // would land here — and what "wrong" costs at this line is a file full of the
+  // participant's audio replaced by an empty one. So the truncate is
+  // conditional, and a name that is already occupied fails the segment instead:
+  // one segment fewer, rather than one destroyed.
+  if (handle.getSize() > 0) {
+    handle.close();
+    self.postMessage({
+      type: "error",
+      detail: `segment ${meta.index}: ${meta.audioName} already holds audio; refusing to overwrite it`,
+    });
+    segments.set(meta.index, {
+      handle,
+      offset: 0,
+      meta,
+      stopWallMs: 0,
+      muteIntervals: [],
+      failed: true,
+    });
+    return;
+  }
   handle.truncate(0);
   segments.set(meta.index, { handle, offset: 0, meta, stopWallMs: 0, muteIntervals: [], failed: false });
 }
