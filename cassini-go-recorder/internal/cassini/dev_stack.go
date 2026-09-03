@@ -226,7 +226,7 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	// has always built, and what the e2e suites assert. Production defaults the
 	// other way, by deriving: a fresh install has no Team folder, so it lands on
 	// the deps-free model without anyone declaring anything.
-	plan.StorageMode = pick("storage-mode", opts.storageMode, "CASSINI_HARNESS_STORAGE_MODE", devStackStorageACL)
+	plan.StorageMode = pick("storage-mode", opts.storageMode, "CASSINI_HARNESS_STORAGE_MODE", devStackStorageDefault)
 	plan.SkipStorageScaffold = opts.skipStorageScaffold ||
 		(!opts.set["debug-skip-storage-scaffold"] && get("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD") == "1")
 	plan.DownSuspend = opts.suspend
