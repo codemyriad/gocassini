@@ -24,7 +24,7 @@
 //    makes "upload after the call" safe rather than a way to lose meetings.
 
 import type { CaptureAnchor, CaptureSegment, CaptureSidecar } from "./protocol";
-import { SOURCE_CAPTURE_PENDING_NAME, mergeMuteIntervals } from "./protocol";
+import { SOURCE_CAPTURE_PENDING_NAMES, mergeMuteIntervals } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope & {
   onrtctransform: ((event: RTCTransformEvent) => void) | null;
@@ -186,6 +186,11 @@ function recoverableSegments(now: number): CaptureSegment[] {
 // write regardless, so the sidecar is never stale about a sealed segment.
 const PENDING_SIDECAR_MIN_INTERVAL_MS = 5_000;
 let lastPendingWriteMs = 0;
+// pendingSlot alternates between the two recovery-sidecar names, so a
+// checkpoint always writes into the slot the previous one is not in. See
+// SOURCE_CAPTURE_PENDING_NAMES: a page that dies mid-checkpoint can then only
+// damage the generation being written, and the previous one is still whole.
+let pendingSlot = 0;
 
 // refreshPendingSidecar isolates the recovery sidecar from the recording. The
 // sidecar exists to salvage a capture whose page died; failing to write it
@@ -214,17 +219,38 @@ async function writePendingSidecar(): Promise<void> {
     return;
   }
   const dir = await ensureDir(pendingDirName);
-  const fileHandle = await dir.getFileHandle(SOURCE_CAPTURE_PENDING_NAME, { create: true });
+  const slot = pendingSlot;
+  const fileHandle = await dir.getFileHandle(SOURCE_CAPTURE_PENDING_NAMES[slot], { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
   const sidecar: CaptureSidecar = {
     ...pendingBase,
     callEndWallMs: Math.max(...built.map((segment) => segment.stopWallMs)),
     segments: built,
   };
-  handle.truncate(0);
-  handle.write(new TextEncoder().encode(JSON.stringify(sidecar)), { at: 0 });
-  handle.flush();
-  handle.close();
+  const body = new TextEncoder().encode(JSON.stringify(sidecar));
+  try {
+    handle.truncate(0);
+    const written = handle.write(body, { at: 0 });
+    if (written !== body.byteLength) {
+      // A short write leaves this slot torn. Say so rather than advance, so the
+      // other slot stays the newest whole generation and this one is rewritten
+      // next time.
+      throw new Error(`recovery sidecar wrote ${written} of ${body.byteLength} bytes`);
+    }
+    handle.flush();
+  } finally {
+    // Always. A sync access handle holds an exclusive lock on its file, and this
+    // worker outlives a failed checkpoint to keep the call's audio flowing, so
+    // one leaked here would lock a file every later checkpoint needs.
+    try {
+      handle.close();
+    } catch {
+      // Already closed, or closing failed too. The write error above is the one
+      // worth reporting.
+    }
+  }
+  // Only a checkpoint that completed advances the slot.
+  pendingSlot = (slot + 1) % SOURCE_CAPTURE_PENDING_NAMES.length;
 }
 
 async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
@@ -332,11 +358,21 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
   }
   const fileHandle = await dir.getFileHandle("capture.json", { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
-  handle.truncate(0);
-  handle.write(new TextEncoder().encode(JSON.stringify(sidecar)), { at: 0 });
-  handle.flush();
-  handle.close();
-  await dir.removeEntry(SOURCE_CAPTURE_PENDING_NAME).catch(() => {});
+  try {
+    handle.truncate(0);
+    handle.write(new TextEncoder().encode(JSON.stringify(sidecar)), { at: 0 });
+    handle.flush();
+  } finally {
+    try {
+      handle.close();
+    } catch {
+      // Nothing further to do with it.
+    }
+  }
+  // Both recovery slots, now that capture.json is the manifest.
+  for (const name of SOURCE_CAPTURE_PENDING_NAMES) {
+    await dir.removeEntry(name).catch(() => {});
+  }
   return sidecar;
 }
 
@@ -364,6 +400,7 @@ function resetRecordingInterval(): void {
   pendingDirName = null;
   pendingBase = null;
   lastPendingWriteMs = 0;
+  pendingSlot = 0;
 }
 
 export async function onMessage(event: MessageEvent): Promise<void> {

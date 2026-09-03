@@ -20,7 +20,24 @@ export const SOURCE_CAPTURE_FORMAT = "org.cassini.source-capture/1";
 // The worker refreshes this recovery sidecar as durable MediaRecorder chunks
 // land. A normal stop replaces it with capture.json; after reload/crash the
 // next Talk page can upload the completed prefix instead of losing it.
-export const SOURCE_CAPTURE_PENDING_NAME = "capture.pending.json";
+//
+// There are TWO of them, written alternately, and that is not belt and braces.
+// A checkpoint is truncate-then-write on one file, so a page that dies inside
+// that window leaves an empty or half-written manifest — and since a page on
+// its way out deliberately does not seal capture.json, that would be the only
+// manifest in the directory. The next page would find nothing parseable and
+// neither resume nor upload a capture that is sitting there complete. Writing
+// the new generation into the slot the previous one is NOT in means a torn
+// write can only ever damage the generation being written; the reader takes
+// whichever slot parses with the later call end.
+export const SOURCE_CAPTURE_PENDING_NAMES = [
+  "capture.pending.json",
+  "capture.pending.b.json",
+] as const;
+
+// SOURCE_CAPTURE_PENDING_NAME is the first slot, kept as a name because it is
+// what a capture written by an older build has.
+export const SOURCE_CAPTURE_PENDING_NAME = SOURCE_CAPTURE_PENDING_NAMES[0];
 
 // TALK_CALL_PATH_SEGMENT is the path Nextcloud Talk serves a call under. Both
 // URL shapes matter: pretty URLs give "<root>/call/<token>", and installs with

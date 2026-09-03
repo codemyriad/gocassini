@@ -42,7 +42,7 @@ import { forgetLegacyConsent, retireLegacyCaptureWorkers } from "./register";
 
 import {
   SOURCE_CAPTURE_FORMAT,
-  SOURCE_CAPTURE_PENDING_NAME,
+  SOURCE_CAPTURE_PENDING_NAMES,
   captureDirName,
   roomTokenFromPath,
   type CaptureSidecar,
@@ -819,6 +819,19 @@ function pollMute(session: CaptureState, sender: RTCRtpSender): void {
   if (session.discarded) {
     return;
   }
+  // The in-call condition, enforced continuously rather than only when a
+  // recorder is constructed. A MediaRecorder holds its own MediaStream over the
+  // track, so nothing about the sender leaving the call reaches it by itself:
+  // the connection dropping, or Talk taking the sender off the connection
+  // entirely, would leave it recording a participant the room can no longer
+  // hear. This poll already runs, already has the sender and the session, and
+  // is the one place that can notice. resumeSegment starts it again if the
+  // participant comes back.
+  if (session.recorder !== null && session.connection && !senderIsInTheCall(sender, session.connection)) {
+    console.info("Cassini source capture: no longer sending to the call; recording paused");
+    stopWithoutRestart(session);
+    return;
+  }
   const enabled = sender.track?.enabled ?? true;
   if (!enabled && session.muteSince === null) {
     session.muteSince = Date.now();
@@ -857,6 +870,7 @@ async function uploadCapture(
   // terminal for that call's recording, whether or not it was switched back on
   // afterwards.
   if (revokedDuringCall || serverAllowsCapture !== true) {
+    await markCaptureRevoked(opfsRoot, dirName);
     await discardCapture(opfsRoot, dirName);
     return;
   }
@@ -886,6 +900,7 @@ async function uploadCapture(
   // out of OPFS above is several awaits long, and the thirty-second poll can
   // land the administrator's off in that window.
   if (serverAllowsCapture !== true) {
+    await markCaptureRevoked(opfsRoot, dirName);
     await discardCapture(opfsRoot, dirName);
     return;
   }
@@ -1078,6 +1093,13 @@ async function readSealedCapture(
   dirName: string,
 ): Promise<SealedCapture | null> {
   const dir = await root.getDirectoryHandle(dirName);
+  if (await captureIsRevoked(dir)) {
+    // The administrator switched collection off during this capture. That is
+    // terminal for the interval, and the marker is what makes it terminal even
+    // if the delete that should have followed did not land.
+    await root.removeEntry(dirName, { recursive: true }).catch(() => {});
+    return null;
+  }
   let highestSegmentOnDisk = -1;
   for await (const [name] of (
     dir as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }
@@ -1087,23 +1109,75 @@ async function readSealedCapture(
       highestSegmentOnDisk = Math.max(highestSegmentOnDisk, Number(match[1]));
     }
   }
-  for (const name of ["capture.json", SOURCE_CAPTURE_PENDING_NAME]) {
+  const read = async (name: string): Promise<CaptureSidecar | null> => {
     try {
       const file = await (await dir.getFileHandle(name)).getFile();
       const parsed: unknown = JSON.parse(await file.text());
-      if (isBufferedCaptureSidecar(parsed)) {
-        return {
-          dirName,
-          sidecar: parsed,
-          highestSegmentOnDisk,
-          interrupted: name === SOURCE_CAPTURE_PENDING_NAME,
-        };
-      }
+      return isBufferedCaptureSidecar(parsed) ? parsed : null;
     } catch {
-      // Absent, unreadable, or half-written. Try the other one.
+      // Absent, unreadable, or half-written.
+      return null;
+    }
+  };
+  const sealed = await read("capture.json");
+  if (sealed !== null) {
+    return { dirName, sidecar: sealed, highestSegmentOnDisk, interrupted: false };
+  }
+  // Otherwise the newest recovery generation that parses. Both slots are tried
+  // and the later call end wins: a checkpoint writes into the slot the previous
+  // one is not in, so a page that died mid-write leaves one torn slot and one
+  // whole older one, and taking the whole one costs a checkpoint interval
+  // rather than the entire capture.
+  let best: CaptureSidecar | null = null;
+  for (const name of SOURCE_CAPTURE_PENDING_NAMES) {
+    const candidate = await read(name);
+    if (candidate !== null && (best === null || candidate.callEndWallMs > best.callEndWallMs)) {
+      best = candidate;
     }
   }
-  return null;
+  if (best === null) {
+    return null;
+  }
+  return { dirName, sidecar: best, highestSegmentOnDisk, interrupted: true };
+}
+
+// CAPTURE_REVOKED_MARKER names a capture the administrator switch turned off
+// mid-interval.
+//
+// The switch being off has to mean nothing from that stretch is kept, and the
+// deletion that enforces it can fail — a transient OPFS error, a handle that
+// has not been released yet. Without a durable record of the refusal, that one
+// failure is all it takes for the audio to be uploaded by a later page that
+// finds the switch back on. The marker lives inside the capture directory, so
+// it says nothing about anybody that the directory did not already say, and it
+// is deleted with it.
+const CAPTURE_REVOKED_MARKER = "capture.revoked";
+
+async function captureIsRevoked(dir: FileSystemDirectoryHandle): Promise<boolean> {
+  try {
+    await dir.getFileHandle(CAPTURE_REVOKED_MARKER);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// markCaptureRevoked records the refusal before attempting the deletion, so a
+// deletion that fails still leaves the interval refused.
+async function markCaptureRevoked(
+  opfsRoot: FileSystemDirectoryHandle,
+  dirName: string,
+): Promise<void> {
+  try {
+    const dir = await opfsRoot.getDirectoryHandle(dirName);
+    const handle = await dir.getFileHandle(CAPTURE_REVOKED_MARKER, { create: true });
+    const writable = await (handle as unknown as { createWritable(): Promise<{ close(): Promise<void> }> })
+      .createWritable();
+    await writable.close();
+  } catch {
+    // The directory is already gone, or the marker cannot be written. The
+    // deletion below is still attempted; this is the belt, not the braces.
+  }
 }
 
 // nextSegmentIndex is the first index a resumed capture may use.
@@ -1424,9 +1498,15 @@ export async function settleBufferedCaptures(): Promise<number> {
   // resume. An older buffer for the same room belongs to an earlier recording,
   // not to the front of this one.
   if (adoptable === null && state === null) {
+    // The FRESHEST adoptable capture, and only that one. Falling through to an
+    // older buffer when the newest cannot be taken would resume a capture from
+    // an earlier recording in this room, splice this call's audio onto it, and
+    // withhold the finished one — the exact confusion the freshness rule exists
+    // to prevent. If the newest is not available, this page adopts nothing.
     const candidates = sealed
       .filter((candidate) => captureIsAdoptable(candidate, roomToken))
-      .sort((a, b) => b.sidecar.callEndWallMs - a.sidecar.callEndWallMs);
+      .sort((a, b) => b.sidecar.callEndWallMs - a.sidecar.callEndWallMs)
+      .slice(0, 1);
     for (const candidate of candidates) {
       // The claim is taken HERE and held until the capture that adopts it is
       // uploaded, or until the hold ends. A directory another page holds is
@@ -1579,8 +1659,10 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
     if (active.discarded) {
       // The administrator switched collection off during this call. That is
       // terminal for the recording, and the buffer must not outlive the page
-      // to be uploaded by a later one that finds the switch back on.
+      // to be uploaded by a later one that finds the switch back on. The marker
+      // goes down first, so a delete that fails still leaves it refused.
       const opfsRoot = await navigator.storage.getDirectory();
+      await markCaptureRevoked(opfsRoot, active.dirName);
       await discardCapture(opfsRoot, active.dirName);
     }
     active.releaseDirClaim();
@@ -1744,8 +1826,18 @@ async function refreshCapturePermission(proxyBase: string): Promise<void> {
     return;
   }
   if (state && !state.discarded) {
-    state.discarded = true;
-    stopWithoutRestart(state);
+    const revoked = state;
+    revoked.discarded = true;
+    stopWithoutRestart(revoked);
+    // Marked now rather than at teardown. Everything from here on is refused
+    // whatever happens to this page next, including a delete that fails and a
+    // page that dies before it can try again.
+    revoked.rotation = revoked.rotation
+      .then(async () => {
+        const opfsRoot = await navigator.storage.getDirectory();
+        await markCaptureRevoked(opfsRoot, revoked.dirName);
+      })
+      .catch(() => {});
   }
   // A buffer merely held for adoption is just as much this call's audio, and
   // the switch being off has to mean nothing from that stretch is kept. This
@@ -1769,7 +1861,20 @@ async function refreshCapturePermission(proxyBase: string): Promise<void> {
 // before anybody is talking, and instrument()'s connectionstatechange starts
 // the capture the moment the connection comes up.
 function senderIsInTheCall(sender: RTCRtpSender, connection: RTCPeerConnection): boolean {
-  return connection.connectionState === "connected" && sender.track?.readyState === "live";
+  if (connection.connectionState !== "connected" || sender.track?.readyState !== "live") {
+    return false;
+  }
+  // And the sender must still BE one of this connection's senders. removeTrack
+  // takes it off the connection without closing anything and without ending the
+  // track, so a recorder holding its own MediaStream over that track would go
+  // on recording a microphone the call is no longer carrying — the participant
+  // audibly gone from the room and still being recorded.
+  try {
+    return connection.getSenders().includes(sender);
+  } catch {
+    // A closed connection can throw here. That is not in the call either.
+    return false;
+  }
 }
 
 function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void {
