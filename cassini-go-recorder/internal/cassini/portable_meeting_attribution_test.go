@@ -24,9 +24,8 @@ import (
 // transcript.words.v1.json carries one attribution-flagged word and one
 // unmeasured word through the real `cassini pack` path, then reads the
 // published .opus back and asserts the evidence survives the wire format:
-// the flagged item carries attributionGapDb and lowConfidenceSpeaker, the
-// unmeasured item carries neither key, and every key an item emits is
-// declared by the spec schema (which pins additionalProperties: false).
+// the flagged item carries attributionGapDb and lowConfidenceSpeaker, while
+// the unmeasured item carries neither key.
 func TestPackedPortableMeetingCarriesAttributionEvidence(t *testing.T) {
 	requireFFMediaTools(t)
 
@@ -69,13 +68,6 @@ func TestPackedPortableMeetingCarriesAttributionEvidence(t *testing.T) {
 	if _, ok := unmeasured["lowConfidenceSpeaker"]; ok {
 		t.Errorf("unmeasured item must not carry lowConfidenceSpeaker, got %v", unmeasured["lowConfidenceSpeaker"])
 	}
-
-	// Schema conformance, in the style of
-	// TestPackedMeetingKeysAreDeclaredBySchema: every key an item emits must
-	// be declared by the v1 transcript item schema — the one place the spec
-	// constrains item bodies; the v2/v3 index schemas reference the same
-	// cassini.words.v1 body by payloadRef without re-declaring its shape.
-	assertTranscriptItemKeysDeclaredBySchema(t, items)
 
 	// Typed read path: the same evidence must come back out of the published
 	// file through the extraction API the CLI uses.
@@ -206,42 +198,11 @@ func decodeDefaultTranscriptItemsForTest(t *testing.T, tags map[string]string) [
 	return body.Items
 }
 
-// assertTranscriptItemKeysDeclaredBySchema checks every emitted item key
-// against the v1 schema's transcript item declaration, which the spec pins
-// with additionalProperties: false.
-func assertTranscriptItemKeysDeclaredBySchema(t *testing.T, items []map[string]any) {
-	t.Helper()
-	const schemaPath = "../../../spec/cassini-portable-meeting-manifest-v1.schema.json"
-	raw, err := os.ReadFile(schemaPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", schemaPath, err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("parse %s: %v", schemaPath, err)
-	}
-	itemSchema := nested(doc, "properties", "transcript", "properties", "items", "items")
-	if itemSchema == nil {
-		t.Fatalf("%s has no transcript item schema", schemaPath)
-	}
-	if additional, ok := itemSchema["additionalProperties"].(bool); !ok || additional {
-		t.Fatalf("%s: transcript item additionalProperties is not false; this test assumes it is", schemaPath)
-	}
-	declared, _ := itemSchema["properties"].(map[string]any)
-	for idx, item := range items {
-		for key := range item {
-			if _, ok := declared[key]; !ok {
-				t.Errorf("%s does not declare transcript item key %q (item %d)", schemaPath, key, idx)
-			}
-		}
-	}
-}
-
 // TestPackedPortableMeetingCarriesAttributionRecord packs a drop-mode-shaped
 // bundle — flagged words already deleted from the transcript, the artifact
 // manifest's provenance.attribution as the only trace they existed — through
 // the real `cassini pack` path, and asserts the record reaches the published
-// wire verbatim, is declared by the closed v2/v3 schemas, comes back through
+// wire verbatim, is declared by the closed schema, comes back through
 // the typed read path, and survives a retag. A sibling attribution-less pack
 // must emit no attribution key at all.
 func TestPackedPortableMeetingCarriesAttributionRecord(t *testing.T) {
@@ -326,7 +287,7 @@ func TestPackedPortableMeetingCarriesAttributionRecord(t *testing.T) {
 // assertPackedAttributionRecord reads the published file's wire manifest as
 // raw JSON — key level, not a Go struct, so an omitempty regression cannot
 // hide behind zero values — and asserts provenance.attribution matches `want`
-// exactly and is fully declared by the closed v2/v3 schemas.
+// exactly and is fully declared by the closed schema.
 func assertPackedAttributionRecord(t *testing.T, path string, want map[string]any) {
 	t.Helper()
 	provenance := decodePackedProvenanceForTest(t, path)
@@ -371,15 +332,12 @@ func decodePackedProvenanceForTest(t *testing.T, path string) map[string]any {
 }
 
 // assertAttributionKeysDeclaredBySchema checks the emitted attribution object
-// against both multi-transcript schemas, which pin the record down with
+// against the portable meeting schema, which pins the record down with
 // additionalProperties: false — a key the producer emits and the schema does
 // not declare makes every packed file invalid.
 func assertAttributionKeysDeclaredBySchema(t *testing.T, attribution map[string]any) {
 	t.Helper()
-	for _, schemaPath := range []string{
-		"../../../spec/cassini-portable-meeting-manifest-v3.schema.json",
-		"../../../spec/cassini-portable-meeting-manifest-v2.schema.json",
-	} {
+	for _, schemaPath := range []string{"../../../spec/cassini-portable-meeting-manifest-v1.schema.json"} {
 		raw, err := os.ReadFile(schemaPath)
 		if err != nil {
 			t.Fatalf("read %s: %v", schemaPath, err)
@@ -500,7 +458,7 @@ func writeProvenancedMeetingBundleFixture(meetingDir, attributionJSON, wordTimin
 // TestPackedPortableMeetingCarriesWordTimingProvenance packs a bundle whose
 // artifact manifest declares provenance.wordTimings through the real
 // `cassini pack` path, and asserts the record reaches the published wire
-// verbatim, is declared by the closed v2/v3 schemas, comes back through the
+// verbatim, is declared by the closed schema, comes back through the
 // typed read path, and survives a retag — the same journey the attribution
 // record is held to above.
 //
@@ -511,7 +469,7 @@ func writeProvenancedMeetingBundleFixture(meetingDir, attributionJSON, wordTimin
 // therefore repair over-long words by clipping them back towards the meeting's
 // median. This build measures each end against the speaker's own track, so an
 // over-long word is now real and that repair destroys it. Only the producer
-// knows which rule ran, so a sibling legacy-shaped pack must emit no
+// knows which rule ran, so a sibling unmarked pack must emit no
 // wordTimings key at all — absence is the whole signal, and this test pins
 // both sides of it.
 func TestPackedPortableMeetingCarriesWordTimingProvenance(t *testing.T) {
@@ -554,28 +512,28 @@ func TestPackedPortableMeetingCarriesWordTimingProvenance(t *testing.T) {
 	}
 	assertPackedWordTimingRecord(t, retaggedPath, wantWordTimings)
 
-	// A legacy-shaped build with other provenance must not grow the key: the
+	// An unmarked build with other provenance must not grow the key: the
 	// viewer's repair keys off its absence, so a producer that invents one
 	// would silently claim measured timings for inherited ones.
-	legacyDir := filepath.Join(tmp, "legacy.meeting")
-	if err := writeProvenancedMeetingBundleFixture(legacyDir, "", ""); err != nil {
-		t.Fatalf("write legacy fixture: %v", err)
+	unmarkedDir := filepath.Join(tmp, "unmarked.meeting")
+	if err := writeProvenancedMeetingBundleFixture(unmarkedDir, "", ""); err != nil {
+		t.Fatalf("write unmarked fixture: %v", err)
 	}
-	legacyPath := filepath.Join(tmp, "legacy.opus")
+	unmarkedPath := filepath.Join(tmp, "unmarked.opus")
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run(context.Background(), []string{"pack", legacyDir, "--out", legacyPath}, &stdout, &stderr); code != 0 {
-		t.Fatalf("pack (legacy) failed code=%d stderr=%q", code, stderr.String())
+	if code := Run(context.Background(), []string{"pack", unmarkedDir, "--out", unmarkedPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack (unmarked) failed code=%d stderr=%q", code, stderr.String())
 	}
-	legacyProvenance := decodePackedProvenanceForTest(t, legacyPath)
-	if legacyProvenance == nil {
-		t.Fatal("legacy pack lost its provenance object entirely")
+	unmarkedProvenance := decodePackedProvenanceForTest(t, unmarkedPath)
+	if unmarkedProvenance == nil {
+		t.Fatal("unmarked pack lost its provenance object entirely")
 	}
-	if _, ok := legacyProvenance["wordTimings"]; ok {
-		t.Errorf("legacy pack emits a wordTimings key: %v", legacyProvenance["wordTimings"])
+	if _, ok := unmarkedProvenance["wordTimings"]; ok {
+		t.Errorf("unmarked pack emits a wordTimings key: %v", unmarkedProvenance["wordTimings"])
 	}
-	if _, ok := legacyProvenance["speechToText"]; !ok {
-		t.Error("legacy pack lost provenance.speechToText, so this half of the test is not exercising a provenance-carrying file")
+	if _, ok := unmarkedProvenance["speechToText"]; !ok {
+		t.Error("unmarked pack lost provenance.speechToText, so this half of the test is not exercising a provenance-carrying file")
 	}
 
 	// The record is metadata, and metadata may not move the audio-integrity
@@ -585,20 +543,20 @@ func TestPackedPortableMeetingCarriesWordTimingProvenance(t *testing.T) {
 	// integrity.opusSha256 — otherwise adding a marker would invalidate every
 	// consumer's stored hash.
 	marked := decodePortableManifestFromOpus(t, outPath)
-	legacy := decodePortableManifestFromOpus(t, legacyPath)
+	unmarked := decodePortableManifestFromOpus(t, unmarkedPath)
 	if marked.Integrity.OpusSHA256 == "" {
 		t.Fatal("packed file carries no audio-integrity digest")
 	}
-	if marked.Integrity.OpusSHA256 != legacy.Integrity.OpusSHA256 {
+	if marked.Integrity.OpusSHA256 != unmarked.Integrity.OpusSHA256 {
 		t.Errorf("the wordTimings record moved the audio digest: %s vs %s",
-			marked.Integrity.OpusSHA256, legacy.Integrity.OpusSHA256)
+			marked.Integrity.OpusSHA256, unmarked.Integrity.OpusSHA256)
 	}
 }
 
 // assertPackedWordTimingRecord reads the published file's wire manifest as raw
 // JSON — key level, not a Go struct, so an omitempty regression cannot hide
 // behind zero values — and asserts provenance.wordTimings matches `want`
-// exactly and is fully declared by the closed v2/v3 schemas.
+// exactly and is fully declared by the closed schema.
 func assertPackedWordTimingRecord(t *testing.T, path string, want map[string]any) {
 	t.Helper()
 	provenance := decodePackedProvenanceForTest(t, path)
@@ -623,15 +581,12 @@ func assertPackedWordTimingRecord(t *testing.T, path string, want map[string]any
 }
 
 // assertWordTimingKeysDeclaredBySchema checks the emitted wordTimings object
-// against both multi-transcript schemas, which pin the record down with
+// against the portable meeting schema, which pins the record down with
 // additionalProperties: false — a key the producer emits and the schema does
 // not declare makes every packed file invalid.
 func assertWordTimingKeysDeclaredBySchema(t *testing.T, wordTimings map[string]any) {
 	t.Helper()
-	for _, schemaPath := range []string{
-		"../../../spec/cassini-portable-meeting-manifest-v3.schema.json",
-		"../../../spec/cassini-portable-meeting-manifest-v2.schema.json",
-	} {
+	for _, schemaPath := range []string{"../../../spec/cassini-portable-meeting-manifest-v1.schema.json"} {
 		raw, err := os.ReadFile(schemaPath)
 		if err != nil {
 			t.Fatalf("read %s: %v", schemaPath, err)
@@ -674,8 +629,8 @@ func assertWordTimingKeysDeclaredBySchema(t *testing.T, wordTimings map[string]a
 // The producer and the packer name the timing-provenance record independently:
 // internal/transcribe writes manifest.json and internal/portable declares the
 // struct the packer decodes it into, and the two never share a type. A rename
-// on either side loses the marker silently — the packed file simply comes out
-// looking like a legacy one, and the viewer clips its timings. This pins the
+// on either side loses the marker silently, and the viewer clips its timings.
+// This pins the
 // seam by decoding a real WriteManifest document with the packer's own struct.
 func TestWriteManifestWordTimingsDecodeIntoThePackerModel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.json")

@@ -58,7 +58,7 @@ expect true  $'spec/x.schema.json\nREADME.md'
 # enumerate, so a PR touching only these auto-passed the REQUIRED gate green.
 # The deny-list must now classify them relevant. spec/ is even called out by
 # name in ci.yml as deliberately not-ignorable.
-expect true  "spec/cassini-portable-meeting-manifest-v2.schema.json"
+expect true  "spec/cassini-portable-meeting-manifest-v1.schema.json"
 expect true  "ops/process-recordings.sh"
 
 echo "PASS: classifier behavioral fixtures"
