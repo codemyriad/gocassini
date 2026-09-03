@@ -312,8 +312,16 @@ async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
   // segment, not per chunk.
   const firstBytes = segment.offset === 0;
   try {
-    segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
-    segment.offset += buffer.byteLength;
+    const written = segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
+    if (written !== buffer.byteLength) {
+      // The audio the sidecars assert is durable. A short write under quota or
+      // storage pressure does not throw, and advancing the offset by what was
+      // ASKED for rather than what landed leaves a hole in the file while every
+      // manifest goes on describing it as whole — a capture that looks intact
+      // and is not, which is the one shape the recorder cannot detect either.
+      throw new Error(`wrote ${written} of ${buffer.byteLength} bytes`);
+    }
+    segment.offset += written;
   } catch (error) {
     segment.failed = true;
     self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });

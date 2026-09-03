@@ -851,7 +851,12 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			// make it delete them.
 			logger.Printf("capture upload: room=%s owner=%s diverges from the capture already stored for that call; both copies hold audio the other does not",
 				sidecar.RoomToken, owner)
-			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "diverged_capture",
+			// 409, not 503. The client keeps a buffer either way, but 503 is a
+			// transient failure and counts towards its attempt cap — which
+			// would delete, on the fifth page load, exactly the audio this
+			// refusal exists to preserve. 409 says the disagreement is about
+			// the content, and the client holds on to it without counting.
+			refuseCaptureUpload(w, logger, owner, http.StatusConflict, "diverged_capture",
 				"another capture is stored for this call and neither contains the other")
 			return
 		}

@@ -116,6 +116,21 @@ const AUDIO_BITS_PER_SECOND = 128_000;
 //   422 the sidecar contradicts itself
 const TERMINAL_UPLOAD_STATUSES = new Set([400, 403, 413, 415, 422]);
 
+// PRESERVED_UPLOAD_STATUSES are refusals that must NOT count towards the
+// attempt cap.
+//
+//   409 the server holds a different capture for this call and neither
+//       contains the other, so it will not take this one and will not throw
+//       the stored one away either
+//
+// The cap exists to stop a permanently-failing deployment re-offering a
+// meeting-sized body forever, and giving up is the right end for that. It is
+// the wrong end for this: the server refused precisely BECAUSE this buffer
+// holds audio nothing else has, and counting those refusals would delete it on
+// the fifth page load — the client destroying exactly what the server declined
+// to destroy.
+const PRESERVED_UPLOAD_STATUSES = new Set([409]);
+
 // MAX_UPLOAD_ATTEMPTS caps how many times one capture is offered to the server.
 //
 // The terminal list above is an allowlist, so anything outside it keeps the
@@ -425,7 +440,12 @@ export interface CaptureState {
 }
 
 let state: CaptureState | null = null;
-const publisherSenders = new Set<RTCRtpSender>();
+// The publishing senders this page has seen, and the connection each is on.
+// Kept as a map rather than a set so that when the connection being recorded
+// goes away, another live one can be found: Talk can build a replacement
+// publishing connection and connect it BEFORE closing the old one, and that
+// replacement emits no state transition afterwards for anything to notice.
+const publisherSenders = new Map<RTCRtpSender, RTCPeerConnection>();
 // The transform has to be attached before Talk negotiates, but audio must not
 // be recorded until Talk confirms that the official recording is active. This
 // worker is therefore started early and remains inert: it creates no OPFS
@@ -437,6 +457,16 @@ let preparedWorker: Worker | null = null;
 // not going to start on the next attempt, and every attempt is another
 // transform offered to a sender carrying a live call.
 let captureAbandoned = false;
+// pageIsGoingAway is set the moment this document begins to unload.
+//
+// Which teardown runs first is Talk's business, not ours: it may close the
+// publishing connection inside its own unload handler, and pc.close reaches
+// endCall before pagehide ever fires. Without this, that ordering decided
+// whether a reload sealed-and-uploaded or sealed-only — and a finalize that
+// happened to complete wrote capture.json, which the next page will not resume.
+// The listener is registered at install, before Talk's bundle loads, so it runs
+// before Talk's own.
+let pageIsGoingAway = false;
 let talkRecordingActive = false;
 // talkRecordingRoom is the room talkRecordingActive is an answer ABOUT.
 //
@@ -446,14 +476,25 @@ let talkRecordingActive = false;
 // the second room's sender arriving before the second room's status does —
 // would have started a capture on the first room's answer.
 let talkRecordingRoom: string | null = null;
-// recordingStatusAnswered distinguishes "Talk says this room is not being
-// recorded" from "Talk has not answered yet". Only the first is a reason to
-// stop holding a buffered capture for adoption; treating the second as a no
-// would upload every reloader's buffer a round trip before the answer that
-// says to keep it arrives.
-let recordingStatusAnswered = false;
+// recordingStatusAnsweredFor distinguishes "Talk says this room is not being
+// recorded" from "Talk has not answered about this room yet". Only the first is
+// a reason to stop holding a buffered capture for adoption; treating the second
+// as a no would upload every reloader's buffer a round trip before the answer
+// that says to keep it arrives.
+//
+// It names a ROOM rather than being a flag, because Talk changes conversation
+// without reloading: an answer about the room just left is not an answer about
+// this one, and treating it as one left a page that failed its single bootstrap
+// request in the new room believing the question had been settled.
+function recordingStatusAnswered(roomToken: string | null): boolean {
+  return roomToken !== null && talkRecordingRoom === roomToken;
+}
 let recordingStatusRevision = 0;
-let recordingStatusFetchInFlight = false;
+// recordingStatusFetchRoom is the room a status request is in flight FOR, or
+// null when none is. Scoped for the same reason as the answer: a request still
+// running for the conversation just left must not make the new one look like it
+// has already been asked.
+let recordingStatusFetchRoom: string | null = null;
 let recordingStatusPoll: number | null = null;
 let talkRoomToken: string | null = null;
 // The connection whose sender we are recording. A Talk call has one publishing
@@ -948,6 +989,14 @@ async function uploadCapture(
     }
     return;
   }
+  if (PRESERVED_UPLOAD_STATUSES.has(response.status)) {
+    // Kept, and deliberately not counted. See PRESERVED_UPLOAD_STATUSES.
+    console.warn(
+      `Cassini source capture: the server holds a different capture for this call (${response.status}); ` +
+        "keeping this one in browser storage",
+    );
+    throw new Error(`upload deferred: ${response.status}`);
+  }
   if (!response.ok) {
     // The server did not decide, it failed. Leave OPFS untouched so the next
     // Talk page load can retry: losing a recording to a transient 502 would
@@ -1266,7 +1315,7 @@ function captureIsAdoptable(sealed: SealedCapture, roomToken: string | null): bo
     // This page will never record, so it will never adopt anything either.
     return false;
   }
-  if (recordingStatusAnswered && !talkRecordingActive) {
+  if (recordingStatusAnswered(roomToken) && !talkRecordingActive) {
     // Talk has already told us this room is not being recorded. Whatever the
     // buffer belongs to is over, so it uploads now — the retry path, unchanged.
     return false;
@@ -1665,6 +1714,12 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
     capturingConnection = null;
     capturingSender = null;
     capturingRoom = null;
+    // The connection that ended may not have been the only one. Talk can
+    // replace a publishing connection mid-call — an ICE restart it decides to
+    // do by renegotiating from scratch — and connect the new one before closing
+    // the old; nothing transitions afterwards, so without looking now the
+    // participant stays live in a recorded call with nothing recording them.
+    adoptAnotherPublisher();
     // Stops the worker only if its transform is not on a sender that can still
     // send. pagehide reaches here with the connection still up, and a page on
     // its way out has nothing to gain from stopping it a moment early.
@@ -1753,7 +1808,8 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
 }
 
 async function endCall(): Promise<void> {
-  await finishCapture(true);
+  // "leave-it" once the document is on its way out, whoever noticed first.
+  await finishCapture(true, pageIsGoingAway ? "leave-it" : "upload");
 }
 
 // endPage is the teardown a navigation gets: close the segment so the recovery
@@ -1831,6 +1887,14 @@ function resumeSegment(session: CaptureState, sender: RTCRtpSender, connection: 
         return;
       }
       if (!talkRecordingActive || serverAllowsCapture !== true) {
+        return;
+      }
+      // This session's OWN connection and room, not merely a connected sender
+      // and a confirmed recording somewhere. Talk changes conversation without
+      // reloading, so a new room's connection coming up would otherwise resume
+      // the previous room's capture: a recorder on room B's microphone,
+      // started before B confirmed anything, writing into A's directory.
+      if (connection !== session.connection || talkRecordingRoom !== session.roomToken) {
         return;
       }
       if (!senderIsInTheCall(sender, connection)) {
@@ -2057,11 +2121,37 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
 }
 
+// adoptAnotherPublisher looks for a publishing sender that is still in the call
+// and makes it the one being recorded. Called when the connection we were
+// recording goes away.
+function adoptAnotherPublisher(): void {
+  const roomToken = roomTokenFromPath(location.pathname);
+  if (roomToken === null || captureAbandoned) {
+    return;
+  }
+  for (const [sender, connection] of publisherSenders) {
+    if (!senderIsInTheCall(sender, connection)) {
+      continue;
+    }
+    capturingSender = sender;
+    capturingConnection = connection;
+    capturingRoom = roomToken;
+    if (serverAllowsCapture) {
+      prepareTimingWorker();
+      if (preparedWorker !== null) {
+        attachTimingTransform(preparedWorker, sender, connection);
+      }
+    }
+    beginCapture(sender, connection);
+    return;
+  }
+}
+
 function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void {
   if (publisherSenders.has(sender)) {
     return;
   }
-  publisherSenders.add(sender);
+  publisherSenders.set(sender, connection);
   const roomToken = roomTokenFromPath(location.pathname);
   if (roomToken) {
     talkRoomToken = roomToken;
@@ -2109,8 +2199,8 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
 }
 
 function applyTalkRecordingStatus(status: number, roomToken: string | null): void {
-  // Any of these is an answer, including the ones that change nothing.
-  recordingStatusAnswered = true;
+  // Any of these is an answer about that room, including the ones that change
+  // nothing.
   talkRecordingRoom = roomToken;
   if (status === TALK_RECORDING_VIDEO || status === TALK_RECORDING_AUDIO) {
     talkRecordingActive = true;
@@ -2157,10 +2247,10 @@ function applyTalkRecordingStatus(status: number, roomToken: string | null): voi
 }
 
 async function refreshTalkRecordingStatus(roomToken: string): Promise<void> {
-  if (recordingStatusFetchInFlight) {
+  if (recordingStatusFetchRoom === roomToken) {
     return;
   }
-  recordingStatusFetchInFlight = true;
+  recordingStatusFetchRoom = roomToken;
   const revision = recordingStatusRevision;
   const rootPath =
     (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
@@ -2173,7 +2263,9 @@ async function refreshTalkRecordingStatus(roomToken: string): Promise<void> {
       applyTalkRecordingStatus(status, roomToken);
     }
   } finally {
-    recordingStatusFetchInFlight = false;
+    if (recordingStatusFetchRoom === roomToken) {
+      recordingStatusFetchRoom = null;
+    }
   }
 }
 
@@ -2256,7 +2348,11 @@ function installTalkRecordingLifecycle(): void {
     // request fails, and the socket is healthy so the watchdog stays off, the
     // page never learns it should be recording and the whole post-rejoin stint
     // is lost.
-    if (!signalingSocketObserved || talkRecordingActive || !recordingStatusAnswered) {
+    if (
+      !signalingSocketObserved ||
+      talkRecordingActive ||
+      !recordingStatusAnswered(talkRoomToken ?? roomTokenFromPath(location.pathname))
+    ) {
       const roomToken = talkRoomToken ?? roomTokenFromPath(location.pathname);
       if (roomToken) {
         talkRoomToken = roomToken;
@@ -2395,7 +2491,17 @@ export function install(config: CaptureDeliveryConfig = captureDeliveryFromIniti
   );
   // A page going away mid-upload keeps its OPFS buffer, so the worst case is a
   // retry rather than a lost recording.
-  window.addEventListener("pagehide", () => void endPage());
+  // beforeunload first, and registered here — before Talk's bundle loads, so
+  // before Talk's own teardown — because Talk can close the publishing
+  // connection from its unload handler and that reaches endCall before pagehide
+  // fires. This is what makes a reload's outcome a decision rather than a race.
+  window.addEventListener("beforeunload", () => {
+    pageIsGoingAway = true;
+  });
+  window.addEventListener("pagehide", () => {
+    pageIsGoingAway = true;
+    void endPage();
+  });
 }
 
 if (typeof window !== "undefined") {
