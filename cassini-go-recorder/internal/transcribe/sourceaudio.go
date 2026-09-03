@@ -358,12 +358,21 @@ func overlayOntoTimeline(dst, src []float32, sampleRate int, placement Placement
 			// those samples belong to audio outside the recording.
 			continue
 		}
-		if pos >= float64(len(src)-1) {
+		if pos >= float64(len(src)) {
 			break
 		}
 		i := int(pos)
-		frac := float32(pos - float64(i))
-		dst[j] = src[i]*(1-frac) + src[i+1]*frac
+		if i >= len(src)-1 {
+			// The last sample has no partner to interpolate towards. Taking it
+			// as it is rather than stopping one short: the window is supposed
+			// to hold every sample the segment decoded, and leaving the final
+			// one to the recorded track underneath is both a dropped sample and
+			// a discontinuity at the seam.
+			dst[j] = src[len(src)-1]
+		} else {
+			frac := float32(pos - float64(i))
+			dst[j] = src[i]*(1-frac) + src[i+1]*frac
+		}
 		stop = j + 1
 	}
 	if stop <= start {
@@ -636,6 +645,16 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 				continue
 			}
 			segmentMS := segment.StopWallMS - segment.StartWallMS
+			if segmentMS <= 0 {
+				// A segment declaring no window claims no audio, and both bounds
+				// below are expressed in terms of that window: the too-short
+				// check and the overrun clamp are skipped for it, so a file
+				// holding a minute under a zero-length window would replace a
+				// minute of recorded audio while promising none. Intake accepts
+				// stop == start; the splice will not act on it.
+				skip(segment, "declares no window, so there is nothing its audio can be said to cover")
+				continue
+			}
 			samples, err := decodeSourceSegment(ctx, filepath.Join(dir, segment.AudioName), sampleRate,
 				sourceDecodeTimeout(segmentMS), maxSourceSegmentSamples(segmentMS, sampleRate, outSamples))
 			if err != nil {
@@ -647,10 +666,9 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 			// Intake validates that a declared file ARRIVED, never that it holds
 			// what was claimed, and a file this far short of its own manifest is
 			// not one whose timing claims are worth believing.
-			if declaredMS := segmentMS; declaredMS > 0 &&
-				float64(decodedMS) < float64(declaredMS)*minSegmentDecodedFraction {
+			if float64(decodedMS) < float64(segmentMS)*minSegmentDecodedFraction {
 				skip(segment, "holds %d ms of the %d ms it declares (%.0f%%); the audio does not match the sidecar",
-					decodedMS, declaredMS, float64(decodedMS)*100/float64(declaredMS))
+					decodedMS, segmentMS, float64(decodedMS)*100/float64(segmentMS))
 				continue
 			}
 			// Only what the segment declared, plus the overrun a checkpointed
@@ -658,13 +676,11 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 			// under a one-second window would otherwise replace a minute of
 			// recorded audio, which is exactly the "never worse than the
 			// recorded track" property the splice exists for.
-			if segmentMS > 0 {
-				if limit := expectedPCMSamples(segmentMS+segmentOverrunSlackMS, sampleRate); limit > 0 && len(samples) > limit {
-					report.Rejections = append(report.Rejections, fmt.Sprintf(
-						"segment %d holds %d ms under a %d ms window; only the window it declares was used",
-						segment.Index, decodedMS, segmentMS))
-					samples = samples[:limit]
-				}
+			if limit := expectedPCMSamples(segmentMS+segmentOverrunSlackMS, sampleRate); limit > 0 && len(samples) > limit {
+				report.Rejections = append(report.Rejections, fmt.Sprintf(
+					"segment %d holds %d ms under a %d ms window; only the window it declares was used",
+					segment.Index, decodedMS, segmentMS))
+				samples = samples[:limit]
 			}
 			from, to := overlayOntoTimeline(out, samples, sampleRate, placement)
 			if to <= from {
