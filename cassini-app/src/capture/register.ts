@@ -9,8 +9,7 @@
 // keep. Nothing reads or writes it any more, which is exactly why it has to be
 // deleted rather than ignored: a value sitting here is a recorded answer to a
 // question this build no longer asks, on a profile whose owner may never touch
-// Cassini again, and docs/privacy.md tells administrators that no such answer
-// exists anywhere.
+// Cassini again, and no such answer is kept.
 const LEGACY_CONSENT_STORAGE_KEY = "cassini.sourceCapture.consent";
 
 // forgetLegacyConsent removes it, and only it.

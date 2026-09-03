@@ -954,7 +954,7 @@ func recordedParticipantFloats(mkvPath string, streams []AudioStream, participan
 // having actually been in THIS call is what a matching track proves, and that
 // is the check that belongs here — and with a splice it is load-bearing twice
 // over, because a participant with no recorded track has no floor to splice on.
-func ApplySourceAudio(ctx context.Context, mkvPath string, streams []AudioStream, captureRoot, roomToken, workDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
+func ApplySourceAudio(ctx context.Context, mkvPath string, streams []AudioStream, captureRoot, roomToken, bundleDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
 	windowStartMS, windowEndMS := recordingWallWindow(streams, timelineMS)
 	captures, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS)
 	if err != nil {
@@ -966,6 +966,17 @@ func ApplySourceAudio(ctx context.Context, mkvPath string, streams []AudioStream
 	}
 	outSamples := int(timelineMS * int64(sampleRate) / 1000)
 	if outSamples <= 0 {
+		return nil
+	}
+	// After the early returns, never before them. A build for a room nobody
+	// uploaded for must touch the bundle exactly as much as a build with
+	// ingestion switched off does, which is not at all.
+	workDir, err := WorkPath(bundleDir, "sourceaudio")
+	if err == nil {
+		err = os.MkdirAll(workDir, 0o755)
+	}
+	if err != nil {
+		fmt.Fprintf(stdout, "  source audio: no work directory: %v\n", err)
 		return nil
 	}
 	var reports []SourceRenderReport

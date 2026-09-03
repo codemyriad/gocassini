@@ -20,6 +20,8 @@ const (
 	// Sixteen bounded deferrals cover about 2h46m, so a normal hour-scale
 	// neighbor workload on a shared GPU does not strand a valid recording.
 	defaultMaxBuildResourceDeferrals = 16
+
+	envSourceAudioIngestEnabled = "CASSINI_SOURCE_AUDIO_INGEST"
 )
 
 type buildTask struct {
@@ -189,10 +191,15 @@ func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Dura
 }
 
 // sourceAudioIngestEnabled reports whether transcripts may be built from
-// participant-uploaded audio. Default off; see the call site.
+// participant-uploaded audio.
+//
+// On by default on this branch, which exists to run the feature: set
+// CASSINI_SOURCE_AUDIO_INGEST=0 to opt out. An unreadable value is treated as
+// 0. See the call site for what it costs, and note that an installation which
+// never collected a capture is unaffected either way — with no upload to place,
+// ingestion has nothing to substitute and the transcript is the recorded track.
 func sourceAudioIngestEnabled() bool {
-	enabled, err := parseBoolEnv("CASSINI_SOURCE_AUDIO_INGEST")
-	return err == nil && enabled
+	return parseBoolEnvDefault(envSourceAudioIngestEnabled, true)
 }
 
 // scheduleDeferredBuild waits for the exponentially calculated retry time
@@ -308,14 +315,18 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	}
 
 	buildArgs := []string{"build", task.ArtifactRunPath, "--out", meetingPath}
-	// Source-audio ingestion is OFF unless an administrator turns it on.
+	// Source-audio ingestion is ON unless an administrator turns it off with
+	// CASSINI_SOURCE_AUDIO_INGEST=0. This branch exists to run the feature end
+	// to end, so it runs by default here.
 	//
-	// Capture and intake are safe to run without it — they only collect — but
-	// substituting a participant's own recording into the transcript is a
-	// judgement about where somebody's words belong, and the offset half of
-	// that judgement still carries client clock skew
-	// (docs/source-audio-capture.md). Until the correlation refinement lands,
-	// an installation opts into that deliberately rather than by upgrading.
+	// What that costs is still worth stating: substituting a participant's own
+	// recording into the transcript is a judgement about where somebody's words
+	// belong, and the offset half of that judgement still carries client clock
+	// skew (docs/source-audio-capture.md). Until the correlation refinement
+	// lands, an installation whose clients are not time-synchronised should opt
+	// out. An installation that never collected a capture is unaffected: the
+	// build below is handed a root with nothing in it for this room, finds no
+	// upload to place, and transcribes the recorded track exactly as before.
 	if sourceAudioIngestEnabled() {
 		root := strings.TrimSpace(rt.cfg.CaptureRoot)
 		binding, hasBinding := rt.talkBindingForJob(task.JobID)

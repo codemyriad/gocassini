@@ -9,7 +9,9 @@ LoadAdditionalScriptsEvent hook to load Cassini's source audio capture on
 authenticated Talk call pages. Capture follows Talk's own official recording. It
 does not record, receive, or store audio itself; the gocassini ExApp remains
 responsible for collection, upload, and ingestion policy. The feature is
-experimental and off by default.]]></description>
+experimental. Installing this app is what lets the payload reach Talk at all;
+the ExApp's own CASSINI_SOURCE_CAPTURE switch decides whether anything is
+collected, and it is on unless set to 0.]]></description>
   <version>0.2.0-beta.6</version>
   <licence>agpl</licence>
   <author>codemyriad</author>

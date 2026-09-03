@@ -126,15 +126,12 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// change what playback means, and the viewer seeks against it.
 	var sourceAudio []SourceRenderReport
 	if cfg.SourceAudioDir != "" {
-		workDir, err := WorkPath(outputDir, "sourceaudio")
-		if err == nil {
-			err = os.MkdirAll(workDir, 0o755)
-		}
-		if err != nil {
-			fmt.Fprintf(stdout, "  source audio: no work directory: %v\n", err)
-		} else {
-			sourceAudio = ApplySourceAudio(ctx, mkvPath, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, workDir, 16000, audioDurationMS, stdout)
-		}
+		// ApplySourceAudio creates its own work directory, and only once it has
+		// a capture to render. Ingestion is on by default, so the ordinary case
+		// is a build with no upload for this room, and that build has to leave
+		// the bundle byte for byte what a build without ingestion would leave —
+		// not an empty _work/sourceaudio to explain to whoever finds it.
+		sourceAudio = ApplySourceAudio(ctx, mkvPath, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, 16000, audioDurationMS, stdout)
 	}
 
 	// --- 3. Download / verify STT model and VAD ---

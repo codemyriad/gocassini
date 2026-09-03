@@ -322,7 +322,7 @@ func TestCaptureUploadEnforcesTheQuotaAgainstALyingContentLength(t *testing.T) {
 // to be inert, so the gate has to come first.
 func TestCaptureGateIsDecidedBeforeAnyStorageWork(t *testing.T) {
 	rt := captureTestRuntime(t)
-	t.Setenv(envSourceCaptureEnabled, "")
+	t.Setenv(envSourceCaptureEnabled, "0")
 	original := probeCaptureFreeBytes
 	probeCaptureFreeBytes = func(string) (int64, error) {
 		t.Error("a disabled installation measured the volume for a capture upload")
@@ -460,7 +460,7 @@ func TestStatusReportsWhatSourceCaptureIsHolding(t *testing.T) {
 	defer cleanup()
 	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
 	t.Setenv(envSourceCaptureEnabled, "1")
-	t.Setenv("CASSINI_SOURCE_AUDIO_INGEST", "")
+	t.Setenv(envSourceAudioIngestEnabled, "0")
 	stubCaptureFreeBytes(t, 12<<30)
 	seedCapture(t, rt.cfg.CaptureRoot, "room-a", "alice", 1700, 4096, 3*time.Hour)
 	seedCapture(t, rt.cfg.CaptureRoot, "room-a", "bob", 1700, 2048, time.Hour)
@@ -506,7 +506,7 @@ func TestStatusReportsSourceCaptureWithCollectionOffWithoutCreatingTheRoot(t *te
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
-	t.Setenv(envSourceCaptureEnabled, "")
+	t.Setenv(envSourceCaptureEnabled, "0")
 	stubCaptureFreeBytes(t, 12<<30)
 
 	status := rt.sourceCaptureStatus()

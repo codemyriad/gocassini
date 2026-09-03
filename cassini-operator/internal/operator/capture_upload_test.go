@@ -133,9 +133,9 @@ func uploadRequest(t *testing.T, sidecar captureSidecar, segments map[string][]b
 
 func captureTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
-	// Source capture is off unless an administrator enables it, so every test
-	// of the intake path has to turn it on first — which is itself the
-	// assertion that the gate is real.
+	// Pinned on rather than left to the default. Source capture is on by
+	// default on this branch, but a test of the intake path must not be
+	// silently re-aimed by a change to that default: it says what it needs.
 	t.Setenv(envSourceCaptureEnabled, "1")
 	// The free-space floor is checked against the real volume the temp
 	// directory sits on. A CI host whose /tmp is smaller than the floor would
@@ -669,11 +669,11 @@ func TestValidateSidecarAcceptsARealisticMultiSegmentCapture(t *testing.T) {
 	}
 }
 
-func TestCaptureUploadIsRefusedUntilAnAdministratorEnablesIt(t *testing.T) {
+func TestCaptureUploadIsRefusedWhenAnAdministratorOptsOut(t *testing.T) {
 	rt := captureTestRuntime(t)
 	// A stale client from before the feature was turned off must still be
 	// unable to store anything.
-	t.Setenv(envSourceCaptureEnabled, "")
+	t.Setenv(envSourceCaptureEnabled, "0")
 
 	req := uploadRequest(t, validSidecar(), map[string][]byte{"segment-0.webm": []byte("audio")})
 	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))

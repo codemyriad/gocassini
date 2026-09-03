@@ -129,27 +129,38 @@ sandbox/wire-cassini.sh --register-only                                      # r
 ### Source capture on the sandbox
 
 Participant source-audio capture ([docs/source-audio-capture.md](../docs/source-audio-capture.md))
-is **off** on every deploy unless asked for, and both of its switches are passed
-to AppAPI explicitly each time, so a deploy without them also turns them off
-again on a host where an earlier deploy had them on.
+is **on by default** on an `--image` deploy from this branch — that is the point
+of the branch — and both of its switches are passed to AppAPI explicitly each
+time, so whatever this deploy says is what the host ends up with. A store deploy
+is the one case where the default does not hold: it cannot build a matching
+companion, so it registers both switches off (see below).
 
 ```bash
-sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha> --with-capture   # collect only
-sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha> --with-capture --with-ingest
+sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha>   # collect and ingest
+CASSINI_SOURCE_AUDIO_INGEST=0 sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha>   # collect only
+CASSINI_SOURCE_CAPTURE=0 sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha>        # collect nothing
 ```
 
-`--with-capture` also installs the `cassini_capture` companion app, built around
-the payload read from the running ExApp container so the two are byte-identical,
-and it needs `--image` for that reason: the companion must carry the same version
-as the ExApp, and only the checkout that produced the image is guaranteed to.
-Without `--with-capture` an enabled companion is disabled again, which is what
-backing the feature out completely requires.
+A deploy with capture on also installs the `cassini_capture` companion app,
+built around the payload read from the running ExApp container so the two are
+byte-identical. That is why it needs `--image`: the companion must carry the same
+version as the ExApp, and only the checkout that produced the image is guaranteed
+to. A `--from-store` deploy cannot deliver the payload at all, so it registers
+both switches off and says why — a switch answering yes with no companion behind
+it is worse than one answering no, and calls still running with a payload from
+an earlier deploy stop within about thirty seconds. With nothing collected there
+is nothing to ingest either, which is why both go rather than only capture.
+`CASSINI_SOURCE_CAPTURE=0` also disables an enabled companion, and a deploy that
+cannot disable it fails rather than reporting success. To back the feature out
+completely, set `CASSINI_SOURCE_AUDIO_INGEST=0` as well: capture off stops new
+uploads but leaves the ones already on disk until the retention sweep reaches
+them, and a build running in the meantime would still transcribe from them.
 
-From GitHub, the `Deploy Sandbox` workflow exposes the same two choices as the
-`source_capture` and `source_audio_ingest` inputs. With capture on, every
-authenticated participant of a recorded call is captured — there is nothing per
-participant to set up, in the browser or anywhere else. Record a call as
-described under "Trying it" in the capture document.
+From GitHub, the `Deploy Sandbox` workflow has no inputs for either switch: pass
+an `image_tag` and both are on. With capture on, every authenticated participant
+of a recorded call is captured — there is nothing per participant to set up, in
+the browser or anywhere else. Record a call as described under "Trying it" in the
+capture document.
 
 The HaRP shared key persists in a fixed **`/opt/cassini-aio`**
 (override with `CASSINI_AIO_STATE`), **not** in the repo. It must be a single
