@@ -388,6 +388,16 @@ function segmentFilesIn(captures) {
     .filter((file) => /^segment-\d+\.webm$/.test(file.name));
 }
 
+// segmentBytesIn maps each segment file to its size, so a file the resumed
+// capture reopened and truncated is visible rather than merely still present.
+function segmentBytesIn(captures) {
+  const bytes = {};
+  for (const file of segmentFilesIn(captures)) {
+    bytes[file.name] = Number(file.size || 0);
+  }
+  return bytes;
+}
+
 async function opfsSnapshot(page) {
   return page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
@@ -695,16 +705,29 @@ try {
   await delay(4_000);
   result.alice.duringRecordingOPFS = await opfsSnapshot(alicePage);
   const capturesAfter = result.alice.duringRecordingOPFS.map((capture) => capture.dirName);
+  const bytesBefore = segmentBytesIn(afterSwitchOPFS);
+  const bytesAfter = segmentBytesIn(result.alice.duringRecordingOPFS);
   result.alice.reload = {
     capturesBefore,
     capturesAfter,
     segmentsBefore: segmentFiles.length,
     segmentsAfter: segmentFilesIn(result.alice.duringRecordingOPFS).length,
+    segmentBytesBefore: bytesBefore,
+    segmentBytesAfter: bytesAfter,
+    // The resumed capture must number its own segment past everything already
+    // in the directory. Numbering from the manifest alone was not enough: the
+    // recovery sidecar is a checkpoint, so a segment the microphone change had
+    // just opened could have bytes on disk and no entry yet — and the resumed
+    // capture then reopened that file and truncated it.
+    preservedPreReloadBytes: Object.entries(bytesBefore)
+      .every(([name, size]) => Number(bytesAfter[name] || 0) >= size),
   };
   assert(capturesAfter.length === 1 && capturesAfter[0] === capturesBefore[0],
     `the reload filed a new capture instead of resuming ${capturesBefore[0]}: ${JSON.stringify(capturesAfter)}`);
   assert(result.alice.reload.segmentsAfter > result.alice.reload.segmentsBefore,
     "the rejoined page added no segment of its own to the adopted capture");
+  assert(result.alice.reload.preservedPreReloadBytes,
+    `the resumed capture overwrote audio recorded before the reload: ${JSON.stringify(result.alice.reload)}`);
 
   const captureUpload = (response) => (
     response.request().method() === "POST" && response.url().includes("/operator/capture/upload")

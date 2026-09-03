@@ -102,6 +102,11 @@ window.__capturePatchedBeforeTalk = window.RTCPeerConnection.__cassiniPatched ==
 // ever record. A page in this state with the room's recording ACTIVE is the
 // sharpest test of that: everything except the call itself is true.
 window.__previewOnly = new URLSearchParams(location.search).get("preview") === "1";
+// The state between the preview and the call: Talk has built the publishing
+// peer connection and added the microphone to it, and nothing has connected.
+// This is the participant who is loaded but not in the meeting — the one who
+// says something they do not expect to be recorded.
+window.__noNegotiate = new URLSearchParams(location.search).get("nonegotiate") === "1";
 window.__talkReady = (async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   window.__localTrack = stream.getAudioTracks()[0];
@@ -134,6 +139,12 @@ window.__talkReady = (async () => {
   // it stops the packets and is a participant nobody can hear.
   window.__audioSender = local.getSenders().find((s) => s.track && s.track.kind === "audio");
 
+  if (window.__noNegotiate) {
+    // Deliberately no offer/answer: the sender exists, the track is live, and
+    // the connection never leaves "new".
+    window.__endCall = () => { local.close(); remote.close(); };
+    return true;
+  }
   const offer = await local.createOffer();
   await local.setLocalDescription(offer);
   await remote.setRemoteDescription(offer);

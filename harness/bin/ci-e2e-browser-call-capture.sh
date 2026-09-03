@@ -407,6 +407,7 @@ BROWSER_RESULT_CONTRACT='
   and (.alice.reload.capturesAfter | length) == 1
   and .alice.reload.capturesAfter[0] == .alice.reload.capturesBefore[0]
   and .alice.reload.segmentsAfter > .alice.reload.segmentsBefore
+  and .alice.reload.preservedPreReloadBytes == true
   and .alice.mediaAfterReload.rejoined == true
   and .alice.mediaAfterReload.audioBytesSent > 2000
   and ([.bob.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 1

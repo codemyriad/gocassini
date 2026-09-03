@@ -80,7 +80,8 @@ cat >"$TMP_DIR/passing.json" <<'JSON'
       "capturesBefore": ["capture-room-1"],
       "capturesAfter": ["capture-room-1"],
       "segmentsBefore": 2,
-      "segmentsAfter": 3
+      "segmentsAfter": 3,
+      "preservedPreReloadBytes": true
     },
     "mediaAfterReload": { "rejoined": true, "audioBytesSent": 26000 },
     "afterLeaveOPFS": [],
@@ -173,6 +174,8 @@ reject "the rejoined page added no segment of its own" \
   '.alice.reload.segmentsAfter = .alice.reload.segmentsBefore'
 reject "Alice's reload lost her the third segment" \
   '.alice.duringRecordingOPFS[0].files |= map(select(.name != "segment-2.webm"))'
+reject "the resumed capture overwrote pre-reload audio" \
+  '.alice.reload.preservedPreReloadBytes = false'
 reject "Alice never got back into the call" '.alice.mediaAfterReload.rejoined = false'
 reject "Alice sent no audio after rejoining" '.alice.mediaAfterReload.audioBytesSent = 0'
 

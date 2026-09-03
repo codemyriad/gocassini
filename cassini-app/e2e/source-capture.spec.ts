@@ -105,12 +105,14 @@ test("starting states do not capture; confirmed active starts and confirmed off 
 // files in each. The directory NAME is what proves adoption: it carries the
 // call start the capture identifies itself by, so a reload that produced a
 // second name produced a second capture.
+type CaptureDir = { name: string; files: string[]; segments: Record<string, number> };
+
 async function captureDirs(
   page: import("@playwright/test").Page,
-): Promise<Array<{ name: string; files: string[] }>> {
+): Promise<CaptureDir[]> {
   return page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
-    const dirs: Array<{ name: string; files: string[] }> = [];
+    const dirs: CaptureDir[] = [];
     for await (const [name, handle] of (
       root as unknown as {
         entries(): AsyncIterable<[string, FileSystemHandle]>;
@@ -118,12 +120,20 @@ async function captureDirs(
     ).entries()) {
       if (handle.kind !== "directory" || !name.startsWith("capture-")) continue;
       const files: string[] = [];
-      for await (const [child] of (
+      const segments: Record<string, number> = {};
+      for await (const [child, childHandle] of (
         handle as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }
       ).entries()) {
         files.push(child);
+        if (/^segment-\d+\.webm$/.test(child) && childHandle.kind === "file") {
+          try {
+            segments[child] = (await (childHandle as FileSystemFileHandle).getFile()).size;
+          } catch {
+            // A live sync access handle can hide its own file's size.
+          }
+        }
       }
-      dirs.push({ name, files: files.sort() });
+      dirs.push({ name, files: files.sort(), segments });
     }
     return dirs.sort((a, b) => a.name.localeCompare(b.name));
   });
@@ -145,11 +155,20 @@ test("a reload mid-recording is adopted into one capture holding both sides", as
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await setOfficialRecording(page, 2);
   await page.waitForTimeout(2600);
+  // A microphone change first, so the reload has to resume a capture whose
+  // newest segment may not be in the recovery sidecar yet — the sidecar is a
+  // checkpoint, and a resumed capture that numbered from it alone opened, and
+  // truncated, the file that segment had already been writing.
+  await page.evaluate(() => (window as never as { __replaceTrack: () => Promise<void> }).__replaceTrack());
+  await page.waitForTimeout(2600);
 
   const before = await captureDirs(page);
   expect(before, "the first page recorded nothing to resume").toHaveLength(1);
   const dirName = before[0].name;
-  expect(before[0].files.some((name) => name.startsWith("segment-"))).toBe(true);
+  expect(
+    Object.keys(before[0].segments).length,
+    "the microphone change did not cut a second segment, so the reload proves less",
+  ).toBeGreaterThanOrEqual(2);
 
   await page.reload();
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
@@ -165,9 +184,16 @@ test("a reload mid-recording is adopted into one capture holding both sides", as
     "the reload started a second capture instead of resuming the first",
   ).toEqual([dirName]);
   expect(
-    during[0].files.filter((name) => name.startsWith("segment-")).length,
+    Object.keys(during[0].segments).length,
     "the rejoined page did not add a segment of its own",
-  ).toBeGreaterThan(before[0].files.filter((name) => name.startsWith("segment-")).length);
+  ).toBeGreaterThan(Object.keys(before[0].segments).length);
+  // Nothing recorded before the reload was reopened and overwritten.
+  for (const [name, size] of Object.entries(before[0].segments)) {
+    expect(
+      during[0].segments[name],
+      `${name} shrank across the reload: the resumed capture reused its index`,
+    ).toBeGreaterThanOrEqual(size);
+  }
 
   await setOfficialRecording(page, 0);
   await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
@@ -180,7 +206,7 @@ test("a reload mid-recording is adopted into one capture holding both sides", as
   expect(dirName).toContain(String(sidecar.callStartWallMs));
   // Both sides of the reload, contiguously numbered, every one of them real
   // audio the server received.
-  expect(sidecar.segments.length).toBeGreaterThanOrEqual(2);
+  expect(sidecar.segments.length).toBeGreaterThanOrEqual(3);
   expect(sidecar.segments.map((segment: { index: number }) => segment.index)).toEqual(
     sidecar.segments.map((_: unknown, index: number) => index),
   );
@@ -219,14 +245,10 @@ test("a buffered capture whose recording is over uploads at the next page load",
   await expect.poll(async () => (await captureDirs(page)).length, { timeout: 20_000 }).toBe(0);
 });
 
-// R1, from the other side. Talk holds the microphone open in its device
-// preview, and the room's recording is active — every condition the payload
-// checks is true except the one that decides everything: there is no sender,
-// because nothing has been added to a peer connection. No MediaRecorder is
-// constructed and no storage is touched.
-test("the device preview constructs no recorder and writes no storage", async ({ page }) => {
-  // Counted from before the payload runs, so a recorder built anywhere at all
-  // is caught — not only one this test knows how to look for.
+// countRecorders installs a MediaRecorder that counts its own construction,
+// before the payload runs — so a recorder built anywhere at all is caught, not
+// only one these tests know how to look for.
+async function countRecorders(page: import("@playwright/test").Page) {
   await page.addInitScript(() => {
     const Original = window.MediaRecorder;
     (window as never as { __recordersBuilt: number }).__recordersBuilt = 0;
@@ -238,32 +260,68 @@ test("the device preview constructs no recorder and writes no storage", async ({
     }
     window.MediaRecorder = Counted as unknown as typeof MediaRecorder;
   });
+}
 
-  await page.goto(`${server.origin}/call/testroom?preview=1`);
-  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
-  // The microphone really is open: this is a preview, not a page that failed.
-  expect(
-    await page.evaluate(
-      () => (window as never as { __localTrack: MediaStreamTrack }).__localTrack.readyState,
-    ),
-  ).toBe("live");
+async function expectNothingCollected(page: import("@playwright/test").Page, where: string) {
   expect(
     await page.evaluate(
       () => (window as never as { RTCPeerConnection: { __cassiniPatched?: boolean } }).RTCPeerConnection.__cassiniPatched,
     ),
     "the payload did not install, so this test proves nothing",
   ).toBe(true);
+  // The microphone really is open: this is Talk holding it, not a page that
+  // failed before it got that far.
+  expect(
+    await page.evaluate(
+      () => (window as never as { __localTrack: MediaStreamTrack }).__localTrack.readyState,
+    ),
+  ).toBe("live");
+  expect(
+    await page.evaluate(() => (window as never as { __recordersBuilt: number }).__recordersBuilt),
+    `a MediaRecorder was constructed ${where}`,
+  ).toBe(0);
+  expect(await captureDirs(page), `${where} created capture storage`).toEqual([]);
+  expect(server.uploads).toHaveLength(0);
+}
+
+// R1, from the other side. Talk holds the microphone open in its device
+// preview, and the room's recording is active — every condition the payload
+// checks is true except the one that decides everything: there is no sender,
+// because nothing has been added to a peer connection.
+test("the device preview constructs no recorder and writes no storage", async ({ page }) => {
+  await countRecorders(page);
+  await page.goto(`${server.origin}/call/testroom?preview=1`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
 
   // Talk's recording is confirmed active, in this very room.
   await setOfficialRecording(page, 2);
   await page.waitForTimeout(3000);
+  await expectNothingCollected(page, "with the participant in the device preview");
+});
 
+// The sharper case, and the one somebody actually gets caught by: the page is
+// loaded, Talk has built the publishing connection and put the microphone on
+// it, the room is being recorded — and the participant is not in the call,
+// because nothing has connected. Anything said here is said by somebody who
+// does not believe they are in a meeting.
+test("a sender on a connection that never came up constructs no recorder", async ({ page }) => {
+  await countRecorders(page);
+  await page.goto(`${server.origin}/call/testroom?nonegotiate=1`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+
+  // The sender is real and carries a live track; only the call is missing.
   expect(
-    await page.evaluate(() => (window as never as { __recordersBuilt: number }).__recordersBuilt),
-    "a MediaRecorder was constructed with the participant not in the call",
-  ).toBe(0);
-  expect(await captureDirs(page), "the device preview created capture storage").toEqual([]);
-  expect(server.uploads).toHaveLength(0);
+    await page.evaluate(
+      () => (window as never as { __audioSender: RTCRtpSender }).__audioSender.track?.readyState,
+    ),
+  ).toBe("live");
+  expect(
+    await page.evaluate(() => (window as never as { __audioSender: RTCRtpSender }) && true),
+  ).toBe(true);
+
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(3000);
+  await expectNothingCollected(page, "with the publishing connection never connected");
 });
 
 test("leaving the room seals and uploads an active source capture", async ({ page }) => {
