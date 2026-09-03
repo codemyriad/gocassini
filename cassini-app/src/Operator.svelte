@@ -219,7 +219,6 @@
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
   import { shouldShowDetailLoading } from "./operator/viewState";
   import { applyJob, readJob } from "./surfaceRouting";
-  import SettingsPanel from "./SettingsPanel.svelte";
 
   const POLL_INTERVAL_MS = 2000;
   // If the SSE stream doesn't reach "open" within this window, assume the
@@ -824,12 +823,6 @@
             <div class="mt-3 alert alert-error text-sm">{actionError}</div>
           {/if}
         </section>
-      {/if}
-
-      {#if operatorClient}
-        {#key operatorClient}
-          <SettingsPanel {operatorClient} />
-        {/key}
       {/if}
 
       <div class="mt-6 grid rounded-box border border-base-300 bg-base-100 shadow-sm min-[981px]:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">

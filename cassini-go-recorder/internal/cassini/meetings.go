@@ -114,6 +114,8 @@ func runMeetings(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return runMeetingsFetch(ctx, args[1:], stdout, stderr)
 	case "context":
 		return runMeetingsContext(ctx, args[1:], stdout, stderr)
+	case "summarize":
+		return runMeetingsSummarize(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown meetings command %q\n\n", args[0])
 		printMeetingsUsage(stderr)
@@ -135,12 +137,15 @@ Usage:
   cassini meetings fetch <meeting-id> --out "./Meeting.opus"
   cassini meetings context <meeting-id>
   cassini meetings context <meeting-id> --json --out ./context.json
+  cassini meetings summarize ./Meeting.opus
 
 Commands:
-  list     List the meetings your account may read, optionally filtered
-  rooms    List the conversations your account has readable recordings from
-  fetch    Download one meeting's portable .opus
-  context  Print one meeting as agent-readable context (transcript + summary)
+  list       List the meetings your account may read, optionally filtered
+  rooms      List the conversations your account has readable recordings from
+  fetch      Download one meeting's portable .opus
+  context    Print one meeting as agent-readable context (transcript + summary)
+  summarize  Add a summary to already-sealed portable .opus files (reads local
+             files and the LLM environment, not Nextcloud)
 
 Connection:
   --nextcloud-url URL   Nextcloud base URL           (env CASSINI_NC_URL)

@@ -27,6 +27,17 @@ export interface PortableTranscriptEntry {
   payloadRef: PortablePayloadRef;
 }
 
+/**
+ * A file the producer sealed into the manifest verbatim (today only
+ * `summary.md`). Written by internal/cassini/portable_meeting.go as an untyped
+ * map, so every field is optional on the wire.
+ */
+export interface PortableAttachment {
+  name?: string;
+  mime?: string;
+  contentBase64?: string;
+}
+
 export interface PortableMeetingManifest {
   kind?: string;
   version?: number;
@@ -72,6 +83,7 @@ export interface PortableMeetingManifest {
   provenance?: unknown;
   transcripts?: PortableTranscriptEntry[];
   readableTranscripts?: PortableTranscriptEntry[];
+  attachments?: PortableAttachment[];
 }
 
 export interface PortableTranscriptDescriptor {
@@ -415,6 +427,45 @@ export function getDefaultTranscriptId(manifest: PortableMeetingManifest): strin
     throw new Error("portable manifest has no transcripts[]");
   }
   return pickDefaultTranscript(transcripts).id;
+}
+
+const SUMMARY_ATTACHMENT_NAME = "summary.md";
+
+/**
+ * Returns the meeting summary the producer sealed into the file as the
+ * `summary.md` attachment, or `null` when the file carries none. Matched by
+ * name only (case-insensitive, like the Go reader in
+ * internal/inspect/extract_meeting.go), not by mime. Never throws: an
+ * attachment that is empty or undecodable (bad base64, invalid UTF-8) reads as
+ * no summary, so a damaged attachment costs the summary panel and nothing else.
+ *
+ * The content is base64.StdEncoding (padded, `+/`), matching the writer in
+ * internal/cassini/portable_meeting.go — not the base64url the
+ * CASSINI_PAYLOAD_* chunks use. decodeBase64Url accepts both alphabets.
+ */
+export function readPortableSummaryMarkdown(manifest: PortableMeetingManifest): string | null {
+  const attachments = Array.isArray(manifest.attachments) ? manifest.attachments : [];
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") {
+      continue;
+    }
+    const name = typeof attachment.name === "string" ? attachment.name.trim().toLowerCase() : "";
+    if (name !== SUMMARY_ATTACHMENT_NAME || typeof attachment.contentBase64 !== "string") {
+      continue;
+    }
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(
+        decodeBase64Url(attachment.contentBase64),
+      );
+    } catch {
+      continue;
+    }
+    if (text.trim() !== "") {
+      return text;
+    }
+  }
+  return null;
 }
 
 function humanizeTranscriptId(value: string): string {

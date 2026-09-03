@@ -13,16 +13,13 @@ import (
 
 // BuildConfig holds runtime options for the transcription pipeline.
 type BuildConfig struct {
-	Device                string     // "cpu" or "cuda"
-	ModelID               ModelID    // defaults to defaultModelID
-	AdditionalModels      []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
-	CacheDir              string     // root cache directory, e.g. ~/.cache/cassini
-	LLM                   LLMConfig  // optional; if not configured, skip readable cleanup
-	SummaryLLM            LLMConfig  // optional; if not configured, skip summary generation
-	StrictReadableCleanup bool       // fail the build if readable cleanup cannot complete
-	NumThreads            int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
-	Quality               STTQuality // "" = balanced; picks model/device when not explicitly set
-	TranscriptionTerms    []string   // optional preferred spellings for LLM readable cleanup; does not affect raw ASR
+	Device           string     // "cpu" or "cuda"
+	ModelID          ModelID    // defaults to defaultModelID
+	AdditionalModels []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
+	CacheDir         string     // root cache directory, e.g. ~/.cache/cassini
+	SummaryLLM       LLMConfig  // optional; if not configured, skip summary generation
+	NumThreads       int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
+	Quality          STTQuality // "" = balanced; picks model/device when not explicitly set
 	// Backend selects the speech decoder ("" = CASSINI_STT_BACKEND, else the
 	// bundled sherpa-onnx). See backend.go.
 	Backend string
@@ -34,7 +31,6 @@ type BuildConfig struct {
 }
 
 var (
-	readableCleanupFn     = ReadableCleanup
 	buildMeetingSummaryFn = BuildMeetingSummary
 	// ensureModelFn / ensureVADFn / buildSpeakerEnvelopesFn are seams so the
 	// pipeline can be exercised end-to-end with a registered fake backend and
@@ -48,7 +44,7 @@ var (
 // bundle artifacts to outputDir:
 //   - meeting.webm          — mono 48 kHz Opus mix of all speakers
 //   - transcript.words.v1.json
-//   - transcript.readable.v1.json + captions.vtt  (if LLM configured)
+//   - captions.vtt
 //   - summary.md            — V0 template format (if SummaryLLM configured)
 //   - manifest.json
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
@@ -172,17 +168,13 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		return err
 	}
 
-	// --- 8. Optional: LLM readable cleanup ---
-	cleanedSegs, hasReadable, err := writeReadableArtifacts(outputDir, streams, segments, audioDurationMS, sha256hex, cfg, stdout)
-	if err != nil {
-		return err
+	// --- 8. Captions, from the canonical transcript ---
+	if err := WriteCaptionsVTT(filepath.Join(outputDir, "captions.vtt"), streams, segments); err != nil {
+		return fmt.Errorf("write captions: %w", err)
 	}
 
 	// --- 9. Optional: meeting summary generation ---
 	summaryInput := segments
-	if hasReadable {
-		summaryInput = cleanedSegs
-	}
 	// The canonical transcript keeps every word; the summary does not. A reader
 	// can see and overrule a word marked as probable crosstalk, but a generated
 	// summary has no such reader, and a fabricated interjection there becomes a
@@ -200,7 +192,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// --- 10. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
-	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, audioDurationMS, streams, segments, backend, cfg.ModelID, cfg.Device, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts, attrProv, wordEnds.provenance()); err != nil {
+	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, audioDurationMS, streams, segments, backend, cfg.ModelID, cfg.Device, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts, attrProv, wordEnds.provenance()); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
@@ -544,28 +536,26 @@ func sanitizeTranscriptID(id string) string {
 // DefaultBuildConfig returns a BuildConfig populated from standard environment
 // variables. The caller should override Device and CacheDir as needed.
 func DefaultBuildConfig() BuildConfig {
-	llm := DefaultLLMConfig()
-	llm.APIKey = os.Getenv("OPENROUTER_API_KEY")
-	llm.BaseURL = os.Getenv("OPENROUTER_BASE_URL")
-	if llm.BaseURL == "" {
-		llm.BaseURL = os.Getenv("LLM_BASE_URL")
+	summaryLLM := DefaultLLMConfig()
+	summaryLLM.APIKey = os.Getenv("OPENROUTER_API_KEY")
+	summaryLLM.BaseURL = os.Getenv("OPENROUTER_BASE_URL")
+	if summaryLLM.BaseURL == "" {
+		summaryLLM.BaseURL = os.Getenv("LLM_BASE_URL")
 	}
-	if llm.BaseURL == "" && llm.APIKey != "" {
-		llm.BaseURL = "https://openrouter.ai/api/v1"
+	if summaryLLM.BaseURL == "" && summaryLLM.APIKey != "" {
+		summaryLLM.BaseURL = "https://openrouter.ai/api/v1"
 	}
 	if model := os.Getenv("LLM_MODEL"); model != "" {
-		llm.Model = model
-	}
-
-	summaryLLM := llm
-	if model := os.Getenv("SUMMARY_MODEL"); model != "" {
 		summaryLLM.Model = model
 	}
-	if envBool("CASSINI_SUMMARY_DISABLED") {
-		// Disable summary independently of readable cleanup. IsConfigured()
-		// requires both APIKey and BaseURL, so blanking the key is sufficient.
-		summaryLLM.APIKey = ""
+	if sec := envInt("CASSINI_LLM_TIMEOUT_SEC"); sec > 0 {
+		summaryLLM.TimeoutSec = sec
 	}
+	if n := envInt("CASSINI_LLM_MAX_TOKENS"); n > 0 {
+		summaryLLM.MaxTokens = n
+	}
+	applyStepEndpoint(&summaryLLM, "SUMMARY")
+	summaryLLM.Disabled = envBool("CASSINI_SUMMARY_DISABLED")
 
 	// Leave an unset model empty: BuildMeetingArtifact derives it from the
 	// quality tier and the resolved device (GPU -> fp32, CPU -> int8). An
@@ -584,18 +574,30 @@ func DefaultBuildConfig() BuildConfig {
 	}
 
 	return BuildConfig{
-		Device:                defaultDevice(),
-		ModelID:               primary,
-		AdditionalModels:      additional,
-		LLM:                   llm,
-		SummaryLLM:            summaryLLM,
-		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),
-		NumThreads:            envInt("CASSINI_STT_NUM_THREADS"),
-		Quality:               NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")),
-		Backend:               ResolveRecognizerBackend(""),
-		SkipAttribution:       envBool("CASSINI_ATTRIBUTION_DISABLED"),
-		DropCrosstalk:         envBool("CASSINI_ATTRIBUTION_DROP"),
-		TranscriptionTerms:    parseTranscriptionTerms(os.Getenv("CASSINI_TRANSCRIPTION_TERMS")),
+		Device:           defaultDevice(),
+		ModelID:          primary,
+		AdditionalModels: additional,
+		SummaryLLM:       summaryLLM,
+		NumThreads:       envInt("CASSINI_STT_NUM_THREADS"),
+		Quality:          NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")),
+		Backend:          ResolveRecognizerBackend(""),
+		SkipAttribution:  envBool("CASSINI_ATTRIBUTION_DISABLED"),
+		DropCrosstalk:    envBool("CASSINI_ATTRIBUTION_DROP"),
+	}
+}
+
+// applyStepEndpoint layers a step's own endpoint over the shared LLM config:
+// {STEP}_BASE_URL, {STEP}_API_KEY and {STEP}_MODEL. An endpoint override brings
+// its own key — the shared key is never sent to a different host — while a
+// model override alone keeps the shared endpoint. The operator emits these from
+// its persisted settings.
+func applyStepEndpoint(cfg *LLMConfig, step string) {
+	if base := strings.TrimSpace(os.Getenv(step + "_BASE_URL")); base != "" {
+		cfg.BaseURL = base
+		cfg.APIKey = os.Getenv(step + "_API_KEY")
+	}
+	if model := strings.TrimSpace(os.Getenv(step + "_MODEL")); model != "" {
+		cfg.Model = model
 	}
 }
 
@@ -617,40 +619,6 @@ func defaultDevice() string {
 		return v
 	}
 	return "auto"
-}
-
-func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) ([]Segment, bool, error) {
-	if !cfg.LLM.IsConfigured() {
-		return nil, false, nil
-	}
-
-	fmt.Fprintln(stdout, "  running LLM readable cleanup...")
-	llmCfg := cfg.LLM
-	llmCfg.PreferredSpellings = preferredSpellingsForCleanup(cfg.TranscriptionTerms, streams)
-	readableSegs, err := readableCleanupFn(llmCfg, segments)
-	if err != nil {
-		if cfg.StrictReadableCleanup {
-			return nil, false, fmt.Errorf("readable cleanup: %w", err)
-		}
-		fmt.Fprintf(stdout, "  warn: LLM cleanup failed: %v — skipping readable transcript\n", err)
-		return nil, false, nil
-	}
-
-	applied := ApplyReadableText(segments, readableSegs)
-
-	readablePath := filepath.Join(outputDir, "transcript.readable.v1.json")
-	// Readable cleanup produces a distinct artifact contract from the raw word
-	// transcript. If we stamp it as transcript.words.v1, downstream loaders will
-	// ignore the cleaned content and fall back to raw ASR text.
-	if err := writeTranscriptWithHash(readablePath, "transcript.readable.v1", streams, applied, audioDurationMS, sha256hex); err != nil {
-		return nil, false, fmt.Errorf("write readable transcript: %w", err)
-	}
-
-	captionsPath := filepath.Join(outputDir, "captions.vtt")
-	if err := WriteCaptionsVTT(captionsPath, streams, applied); err != nil {
-		return nil, false, fmt.Errorf("write captions: %w", err)
-	}
-	return applied, true, nil
 }
 
 func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) (bool, error) {

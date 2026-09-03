@@ -2,6 +2,11 @@ import type {
   Job,
   JobAttempt,
   JobDetailResponse,
+  LLMEffectiveStep,
+  LLMModel,
+  LLMSettings,
+  LLMSettingsUpdate,
+  LLMStep,
   Settings,
   SettingsEffective,
   SettingsQuality,
@@ -104,6 +109,42 @@ export class OperatorClient {
     );
   }
 
+  async getLLMSettings(): Promise<LLMSettings> {
+    return normalizeLLMSettings(await this.#request<unknown>("/settings/llm"));
+  }
+
+  async putLLMSettings(payload: LLMSettingsUpdate): Promise<LLMSettings> {
+    return normalizeLLMSettings(
+      await this.#request<unknown>("/settings/llm", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+  }
+
+  async listProviderModels(providerId: string): Promise<LLMModel[]> {
+    const raw = await this.#request<{ models?: unknown }>(
+      `/settings/llm/providers/${encodeURIComponent(providerId)}/models`,
+    );
+    if (!Array.isArray(raw.models)) {
+      return [];
+    }
+    return raw.models
+      .filter((item): item is Record<string, unknown> => item != null && typeof item === "object")
+      .filter((item) => typeof item.id === "string" && item.id !== "")
+      .map((item) => ({
+        id: item.id as string,
+        name: typeof item.name === "string" ? item.name : undefined,
+        context_length:
+          typeof item.context_length === "number" && Number.isFinite(item.context_length)
+            ? item.context_length
+            : undefined,
+      }));
+  }
+
   openEventStream(handlers: OperatorStreamHandlers): EventSource {
     const eventSource = new EventSource(`${this.#baseUrl}/events`);
     const handleMessage = (event: MessageEvent<string>) => {
@@ -167,7 +208,6 @@ function normalizeSettings(raw: unknown): Settings {
   return {
     quality: normalizeQuality(value.quality),
     device_override: asString(value.device_override),
-    transcription_terms: asStringArray(value.transcription_terms),
     source: asString(value.source) || "auto",
     detected_gpu: value.detected_gpu === true,
     cores: typeof value.cores === "number" && Number.isFinite(value.cores) ? value.cores : 0,
@@ -190,9 +230,60 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
+
+// normalizeLLMSettings mirrors normalizeSettings: tolerate contract drift so
+// the panel always has a renderable shape, and never carry a raw key even if a
+// buggy server were to send one.
+function normalizeLLMSettings(raw: unknown): LLMSettings {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  const effective =
+    value.effective != null && typeof value.effective === "object"
+      ? (value.effective as Record<string, unknown>)
+      : {};
+  const providers = Array.isArray(value.providers)
+    ? value.providers
+        .filter((item): item is Record<string, unknown> => item != null && typeof item === "object")
+        .map((item) => ({
+          id: asString(item.id),
+          name: asString(item.name),
+          base_url: asString(item.base_url),
+          api_key_configured: item.api_key_configured === true,
+          timeout_sec: asNonNegativeNumber(item.timeout_sec),
+          max_tokens: asNonNegativeNumber(item.max_tokens),
+        }))
+        .filter((item) => item.id !== "")
+    : [];
+  return {
+    providers,
+    summary: normalizeLLMStep(value.summary),
+    effective: {
+      summary: normalizeLLMEffectiveStep(effective.summary),
+    },
+  };
+}
+
+function normalizeLLMStep(raw: unknown): LLMStep {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  return {
+    enabled: value.enabled === true,
+    provider: asString(value.provider),
+    model: asString(value.model),
+  };
+}
+
+function normalizeLLMEffectiveStep(raw: unknown): LLMEffectiveStep | null {
+  if (raw == null || typeof raw !== "object") {
+    return null;
   }
-  return value.filter((item): item is string => typeof item === "string");
+  const value = raw as Record<string, unknown>;
+  return {
+    provider: asString(value.provider),
+    base_url: asString(value.base_url),
+    model: asString(value.model),
+    api_key_configured: value.api_key_configured === true,
+  };
+}
+
+function asNonNegativeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }

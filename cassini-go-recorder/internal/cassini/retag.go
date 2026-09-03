@@ -319,63 +319,88 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 		summary.Changes = append(summary.Changes, RetagChange{Field: edit.Field, From: retagJSONValue(before), To: edit.Value})
 	}
 
+	// The retag-specific half of the verification the shared rewrite runs
+	// against the STAGED file: the fields this command exists to move must be
+	// in the written manifest, and the plain-tag mirrors must agree with it,
+	// since a shell reader believes them. A chunk set that did not survive the
+	// muxer, a payload digest that does not match what was written, a room id
+	// that landed in the tags and not the manifest — all of them produce a
+	// file that plays perfectly and is unreadable as a meeting, and the
+	// callers upload the result over a recording that, under D-612, cannot be
+	// deleted.
+	verify := func(intended, written portable.Manifest, writtenTags map[string]string) error {
+		if written.Meeting.RoomID != intended.Meeting.RoomID ||
+			written.Meeting.JobID != intended.Meeting.JobID ||
+			written.Meeting.AttemptNumber != intended.Meeting.AttemptNumber {
+			return fmt.Errorf("verify retagged file: the written manifest does not carry the requested fields")
+		}
+		if got := portableTagValue(writtenTags, "CASSINI_ROOM_ID"); got != written.Meeting.RoomID {
+			return fmt.Errorf("verify retagged file: CASSINI_ROOM_ID is %q, manifest says %q", got, written.Meeting.RoomID)
+		}
+		return nil
+	}
+	if err := commitPortableManifestRewrite(ctx, inputPath, resolvedOut, document, tags, verify); err != nil {
+		return RetagSummary{}, err
+	}
+	return summary, nil
+}
+
+// commitPortableManifestRewrite is the shared write half of every command that
+// edits the manifest inside a sealed portable .opus (`cassini retag`,
+// `cassini meetings summarize`): re-encode the edited JSON document, rebuild
+// the OpusTags around it, stage the rewritten file next to the output, verify
+// the copied audio against the manifest's own integrity policy, read the
+// manifest back OUT of the staged file so the caller can verify its edit
+// actually landed, and only then commit with a single rename. When the output
+// path IS the input path this is a safe in-place rewrite: the original is
+// untouched until the verified stage file atomically replaces it.
+//
+// The manifest is re-parsed from the edited document rather than carried
+// alongside it, so the integrity numbers verified here are the ones the output
+// file actually claims — not the ones the input claimed.
+func commitPortableManifestRewrite(ctx context.Context, inputPath, resolvedOut string, document map[string]any, existingTags map[string]string, verify func(intended, written portable.Manifest, writtenTags map[string]string) error) error {
 	updatedJSON, err := json.Marshal(document)
 	if err != nil {
-		return RetagSummary{}, fmt.Errorf("encode portable meeting manifest: %w", err)
+		return fmt.Errorf("encode portable meeting manifest: %w", err)
 	}
-
-	// The manifest is re-parsed into the struct AFTER the edit rather than
-	// carried alongside it, so the integrity numbers verified below are the
-	// ones the output file actually claims — not the ones the input claimed.
+	// Decoded with the published-manifest decoder (published files are v1-only
+	// on the wire now), so the integrity numbers verified below are the ones
+	// the output file actually claims.
 	manifest, err := portable.DecodePublishedManifest(updatedJSON)
 	if err != nil {
-		return RetagSummary{}, err
+		return err
 	}
 
-	updatedTags, err := retagOpusTags(tags, updatedJSON, manifest)
+	updatedTags, err := retagOpusTags(existingTags, updatedJSON, manifest)
 	if err != nil {
-		return RetagSummary{}, err
+		return err
 	}
 
 	stagePath, err := createPortableStagePath(resolvedOut)
 	if err != nil {
-		return RetagSummary{}, err
+		return err
 	}
 	defer func() { _ = os.Remove(stagePath) }()
 	if err := writePortableMeetingFile(ctx, inputPath, stagePath, updatedTags); err != nil {
-		return RetagSummary{}, err
+		return err
 	}
 	if err := verifyPortableMeetingFile(stagePath, manifest); err != nil {
-		return RetagSummary{}, err
+		return err
 	}
-	// Read the manifest back OUT of the staged file before committing it.
-	//
 	// verifyPortableMeetingFile checks the audio, which -c:a copy makes almost
 	// impossible to break; what can actually go wrong here is the metadata,
-	// which is the only thing this command changes. A chunk set that did not
-	// survive the muxer, a payload digest that does not match what was written,
-	// a room id that landed in the tags and not the manifest — all of them
-	// produce a file that plays perfectly and is unreadable as a meeting.
-	//
-	// The callers upload the result over a recording that, under D-612, cannot
-	// be deleted. This is the last point at which that is preventable.
+	// which is the only thing these commands change. Reading the staged file
+	// back is the last point at which a wrong write is preventable.
 	written, writtenTags, err := readPortableMeetingManifest(stagePath)
 	if err != nil {
-		return RetagSummary{}, fmt.Errorf("verify retagged file: %w", err)
+		return fmt.Errorf("verify rewritten file: %w", err)
 	}
-	if written.Meeting.RoomID != manifest.Meeting.RoomID ||
-		written.Meeting.JobID != manifest.Meeting.JobID ||
-		written.Meeting.AttemptNumber != manifest.Meeting.AttemptNumber {
-		return RetagSummary{}, fmt.Errorf("verify retagged file: the written manifest does not carry the requested fields")
+	if verify != nil {
+		if err := verify(manifest, written, writtenTags); err != nil {
+			return err
+		}
 	}
-	// And that the mirrors agree with it, since a shell reader believes them.
-	if got := portableTagValue(writtenTags, "CASSINI_ROOM_ID"); got != written.Meeting.RoomID {
-		return RetagSummary{}, fmt.Errorf("verify retagged file: CASSINI_ROOM_ID is %q, manifest says %q", got, written.Meeting.RoomID)
-	}
-	if err := commitPortableMeetingOutput(stagePath, resolvedOut); err != nil {
-		return RetagSummary{}, err
-	}
-	return summary, nil
+	return commitPortableMeetingOutput(stagePath, resolvedOut)
 }
 
 // retagOpusTags rebuilds the tag set: every tag the file already had, with the

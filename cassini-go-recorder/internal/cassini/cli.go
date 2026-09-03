@@ -397,6 +397,7 @@ Usage:
   cassini meetings rooms
   cassini meetings fetch <meeting-id> --out "./Meeting.opus"
   cassini meetings context <meeting-id>
+  cassini meetings summarize ./Meeting.opus
   cassini operator start [args...]
   cassini pack ./meetings/demo.meeting --out "./Meeting.opus"
   cassini publish ./meetings --out ./site

@@ -27,6 +27,7 @@
 # Operator runtime state, written beside the sqlite DB — lands in-tree when a
 # dev run points DBPath into the source dir
 /cassini-operator/internal/operator/settings.json
+/cassini-operator/internal/operator/llm-settings.json
 
 # Local recorder artifacts
 *.csr

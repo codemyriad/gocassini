@@ -92,3 +92,23 @@ describe("applyJob", () => {
     expect(readJob(applyJob("#surface=operator", "01KXZV5QZP"))).toBe("01KXZV5QZP");
   });
 });
+
+describe("settings surface (D-696)", () => {
+  it("reads, marks, and round-trips the settings surface", () => {
+    expect(readSurface("#surface=settings")).toBe("settings");
+    expect(surfaceHash("settings")).toBe("#surface=settings");
+    expect(readSurface(surfaceHash("settings"))).toBe("settings");
+  });
+
+  it("applies the settings surface first while preserving viewer params", () => {
+    expect(applySurface("#meeting=abc&t=5s", "settings")).toBe("#surface=settings&meeting=abc&t=5s");
+  });
+
+  it("switches between admin surfaces without duplicating the marker", () => {
+    expect(applySurface("#surface=operator&meeting=abc", "settings")).toBe(
+      "#surface=settings&meeting=abc",
+    );
+    expect(applySurface("#surface=settings", "operator")).toBe("#surface=operator");
+    expect(applySurface("#surface=settings", "browse")).toBe("");
+  });
+});
