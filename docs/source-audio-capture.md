@@ -264,7 +264,7 @@ open Talk on that machine again.
 
 What a reload still costs is the tail of the current `MediaRecorder` chunk, at
 most about two seconds. And if the storage read that makes this decision has not
-finished within five seconds — which on a healthy browser it does in
+finished within a second — which on a healthy browser it does in
 milliseconds — the capture starts anyway rather than holding the participant's
 microphone hostage to it. The reload then files two captures instead of one;
 both reach the server and the recorder splices both, so what is lost is the

@@ -423,7 +423,25 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 		t.Fatal("a stale snapshot with the same segment count replaced a capture holding more of the call")
 	}
 
-	// An ordinary re-upload — the same call, no shorter — still replaces.
+	// A capture that reaches at least as far but is MISSING one of the stored
+	// segments would be dropping that audio, whatever its call window says.
+	// Two pages that both resumed one prefix can diverge like this.
+	divergent := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9500,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm"},
+			{Index: 1, AudioName: "segment-1.webm"},
+		},
+	}
+	replaced, err = rt.promoteCapture(divergent, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if replaced {
+		t.Fatal("an upload missing a stored segment replaced the capture that held it")
+	}
+
+	// An ordinary re-upload — the same segments, no shorter — still replaces.
 	again := stored
 	again.CallEndWallMS = 9500
 	replaced, err = rt.promoteCapture(&again, staging, final)

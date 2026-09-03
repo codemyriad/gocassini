@@ -291,36 +291,46 @@ func writeFileSynced(path string, body []byte) error {
 	return f.Close()
 }
 
-// storedCallEndWallMS reads how far into its call the capture stored at `dir`
-// reaches. Zero means there is genuinely nothing there; an error means the
-// question could not be answered, which is NOT the same thing and must not be
-// treated as it.
-func storedCallEndWallMS(dir string, roomToken string, callStartWallMS int64) (int64, error) {
+// storedCapture is what the server already holds for one call: which segments
+// it names, and how far into the call it reaches.
+type storedCapture struct {
+	names  map[string]struct{}
+	endsAt int64
+}
+
+// readStoredCapture reads that. A zero value means there is genuinely nothing
+// there; an error means the question could not be answered, which is NOT the
+// same thing and must not be treated as it.
+func readStoredCapture(dir string, roomToken string, callStartWallMS int64) (storedCapture, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, captureSidecarName))
 	if os.IsNotExist(err) {
-		return 0, nil
+		return storedCapture{}, nil
 	}
 	if err != nil {
 		// A transient read failure here used to read as "no capture stored",
 		// which promotes the incoming upload and deletes the copy that could not
 		// be read. The guard has to survive the storage faults it exists for.
-		return 0, fmt.Errorf("read stored capture sidecar: %w", err)
+		return storedCapture{}, fmt.Errorf("read stored capture sidecar: %w", err)
 	}
 	var stored captureSidecar
 	if err := json.Unmarshal(raw, &stored); err != nil {
 		// A manifest that does not parse describes nothing this can be compared
 		// against, and a directory with one is already unusable to the build.
-		return 0, nil
+		return storedCapture{}, nil
 	}
 	if stored.CallStartWallMS != callStartWallMS || stored.RoomToken != roomToken {
 		// A different call. Nothing to compare, and nothing to protect.
-		return 0, nil
+		return storedCapture{}, nil
 	}
-	return stored.CallEndWallMS, nil
+	names := make(map[string]struct{}, len(stored.Segments))
+	for _, segment := range stored.Segments {
+		names[segment.AudioName] = struct{}{}
+	}
+	return storedCapture{names: names, endsAt: stored.CallEndWallMS}, nil
 }
 
-// captureIsAShorterRetelling reports whether `incoming` describes less of the
-// same call than what is already on the server.
+// captureWouldLoseStoredAudio reports whether promoting `incoming` would drop
+// audio the server already holds for this call.
 //
 // A re-upload for one call replaces what is stored, and that is right for the
 // case it was built for: a client offering the same capture again. It is wrong
@@ -331,32 +341,51 @@ func storedCallEndWallMS(dir string, roomToken string, callStartWallMS int64) (i
 // replace the whole recording with its own first half and the sweep would
 // delete the rest.
 //
-// The test is the call window alone. Segment COUNT is not a measure of how much
-// audio a capture holds: a stale snapshot of a live one-segment capture has the
-// same count as the finished one and a fraction of its audio, so counting
-// segments let exactly the upload this is meant to refuse through. An upload
-// that ends earlier than what is stored is a retelling of less of the call,
-// however many files it arrives in; one that ends at the same instant or later
-// replaces as before.
+// The test is two questions, because neither answers alone. Containment by
+// segment NAME: a capture missing any segment the stored one names would be
+// dropping that audio. And the call's END: two captures can name the same
+// segments and hold different amounts of them — a snapshot of a live capture
+// has the same names as the finished one and a fraction of its seconds — so an
+// upload that reaches less far into the call is a retelling of less of it
+// whatever it is called. Segment count answers neither and was the first thing
+// tried. An upload has to be a superset by name AND reach at least as far
+// before it may replace what is stored.
 //
 // The set-aside copy is consulted too. promoteCapture moves the previous
 // capture to `.superseded` before it swaps, so a crash between those two
 // renames leaves the whole recording THERE and nothing at the live path — and
 // a stale prefix arriving afterwards would find no stored capture to compare
 // against, promote itself, and let the sweep delete the longer copy.
-func captureIsAShorterRetelling(incoming *captureSidecar, final string) (bool, error) {
-	stored, err := storedCallEndWallMS(final, incoming.RoomToken, incoming.CallStartWallMS)
+func captureWouldLoseStoredAudio(incoming *captureSidecar, final string) (bool, error) {
+	live, err := readStoredCapture(final, incoming.RoomToken, incoming.CallStartWallMS)
 	if err != nil {
 		return false, err
 	}
-	setAside, err := storedCallEndWallMS(final+captureSupersededSuffix, incoming.RoomToken, incoming.CallStartWallMS)
+	setAside, err := readStoredCapture(final+captureSupersededSuffix, incoming.RoomToken, incoming.CallStartWallMS)
 	if err != nil {
 		return false, err
 	}
-	if setAside > stored {
-		stored = setAside
+	offered := make(map[string]struct{}, len(incoming.Segments))
+	for _, segment := range incoming.Segments {
+		offered[segment.AudioName] = struct{}{}
 	}
-	return stored > 0 && incoming.CallEndWallMS < stored, nil
+	// Both copies are compared against, not the "bigger" of them: whichever one
+	// the incoming upload would drop something from is a reason to keep what is
+	// stored.
+	for _, held := range []storedCapture{live, setAside} {
+		if len(held.names) == 0 {
+			continue
+		}
+		if incoming.CallEndWallMS < held.endsAt {
+			return true, nil
+		}
+		for name := range held.names {
+			if _, ok := offered[name]; !ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // restoreInterruptedPromotion completes a promotion that stopped between its
@@ -403,10 +432,11 @@ func restoreInterruptedPromotion(final string) error {
 // deleted their local copy. Moving the old aside first means the worst case is
 // a leftover directory, not a lost recording.
 //
-// Returns false when the stored capture was kept because the incoming one is a
-// strictly shorter retelling of it. The upload is still accepted — the client's
-// bytes are already on the server, inside the longer capture — so it deletes
-// its buffer rather than re-offering a body that will never win.
+// Returns false when the stored capture was kept because promoting the incoming
+// one would drop audio already held for this call. The upload is still accepted
+// — the client's segments are a subset of what is stored, so its bytes are
+// already there — and it deletes its buffer rather than re-offering a body that
+// will never win.
 func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string) (bool, error) {
 	capturePromotionMu.Lock()
 	defer capturePromotionMu.Unlock()
@@ -420,13 +450,13 @@ func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string
 		return false, err
 	}
 
-	shorter, err := captureIsAShorterRetelling(sidecar, final)
+	lossy, err := captureWouldLoseStoredAudio(sidecar, final)
 	if err != nil {
 		// Refused rather than guessed. Promoting on an unanswered question is
 		// what destroys the longer copy.
 		return false, err
 	}
-	if shorter {
+	if lossy {
 		return false, nil
 	}
 	superseded := ""
@@ -778,7 +808,7 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			// this call's audio and more of it. Saying so is worth a log line,
 			// because "the upload arrived and the bytes on disk did not change"
 			// is otherwise indistinguishable from a bug.
-			logger.Printf("capture upload: room=%s owner=%s kept the stored capture; this upload describes %d segments of a call already stored with more",
+			logger.Printf("capture upload: room=%s owner=%s kept the stored capture; this upload's %d segments do not include everything already stored for that call",
 				sidecar.RoomToken, owner, len(sidecar.Segments))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
