@@ -744,6 +744,10 @@ function abandonCapture(worker: Worker, reason: string): void {
   if (failed) {
     state = null;
     failed.finished = true;
+    // The buffer outlives this page's capture and a later page has to be able
+    // to settle it. A claim left behind would make it look like somebody is
+    // still recording into it for as long as this page is open.
+    failed.releaseDirClaim();
     if (failed.mutePoll !== null) {
       clearInterval(failed.mutePoll);
     }
@@ -1355,12 +1359,17 @@ export async function settleBufferedCaptures(): Promise<number> {
       continue;
     }
     try {
-      await claimCaptureDir(
+      const sent = await claimCaptureDir(
         candidate.dirName,
-        () => uploadCapture(candidate.sidecar, candidate.dirName, false),
-        undefined,
+        async () => {
+          await uploadCapture(candidate.sidecar, candidate.dirName, false);
+          return true;
+        },
+        false,
       );
-      uploaded += 1;
+      if (sent) {
+        uploaded += 1;
+      }
     } catch {
       // Left in place so a later page load can retry; nothing is lost to a
       // transient upload failure.
