@@ -678,8 +678,8 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 			// recorded track" property the splice exists for.
 			if limit := expectedPCMSamples(segmentMS+segmentOverrunSlackMS, sampleRate); limit > 0 && len(samples) > limit {
 				report.Rejections = append(report.Rejections, fmt.Sprintf(
-					"segment %d holds %d ms under a %d ms window; only the window it declares was used",
-					segment.Index, decodedMS, segmentMS))
+					"segment %d holds %d ms under a %d ms window; only the first %d ms of it was used",
+					segment.Index, decodedMS, segmentMS, segmentMS+segmentOverrunSlackMS))
 				samples = samples[:limit]
 			}
 			from, to := overlayOntoTimeline(out, samples, sampleRate, placement)

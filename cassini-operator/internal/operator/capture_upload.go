@@ -351,17 +351,24 @@ func captureIsAShorterRetelling(incoming *captureSidecar, final string) bool {
 // with nothing at the live path. Discovery ignores that name by design, so the
 // capture is on disk and unreachable; moving it back is the whole of the fix,
 // and doing it here means the next upload for that call is judged against it.
-func restoreInterruptedPromotion(final string) {
+func restoreInterruptedPromotion(final string) error {
 	setAside := final + captureSupersededSuffix
 	if _, err := os.Stat(setAside); err != nil {
-		return
+		return nil
 	}
 	if _, err := os.Stat(final); err == nil {
 		// A live capture exists; the set-aside copy is the older one the sweep
 		// removes. Nothing to restore.
-		return
+		return nil
 	}
-	_ = os.Rename(setAside, final)
+	if err := os.Rename(setAside, final); err != nil {
+		// Reported, not swallowed. Carrying on would judge this upload against a
+		// capture that is still under a name discovery ignores, and could accept
+		// a shorter one — telling the client to delete its buffer while the only
+		// complete copy stays unreachable. A retryable failure keeps both.
+		return fmt.Errorf("restore interrupted promotion: %w", err)
+	}
+	return nil
 }
 
 // promoteCapture swaps a completed staging directory into its final path
@@ -385,7 +392,9 @@ func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string
 	// `.superseded` is one discovery deliberately ignores, so "kept" would
 	// otherwise mean retained on disk and invisible to every build — the audio
 	// preserved and never used, which is not what the set-aside is for.
-	restoreInterruptedPromotion(final)
+	if err := restoreInterruptedPromotion(final); err != nil {
+		return false, err
+	}
 
 	if captureIsAShorterRetelling(sidecar, final) {
 		return false, nil
