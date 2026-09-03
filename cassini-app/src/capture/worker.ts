@@ -129,6 +129,13 @@ interface OpenSegment {
   // contain is worse than one segment fewer, because the server would place
   // and transcribe the truncation as if it were the meeting.
   failed: boolean;
+  // preexisting marks a segment refused because its file ALREADY held audio.
+  // It is failed in the sense that this interval wrote none of it, and it must
+  // never be deleted with the others: those files are this worker's own
+  // truncations, while this one is somebody else's complete recording, and
+  // removing it would make the collision backstop destroy exactly what it
+  // refused to overwrite.
+  preexisting: boolean;
 }
 
 let captureDir: FileSystemDirectoryHandle | null = null;
@@ -180,11 +187,20 @@ async function openSegment(dirName: string, meta: OpenSegment["meta"]): Promise<
       stopWallMs: 0,
       muteIntervals: [],
       failed: true,
+      preexisting: true,
     });
     return;
   }
   handle.truncate(0);
-  segments.set(meta.index, { handle, offset: 0, meta, stopWallMs: 0, muteIntervals: [], failed: false });
+  segments.set(meta.index, {
+    handle,
+    offset: 0,
+    meta,
+    stopWallMs: 0,
+    muteIntervals: [],
+    failed: false,
+    preexisting: false,
+  });
 }
 
 function recoverableSegments(now: number): CaptureSegment[] {
@@ -367,7 +383,14 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
       // Never describe a segment whose bytes are not all there, and never
       // describe an empty one: the upload would be refused for a missing file,
       // taking the good segments with it.
-      await dir.removeEntry(segment.meta.audioName).catch(() => {});
+      //
+      // The file goes with it — except when it was already there. Those bytes
+      // are another interval's complete recording, which this one declined to
+      // overwrite; deleting it here would make the refusal worse than the
+      // overwrite it prevented.
+      if (!segment.preexisting) {
+        await dir.removeEntry(segment.meta.audioName).catch(() => {});
+      }
       continue;
     }
     built.push({
@@ -384,9 +407,18 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
   }
   const fileHandle = await dir.getFileHandle("capture.json", { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
+  const body = new TextEncoder().encode(JSON.stringify(sidecar));
   try {
     handle.truncate(0);
-    handle.write(new TextEncoder().encode(JSON.stringify(sidecar)), { at: 0 });
+    const written = handle.write(body, { at: 0 });
+    if (written !== body.byteLength) {
+      // Checked here for the same reason the checkpoint checks it, and with
+      // more at stake: the recovery slots are removed on the strength of this
+      // manifest, so a short write that went unnoticed would leave the
+      // directory with a truncated capture.json and no generation to fall back
+      // on — segment files intact and nothing able to describe them.
+      throw new Error(`capture sidecar wrote ${written} of ${body.byteLength} bytes`);
+    }
     handle.flush();
   } finally {
     try {
@@ -395,7 +427,8 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
       // Nothing further to do with it.
     }
   }
-  // Both recovery slots, now that capture.json is the manifest.
+  // Both recovery slots, and only now that capture.json is verifiably the
+  // manifest.
   for (const name of SOURCE_CAPTURE_PENDING_NAMES) {
     await dir.removeEntry(name).catch(() => {});
   }

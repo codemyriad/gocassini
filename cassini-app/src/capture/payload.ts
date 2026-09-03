@@ -467,6 +467,13 @@ let capturingConnection: RTCPeerConnection | null = null;
 // meant that sender's replaceTrack(null) stopped the microphone capture, or its
 // replaceTrack rotated capture onto itself.
 let capturingSender: RTCRtpSender | null = null;
+// capturingRoom is the room capturingSender was seen in. Talk navigates between
+// conversations without reloading, and the sender of the room being left can
+// still be connected when the room being entered confirms its recording — so
+// "a connected sender" and "this room is being recorded" can both be true of
+// two different rooms at once, and capture would have started on the wrong
+// microphone and filed it under the wrong conversation.
+let capturingRoom: string | null = null;
 
 function workerURL(): string {
   return `${deliveryConfig.proxyBase}/ui/capture-worker.js`;
@@ -1565,6 +1572,14 @@ export async function settleBufferedCaptures(): Promise<number> {
         release();
         continue;
       }
+      // Once more, immediately before committing. That last check is an await
+      // too, and an administrator switching collection off — or Talk confirming
+      // the recording stopped — during it would leave this holding a buffer
+      // that releaseAdoptableCapture had already looked for and not found.
+      if (state !== null || serverAllowsCapture !== true || !captureIsAdoptable(fresh, roomToken)) {
+        release();
+        continue;
+      }
       adoptable = { ...fresh, release };
       clearAdoptDeadline();
       adoptDeadline = setTimeout(() => {
@@ -1649,6 +1664,7 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
     const idleWorker = preparedWorker;
     capturingConnection = null;
     capturingSender = null;
+    capturingRoom = null;
     // Stops the worker only if its transform is not on a sender that can still
     // send. pagehide reaches here with the connection still up, and a page on
     // its way out has nothing to gain from stopping it a moment early.
@@ -1928,6 +1944,12 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
     // said is being recorded.
     return;
   }
+  if (sender === capturingSender && capturingRoom !== null && capturingRoom !== roomToken) {
+    // And the sender is the room being LEFT. Its connection can still be up
+    // while the next room confirms its own recording; recording it here would
+    // put one conversation's microphone into another's capture.
+    return;
+  }
   talkRoomToken = roomToken;
   // The administrator switch was injected before this script ran. Anything
   // other than an explicit yes means no recorder or OPFS directory is created.
@@ -2048,6 +2070,7 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
   if (capturingSender === null) {
     capturingSender = sender;
     capturingConnection = connection;
+    capturingRoom = roomToken;
     if (serverAllowsCapture) {
       prepareTimingWorker();
       if (preparedWorker !== null) {
@@ -2093,6 +2116,17 @@ function applyTalkRecordingStatus(status: number, roomToken: string | null): voi
   if (status === TALK_RECORDING_VIDEO_STARTING || status === TALK_RECORDING_AUDIO_STARTING) {
     // A moderator requested recording, but Talk's backend has not confirmed it.
     // Starting here would collect audio from a recording that might fail.
+    //
+    // A capture already running is a different matter. This status describes a
+    // recording that is BEGINNING, so the confirmed one this capture belongs to
+    // has ended — the stop was missed, or the poll landed after both — and
+    // going on collecting would be collecting outside any confirmed recording.
+    // Seal it; the next confirmed ACTIVE starts a new one.
+    talkRecordingActive = false;
+    if (state) {
+      console.info("Cassini source capture: a new recording is starting; sealing the previous one");
+      void finishCapture(false);
+    }
     return;
   }
   if (status === TALK_RECORDING_OFF || status === TALK_RECORDING_FAILED) {
