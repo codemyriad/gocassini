@@ -1491,9 +1491,10 @@ async function endCall(): Promise<void> {
   await finishCapture(true);
 }
 
-// endPage is the teardown a navigation gets: seal the interval so the buffer on
-// disk is described, and leave the uploading to whichever page loads next. See
-// finishCapture's `upload` parameter for why it does not try.
+// endPage is the teardown a navigation gets: close the segment so the recovery
+// sidecar describes every byte on disk, and leave everything else to whichever
+// page loads next. See finishCapture's "leave-it" disposition for why it
+// neither seals nor uploads.
 async function endPage(): Promise<void> {
   await finishCapture(true, "leave-it");
 }
