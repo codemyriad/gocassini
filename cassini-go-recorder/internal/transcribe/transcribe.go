@@ -133,7 +133,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		if err != nil {
 			fmt.Fprintf(stdout, "  source audio: no work directory: %v\n", err)
 		} else {
-			sourceAudio = ApplySourceAudio(ctx, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, workDir, 16000, audioDurationMS, stdout)
+			sourceAudio = ApplySourceAudio(ctx, mkvPath, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, workDir, 16000, audioDurationMS, stdout)
 		}
 	}
 
