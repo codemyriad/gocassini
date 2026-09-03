@@ -427,6 +427,44 @@ companion_enabled() {
   printf '%s\n' "$listing" | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"
 }
 
+# capture_config_synced answers whether AppAPI's ExApp config store carries the
+# gate the companion reads, as true.
+capture_config_synced() {
+  local value
+  value="$(occ app_api:app:config:get "$CASSINI_APPSTORE_ID" source_capture_enabled 2>/dev/null | tr -d '[:space:]')"
+  [[ "$value" == "true" || "$value" == "1" ]]
+}
+
+# sync_capture_companion_state makes the value the companion reads agree with
+# the switch this deploy registered.
+#
+# That value's only writer is the operator's enable-edge callback, and AppAPI
+# can mark an ExApp enabled without delivering one — a fresh registration
+# commonly does, and register_cassini's own app_api:app:enable then
+# short-circuits because the app is already enabled. So a first --image deploy
+# could install the companion, report capture on, and leave every Talk page
+# being told it is off.
+#
+# The remedy is the one docs/exapp-install.md gives an administrator: bounce the
+# app once so the edge fires. Taken only when the value is not already right, so
+# an ordinary redeploy does not pay for it.
+sync_capture_companion_state() {
+  capture_on || return 0
+  capture_config_synced && return 0
+  log "AppAPI carries no synchronized source_capture_enabled yet; bouncing $CASSINI_APPSTORE_ID so the operator writes it"
+  occ app_api:app:disable "$CASSINI_APPSTORE_ID" >/dev/null 2>&1 || true
+  occ app_api:app:enable "$CASSINI_APPSTORE_ID" >/dev/null 2>&1 || true
+  local attempt
+  for attempt in $(seq 1 15); do
+    if capture_config_synced; then
+      log "source_capture_enabled synchronized after $attempt attempt(s)"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 # install_capture_companion installs or retires the native companion app that
 # delivers the capture payload to Talk's call page. The ExApp cannot do this
 # for itself: it reaches Nextcloud over HTTP, never occ, and a native app can
@@ -549,14 +587,12 @@ verify() {
     companion_enabled \
       || die "Capture is on but $CAPTURE_COMPANION_ID is not enabled: no Talk page will carry the payload, so nothing would be captured."
     # The companion does not read the ExApp's environment. It reads this value
-    # out of AppAPI's ExApp config store, which the operator writes on the
-    # lifecycle edge, and it is what decides the initial state every Talk page
-    # is built with. An enabled companion beside a stale or unwritten "false"
-    # is a deploy that reports capture on and captures nothing.
-    local synced
-    synced="$(occ app_api:app:config:get "$CASSINI_APPSTORE_ID" source_capture_enabled 2>/dev/null | tr -d '[:space:]')"
-    [[ "$synced" == "true" || "$synced" == "1" ]] \
-      || die "Capture is on and $CAPTURE_COMPANION_ID is enabled, but AppAPI's source_capture_enabled for $CASSINI_APPSTORE_ID reads '$synced'. That value, not the container's environment, is what the companion injects into Talk's pages, so every call would be told capture is off. Disable and re-enable $CASSINI_APPSTORE_ID to make the operator write it again."
+    # out of AppAPI's ExApp config store, and it is what decides the initial
+    # state every Talk page is built with. An enabled companion beside a stale
+    # or unwritten "false" is a deploy that reports capture on and captures
+    # nothing. sync_capture_companion_state has already tried to repair it.
+    capture_config_synced \
+      || die "Capture is on and $CAPTURE_COMPANION_ID is enabled, but AppAPI's source_capture_enabled for $CASSINI_APPSTORE_ID is still not true after bouncing the app. That value, not the container's environment, is what the companion injects into Talk's pages, so every call would be told capture is off. Check the operator log for 'source capture: synchronized companion initial state'."
     printf "  ok   %s enabled and source_capture_enabled synced; capture follows Talk's recording per docs/source-audio-capture.md \"Trying it\"\n" "$CAPTURE_COMPANION_ID"
   elif companion_enabled; then
     die "Capture is off but $CAPTURE_COMPANION_ID is still enabled: Talk pages are still being given the capture payload. Disable it by hand before treating this host as capture-free."
@@ -575,6 +611,7 @@ resolve_capture_switches
 register_cassini
 handoff_talk_recording
 install_capture_companion
+sync_capture_companion_state || true   # verify() reports the failure with context
 reset_admin_password
 verify
 

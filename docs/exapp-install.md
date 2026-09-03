@@ -283,10 +283,14 @@ AppAPI lifecycle edge the ExApp mirrors `CASSINI_SOURCE_CAPTURE` into AppAPI's
 ExApp config store, which the companion reads into initial state; after first installing the companion,
 disable/re-enable or redeploy `gocassini` once if it was already running.
 
-To turn the feature off, first redeploy with `CASSINI_SOURCE_CAPTURE=0` — unset
-means on — and wait at least 30 seconds for open calls to observe the
-fail-closed poll, then disable `cassini_capture`. Anonymous Talk guests and
-mobile clients are not captured.
+To stop collecting, first redeploy with `CASSINI_SOURCE_CAPTURE=0` — unset means
+on — and wait at least 30 seconds for open calls to observe the fail-closed
+poll, then disable `cassini_capture`. That stops new captures; it does not
+remove the ones already stored, which stay until the retention sweep reaches
+them, and while `CASSINI_SOURCE_AUDIO_INGEST` is on a build that runs in the
+meantime still transcribes from them. Set `CASSINI_SOURCE_AUDIO_INGEST=0` in the
+same redeploy to turn the whole feature off. Anonymous Talk guests and mobile
+clients are not captured.
 
 ### Updating deploy options after install
 
