@@ -137,24 +137,54 @@ log()  { printf '\n\033[1;34m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 occ()  { docker exec --user www-data "$AIO_NEXTCLOUD" php occ "$@"; }
 
+# bool_on reads one source-capture switch the way the operator's
+# parseBoolEnvDefault does (cassini-operator/internal/operator/exapp.go): blank
+# is the default (on), the exact strings Go's strconv.ParseBool calls true are
+# on, and everything else — an explicit false, or a value it cannot read at
+# all — is off.
+#
+# This is not the last word on any value; resolve_capture_switches is, and it
+# rewrites what the ExApp is given into 1 or 0 so that only one of the two ever
+# has to parse anything. Mirroring Go's parser in shell exactly is not possible
+# to do safely — strings.TrimSpace trims Unicode space that bash's
+# [[:space:]] leaves alone, for one — and a disagreement means retiring the
+# companion while the ExApp goes on accepting uploads.
+bool_on() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"   # trim leading whitespace
+  value="${value%"${value##*[![:space:]]}"}"   # trim trailing whitespace
+  case "$value" in
+    ''|1|t|T|TRUE|true|True) return 0 ;;
+    *)                       return 1 ;;
+  esac
+}
+
 # resolve_capture_switches settles what this deploy will register, BEFORE
 # anything is registered, so the ExApp's switch and the companion's presence can
 # never contradict each other.
 #
-# There is one case where they otherwise would. Capture is on by default, but
-# the companion may only be built from the checkout that produced the deployed
-# image (see install_capture_companion), so a store deploy cannot deliver the
-# payload to Talk at all. Leaving the ExApp switch on there would register an
-# installation that answers "yes, capture" to any browser that asks — including
+# It does two things. It canonicalises both switches to 1 or 0, so what AppAPI
+# is handed is the value this script acted on and no second parser can read it
+# differently. And it turns collection off on a store deploy: capture is on by
+# default, but the companion may only be built from the checkout that produced
+# the deployed image (see install_capture_companion), so a store deploy cannot
+# deliver the payload to Talk at all. Leaving the switch on there would register
+# an installation answering "yes, capture" to any browser that asks — including
 # a call still running with a payload from a previous image deploy — while this
-# script quietly retires the companion underneath it. So a store deploy turns
-# collection off outright, and says why.
+# script quietly retires the companion underneath it.
 resolve_capture_switches() {
-  if [[ "$CASSINI_INSTALL_SOURCE" == "image" ]] || ! capture_on; then
-    return 0
+  local raw_capture="$CASSINI_SOURCE_CAPTURE" raw_ingest="$CASSINI_SOURCE_AUDIO_INGEST"
+  if bool_on "$raw_capture"; then CASSINI_SOURCE_CAPTURE=1; else CASSINI_SOURCE_CAPTURE=0; fi
+  if bool_on "$raw_ingest"; then CASSINI_SOURCE_AUDIO_INGEST=1; else CASSINI_SOURCE_AUDIO_INGEST=0; fi
+  [[ "$raw_capture" == "$CASSINI_SOURCE_CAPTURE" ]] \
+    || log "Read CASSINI_SOURCE_CAPTURE=$(printf '%q' "$raw_capture") as $CASSINI_SOURCE_CAPTURE, and that is what will be registered"
+  [[ "$raw_ingest" == "$CASSINI_SOURCE_AUDIO_INGEST" ]] \
+    || log "Read CASSINI_SOURCE_AUDIO_INGEST=$(printf '%q' "$raw_ingest") as $CASSINI_SOURCE_AUDIO_INGEST, and that is what will be registered"
+
+  if capture_on && [[ "$CASSINI_INSTALL_SOURCE" != "image" ]]; then
+    log "Source capture is on, but the $CAPTURE_COMPANION_ID companion can only be built from the checkout that produced the image, and this is a store install. Registering CASSINI_SOURCE_CAPTURE=0: nothing would reach Talk's pages anyway, and a switch that says yes with no companion is worse than one that says no. Deploy with --image to capture."
+    CASSINI_SOURCE_CAPTURE=0
   fi
-  log "Source capture is on, but the $CAPTURE_COMPANION_ID companion can only be built from the checkout that produced the image, and this is a store install. Registering CASSINI_SOURCE_CAPTURE=0: nothing would reach Talk's pages anyway, and a switch that says yes with no companion is worse than one that says no. Deploy with --image to capture."
-  CASSINI_SOURCE_CAPTURE=0
 }
 
 require_state() {
@@ -355,26 +385,10 @@ handoff_talk_recording() {
   occ config:app:set spreed call_recording --value yes >/dev/null
 }
 
-# capture_on reads CASSINI_SOURCE_CAPTURE the way the operator does — see
-# parseBoolEnvDefault in cassini-operator/internal/operator/exapp.go: surrounding
-# whitespace is trimmed, blank is the default (on), anything Go's
-# strconv.ParseBool calls false is off, and anything it cannot read at all is
-# off. The same string has to mean the same thing on both sides of the
-# registration, or this script retires the companion while the ExApp goes on
-# accepting uploads, or installs it while the ExApp 404s the payload.
-capture_on() {
-  local value="$CASSINI_SOURCE_CAPTURE"
-  value="${value#"${value%%[![:space:]]*}"}"   # trim leading whitespace
-  value="${value%"${value##*[![:space:]]}"}"   # trim trailing whitespace
-  # Exactly the strings ParseBool accepts as true, and blank for the default.
-  # Deliberately not a case-insensitive match: ParseBool takes "TRUE", "true"
-  # and "True" but rejects "tRUE", and what it rejects is off in the operator,
-  # so it has to be off here too.
-  case "$value" in
-    ''|1|t|T|TRUE|true|True) return 0 ;;
-    *)                       return 1 ;;
-  esac
-}
+# capture_on is only meaningful after resolve_capture_switches has canonicalised
+# the variable, which is why it compares rather than parses: past that point the
+# value this script holds is exactly the value the ExApp is registered with.
+capture_on() { [[ "$CASSINI_SOURCE_CAPTURE" == "1" ]]; }
 
 # companion_enabled answers whether Nextcloud currently has the companion app
 # enabled. The listing is taken on its own line, because inside an

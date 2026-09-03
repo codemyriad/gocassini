@@ -329,10 +329,12 @@ unset, so a registration that says nothing about it collects. The ExApp mirrors
 the value into Nextcloud app config, which is what the companion reads while
 building the call page's initial state — the operator logs
 `source capture: synchronized companion initial state enabled=true` when that
-lands. To collect nothing, pass `CASSINI_SOURCE_CAPTURE=0` as a deploy option at
-registration (`app_api:app:register … --env`); add
-`CASSINI_SOURCE_AUDIO_INGEST=0` if you want uploads stored but kept out of
-transcripts.
+lands. There are two opt-outs, and they are alternatives, not steps. To collect
+nothing at all, pass `CASSINI_SOURCE_CAPTURE=0` as a deploy option at
+registration (`app_api:app:register … --env`). To keep collecting but keep what
+is collected out of transcripts, leave capture alone and pass
+`CASSINI_SOURCE_AUDIO_INGEST=0` instead — with capture off there are no uploads
+for it to exclude.
 
 On the demo sandbox, steps 1 and 2 are one command or one workflow dispatch:
 `sandbox/wire-cassini.sh --image …`, or the `Deploy Sandbox` workflow with an
