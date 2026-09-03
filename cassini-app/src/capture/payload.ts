@@ -440,12 +440,7 @@ export interface CaptureState {
 }
 
 let state: CaptureState | null = null;
-// The publishing senders this page has seen, and the connection each is on.
-// Kept as a map rather than a set so that when the connection being recorded
-// goes away, another live one can be found: Talk can build a replacement
-// publishing connection and connect it BEFORE closing the old one, and that
-// replacement emits no state transition afterwards for anything to notice.
-const publisherSenders = new Map<RTCRtpSender, RTCPeerConnection>();
+const publisherSenders = new Set<RTCRtpSender>();
 // The transform has to be attached before Talk negotiates, but audio must not
 // be recorded until Talk confirms that the official recording is active. This
 // worker is therefore started early and remains inert: it creates no OPFS
@@ -2130,52 +2125,11 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
 }
 
-// handoffToAnotherPublisher looks for a publishing sender that is still in the
-// call and makes it the one being recorded.
-//
-// Called AFTER the teardown of the connection that went away, never during it:
-// finishCapture clears the recording flag and holds on to the session until its
-// async tail completes, so anything asking beginCapture to start from in there
-// is asking a question whose answer is always no.
-//
-// It does not assume the recording is still running either. Talk is asked
-// again, and its answer is what starts the capture — the flag this page held
-// described the connection that just died, and re-deriving is both simpler and
-// correct if the call really did end.
-function handoffToAnotherPublisher(): void {
-  if (state !== null || captureAbandoned) {
-    return;
-  }
-  const roomToken = roomTokenFromPath(location.pathname);
-  if (roomToken === null) {
-    return;
-  }
-  for (const [sender, connection] of publisherSenders) {
-    if (!senderIsInTheCall(sender, connection)) {
-      continue;
-    }
-    capturingSender = sender;
-    capturingConnection = connection;
-    capturingRoom = roomToken;
-    if (serverAllowsCapture) {
-      prepareTimingWorker();
-      if (preparedWorker !== null) {
-        attachTimingTransform(preparedWorker, sender, connection);
-      }
-    }
-    // Ask Talk, rather than trust a flag about a connection that is gone. A
-    // confirmed ACTIVE answer calls beginCapture for this sender.
-    talkRoomToken = roomToken;
-    void refreshTalkRecordingStatus(roomToken);
-    return;
-  }
-}
-
 function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void {
   if (publisherSenders.has(sender)) {
     return;
   }
-  publisherSenders.set(sender, connection);
+  publisherSenders.add(sender);
   const roomToken = roomTokenFromPath(location.pathname);
   if (roomToken) {
     talkRoomToken = roomToken;
@@ -2252,6 +2206,10 @@ function applyTalkRecordingStatus(status: number, roomToken: string | null): voi
     // going on collecting would be collecting outside any confirmed recording.
     // Seal it; the next confirmed ACTIVE starts a new one.
     talkRecordingActive = false;
+    // And a buffer held for adoption belongs to the recording that has just
+    // ended, not to the one starting. Held, it would be spliced onto the front
+    // of a different recording; released, it uploads as its own.
+    releaseAdoptableCapture();
     if (state) {
       console.info("Cassini source capture: a new recording is starting; sealing the previous one");
       void finishCapture(false);
@@ -2414,9 +2372,7 @@ function instrument(pc: RTCPeerConnection): void {
       return;
     }
     if (pc.connectionState === "closed" || pc.connectionState === "failed") {
-      // The handoff runs after the teardown, and only reaches anything when
-      // Talk has replaced this connection rather than ended the call.
-      void endCall().then(handoffToAnotherPublisher);
+      void endCall();
       return;
     }
     if (pc.connectionState === "connected" && capturingSender) {
@@ -2437,33 +2393,23 @@ function instrument(pc: RTCPeerConnection): void {
   // recorder holds its own MediaStream over that track and would go on
   // recording a participant the room can no longer hear. The mute poll catches
   // it within its interval; this catches it at the instant it happens.
+  // removeTrack takes the sender off the connection without closing anything
+  // and without ending the track, so nothing else here would notice: the
+  // recorder holds its own MediaStream over that track and would go on
+  // recording a participant the room can no longer hear.
+  //
+  // It closes the segment exactly the way replaceTrack(null) does, on the
+  // rotation chain — the path stopSegment was written for, which waits for
+  // MediaRecorder's final chunk before the worker closes the file. Stopping
+  // the recorder synchronously here instead raced that chunk into a closed
+  // handle and cost the whole segment. The mute poll is what bounds how much
+  // audio can be recorded between the removal and the stop, and it is a
+  // quarter second.
   const originalRemoveTrack = pc.removeTrack.bind(pc);
   pc.removeTrack = (sender: RTCRtpSender) => {
     try {
-      if (sender === capturingSender) {
-        if (state) {
-          // Stopped SYNCHRONOUSLY, before the removal goes through. Queueing
-          // the stop meant the recorder still owned the live track while the
-          // sender stopped carrying it, so its final chunk could hold audio
-          // from after the participant left the call. MediaRecorder's own stop
-          // is what draws that line; stopWithoutRestart then closes the
-          // segment properly around it.
-          try {
-            state.recorder?.stop();
-          } catch {
-            // Already inactive. The segment close below is what matters.
-          }
-          stopWithoutRestart(state);
-        }
-        // And the slot is freed. Talk rebuilds its media pipeline as
-        // removeTrack followed by addTrack on the same connected connection;
-        // holding on to the removed sender made watchSender refuse the
-        // replacement — same room, sender already set — and there is no
-        // connection-state event afterwards for anything else to notice.
-        publisherSenders.delete(sender);
-        capturingSender = null;
-        capturingConnection = null;
-        capturingRoom = null;
+      if (state && sender === capturingSender) {
+        stopWithoutRestart(state);
       }
     } catch {
       // Never let instrumentation break Talk's own removeTrack.
@@ -2472,20 +2418,14 @@ function instrument(pc: RTCPeerConnection): void {
   };
   const originalClose = pc.close.bind(pc);
   pc.close = () => {
-    const wasCapturing = pc === capturingConnection;
     try {
-      if (wasCapturing) {
+      if (pc === capturingConnection) {
         void endCall();
       }
     } catch {
       // Fall through to the real close regardless.
     }
     originalClose();
-    if (wasCapturing) {
-      // AFTER the real close, so this connection can no longer look like a
-      // candidate for the handoff it just triggered.
-      void Promise.resolve().then(handoffToAnotherPublisher);
-    }
   };
 }
 
