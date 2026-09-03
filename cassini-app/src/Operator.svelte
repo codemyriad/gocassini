@@ -65,9 +65,6 @@
 
   export function meetingLabel(requestJSON: string, fallbackId?: string): string {
     const meta = parseRequestJSON(requestJSON);
-    if (meta.roomToken) {
-      return `Call ${meta.roomToken}`;
-    }
     if (meta.url) {
       try {
         const token = new URL(meta.url).pathname.split("/").filter(Boolean).pop();
@@ -78,6 +75,9 @@
       } catch {
         return meta.url;
       }
+    }
+    if (meta.roomToken) {
+      return `Call ${meta.roomToken}`;
     }
     if (fallbackId && typeof fallbackId === "string" && fallbackId.trim() !== "") {
       const cleanId = fallbackId.trim();
@@ -1148,7 +1148,7 @@
                     {/if}
                     {#if formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}
                       <div>
-                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recorded duration</dt>
+                        <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record duration</dt>
                         <dd class="text-sm">{formatDuration(selectedJob.job.record_started_at, selectedJob.job.record_finished_at)}</dd>
                       </div>
                     {/if}
@@ -1301,7 +1301,7 @@
                             {/if}
                             {#if formatDuration(attempt.record_started_at, attempt.record_finished_at)}
                               <div>
-                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Recorded duration</dt>
+                                <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record duration</dt>
                                 <dd class="text-sm">{formatDuration(attempt.record_started_at, attempt.record_finished_at)}</dd>
                               </div>
                             {/if}

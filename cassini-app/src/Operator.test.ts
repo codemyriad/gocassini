@@ -124,6 +124,17 @@ describe("Operator meeting label and URL formatting", () => {
     expect(requestUrlLabel(urlPayload)).toBe("https://nextcloud.company.com/call/room-alpha-123");
   });
 
+  it("prefers explicit url over baseURL and roomToken when both are provided", () => {
+    const dualPayload = JSON.stringify({
+      url: "https://nextcloud.company.com/call/explicit-room",
+      baseURL: "https://other.company.com",
+      roomToken: "other-room",
+    });
+
+    expect(meetingLabel(dualPayload)).toBe("Call explicit-room");
+    expect(requestUrlLabel(dualPayload)).toBe("https://nextcloud.company.com/call/explicit-room");
+  });
+
   it("falls back to short job ID when request JSON contains no room or URL", () => {
     expect(meetingLabel("{}", "01M1KD3CMJ9J5AJ3QBS6123VXX")).toBe("Recording 01M1KD3C");
     expect(meetingLabel("not-valid-json", "01M1KD3CMJ9J5AJ3QBS6123VXX")).toBe("Recording 01M1KD3C");
