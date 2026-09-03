@@ -286,15 +286,18 @@ async function expectNothingCollected(page: import("@playwright/test").Page, whe
 
 // Browser storage belongs to the origin, not to the signed-in session. On a
 // shared machine the buffer a colleague's dead page left behind is still there
-// when the next person signs in, and resuming it would splice their voice into
-// this participant's capture and file it under this participant's name.
-test("a buffered capture from another account is never resumed", async ({ page }) => {
+// when the next person signs in. The operator stamps the AUTHENTICATED caller
+// as the owner, so offering it would publish their voice under this
+// participant's name — and resuming it would splice it into this participant's
+// own capture. Neither happens; it waits for its own account.
+test("a buffered capture from another account is neither resumed nor uploaded", async ({ page }) => {
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await setOfficialRecording(page, 2);
   await page.waitForTimeout(2600);
   const alice = await captureDirs(page);
   expect(alice, "alice recorded nothing to leave behind").toHaveLength(1);
+  const aliceDir = alice[0].name;
 
   // Alice's page goes away mid-recording, leaving her buffer. Bob signs in on
   // the same browser and joins the same still-recording call.
@@ -306,17 +309,30 @@ test("a buffered capture from another account is never resumed", async ({ page }
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await page.waitForTimeout(3000);
 
-  const dirs = await captureDirs(page);
+  const withBob = await captureDirs(page);
+  const names = withBob.map((dir) => dir.name);
+  expect(names, "bob resumed alice's buffered capture").toContain(aliceDir);
+  expect(names.length, "bob did not start a capture of his own").toBe(2);
   expect(
-    dirs.map((dir) => dir.name),
-    "bob resumed alice's buffered capture",
-  ).not.toContain(alice[0].name);
-  expect(dirs.length, "bob did not start a capture of his own").toBe(1);
+    server.uploads,
+    "alice's audio was uploaded under bob's authenticated identity",
+  ).toHaveLength(0);
 
-  // Alice's buffer is not adopted, but it is not stranded either: it uploads on
-  // the ordinary retry path, under the name her own page recorded it with.
-  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
-  expect(server.uploads[0].sidecar!.participantId).toBe("alice");
+  // It is not stranded either. Alice signs back in on this machine and her own
+  // buffer goes, under her own name, on the ordinary retry path.
+  await setOfficialRecording(page, 0);
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBeGreaterThan(0);
+  expect(
+    server.uploads.some((upload) => upload.sidecar?.participantId === "alice"),
+    "alice's own buffer never reached the server",
+  ).toBe(true);
+  // And the rule holds in the other direction: bob's buffer is still bob's.
+  expect(
+    server.uploads.every((upload) => upload.sidecar?.participantId !== "bob"),
+    "alice's page uploaded bob's capture",
+  ).toBe(true);
 });
 
 // R1, from the other side. Talk holds the microphone open in its device
