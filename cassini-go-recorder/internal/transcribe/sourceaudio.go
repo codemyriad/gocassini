@@ -676,7 +676,11 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 			// under a one-second window would otherwise replace a minute of
 			// recorded audio, which is exactly the "never worse than the
 			// recorded track" property the splice exists for.
-			if limit := expectedPCMSamples(segmentMS+segmentOverrunSlackMS, sampleRate); limit > 0 && len(samples) > limit {
+			// The bound exactly, not expectedPCMSamples: that helper adds a
+			// second of codec-tail allowance to a CAPACITY hint, which is right
+			// for an allocation and wrong for a clamp that says how much
+			// recorded audio may be replaced.
+			if limit := int((segmentMS + segmentOverrunSlackMS) * int64(sampleRate) / 1000); limit > 0 && len(samples) > limit {
 				report.Rejections = append(report.Rejections, fmt.Sprintf(
 					"segment %d holds %d ms under a %d ms window; only the first %d ms of it was used",
 					segment.Index, decodedMS, segmentMS, segmentMS+segmentOverrunSlackMS))

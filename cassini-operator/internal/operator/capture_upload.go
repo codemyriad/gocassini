@@ -292,21 +292,31 @@ func writeFileSynced(path string, body []byte) error {
 }
 
 // storedCallEndWallMS reads how far into its call the capture stored at `dir`
-// reaches, or zero when there is nothing readable there.
-func storedCallEndWallMS(dir string, roomToken string, callStartWallMS int64) int64 {
+// reaches. Zero means there is genuinely nothing there; an error means the
+// question could not be answered, which is NOT the same thing and must not be
+// treated as it.
+func storedCallEndWallMS(dir string, roomToken string, callStartWallMS int64) (int64, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, captureSidecarName))
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
 	if err != nil {
-		return 0
+		// A transient read failure here used to read as "no capture stored",
+		// which promotes the incoming upload and deletes the copy that could not
+		// be read. The guard has to survive the storage faults it exists for.
+		return 0, fmt.Errorf("read stored capture sidecar: %w", err)
 	}
 	var stored captureSidecar
 	if err := json.Unmarshal(raw, &stored); err != nil {
-		return 0
+		// A manifest that does not parse describes nothing this can be compared
+		// against, and a directory with one is already unusable to the build.
+		return 0, nil
 	}
 	if stored.CallStartWallMS != callStartWallMS || stored.RoomToken != roomToken {
 		// A different call. Nothing to compare, and nothing to protect.
-		return 0
+		return 0, nil
 	}
-	return stored.CallEndWallMS
+	return stored.CallEndWallMS, nil
 }
 
 // captureIsAShorterRetelling reports whether `incoming` describes less of the
@@ -334,12 +344,19 @@ func storedCallEndWallMS(dir string, roomToken string, callStartWallMS int64) in
 // renames leaves the whole recording THERE and nothing at the live path — and
 // a stale prefix arriving afterwards would find no stored capture to compare
 // against, promote itself, and let the sweep delete the longer copy.
-func captureIsAShorterRetelling(incoming *captureSidecar, final string) bool {
-	stored := storedCallEndWallMS(final, incoming.RoomToken, incoming.CallStartWallMS)
-	if setAside := storedCallEndWallMS(final+captureSupersededSuffix, incoming.RoomToken, incoming.CallStartWallMS); setAside > stored {
+func captureIsAShorterRetelling(incoming *captureSidecar, final string) (bool, error) {
+	stored, err := storedCallEndWallMS(final, incoming.RoomToken, incoming.CallStartWallMS)
+	if err != nil {
+		return false, err
+	}
+	setAside, err := storedCallEndWallMS(final+captureSupersededSuffix, incoming.RoomToken, incoming.CallStartWallMS)
+	if err != nil {
+		return false, err
+	}
+	if setAside > stored {
 		stored = setAside
 	}
-	return stored > 0 && incoming.CallEndWallMS < stored
+	return stored > 0 && incoming.CallEndWallMS < stored, nil
 }
 
 // restoreInterruptedPromotion completes a promotion that stopped between its
@@ -354,12 +371,19 @@ func captureIsAShorterRetelling(incoming *captureSidecar, final string) bool {
 func restoreInterruptedPromotion(final string) error {
 	setAside := final + captureSupersededSuffix
 	if _, err := os.Stat(setAside); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil
+		}
+		// "Cannot tell" is not "not there". Carrying on would judge this upload
+		// as if no set-aside copy existed.
+		return fmt.Errorf("stat set-aside capture: %w", err)
 	}
 	if _, err := os.Stat(final); err == nil {
 		// A live capture exists; the set-aside copy is the older one the sweep
 		// removes. Nothing to restore.
 		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat capture: %w", err)
 	}
 	if err := os.Rename(setAside, final); err != nil {
 		// Reported, not swallowed. Carrying on would judge this upload against a
@@ -396,7 +420,13 @@ func (rt *Runtime) promoteCapture(sidecar *captureSidecar, staging, final string
 		return false, err
 	}
 
-	if captureIsAShorterRetelling(sidecar, final) {
+	shorter, err := captureIsAShorterRetelling(sidecar, final)
+	if err != nil {
+		// Refused rather than guessed. Promoting on an unanswered question is
+		// what destroys the longer copy.
+		return false, err
+	}
+	if shorter {
 		return false, nil
 	}
 	superseded := ""
