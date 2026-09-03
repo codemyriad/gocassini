@@ -2,15 +2,18 @@
 
 Date: 2026-08-31
 
-Status: **administrator-enabled prototype.** Capture, intake and ingestion are
-implemented and tested. A tiny native companion app now delivers the payload
+Status: **prototype, on by default on this branch.** Capture, intake and
+ingestion are implemented and tested, and both switches run unless an
+administrator sets them to `0`. A tiny native companion app now delivers the payload
 through Nextcloud's sanctioned additional-scripts event; the offset half of the
 timing model still needs the correlation refinement described below before it
 can be trusted on clients whose clocks are not known to be synchronised.
 
-What this collects, where it lands, who can read it and how long it is kept is
-in [Data processing & privacy](privacy.md#participant-source-audio-capture).
-Read that before enabling it on an instance with real participants on it.
+What this collects and who decides it is described below: "Two switches, both on
+by default" for the containment boundary, "Intake and trust" for what the server
+settles about an upload and what it deliberately does not, and "What that costs"
+for the limits of the timing model. Read those before running this branch on an
+instance with real participants on it.
 
 ## The problem
 
@@ -127,7 +130,13 @@ Current Talk does not dispatch the event on its anonymous guest path, and the
 upload endpoint deliberately requires a logged-in user. Source capture therefore
 supports authenticated participants only.
 
-## Two switches, both off by default
+## Two switches, both on by default
+
+This branch exists to run the feature end to end, so both switches are on when
+nothing sets them. Each is an explicit opt-out: set it to `0` (or `false`) to
+turn that half off. A value neither of those nor a recognised true also lands
+off, and the operator logs it — a switch nobody can read must not be the one
+that starts collecting microphones.
 
 `CASSINI_SOURCE_CAPTURE` decides whether anything is collected at all.
 
@@ -145,31 +154,41 @@ second line, and a client that gets that refusal deletes its buffer rather than
 keeping it for a retry.
 
 This switch is the whole containment boundary, and it is the only one Cassini
-has. With it on, every authenticated participant of every recorded call is
-captured; there is no per-participant control and no answer of theirs is
-recorded anywhere. Telling the room is Talk's job — its recording indicator, and its own
-`recording_consent` setting if the installation needs each participant asked. So
-the switch is acceptable for a deployment whose operator chose to run this
-prototype and configured Talk accordingly; it is not acceptable for one that
-merely upgraded.
+has. With it on — which is the default here — every authenticated participant of
+every recorded call is captured; there is no per-participant control and no
+answer of theirs is recorded anywhere. Telling the room is Talk's job — its
+recording indicator, and its own `recording_consent` setting if the installation
+needs each participant asked. So the default is right for a deployment whose
+operator chose to run this branch and configured Talk accordingly; it is not
+right for one that merely upgraded, and that deployment sets:
+
+```
+CASSINI_SOURCE_CAPTURE=0
+```
 
 `CASSINI_SOURCE_AUDIO_INGEST` decides whether collected audio reaches a
 transcript. See below.
 
-## Ingestion is off by default
+## Ingestion, and how to switch it off
 
 Capture and intake only collect. Substituting a participant's own recording
 into the transcript is a judgement about where somebody's words belong, and the
-offset half of that judgement still carries client clock skew. So an
-installation turns it on deliberately:
+offset half of that judgement still carries client clock skew. That is a real
+cost, and this branch pays it on purpose so the whole path gets exercised; an
+installation whose clients are not known to be time-synchronised opts out:
 
 ```
-CASSINI_SOURCE_AUDIO_INGEST=1
+CASSINI_SOURCE_AUDIO_INGEST=0
 ```
 
-Without it the operator never passes `--source-audio` to the build, uploads
+With that set the operator never passes `--source-audio` to the build, uploads
 accumulate, and transcripts are built from the recorded tracks exactly as
 before.
+
+Left on, it costs nothing where nothing was collected. The build is handed a
+capture root, finds no upload from this room and this call window, and
+transcribes the recorded tracks — the same bundle, byte for byte, that it would
+have produced with ingestion off.
 
 Selection is scoped to the recording: a capture must be from the same Talk room
 **and** from a call whose wall-clock window overlaps this one. Matching on
@@ -287,10 +306,11 @@ responsible for proxy refusal and replacement matrices.
 ## Trying it
 
 Two things have to be true before a single byte is captured, and they are
-deliberately independent: an administrator enables collection, and the companion
-app is installed so the payload reaches Talk at all. There is nothing per
-participant. Once both are true, every authenticated participant of a recorded
-call is captured.
+deliberately independent: collection is enabled on the ExApp — which on this
+branch is the default — and the companion app is installed so the payload
+reaches Talk at all. Installing the companion is still a deliberate act, and
+nothing is captured without it. There is nothing per participant. Once both are
+true, every authenticated participant of a recorded call is captured.
 
 **1. Install the companion app.** The payload is delivered by `cassini_capture`,
 a separate native Nextcloud app (see
@@ -304,17 +324,20 @@ release tag publishes a `cassini_capture.tar.gz`; from a branch, build one:
 occ app:enable cassini_capture
 ```
 
-**2. Enable collection on the ExApp.** `CASSINI_SOURCE_CAPTURE=1`, set as a
-deploy option at registration (`app_api:app:register … --env`). The ExApp
-mirrors it into Nextcloud app config, which is what the companion reads while
+**2. Leave collection on, or turn it off.** `CASSINI_SOURCE_CAPTURE` is on when
+unset, so a registration that says nothing about it collects. The ExApp mirrors
+the value into Nextcloud app config, which is what the companion reads while
 building the call page's initial state — the operator logs
 `source capture: synchronized companion initial state enabled=true` when that
-lands. Add `CASSINI_SOURCE_AUDIO_INGEST=1` as well if you want the uploaded
-audio to reach a transcript rather than only be stored.
+lands. To collect nothing, pass `CASSINI_SOURCE_CAPTURE=0` as a deploy option at
+registration (`app_api:app:register … --env`); add
+`CASSINI_SOURCE_AUDIO_INGEST=0` if you want uploads stored but kept out of
+transcripts.
 
 On the demo sandbox, steps 1 and 2 are one command or one workflow dispatch:
-`sandbox/wire-cassini.sh --image … --with-capture`, or the `Deploy Sandbox`
-workflow with `source_capture` set. See `sandbox/README.md`.
+`sandbox/wire-cassini.sh --image …`, or the `Deploy Sandbox` workflow with an
+`image_tag`. Both switches are on there too; the environment is the opt-out. See
+`sandbox/README.md`.
 
 **3. Make a recording.** Nothing else is set up, in the browser or anywhere
 else. Join an **authenticated** Talk call (guest pages are not supported — Talk
@@ -341,7 +364,8 @@ logged-in user. The client fails closed at every one of those.
 
 - **Cross-correlation refinement of the offset** (see above). This is the gap
   that decides whether ingestion can be trusted on arbitrary clients, and the
-  reason ingestion is off by default.
+  reason an installation whose clients are not time-synchronised should set
+  `CASSINI_SOURCE_AUDIO_INGEST=0`.
 - **Rebuild on late upload.** An upload arriving after the meeting was published
   does not trigger a rebuild; only a manual rerun picks it up.
 - **The published mix.** Ingestion changes the transcript only. The playable
