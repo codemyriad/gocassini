@@ -505,12 +505,18 @@ verify() {
     [[ "$resolved" == "$want" ]] \
       || die "The running ExApp resolved source audio to '$resolved', not the '$want' this deploy registered. A container from an earlier deploy survived registration; re-run the deploy before trusting this host's capture state."
     printf '  ok   ExApp resolved %s\n' "$resolved"
-  elif [[ "$want" != "collect=false ingest=false" ]]; then
-    # It was asked for and there is no sign of it. Either registration did not
-    # take, or the deployed release has no source-capture feature to switch on.
-    die "This deploy registered $want, but the running ExApp reports no source-audio state at all. Either registration did not take, or the deployed release predates the feature. Re-run the deploy from an image built from this checkout."
+  elif grep -q 'CASSINI_SOURCE_CAPTURE' "$WORK_DIR/gocassini-info.xml"; then
+    # Fails closed, whichever way the switches were set. "No line" is not
+    # evidence of "no feature": docker log rotation can take the startup line
+    # away from a container that has the feature and is capturing right now, and
+    # reading that silence as reassurance is how an opt-out deploy reports
+    # success over a stale container still uploading.
+    die "The running ExApp reports no source-audio state, but the manifest this deploy registered declares the switches, so this release does have the feature. Either registration did not take and a container from an earlier deploy is still running — possibly still capturing — or its startup log has rotated away. Inspect '$exapp_container' by hand before trusting this host's capture state."
   else
-    printf '  ok   no source-audio state reported; the deployed release predates the feature and both switches are off\n'
+    # Established from the manifest this deploy actually registered, not from
+    # the absence of a log line. A release that does not declare the switches
+    # has no source-audio code behind them.
+    printf '  ok   the deployed release does not declare the source-audio switches; it predates the feature and can collect nothing\n'
   fi
 
   # resolve_capture_switches has already ruled out "capture on without a
