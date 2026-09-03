@@ -143,10 +143,13 @@ A deploy with capture on also installs the `cassini_capture` companion app,
 built around the payload read from the running ExApp container so the two are
 byte-identical. That is why it needs `--image`: the companion must carry the same
 version as the ExApp, and only the checkout that produced the image is guaranteed
-to. A `--from-store` deploy therefore installs no companion and says so — the
-ExApp switch stays on, but no Talk page carries the payload.
-`CASSINI_SOURCE_CAPTURE=0` disables an enabled companion again, which is what
-backing the feature out completely requires.
+to. A `--from-store` deploy cannot deliver the payload at all, so it registers
+`CASSINI_SOURCE_CAPTURE=0` and says why — a switch answering yes with no
+companion behind it is worse than one answering no, and calls still running with
+a payload from an earlier deploy stop within about thirty seconds.
+`CASSINI_SOURCE_CAPTURE=0` also disables an enabled companion, which is what
+backing the feature out completely requires; a deploy that cannot disable it
+fails rather than reporting success.
 
 From GitHub, the `Deploy Sandbox` workflow has no inputs for either switch: pass
 an `image_tag` and both are on. With capture on, every authenticated participant

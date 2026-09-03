@@ -264,14 +264,22 @@ func parseBoolEnv(name string) (bool, error) {
 // false — the shape a switch takes when an installation turns it OFF rather
 // than on.
 //
-// Unset or blank yields def. Anything strconv.ParseBool understands yields
-// that value, so "0"/"false" is always an opt-out whatever the default is.
-// Anything else is a typo, and yields false rather than def: a switch nobody
-// can read should land on the setting that collects nothing and publishes
-// nothing, which is the same fail-closed reading parseBoolEnv's callers get
-// from its error. A typo is otherwise entirely silent, so it is logged — once
-// per distinct value, because these switches are read per request and per
-// build and one repeated typo would bury the log.
+// Unset or blank yields def. Blank is deliberately the same as unset, not a
+// third case: every deployment surface that reaches this process — an AppAPI
+// deploy option left empty, a compose file's VAR: "", a `docker run -e VAR`
+// passing through an unset parent — spells "not configured" as an empty string,
+// and parseBoolEnv has always read it that way. Treating it as a typo would
+// silently disable the feature on installations that configured nothing, which
+// is exactly what the default exists to prevent.
+//
+// Anything else strconv.ParseBool understands yields that value, so "0"/"false"
+// is always an opt-out whatever the default is. Anything it cannot read is a
+// typo, and yields false rather than def: a switch nobody can read should land
+// on the setting that collects nothing and publishes nothing, which is the same
+// fail-closed reading parseBoolEnv's callers get from its error. A typo is
+// otherwise entirely silent, so it is logged — once per distinct value, because
+// these switches are read per request and per build and one repeated typo would
+// bury the log.
 func parseBoolEnvDefault(name string, def bool) bool {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {

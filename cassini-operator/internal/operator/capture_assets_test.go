@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func captureDistWith(t *testing.T, files map[string]string) string {
@@ -115,8 +117,9 @@ func TestUIAssetHandlerServesCaptureBundles(t *testing.T) {
 
 // The administrator gate is the containment boundary for the whole feature.
 // Capture runs by default on this branch, so what has to hold is the opt-out:
-// with CASSINI_SOURCE_CAPTURE=0 a user opting in client-side achieves nothing,
-// because the ordinary capture scripts disappear and uploads stay forbidden.
+// with CASSINI_SOURCE_CAPTURE=0 a browser that still holds the payload from an
+// earlier page load achieves nothing, because the ordinary capture scripts
+// stop being served and uploads stay forbidden.
 func TestCaptureAssetsDisappearWhenAnAdministratorOptsOut(t *testing.T) {
 	dist := captureDistWith(t, map[string]string{capturePayloadFile: "// payload"})
 	cfg := ExAppConfig{ViewerDist: dist}
@@ -227,9 +230,10 @@ func TestParseBoolEnvDefaultReportsAnUnreadableValueOnce(t *testing.T) {
 	log.SetFlags(0)
 	t.Cleanup(func() { log.SetOutput(previous); log.SetFlags(flags) })
 
-	// A name of this test's own: the dedupe is package-global and remembers
-	// what other tests have already reported.
-	const name = "CASSINI_TEST_UNREADABLE_SWITCH"
+	// A name nothing else will use, and a different one on every run: the
+	// dedupe is package-global and outlives one test, so a fixed name would
+	// make this pass once and fail under `go test -count=2`.
+	name := fmt.Sprintf("CASSINI_TEST_UNREADABLE_SWITCH_%d", time.Now().UnixNano())
 	t.Setenv(name, "ture")
 	for i := 0; i < 3; i++ {
 		if parseBoolEnvDefault(name, true) {

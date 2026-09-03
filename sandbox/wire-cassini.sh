@@ -117,7 +117,9 @@ production install would set (docs/source-audio-capture.md):
 
 Installing the cassini_capture companion needs --image: it is built from this
 checkout and must carry the same version as the deployed ExApp. A --from-store
-deploy therefore leaves Talk pages without the payload and says so.
+deploy therefore registers CASSINI_SOURCE_CAPTURE=0 and says so — a switch that
+answers yes with no companion to deliver the payload is worse than one that
+answers no.
 EOF
       exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -134,6 +136,26 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 log()  { printf '\n\033[1;34m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 occ()  { docker exec --user www-data "$AIO_NEXTCLOUD" php occ "$@"; }
+
+# resolve_capture_switches settles what this deploy will register, BEFORE
+# anything is registered, so the ExApp's switch and the companion's presence can
+# never contradict each other.
+#
+# There is one case where they otherwise would. Capture is on by default, but
+# the companion may only be built from the checkout that produced the deployed
+# image (see install_capture_companion), so a store deploy cannot deliver the
+# payload to Talk at all. Leaving the ExApp switch on there would register an
+# installation that answers "yes, capture" to any browser that asks — including
+# a call still running with a payload from a previous image deploy — while this
+# script quietly retires the companion underneath it. So a store deploy turns
+# collection off outright, and says why.
+resolve_capture_switches() {
+  if [[ "$CASSINI_INSTALL_SOURCE" == "image" ]] || ! capture_on; then
+    return 0
+  fi
+  log "Source capture is on, but the $CAPTURE_COMPANION_ID companion can only be built from the checkout that produced the image, and this is a store install. Registering CASSINI_SOURCE_CAPTURE=0: nothing would reach Talk's pages anyway, and a switch that says yes with no companion is worse than one that says no. Deploy with --image to capture."
+  CASSINI_SOURCE_CAPTURE=0
+}
 
 require_state() {
   mkdir -p "$STATE_DIR" 2>/dev/null || true
@@ -334,13 +356,17 @@ handoff_talk_recording() {
 }
 
 # capture_on reads CASSINI_SOURCE_CAPTURE the way the operator does — see
-# parseBoolEnvDefault in cassini-operator/internal/operator/exapp.go: unset is
-# on, anything Go's strconv.ParseBool calls false is off, and anything it cannot
-# read at all is off. The same string has to mean the same thing on both sides
-# of the registration, or this script retires the companion while the ExApp goes
-# on accepting uploads, or installs it while the ExApp 404s the payload.
+# parseBoolEnvDefault in cassini-operator/internal/operator/exapp.go: surrounding
+# whitespace is trimmed, blank is the default (on), anything Go's
+# strconv.ParseBool calls false is off, and anything it cannot read at all is
+# off. The same string has to mean the same thing on both sides of the
+# registration, or this script retires the companion while the ExApp goes on
+# accepting uploads, or installs it while the ExApp 404s the payload.
 capture_on() {
-  case "$(printf '%s' "$CASSINI_SOURCE_CAPTURE" | tr '[:upper:]' '[:lower:]')" in
+  local value="$CASSINI_SOURCE_CAPTURE"
+  value="${value#"${value%%[![:space:]]*}"}"   # trim leading whitespace
+  value="${value%"${value##*[![:space:]]}"}"   # trim trailing whitespace
+  case "${value,,}" in
     ''|1|t|true) return 0 ;;
     *)           return 1 ;;
   esac
@@ -360,29 +386,26 @@ capture_on() {
 # same version as the ExApp's (scripts/test-info-schema.sh enforces it in CI),
 # and only a checkout that produced the image is guaranteed to match it. A
 # store release was cut from some other commit, so its version and this
-# checkout's companion would drift the first time they differed. A store deploy
-# therefore ends here with no companion, capture switch on or not.
+# checkout's companion would drift the first time they differed. That is why
+# resolve_capture_switches turns collection off on a store deploy: this function
+# then simply takes the retire path.
 install_capture_companion() {
-  local retire_because=""
   if ! capture_on; then
-    retire_because="Source capture is off"
-  elif [[ "$CASSINI_INSTALL_SOURCE" != "image" ]]; then
-    # Capture stays ON in the ExApp — assets served, uploads accepted — but
-    # there is no companion this checkout may honestly install beside a store
-    # release, so nothing injects the payload and nothing is collected until an
-    # --image deploy. Said out loud rather than failed on: installing from the
-    # store is the default and must not stop working because capture is.
-    retire_because="Capture is on but this is a store install, and the companion must match the deployed image (use --image)"
-  fi
-  if [[ -n "$retire_because" ]]; then
     # Backing out completely means the companion goes too: it is a separate
     # app that outlives the ExApp's own switch and keeps injecting the payload
     # into every Talk call page until it is disabled.
+    #
+    # After register_cassini, deliberately, and that order is the documented one
+    # (docs/exapp-install.md): the ExApp learns capture is off first, which
+    # reaches calls already in progress through the payload's 30-second poll,
+    # and only then does the payload stop being delivered to new page loads.
     if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
-      log "$retire_because; disabling $CAPTURE_COMPANION_ID so Talk pages stop carrying the payload"
-      occ app:disable "$CAPTURE_COMPANION_ID" >/dev/null 2>&1 || true
-    else
-      log "$retire_because; $CAPTURE_COMPANION_ID stays out of Talk's pages"
+      log "Source capture is off; disabling $CAPTURE_COMPANION_ID so Talk pages stop carrying the payload"
+      # Not swallowed. A companion left enabled while capture is being turned
+      # off is the one outcome this branch exists to prevent, and a deploy that
+      # cannot achieve it has to say so rather than report success.
+      occ app:disable "$CAPTURE_COMPANION_ID" >/dev/null \
+        || die "Could not disable $CAPTURE_COMPANION_ID. Talk pages are still being given the capture payload; disable it by hand before treating this host as capture-free."
     fi
     return 0
   fi
@@ -428,14 +451,17 @@ verify() {
     printf '         handle /exapps/* { reverse_proxy 127.0.0.1:%s }\n' "$HARP_HTTP_PORT" >&2
   fi
   occ app_api:app:list 2>/dev/null | grep -i "$CASSINI_APPSTORE_ID" || true
-  if capture_on && [[ "$CASSINI_INSTALL_SOURCE" == "image" ]]; then
+  # resolve_capture_switches has already ruled out "capture on without a
+  # companion", so these two are the only outcomes: on with the companion
+  # enabled, or off with it gone.
+  if capture_on; then
     if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
       printf "  ok   %s enabled; capture follows Talk's recording per docs/source-audio-capture.md \"Trying it\"\n" "$CAPTURE_COMPANION_ID"
     else
       printf '  FAIL %s is not enabled\n' "$CAPTURE_COMPANION_ID" >&2
     fi
-  elif capture_on; then
-    printf '  note capture is on in the ExApp but this is a store install, so no %s and no payload on Talk pages (deploy with --image)\n' "$CAPTURE_COMPANION_ID"
+  elif occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
+    printf '  FAIL capture is off but %s is still enabled; Talk pages are still being given the payload\n' "$CAPTURE_COMPANION_ID" >&2
   fi
 }
 
@@ -447,6 +473,7 @@ if [[ "$REGISTER_ONLY" != "true" ]]; then
   ensure_harp
 fi
 resolve_info_xml
+resolve_capture_switches
 register_cassini
 handoff_talk_recording
 install_capture_companion

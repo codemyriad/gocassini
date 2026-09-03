@@ -112,10 +112,10 @@ jobs:
           # Source capture and ingestion are on by default on this branch and
           # the script has no flags for them; a deploy that wants them off sets
           # CASSINI_SOURCE_CAPTURE=0 / CASSINI_SOURCE_AUDIO_INGEST=0 in the
-          # remote environment (docs/source-audio-capture.md). Note that the
-          # cassini_capture companion still needs image_tag: without one this
-          # installs the store release, capture stays on in the ExApp, and
-          # nothing injects the payload into Talk's pages.
+          # remote environment (docs/source-audio-capture.md). Capture still
+          # needs image_tag: the cassini_capture companion is built from the
+          # deploying checkout, so a store install has no way to deliver the
+          # payload and wire-cassini.sh registers capture off there.
 
           # The admin password is read from stdin into the remote env so it never
           # appears in the remote process argument list.

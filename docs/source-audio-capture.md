@@ -393,7 +393,7 @@ logged-in user. The client fails closed at every one of those.
   with no backoff. But the only trace either leaves is a `console.warn`. The
   participant is not told the recording was destroyed, and nothing server-side
   records that one was dropped before it arrived, so a deployment refusing every
-  upload looks the same from the operator as one nobody opted into.
+  upload looks the same from the operator as one where nobody ever recorded.
 - **Abrupt-page tail.** A reload or crash can lose the not-yet-checkpointed tail
   of the current MediaRecorder chunk (at most about two seconds). Completed
   chunks and their recovery sidecar survive in OPFS, are retried on the next
