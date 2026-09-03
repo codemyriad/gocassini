@@ -423,6 +423,12 @@ let preparedWorker: Worker | null = null;
 // transform offered to a sender carrying a live call.
 let captureAbandoned = false;
 let talkRecordingActive = false;
+// recordingStatusAnswered distinguishes "Talk says this room is not being
+// recorded" from "Talk has not answered yet". Only the first is a reason to
+// stop holding a buffered capture for adoption; treating the second as a no
+// would upload every reloader's buffer a round trip before the answer that
+// says to keep it arrives.
+let recordingStatusAnswered = false;
 let recordingStatusRevision = 0;
 let recordingStatusFetchInFlight = false;
 let recordingStatusPoll: number | null = null;
@@ -917,6 +923,53 @@ async function uploadCapture(
   console.info("Cassini source capture: upload accepted");
 }
 
+// A sealed capture found in OPFS at page load: everything a previous page
+// buffered, and the manifest describing it.
+interface SealedCapture {
+  dirName: string;
+  sidecar: CaptureSidecar;
+}
+
+// adoptable is the sealed capture this page may CONTINUE rather than upload.
+//
+// A reload during a recorded call is the case this exists for, and it is the
+// case the feature matters most in: people reload when the connection is bad,
+// which is exactly when the recorder's copy of them is full of holes. The
+// previous page left a buffer behind; uploading it here would push a
+// meeting-sized body up the same bad uplink the participant is still trying to
+// talk over, and would file the two halves of one recording as two captures.
+// So it is held instead, and the capture this page starts adopts it as its
+// leading segments — the reload becoming a segment boundary exactly like a
+// mid-call microphone change.
+//
+// Held, never abandoned: every path out of holding either adopts it or uploads
+// it. See releaseAdoptableCapture.
+let adoptable: SealedCapture | null = null;
+let adoptDeadline: number | null = null;
+
+// ADOPT_MAX_AGE_MS bounds how stale a sealed capture may be and still be
+// treated as this recording's own first half.
+//
+// The page cannot ask Talk which recording a buffer belongs to; there is no
+// recording id in any of this. What it has is "the same room, and a recording
+// is active now", which a buffer from a DIFFERENT recording earlier in the same
+// room would also satisfy. Two minutes is far more than a reload and a rejoin
+// take even on the connection this feature exists for, and far less than the
+// gap between two recordings anybody would confuse. Getting it wrong is not
+// silent corruption either — segments carry their own wall-clock windows, so a
+// wrongly adopted one is placed before this recording began and simply falls
+// outside it — but it is still worth not doing.
+const ADOPT_MAX_AGE_MS = 120_000;
+
+// ADOPT_DECISION_TIMEOUT_MS is how long a held capture waits for this page to
+// start recording before it is uploaded after all.
+//
+// Holding is only ever an optimisation; uploading is always correct. So the
+// deadline is generous — a participant whose microphone permission prompt is
+// still open has not failed to rejoin — and its expiry costs nothing but the
+// upload happening mid-call, which is what every previous build did.
+const ADOPT_DECISION_TIMEOUT_MS = 60_000;
+
 function isBufferedCaptureSidecar(value: unknown): value is CaptureSidecar {
   if (!value || typeof value !== "object") {
     return false;
@@ -932,38 +985,153 @@ function isBufferedCaptureSidecar(value: unknown): value is CaptureSidecar {
   );
 }
 
-// A navigation is allowed to cancel the network request: the completed
-// capture remains in OPFS. Every new Talk page retries those sealed captures
-// before recording anything else, which turns reload into two contiguous
-// source sessions rather than a lost first half.
-export async function retryBufferedCaptures(): Promise<number> {
+// readSealedCapture reads one buffered capture's manifest.
+//
+// capture.json first, then the recovery sidecar the worker refreshes as chunks
+// land. Both are tried on CONTENT rather than on existence: a page that died
+// while sealing can leave a capture.json truncated mid-JSON, and preferring a
+// file that merely exists would then discard a capture whose recovery sidecar
+// was perfectly good. A directory with neither is left alone — the previous
+// page died before the first checkpoint, and a future repair tool has more to
+// work with than an empty slot.
+async function readSealedCapture(
+  root: FileSystemDirectoryHandle,
+  dirName: string,
+): Promise<SealedCapture | null> {
+  const dir = await root.getDirectoryHandle(dirName);
+  for (const name of ["capture.json", SOURCE_CAPTURE_PENDING_NAME]) {
+    try {
+      const file = await (await dir.getFileHandle(name)).getFile();
+      const parsed: unknown = JSON.parse(await file.text());
+      if (isBufferedCaptureSidecar(parsed)) {
+        return { dirName, sidecar: parsed };
+      }
+    } catch {
+      // Absent, unreadable, or half-written. Try the other one.
+    }
+  }
+  return null;
+}
+
+// nextSegmentIndex is the first index a resumed capture may use. One past the
+// highest already in the directory, never a count: the worker drops segments
+// whose file was not written completely, so the indices in a sealed sidecar can
+// have holes, and reusing one would overwrite that segment's audio and give the
+// server a manifest naming the same file twice.
+function nextSegmentIndex(sidecar: CaptureSidecar): number {
+  let highest = -1;
+  for (const segment of sidecar.segments) {
+    if (Number.isInteger(segment.index) && segment.index > highest) {
+      highest = segment.index;
+    }
+  }
+  return highest + 1;
+}
+
+// captureIsAdoptable decides whether a sealed capture is this recording's own
+// first half rather than a leftover to upload.
+function captureIsAdoptable(sealed: SealedCapture, roomToken: string | null): boolean {
+  if (roomToken === null || sealed.sidecar.roomToken !== roomToken) {
+    // Another room's buffer has nothing to do with the call this page is on.
+    return false;
+  }
+  if (captureAbandoned) {
+    // This page will never record, so it will never adopt anything either.
+    return false;
+  }
+  if (recordingStatusAnswered && !talkRecordingActive) {
+    // Talk has already told us this room is not being recorded. Whatever the
+    // buffer belongs to is over, so it uploads now — the retry path, unchanged.
+    return false;
+  }
+  const age = Date.now() - sealed.sidecar.callEndWallMs;
+  return sealed.sidecar.callEndWallMs > 0 && age >= 0 && age <= ADOPT_MAX_AGE_MS;
+}
+
+// releaseAdoptableCapture uploads a held capture, because this page is not
+// going to continue it: Talk says the recording is over, or nothing started
+// recording before the deadline.
+function releaseAdoptableCapture(): void {
+  const held = adoptable;
+  adoptable = null;
+  clearAdoptDeadline();
+  if (held === null) {
+    return;
+  }
+  void uploadCapture(held.sidecar, held.dirName, false).catch(() => {
+    // Left in OPFS for the next Talk page load, exactly as any other deferred
+    // upload is.
+    console.warn("Cassini source capture: upload deferred; buffered audio remains in browser storage");
+  });
+}
+
+function clearAdoptDeadline(): void {
+  if (adoptDeadline !== null) {
+    clearTimeout(adoptDeadline);
+    adoptDeadline = null;
+  }
+}
+
+// settleBufferedCaptures decides what happens to every capture left in this
+// browser's storage, and is the only thing that reads that storage at page
+// load.
+//
+// A navigation is allowed to cancel an upload, and a reload is not even asked
+// to attempt one, so completed captures routinely outlive the page that made
+// them. Each is either uploaded now or held for this page's own capture to
+// adopt; nothing is left undecided.
+export async function settleBufferedCaptures(): Promise<number> {
   if (serverAllowsCapture !== true) {
     return 0;
   }
   const root = await navigator.storage.getDirectory();
-  let uploaded = 0;
+  // The listing is snapshotted BEFORE anything is uploaded, and that ordering
+  // is load-bearing. Uploading is slow, this page starts its own capture in
+  // the same seconds, and a live capture directory enumerated by a scan still
+  // in progress would be uploaded half-written and then DELETED out from under
+  // the worker recording into it. A snapshot cannot see a directory that did
+  // not exist when the page loaded.
+  const names: string[] = [];
   for await (const [dirName, handle] of root.entries()) {
-    if (handle.kind !== "directory" || !dirName.startsWith("capture-")) {
+    if (handle.kind === "directory" && dirName.startsWith("capture-")) {
+      names.push(dirName);
+    }
+  }
+  const roomToken = roomTokenFromPath(location.pathname);
+  let uploaded = 0;
+  for (const dirName of names) {
+    // Belt and braces against the snapshot above: never touch the directory a
+    // capture is recording into, or one already held for adoption.
+    if (state?.dirName === dirName || adoptable?.dirName === dirName) {
+      continue;
+    }
+    let sealed: SealedCapture | null = null;
+    try {
+      sealed = await readSealedCapture(root, dirName);
+    } catch {
+      sealed = null;
+    }
+    if (sealed === null) {
+      continue;
+    }
+    // Only one capture is ever held. A second buffer for the same room is a
+    // previous reload's, and belongs on the server rather than spliced onto
+    // the front of this one.
+    if (adoptable === null && state === null && captureIsAdoptable(sealed, roomToken)) {
+      adoptable = sealed;
+      clearAdoptDeadline();
+      adoptDeadline = setTimeout(() => {
+        console.info("Cassini source capture: nothing resumed the buffered capture; uploading it");
+        releaseAdoptableCapture();
+      }, ADOPT_DECISION_TIMEOUT_MS) as unknown as number;
       continue;
     }
     try {
-      const dir = handle as FileSystemDirectoryHandle;
-      let sidecarFile: File;
-      try {
-        sidecarFile = await (await dir.getFileHandle("capture.json")).getFile();
-      } catch {
-        sidecarFile = await (await dir.getFileHandle(SOURCE_CAPTURE_PENDING_NAME)).getFile();
-      }
-      const sidecar = JSON.parse(await sidecarFile.text()) as unknown;
-      if (!isBufferedCaptureSidecar(sidecar)) {
-        continue;
-      }
-      await uploadCapture(sidecar, dirName, false);
+      await uploadCapture(sealed.sidecar, dirName, false);
       uploaded += 1;
     } catch {
-      // No sidecar means the previous page died before sealing. Leave the
-      // directory untouched; periodic chunks may still be recoverable by a
-      // future repair tool, while deleting it here would make that impossible.
+      // Left in place so a later page load can retry; nothing is lost to a
+      // transient upload failure.
     }
   }
   return uploaded;
@@ -973,7 +1141,7 @@ export async function retryBufferedCaptures(): Promise<number> {
 // upload. Talk's confirmed recording-off event calls this while the participant
 // remains in the room; peer close and pagehide call it with callEnded=true as
 // an idempotent fallback.
-async function finishCapture(callEnded: boolean): Promise<void> {
+async function finishCapture(callEnded: boolean, upload = true): Promise<void> {
   if (callEnded) {
     talkRecordingActive = false;
     const idleWorker = preparedWorker;
@@ -1027,6 +1195,15 @@ async function finishCapture(callEnded: boolean): Promise<void> {
     if (event.data?.type !== "finalized") {
       return;
     }
+    if (!upload) {
+      // The page is going away. An upload started here cannot finish — the
+      // document is torn down and the request goes with it — and ATTEMPTING one
+      // is worse than not: whether it happens to land decides whether the next
+      // page finds a buffer to adopt, which would make a reload's outcome a
+      // race. The buffer is durable and the next Talk page settles it.
+      retireSessionWorker(active.worker);
+      return;
+    }
     void uploadCapture(event.data.sidecar as CaptureSidecar, event.data.dirName as string, active.discarded)
       .catch(() => {
         // The OPFS buffer is deliberately left in place so a later page load
@@ -1047,6 +1224,13 @@ async function finishCapture(callEnded: boolean): Promise<void> {
 
 async function endCall(): Promise<void> {
   await finishCapture(true);
+}
+
+// endPage is the teardown a navigation gets: seal the interval so the buffer on
+// disk is described, and leave the uploading to whichever page loads next. See
+// finishCapture's `upload` parameter for why it does not try.
+async function endPage(): Promise<void> {
+  await finishCapture(true, false);
 }
 
 // stopWithoutRestart closes the current segment and leaves the recorder idle.
@@ -1137,18 +1321,37 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   // then — the platform ignores a transform attached this late, so that capture
   // simply carries no anchors.
   attachTimingTransform(worker, sender, connection);
-  const callStartWallMs = Date.now();
+  // Adoption. A buffered capture held for this room becomes the leading
+  // segments of the one starting now, rather than a second capture of the same
+  // recording: same directory, same call start, segment numbering continuing
+  // where the previous page stopped. The reload is then a segment boundary,
+  // which is a seam this pipeline already understands — it is what a mid-call
+  // microphone change produces — and the gap between the two is a stretch the
+  // participant genuinely was not in the call for.
+  //
+  // Consumed unconditionally, whether or not it is used, so that nothing can
+  // hold a buffer past the capture it was waiting for.
+  const inherited = adoptable;
+  adoptable = null;
+  clearAdoptDeadline();
+  const adopted =
+    inherited !== null && inherited.sidecar.roomToken === roomToken ? inherited : null;
+  if (inherited !== null && adopted === null) {
+    // Held for a room this capture is not for. Upload it rather than drop it.
+    void uploadCapture(inherited.sidecar, inherited.dirName, false).catch(() => {});
+  }
+  const callStartWallMs = adopted?.sidecar.callStartWallMs ?? Date.now();
   const session: CaptureState = {
     roomToken,
-    dirName: captureDirName(roomToken, callStartWallMs),
+    dirName: adopted?.dirName ?? captureDirName(roomToken, callStartWallMs),
     callStartWallMs,
     worker,
-    segmentIndex: 0,
+    segmentIndex: adopted === null ? 0 : nextSegmentIndex(adopted.sidecar),
     recorder: null,
     muteIntervals: [],
     muteSince: null,
     mutePoll: null,
-    segmentStartWallMs: callStartWallMs,
+    segmentStartWallMs: Date.now(),
     finished: false,
     discarded: false,
     pendingChunks: Promise.resolve(),
@@ -1169,10 +1372,19 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
       callStartWallMs: session.callStartWallMs,
       userAgent: navigator.userAgent,
     },
+    // The segments the previous page left in this directory. Their files are
+    // already there; the worker carries them into every sidecar it writes from
+    // here on, so a second reload inherits both stints rather than only the
+    // last.
+    adopted: adopted?.sidecar.segments ?? [],
   });
   worker.postMessage({ type: "timing-active", active: true });
   startSegment(session, sender);
-  console.info("Cassini source capture: Talk recording active; local source recording started");
+  console.info(
+    adopted === null
+      ? "Cassini source capture: Talk recording active; local source recording started"
+      : `Cassini source capture: resuming the buffered capture of this recording (${adopted.sidecar.segments.length} segment(s) carried over)`,
+  );
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
 }
 
@@ -1221,6 +1433,8 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
 }
 
 function applyTalkRecordingStatus(status: number): void {
+  // Any of these is an answer, including the ones that change nothing.
+  recordingStatusAnswered = true;
   if (status === TALK_RECORDING_VIDEO || status === TALK_RECORDING_AUDIO) {
     talkRecordingActive = true;
     if (capturingSender && capturingConnection) {
@@ -1235,6 +1449,9 @@ function applyTalkRecordingStatus(status: number): void {
   }
   if (status === TALK_RECORDING_OFF || status === TALK_RECORDING_FAILED) {
     talkRecordingActive = false;
+    // Nothing left to adopt a buffered capture into: the recording it belongs
+    // to is over. This is the retry path a reload without a rejoin ends on.
+    releaseAdoptableCapture();
     if (state) {
       console.info("Cassini source capture: Talk recording stopped; sealing and uploading");
       void finishCapture(false);
@@ -1400,7 +1617,7 @@ export function install(config: CaptureDeliveryConfig = captureDeliveryFromIniti
   if (!Original || (Original as { __cassiniPatched?: boolean }).__cassiniPatched) {
     return;
   }
-  void retryBufferedCaptures().catch(() => {});
+  void settleBufferedCaptures().catch(() => {});
   installTalkRecordingLifecycle();
   // Here rather than at addTrack, because the readiness deadline runs from this
   // line and a participant is mute for whatever is left of it. Talk still has
@@ -1437,7 +1654,7 @@ export function install(config: CaptureDeliveryConfig = captureDeliveryFromIniti
   );
   // A page going away mid-upload keeps its OPFS buffer, so the worst case is a
   // retry rather than a lost recording.
-  window.addEventListener("pagehide", () => void endCall());
+  window.addEventListener("pagehide", () => void endPage());
 }
 
 if (typeof window !== "undefined") {

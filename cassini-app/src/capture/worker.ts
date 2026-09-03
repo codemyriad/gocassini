@@ -135,6 +135,14 @@ let captureDir: FileSystemDirectoryHandle | null = null;
 const segments = new Map<number, OpenSegment>();
 let pendingDirName: string | null = null;
 let pendingBase: Omit<CaptureSidecar, "segments" | "callEndWallMs"> | null = null;
+// adoptedSegments are segments a PREVIOUS page recorded into this same
+// directory, handed over when a reload resumes a capture rather than starting a
+// second one. Their files are already on disk and their anchors were measured
+// against that page's encoder, so they are carried verbatim: this worker never
+// opens, writes, re-slices or deletes them. It only has to keep describing them
+// in every sidecar it writes, or the reload's first half would be present on
+// disk and absent from the manifest, which is the same as losing it.
+let adoptedSegments: CaptureSegment[] = [];
 
 async function ensureDir(name: string): Promise<FileSystemDirectoryHandle> {
   if (captureDir) {
@@ -154,7 +162,7 @@ async function openSegment(dirName: string, meta: OpenSegment["meta"]): Promise<
 }
 
 function recoverableSegments(now: number): CaptureSegment[] {
-  return [...segments.values()]
+  const live = [...segments.values()]
     .filter((segment) => !segment.failed && segment.offset > 0)
     .sort((a, b) => a.meta.index - b.meta.index)
     .map((segment) => {
@@ -166,6 +174,7 @@ function recoverableSegments(now: number): CaptureSegment[] {
         muteIntervals: mergeMuteIntervals(segment.muteIntervals),
       };
     });
+  return [...adoptedSegments, ...live].sort((a, b) => a.index - b.index);
 }
 
 // PENDING_SIDECAR_MIN_INTERVAL_MS bounds how often the recovery sidecar is
@@ -279,7 +288,7 @@ export function anchorsWithin(
 }
 
 async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">): Promise<CaptureSidecar> {
-  if (segments.size === 0) {
+  if (segments.size === 0 && adoptedSegments.length === 0) {
     // Nothing was ever opened — a capture denied or revoked before it started.
     // Creating the directory just to throw would leave an empty one behind on
     // the participant's disk, which is exactly what a denied capture must not
@@ -287,7 +296,9 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
     throw new Error("nothing was recorded");
   }
   const dir = await ensureDir(dirName);
-  const built: CaptureSegment[] = [];
+  // Adopted first, and untouched: they were sealed by the page that recorded
+  // them and their files are already complete.
+  const built: CaptureSegment[] = [...adoptedSegments];
   for (const segment of [...segments.values()].sort((a, b) => a.meta.index - b.meta.index)) {
     if (segment.failed || segment.offset === 0) {
       // Never describe a segment whose bytes are not all there, and never
@@ -303,6 +314,7 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
       muteIntervals: mergeMuteIntervals(segment.muteIntervals),
     });
   }
+  built.sort((a, b) => a.index - b.index);
   const sidecar: CaptureSidecar = { ...base, segments: built };
   if (built.length === 0) {
     throw new Error("no segment was written completely");
@@ -333,6 +345,7 @@ function resetRecordingInterval(): void {
     }
   }
   segments.clear();
+  adoptedSegments = [];
   captureDir = null;
   anchors = [];
   frameIndex = 0;
@@ -354,11 +367,24 @@ export async function onMessage(event: MessageEvent): Promise<void> {
           lastSSRC = -1;
         }
         break;
-      case "capture-start":
+      case "capture-start": {
         pendingDirName = message.dirName;
         pendingBase = message.base;
         lastPendingWriteMs = 0;
+        adoptedSegments = Array.isArray(message.adopted) ? (message.adopted as CaptureSegment[]) : [];
+        if (adoptedSegments.length > 0) {
+          // The stale manifest goes FIRST. A page that sealed before it died
+          // left a capture.json describing only the segments it knew about; a
+          // third page load would prefer that file and file this reload's
+          // second half as if the first had never happened. Removing it makes
+          // the recovery sidecar written immediately below the only manifest in
+          // the directory until this interval seals its own.
+          const dir = await ensureDir(pendingDirName as string);
+          await dir.removeEntry("capture.json").catch(() => {});
+          await refreshPendingSidecar(true);
+        }
         break;
+      }
       case "segment-start":
         await openSegment(message.dirName, message.meta);
         self.postMessage({ type: "segment-started", index: message.meta.index });
