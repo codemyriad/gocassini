@@ -211,7 +211,7 @@ func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate, offse
 		if errO != nil || errS != nil {
 			return SourceTimeBase{}
 		}
-		timelineNS = int64((offset + sourceStart) * 1e9)
+		timelineNS = int64(math.Round((offset + sourceStart) * 1e9))
 	}
 	return SourceTimeBase{
 		FirstPacketWallMS: wallMS,
