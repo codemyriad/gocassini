@@ -507,9 +507,13 @@ type SourceRenderReport struct {
 	// recorded track, unchanged, so this is the one number that says how much
 	// of the transcript the capture is answerable for.
 	SplicedMS int64 `json:"spliced_ms"`
-	// Skipped counts segments left out of the splice. Each one has a reason in
-	// Rejections and costs nothing but the recorded audio staying where it was.
-	Skipped    int      `json:"skipped"`
+	// Skipped counts segments left out of the splice entirely. Each one costs
+	// nothing but the recorded audio staying where it was.
+	Skipped int `json:"skipped"`
+	// Rejections says what the splice declined to do and why. Every skipped
+	// segment has an entry; so does a segment that was used only across the
+	// window it declared, which is not a skip but is still the splice refusing
+	// part of what arrived.
 	Rejections []string `json:"rejections,omitempty"`
 }
 

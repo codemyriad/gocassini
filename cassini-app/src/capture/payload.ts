@@ -1397,6 +1397,13 @@ export async function settleBufferedCaptures(): Promise<number> {
       // uploaded, or until the hold ends. A directory another page holds is
       // not this page's to resume — that page is recording into it — and it is
       // left entirely alone rather than tried again below.
+      //
+      // This is the one wait that can outlast the settle deadline, and only
+      // when another page really is holding the directory. A capture then
+      // starts fresh instead of resuming, which is the right answer for that
+      // case anyway: there is nothing here for this page to continue. On a
+      // reload the previous document is already gone, so the claim is granted
+      // at once.
       const release = await claimCaptureDirUntilReleased(candidate.dirName);
       if (release === null) {
         continue;
