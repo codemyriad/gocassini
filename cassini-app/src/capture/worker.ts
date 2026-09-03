@@ -232,6 +232,17 @@ async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
   if (!segment) {
     return;
   }
+  // A segment with no bytes yet is not in the recovery sidecar — there is
+  // nothing to recover — so the write that gives it its first bytes is the one
+  // that makes it describable, and it is forced past the throttle.
+  //
+  // Without that, a segment opened by a mid-call microphone change stayed
+  // unnamed for up to the throttle interval while its file grew on disk. A page
+  // that reloaded in that window handed the next page a manifest describing one
+  // fewer segment than the directory held, and the resumed capture numbered its
+  // own first segment over the one already there. One extra sidecar write per
+  // segment, not per chunk.
+  const firstBytes = segment.offset === 0;
   try {
     segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
     segment.offset += buffer.byteLength;
@@ -240,7 +251,7 @@ async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
     self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
     return;
   }
-  await refreshPendingSidecar(false);
+  await refreshPendingSidecar(firstBytes);
 }
 
 async function closeSegment(
