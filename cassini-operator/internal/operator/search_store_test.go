@@ -23,27 +23,27 @@ func newTestSearchStore(t *testing.T) *searchStore {
 
 // matches runs the query the search handler will run, minus the visibility
 // join, and returns the references it resolved to.
-func matches(t *testing.T, store *searchStore, expression string) []searchWindow {
+func matches(t *testing.T, store *searchStore, expression string) []searchRow {
 	t.Helper()
 	rows, err := store.db.Query(`
-SELECT r.opus_name, r.bucket_ms, r.start_ms, r.end_ms, r.speaker_id
-  FROM window_fts f
-  JOIN window_ref r ON r.rowid_ = f.rowid
- WHERE window_fts MATCH ?
+SELECT r.opus_name, r.segment_id, r.start_ms, r.end_ms, r.speaker_id
+  FROM segment_fts f
+  JOIN segment_ref r ON r.rowid_ = f.rowid
+ WHERE segment_fts MATCH ?
  ORDER BY r.opus_name, r.start_ms`, expression)
 	if err != nil {
 		t.Fatalf("match %q: %v", expression, err)
 	}
 	defer rows.Close()
-	var out []searchWindow
+	var out []searchRow
 	for rows.Next() {
 		var name string
-		var window searchWindow
-		if err := rows.Scan(&name, &window.BucketMS, &window.StartMS, &window.EndMS, &window.SpeakerID); err != nil {
+		var row searchRow
+		if err := rows.Scan(&name, &row.SegmentID, &row.StartMS, &row.EndMS, &row.SpeakerID); err != nil {
 			t.Fatalf("scan match: %v", err)
 		}
-		window.Text = name
-		out = append(out, window)
+		row.Text = name
+		out = append(out, row)
 	}
 	return out
 }
@@ -52,13 +52,14 @@ func TestSearchStoreIndexesAndResolvesReferences(t *testing.T) {
 	store := newTestSearchStore(t)
 	ctx := context.Background()
 
-	windows := buildSearchWindows([]searchTranscriptWord{
-		{SpeakerID: "S1", StartMS: 1_000, EndMS: 1_200, Text: "we"},
-		{SpeakerID: "S1", StartMS: 1_400, EndMS: 1_700, Text: "discussed"},
-		{SpeakerID: "S1", StartMS: 1_900, EndMS: 1_900, Text: "acquisition"},
-		{SpeakerID: "S2", StartMS: 62_000, EndMS: 62_400, Text: "roadmap"},
+	// The artifact's own readable segments, as they come out of a .opus.
+	rows := searchRowsFromSegments([]searchReadableSegment{
+		{ID: "seg_0007", SpeakerID: "S1", StartMS: 1_000, EndMS: 4_200,
+			Text: "we discussed the acquisition at some length"},
+		{ID: "seg_0008", SpeakerID: "S2", StartMS: 62_000, EndMS: 64_500,
+			Text: "and then the roadmap"},
 	})
-	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-1", windows); err != nil {
+	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-1", searchRowSourceSegments, rows); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 
@@ -66,40 +67,69 @@ func TestSearchStoreIndexesAndResolvesReferences(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("hits = %d, want 1: %+v", len(hits), hits)
 	}
-	if hits[0].Text != "JOB1.opus" || hits[0].SpeakerID != "S1" {
-		t.Errorf("hit = %+v, want JOB1.opus / S1", hits[0])
+	// A hit names the producer's own segment and its real bounds, so it points
+	// at the same unit the viewer renders.
+	if hits[0].Text != "JOB1.opus" || hits[0].SegmentID != "seg_0007" {
+		t.Errorf("hit = %+v, want JOB1.opus / seg_0007", hits[0])
 	}
-	// The reference is the real speech span, not the bucket's bounds: the words
-	// ran 1000..1900ms, so that is what a hit must cite.
-	if hits[0].BucketMS != 0 {
-		t.Errorf("bucket = %d, want 0", hits[0].BucketMS)
+	if hits[0].StartMS != 1_000 || hits[0].EndMS != 4_200 {
+		t.Errorf("bounds = [%d,%d], want the segment's own [1000,4200]", hits[0].StartMS, hits[0].EndMS)
 	}
-	if hits[0].StartMS != 1_000 || hits[0].EndMS != 1_900 {
-		t.Errorf("speech span = [%d,%d], want [1000,1900] — a hit must not cite bucket bounds",
-			hits[0].StartMS, hits[0].EndMS)
+	if hits[0].SpeakerID != "S1" {
+		t.Errorf("speaker = %q, want S1", hits[0].SpeakerID)
 	}
-	if got := matches(t, store, "roadmap"); len(got) == 0 || got[0].SpeakerID != "S2" {
-		t.Errorf("speaker split lost the second speaker: %+v", got)
+	if got := matches(t, store, "roadmap"); len(got) == 0 || got[0].SegmentID != "seg_0008" {
+		t.Errorf("second segment not indexed: %+v", got)
 	}
-	// A phrase spanning two words must match as a phrase, which is the entire
-	// reason windows hold a run of words rather than one word each.
-	if got := matches(t, store, `"discussed acquisition"`); len(got) == 0 {
-		t.Error("phrase query found nothing; words are not contiguous in a row")
+	if got := matches(t, store, `"discussed the acquisition"`); len(got) == 0 {
+		t.Error("phrase query found nothing inside a segment")
 	}
 }
 
-// content=” means the store cannot hand back the text it indexed. This is what
+// A meeting with no readable transcript is still searchable, from words, and
+// the index records that its rows are the coarser kind.
+func TestSearchStoreIndexesAWordDerivedFallback(t *testing.T) {
+	store := newTestSearchStore(t)
+	ctx := context.Background()
+
+	rows := deriveSearchRowsFromWords([]searchTranscriptWord{
+		{SpeakerID: "S1", StartMS: 1_000, EndMS: 1_200, Text: "we"},
+		{SpeakerID: "S1", StartMS: 1_400, EndMS: 1_700, Text: "discussed"},
+		{SpeakerID: "S1", StartMS: 1_900, EndMS: 2_100, Text: "acquisition"},
+	})
+	if err := store.ReplaceMeeting(ctx, "JOB2.opus", "sha-2", searchRowSourceWords, rows); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+
+	hits := matches(t, store, "acquisition")
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1: %+v", len(hits), hits)
+	}
+	// Even a derived row cites the speech it holds, never the window's bounds.
+	if hits[0].StartMS != 1_000 || hits[0].EndMS != 2_100 {
+		t.Errorf("bounds = [%d,%d], want the speech span [1000,2100]", hits[0].StartMS, hits[0].EndMS)
+	}
+	var source string
+	if err := store.db.QueryRow(
+		`SELECT row_source FROM meeting_index WHERE opus_name = 'JOB2.opus'`).Scan(&source); err != nil {
+		t.Fatalf("read row_source: %v", err)
+	}
+	if source != searchRowSourceWords {
+		t.Errorf("row_source = %q, want %q — a coarser index must say so", source, searchRowSourceWords)
+	}
+}
+
 // makes references-only a property of the store rather than a rule a handler
 // has to remember.
 func TestSearchStoreCannotEmitIndexedText(t *testing.T) {
 	store := newTestSearchStore(t)
-	if err := store.ReplaceMeeting(context.Background(), "JOB1.opus", "", []searchWindow{
-		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "severance package details"},
+	if err := store.ReplaceMeeting(context.Background(), "JOB1.opus", "", searchRowSourceSegments, []searchRow{
+		{SegmentID: "s1", StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "severance package details"},
 	}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	var text sql.NullString
-	if err := store.db.QueryRow(`SELECT text FROM window_fts WHERE window_fts MATCH 'severance'`).Scan(&text); err != nil {
+	if err := store.db.QueryRow(`SELECT text FROM segment_fts WHERE segment_fts MATCH 'severance'`).Scan(&text); err != nil {
 		t.Fatalf("select text: %v", err)
 	}
 	if text.Valid {
@@ -107,7 +137,7 @@ func TestSearchStoreCannotEmitIndexedText(t *testing.T) {
 	}
 	var snippet sql.NullString
 	if err := store.db.QueryRow(
-		`SELECT snippet(window_fts, 0, '[', ']', '…', 8) FROM window_fts WHERE window_fts MATCH 'severance'`).Scan(&snippet); err != nil {
+		`SELECT snippet(segment_fts, 0, '[', ']', '…', 8) FROM segment_fts WHERE segment_fts MATCH 'severance'`).Scan(&snippet); err != nil {
 		t.Fatalf("snippet: %v", err)
 	}
 	if snippet.Valid {
@@ -121,13 +151,13 @@ func TestSearchStoreReplacesRatherThanAppends(t *testing.T) {
 	store := newTestSearchStore(t)
 	ctx := context.Background()
 
-	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-1", []searchWindow{
-		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "original wording"},
+	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-1", searchRowSourceSegments, []searchRow{
+		{SegmentID: "s1", StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "original wording"},
 	}); err != nil {
 		t.Fatalf("first replace: %v", err)
 	}
-	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-2", []searchWindow{
-		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "corrected wording"},
+	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "sha-2", searchRowSourceSegments, []searchRow{
+		{SegmentID: "s1", StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "corrected wording"},
 	}); err != nil {
 		t.Fatalf("second replace: %v", err)
 	}
@@ -139,23 +169,23 @@ func TestSearchStoreReplacesRatherThanAppends(t *testing.T) {
 		t.Errorf("the current attempt is not searchable: %+v", got)
 	}
 	var count int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM window_ref WHERE opus_name = 'JOB1.opus'`).Scan(&count); err != nil {
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM segment_ref WHERE opus_name = 'JOB1.opus'`).Scan(&count); err != nil {
 		t.Fatalf("count windows: %v", err)
 	}
 	if count != 1 {
-		t.Errorf("window_ref rows = %d, want 1 — the old row was orphaned", count)
+		t.Errorf("segment_ref rows = %d, want 1 — the old row was orphaned", count)
 	}
 }
 
 // An orphaned posting in a contentless index is unreachable garbage that still
-// matches, so dropping a meeting has to reach window_fts too — which no foreign
+// matches, so dropping a meeting has to reach segment_fts too — which no foreign
 // key can do for it.
 func TestSearchStoreForgetLeavesNoOrphanedPostings(t *testing.T) {
 	store := newTestSearchStore(t)
 	ctx := context.Background()
 
-	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "", []searchWindow{
-		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "quarterly numbers"},
+	if err := store.ReplaceMeeting(ctx, "JOB1.opus", "", searchRowSourceSegments, []searchRow{
+		{SegmentID: "s1", StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "quarterly numbers"},
 	}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
@@ -167,7 +197,7 @@ func TestSearchStoreForgetLeavesNoOrphanedPostings(t *testing.T) {
 		t.Errorf("a forgotten meeting still matches: %+v", got)
 	}
 	var postings int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM window_fts WHERE window_fts MATCH 'quarterly'`).Scan(&postings); err != nil {
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM segment_fts WHERE segment_fts MATCH 'quarterly'`).Scan(&postings); err != nil {
 		t.Fatalf("count postings: %v", err)
 	}
 	if postings != 0 {
@@ -182,8 +212,8 @@ func TestSearchStoreUnavailableDropsRowsAndCoverage(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"JOB1.opus", "JOB2.opus"} {
-		if err := store.ReplaceMeeting(ctx, name, "", []searchWindow{
-			{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "budget"},
+		if err := store.ReplaceMeeting(ctx, name, "", searchRowSourceSegments, []searchRow{
+			{SegmentID: "s1", StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "budget"},
 		}); err != nil {
 			t.Fatalf("replace %s: %v", name, err)
 		}
@@ -216,8 +246,8 @@ func TestSearchStoreRebuildsOnSchemaVersionMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := store.ReplaceMeeting(context.Background(), "JOB1.opus", "", []searchWindow{
-		{BucketMS: 0, StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "stale index content"},
+	if err := store.ReplaceMeeting(context.Background(), "JOB1.opus", "", searchRowSourceSegments, []searchRow{
+		{SegmentID: "s1", StartMS: 0, EndMS: 30_000, SpeakerID: "S1", Text: "stale index content"},
 	}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}

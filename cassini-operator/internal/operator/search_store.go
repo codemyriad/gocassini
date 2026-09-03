@@ -35,6 +35,11 @@ import (
 // catalog — which is also what makes this independent of where the catalog
 // lives, so D-631 moving it later would change nothing here.
 //
+// It is also why a row is a SEGMENT rather than a synthetic time bucket. The
+// published .opus carries the readable transcript as its own payload beside the
+// raw one, so the producer's segmentation is data in the archive: a rebuild
+// reads it back rather than guessing where the cuts were. See search_rows.go.
+//
 // And it is why access control is absent from this file entirely. The index
 // knows which meeting a row belongs to and nothing about who may read it; the
 // visible set is an argument to the query, resolved per request from Nextcloud.
@@ -83,26 +88,29 @@ CREATE TABLE IF NOT EXISTS meeting_index (
   -- The digest of the artifact these rows were built from, so a rebuild can
   -- tell rows built from a DIFFERENT attempt from rows that are current.
   opus_sha256  TEXT NOT NULL DEFAULT '',
-  window_count INTEGER NOT NULL DEFAULT 0,
+  -- Which payload the rows came from: the artifact's own readable segments, or
+  -- a word-derived fallback for a meeting that carries none. Recorded so a
+  -- result can say what granularity it is pointing at rather than implying they
+  -- are the same.
+  row_source   TEXT NOT NULL DEFAULT '',
+  row_count    INTEGER NOT NULL DEFAULT 0,
   indexed_at   TEXT NOT NULL
 );
 
--- One row per (meeting, wall-clock window, speaker). rowid is shared with
--- window_fts, which is how a match resolves back to a reference.
-CREATE TABLE IF NOT EXISTS window_ref (
+-- One row per transcript segment. rowid is shared with segment_fts, which is
+-- how a match resolves back to a reference.
+CREATE TABLE IF NOT EXISTS segment_ref (
   rowid_     INTEGER PRIMARY KEY AUTOINCREMENT,
   opus_name  TEXT NOT NULL REFERENCES meeting_index(opus_name) ON DELETE CASCADE,
-  -- bucket_ms is the row's identity; start_ms/end_ms are when someone actually
-  -- spoke inside it. Keeping both is what lets a hit cite real speech while the
-  -- row set stays a pure function of each word's own timestamp. See
-  -- searchWindow for why reporting the bucket's own bounds would be worse.
-  bucket_ms  INTEGER NOT NULL,
+  -- The producer's own segment id, so a hit names the unit the viewer renders.
+  -- Synthetic and deterministic for a meeting indexed from words instead.
+  segment_id TEXT NOT NULL,
   start_ms   INTEGER NOT NULL,
   end_ms     INTEGER NOT NULL,
   speaker_id TEXT NOT NULL DEFAULT ''
 );
 
-CREATE INDEX IF NOT EXISTS window_ref_by_meeting ON window_ref(opus_name);
+CREATE INDEX IF NOT EXISTS segment_ref_by_meeting ON segment_ref(opus_name);
 
 -- The inverted index. contentless (content='') so the store CANNOT emit the
 -- text it indexed: SELECT text and snippet() both return NULL, which makes
@@ -121,7 +129,7 @@ CREATE INDEX IF NOT EXISTS window_ref_by_meeting ON window_ref(opus_name);
 -- slower). This makes cross-meeting search token/prefix matching, while the
 -- viewer's in-meeting search is substring — they will not return identical
 -- results, and that is a deliberate choice rather than an oversight.
-CREATE VIRTUAL TABLE IF NOT EXISTS window_fts USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS segment_fts USING fts5(
   text,
   content='',
   contentless_delete=1,
@@ -195,7 +203,7 @@ func openSearchStore(path string, logger *log.Logger) (*searchStore, error) {
 //
 // WAL so a reader never blocks the ingest writer, a real busy_timeout so a
 // concurrent open waits instead of failing instantly with SQLITE_BUSY, and
-// foreign_keys ON so window_ref's ON DELETE CASCADE is more than decorative.
+// foreign_keys ON so segment_ref's ON DELETE CASCADE is more than decorative.
 // The pool is left at the driver default rather than pinned to one connection:
 // searches are reads, and WAL is what makes concurrent ones safe.
 func openSearchStoreAt(path string) (*searchStore, error) {
@@ -263,7 +271,7 @@ func (s *searchStore) applySchema() error {
 // attempt's rows searchable alongside the current ones. The whole swap is one
 // transaction, so a failure leaves the previous rows intact rather than a
 // half-replaced meeting that would answer with a mixture of two attempts.
-func (s *searchStore) ReplaceMeeting(ctx context.Context, opusName, opusSHA256 string, windows []searchWindow) error {
+func (s *searchStore) ReplaceMeeting(ctx context.Context, opusName, opusSHA256, rowSource string, rows []searchRow) error {
 	name := strings.TrimSpace(opusName)
 	if name == "" {
 		return errors.New("opus name must not be empty")
@@ -273,39 +281,40 @@ func (s *searchStore) ReplaceMeeting(ctx context.Context, opusName, opusSHA256 s
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO meeting_index (opus_name, state, reason, opus_sha256, window_count, indexed_at)
-VALUES (?, ?, '', ?, ?, ?)
+INSERT INTO meeting_index (opus_name, state, reason, opus_sha256, row_source, row_count, indexed_at)
+VALUES (?, ?, '', ?, ?, ?, ?)
 ON CONFLICT(opus_name) DO UPDATE SET
   state = excluded.state, reason = '', opus_sha256 = excluded.opus_sha256,
-  window_count = excluded.window_count, indexed_at = excluded.indexed_at`,
-			name, searchStateIndexed, strings.TrimSpace(opusSHA256), len(windows), nowUTCString()); err != nil {
+  row_source = excluded.row_source, row_count = excluded.row_count,
+  indexed_at = excluded.indexed_at`,
+			name, searchStateIndexed, strings.TrimSpace(opusSHA256), rowSource, len(rows), nowUTCString()); err != nil {
 			return fmt.Errorf("upsert meeting index row: %w", err)
 		}
 
 		refs, err := tx.PrepareContext(ctx,
-			`INSERT INTO window_ref (opus_name, bucket_ms, start_ms, end_ms, speaker_id) VALUES (?, ?, ?, ?, ?)`)
+			`INSERT INTO segment_ref (opus_name, segment_id, start_ms, end_ms, speaker_id) VALUES (?, ?, ?, ?, ?)`)
 		if err != nil {
 			return fmt.Errorf("prepare window insert: %w", err)
 		}
 		defer refs.Close()
-		texts, err := tx.PrepareContext(ctx, `INSERT INTO window_fts (rowid, text) VALUES (?, ?)`)
+		texts, err := tx.PrepareContext(ctx, `INSERT INTO segment_fts (rowid, text) VALUES (?, ?)`)
 		if err != nil {
 			return fmt.Errorf("prepare posting insert: %w", err)
 		}
 		defer texts.Close()
 
-		for _, window := range windows {
-			result, err := refs.ExecContext(ctx, name, window.BucketMS, window.StartMS, window.EndMS, window.SpeakerID)
+		for _, row := range rows {
+			result, err := refs.ExecContext(ctx, name, row.SegmentID, row.StartMS, row.EndMS, row.SpeakerID)
 			if err != nil {
-				return fmt.Errorf("insert window: %w", err)
+				return fmt.Errorf("insert segment: %w", err)
 			}
 			rowID, err := result.LastInsertId()
 			if err != nil {
-				return fmt.Errorf("read window rowid: %w", err)
+				return fmt.Errorf("read segment rowid: %w", err)
 			}
-			// The FTS row shares window_ref's rowid; that shared key is the only
-			// thing that turns a match back into a reference.
-			if _, err := texts.ExecContext(ctx, rowID, window.Text); err != nil {
+			// The FTS row shares segment_ref's rowid; that shared key is the
+			// only thing that turns a match back into a reference.
+			if _, err := texts.ExecContext(ctx, rowID, row.Text); err != nil {
 				return fmt.Errorf("insert posting: %w", err)
 			}
 		}
@@ -326,10 +335,11 @@ func (s *searchStore) MarkUnavailable(ctx context.Context, opusName, reason stri
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO meeting_index (opus_name, state, reason, opus_sha256, window_count, indexed_at)
-VALUES (?, ?, ?, '', 0, ?)
+INSERT INTO meeting_index (opus_name, state, reason, opus_sha256, row_source, row_count, indexed_at)
+VALUES (?, ?, ?, '', '', 0, ?)
 ON CONFLICT(opus_name) DO UPDATE SET
-  state = excluded.state, reason = excluded.reason, window_count = 0, indexed_at = excluded.indexed_at`,
+  state = excluded.state, reason = excluded.reason, row_source = '', row_count = 0,
+  indexed_at = excluded.indexed_at`,
 			name, searchStateUnavailable, strings.TrimSpace(reason), nowUTCString()); err != nil {
 			return fmt.Errorf("mark meeting unavailable: %w", err)
 		}
@@ -358,39 +368,39 @@ func (s *searchStore) ForgetMeeting(ctx context.Context, opusName string) error 
 	})
 }
 
-// deleteMeetingRows drops a meeting's windows and their postings.
+// deleteMeetingRows drops a meeting's segments and their postings.
 //
-// The postings go FIRST and by explicit rowid: window_ref's ON DELETE CASCADE
-// cannot reach window_fts, which is a virtual table and has no foreign keys.
+// The postings go FIRST and by explicit rowid: segment_ref's ON DELETE CASCADE
+// cannot reach segment_fts, which is a virtual table and has no foreign keys.
 // Dropping the refs first would orphan every posting, and an orphaned posting
 // in a contentless index is unreachable garbage that still matches.
 func deleteMeetingRows(ctx context.Context, tx *sql.Tx, opusName string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT rowid_ FROM window_ref WHERE opus_name = ?`, opusName)
+	rows, err := tx.QueryContext(ctx, `SELECT rowid_ FROM segment_ref WHERE opus_name = ?`, opusName)
 	if err != nil {
-		return fmt.Errorf("list existing windows: %w", err)
+		return fmt.Errorf("list existing segments: %w", err)
 	}
 	var rowIDs []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return fmt.Errorf("scan existing window: %w", err)
+			return fmt.Errorf("scan existing segment: %w", err)
 		}
 		rowIDs = append(rowIDs, id)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return fmt.Errorf("list existing windows: %w", err)
+		return fmt.Errorf("list existing segments: %w", err)
 	}
 	rows.Close()
 
 	for _, id := range rowIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM window_fts WHERE rowid = ?`, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM segment_fts WHERE rowid = ?`, id); err != nil {
 			return fmt.Errorf("delete posting: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM window_ref WHERE opus_name = ?`, opusName); err != nil {
-		return fmt.Errorf("delete windows: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM segment_ref WHERE opus_name = ?`, opusName); err != nil {
+		return fmt.Errorf("delete segments: %w", err)
 	}
 	return nil
 }
