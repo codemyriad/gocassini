@@ -291,8 +291,26 @@ func writeFileSynced(path string, body []byte) error {
 	return f.Close()
 }
 
-// captureIsAShorterRetelling reports whether `incoming` describes strictly less
-// of the same call than the sidecar already stored at `final`.
+// storedCallEndWallMS reads how far into its call the capture stored at `dir`
+// reaches, or zero when there is nothing readable there.
+func storedCallEndWallMS(dir string, roomToken string, callStartWallMS int64) int64 {
+	raw, err := os.ReadFile(filepath.Join(dir, captureSidecarName))
+	if err != nil {
+		return 0
+	}
+	var stored captureSidecar
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return 0
+	}
+	if stored.CallStartWallMS != callStartWallMS || stored.RoomToken != roomToken {
+		// A different call. Nothing to compare, and nothing to protect.
+		return 0
+	}
+	return stored.CallEndWallMS
+}
+
+// captureIsAShorterRetelling reports whether `incoming` describes less of the
+// same call than what is already on the server.
 //
 // A re-upload for one call replaces what is stored, and that is right for the
 // case it was built for: a client offering the same capture again. It is wrong
@@ -303,23 +321,25 @@ func writeFileSynced(path string, body []byte) error {
 // replace the whole recording with its own first half and the sweep would
 // delete the rest.
 //
-// Fewer segments AND an earlier end is the shape only a prefix has. It is
-// deliberately conservative: a re-upload that is the same length or longer, or
-// that changed a segment's content without shortening the call, still replaces
-// as before.
+// The test is the call window alone. Segment COUNT is not a measure of how much
+// audio a capture holds: a stale snapshot of a live one-segment capture has the
+// same count as the finished one and a fraction of its audio, so counting
+// segments let exactly the upload this is meant to refuse through. An upload
+// that ends earlier than what is stored is a retelling of less of the call,
+// however many files it arrives in; one that ends at the same instant or later
+// replaces as before.
+//
+// The set-aside copy is consulted too. promoteCapture moves the previous
+// capture to `.superseded` before it swaps, so a crash between those two
+// renames leaves the whole recording THERE and nothing at the live path — and
+// a stale prefix arriving afterwards would find no stored capture to compare
+// against, promote itself, and let the sweep delete the longer copy.
 func captureIsAShorterRetelling(incoming *captureSidecar, final string) bool {
-	raw, err := os.ReadFile(filepath.Join(final, captureSidecarName))
-	if err != nil {
-		return false
+	stored := storedCallEndWallMS(final, incoming.RoomToken, incoming.CallStartWallMS)
+	if setAside := storedCallEndWallMS(final+captureSupersededSuffix, incoming.RoomToken, incoming.CallStartWallMS); setAside > stored {
+		stored = setAside
 	}
-	var stored captureSidecar
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		return false
-	}
-	if stored.CallStartWallMS != incoming.CallStartWallMS || stored.RoomToken != incoming.RoomToken {
-		return false
-	}
-	return len(incoming.Segments) < len(stored.Segments) && incoming.CallEndWallMS < stored.CallEndWallMS
+	return stored > 0 && incoming.CallEndWallMS < stored
 }
 
 // promoteCapture swaps a completed staging directory into its final path

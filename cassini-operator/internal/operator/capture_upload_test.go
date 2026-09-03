@@ -404,6 +404,25 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 		t.Fatalf("the post-reload audio was destroyed by a stale prefix upload: %v", err)
 	}
 
+	// Segment COUNT is not a measure of audio. A stale snapshot of a live
+	// one-segment capture has the same count as the finished one and a
+	// fraction of its seconds, so the window is what decides.
+	sameCount := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 3000,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm"},
+			{Index: 1, AudioName: "segment-1.webm"},
+			{Index: 2, AudioName: "segment-2.webm"},
+		},
+	}
+	replaced, err = rt.promoteCapture(sameCount, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if replaced {
+		t.Fatal("a stale snapshot with the same segment count replaced a capture holding more of the call")
+	}
+
 	// An ordinary re-upload — the same call, no shorter — still replaces.
 	again := stored
 	again.CallEndWallMS = 9500
@@ -413,6 +432,46 @@ func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
 	}
 	if !replaced {
 		t.Fatal("an ordinary re-upload of the same call was refused the swap")
+	}
+}
+
+// promoteCapture moves the previous capture aside before it swaps, so a crash
+// between those two renames leaves the whole recording under `.superseded` and
+// nothing at the live path. A stale prefix arriving afterwards would find no
+// stored capture to compare against, promote itself, and let the sweep delete
+// the longer copy the set-aside exists to protect.
+func TestPromoteCaptureConsultsTheSetAsideCopy(t *testing.T) {
+	rt := captureTestRuntime(t)
+	final := filepath.Join(rt.cfg.CaptureRoot, "room", "bob", "1700")
+	setAside := final + captureSupersededSuffix
+	staging := filepath.Join(rt.cfg.CaptureRoot, "upload-stale")
+	for _, dir := range []string{setAside, staging} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	whole := captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9000,
+		Segments: []captureSegment{{Index: 0, AudioName: "segment-0.webm"}},
+	}
+	raw, err := json.Marshal(whole)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(setAside, captureSidecarName), raw, 0o640); err != nil {
+		t.Fatalf("write set-aside sidecar: %v", err)
+	}
+
+	prefix := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 4000,
+		Segments: []captureSegment{{Index: 0, AudioName: "segment-0.webm"}},
+	}
+	replaced, err := rt.promoteCapture(prefix, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if replaced {
+		t.Fatal("a stale prefix promoted itself over a set-aside capture holding more of the call")
 	}
 }
 
