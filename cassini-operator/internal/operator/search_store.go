@@ -92,6 +92,11 @@ CREATE TABLE IF NOT EXISTS meeting_index (
 CREATE TABLE IF NOT EXISTS window_ref (
   rowid_     INTEGER PRIMARY KEY AUTOINCREMENT,
   opus_name  TEXT NOT NULL REFERENCES meeting_index(opus_name) ON DELETE CASCADE,
+  -- bucket_ms is the row's identity; start_ms/end_ms are when someone actually
+  -- spoke inside it. Keeping both is what lets a hit cite real speech while the
+  -- row set stays a pure function of each word's own timestamp. See
+  -- searchWindow for why reporting the bucket's own bounds would be worse.
+  bucket_ms  INTEGER NOT NULL,
   start_ms   INTEGER NOT NULL,
   end_ms     INTEGER NOT NULL,
   speaker_id TEXT NOT NULL DEFAULT ''
@@ -278,7 +283,7 @@ ON CONFLICT(opus_name) DO UPDATE SET
 		}
 
 		refs, err := tx.PrepareContext(ctx,
-			`INSERT INTO window_ref (opus_name, start_ms, end_ms, speaker_id) VALUES (?, ?, ?, ?)`)
+			`INSERT INTO window_ref (opus_name, bucket_ms, start_ms, end_ms, speaker_id) VALUES (?, ?, ?, ?, ?)`)
 		if err != nil {
 			return fmt.Errorf("prepare window insert: %w", err)
 		}
@@ -290,7 +295,7 @@ ON CONFLICT(opus_name) DO UPDATE SET
 		defer texts.Close()
 
 		for _, window := range windows {
-			result, err := refs.ExecContext(ctx, name, window.StartMS, window.EndMS, window.SpeakerID)
+			result, err := refs.ExecContext(ctx, name, window.BucketMS, window.StartMS, window.EndMS, window.SpeakerID)
 			if err != nil {
 				return fmt.Errorf("insert window: %w", err)
 			}
