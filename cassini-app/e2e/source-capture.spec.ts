@@ -284,6 +284,41 @@ async function expectNothingCollected(page: import("@playwright/test").Page, whe
   expect(server.uploads).toHaveLength(0);
 }
 
+// Browser storage belongs to the origin, not to the signed-in session. On a
+// shared machine the buffer a colleague's dead page left behind is still there
+// when the next person signs in, and resuming it would splice their voice into
+// this participant's capture and file it under this participant's name.
+test("a buffered capture from another account is never resumed", async ({ page }) => {
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(2600);
+  const alice = await captureDirs(page);
+  expect(alice, "alice recorded nothing to leave behind").toHaveLength(1);
+
+  // Alice's page goes away mid-recording, leaving her buffer. Bob signs in on
+  // the same browser and joins the same still-recording call.
+  await page.goto(`${server.origin}/`);
+  await page.waitForTimeout(600);
+  expect(server.uploads).toHaveLength(0);
+
+  await page.goto(`${server.origin}/call/testroom?user=bob`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await page.waitForTimeout(3000);
+
+  const dirs = await captureDirs(page);
+  expect(
+    dirs.map((dir) => dir.name),
+    "bob resumed alice's buffered capture",
+  ).not.toContain(alice[0].name);
+  expect(dirs.length, "bob did not start a capture of his own").toBe(1);
+
+  // Alice's buffer is not adopted, but it is not stranded either: it uploads on
+  // the ordinary retry path, under the name her own page recorded it with.
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
+  expect(server.uploads[0].sidecar!.participantId).toBe("alice");
+});
+
 // R1, from the other side. Talk holds the microphone open in its device
 // preview, and the room's recording is active — every condition the payload
 // checks is true except the one that decides everything: there is no sender,

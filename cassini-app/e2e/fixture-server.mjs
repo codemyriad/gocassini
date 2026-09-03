@@ -53,7 +53,10 @@ function callPage(state, routeToken = "") {
   window.__talkRouteToken = ${JSON.stringify(routeToken)};
   window.OC = {
     getRootPath: () => "",
-    getCurrentUser: () => ({ uid: "alice" }),
+    // A ?user= override so a test can model the thing browser storage really
+    // does: it belongs to the origin, not to the signed-in session, so the next
+    // person to sign in on this machine finds the previous one's buffer.
+    getCurrentUser: () => ({ uid: new URLSearchParams(location.search).get("user") || "alice" }),
     requestToken: "stub-token",
   };
 </script>
