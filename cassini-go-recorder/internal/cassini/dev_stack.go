@@ -222,10 +222,9 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	plan.RecordingBackend = pick("recording-backend", opts.recordingBackend, "CASSINI_HARNESS_RECORDING_BACKEND", devStackRecordingLegacy)
 	plan.ExAppImageMode = pick("exapp-image-mode", opts.exAppImageMode, "CASSINI_HARNESS_EXAPP_IMAGE_MODE", devStackImageReuseLocal)
 	plan.PatchMode = pick("patch", opts.patchMode, "CASSINI_HARNESS_PATCH_MODE", devStackPatchAuto)
-	// Access-controlled is the harness default because it is what the harness
-	// has always built, and what the e2e suites assert. Production defaults the
-	// other way, by deriving: a fresh install has no Team folder, so it lands on
-	// the deps-free model without anyone declaring anything.
+	// Match a fresh production install: build the dependency-free storage model
+	// unless a caller explicitly asks for the access-controlled substrate. Tests
+	// that exercise Team-folder permissions declare acl-enabled in their topology.
 	plan.StorageMode = pick("storage-mode", opts.storageMode, "CASSINI_HARNESS_STORAGE_MODE", devStackStorageDefault)
 	plan.SkipStorageScaffold = opts.skipStorageScaffold ||
 		(!opts.set["debug-skip-storage-scaffold"] && get("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD") == "1")
