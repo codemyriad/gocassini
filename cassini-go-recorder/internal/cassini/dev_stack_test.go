@@ -800,18 +800,16 @@ func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 	}
 }
 
-// The storage mode is EXPLICIT (D-616 follow-up). It used to be implied: the
-// harness built the access-controlled substrate unconditionally, so "default
-// mode" and "the substrate has not appeared yet" looked identical — and the
-// ExApp derived its own mode from whichever it happened to see at that instant.
-func TestResolveDevStackPlanStorageModeDefaultsToAccessControlled(t *testing.T) {
+// A fresh harness stack matches a fresh production install: the dependency-free
+// storage model is the default, while tests that exercise Team-folder ACLs ask
+// for that substrate explicitly.
+func TestResolveDevStackPlanStorageModeDefaultsToDefault(t *testing.T) {
 	plan, _, err := resolveDevStackPlan("plan", nil, testEnv(nil))
 	if err != nil {
 		t.Fatalf("resolveDevStackPlan: %v", err)
 	}
-	if plan.StorageMode != devStackStorageACL {
-		t.Fatalf("StorageMode = %q, want %q — the harness has always built this and the e2e suites assert it",
-			plan.StorageMode, devStackStorageACL)
+	if plan.StorageMode != devStackStorageDefault {
+		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
 	}
 	if plan.SkipStorageScaffold {
 		t.Fatal("SkipStorageScaffold defaulted on")
@@ -898,7 +896,10 @@ func TestResolveDevStackPlanSkipStorageScaffold(t *testing.T) {
 	// mode the ExApp is told to start in, which is what makes
 	// "access control selected, nothing built" reachable — the state the app's
 	// own setup flow exists to fix.
-	plan, _, err = resolveDevStackPlan("plan", []string{"--debug-skip-storage-scaffold"}, testEnv(nil))
+	plan, _, err = resolveDevStackPlan("plan", []string{
+		"--storage-mode", devStackStorageACL,
+		"--debug-skip-storage-scaffold",
+	}, testEnv(nil))
 	if err != nil {
 		t.Fatalf("resolveDevStackPlan: %v", err)
 	}
