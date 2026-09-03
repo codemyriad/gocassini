@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
+  import { fade } from "svelte/transition";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
   import {
     sortMeetingCatalogEntries,
@@ -10,13 +11,26 @@
   import { isEmbeddedViewer } from "./viewer/appBase";
   import { resolveCatalogSelection } from "./viewer/catalogSelection";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
+  import {
+    buildRoomBuckets,
+    filterMeetingsByRoom,
+    type RoomBucket,
+  } from "./viewer/rooms";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
+  import RoomsRail from "./components/RoomsRail.svelte";
 
-  // The shell (D-420): owns the catalog/list, which meeting is selected, the
-  // `meeting` hash param, theme, and responsive state. The two surfaces —
-  // MeetingList (left) and MeetingView (right) — are fed from here. MeetingView
-  // owns artifact loading, playback, transcript switching, and the tx/t params.
+  // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
+  // is selected, which meeting is open, the `meeting` hash param, theme, and
+  // responsive state. Three surfaces are fed from here — RoomsRail (left),
+  // MeetingList (centre) and MeetingView, which now opens as a sheet over the
+  // list rather than as a second column. MeetingView still owns artifact
+  // loading, playback, transcript switching, and the tx/t params.
+  //
+  // The sheet is positioned against THIS component's shell, not the viewport:
+  // in the embedded build the viewer renders inside a Nextcloud page, and a
+  // position:fixed sheet would cover Nextcloud's own chrome and the app shell's
+  // Browse/Operator nav along with the list it means to cover.
 
   // ncMode is true when embedded in Nextcloud and OCA.Theming was detected by
   // embedded.ts. Theme toggle is hidden and localStorage/prefers-color-scheme
@@ -58,6 +72,14 @@
   let catalogRefreshRunning = false;
   let catalogRefreshTimer: number | undefined;
 
+  // Which room the list is narrowed to (D-654). null is "all meetings" — not
+  // the same as rooms.NO_ROOM_KEY, which selects the meetings that have no room
+  // at all. List-local like the text filter: it is a way of looking at the
+  // archive, not a location, so it stays out of the hash and out of history.
+  let selectedRoomKey: string | null = null;
+  // Narrow viewports only: whether the rail is slid in over the list.
+  let railOpen = false;
+
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
   let themeMode: ThemeMode = "saturn-light";
@@ -76,32 +98,52 @@
   let isDesktop = false;
   let viewportMedia: MediaQueryList | null = null;
 
-  let viewportChanging = false;
-
-  async function handleViewportChange(event: MediaQueryListEvent) {
-    viewportChanging = true;
+  function handleViewportChange(event: MediaQueryListEvent) {
     isDesktop = event.matches;
-    await tick();
-    viewportChanging = false;
+  }
+
+  // The breakpoint below which the rooms rail becomes a drawer and the meeting
+  // sheet becomes a bottom sheet. Separate from DESKTOP_MEDIA_QUERY, which asks
+  // a different question (how much room MeetingView's own internals have).
+  const NARROW_MEDIA_QUERY = "(max-width: 720px)";
+  let isNarrow = false;
+  let narrowMedia: MediaQueryList | null = null;
+
+  function handleNarrowChange(event: MediaQueryListEvent) {
+    isNarrow = event.matches;
+    if (!isNarrow) {
+      // The drawer only exists below the breakpoint; leaving it "open" would
+      // strand a scrim over a rail that is now permanently in view.
+      railOpen = false;
+    }
   }
 
   let prefersReducedMotion = false;
   let reducedMotionMedia: MediaQueryList | null = null;
-  let mountComplete = false;
 
   function handleReducedMotionChange(event: MediaQueryListEvent) {
     prefersReducedMotion = event.matches;
   }
 
-  function regionFlyConfig(direction: -1 | 1) {
-    if (prefersReducedMotion || isDesktop || !mountComplete || viewportChanging) {
+  // The sheet slides in from the edge it is anchored to — the right on a wide
+  // viewport, the bottom on a phone, where a side drawer would leave the list
+  // it covers unreachable and read as a page rather than a layer. A percentage
+  // transform (rather than svelte/transition's fly, which needs pixels) travels
+  // exactly the sheet's own width at whatever size it resolved to.
+  function sheetSlide(_node: Element, { duration = 320 }: { duration?: number }) {
+    if (prefersReducedMotion) {
       return { duration: 0 };
     }
+    const axis = isNarrow ? "Y" : "X";
     return {
-      duration: 280,
+      duration,
       easing: cubicOut,
-      opacity: 0,
+      css: (_t: number, u: number) => `transform: translate${axis}(${u * 100}%)`,
     };
+  }
+
+  function scrimFade() {
+    return prefersReducedMotion ? { duration: 0 } : { duration: 200 };
   }
 
   // Routing is hash-only (see src/viewer/hashRouting.ts for why and the wire
@@ -132,6 +174,30 @@
     pushMeetingUrl("");
     selectedMeetingId = "";
     notFoundMessage = "";
+  }
+
+  function handleRoomSelect(event: CustomEvent<string | null>) {
+    selectedRoomKey = event.detail;
+  }
+
+  // Escape closes the topmost layer: the rooms drawer if it is over the sheet,
+  // otherwise the sheet. It deliberately does NOT fire while MeetingView's
+  // shortcuts <dialog> is open — a native modal already answers Escape, and
+  // closing the meeting out from under it would be a second, unasked-for action.
+  function handleShellKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || event.defaultPrevented) {
+      return;
+    }
+    if (rootEl?.querySelector("dialog[open]")) {
+      return;
+    }
+    if (railOpen) {
+      railOpen = false;
+      return;
+    }
+    if (selectedMeetingId) {
+      handleBackToList();
+    }
   }
 
   function handlePopState() {
@@ -316,6 +382,21 @@
     }
   }
 
+  $: roomBuckets = buildRoomBuckets(catalogMeetings);
+  // A room the catalog no longer describes (its last meeting was removed, or a
+  // refresh re-tagged it) must not leave the list narrowed to nothing with no
+  // chip that explains why.
+  $: if (
+    selectedRoomKey !== null &&
+    !roomBuckets.some((bucket: RoomBucket) => bucket.key === selectedRoomKey)
+  ) {
+    selectedRoomKey = null;
+  }
+  $: selectedRoomName =
+    roomBuckets.find((bucket: RoomBucket) => bucket.key === selectedRoomKey)?.name ??
+    null;
+  $: roomMeetings = filterMeetingsByRoom(catalogMeetings, selectedRoomKey);
+
   $: selectedMeeting = selectedMeetingId
     ? catalogMeetings.find((entry) => entry.id === selectedMeetingId) ?? null
     : null;
@@ -361,6 +442,9 @@
       viewportMedia = window.matchMedia(DESKTOP_MEDIA_QUERY);
       isDesktop = viewportMedia.matches;
       viewportMedia.addEventListener("change", handleViewportChange);
+      narrowMedia = window.matchMedia(NARROW_MEDIA_QUERY);
+      isNarrow = narrowMedia.matches;
+      narrowMedia.addEventListener("change", handleNarrowChange);
       reducedMotionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
       prefersReducedMotion = reducedMotionMedia.matches;
       reducedMotionMedia.addEventListener("change", handleReducedMotionChange);
@@ -406,10 +490,6 @@
         return;
       }
       listError = error instanceof Error ? error.message : String(error);
-    } finally {
-      if (!destroyed) {
-        mountComplete = true;
-      }
     }
   });
 
@@ -427,6 +507,7 @@
     catalogHydrationGeneration += 1;
     prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
     viewportMedia?.removeEventListener("change", handleViewportChange);
+    narrowMedia?.removeEventListener("change", handleNarrowChange);
     reducedMotionMedia?.removeEventListener("change", handleReducedMotionChange);
   });
 </script>
@@ -439,42 +520,159 @@
   />
 </svelte:head>
 
+<svelte:window on:keydown={handleShellKeydown} />
+
 <!-- .cassini-root carries the daisyUI theme (data-theme) and the theme-switching
      transition-suppression for the whole app. It lives here (in-tree), not on
      document.documentElement, so it works inside the embedded build's shadow
      root. MeetingView's shortcuts <dialog> is inside this wrapper too so
      [data-theme] styles it. -->
 <div bind:this={rootEl} class="cassini-root" data-theme={themeMode} class:theme-switching={themeSwitching}>
-<div class="grid grid-cols-1 min-[981px]:grid-cols-[400px_1fr] grid-rows-1 h-full bg-base-200 overflow-x-clip">
-  {#if isDesktop || !selectedMeetingId}
-    <MeetingList
-      meetings={catalogMeetings}
-      {selectedMeetingId}
-      {ncMode}
-      {themeMode}
-      errorMessage={listError}
-      flyParams={regionFlyConfig(-1)}
-      on:select={(event) => loadCatalogMeeting(event.detail)}
-      on:toggleTheme={toggleTheme}
-    />
-  {/if}
 
-  <!-- bundledMode is in the condition because a standalone single-meeting
-       export has neither a desktop viewport nor a selected id, and without it
-       a phone-sized window renders an empty list and no meeting at all. -->
-  {#if isDesktop || selectedMeetingId || bundledMode}
+{#if bundledMode}
+  <!-- A standalone single-meeting export has no list to open over: the meeting
+       IS the page, so it keeps the full-bleed layout it has always had. -->
+  <div class="grid grid-cols-1 grid-rows-1 h-full bg-base-200 overflow-x-clip">
     <MeetingView
       {dataProvider}
       meeting={selectedMeeting}
-      bundled={bundledMode}
+      bundled={true}
       {isDesktop}
       {prefersReducedMotion}
-      flyParams={regionFlyConfig(1)}
       hasCatalog={catalogMeetings.length > 0}
       {notFoundMessage}
       on:back={handleBackToList}
       on:enriched={handleEnriched}
     />
-  {/if}
-</div>
+  </div>
+{:else}
+  <div class="browse-shell">
+    <RoomsRail
+      rooms={roomBuckets}
+      {selectedRoomKey}
+      totalCount={catalogMeetings.length}
+      open={railOpen}
+      on:select={handleRoomSelect}
+      on:close={() => (railOpen = false)}
+    />
+
+    <MeetingList
+      meetings={roomMeetings}
+      totalCount={catalogMeetings.length}
+      {selectedRoomName}
+      {selectedMeetingId}
+      {ncMode}
+      {themeMode}
+      errorMessage={listError}
+      on:select={(event) => loadCatalogMeeting(event.detail)}
+      on:clearRoom={() => (selectedRoomKey = null)}
+      on:openRooms={() => (railOpen = true)}
+      on:toggleTheme={toggleTheme}
+    />
+
+    {#if railOpen}
+      <button
+        type="button"
+        class="shell-scrim rail-scrim"
+        aria-label="Close the room list"
+        transition:fade={scrimFade()}
+        on:click={() => (railOpen = false)}
+      ></button>
+    {/if}
+
+    {#if selectedMeetingId}
+      <button
+        type="button"
+        class="shell-scrim sheet-scrim"
+        aria-label="Close the meeting"
+        transition:fade={scrimFade()}
+        on:click={handleBackToList}
+      ></button>
+      <aside class="meeting-sheet" transition:sheetSlide={{}}>
+        <MeetingView
+          {dataProvider}
+          meeting={selectedMeeting}
+          bundled={false}
+          inSheet={true}
+          {isDesktop}
+          {prefersReducedMotion}
+          hasCatalog={catalogMeetings.length > 0}
+          {notFoundMessage}
+          on:back={handleBackToList}
+          on:enriched={handleEnriched}
+        />
+      </aside>
+    {/if}
+  </div>
+{/if}
 </div><!-- /.cassini-root -->
+
+<style>
+  /* The browse shell: rail + list side by side, with the meeting sheet and its
+     scrim positioned against this element rather than the viewport (see the
+     note in the script). Plain CSS because the sheet's geometry changes shape,
+     not just size, below the breakpoint. */
+  .browse-shell {
+    position: relative;
+    display: grid;
+    grid-template-columns: 268px minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    background-color: var(--color-base-100);
+  }
+
+  .shell-scrim {
+    position: absolute;
+    inset: 0;
+    display: block;
+    padding: 0;
+    border: 0;
+    cursor: pointer;
+    background-color: oklch(0% 0 0 / 0.55);
+  }
+  .sheet-scrim {
+    z-index: 20;
+  }
+  /* Above the sheet: with both open, the drawer is the layer on top, so its
+     scrim has to cover the sheet too. */
+  .rail-scrim {
+    z-index: 39;
+  }
+
+  .meeting-sheet {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    width: min(680px, 100%);
+    display: flex;
+    flex-direction: column;
+    background-color: var(--color-base-200);
+    border-left: 1px solid var(--color-base-300);
+    box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
+  }
+
+  @media (max-width: 720px) {
+    /* The rail is out of flow down here (it is the drawer), so the list gets
+       the whole shell rather than being squeezed beside an empty track. */
+    .browse-shell {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    /* A side drawer on a phone leaves the content it covers unreachable and
+       reads as a page; a bottom sheet reads as a layer over the list. */
+    .meeting-sheet {
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 92%;
+      border-left: 0;
+      border-top: 1px solid var(--color-base-300);
+      border-radius: var(--radius-box, 1rem) var(--radius-box, 1rem) 0 0;
+      box-shadow: 0 -8px 30px oklch(0% 0 0 / 0.22);
+    }
+  }
+</style>
