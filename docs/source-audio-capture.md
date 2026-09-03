@@ -325,12 +325,28 @@ occ app:enable cassini_capture
 ```
 
 **2. Leave collection on, or turn it off.** `CASSINI_SOURCE_CAPTURE` is on when
-unset, so a registration that says nothing about it collects. The ExApp mirrors
-the value into Nextcloud app config, which is what the companion reads while
-building the call page's initial state — the operator logs
-`source capture: synchronized companion initial state enabled=true` when that
-lands. There are two opt-outs, and which you want depends on what you are
-backing out of.
+unset, so a registration that says nothing about it collects.
+
+The switch on the ExApp is not the whole story, though, and this is the one step
+that catches people out. The companion does not read the ExApp's environment: it
+reads `source_capture_enabled` out of AppAPI's ExApp config store, and the only
+thing that writes there is the operator's enable-edge callback. AppAPI can mark
+a freshly registered app enabled without delivering that callback, which leaves
+the value missing — and the payload fails closed on a missing value, so every
+Talk page is told capture is off while the ExApp says it is on. Confirm it:
+
+```bash
+occ app_api:app:config:get gocassini source_capture_enabled   # want: true
+```
+
+If it is missing or `false` while capture is meant to be on, disable and
+re-enable the ExApp once (`occ app_api:app:disable gocassini` then
+`app_api:app:enable`) and check again; the operator logs
+`source capture: synchronized companion initial state enabled=true` when it
+lands. `sandbox/wire-cassini.sh` does this for you.
+
+There are two opt-outs, and which you want depends on what you are backing out
+of.
 
 To stop collecting, pass `CASSINI_SOURCE_CAPTURE=0` as a deploy option at
 registration (`app_api:app:register … --env`). To go on collecting but keep what

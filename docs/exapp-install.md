@@ -283,6 +283,17 @@ AppAPI lifecycle edge the ExApp mirrors `CASSINI_SOURCE_CAPTURE` into AppAPI's
 ExApp config store, which the companion reads into initial state; after first installing the companion,
 disable/re-enable or redeploy `gocassini` once if it was already running.
 
+Confirm the value landed, because the companion fails closed without it and a
+freshly registered app does not always receive the lifecycle edge that writes
+it — capture would be on in the ExApp and off on every Talk page:
+
+```bash
+occ app_api:app:config:get gocassini source_capture_enabled   # want: true
+```
+
+If it is missing or `false`, `occ app_api:app:disable gocassini` then
+`occ app_api:app:enable gocassini`, and check again.
+
 To stop collecting, first redeploy with `CASSINI_SOURCE_CAPTURE=0` — unset means
 on — and wait at least 30 seconds for open calls to observe the fail-closed
 poll, then disable `cassini_capture`. That stops new captures; it does not
