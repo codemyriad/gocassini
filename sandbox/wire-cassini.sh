@@ -480,6 +480,22 @@ verify() {
     printf '         handle /exapps/* { reverse_proxy 127.0.0.1:%s }\n' "$HARP_HTTP_PORT" >&2
   fi
   occ app_api:app:list 2>/dev/null | grep -i "$CASSINI_APPSTORE_ID" || true
+  # What the CONTAINER carries, not what this script decided. Registration
+  # tolerates its own failure above (--wait-finish can outlive its window on a
+  # first deploy), so a stale container still holding the previous switch is a
+  # real outcome — and it is precisely the one where an opt-out deploy reports
+  # success while a payload already loaded in somebody's browser goes on
+  # capturing and uploading.
+  local exapp_container="nc_app_$CASSINI_APPSTORE_ID" exapp_env
+  exapp_env="$(docker inspect "$exapp_container" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)" \
+    || die "Could not read the environment of '$exapp_container', so which source-capture switch is actually running is unknown. Registration may have failed; re-run the deploy."
+  grep -qx "CASSINI_SOURCE_CAPTURE=$CASSINI_SOURCE_CAPTURE" <<<"$exapp_env" \
+    || die "The running ExApp does not carry CASSINI_SOURCE_CAPTURE=$CASSINI_SOURCE_CAPTURE. A container from an earlier deploy survived registration and is still answering with its own switch; re-run the deploy before trusting this host's capture state."
+  grep -qx "CASSINI_SOURCE_AUDIO_INGEST=$CASSINI_SOURCE_AUDIO_INGEST" <<<"$exapp_env" \
+    || die "The running ExApp does not carry CASSINI_SOURCE_AUDIO_INGEST=$CASSINI_SOURCE_AUDIO_INGEST. A container from an earlier deploy survived registration; re-run the deploy."
+  printf '  ok   ExApp carries CASSINI_SOURCE_CAPTURE=%s CASSINI_SOURCE_AUDIO_INGEST=%s\n' \
+    "$CASSINI_SOURCE_CAPTURE" "$CASSINI_SOURCE_AUDIO_INGEST"
+
   # resolve_capture_switches has already ruled out "capture on without a
   # companion", so these two are the only outcomes: on with the companion
   # enabled, or off with it gone. Either contradiction is one this run just
