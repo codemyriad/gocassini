@@ -31,11 +31,13 @@ export function requestUrlLabel(requestJSON: string): string {
 /**
  * Names a job after the conversation it recorded.
  *
- * Falls back to the token in the request URL for a non-Talk job, for a job
- * whose room-name lookup never completed, and for every job recorded before
- * the operator promoted the room to a column (D-646) — that fallback names a
- * row after an opaque string that tells an operator nothing about which
- * conversation it was, which is exactly what the room name replaces.
+ * The fallback applies to a non-Talk job, a job whose room-name lookup never
+ * completed, and every job recorded before the operator promoted the room to a
+ * column (D-646). It is worse than it looks: a Talk-triggered job carries
+ * `baseURL` and `roomToken` rather than a `url`, so it falls all the way
+ * through to the generic "Recording" — the `Call <token>` arm only reaches
+ * jobs created with an explicit URL. Neither says which conversation it was,
+ * which is what the room name replaces. See D-711 for the fallback itself.
  */
 export function meetingLabel(job: LabelledJob): string {
   const room = job.room_name?.trim();
