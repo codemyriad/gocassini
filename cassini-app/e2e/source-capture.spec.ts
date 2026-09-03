@@ -101,23 +101,169 @@ test("starting states do not capture; confirmed active starts and confirmed off 
   ).toBe("live");
 });
 
-test("reloading during an active Talk recording resumes and preserves both sides", async ({ page }) => {
+// captureDirs lists the OPFS directories the payload has created, with the
+// files in each. The directory NAME is what proves adoption: it carries the
+// call start the capture identifies itself by, so a reload that produced a
+// second name produced a second capture.
+async function captureDirs(
+  page: import("@playwright/test").Page,
+): Promise<Array<{ name: string; files: string[] }>> {
+  return page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const dirs: Array<{ name: string; files: string[] }> = [];
+    for await (const [name, handle] of (
+      root as unknown as {
+        entries(): AsyncIterable<[string, FileSystemHandle]>;
+      }
+    ).entries()) {
+      if (handle.kind !== "directory" || !name.startsWith("capture-")) continue;
+      const files: string[] = [];
+      for await (const [child] of (
+        handle as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }
+      ).entries()) {
+        files.push(child);
+      }
+      dirs.push({ name, files: files.sort() });
+    }
+    return dirs.sort((a, b) => a.name.localeCompare(b.name));
+  });
+}
+
+// A reload mid-recording is the case this whole seam exists for: people reload
+// when the connection is bad, and a bad connection is exactly when the
+// recorder's own copy of them has holes in it.
+//
+// The page that goes away seals its buffer and deliberately does NOT upload —
+// a request started during unload cannot finish, and whether it happened to
+// land would decide whether the next page finds anything to resume. The page
+// that comes back adopts that buffer as the leading segments of its own
+// capture: same directory, same call start, segment numbering continuing. One
+// capture, uploaded once when the recording stops, holding both sides of the
+// reload.
+test("a reload mid-recording is adopted into one capture holding both sides", async ({ page }) => {
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await setOfficialRecording(page, 2);
   await page.waitForTimeout(2600);
 
-  // The room resource remains active across navigation. The outgoing page must
-  // durably seal its interval, and the incoming page must bootstrap from this
-  // status rather than waiting for another signaling transition that may never
-  // arrive.
+  const before = await captureDirs(page);
+  expect(before, "the first page recorded nothing to resume").toHaveLength(1);
+  const dirName = before[0].name;
+  expect(before[0].files.some((name) => name.startsWith("segment-"))).toBe(true);
+
   await page.reload();
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
-  await page.waitForTimeout(2600);
-  await setOfficialRecording(page, 0);
+  // The pre-reload buffer must still be there while the new page records: an
+  // upload started on the way out would have deleted it, and an upload started
+  // on the way in would have filed the reload as a separate capture.
+  expect(server.uploads, "the buffered capture was uploaded instead of resumed").toHaveLength(0);
+  await page.waitForTimeout(3000);
 
-  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(2);
-  expect(server.uploads.every((upload) => upload.segments.some((segment) => segment.bytes > 1000))).toBe(true);
+  const during = await captureDirs(page);
+  expect(
+    during.map((dir) => dir.name),
+    "the reload started a second capture instead of resuming the first",
+  ).toEqual([dirName]);
+  expect(
+    during[0].files.filter((name) => name.startsWith("segment-")).length,
+    "the rejoined page did not add a segment of its own",
+  ).toBeGreaterThan(before[0].files.filter((name) => name.startsWith("segment-")).length);
+
+  await setOfficialRecording(page, 0);
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
+
+  const upload = server.uploads[0];
+  const sidecar = upload.sidecar!;
+  expect(sidecar, "the upload carried no parseable sidecar").toBeTruthy();
+  // The capture still identifies itself by the call it started in, before the
+  // reload — which is what makes the server file it as one capture.
+  expect(dirName).toContain(String(sidecar.callStartWallMs));
+  // Both sides of the reload, contiguously numbered, every one of them real
+  // audio the server received.
+  expect(sidecar.segments.length).toBeGreaterThanOrEqual(2);
+  expect(sidecar.segments.map((segment: { index: number }) => segment.index)).toEqual(
+    sidecar.segments.map((_: unknown, index: number) => index),
+  );
+  expect(upload.segments.length).toBe(sidecar.segments.length);
+  for (const segment of upload.segments) {
+    expect(segment.bytes, `segment ${segment.name} arrived empty`).toBeGreaterThan(1000);
+  }
+  // Nothing is left behind once the merged capture is accepted.
+  expect(await captureDirs(page)).toEqual([]);
+});
+
+// The other half of R2's promise: a buffer whose recording is over is not held
+// for a resumption that will never come. This is the existing retry path, and
+// it has to still be the one a reload without a rejoin ends on.
+test("a buffered capture whose recording is over uploads at the next page load", async ({ page }) => {
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(2600);
+
+  // Leave the page without leaving the room, which is what a navigation is.
+  // The buffer is sealed here and nothing is sent.
+  await page.goto(`${server.origin}/`);
+  await page.waitForTimeout(600);
+  expect(server.uploads, "a page on its way out started an upload it could not finish").toHaveLength(0);
+
+  // Meanwhile the moderator stopped the recording. The participant's next Talk
+  // page has nothing to resume the buffer into.
+  server.state.recordingStatus = 0;
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
+  expect(server.uploads[0].segments[0].bytes).toBeGreaterThan(1000);
+  expect(server.uploads[0].sidecar!.roomToken).toBe("testroom");
+  await expect.poll(async () => (await captureDirs(page)).length, { timeout: 20_000 }).toBe(0);
+});
+
+// R1, from the other side. Talk holds the microphone open in its device
+// preview, and the room's recording is active — every condition the payload
+// checks is true except the one that decides everything: there is no sender,
+// because nothing has been added to a peer connection. No MediaRecorder is
+// constructed and no storage is touched.
+test("the device preview constructs no recorder and writes no storage", async ({ page }) => {
+  // Counted from before the payload runs, so a recorder built anywhere at all
+  // is caught — not only one this test knows how to look for.
+  await page.addInitScript(() => {
+    const Original = window.MediaRecorder;
+    (window as never as { __recordersBuilt: number }).__recordersBuilt = 0;
+    class Counted extends Original {
+      constructor(stream: MediaStream, options?: MediaRecorderOptions) {
+        (window as never as { __recordersBuilt: number }).__recordersBuilt += 1;
+        super(stream, options);
+      }
+    }
+    window.MediaRecorder = Counted as unknown as typeof MediaRecorder;
+  });
+
+  await page.goto(`${server.origin}/call/testroom?preview=1`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  // The microphone really is open: this is a preview, not a page that failed.
+  expect(
+    await page.evaluate(
+      () => (window as never as { __localTrack: MediaStreamTrack }).__localTrack.readyState,
+    ),
+  ).toBe("live");
+  expect(
+    await page.evaluate(
+      () => (window as never as { RTCPeerConnection: { __cassiniPatched?: boolean } }).RTCPeerConnection.__cassiniPatched,
+    ),
+    "the payload did not install, so this test proves nothing",
+  ).toBe(true);
+
+  // Talk's recording is confirmed active, in this very room.
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(3000);
+
+  expect(
+    await page.evaluate(() => (window as never as { __recordersBuilt: number }).__recordersBuilt),
+    "a MediaRecorder was constructed with the participant not in the call",
+  ).toBe(0);
+  expect(await captureDirs(page), "the device preview created capture storage").toEqual([]);
+  expect(server.uploads).toHaveLength(0);
 });
 
 test("leaving the room seals and uploads an active source capture", async ({ page }) => {

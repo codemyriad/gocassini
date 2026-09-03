@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -537,48 +538,6 @@ func TestDiscoverSourceCapturesKeepsEveryMatchingCapture(t *testing.T) {
 // their recorded streams, so a skipped segment became silence where words had
 // been. Any segment that cannot be placed must fail the whole speaker back to
 // the recorded audio.
-func TestRenderSourceTrackRefusesAPartialCapture(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "capture")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	// Too few anchors to place: a short segment, e.g. after a device change
-	// near the end of a call. Placed FIRST so the refusal happens at the fit,
-	// before any decoding, which keeps the test free of fixture media.
-	bad := syntheticSegment(1000, 3, 1000, 0)
-	bad.AudioName = "segment-0.webm"
-	// Directly after `bad`, so the pair spans its call without a hole: a hole
-	// is a different defect with its own refusal, and it would fire first.
-	good := syntheticSegment(4_000, 60, 1000, 0)
-	good.Index = 1
-	good.AudioName = "segment-1.webm"
-
-	sidecar := SourceSidecar{
-		Format:          SourceCaptureFormat,
-		RoomToken:       "room1",
-		OwnerUserID:     "alice",
-		CallStartWallMS: bad.StartWallMS,
-		CallEndWallMS:   good.StopWallMS,
-		Segments:        []SourceSegment{bad, good},
-	}
-	raw, _ := json.Marshal(sidecar)
-	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	_, report, err := RenderSourceTrack(context.Background(), []string{dir}, testBase(), 16000, 16000*120)
-	if err == nil {
-		t.Fatal("a capture with an unplaceable segment was accepted; that silently deletes speech")
-	}
-	if !strings.Contains(err.Error(), "anchors") {
-		t.Fatalf("refused for the wrong reason: %v", err)
-	}
-	if report.Placed != 0 {
-		t.Fatalf("report claims %d segments placed by a refused capture", report.Placed)
-	}
-}
-
 func TestRecordingWallWindowDerivesTimelineZero(t *testing.T) {
 	const zero = int64(1_700_000_000_000)
 	// Nobody spoke for the first thirty seconds, so the earliest track's first
@@ -770,184 +729,336 @@ func TestDecodeSourceSegmentEnforcesTheCeiling(t *testing.T) {
 	}
 }
 
-// A capture whose segments no longer add up to the call it declares has lost
-// segments — the browser worker drops one whose storage write failed and
-// uploads the rest, so everything remaining places cleanly and nothing else
-// notices. Substituting it deletes the speech those segments should have held.
-func TestCoverageIsComplete(t *testing.T) {
-	cases := []struct {
-		name       string
-		callMS     int64
-		declaredMS int64
-		wantErr    bool
-	}{
-		{"a whole capture", 600_000, 600_000, false},
-		{"rotation gaps are not a shortfall", 600_000, 597_000, false},
-		{"exactly at the bar", 600_000, 540_000, false},
-		{"a minute short of the bar", 600_000, 539_000, true},
-		{"half the call missing", 600_000, 300_000, true},
-		{"almost nothing survived", 3_600_000, 120_000, true},
-		{"no call window fails closed", 0, 120_000, true},
-		{"a negative window fails closed too", -1, 120_000, true},
+// --- the splice --------------------------------------------------------------
+//
+// Ingestion lays a participant's own recording over their recorded track rather
+// than replacing it. Everything below is about the one property that makes that
+// safe to do without a coverage threshold in front of it: outside the windows an
+// upload actually holds audio for, the recorded track has to come through
+// untouched.
+
+// recordedMarker is a track of one constant value, so any sample the splice
+// changed is distinguishable from one it left alone by inspection.
+func recordedMarker(n int, value float32) []float32 {
+	out := make([]float32, n)
+	for i := range out {
+		out[i] = value
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := coverageIsComplete("capture-1", tc.callMS, tc.declaredMS)
-			if tc.wantErr && err == nil {
-				t.Fatalf("a capture accounting for %d of %d ms was accepted", tc.declaredMS, tc.callMS)
-			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("a healthy capture was refused: %v", err)
-			}
-			if tc.wantErr && !strings.Contains(err.Error(), "silence") && !strings.Contains(err.Error(), "no call window") {
-				t.Fatalf("refusal does not say why: %v", err)
-			}
-		})
+	return out
+}
+
+// The boundary property, stated as narrowly as it can be: a segment overlaid in
+// the middle of a track changes its own window and not one sample either side of
+// it. Compared on the raw bits, because "close enough" is exactly the failure
+// this is guarding against — a resampler that bleeds a sample past the edge, or
+// a summed rather than overwritten placement.
+func TestOverlayLeavesEverythingOutsideItsWindowByteIdentical(t *testing.T) {
+	const sampleRate = 16000
+	const outSamples = sampleRate * 10
+
+	recorded := recordedMarker(outSamples, 0.25)
+	original := append([]float32(nil), recorded...)
+
+	// A distinct signal, so nothing inside the window can be mistaken for the
+	// recorded value it replaced.
+	src := make([]float32, sampleRate*2)
+	for i := range src {
+		src[i] = -0.75
+	}
+
+	from, to := overlayOntoTimeline(recorded, src, sampleRate, Placement{OffsetMS: 4000, Rate: 1})
+	if from <= 0 || to <= from || to >= outSamples {
+		t.Fatalf("overlay window [%d, %d) is not inside the %d-sample track", from, to, outSamples)
+	}
+	// The window is where the segment said it would be.
+	if want := 4 * sampleRate; from != want {
+		t.Fatalf("window opens at sample %d, want %d", from, want)
+	}
+	if want, got := 6*sampleRate, to; got < want-2 || got > want+2 {
+		t.Fatalf("window closes at sample %d, want about %d", got, want)
+	}
+
+	for i := 0; i < outSamples; i++ {
+		inside := i >= from && i < to
+		changed := math.Float32bits(recorded[i]) != math.Float32bits(original[i])
+		if !inside && changed {
+			t.Fatalf("sample %d outside the overlay window changed from %v to %v; the recorded track must survive there",
+				i, original[i], recorded[i])
+		}
+		if inside && !changed {
+			t.Fatalf("sample %d inside the overlay window kept the recorded value %v; the upload was not applied",
+				i, original[i])
+		}
 	}
 }
 
-// The refusal has to travel through the render, because a caller that only
-// checks the error would otherwise substitute an incomplete capture anyway.
-func TestRenderSourceTrackRefusesAnIncompleteCapture(t *testing.T) {
-	dir := t.TempDir()
-	// A well-formed sixty-second segment, offered as the whole of a ten-minute
-	// call: exactly the shape the browser worker produces when it drops
-	// segments whose storage write failed and uploads the rest.
-	segment := syntheticSegmentDelayed(0, 60, 1000, 0, 0)
-	sidecar := SourceSidecar{
-		Format:          SourceCaptureFormat,
-		RoomToken:       "room1",
-		OwnerUserID:     "alice",
-		CallStartWallMS: segment.StartWallMS,
-		CallEndWallMS:   segment.StartWallMS + 600_000,
-		Segments:        []SourceSegment{segment},
+// Overwrite, never sum. The recorded track is already in the destination, so
+// adding would play the same words twice at once.
+func TestOverlayReplacesRatherThanMixes(t *testing.T) {
+	const sampleRate = 16000
+	dst := recordedMarker(sampleRate, 0.5)
+	src := recordedMarker(sampleRate, 0.5)
+	from, to := overlayOntoTimeline(dst, src, sampleRate, Placement{OffsetMS: 0, Rate: 1})
+	if to <= from {
+		t.Fatal("nothing was overlaid")
 	}
+	for i := from; i < to; i++ {
+		if dst[i] > 0.6 {
+			t.Fatalf("sample %d is %v: the segment was summed onto the recorded track, not laid over it", i, dst[i])
+		}
+	}
+}
+
+// writeToneSegment synthesises one segment's audio file. The name is the
+// sidecar's audioName — ffmpeg reads the container from the bytes, so a WAV
+// under a .webm name decodes exactly as the real upload would.
+func writeToneSegment(t *testing.T, dir, name string, seconds float64, frequency int) {
+	t.Helper()
+	cmd := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi",
+		"-i", fmt.Sprintf("sine=frequency=%d:duration=%g", frequency, seconds),
+		"-ac", "1", "-ar", "16000", "-f", "wav", filepath.Join(dir, name))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("could not synthesise segment audio: %v: %s", err, out)
+	}
+}
+
+func writeSidecar(t *testing.T, dir string, sidecar SourceSidecar) {
+	t.Helper()
 	raw, err := json.Marshal(sidecar)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
+		t.Fatalf("write sidecar: %v", err)
 	}
+}
 
-	_, report, err := RenderSourceTrack(context.Background(), []string{dir}, testBase(), 16000, 16000*600)
+// The reload case, end to end through the splice.
+//
+// A participant reloads mid-recording and rejoins. Their capture holds the audio
+// from before the reload and the audio from after it, with a hole between the
+// two where the page was loading and they were not in the call at all. The old
+// whole-call coverage gate refused exactly this capture; there is nothing to
+// refuse now, because the hole keeps whatever the recorder heard — which for a
+// participant who was absent is what should be there.
+func TestSpliceUsesBothSidesOfAReloadAndKeepsTheRecordedAudioInTheGap(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
+
+	dir := t.TempDir()
+	// Twenty seconds from the start, then a forty-second reload gap, then
+	// twenty seconds after the rejoin.
+	before := syntheticSegmentDelayed(0, 20, 1000, 0, 0)
+	before.AudioName = "segment-0.webm"
+	after := syntheticSegmentDelayed(60_000, 20, 1000, 0, 0)
+	after.Index = 1
+	after.AudioName = "segment-1.webm"
+	writeToneSegment(t, dir, before.AudioName, 20, 440)
+	writeToneSegment(t, dir, after.AudioName, 20, 660)
+	writeSidecar(t, dir, SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: before.StartWallMS, CallEndWallMS: after.StopWallMS,
+		Segments: []SourceSegment{before, after},
+	})
+
+	recorded := recordedMarker(outSamples, 0.25)
+	original := append([]float32(nil), recorded...)
+
+	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	if err != nil {
+		t.Fatalf("a reloader's capture was refused: %v", err)
+	}
+	if report.Placed != 2 || report.Skipped != 0 {
+		t.Fatalf("placed %d segments and skipped %d, want 2 and 0", report.Placed, report.Skipped)
+	}
+	// Both stints reached the timeline, in their own places.
+	for _, at := range []int{sampleRate * 5, sampleRate * 65} {
+		if math.Float32bits(out[at]) == math.Float32bits(original[at]) {
+			t.Fatalf("sample %d still holds the recorded value; that stint of the upload was not used", at)
+		}
+	}
+	// The reload gap is the recorded track, sample for sample. The participant
+	// was not in the call there, so this is silence the recorder already had.
+	for i := sampleRate * 25; i < sampleRate*55; i++ {
+		if math.Float32bits(out[i]) != math.Float32bits(original[i]) {
+			t.Fatalf("sample %d inside the reload gap was overwritten; the recorded audio must stand there", i)
+		}
+	}
+	// And so is everything after the participant stopped.
+	for i := sampleRate * 85; i < outSamples; i++ {
+		if math.Float32bits(out[i]) != math.Float32bits(original[i]) {
+			t.Fatalf("sample %d after the capture ends was overwritten", i)
+		}
+	}
+	if report.SplicedMS < 38_000 || report.SplicedMS > 42_000 {
+		t.Fatalf("report claims %d ms spliced, want about 40000", report.SplicedMS)
+	}
+	// The caller's own slice is never mutated: it is the fallback if the WAV
+	// write fails, and the evidence that a splice changed only what it says.
+	for i := range recorded {
+		if math.Float32bits(recorded[i]) != math.Float32bits(original[i]) {
+			t.Fatalf("SpliceSourceTrack mutated the caller's recorded track at sample %d", i)
+		}
+	}
+}
+
+// A segment nothing can place is left out, and the recorded audio stays where it
+// would have gone. Under whole-track substitution this failed the entire
+// speaker, so one short fragment — a reload a few seconds in, a microphone
+// change near the end — cost every other segment they uploaded.
+func TestSpliceSkipsAnUnplaceableSegmentAndKeepsTheRest(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
+
+	dir := t.TempDir()
+	// Three anchors: fewer than a placement needs.
+	stub := syntheticSegmentDelayed(0, 3, 1000, 0, 0)
+	stub.AudioName = "segment-0.webm"
+	good := syntheticSegmentDelayed(60_000, 20, 1000, 0, 0)
+	good.Index = 1
+	good.AudioName = "segment-1.webm"
+	writeToneSegment(t, dir, stub.AudioName, 3, 440)
+	writeToneSegment(t, dir, good.AudioName, 20, 660)
+	writeSidecar(t, dir, SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: stub.StartWallMS, CallEndWallMS: good.StopWallMS,
+		Segments: []SourceSegment{stub, good},
+	})
+
+	recorded := recordedMarker(outSamples, 0.25)
+	original := append([]float32(nil), recorded...)
+	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	if err != nil {
+		t.Fatalf("one unplaceable segment refused the whole speaker: %v", err)
+	}
+	if report.Placed != 1 || report.Skipped != 1 {
+		t.Fatalf("placed %d and skipped %d, want 1 and 1", report.Placed, report.Skipped)
+	}
+	if len(report.Rejections) != 1 || !strings.Contains(report.Rejections[0], "anchors") {
+		t.Fatalf("the skip does not say why: %v", report.Rejections)
+	}
+	for i := 0; i < sampleRate*3; i++ {
+		if math.Float32bits(out[i]) != math.Float32bits(original[i]) {
+			t.Fatalf("sample %d was overwritten by a segment that could not be placed", i)
+		}
+	}
+	if math.Float32bits(out[sampleRate*65]) == math.Float32bits(original[sampleRate*65]) {
+		t.Fatal("the placeable segment was dropped along with the unplaceable one")
+	}
+}
+
+// A segment holding far less audio than it declares is left out too. Intake
+// checks that a declared file arrived, never that it holds what was claimed, and
+// a file that disagrees with its own manifest this badly is not one whose timing
+// claims are worth believing either.
+func TestSpliceSkipsASegmentWhoseAudioDoesNotMatchItsSidecar(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
+
+	dir := t.TempDir()
+	// Declares sixty seconds, holds five.
+	lying := syntheticSegmentDelayed(0, 60, 1000, 0, 0)
+	lying.AudioName = "segment-0.webm"
+	writeToneSegment(t, dir, lying.AudioName, 5, 440)
+	writeSidecar(t, dir, SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: lying.StartWallMS, CallEndWallMS: lying.StopWallMS,
+		Segments: []SourceSegment{lying},
+	})
+
+	recorded := recordedMarker(outSamples, 0.25)
+	_, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err == nil {
-		t.Fatal("an incomplete capture was rendered; substituting it deletes nine minutes of speech")
+		t.Fatal("a segment whose audio contradicts its sidecar was used")
 	}
-	if !strings.Contains(err.Error(), "replace that speech with silence") {
-		t.Fatalf("refused for the wrong reason: %v", err)
+	if report.Skipped != 1 {
+		t.Fatalf("skipped %d segments, want 1", report.Skipped)
 	}
-	// The figures travel even on refusal, so a pilot can see how close it was.
-	if report.CallMS != 600_000 {
-		t.Fatalf("report carries call=%d, want 600000", report.CallMS)
-	}
-	if report.DeclaredMS >= report.CallMS {
-		t.Fatalf("declared %d ms of a %d ms call; the fixture is not short", report.DeclaredMS, report.CallMS)
+	if len(report.Rejections) != 1 || !strings.Contains(report.Rejections[0], "does not match the sidecar") {
+		t.Fatalf("the skip does not say why: %v", report.Rejections)
 	}
 }
 
-// Summing segment durations is not the same as covering the call. These are the
-// shapes where the sum looks healthy and the audio is not there.
-func TestCoveredCallMSUsesTheUnionOfWindows(t *testing.T) {
-	const start = int64(1_700_000_000_000)
-	seg := func(from, to int64) SourceSegment {
-		return SourceSegment{StartWallMS: start + from, StopWallMS: start + to}
+// A capture that contributes nothing is an error rather than a WAV identical to
+// the recorded track, so the caller leaves the stream alone.
+func TestSpliceRefusesWhenNoSegmentCanBePlaced(t *testing.T) {
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
+
+	dir := t.TempDir()
+	stub := syntheticSegmentDelayed(0, 3, 1000, 0, 0)
+	stub.AudioName = "segment-0.webm"
+	writeSidecar(t, dir, SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: stub.StartWallMS, CallEndWallMS: stub.StopWallMS,
+		Segments: []SourceSegment{stub},
+	})
+
+	recorded := recordedMarker(outSamples, 0.25)
+	samples, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	if err == nil {
+		t.Fatal("a capture with nothing placeable produced a track")
 	}
-	cases := []struct {
-		name     string
-		callMS   int64
-		segments []SourceSegment
-		want     int64
-	}{
-		{"contiguous segments cover the call", 600_000,
-			[]SourceSegment{seg(0, 300_000), seg(300_000, 600_000)}, 600_000},
-		{"two copies of the same window count once", 600_000,
-			[]SourceSegment{seg(0, 300_000), seg(0, 300_000)}, 300_000},
-		{"overlapping windows count once", 600_000,
-			[]SourceSegment{seg(0, 400_000), seg(200_000, 600_000)}, 600_000},
-		{"a hole in the middle is not covered", 600_000,
-			[]SourceSegment{seg(0, 100_000), seg(500_000, 600_000)}, 200_000},
-		{"a segment running past the call is clipped", 600_000,
-			[]SourceSegment{seg(0, 900_000)}, 600_000},
-		{"a segment before the call is clipped", 600_000,
-			[]SourceSegment{seg(-200_000, 100_000)}, 100_000},
-		{"a backwards window spans nothing", 600_000,
-			[]SourceSegment{seg(300_000, 200_000)}, 0},
+	if samples != nil {
+		t.Fatal("a refused splice still returned audio")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := coveredCallMS(SourceSidecar{
-				CallStartWallMS: start,
-				CallEndWallMS:   start + tc.callMS,
-				Segments:        tc.segments,
-			})
-			if got != tc.want {
-				t.Fatalf("coveredCallMS = %d, want %d", got, tc.want)
-			}
-		})
+	if report.Segments != 1 || report.Placed != 0 {
+		t.Fatalf("report claims %d segments and %d placed", report.Segments, report.Placed)
 	}
 }
 
-// Two copies of the same half of a call sum to the whole of it. Before the
-// union this passed, and the other half was replaced with silence.
-func TestCoverageRejectsDuplicateSegmentsThatSumToTheCall(t *testing.T) {
-	const start = int64(1_700_000_000_000)
-	sidecar := SourceSidecar{
-		CallStartWallMS: start,
-		CallEndWallMS:   start + 600_000,
-		Segments: []SourceSegment{
-			{StartWallMS: start, StopWallMS: start + 300_000},
-			{StartWallMS: start, StopWallMS: start + 300_000},
-		},
+// A capture from a rejoin is a second directory, and both belong to this
+// recording. Each is spliced onto the same timeline in its own place; neither
+// can refuse the other, because there is no refusal left.
+func TestSpliceUsesEveryCaptureDirectory(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
 	}
-	covered := coveredCallMS(sidecar)
-	if covered != 300_000 {
-		t.Fatalf("covered = %d, want 300000: duplicates must count once", covered)
-	}
-	if err := coverageIsComplete("dup", 600_000, covered); err == nil {
-		t.Fatal("a capture holding half a call twice was accepted")
-	}
-}
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
 
-// A participant who left and rejoined uploads one capture per session, and both
-// render onto the same timeline. Checking the totals lets a long healthy
-// capture carry a broken short one, and the interval it lost is still silenced.
-func TestRenderSourceTrackChecksEachRejoinSeparately(t *testing.T) {
 	root := t.TempDir()
-	write := func(name string, sidecar SourceSidecar) string {
+	write := func(name string, segment SourceSegment, seconds float64, frequency int) string {
 		dir := filepath.Join(root, name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		raw, err := json.Marshal(sidecar)
-		if err != nil {
-			t.Fatalf("marshal: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
-			t.Fatalf("write: %v", err)
-		}
+		writeToneSegment(t, dir, segment.AudioName, seconds, frequency)
+		writeSidecar(t, dir, SourceSidecar{
+			Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+			CallStartWallMS: segment.StartWallMS, CallEndWallMS: segment.StopWallMS,
+			Segments: []SourceSegment{segment},
+		})
 		return dir
 	}
+	first := syntheticSegmentDelayed(0, 20, 1000, 0, 0)
+	first.AudioName = "segment-0.webm"
+	second := syntheticSegmentDelayed(60_000, 20, 1000, 0, 0)
+	second.AudioName = "segment-0.webm"
 
-	// A healthy first session, and a rejoin that lost almost everything.
-	whole := syntheticSegmentDelayed(0, 60, 1000, 0, 0)
-	healthy := write("session-1", SourceSidecar{
-		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
-		CallStartWallMS: whole.StartWallMS, CallEndWallMS: whole.StopWallMS,
-		Segments: []SourceSegment{whole},
-	})
-	stub := syntheticSegmentDelayed(0, 5, 1000, 0, 0)
-	broken := write("session-2", SourceSidecar{
-		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
-		CallStartWallMS: stub.StartWallMS, CallEndWallMS: stub.StartWallMS + 600_000,
-		Segments: []SourceSegment{stub},
-	})
-
-	_, _, err := RenderSourceTrack(context.Background(), []string{healthy, broken}, testBase(), 16000, 16000*600)
-	if err == nil {
-		t.Fatal("a broken rejoin was carried over the bar by a healthy session")
+	recorded := recordedMarker(outSamples, 0.25)
+	original := append([]float32(nil), recorded...)
+	out, report, err := SpliceSourceTrack(context.Background(), recorded,
+		[]string{write("session-1", first, 20, 440), write("session-2", second, 20, 660)},
+		testBase(), sampleRate, outSamples)
+	if err != nil {
+		t.Fatalf("SpliceSourceTrack: %v", err)
 	}
-	if !strings.Contains(err.Error(), "session-2") {
-		t.Fatalf("refusal should name the capture that fell short: %v", err)
+	if report.Placed != 2 {
+		t.Fatalf("placed %d segments across two captures, want 2", report.Placed)
+	}
+	for _, at := range []int{sampleRate * 5, sampleRate * 65} {
+		if math.Float32bits(out[at]) == math.Float32bits(original[at]) {
+			t.Fatalf("sample %d still holds the recorded value; one capture was ignored", at)
+		}
 	}
 }

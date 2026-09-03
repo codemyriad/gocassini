@@ -96,8 +96,18 @@ window.__setRecordingStatus = (status, roomid = "testroom") => {
   }));
 };
 window.__capturePatchedBeforeTalk = window.RTCPeerConnection.__cassiniPatched === true;
+// The device-preview state: Talk has the microphone open and shows it back to
+// the participant, and there is no call. Nothing has been added to a peer
+// connection, so no sender exists — which is the only thing the payload will
+// ever record. A page in this state with the room's recording ACTIVE is the
+// sharpest test of that: everything except the call itself is true.
+window.__previewOnly = new URLSearchParams(location.search).get("preview") === "1";
 window.__talkReady = (async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  window.__localTrack = stream.getAudioTracks()[0];
+  if (window.__previewOnly) {
+    return true;
+  }
   const local = new RTCPeerConnection();
   const remote = new RTCPeerConnection();
   local.onicecandidate = (e) => e.candidate && remote.addIceCandidate(e.candidate);
