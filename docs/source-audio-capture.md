@@ -30,9 +30,19 @@ captured at the source or not at all.
 ## The shape
 
 The participant's browser records the track Talk is **sending**, before Opus
-encoding and before the network, while Talk's official recording is active.
-It buffers locally and uploads as soon as Talk confirms recording stopped;
-leaving the room is an idempotent fallback rather than the normal trigger.
+encoding and before the network, while Talk's official recording is active *and*
+that browser is actually in the call. It buffers locally and uploads as soon as
+Talk confirms recording stopped; leaving the room is an idempotent fallback
+rather than the normal trigger.
+
+Being in the call is a condition in its own right, and it is the only one of the
+three that says anything about this browser: Talk's confirmed recording says the
+*room* is being recorded, and the administrator switch says the *installation*
+collects. So the recorder waits for the publishing connection to reach
+`connected` with a live track. The device preview, the lobby, and a page whose
+join never completed are all states in which nothing is recorded — which matters
+because they are exactly the states a participant is in when they do not believe
+they are in a meeting.
 
 ```text
   mic ─▶ Talk's media pipeline ─▶ sender track ─┬─▶ Opus ─▶ network ─▶ SFU ─▶ recorder ─▶ .mkv
@@ -54,6 +64,13 @@ attempts to flip it back.
 
 **It is the same signal the SFU encoded**, one step earlier. That is what makes
 verifying an upload against the server's own recording meaningful later.
+
+The recording remains the record; an upload only feeds the transcript, and both
+stay on disk to compare. Nothing in ingestion writes to the recorded tracks: the
+published mix is built from them before an upload is looked at, and the splice
+below produces a separate WAV under `_work/sourceaudio/` that only the
+transcription pass reads. When a transcript says something the meeting does not,
+the audio to check it against is still there.
 
 ## Timing: two clocks, and which one does what
 
@@ -197,9 +214,61 @@ speech in another's transcript — a later unrelated capture hid the correct
 older one, and two calls close in time each looked plausible.
 
 A participant with several tracks in one recording (a rejoin, a stream
-rotation) has their source render attached to exactly one of them; the others
-are dropped from transcription, because the render spans the whole timeline and
-transcribing both would emit every word twice.
+rotation) has their spliced track attached to exactly one of them; the others
+are dropped from transcription, because that track spans the whole timeline and
+already contains their recorded audio, so transcribing both would emit every
+word twice.
+
+### The upload is spliced over the recorded track, not substituted for it
+
+Each uploaded segment replaces the recorded audio over the window it actually
+holds audio for, and nowhere else. Everywhere else — a reload gap, a late start,
+a segment that cannot be placed or whose audio contradicts its own sidecar — the
+recorded track stands.
+
+That is what makes ingestion safe without a completeness threshold in front of
+it. Substituting a participant's whole track meant every span an upload did not
+cover became digital silence with the recorded audio already suppressed, so
+words the recorder had heard perfectly well disappeared. A 90% coverage gate
+guarded against that and has been removed with it: a threshold could only choose
+*which* participants lost speech, and it refused exactly the people this feature
+exists for — someone whose page reloaded on a bad connection, whose capture
+therefore has a hole in it, and who was not in the call during that hole anyway.
+A splice can never be worse than not ingesting at all, so there is nothing left
+to refuse.
+
+### A reload mid-recording is one capture, not two
+
+People reload during meetings, most of all on the connections this feature is
+for. The page on its way out seals its buffer and deliberately does not upload:
+a request started during unload cannot finish, and whether it happened to land
+would decide whether the next page found anything to resume.
+
+The next Talk page settles every buffer in that browser. One for another room,
+or for a recording Talk says is over, uploads as before — that is the retry path
+a reload without a rejoin ends on. One for *this* room while a recording is still
+active is held, and the capture that page starts **adopts** it: the same OPFS
+directory, the same call start, segment numbering continuing past the highest
+index already there. The reload becomes a segment boundary, which is a seam the
+pipeline already understands because a mid-call microphone change produces one,
+and the recorder places both sides from their own wall-clock windows. Holding is
+bounded four ways: the same room, the same account, a minute of staleness, and a
+sixty-second deadline after which the buffer is uploaded after all.
+
+Browser storage belongs to the origin, not to the signed-in session, so on a
+shared machine a buffer one person's dead page left behind is still there when
+the next person signs in. It is neither resumed nor uploaded by them: the upload
+endpoint stamps the *authenticated caller* as the owner, so sending it would
+publish one person's voice under another's name. It waits for its own account to
+open Talk on that machine again.
+
+What a reload still costs is the tail of the current `MediaRecorder` chunk, at
+most about two seconds. And if the storage read that makes this decision has not
+finished within a second — which on a healthy browser it does in
+milliseconds — the capture starts anyway rather than holding the participant's
+microphone hostage to it. The reload then files two captures instead of one;
+both reach the server and the recorder splices both, so what is lost is the
+tidiness, not the audio.
 
 ## Intake and trust
 
@@ -239,7 +308,10 @@ exists for. The tests assert that the loss is real, that the captured copy is
 unaffected by it, that the anchors advance monotonically on the sender's clock,
 that a mute spell is recorded, that joining alone creates no audio storage,
 that confirmed recording-off uploads while the call stays connected, that a
-reload resumes and preserves both durable intervals, that a recorded call is
+reload mid-recording is adopted into one capture holding both sides of the seam,
+that a buffered capture whose recording is over uploads at the next page load,
+that Talk's device preview constructs no `MediaRecorder` and writes no storage
+even with the room's recording confirmed active, that a recorded call is
 captured with nothing stored in the browser, and that the administrator switch
 stops and discards a capture already running.
 
@@ -278,9 +350,10 @@ The seam between those legs is
 its companion into the full harness stack, logs two real Chromium participants
 into Nextcloud, and joins both to the real Talk/HPB call with fake media. Talk
 starts an official audio recording, and both browsers must therefore capture:
-Alice additionally changes microphone mid-call, so the payload must rotate and
-upload multiple source segments, while Bob's single-segment capture is the same
-path without that complication. The leg accepts success only after each
+Alice additionally changes microphone mid-call and then reloads her page and
+rejoins, so the payload must rotate segments, survive the reload and resume the
+same capture rather than filing a second one, while Bob's single-segment capture
+is the same path without either complication. The leg accepts success only after each
 participant's own browser-observed multipart response accounts for the same
 byte-plausible segment set found under that participant's authenticated owner
 path on the ExApp, with nothing left in either browser. The administrator, who
@@ -423,8 +496,9 @@ logged-in user. The client fails closed at every one of those.
   upload looks the same from the operator as one where nobody ever recorded.
 - **Abrupt-page tail.** A reload or crash can lose the not-yet-checkpointed tail
   of the current MediaRecorder chunk (at most about two seconds). Completed
-  chunks and their recovery sidecar survive in OPFS, are retried on the next
-  Talk page, and an active Talk recording resumes as a new capture session.
+  chunks and their recovery sidecar survive in OPFS; the next Talk page in that
+  room resumes them into the capture it starts, or uploads them if the recording
+  is over.
 - **A disabled ExApp still loads the payload.** The companion is a separate
   native app and reads `source_capture_enabled` from AppAPI's ExApp config,
   which outlives disabling the ExApp, so the script tag keeps appearing on Talk

@@ -339,7 +339,7 @@ func TestPromoteCaptureKeepsThePreviousUploadWhenTheSwapFails(t *testing.T) {
 	// Staging does not exist, so the promotion rename fails. The participant's
 	// previous audio must survive that — they may well have deleted their only
 	// other copy.
-	err := rt.promoteCapture(filepath.Join(rt.cfg.CaptureRoot, "no-such-staging"), final)
+	_, err := rt.promoteCapture(&captureSidecar{}, filepath.Join(rt.cfg.CaptureRoot, "no-such-staging"), final)
 	if err == nil {
 		t.Fatal("expected the promotion to fail")
 	}
@@ -352,6 +352,230 @@ func TestPromoteCaptureKeepsThePreviousUploadWhenTheSwapFails(t *testing.T) {
 	}
 	if entries, _ := filepath.Glob(final + ".superseded"); len(entries) != 0 {
 		t.Fatal("a superseded directory was left behind")
+	}
+}
+
+// A browser that reloads mid-recording resumes its buffer, so its one upload
+// for that call describes MORE of it than any earlier copy of the prefix. If a
+// stale copy of that prefix reaches the endpoint afterwards — a second tab, a
+// request the network reordered — last-writer-wins would replace the whole
+// recording with its own first half, and the sweep would then delete the rest.
+func TestPromoteCaptureKeepsTheLongerStoredCapture(t *testing.T) {
+	rt := captureTestRuntime(t)
+	final := filepath.Join(rt.cfg.CaptureRoot, "room", "bob", "1700")
+	staging := filepath.Join(rt.cfg.CaptureRoot, "upload-stale")
+	for _, dir := range []string{final, staging} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	stored := captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9000,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+			{Index: 1, AudioName: "segment-1.webm", StartWallMS: 4000, StopWallMS: 6000},
+			{Index: 2, AudioName: "segment-2.webm", StartWallMS: 6000, StopWallMS: 9000},
+		},
+	}
+	raw, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(final, captureSidecarName), raw, 0o640); err != nil {
+		t.Fatalf("write stored sidecar: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(final, "segment-2.webm"), []byte("after the reload"), 0o640); err != nil {
+		t.Fatalf("write stored segment: %v", err)
+	}
+
+	// The prefix: the same call, fewer segments, ending earlier.
+	prefix := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 4000,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+		},
+	}
+	outcome, err := rt.promoteCapture(prefix, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome != captureAlreadyStored {
+		t.Fatalf("a stale prefix got outcome %d; it is a subset of what is stored", outcome)
+	}
+	if _, err := os.Stat(filepath.Join(final, "segment-2.webm")); err != nil {
+		t.Fatalf("the post-reload audio was destroyed by a stale prefix upload: %v", err)
+	}
+
+	// Segment COUNT is not a measure of audio. A stale snapshot of a live
+	// one-segment capture has the same count as the finished one and a
+	// fraction of its seconds, so the window is what decides.
+	sameCount := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 7000,
+		Segments: []captureSegment{
+			// The sealed segments are identical — a snapshot cuts at the same
+			// boundaries — and only the live one is short.
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+			{Index: 1, AudioName: "segment-1.webm", StartWallMS: 4000, StopWallMS: 6000},
+			{Index: 2, AudioName: "segment-2.webm", StartWallMS: 6000, StopWallMS: 7000},
+		},
+	}
+	outcome, err = rt.promoteCapture(sameCount, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome != captureAlreadyStored {
+		t.Fatalf("a stale snapshot with the same segment count got outcome %d", outcome)
+	}
+
+	// A capture that reaches at least as far but is MISSING one of the stored
+	// segments would be dropping that audio, whatever its call window says.
+	// Two pages that both resumed one prefix can diverge like this.
+	divergent := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9500,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+			{Index: 1, AudioName: "segment-1.webm", StartWallMS: 4000, StopWallMS: 6000},
+		},
+	}
+	outcome, err = rt.promoteCapture(divergent, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome != captureAlreadyStored {
+		t.Fatalf("an upload missing a stored segment got outcome %d; it holds nothing new", outcome)
+	}
+
+	// Two racing pages that each hold a segment the other does not. Neither may
+	// replace the other, and accepting either is what makes a browser delete
+	// the only copy of the audio only it has — so this one is refused
+	// retryably rather than answered "accepted".
+	diverged := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9500,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+			{Index: 3, AudioName: "segment-3.webm", StartWallMS: 9000, StopWallMS: 9500},
+		},
+	}
+	outcome, err = rt.promoteCapture(diverged, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome != captureDiverged {
+		t.Fatalf("a capture holding audio the server does not got outcome %d; accepting it destroys that audio", outcome)
+	}
+
+	// The same names and a later call end, but one segment covering LESS of the
+	// call than the stored one does. Names and the call window each say this is
+	// a superset; the segment's own span says it is not, and the audio between
+	// the two spans exists only in what is stored.
+	narrower := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9500,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 3000},
+			{Index: 1, AudioName: "segment-1.webm", StartWallMS: 3000, StopWallMS: 6000},
+			{Index: 2, AudioName: "segment-2.webm", StartWallMS: 6000, StopWallMS: 9500},
+		},
+	}
+	outcome, err = rt.promoteCapture(narrower, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome == capturePromoted {
+		t.Fatal("an upload whose segment covers less of the call than the stored one replaced it")
+	}
+
+	// The manifests agree on everything and the FILES do not. Recovery sidecars
+	// are checkpointed, so two uploads for one call can carry the same account
+	// of a segment that was still growing; the staler snapshot must not replace
+	// the fuller one on the strength of metadata that compares equal.
+	for name, size := range map[string]int{
+		"segment-0.webm": 4000,
+		"segment-1.webm": 4000,
+		"segment-2.webm": 4000,
+	} {
+		if err := os.WriteFile(filepath.Join(final, name), make([]byte, size), 0o640); err != nil {
+			t.Fatalf("write stored %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(staging, name), make([]byte, size/2), 0o640); err != nil {
+			t.Fatalf("write staged %s: %v", name, err)
+		}
+	}
+	staleSnapshot := stored
+	outcome, err = rt.promoteCapture(&staleSnapshot, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome == capturePromoted {
+		t.Fatal("a staler snapshot of the same segments replaced the fuller stored files")
+	}
+	for name := range map[string]int{"segment-0.webm": 0, "segment-1.webm": 0, "segment-2.webm": 0} {
+		if err := os.Remove(filepath.Join(staging, name)); err != nil {
+			t.Fatalf("clean staged %s: %v", name, err)
+		}
+	}
+
+	// An ordinary re-upload — the same segments, no shorter — still replaces.
+	again := stored
+	again.CallEndWallMS = 9500
+	outcome, err = rt.promoteCapture(&again, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome != capturePromoted {
+		t.Fatalf("an ordinary re-upload of the same call got outcome %d", outcome)
+	}
+}
+
+// promoteCapture moves the previous capture aside before it swaps, so a crash
+// between those two renames leaves the whole recording under `.superseded` and
+// nothing at the live path. A stale prefix arriving afterwards would find no
+// stored capture to compare against, promote itself, and let the sweep delete
+// the longer copy the set-aside exists to protect.
+func TestPromoteCaptureConsultsTheSetAsideCopy(t *testing.T) {
+	rt := captureTestRuntime(t)
+	final := filepath.Join(rt.cfg.CaptureRoot, "room", "bob", "1700")
+	setAside := final + captureSupersededSuffix
+	staging := filepath.Join(rt.cfg.CaptureRoot, "upload-stale")
+	for _, dir := range []string{setAside, staging} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	whole := captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 9000,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+		},
+	}
+	raw, err := json.Marshal(whole)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(setAside, captureSidecarName), raw, 0o640); err != nil {
+		t.Fatalf("write set-aside sidecar: %v", err)
+	}
+
+	prefix := &captureSidecar{
+		Format: captureSourceFormat, RoomToken: "room", CallStartWallMS: 1700, CallEndWallMS: 4000,
+		Segments: []captureSegment{
+			{Index: 0, AudioName: "segment-0.webm", StartWallMS: 1700, StopWallMS: 4000},
+		},
+	}
+	outcome, err := rt.promoteCapture(prefix, staging, final)
+	if err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+	if outcome == capturePromoted {
+		t.Fatal("a stale prefix promoted itself over a set-aside capture holding more of the call")
+	}
+	// And the interrupted promotion is finished, so the capture that was kept
+	// is one a build can actually find: discovery ignores the `.superseded`
+	// name by design, and a capture left there is retained and unreachable.
+	if _, err := os.Stat(filepath.Join(final, captureSidecarName)); err != nil {
+		t.Fatalf("the set-aside capture was kept where no build can discover it: %v", err)
+	}
+	if _, err := os.Stat(setAside); !os.IsNotExist(err) {
+		t.Fatalf("the set-aside directory survived its own restoration (err=%v)", err)
 	}
 }
 
@@ -385,7 +609,7 @@ func TestSupersededSuffixIsTheNameDiscoveryFiltersOn(t *testing.T) {
 	}
 
 	rt := &Runtime{}
-	if err := rt.promoteCapture(staging, final); err != nil {
+	if _, err := rt.promoteCapture(&captureSidecar{}, staging, final); err != nil {
 		t.Fatalf("promoteCapture: %v", err)
 	}
 

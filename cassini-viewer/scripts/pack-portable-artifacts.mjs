@@ -2,15 +2,9 @@
 // file in --output-dir by delegating to `cassini pack` (set CASSINI_BIN to
 // point at the binary; default: `cassini` on PATH).
 //
-// Input contract (changed when #219 delegated production to the Go packer):
-// a directory is packed only when it is a bundle `cassini pack` accepts — a
+// A directory is packed only when it is a bundle `cassini pack` accepts — a
 // `cassini.json` whose kind is "meeting" and whose state is ready (or unset),
 // alongside `meeting.webm`, `transcript.words.v1.json`, and `manifest.json`.
-// Before #219 this script was its own portable producer and accepted the
-// legacy viewer-artifact shape (`meeting.opus` + `transcript.words.v1.json`);
-// the Go packer refuses that shape, so those directories are now reported and
-// skipped rather than handed to a command guaranteed to fail. Rebuild a legacy
-// artifact into a `.meeting` bundle with `cassini build` before packing it.
 //
 // Discovery here is a shallow readiness screen so we never invoke the packer
 // on a directory it categorically rejects; `cassini pack` remains the
@@ -27,19 +21,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 
 export async function main(argv = process.argv.slice(2)) {
   const { outputDir, sourceDir } = parseArgs(argv);
-  const { bundleDirs, legacyDirs } = discoverArtifactDirectories(sourceDir);
-  for (const legacyDir of legacyDirs) {
-    console.warn(
-      `skip ${legacyDir}: legacy portable artifact (meeting.opus without a ready cassini.json bundle); ` +
-        "`cassini pack` needs a ready .meeting bundle — rebuild it with `cassini build` first",
-    );
-  }
+  const bundleDirs = listArtifactDirectories(sourceDir);
   if (bundleDirs.length === 0) {
-    const legacyNote =
-      legacyDirs.length > 0
-        ? ` (${legacyDirs.length} legacy artifact director${legacyDirs.length === 1 ? "y" : "ies"} skipped — see warnings above)`
-        : "";
-    throw new Error(`No ready .meeting bundles found in ${sourceDir}${legacyNote}`);
+    throw new Error(`No ready .meeting bundles found in ${sourceDir}`);
   }
 
   mkdirSync(outputDir, { recursive: true });
@@ -118,14 +102,7 @@ export function isReadyMeetingBundle(dir) {
   );
 }
 
-// The shape this script consumed before #219, when it produced portable files
-// itself. The Go packer refuses it, so discovery reports it instead of
-// packing it.
-export function isLegacyPortableArtifact(dir) {
-  return existsSync(join(dir, "meeting.opus")) && existsSync(join(dir, "transcript.words.v1.json"));
-}
-
-export function discoverArtifactDirectories(sourceDir) {
+export function listArtifactDirectories(sourceDir) {
   if (!existsSync(sourceDir)) {
     throw new Error(`Missing source directory: ${sourceDir}`);
   }
@@ -136,21 +113,12 @@ export function discoverArtifactDirectories(sourceDir) {
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
     .map((entry) => join(sourceDir, entry.name))
     .sort();
-  return {
-    bundleDirs: candidates.filter((dir) => isReadyMeetingBundle(dir)),
-    legacyDirs: candidates.filter((dir) => !isReadyMeetingBundle(dir) && isLegacyPortableArtifact(dir)),
-  };
-}
-
-export function listArtifactDirectories(sourceDir) {
-  return discoverArtifactDirectories(sourceDir).bundleDirs;
+  return candidates.filter((dir) => isReadyMeetingBundle(dir));
 }
 
 export async function packArtifactDirectory(artifactDir, outputPath, runCassini = execFileSync) {
-  // Keep one portable producer. The Go packer owns the v3 manifest, canonical
-  // compressed-Opus identity, and the post-remux integrity check. Reimplementing
-  // those rules here previously left this maintenance command producing v1
-  // exact-PCM files after the application had moved on.
+  // Keep one portable producer. The Go packer owns the published manifest,
+  // compressed-Opus identity, and the post-remux integrity check.
   const cassiniBin = String(process.env.CASSINI_BIN ?? "cassini").trim() || "cassini";
   runCassini(cassiniBin, ["pack", artifactDir, "--out", outputPath], { stdio: "inherit" });
   return { status: "write" };

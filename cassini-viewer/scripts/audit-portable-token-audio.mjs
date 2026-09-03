@@ -2,12 +2,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, basename, join } from "node:path";
-import { gunzipSync } from "node:zlib";
 
 import {
   buildDisplayTranscriptFromArtifacts,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  readPortableMeeting,
 } from "./export-static-meetings.mjs";
 
 const DEFAULT_BEFORE_MS = 600;
@@ -133,29 +133,7 @@ function loadPortableManifest(audioPath) {
   if (!existsSync(audioPath)) {
     throw new Error(`audio file not found: ${audioPath}`);
   }
-  const report = JSON.parse(execFileSync(
-    "ffprobe",
-    ["-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", audioPath],
-    { encoding: "utf8" },
-  ));
-  const tags = { ...(report.format?.tags || {}) };
-  for (const stream of report.streams || []) {
-    Object.assign(tags, stream.tags || {});
-  }
-  const chunkCount = Number(tags.CASSINI_PAYLOAD_CHUNK_COUNT || 0);
-  if (!Number.isInteger(chunkCount) || chunkCount <= 0) {
-    throw new Error("missing or invalid CASSINI_PAYLOAD_CHUNK_COUNT");
-  }
-  let encoded = "";
-  for (let index = 0; index < chunkCount; index += 1) {
-    const key = `CASSINI_PAYLOAD_${String(index).padStart(3, "0")}`;
-    const chunk = tags[key];
-    if (!chunk) {
-      throw new Error(`missing payload chunk ${key}`);
-    }
-    encoded += chunk;
-  }
-  return JSON.parse(gunzipSync(Buffer.from(encoded, "base64url")).toString("utf8"));
+  return readPortableMeeting(audioPath).manifest;
 }
 
 function loadPortableManifestWithDisplay(audioPath) {

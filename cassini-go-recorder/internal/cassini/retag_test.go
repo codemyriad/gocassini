@@ -104,8 +104,8 @@ func TestRetagPreservesEverythingItWasNotAskedToChange(t *testing.T) {
 		t.Errorf("audio block changed:\n before %+v\n after  %+v", before.Audio, after.Audio)
 	}
 
-	// And every non-payload tag, including the v2 per-transcript chunk sets
-	// that nothing in this command understands. ffmpeg runs with
+	// And every non-payload tag, including the per-transcript chunk sets.
+	// ffmpeg runs with
 	// -map_metadata -1, so a tag not carried forward is deleted.
 	afterTags, err := portableMeetingTags(outPath)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestRetagPreservesEverythingItWasNotAskedToChange(t *testing.T) {
 			t.Errorf("tag %s = %q after retag, want the original %q", key, got, want)
 		}
 	}
-	// Specifically: a v2 file's transcript payloads must still be there.
+	// Specifically: the transcript payloads must still be there.
 	transcriptChunks := 0
 	for key := range afterTags {
 		if strings.HasPrefix(strings.ToUpper(key), "CASSINI_TX_") {
@@ -128,7 +128,7 @@ func TestRetagPreservesEverythingItWasNotAskedToChange(t *testing.T) {
 		}
 	}
 	if transcriptChunks == 0 {
-		t.Error("no CASSINI_TX_* tags survived the retag; a v2 file lost its transcript bodies")
+		t.Error("no CASSINI_TX_* tags survived the retag; the file lost its transcript bodies")
 	}
 }
 
@@ -159,42 +159,6 @@ func TestRetagClearsFields(t *testing.T) {
 		if got := readOpusTag(t, outPath, tag); got != "" {
 			t.Errorf("%s = %q after clearing, want absent", tag, got)
 		}
-	}
-}
-
-// TestRetagStripsALegacyRoomName covers the field D-640 stopped writing: an
-// already-published file still carries a frozen room name, and the tool that
-// edits published files has to be able to remove one.
-func TestRetagStripsALegacyRoomName(t *testing.T) {
-	requireFFMediaTools(t)
-	tmp := t.TempDir()
-	inPath := packFixtureOpus(t, tmp, "before")
-
-	// Put a legacy name on it the way a pre-D-640 producer would have.
-	legacyPath := filepath.Join(tmp, "legacy.opus")
-	var stdout, stderr bytes.Buffer
-	if code := Run(context.Background(), []string{
-		"retag", inPath, "--out", legacyPath, "--room-name", "Old Standup",
-	}, &stdout, &stderr); code != 0 {
-		t.Fatalf("seed legacy name failed code=%d stderr=%q", code, stderr.String())
-	}
-	if got := decodePortableManifestFromOpus(t, legacyPath).Meeting.RoomName; got != "Old Standup" {
-		t.Fatalf("seeded meeting.roomName = %q, want %q", got, "Old Standup")
-	}
-
-	strippedPath := filepath.Join(tmp, "stripped.opus")
-	stdout.Reset()
-	stderr.Reset()
-	if code := Run(context.Background(), []string{
-		"retag", legacyPath, "--out", strippedPath, "--clear-room-name",
-	}, &stdout, &stderr); code != 0 {
-		t.Fatalf("clear failed code=%d stderr=%q", code, stderr.String())
-	}
-	if got := decodePortableManifestFromOpus(t, strippedPath).Meeting.RoomName; got != "" {
-		t.Errorf("meeting.roomName = %q after --clear-room-name, want empty", got)
-	}
-	if got := readOpusTag(t, strippedPath, "CASSINI_ROOM_NAME"); got != "" {
-		t.Errorf("CASSINI_ROOM_NAME = %q after --clear-room-name, want absent", got)
 	}
 }
 

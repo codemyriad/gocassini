@@ -321,9 +321,7 @@ async function persistObservedUploadBodies(page, participant, evidence, minimumR
   return observed;
 }
 
-async function joinCall(page, participant) {
-  await page.goto(`${baseURL}/index.php/call/${roomToken}`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => RTCPeerConnection.__cassiniPatched === true, null, { timeout });
+async function enterCall(page, participant) {
   const initialJoin = await firstVisible(
     page.locator("button.join-call:not([disabled])"),
     `${participant}: enabled Talk join button`,
@@ -338,8 +336,66 @@ async function joinCall(page, participant) {
   const dialogJoin = await firstVisible(page.locator(".media-settings button.join-call"), `${participant}: media-dialog join button`);
   await dialogJoin.click();
   await page.locator(".leave-call").first().waitFor({ state: "visible", timeout });
+}
+
+async function joinCall(page, participant) {
+  await page.goto(`${baseURL}/index.php/call/${roomToken}`, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => RTCPeerConnection.__cassiniPatched === true, null, { timeout });
+  await enterCall(page, participant);
   const media = await waitForAudioFlow(page, participant);
   return { ...media, mediaDialogClicked: true };
+}
+
+// reloadIntoCall is the thing people actually do on a bad connection: reload the
+// Talk page in the middle of a recorded call and carry on talking.
+//
+// The document is destroyed, so everything the payload holds in memory goes with
+// it and only what reached OPFS survives. Whether Talk puts the participant
+// straight back in the call or asks them to join again is Talk's business and
+// varies with how the reload raced the signalling, so both shapes are accepted;
+// what this leg requires is that they are audibly back in the call afterwards.
+async function reloadIntoCall(page, participant) {
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => RTCPeerConnection.__cassiniPatched === true, null, { timeout });
+  const deadline = Date.now() + 30_000;
+  let rejoined = false;
+  while (Date.now() < deadline) {
+    const leave = page.locator(".leave-call");
+    for (let index = 0; index < await leave.count(); index += 1) {
+      if (await leave.nth(index).isVisible()) { rejoined = true; break; }
+    }
+    if (rejoined) break;
+    const join = page.locator("button.join-call:not([disabled])");
+    for (let index = 0; index < await join.count(); index += 1) {
+      if (await join.nth(index).isVisible()) {
+        await enterCall(page, participant);
+        rejoined = true;
+        break;
+      }
+    }
+    if (rejoined) break;
+    await delay(250);
+  }
+  assert(rejoined, `${participant}: never got back into the call after reloading`);
+  // The byte floor is the default: outbound counters belong to the peer
+  // connections of THIS document, and the reload gave the page new ones.
+  return { ...(await waitForAudioFlow(page, participant)), rejoined: true };
+}
+
+// segmentFilesIn counts the sealed audio files across a capture snapshot.
+function segmentFilesIn(captures) {
+  return captures.flatMap((capture) => capture.files)
+    .filter((file) => /^segment-\d+\.webm$/.test(file.name));
+}
+
+// segmentBytesIn maps each segment file to its size, so a file the resumed
+// capture reopened and truncated is visible rather than merely still present.
+function segmentBytesIn(captures) {
+  const bytes = {};
+  for (const file of segmentFilesIn(captures)) {
+    bytes[file.name] = Number(file.size || 0);
+  }
+  return bytes;
 }
 
 async function opfsSnapshot(page) {
@@ -610,11 +666,68 @@ try {
   const bytesImmediatelyAfterSwitch = result.alice.mediaImmediatelyAfterSwitch.audioBytesSent;
   await delay(3_200);
   result.alice.mediaAfterSwitch = await waitForAudioFlow(alicePage, "alice", bytesImmediatelyAfterSwitch + 2_000);
-  result.alice.duringRecordingOPFS = await opfsSnapshot(alicePage);
-  const segmentFiles = result.alice.duringRecordingOPFS.flatMap((capture) => capture.files)
-    .filter((file) => /^segment-\d+\.webm$/.test(file.name));
+  const afterSwitchOPFS = await opfsSnapshot(alicePage);
+  const segmentFiles = segmentFilesIn(afterSwitchOPFS);
   assert(segmentFiles.length >= 2, `microphone switch left only ${segmentFiles.length} OPFS segment file(s)`);
   assert(segmentFiles.some((file) => Number(file.size || 0) > 1_000), "sealed pre-switch OPFS segment is implausibly small");
+
+  // A mid-call page reload, on the participant who has already rotated a
+  // segment. This is the seam the whole feature is most needed at: people
+  // reload when their connection is bad, and a bad connection is exactly when
+  // the recorder's own copy of them is full of holes.
+  //
+  // The page that goes away seals its buffer and does not upload — a request
+  // started during unload cannot finish. The page that comes back must ADOPT
+  // that buffer rather than file a second capture, so the directory name (which
+  // carries the call start the capture identifies itself by) has to survive the
+  // reload while the segment count grows. Everything downstream then reconciles
+  // across the seam for free: one owner directory, one upload, and the stored
+  // byte total covering the audio from before the reload as well as after it.
+  assert(afterSwitchOPFS.length === 1,
+    `Alice buffered ${afterSwitchOPFS.length} captures before reloading`);
+  const capturesBefore = afterSwitchOPFS.map((capture) => capture.dirName);
+  result.alice.mediaAfterReload = await reloadIntoCall(alicePage, "alice");
+  // Talk's recording is still the one that was running before the reload, so
+  // the rejoined page records into the capture it inherited. Wait for its own
+  // segment rather than for any capture directory: the adopted one is already
+  // there, so "a capture exists" was true the moment the page loaded.
+  await alicePage.waitForFunction(async (before) => {
+    const root = await navigator.storage.getDirectory();
+    let sealed = 0;
+    for await (const [dirName, handle] of root.entries()) {
+      if (handle.kind !== "directory" || !dirName.startsWith("capture-")) continue;
+      for await (const [name] of handle.entries()) if (/^segment-\d+\.webm$/.test(name)) sealed += 1;
+    }
+    return sealed > before;
+  }, segmentFiles.length, { timeout });
+  // Keep talking on the far side of the seam, long enough for the rejoined
+  // segment to hold real audio rather than a container header.
+  await delay(4_000);
+  result.alice.duringRecordingOPFS = await opfsSnapshot(alicePage);
+  const capturesAfter = result.alice.duringRecordingOPFS.map((capture) => capture.dirName);
+  const bytesBefore = segmentBytesIn(afterSwitchOPFS);
+  const bytesAfter = segmentBytesIn(result.alice.duringRecordingOPFS);
+  result.alice.reload = {
+    capturesBefore,
+    capturesAfter,
+    segmentsBefore: segmentFiles.length,
+    segmentsAfter: segmentFilesIn(result.alice.duringRecordingOPFS).length,
+    segmentBytesBefore: bytesBefore,
+    segmentBytesAfter: bytesAfter,
+    // The resumed capture must number its own segment past everything already
+    // in the directory. Numbering from the manifest alone was not enough: the
+    // recovery sidecar is a checkpoint, so a segment the microphone change had
+    // just opened could have bytes on disk and no entry yet — and the resumed
+    // capture then reopened that file and truncated it.
+    preservedPreReloadBytes: Object.entries(bytesBefore)
+      .every(([name, size]) => Number(bytesAfter[name] || 0) >= size),
+  };
+  assert(capturesAfter.length === 1 && capturesAfter[0] === capturesBefore[0],
+    `the reload filed a new capture instead of resuming ${capturesBefore[0]}: ${JSON.stringify(capturesAfter)}`);
+  assert(result.alice.reload.segmentsAfter > result.alice.reload.segmentsBefore,
+    "the rejoined page added no segment of its own to the adopted capture");
+  assert(result.alice.reload.preservedPreReloadBytes,
+    `the resumed capture overwrote audio recorded before the reload: ${JSON.stringify(result.alice.reload)}`);
 
   const captureUpload = (response) => (
     response.request().method() === "POST" && response.url().includes("/operator/capture/upload")

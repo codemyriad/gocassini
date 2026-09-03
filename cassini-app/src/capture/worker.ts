@@ -24,7 +24,7 @@
 //    makes "upload after the call" safe rather than a way to lose meetings.
 
 import type { CaptureAnchor, CaptureSegment, CaptureSidecar } from "./protocol";
-import { SOURCE_CAPTURE_PENDING_NAME, mergeMuteIntervals } from "./protocol";
+import { SOURCE_CAPTURE_PENDING_NAMES, mergeMuteIntervals } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope & {
   onrtctransform: ((event: RTCTransformEvent) => void) | null;
@@ -129,12 +129,27 @@ interface OpenSegment {
   // contain is worse than one segment fewer, because the server would place
   // and transcribe the truncation as if it were the meeting.
   failed: boolean;
+  // preexisting marks a segment refused because its file ALREADY held audio.
+  // It is failed in the sense that this interval wrote none of it, and it must
+  // never be deleted with the others: those files are this worker's own
+  // truncations, while this one is somebody else's complete recording, and
+  // removing it would make the collision backstop destroy exactly what it
+  // refused to overwrite.
+  preexisting: boolean;
 }
 
 let captureDir: FileSystemDirectoryHandle | null = null;
 const segments = new Map<number, OpenSegment>();
 let pendingDirName: string | null = null;
 let pendingBase: Omit<CaptureSidecar, "segments" | "callEndWallMs"> | null = null;
+// adoptedSegments are segments a PREVIOUS page recorded into this same
+// directory, handed over when a reload resumes a capture rather than starting a
+// second one. Their files are already on disk and their anchors were measured
+// against that page's encoder, so they are carried verbatim: this worker never
+// opens, writes, re-slices or deletes them. It only has to keep describing them
+// in every sidecar it writes, or the reload's first half would be present on
+// disk and absent from the manifest, which is the same as losing it.
+let adoptedSegments: CaptureSegment[] = [];
 
 async function ensureDir(name: string): Promise<FileSystemDirectoryHandle> {
   if (captureDir) {
@@ -149,12 +164,47 @@ async function openSegment(dirName: string, meta: OpenSegment["meta"]): Promise<
   const dir = await ensureDir(dirName);
   const fileHandle = await dir.getFileHandle(meta.audioName, { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
+  // Never over audio that is already there.
+  //
+  // A resumed capture numbers itself past everything the directory holds, and
+  // the page claims the directory so that a second page cannot be numbering
+  // into it at the same time. Both of those can be wrong at once — a browser
+  // without Web Locks has no claim to take, and a bug in either calculation
+  // would land here — and what "wrong" costs at this line is a file full of the
+  // participant's audio replaced by an empty one. So the truncate is
+  // conditional, and a name that is already occupied fails the segment instead:
+  // one segment fewer, rather than one destroyed.
+  if (handle.getSize() > 0) {
+    handle.close();
+    self.postMessage({
+      type: "error",
+      detail: `segment ${meta.index}: ${meta.audioName} already holds audio; refusing to overwrite it`,
+    });
+    segments.set(meta.index, {
+      handle,
+      offset: 0,
+      meta,
+      stopWallMs: 0,
+      muteIntervals: [],
+      failed: true,
+      preexisting: true,
+    });
+    return;
+  }
   handle.truncate(0);
-  segments.set(meta.index, { handle, offset: 0, meta, stopWallMs: 0, muteIntervals: [], failed: false });
+  segments.set(meta.index, {
+    handle,
+    offset: 0,
+    meta,
+    stopWallMs: 0,
+    muteIntervals: [],
+    failed: false,
+    preexisting: false,
+  });
 }
 
 function recoverableSegments(now: number): CaptureSegment[] {
-  return [...segments.values()]
+  const live = [...segments.values()]
     .filter((segment) => !segment.failed && segment.offset > 0)
     .sort((a, b) => a.meta.index - b.meta.index)
     .map((segment) => {
@@ -166,6 +216,7 @@ function recoverableSegments(now: number): CaptureSegment[] {
         muteIntervals: mergeMuteIntervals(segment.muteIntervals),
       };
     });
+  return [...adoptedSegments, ...live].sort((a, b) => a.index - b.index);
 }
 
 // PENDING_SIDECAR_MIN_INTERVAL_MS bounds how often the recovery sidecar is
@@ -177,6 +228,11 @@ function recoverableSegments(now: number): CaptureSegment[] {
 // write regardless, so the sidecar is never stale about a sealed segment.
 const PENDING_SIDECAR_MIN_INTERVAL_MS = 5_000;
 let lastPendingWriteMs = 0;
+// pendingSlot alternates between the two recovery-sidecar names, so a
+// checkpoint always writes into the slot the previous one is not in. See
+// SOURCE_CAPTURE_PENDING_NAMES: a page that dies mid-checkpoint can then only
+// damage the generation being written, and the previous one is still whole.
+let pendingSlot = 0;
 
 // refreshPendingSidecar isolates the recovery sidecar from the recording. The
 // sidecar exists to salvage a capture whose page died; failing to write it
@@ -205,17 +261,38 @@ async function writePendingSidecar(): Promise<void> {
     return;
   }
   const dir = await ensureDir(pendingDirName);
-  const fileHandle = await dir.getFileHandle(SOURCE_CAPTURE_PENDING_NAME, { create: true });
+  const slot = pendingSlot;
+  const fileHandle = await dir.getFileHandle(SOURCE_CAPTURE_PENDING_NAMES[slot], { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
   const sidecar: CaptureSidecar = {
     ...pendingBase,
     callEndWallMs: Math.max(...built.map((segment) => segment.stopWallMs)),
     segments: built,
   };
-  handle.truncate(0);
-  handle.write(new TextEncoder().encode(JSON.stringify(sidecar)), { at: 0 });
-  handle.flush();
-  handle.close();
+  const body = new TextEncoder().encode(JSON.stringify(sidecar));
+  try {
+    handle.truncate(0);
+    const written = handle.write(body, { at: 0 });
+    if (written !== body.byteLength) {
+      // A short write leaves this slot torn. Say so rather than advance, so the
+      // other slot stays the newest whole generation and this one is rewritten
+      // next time.
+      throw new Error(`recovery sidecar wrote ${written} of ${body.byteLength} bytes`);
+    }
+    handle.flush();
+  } finally {
+    // Always. A sync access handle holds an exclusive lock on its file, and this
+    // worker outlives a failed checkpoint to keep the call's audio flowing, so
+    // one leaked here would lock a file every later checkpoint needs.
+    try {
+      handle.close();
+    } catch {
+      // Already closed, or closing failed too. The write error above is the one
+      // worth reporting.
+    }
+  }
+  // Only a checkpoint that completed advances the slot.
+  pendingSlot = (slot + 1) % SOURCE_CAPTURE_PENDING_NAMES.length;
 }
 
 async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
@@ -223,15 +300,34 @@ async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
   if (!segment) {
     return;
   }
+  // A segment with no bytes yet is not in the recovery sidecar — there is
+  // nothing to recover — so the write that gives it its first bytes is the one
+  // that makes it describable, and it is forced past the throttle.
+  //
+  // Without that, a segment opened by a mid-call microphone change stayed
+  // unnamed for up to the throttle interval while its file grew on disk. A page
+  // that reloaded in that window handed the next page a manifest describing one
+  // fewer segment than the directory held, and the resumed capture numbered its
+  // own first segment over the one already there. One extra sidecar write per
+  // segment, not per chunk.
+  const firstBytes = segment.offset === 0;
   try {
-    segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
-    segment.offset += buffer.byteLength;
+    const written = segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
+    if (written !== buffer.byteLength) {
+      // The audio the sidecars assert is durable. A short write under quota or
+      // storage pressure does not throw, and advancing the offset by what was
+      // ASKED for rather than what landed leaves a hole in the file while every
+      // manifest goes on describing it as whole — a capture that looks intact
+      // and is not, which is the one shape the recorder cannot detect either.
+      throw new Error(`wrote ${written} of ${buffer.byteLength} bytes`);
+    }
+    segment.offset += written;
   } catch (error) {
     segment.failed = true;
     self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
     return;
   }
-  await refreshPendingSidecar(false);
+  await refreshPendingSidecar(firstBytes);
 }
 
 async function closeSegment(
@@ -243,11 +339,16 @@ async function closeSegment(
   if (!segment) {
     return;
   }
-  try {
-    segment.handle.flush();
-  } catch (error) {
-    segment.failed = true;
-    self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+  if (!segment.preexisting) {
+    // A segment refused because its file already held audio never opened a
+    // handle this interval owns: it was closed at the refusal, and flushing it
+    // only raises an error about a state that is correct.
+    try {
+      segment.handle.flush();
+    } catch (error) {
+      segment.failed = true;
+      self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+    }
   }
   try {
     // Closed even when the flush threw. A sync access handle holds an
@@ -279,7 +380,7 @@ export function anchorsWithin(
 }
 
 async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">): Promise<CaptureSidecar> {
-  if (segments.size === 0) {
+  if (segments.size === 0 && adoptedSegments.length === 0) {
     // Nothing was ever opened — a capture denied or revoked before it started.
     // Creating the directory just to throw would leave an empty one behind on
     // the participant's disk, which is exactly what a denied capture must not
@@ -287,13 +388,22 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
     throw new Error("nothing was recorded");
   }
   const dir = await ensureDir(dirName);
-  const built: CaptureSegment[] = [];
+  // Adopted first, and untouched: they were sealed by the page that recorded
+  // them and their files are already complete.
+  const built: CaptureSegment[] = [...adoptedSegments];
   for (const segment of [...segments.values()].sort((a, b) => a.meta.index - b.meta.index)) {
     if (segment.failed || segment.offset === 0) {
       // Never describe a segment whose bytes are not all there, and never
       // describe an empty one: the upload would be refused for a missing file,
       // taking the good segments with it.
-      await dir.removeEntry(segment.meta.audioName).catch(() => {});
+      //
+      // The file goes with it — except when it was already there. Those bytes
+      // are another interval's complete recording, which this one declined to
+      // overwrite; deleting it here would make the refusal worse than the
+      // overwrite it prevented.
+      if (!segment.preexisting) {
+        await dir.removeEntry(segment.meta.audioName).catch(() => {});
+      }
       continue;
     }
     built.push({
@@ -303,17 +413,38 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
       muteIntervals: mergeMuteIntervals(segment.muteIntervals),
     });
   }
+  built.sort((a, b) => a.index - b.index);
   const sidecar: CaptureSidecar = { ...base, segments: built };
   if (built.length === 0) {
     throw new Error("no segment was written completely");
   }
   const fileHandle = await dir.getFileHandle("capture.json", { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
-  handle.truncate(0);
-  handle.write(new TextEncoder().encode(JSON.stringify(sidecar)), { at: 0 });
-  handle.flush();
-  handle.close();
-  await dir.removeEntry(SOURCE_CAPTURE_PENDING_NAME).catch(() => {});
+  const body = new TextEncoder().encode(JSON.stringify(sidecar));
+  try {
+    handle.truncate(0);
+    const written = handle.write(body, { at: 0 });
+    if (written !== body.byteLength) {
+      // Checked here for the same reason the checkpoint checks it, and with
+      // more at stake: the recovery slots are removed on the strength of this
+      // manifest, so a short write that went unnoticed would leave the
+      // directory with a truncated capture.json and no generation to fall back
+      // on — segment files intact and nothing able to describe them.
+      throw new Error(`capture sidecar wrote ${written} of ${body.byteLength} bytes`);
+    }
+    handle.flush();
+  } finally {
+    try {
+      handle.close();
+    } catch {
+      // Nothing further to do with it.
+    }
+  }
+  // Both recovery slots, and only now that capture.json is verifiably the
+  // manifest.
+  for (const name of SOURCE_CAPTURE_PENDING_NAMES) {
+    await dir.removeEntry(name).catch(() => {});
+  }
   return sidecar;
 }
 
@@ -333,6 +464,7 @@ function resetRecordingInterval(): void {
     }
   }
   segments.clear();
+  adoptedSegments = [];
   captureDir = null;
   anchors = [];
   frameIndex = 0;
@@ -340,6 +472,7 @@ function resetRecordingInterval(): void {
   pendingDirName = null;
   pendingBase = null;
   lastPendingWriteMs = 0;
+  pendingSlot = 0;
 }
 
 export async function onMessage(event: MessageEvent): Promise<void> {
@@ -354,11 +487,24 @@ export async function onMessage(event: MessageEvent): Promise<void> {
           lastSSRC = -1;
         }
         break;
-      case "capture-start":
+      case "capture-start": {
         pendingDirName = message.dirName;
         pendingBase = message.base;
         lastPendingWriteMs = 0;
+        adoptedSegments = Array.isArray(message.adopted) ? (message.adopted as CaptureSegment[]) : [];
+        if (adoptedSegments.length > 0) {
+          // The stale manifest goes FIRST. A page that sealed before it died
+          // left a capture.json describing only the segments it knew about; a
+          // third page load would prefer that file and file this reload's
+          // second half as if the first had never happened. Removing it makes
+          // the recovery sidecar written immediately below the only manifest in
+          // the directory until this interval seals its own.
+          const dir = await ensureDir(pendingDirName as string);
+          await dir.removeEntry("capture.json").catch(() => {});
+          await refreshPendingSidecar(true);
+        }
         break;
+      }
       case "segment-start":
         await openSegment(message.dirName, message.meta);
         self.postMessage({ type: "segment-started", index: message.meta.index });

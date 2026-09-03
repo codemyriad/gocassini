@@ -52,7 +52,7 @@ grep -q 'jq -e "\$BROWSER_RESULT_CONTRACT"' "$LEG_SH" \
 
 # Both participants are subjects of the leg, not one plus a control.
 # shellcheck disable=SC2016  # a literal dollar in a grep pattern matching the leg's own source
-grep -q 'verify_owner_capture alice "\$ALICE" 2' "$LEG_SH" \
+grep -q 'verify_owner_capture alice "\$ALICE" 3' "$LEG_SH" \
   || fail "the leg no longer verifies Alice's stored multi-segment capture"
 # shellcheck disable=SC2016  # a literal dollar in a grep pattern matching the leg's own source
 grep -q 'verify_owner_capture bob "\$BOB" 1' "$LEG_SH" \
@@ -72,9 +72,18 @@ cat >"$TMP_DIR/passing.json" <<'JSON'
       { "dirName": "capture-room-1", "files": [
         { "name": "capture.json.partial", "kind": "file", "size": 800 },
         { "name": "segment-0.webm", "kind": "file", "size": 42000 },
-        { "name": "segment-1.webm", "kind": "file", "size": 31000 }
+        { "name": "segment-1.webm", "kind": "file", "size": 31000 },
+        { "name": "segment-2.webm", "kind": "file", "size": 28000 }
       ] }
     ],
+    "reload": {
+      "capturesBefore": ["capture-room-1"],
+      "capturesAfter": ["capture-room-1"],
+      "segmentsBefore": 2,
+      "segmentsAfter": 3,
+      "preservedPreReloadBytes": true
+    },
+    "mediaAfterReload": { "rejoined": true, "audioBytesSent": 26000 },
     "afterLeaveOPFS": [],
     "captureStorageKeys": [],
     "mediaBeforeRecording": {
@@ -92,7 +101,7 @@ cat >"$TMP_DIR/passing.json" <<'JSON'
       "before": { "deviceId": "device-a", "trackId": "track-a" },
       "after": { "deviceId": "device-b", "trackId": "track-b" }
     },
-    "upload": { "status": 202, "body": "{\"status\":\"accepted\",\"room\":\"r\",\"segments\":2,\"bytes\":73000}" },
+    "upload": { "status": 202, "body": "{\"status\":\"accepted\",\"room\":\"r\",\"segments\":3,\"bytes\":101000}" },
     "observedUploadRequestCount": 1,
     "observedUploadResponseCount": 1
   },
@@ -153,5 +162,21 @@ reject "someone captured before the recording"   '.bob.joinedBeforeRecordingOPFS
 reject "Talk never confirmed the recording"      '.recording.callRecording = 4'
 reject "Bob's audio never reached the SFU"       '.bob.mediaBeforeRecording.connections[0].audioBytesSent = 0'
 reject "the browser process itself failed"       '.result = "failed"'
+# The reload seam. A run that looked like any of these would mean the page that
+# came back filed a second capture, or never got its own audio into the one it
+# inherited — which is the reload's audio lost, exactly what this leg exists to
+# catch.
+reject "the reload filed a second capture" \
+  '.alice.reload.capturesAfter = ["capture-room-1", "capture-room-9"]'
+reject "the rejoined page abandoned the pre-reload buffer" \
+  '.alice.reload.capturesAfter = ["capture-room-9"]'
+reject "the rejoined page added no segment of its own" \
+  '.alice.reload.segmentsAfter = .alice.reload.segmentsBefore'
+reject "Alice's reload lost her the third segment" \
+  '.alice.duringRecordingOPFS[0].files |= map(select(.name != "segment-2.webm"))'
+reject "the resumed capture overwrote pre-reload audio" \
+  '.alice.reload.preservedPreReloadBytes = false'
+reject "Alice never got back into the call" '.alice.mediaAfterReload.rejoined = false'
+reject "Alice sent no audio after rejoining" '.alice.mediaAfterReload.audioBytesSent = 0'
 
-echo "PASS: the browser leg's contract requires a capture and an accepted upload from every participant"
+echo "PASS: the browser leg's contract requires a capture, a resumed reload and an accepted upload from every participant"

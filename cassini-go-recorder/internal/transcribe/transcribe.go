@@ -131,7 +131,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		// is a build with no upload for this room, and that build has to leave
 		// the bundle byte for byte what a build without ingestion would leave —
 		// not an empty _work/sourceaudio to explain to whoever finds it.
-		sourceAudio = ApplySourceAudio(ctx, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, 16000, audioDurationMS, stdout)
+		sourceAudio = ApplySourceAudio(ctx, mkvPath, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, 16000, audioDurationMS, stdout)
 	}
 
 	// --- 3. Download / verify STT model and VAD ---
@@ -147,9 +147,9 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	}
 
 	// --- 4. Transcribe with the primary model, then any additional models.
-	// The primary model writes the default transcript.words.v1.json (v1
-	// fallback). Each additional model writes a sibling transcript file and
-	// is recorded under manifest.files.transcripts for v2 multi-tx output.
+	// The primary model writes the default transcript.words.v1.json. Each
+	// additional model writes a sibling transcript file and is recorded under
+	// manifest.files.transcripts for indexed portable output.
 	// Whether the manifest may claim provenance.wordTimings.endsBoundedByAudio
 	// is decided by the recognizers, not by this function: every pass below
 	// records what its decoder declared, and the claim survives only if all of
@@ -235,10 +235,10 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 
 // AdditionalTranscript describes one extra transcript file emitted by a
 // secondary STT model. The producer turns these into manifest.files.transcripts
-// entries so the v2 portable-meeting packer can fan them out into separate
+// entries so the portable-meeting packer can place them in separate
 // CASSINI_TX_<ID>_PAYLOAD_* tag sets.
 type AdditionalTranscript struct {
-	ID      string  // sanitised model id, suitable for tag namespace (a-z 0-9 - _, max 32 chars)
+	ID      string  // sanitised model id, suitable for tag namespace (a-z 0-9 -, max 32 chars)
 	Path    string  // relative to outputDir, e.g. transcript-parakeet-tdt-06b-v2-int8.words.v1.json
 	ModelID ModelID // raw STT model id, kept for provenance
 	Backend string  // resolved STT backend id that produced this transcript
@@ -563,7 +563,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 	return out, nil
 }
 
-// sanitizeTranscriptID maps a model id to the format-v2 transcript-id regex
+// sanitizeTranscriptID maps a model id to the published transcript-id regex
 // ^[a-z0-9][a-z0-9-]{0,31}$. Dots and other unsupported runes become hyphens
 // and the result is truncated to 32 runes.
 func sanitizeTranscriptID(id string) string {

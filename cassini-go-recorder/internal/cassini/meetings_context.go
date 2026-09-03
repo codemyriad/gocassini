@@ -240,20 +240,15 @@ func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting, 
 	labels := meeting.SpeakerLabels()
 	segments := deriveProseSegments(meeting.Transcript.Words, labels)
 
-	// The catalog is authoritative for the room, and the file is the fallback.
-	// A catalog entry's room id is kept current by the backfill and by any
-	// reattribution an operator has made, while the file's is whatever it was
-	// last tagged with — so preferring the entry means a merged room reads as
-	// merged here too. The file's legacy room name is used only when the
-	// catalog has none, which is what a pre-D-640 archive looks like.
+	// The catalog is authoritative for the room. A catalog entry's room id is
+	// kept current by the operator, while the file's is whatever it was last
+	// tagged with, so the file is only the id fallback. Mutable room names live
+	// exclusively in the catalog.
 	roomID := strings.TrimSpace(entry.RoomID)
 	if roomID == "" {
 		roomID = strings.TrimSpace(meeting.Manifest.Meeting.RoomID)
 	}
 	roomName := strings.TrimSpace(entry.RoomName)
-	if roomName == "" {
-		roomName = strings.TrimSpace(meeting.Manifest.Meeting.RoomName)
-	}
 
 	bundle := meetingContext{
 		Version: meetingContextVersion,

@@ -196,7 +196,6 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 
 ### Proposals & operations notes
 
-- [Multi-transcription portable format — proposal](./proposals/multi-transcription-format.md) and [build plan](./proposals/multi-transcription-format-plan.md).
 - [Branch previews](./branch-previews.md) — per-branch viewer deployments.
 - [Proxmox Jellyfin NVIDIA passthrough](./proxmox-jellyfin-nvidia.md) — host GPU setup pitfalls.
 
