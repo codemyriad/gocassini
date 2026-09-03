@@ -457,16 +457,31 @@ let preparedWorker: Worker | null = null;
 // not going to start on the next attempt, and every attempt is another
 // transform offered to a sender carrying a live call.
 let captureAbandoned = false;
-// pageIsGoingAway is set the moment this document begins to unload.
+// unloadStartedAtMs is when this document last began to unload.
 //
 // Which teardown runs first is Talk's business, not ours: it may close the
 // publishing connection inside its own unload handler, and pc.close reaches
-// endCall before pagehide ever fires. Without this, that ordering decided
+// endCall before pagehide ever fires. Without knowing, that ordering decided
 // whether a reload sealed-and-uploaded or sealed-only — and a finalize that
 // happened to complete wrote capture.json, which the next page will not resume.
 // The listener is registered at install, before Talk's bundle loads, so it runs
 // before Talk's own.
-let pageIsGoingAway = false;
+//
+// A timestamp rather than a flag, because beforeunload is not a promise that
+// the page is going: another handler can prompt and the participant can cancel,
+// and a latched flag would then make every later leave seal without uploading —
+// stranding a capture in a browser whose page never went anywhere. A real
+// unload is over in milliseconds; a cancelled one leaves this behind and it
+// expires.
+let unloadStartedAtMs = 0;
+
+// UNLOAD_WINDOW_MS is how long after beforeunload the document is still
+// presumed to be leaving.
+const UNLOAD_WINDOW_MS = 5_000;
+
+function pageIsGoingAway(): boolean {
+  return unloadStartedAtMs > 0 && Date.now() - unloadStartedAtMs < UNLOAD_WINDOW_MS;
+}
 let talkRecordingActive = false;
 // talkRecordingRoom is the room talkRecordingActive is an answer ABOUT.
 //
@@ -1714,12 +1729,6 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
     capturingConnection = null;
     capturingSender = null;
     capturingRoom = null;
-    // The connection that ended may not have been the only one. Talk can
-    // replace a publishing connection mid-call — an ICE restart it decides to
-    // do by renegotiating from scratch — and connect the new one before closing
-    // the old; nothing transitions afterwards, so without looking now the
-    // participant stays live in a recorded call with nothing recording them.
-    adoptAnotherPublisher();
     // Stops the worker only if its transform is not on a sender that can still
     // send. pagehide reaches here with the connection still up, and a page on
     // its way out has nothing to gain from stopping it a moment early.
@@ -1809,7 +1818,7 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
 
 async function endCall(): Promise<void> {
   // "leave-it" once the document is on its way out, whoever noticed first.
-  await finishCapture(true, pageIsGoingAway ? "leave-it" : "upload");
+  await finishCapture(true, pageIsGoingAway() ? "leave-it" : "upload");
 }
 
 // endPage is the teardown a navigation gets: close the segment so the recovery
@@ -2121,12 +2130,24 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
 }
 
-// adoptAnotherPublisher looks for a publishing sender that is still in the call
-// and makes it the one being recorded. Called when the connection we were
-// recording goes away.
-function adoptAnotherPublisher(): void {
+// handoffToAnotherPublisher looks for a publishing sender that is still in the
+// call and makes it the one being recorded.
+//
+// Called AFTER the teardown of the connection that went away, never during it:
+// finishCapture clears the recording flag and holds on to the session until its
+// async tail completes, so anything asking beginCapture to start from in there
+// is asking a question whose answer is always no.
+//
+// It does not assume the recording is still running either. Talk is asked
+// again, and its answer is what starts the capture — the flag this page held
+// described the connection that just died, and re-deriving is both simpler and
+// correct if the call really did end.
+function handoffToAnotherPublisher(): void {
+  if (state !== null || captureAbandoned) {
+    return;
+  }
   const roomToken = roomTokenFromPath(location.pathname);
-  if (roomToken === null || captureAbandoned) {
+  if (roomToken === null) {
     return;
   }
   for (const [sender, connection] of publisherSenders) {
@@ -2142,7 +2163,10 @@ function adoptAnotherPublisher(): void {
         attachTimingTransform(preparedWorker, sender, connection);
       }
     }
-    beginCapture(sender, connection);
+    // Ask Talk, rather than trust a flag about a connection that is gone. A
+    // confirmed ACTIVE answer calls beginCapture for this sender.
+    talkRoomToken = roomToken;
+    void refreshTalkRecordingStatus(roomToken);
     return;
   }
 }
@@ -2259,7 +2283,14 @@ async function refreshTalkRecordingStatus(roomToken: string): Promise<void> {
     // A signaling event received while this request was in flight is newer
     // than the response and wins. This prevents a slow bootstrap response of
     // OFF from tearing down a recording the socket just confirmed active.
-    if (status !== null && revision === recordingStatusRevision) {
+    //
+    // And the page must still be in the room this answer is about. A request
+    // that stalled while Talk changed conversation would otherwise land
+    // afterwards and be applied as the current truth — finishing the new
+    // room's capture because the answer names a different room, and leaving a
+    // hole until the poll starts it again.
+    const currentRoom = roomTokenFromPath(location.pathname);
+    if (status !== null && revision === recordingStatusRevision && roomToken === currentRoom) {
       applyTalkRecordingStatus(status, roomToken);
     }
   } finally {
@@ -2383,7 +2414,9 @@ function instrument(pc: RTCPeerConnection): void {
       return;
     }
     if (pc.connectionState === "closed" || pc.connectionState === "failed") {
-      void endCall();
+      // The handoff runs after the teardown, and only reaches anything when
+      // Talk has replaced this connection rather than ended the call.
+      void endCall().then(handoffToAnotherPublisher);
       return;
     }
     if (pc.connectionState === "connected" && capturingSender) {
@@ -2407,8 +2440,30 @@ function instrument(pc: RTCPeerConnection): void {
   const originalRemoveTrack = pc.removeTrack.bind(pc);
   pc.removeTrack = (sender: RTCRtpSender) => {
     try {
-      if (state && sender === capturingSender) {
-        stopWithoutRestart(state);
+      if (sender === capturingSender) {
+        if (state) {
+          // Stopped SYNCHRONOUSLY, before the removal goes through. Queueing
+          // the stop meant the recorder still owned the live track while the
+          // sender stopped carrying it, so its final chunk could hold audio
+          // from after the participant left the call. MediaRecorder's own stop
+          // is what draws that line; stopWithoutRestart then closes the
+          // segment properly around it.
+          try {
+            state.recorder?.stop();
+          } catch {
+            // Already inactive. The segment close below is what matters.
+          }
+          stopWithoutRestart(state);
+        }
+        // And the slot is freed. Talk rebuilds its media pipeline as
+        // removeTrack followed by addTrack on the same connected connection;
+        // holding on to the removed sender made watchSender refuse the
+        // replacement — same room, sender already set — and there is no
+        // connection-state event afterwards for anything else to notice.
+        publisherSenders.delete(sender);
+        capturingSender = null;
+        capturingConnection = null;
+        capturingRoom = null;
       }
     } catch {
       // Never let instrumentation break Talk's own removeTrack.
@@ -2417,14 +2472,20 @@ function instrument(pc: RTCPeerConnection): void {
   };
   const originalClose = pc.close.bind(pc);
   pc.close = () => {
+    const wasCapturing = pc === capturingConnection;
     try {
-      if (pc === capturingConnection) {
+      if (wasCapturing) {
         void endCall();
       }
     } catch {
       // Fall through to the real close regardless.
     }
     originalClose();
+    if (wasCapturing) {
+      // AFTER the real close, so this connection can no longer look like a
+      // candidate for the handoff it just triggered.
+      void Promise.resolve().then(handoffToAnotherPublisher);
+    }
   };
 }
 
@@ -2496,10 +2557,10 @@ export function install(config: CaptureDeliveryConfig = captureDeliveryFromIniti
   // connection from its unload handler and that reaches endCall before pagehide
   // fires. This is what makes a reload's outcome a decision rather than a race.
   window.addEventListener("beforeunload", () => {
-    pageIsGoingAway = true;
+    unloadStartedAtMs = Date.now();
   });
   window.addEventListener("pagehide", () => {
-    pageIsGoingAway = true;
+    unloadStartedAtMs = Date.now();
     void endPage();
   });
 }
