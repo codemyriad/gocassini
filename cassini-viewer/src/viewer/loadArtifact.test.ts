@@ -645,12 +645,21 @@ describe("loadArtifactFromDirectory", () => {
       },
     } as Window;
     const summaryMarkdown = "# Meeting summary\n\n- Shipped the thing\n";
-    const portableFixture = {
+    const manifest = {
+      kind: "cassini-portable-meeting",
+      version: 1,
+      profile: "ogg-opus",
       meeting: { durationMs: 2000 },
-      speakers: [{ id: "spk_1", label: "Alice" }],
-      transcript: {
-        items: [{ id: "seg_1", speaker: "spk_1", startMs: 0, endMs: 1000, text: "hello" }],
+      audio: {
+        container: "ogg",
+        codec: "opus",
+        sampleRate: 48_000,
+        channels: 1,
+        sampleCount: 96_000,
+        durationMs: 2000,
       },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
       attachments: [
         {
           name: "summary.md",
@@ -659,7 +668,12 @@ describe("loadArtifactFromDirectory", () => {
         },
       ],
     };
-    const portableBytes = buildPortableOpusFixture(portableFixture);
+    const rawTranscript = {
+      format: "cassini.words.v1",
+      wordCount: 1,
+      items: [{ id: "seg_1", speaker: "spk_1", startMs: 0, endMs: 1000, text: "hello" }],
+    };
+    const portableBytes = buildPortableOpusFixture({ manifest, rawTranscript });
     globalThis.fetch = vi.fn(async (input: string | URL) => {
       const url = String(input);
       if (url.endsWith(".opus")) {
