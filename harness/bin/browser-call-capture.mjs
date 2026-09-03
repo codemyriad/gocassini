@@ -2,6 +2,13 @@
 // Drive the browser-only half of the real Talk source-capture harness leg.
 // The shell orchestrator owns Nextcloud, Talk, the ExApp, and disk assertions;
 // this process owns only browser interaction and browser-side evidence.
+//
+// Capture follows Talk's official recording, so BOTH participants are subjects:
+// Alice and Bob each record their own microphone and each upload their own
+// capture under their own Nextcloud identity. Neither browser is asked anything
+// and neither stores anything to say it was captured. Alice additionally
+// switches microphone mid-call, which is the one thing that cuts a capture into
+// several segments.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -22,7 +29,6 @@ const baseURL = process.env.NEXTCLOUD_URL.replace(/\/+$/, "");
 const roomToken = process.env.ROOM_TOKEN;
 const logDir = process.env.BROWSER_LOG_DIR;
 const timeout = Number(process.env.BROWSER_TIMEOUT_MS || 120_000);
-const consentKey = "cassini.sourceCapture.consent";
 const resultPath = path.join(logDir, "result.json");
 const pendingEvidence = new Set();
 const evidenceErrors = [];
@@ -218,11 +224,22 @@ async function login(page, participant, password) {
   await fs.writeFile(path.join(logDir, `${participant}-after-login.html`), await page.content());
 }
 
-async function setCaptureConsent(page, granted) {
-  await page.evaluate(({ key, allow }) => {
-    if (allow) localStorage.setItem(key, "granted");
-    else localStorage.removeItem(key);
-  }, { key: consentKey, allow: granted });
+// captureStorageKeys reports what the payload left in this browser, other than
+// its own delivery bookkeeping. Cassini records no answer from a participant,
+// so this must stay empty: a key here would be a consent-shaped surface growing
+// back on the quiet.
+//
+// cassini.sourceCapture.uploadAttempts is excluded deliberately. It counts
+// refusals per buffered capture so a permanently-failing deployment stops
+// re-offering a meeting-sized body forever; it says nothing about a person, and
+// a run that hit one transient 502 would otherwise fail here for the wrong
+// reason.
+const DELIVERY_BOOKKEEPING_KEY = "cassini.sourceCapture.uploadAttempts";
+
+async function captureStorageKeys(page) {
+  return page.evaluate((bookkeeping) => (
+    Object.keys(localStorage).filter((key) => key.startsWith("cassini") && key !== bookkeeping)
+  ), DELIVERY_BOOKKEEPING_KEY);
 }
 
 async function mediaSnapshot(page) {
@@ -343,6 +360,22 @@ async function opfsSnapshot(page) {
     }
     return captures;
   });
+}
+
+// waitForDrainedCaptureStorage polls until the browser has let go of its
+// buffer. The payload deletes the OPFS directory only after the server accepts
+// the upload, several awaits after the response this process saw, so reading
+// once would race that teardown rather than test it.
+async function waitForDrainedCaptureStorage(page, participant) {
+  const deadline = Date.now() + 20_000;
+  let captures = await opfsSnapshot(page);
+  while (Date.now() < deadline && captures.length > 0) {
+    await delay(250);
+    captures = await opfsSnapshot(page);
+  }
+  assert(captures.length === 0,
+    `${participant}: source-capture OPFS state survived an accepted upload: ${JSON.stringify(captures)}`);
+  return captures;
 }
 
 async function talkRequest(page, method, endpoint, body) {
@@ -537,9 +570,7 @@ try {
   const bobUploadEvidence = attachEvidence(bobPage, "bob");
 
   await login(alicePage, "alice", process.env.ALICE_PASSWORD);
-  await setCaptureConsent(alicePage, true);
   await login(bobPage, "bob", process.env.BOB_PASSWORD);
-  await setCaptureConsent(bobPage, false);
 
   result.alice.preRecordingOPFS = await opfsSnapshot(alicePage);
   result.bob.preRecordingOPFS = await opfsSnapshot(bobPage);
@@ -555,14 +586,23 @@ try {
   assert(result.bob.joinedBeforeRecordingOPFS.length === 0, "Bob captured before Talk recording became active");
   result.recording = await startRecording(alicePage);
 
-  await alicePage.waitForFunction(async () => {
+  // Both browsers, not only the one that started the recording. Talk's
+  // confirmed recording is the whole trigger, so a Bob who records nothing here
+  // means the payload is still gating on something of its own.
+  const captureStarted = async () => {
     const root = await navigator.storage.getDirectory();
     for await (const [name] of root.entries()) if (name.startsWith("capture-")) return true;
     return false;
-  }, null, { timeout });
+  };
+  await alicePage.waitForFunction(captureStarted, null, { timeout });
+  await bobPage.waitForFunction(captureStarted, null, { timeout });
   await delay(3_200);
   result.bob.duringRecordingOPFS = await opfsSnapshot(bobPage);
-  assert(result.bob.duringRecordingOPFS.length === 0, "no-consent Bob created source-capture OPFS state");
+  assert(result.bob.duringRecordingOPFS.length === 1,
+    `Bob buffered ${result.bob.duringRecordingOPFS.length} captures for one recorded call`);
+  const bobSegmentFiles = result.bob.duringRecordingOPFS.flatMap((capture) => capture.files)
+    .filter((file) => /^segment-\d+\.webm$/.test(file.name));
+  assert(bobSegmentFiles.length >= 1, "Bob created no OPFS segment file during the recorded call");
 
   result.alice.mediaBeforeSwitch = await mediaSnapshot(alicePage);
   result.alice.microphoneSwitch = await switchMicrophone(alicePage);
@@ -576,28 +616,50 @@ try {
   assert(segmentFiles.length >= 2, `microphone switch left only ${segmentFiles.length} OPFS segment file(s)`);
   assert(segmentFiles.some((file) => Number(file.size || 0) > 1_000), "sealed pre-switch OPFS segment is implausibly small");
 
-  const uploadResponse = alicePage.waitForResponse((response) => (
+  const captureUpload = (response) => (
     response.request().method() === "POST" && response.url().includes("/operator/capture/upload")
-  ), { timeout: 45_000 });
+  );
+
+  // Both listeners are armed before either participant leaves. Bob's upload is
+  // normally triggered by his own leave, but if this Talk stops the recording
+  // when the moderator who started it goes, Talk's confirmed recording-off
+  // uploads Bob's capture at that moment instead — and a listener armed after
+  // Alice left would wait out its timeout on an upload that already happened.
+  const aliceUploadResponse = alicePage.waitForResponse(captureUpload, { timeout: 45_000 });
+  const bobUploadResponse = bobPage.waitForResponse(captureUpload, { timeout: 90_000 });
+
   await leaveCall(alicePage, "alice");
   aliceLeft = true;
-  const upload = await uploadResponse;
+  const aliceUpload = await aliceUploadResponse;
   const observedAliceUploads = await persistObservedUploadBodies(alicePage, "alice", aliceUploadEvidence, 1);
   result.alice.upload = observedAliceUploads.at(-1);
-  assert(result.alice.upload.status === upload.status(), "page and Playwright disagreed on upload HTTP status");
-  assert(upload.status() === 202, `source capture upload returned HTTP ${upload.status()}: ${result.alice.upload.body}`);
+  assert(result.alice.upload.status === aliceUpload.status(), "alice: page and Playwright disagreed on upload HTTP status");
+  assert(aliceUpload.status() === 202, `alice: source capture upload returned HTTP ${aliceUpload.status()}: ${result.alice.upload.body}`);
+
   await leaveCall(bobPage, "bob");
   bobLeft = true;
-  await delay(3_000);
-  await persistObservedUploadBodies(bobPage, "bob", bobUploadEvidence);
-  result.bob.afterLeaveOPFS = await opfsSnapshot(bobPage);
-  result.bob.uploadCount = bobUploadEvidence.uploadRequests.length;
-  assert(result.bob.afterLeaveOPFS.length === 0, "no-consent Bob retained source-capture OPFS state after leaving");
-  assert(result.bob.uploadCount === 0, "no-consent Bob attempted a source-capture upload while leaving");
+  const bobUpload = await bobUploadResponse;
+  const observedBobUploads = await persistObservedUploadBodies(bobPage, "bob", bobUploadEvidence, 1);
+  result.bob.upload = observedBobUploads.at(-1);
+  assert(result.bob.upload.status === bobUpload.status(), "bob: page and Playwright disagreed on upload HTTP status");
+  assert(bobUpload.status() === 202, `bob: source capture upload returned HTTP ${bobUpload.status()}: ${result.bob.upload.body}`);
+
+  result.alice.afterLeaveOPFS = await waitForDrainedCaptureStorage(alicePage, "alice");
+  result.bob.afterLeaveOPFS = await waitForDrainedCaptureStorage(bobPage, "bob");
+  // Nothing per participant is stored anywhere in either browser: capture
+  // followed Talk's recording and left no trace of its own behind.
+  result.alice.captureStorageKeys = await captureStorageKeys(alicePage);
+  result.bob.captureStorageKeys = await captureStorageKeys(bobPage);
+  assert(result.alice.captureStorageKeys.length === 0,
+    `alice: browser storage holds capture keys ${JSON.stringify(result.alice.captureStorageKeys)}`);
+  assert(result.bob.captureStorageKeys.length === 0,
+    `bob: browser storage holds capture keys ${JSON.stringify(result.bob.captureStorageKeys)}`);
   await alicePage.screenshot({ path: path.join(logDir, "alice-after-leave.png"), fullPage: true }).catch(() => {});
   await bobPage.screenshot({ path: path.join(logDir, "bob-after-leave.png"), fullPage: true }).catch(() => {});
   result.alice.observedUploadRequestCount = aliceUploadEvidence.uploadRequests.length;
   result.alice.observedUploadResponseCount = aliceUploadEvidence.uploadResponses.length;
+  result.bob.observedUploadRequestCount = bobUploadEvidence.uploadRequests.length;
+  result.bob.observedUploadResponseCount = bobUploadEvidence.uploadResponses.length;
   await drainEvidence();
   assert(evidenceErrors.length === 0, `could not persist browser evidence: ${evidenceErrors.join("; ")}`);
   result.result = "passed";

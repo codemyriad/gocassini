@@ -45,9 +45,9 @@ negotiation. It creates no audio file or OPFS directory until Talk's confirmed
 recording-active status; confirmed recording-off seals and uploads immediately.
 The browser e2e asserts that ordering against a real `RTCPeerConnection`.
 
-The ExApp remains responsible for the worker, OPFS capture, upload intake,
-consent, the periodic fail-closed revocation check, and ingestion. The companion
-contains no audio or storage logic.
+The ExApp remains responsible for the worker, OPFS capture, upload intake, the
+periodic fail-closed revocation check, and ingestion. The companion contains no
+audio or storage logic.
 
 ## Why the service-worker route was removed
 

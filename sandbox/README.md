@@ -146,9 +146,10 @@ Without `--with-capture` an enabled companion is disabled again, which is what
 backing the feature out completely requires.
 
 From GitHub, the `Deploy Sandbox` workflow exposes the same two choices as the
-`source_capture` and `source_audio_ingest` inputs. Participants still opt in
-themselves, per "Trying it" in the capture document; nothing is collected until
-they do.
+`source_capture` and `source_audio_ingest` inputs. With capture on, every
+authenticated participant of a recorded call is captured — there is nothing per
+participant to set up, in the browser or anywhere else. Record a call as
+described under "Trying it" in the capture document.
 
 The HaRP shared key persists in a fixed **`/opt/cassini-aio`**
 (override with `CASSINI_AIO_STATE`), **not** in the repo. It must be a single

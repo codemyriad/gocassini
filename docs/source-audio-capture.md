@@ -144,11 +144,14 @@ a minute rather than at the next page load. The upload endpoint refuses as a
 second line, and a client that gets that refusal deletes its buffer rather than
 keeping it for a retry.
 
-This is the containment boundary for the known limitations below — chiefly
-consent recorded per browser origin rather than per Nextcloud account. That is
-acceptable for a deployment whose operator chose to run this prototype; it is
-not acceptable for one that merely
-upgraded.
+This switch is the whole containment boundary, and it is the only one Cassini
+has. With it on, every authenticated participant of every recorded call is
+captured; there is no per-participant control and no answer of theirs is
+recorded anywhere. Telling the room is Talk's job — its recording indicator, and its own
+`recording_consent` setting if the installation needs each participant asked. So
+the switch is acceptable for a deployment whose operator chose to run this
+prototype and configured Talk accordingly; it is not acceptable for one that
+merely upgraded.
 
 `CASSINI_SOURCE_AUDIO_INGEST` decides whether collected audio reaches a
 transcript. See below.
@@ -158,7 +161,7 @@ transcript. See below.
 Capture and intake only collect. Substituting a participant's own recording
 into the transcript is a judgement about where somebody's words belong, and the
 offset half of that judgement still carries client clock skew. So an
-installation opts in deliberately:
+installation turns it on deliberately:
 
 ```
 CASSINI_SOURCE_AUDIO_INGEST=1
@@ -217,8 +220,9 @@ exists for. The tests assert that the loss is real, that the captured copy is
 unaffected by it, that the anchors advance monotonically on the sender's clock,
 that a mute spell is recorded, that joining alone creates no audio storage,
 that confirmed recording-off uploads while the call stays connected, that a
-reload resumes and preserves both durable intervals, and that nothing is
-uploaded without consent.
+reload resumes and preserves both durable intervals, that a recorded call is
+captured with nothing stored in the browser, and that the administrator switch
+stops and discards a capture already running.
 
 ```bash
 npm run build:capture -w cassini-app
@@ -253,17 +257,26 @@ IMAGE_REF=cassini-exapp:e2e-v3-cpu-gpu ./harness/bin/ci-e2e-installed-exapp-capt
 The seam between those legs is
 `harness/bin/ci-e2e-browser-call-capture.sh`. It installs the exact image and
 its companion into the full harness stack, logs two real Chromium participants
-into Nextcloud, and joins both to the real Talk/HPB call with fake media. Alice
-opts in, Talk starts an official audio recording, and Alice changes microphone
-mid-call so the payload must rotate and upload multiple source segments. Bob
-sends audio in the same call without capture consent and is the differential
-negative control. The leg accepts success only after Alice's browser-observed
-multipart response accounts for the same byte-plausible segment set found
-under Alice's authenticated owner path on the ExApp; Bob must create neither
-OPFS capture state nor a server owner directory.
+into Nextcloud, and joins both to the real Talk/HPB call with fake media. Talk
+starts an official audio recording, and both browsers must therefore capture:
+Alice additionally changes microphone mid-call, so the payload must rotate and
+upload multiple source segments, while Bob's single-segment capture is the same
+path without that complication. The leg accepts success only after each
+participant's own browser-observed multipart response accounts for the same
+byte-plausible segment set found under that participant's authenticated owner
+path on the ExApp, with nothing left in either browser. The administrator, who
+never joined, must own nothing.
 
 ```bash
 IMAGE_REF=cassini-exapp:e2e-v3-cpu-gpu ./harness/bin/ci-e2e-browser-call-capture.sh
+```
+
+That leg's acceptance contract is also checked offline, with no Docker and no
+browser, so an edit that quietly stops requiring one of those things fails in a
+second rather than passing a stack run for the wrong reason:
+
+```bash
+./harness/bin/test-browser-capture-contract.sh
 ```
 
 This real-browser leg is advisory in `publish-exapp-image.yml`, alongside the
@@ -273,10 +286,11 @@ responsible for proxy refusal and replacement matrices.
 
 ## Trying it
 
-Three things have to be true before a single byte is captured, and they are
-deliberately independent: an administrator enables collection, the companion
-app is installed so the payload reaches Talk at all, and the participant opts
-in themselves.
+Two things have to be true before a single byte is captured, and they are
+deliberately independent: an administrator enables collection, and the companion
+app is installed so the payload reaches Talk at all. There is nothing per
+participant. Once both are true, every authenticated participant of a recorded
+call is captured.
 
 **1. Install the companion app.** The payload is delivered by `cassini_capture`,
 a separate native Nextcloud app (see
@@ -302,21 +316,21 @@ On the demo sandbox, steps 1 and 2 are one command or one workflow dispatch:
 `sandbox/wire-cassini.sh --image … --with-capture`, or the `Deploy Sandbox`
 workflow with `source_capture` set. See `sandbox/README.md`.
 
-**3. Opt in, per participant.** There is no UI for this yet. On any Nextcloud
-page in that browser:
-
-```js
-localStorage.setItem("cassini.sourceCapture.consent", "granted")
-```
-
-Then join an **authenticated** Talk call (guest pages are not supported —
-Talk does not dispatch the hook there), press Talk's **Record** control, talk,
-and press **Stop recording**. Cassini starts only after Talk confirms the
-recording active and uploads at the confirmed stop; leaving the room performs
-the same teardown as a fallback. Uploads land under the
+**3. Make a recording.** Nothing else is set up, in the browser or anywhere
+else. Join an **authenticated** Talk call (guest pages are not supported — Talk
+does not dispatch the hook there), press Talk's **Record** control, talk, and
+press **Stop recording**. Cassini starts only after Talk confirms the recording
+active and uploads at the confirmed stop; leaving the room performs the same
+teardown as a fallback. Every signed-in participant of that call does the same,
+in their own browser, under their own account. Uploads land under the
 operator's `--capture-root` (`CASSINI_OPERATOR_CAPTURE_ROOT`, default
 `<data>/capture`) as `<room>/<user>/<call-start-ms>/`, holding `capture.json`
 and the segment files.
+
+Whether the room is told, beyond Talk's own recording indicator, is Talk's
+setting to make: `occ config:app:set spreed recording_consent --value 1` makes
+Talk ask each participant before a recorded call starts. Cassini does not touch
+it.
 
 If nothing arrives, check in this order: the companion is enabled
 (`occ app:list | grep cassini_capture`), the operator logged the synchronized
@@ -328,16 +342,12 @@ logged-in user. The client fails closed at every one of those.
 - **Cross-correlation refinement of the offset** (see above). This is the gap
   that decides whether ingestion can be trusted on arbitrary clients, and the
   reason ingestion is off by default.
-- **Account-scoped consent.** The opt-in lives in `localStorage`, which is
-  per-origin, not per-Nextcloud-account: two people sharing a browser profile
-  share the answer.
 - **Rebuild on late upload.** An upload arriving after the meeting was published
   does not trigger a rebuild; only a manual rerun picks it up.
 - **The published mix.** Ingestion changes the transcript only. The playable
   audio stays the recorded mix, which is what the viewer seeks against.
 - **Attribution.** The cross-track attribution stage still measures the recorded
   tracks, not the ingested ones.
-- **The opt-in UI**, and with it any consent copy worth shipping.
 - **Verification of an upload against the recorder's own audio** (see above).
 - **The second copy of ingested audio.** Captures themselves are now bounded and
   swept — see the capture quota and retention settings — but with ingestion on
@@ -347,14 +357,11 @@ logged-in user. The client fails closed at every one of those.
   quota nor the capture sweep. Separately, nothing rate-limits a participant:
   the quotas bound how much may be held at once, not how often somebody may
   upload, so churn is unbounded even though volume is not.
-- **Erasure.** Withdrawing consent stops a recording in progress and discards
-  its buffer. After the call it is weaker than it sounds: it reliably stops a
-  buffered recording being sent, because the retry path checks consent first,
-  but it does not delete what is already buffered in the browser. And there is
-  nothing a participant can do about audio already uploaded. They cannot see
-  what they have uploaded, cannot ask for it back, and cannot have it deleted
-  ahead of the sweep except by an administrator removing the directory by
-  hand.
+- **Erasure.** The administrator switch stops a recording in progress and
+  discards its buffer, and that is the only lever anyone has. A participant has
+  none: they cannot see what they have uploaded, cannot ask for it back, and
+  cannot have it deleted ahead of the sweep except by an administrator removing
+  the directory by hand.
 - **Silent outcomes at the client.** A capture the server refuses — the terminal
   status allowlist, 400/403/413/415/422 — is deleted from OPFS unsent, and so is
   one that has failed `MAX_UPLOAD_ATTEMPTS` times. Both are deliberate: keeping

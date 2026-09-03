@@ -31,10 +31,11 @@ rest of this page.
 transcript is still produced and published; only the transcript cleanup/summary is
 skipped.
 
-**Source-side capture is off by default**, and three separate things have to be
-switched on before any browser records anything. It is the only step that runs
-code inside a participant's browser, and the only data Cassini stores that no
-retention policy covers and no participant can have deleted — see
+**Source-side capture is off by default**, and two separate things have to be
+switched on before any browser records anything. Once they are, every
+authenticated participant of every recorded call is captured. It is the only
+step that runs code inside a participant's browser, and the only data Cassini
+stores that no retention policy covers and no participant can have deleted — see
 [Participant source-audio capture](#participant-source-audio-capture) before
 turning it on.
 
@@ -124,9 +125,9 @@ It is off by default, and it is an experimental prototype. What follows is what
 an installation that turns it on actually does today, including the parts that
 are not finished.
 
-### Three switches, not one
+### Two switches, and no third
 
-Nothing is captured unless all three are true, and they are independent:
+Nothing is captured unless both are true, and they are independent:
 
 - **`CASSINI_SOURCE_CAPTURE=1`** on the Cassini ExApp. Off by default. With it
   off the browser assets 404 and the upload endpoint refuses, so nothing is
@@ -134,12 +135,25 @@ Nothing is captured unless all three are true, and they are independent:
 - **The `cassini_capture` companion app is installed and enabled.** It is a
   separate native Nextcloud app; installing or updating Cassini does not install
   it, and without it no capture code reaches Talk's page at all.
-- **The participant opted in, in that browser.** Capture never starts on its own.
+
+There is no third switch, and in particular there is nothing per participant.
+**With both of the above on, every authenticated participant of every recorded
+call is captured** — everyone whose browser loads Talk's call page while Talk's
+own recording is confirmed active. Cassini offers no per-participant control: no
+opt-in, no opt-out, no dialog, and no answer of theirs recorded anywhere.
+
+What informs the people in the room is Talk's, not Cassini's: Talk's recording
+indicator, which everyone sees for the whole time capture can run, and Talk's
+own recording-consent setting (`occ config:app:set spreed recording_consent
+--value 1`), which makes Talk ask each participant before a recorded call. If
+your installation needs participants to be told or to agree, configure that in
+Talk. Cassini neither adds to it nor changes it.
 
 Turning the administrator switch back off reaches a call already in progress. The
 payload re-asks the server every thirty seconds and treats an unreachable or
 unclear answer as no, so an in-flight recording stops within about half a minute,
-and the endpoint refuses whatever a stale client still tries to send.
+that call's buffered audio is discarded rather than uploaded, and the endpoint
+refuses whatever a stale client still tries to send.
 
 ### What is captured, and when
 
@@ -227,38 +241,30 @@ may be held at once.
 
 ### What a participant can and cannot do
 
-**Can:** grant and withdraw the opt-in. It is a browser storage key
-(`cassini.sourceCapture.consent`), set by hand or through
-`window.cassiniSourceCapture.enable()` and `.disable()` on the Cassini page.
-Withdrawing during a call stops the recorder within a fraction of a second and
-discards that call's buffer without uploading it. Withdrawal is terminal for
-that call — granting again a moment later does not resurrect the audio recorded
-meanwhile.
+**Can:** what Talk already gives them. Talk's mute is honoured at the source, so
+a muted participant is recorded as silence. Talk's recording indicator tells
+them the call is being recorded, and with Talk's recording-consent setting on
+they are asked before it starts. Not joining, muting, or leaving are the
+controls; they are Talk's controls, and they are real.
 
-Withdrawing after the call is weaker than it sounds. It reliably stops a
-buffered recording being uploaded, because the retry path checks consent before
-it sends anything. It does not delete what is already buffered: that audio stays
-in the browser's storage, unsent, until the browser reclaims it or the
-participant clears the site's data.
-
-**Cannot:** anything at all about audio already uploaded. There is no withdrawal
-path for it, no list of what they have uploaded, and no way to have one deleted
-except by asking an administrator to remove it from the volume.
+**Cannot:** anything specific to Cassini. There is no per-participant switch to
+turn capture off while staying in a recorded call, because Cassini does not have
+one. Nor is there anything to do about audio already uploaded: no list of what
+they have uploaded, no withdrawal path, and no way to have one deleted except by
+asking an administrator to remove it from the volume.
 
 **Is not told what became of it either.** A recording the server refuses —
 capture switched off since, no longer a participant of that room, a payload it
 rejects — is deleted from the browser unsent, and so is one whose delivery keeps
 failing. Both are the right call; the alternative is a meeting-sized upload
 re-offered on every Talk page load forever. But neither is announced anywhere a
-participant would look, so somebody who opted in cannot tell whether their audio
+participant would look, so nobody in the call can tell whether their audio
 reached the server, was discarded, or is still waiting to be sent.
 
-**There is no interface for any of this yet** — no dialog, no toggle, no consent
-copy. Setting a storage key by hand is not informed consent in the sense a
-privacy notice needs, and the key is stored per browser profile rather than per
-Nextcloud account, so two people signing in on the same profile share one answer
-and the second of them was never asked. Treat the opt-in as a pilot mechanism,
-not the finished one, and tell participants about the feature yourself.
+**So the administrator carries this decision alone.** Turning the switch on
+captures everybody in every recorded call, and the only thing the room is told
+is what Talk tells it. Configure Talk's recording consent, tell participants
+about the feature yourself, and treat this as the experimental prototype it is.
 
 ## What leaves your infrastructure, and when
 

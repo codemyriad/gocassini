@@ -3,13 +3,13 @@
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
   <id>cassini_capture</id>
   <name>Cassini source capture</name>
-  <summary>Loads Cassini's opt-in source-audio recorder on Talk calls.</summary>
+  <summary>Loads Cassini's source-audio recorder on Talk calls.</summary>
   <description><![CDATA[Companion app for the Cassini recording ExApp. It uses Nextcloud's public
-LoadAdditionalScriptsEvent hook to load Cassini's participant-opt-in source
-audio capture on authenticated Talk call pages. It does not record, receive, or
-store audio itself; the gocassini ExApp remains responsible for consent,
-collection, upload, and ingestion policy. The feature is experimental and off
-by default.]]></description>
+LoadAdditionalScriptsEvent hook to load Cassini's source audio capture on
+authenticated Talk call pages. Capture follows Talk's own official recording. It
+does not record, receive, or store audio itself; the gocassini ExApp remains
+responsible for collection, upload, and ingestion policy. The feature is
+experimental and off by default.]]></description>
   <version>0.2.0-beta.6</version>
   <licence>agpl</licence>
   <author>codemyriad</author>

@@ -10,9 +10,12 @@
 # matters most: Talk replaces Alice's microphone track and the browser upload
 # arrives with multiple source-audio segments.
 #
-# Alice opts in. Bob is a differential no-consent control in the same official
-# recording: both browsers must connect to the SFU and send audio bytes, while
-# only Alice may create OPFS state or an owner directory on the ExApp.
+# Capture follows Talk's official recording, so both participants are subjects
+# and both are asserted: Alice and Bob must each connect to the SFU, each buffer
+# their own OPFS capture, each upload it, and each land under their OWN
+# authenticated owner directory with every stored byte accounted for by the
+# response their own browser saw. The differential control is the administrator,
+# who never joined and must own nothing.
 #
 # Evidence lands in $LOG_DIR (summary.json, browser API response bodies and
 # diagnostics, container/compose logs). Teardown runs on every exit.
@@ -52,11 +55,19 @@ INSTALLED_IMAGE_ID=""
 CAPTURE_ROOT=""
 CAPTURE_ROOT_BEFORE_CALL="unknown"
 ROOM_TOKEN=""
-CALL_START_MS=""
-STORED_SEGMENT_COUNT=0
-STORED_BYTES=0
+ALICE_CALL_START_MS=""
+ALICE_SEGMENT_COUNT=0
+ALICE_BYTES=0
+BOB_CALL_START_MS=""
+BOB_SEGMENT_COUNT=0
+BOB_BYTES=0
 CAPTURE_ROOT_EMPTY_BEFORE_CALL=false
-BOB_NO_CAPTURE=false
+ADMIN_NO_CAPTURE=false
+# Set by verify_owner_capture, which cannot return them: `fail` has to exit the
+# script, and a command substitution would swallow that exit in a subshell.
+OWNER_CALL_START_MS=""
+OWNER_SEGMENT_COUNT=0
+OWNER_BYTES=0
 CHECKS_PASSED=()
 
 STACK_TOPOLOGY=(
@@ -170,16 +181,24 @@ assert_fresh_stack_targets() {
   done
 }
 
+# readable_json echoes a path holding parseable JSON, substituting a `null`
+# document when the real one is missing or truncated, so a failed run still
+# writes a summary instead of losing every other field with it.
+readable_json() {
+  local candidate="$1" fallback="$2"
+  if jq -e . "$candidate" >/dev/null 2>&1; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+  printf 'null\n' >"$fallback"
+  printf '%s\n' "$fallback"
+}
+
 write_summary() {
-  local rc="$1" browser_result="$LOG_DIR/browser/result.json" stored_sidecar="$LOG_DIR/stored-sidecar.json"
-  if ! jq -e . "$browser_result" >/dev/null 2>&1; then
-    printf 'null\n' >"$LOG_DIR/browser-result.empty.json"
-    browser_result="$LOG_DIR/browser-result.empty.json"
-  fi
-  if ! jq -e . "$stored_sidecar" >/dev/null 2>&1; then
-    printf 'null\n' >"$LOG_DIR/stored-sidecar.empty.json"
-    stored_sidecar="$LOG_DIR/stored-sidecar.empty.json"
-  fi
+  local rc="$1" browser_result stored_alice stored_bob
+  browser_result="$(readable_json "$LOG_DIR/browser/result.json" "$LOG_DIR/browser-result.empty.json")"
+  stored_alice="$(readable_json "$LOG_DIR/stored-sidecar-$ALICE.json" "$LOG_DIR/stored-sidecar-$ALICE.empty.json")"
+  stored_bob="$(readable_json "$LOG_DIR/stored-sidecar-$BOB.json" "$LOG_DIR/stored-sidecar-$BOB.empty.json")"
   jq -n \
     --arg result "$RESULT" \
     --argjson exit_code "$rc" \
@@ -191,21 +210,28 @@ write_summary() {
     --arg capture_root "$CAPTURE_ROOT" \
     --arg capture_root_before_call "$CAPTURE_ROOT_BEFORE_CALL" \
     --arg room_token "$ROOM_TOKEN" \
-    --arg call_start_ms "$CALL_START_MS" \
-    --argjson segment_count "$STORED_SEGMENT_COUNT" \
-    --argjson bytes "$STORED_BYTES" \
+    --arg alice_call_start_ms "$ALICE_CALL_START_MS" \
+    --argjson alice_segment_count "$ALICE_SEGMENT_COUNT" \
+    --argjson alice_bytes "$ALICE_BYTES" \
+    --arg bob_call_start_ms "$BOB_CALL_START_MS" \
+    --argjson bob_segment_count "$BOB_SEGMENT_COUNT" \
+    --argjson bob_bytes "$BOB_BYTES" \
     --argjson capture_root_empty "$CAPTURE_ROOT_EMPTY_BEFORE_CALL" \
-    --argjson bob_no_capture "$BOB_NO_CAPTURE" \
+    --argjson admin_no_capture "$ADMIN_NO_CAPTURE" \
     --argjson checks "$(printf '%s\n' "${CHECKS_PASSED[@]:-}" | sed '/^$/d' | jq -R . | jq -s .)" \
     --slurpfile browser "$browser_result" \
-    --slurpfile sidecar "$stored_sidecar" \
+    --slurpfile alice_sidecar "$stored_alice" \
+    --slurpfile bob_sidecar "$stored_bob" \
     '{result:$result,exit_code:$exit_code,image_ref:$image_ref,source_image_id:$source_image_id,
       installed_image_id:$installed_image_id,app_version:$app_version,cleanup:$cleanup,
-      capture_root:$capture_root,room_token:$room_token,call_start_ms:$call_start_ms,
-      stored:{segment_count:$segment_count,bytes:$bytes,sidecar:$sidecar[0]},
+      capture_root:$capture_root,room_token:$room_token,
+      stored:{alice:{call_start_ms:$alice_call_start_ms,segment_count:$alice_segment_count,
+          bytes:$alice_bytes,sidecar:$alice_sidecar[0]},
+        bob:{call_start_ms:$bob_call_start_ms,segment_count:$bob_segment_count,
+          bytes:$bob_bytes,sidecar:$bob_sidecar[0]}},
       controls:{capture_root_empty_before_call:$capture_root_empty,
-        capture_root_state_before_call:$capture_root_before_call,no_consent_user:"bob",
-        no_consent_user_stored_nothing:$bob_no_capture},
+        capture_root_state_before_call:$capture_root_before_call,uninvolved_user:"admin",
+        uninvolved_user_stored_nothing:$admin_no_capture},
       browser:$browser[0],checks_passed:$checks}' \
     >"$LOG_DIR/summary.json" || true
 }
@@ -346,16 +372,22 @@ if ! NEXTCLOUD_URL="$NEXTCLOUD_URL" ROOM_TOKEN="$ROOM_TOKEN" \
   fail "real-browser Talk call failed (see $LOG_DIR/browser/result.json)"
 fi
 
-jq -e '
+# The contract the browser leg's result.json must satisfy. Kept between these
+# markers because test-browser-capture-contract.sh extracts it verbatim and
+# evaluates it offline against synthesized documents — an edit that weakens it
+# has to fail there rather than pass unnoticed on a machine with no stack.
+# BEGIN browser-result contract
+BROWSER_RESULT_CONTRACT='
   .result == "passed"
   and .recording.callRecording == 2
   and (.alice.preRecordingOPFS | length) == 0
   and (.bob.preRecordingOPFS | length) == 0
   and (.alice.joinedBeforeRecordingOPFS | length) == 0
   and (.bob.joinedBeforeRecordingOPFS | length) == 0
-  and (.bob.duringRecordingOPFS | length) == 0
+  and (.alice.afterLeaveOPFS | length) == 0
   and (.bob.afterLeaveOPFS | length) == 0
-  and .bob.uploadCount == 0
+  and (.alice.captureStorageKeys | length) == 0
+  and (.bob.captureStorageKeys | length) == 0
   and .alice.mediaBeforeRecording.audioBytesSent > 2000
   and .bob.mediaBeforeRecording.audioBytesSent > 2000
   and .alice.mediaBeforeRecording.mediaDialogClicked == true
@@ -371,73 +403,110 @@ jq -e '
   and .alice.microphoneSwitch.before.deviceId != .alice.microphoneSwitch.after.deviceId
   and .alice.microphoneSwitch.before.trackId != .alice.microphoneSwitch.after.trackId
   and ([.alice.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 2
+  and ([.bob.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 1
   and .alice.upload.status == 202
+  and .bob.upload.status == 202
   and .alice.observedUploadRequestCount == 1
-' "$LOG_DIR/browser/result.json" >/dev/null \
-  || fail "browser result lacks connected media, the differential control, microphone rotation, or an accepted upload"
-pass "two real browser participants sent SFU audio; only opted-in Alice captured and uploaded"
+  and .bob.observedUploadRequestCount == 1
+'
+# END browser-result contract
+jq -e "$BROWSER_RESULT_CONTRACT" "$LOG_DIR/browser/result.json" >/dev/null \
+  || fail "browser result lacks connected media, a capture and accepted upload from each participant, or microphone rotation"
+pass "both real browser participants sent SFU audio, captured themselves, and uploaded"
+pass "neither browser stored anything of its own for capture"
 pass "Talk's microphone selection replaced Alice's live sender and cut multiple browser segments"
 
-owner_root="$CAPTURE_ROOT/$ROOM_TOKEN/$ALICE"
-docker exec "$EXAPP_CONTAINER" test -d "$owner_root" \
-  || fail "accepted browser upload left no Alice owner directory under the capture root"
-CALL_START_MS="$(docker exec "$EXAPP_CONTAINER" ls -1 "$owner_root")"
-[[ "$CALL_START_MS" =~ ^[0-9]+$ ]] \
-  || fail "expected exactly one numeric Alice call directory, got: $CALL_START_MS"
-final_dir="$owner_root/$CALL_START_MS"
-docker exec "$EXAPP_CONTAINER" cat "$final_dir/capture.json" >"$LOG_DIR/stored-sidecar.json" \
-  || fail "stored browser capture has no capture.json"
+# verify_owner_capture asserts one participant's capture landed whole under
+# their own owner directory and is reconciled byte-for-byte against the upload
+# response their own browser saw. Results come back in OWNER_* rather than on
+# stdout: `fail` must exit the script, and a command substitution would trap
+# that exit inside a subshell and carry on.
+verify_owner_capture() {
+  local who="$1" owner="$2" min_segments="$3"
+  local owner_root="$CAPTURE_ROOT/$ROOM_TOKEN/$owner"
+  local sidecar="$LOG_DIR/stored-sidecar-$owner.json"
+  docker exec "$EXAPP_CONTAINER" test -d "$owner_root" \
+    || fail "accepted browser upload left no $owner owner directory under the capture root"
+  OWNER_CALL_START_MS="$(docker exec "$EXAPP_CONTAINER" ls -1 "$owner_root")"
+  [[ "$OWNER_CALL_START_MS" =~ ^[0-9]+$ ]] \
+    || fail "expected exactly one numeric $owner call directory, got: $OWNER_CALL_START_MS"
+  local final_dir="$owner_root/$OWNER_CALL_START_MS"
+  docker exec "$EXAPP_CONTAINER" cat "$final_dir/capture.json" >"$sidecar" \
+    || fail "stored $owner capture has no capture.json"
 
-jq -e --arg owner "$ALICE" --arg room "$ROOM_TOKEN" --arg format "$CAPTURE_FORMAT" --arg start "$CALL_START_MS" '
-  (.segments | length) as $count
-  | .format == $format
-    and .roomToken == $room
-    and .participantId == $owner
-    and .ownerUserId == $owner
-    and (.callStartWallMs | tostring) == $start
-    and (.receivedAt | type == "string" and length > 0)
-    and (.userAgent | test("Chrom(e|ium)"))
-    and $count >= 2
-    and ([.segments[].index] == [range(0; $count)])
-    and all(.segments[]; .audioName == ("segment-" + (.index | tostring) + ".webm")
-      and (.mimeType | startswith("audio/webm")))
-' "$LOG_DIR/stored-sidecar.json" >/dev/null \
-  || fail "stored sidecar is not Alice's contiguous multi-segment browser capture"
+  jq -e --arg owner "$owner" --arg room "$ROOM_TOKEN" --arg format "$CAPTURE_FORMAT" \
+    --arg start "$OWNER_CALL_START_MS" --argjson min "$min_segments" '
+    (.segments | length) as $count
+    | .format == $format
+      and .roomToken == $room
+      and .participantId == $owner
+      and .ownerUserId == $owner
+      and (.callStartWallMs | tostring) == $start
+      and (.receivedAt | type == "string" and length > 0)
+      and (.userAgent | test("Chrom(e|ium)"))
+      and $count >= $min
+      and ([.segments[].index] == [range(0; $count)])
+      and all(.segments[]; .audioName == ("segment-" + (.index | tostring) + ".webm")
+        and (.mimeType | startswith("audio/webm")))
+  ' "$sidecar" >/dev/null \
+    || fail "stored sidecar is not $owner's contiguous browser capture of this call"
 
-mapfile -t segment_names < <(jq -r '.segments[].audioName' "$LOG_DIR/stored-sidecar.json")
-STORED_SEGMENT_COUNT="${#segment_names[@]}"
-(( STORED_SEGMENT_COUNT >= 2 )) || fail "stored browser capture has fewer than two segments"
-printf 'name\tbytes\n' >"$LOG_DIR/stored-segments.tsv"
-for name in "${segment_names[@]}"; do
-  [[ "$name" =~ ^segment-[0-9]+\.webm$ ]] || fail "unsafe or unexpected segment name: $name"
-  bytes="$(docker exec "$EXAPP_CONTAINER" stat -c %s "$final_dir/$name")" \
-    || fail "sidecar-declared segment is absent: $name"
-  [[ "$bytes" =~ ^[0-9]+$ ]] || fail "$name has a non-numeric byte size: $bytes"
-  (( bytes > 1000 )) || fail "$name is implausibly small ($bytes bytes)"
-  STORED_BYTES=$((STORED_BYTES + bytes))
-  printf '%s\t%s\n' "$name" "$bytes" >>"$LOG_DIR/stored-segments.tsv"
-done
-(( STORED_BYTES > 10000 )) || fail "multi-segment browser capture is implausibly small in total ($STORED_BYTES bytes)"
+  local -a segment_names
+  mapfile -t segment_names < <(jq -r '.segments[].audioName' "$sidecar")
+  OWNER_SEGMENT_COUNT="${#segment_names[@]}"
+  (( OWNER_SEGMENT_COUNT >= min_segments )) \
+    || fail "stored $owner capture has fewer than $min_segments segment(s)"
+  OWNER_BYTES=0
+  local name bytes
+  printf 'name\tbytes\n' >"$LOG_DIR/stored-segments-$owner.tsv"
+  for name in "${segment_names[@]}"; do
+    [[ "$name" =~ ^segment-[0-9]+\.webm$ ]] || fail "unsafe or unexpected segment name: $name"
+    bytes="$(docker exec "$EXAPP_CONTAINER" stat -c %s "$final_dir/$name")" \
+      || fail "sidecar-declared segment is absent: $owner/$name"
+    [[ "$bytes" =~ ^[0-9]+$ ]] || fail "$owner/$name has a non-numeric byte size: $bytes"
+    (( bytes > 1000 )) || fail "$owner/$name is implausibly small ($bytes bytes)"
+    OWNER_BYTES=$((OWNER_BYTES + bytes))
+    printf '%s\t%s\n' "$name" "$bytes" >>"$LOG_DIR/stored-segments-$owner.tsv"
+  done
+  (( OWNER_BYTES > 10000 )) \
+    || fail "$owner's browser capture is implausibly small in total ($OWNER_BYTES bytes)"
 
-jq -e --arg room "$ROOM_TOKEN" --argjson segments "$STORED_SEGMENT_COUNT" --argjson bytes "$STORED_BYTES" '
-  (.alice.upload.body | fromjson) as $upload
-  | $upload.status == "accepted"
-    and $upload.room == $room
-    and $upload.segments == $segments
-    and $upload.bytes == $bytes
-' "$LOG_DIR/browser/result.json" >/dev/null \
-  || fail "browser-observed upload response does not account for every stored byte"
+  jq -e --arg who "$who" --arg room "$ROOM_TOKEN" \
+    --argjson segments "$OWNER_SEGMENT_COUNT" --argjson bytes "$OWNER_BYTES" '
+    (.[$who].upload.body | fromjson) as $upload
+    | $upload.status == "accepted"
+      and $upload.room == $room
+      and $upload.segments == $segments
+      and $upload.bytes == $bytes
+  ' "$LOG_DIR/browser/result.json" >/dev/null \
+    || fail "$owner's browser-observed upload response does not account for every stored byte"
 
-docker exec "$EXAPP_CONTAINER" test ! -e "$CAPTURE_ROOT/$ROOM_TOKEN/$BOB" \
-  || fail "no-consent Bob acquired a capture owner directory"
-BOB_NO_CAPTURE=true
+  grep -qF "capture upload: room=$ROOM_TOKEN owner=$owner segments=$OWNER_SEGMENT_COUNT bytes=$OWNER_BYTES" \
+    "$(exapp_logs)" || fail "operator log does not account for $owner's browser upload"
+}
+
+verify_owner_capture alice "$ALICE" 2
+ALICE_CALL_START_MS="$OWNER_CALL_START_MS"
+ALICE_SEGMENT_COUNT="$OWNER_SEGMENT_COUNT"
+ALICE_BYTES="$OWNER_BYTES"
+
+verify_owner_capture bob "$BOB" 1
+BOB_CALL_START_MS="$OWNER_CALL_START_MS"
+BOB_SEGMENT_COUNT="$OWNER_SEGMENT_COUNT"
+BOB_BYTES="$OWNER_BYTES"
+
+[[ "$ALICE_CALL_START_MS" != "$BOB_CALL_START_MS" || "$ALICE_BYTES" != "$BOB_BYTES" ]] \
+  || fail "Alice and Bob stored identical captures; one browser's audio was filed twice"
+
+# The administrator never joined the call. An owner directory for them would
+# mean the upload was attributed to the proxying identity rather than to the
+# authenticated browser user.
 docker exec "$EXAPP_CONTAINER" test ! -e "$CAPTURE_ROOT/$ROOM_TOKEN/admin" \
   || fail "capture was attributed to the room administrator instead of the browser user"
-grep -qF "capture upload: room=$ROOM_TOKEN owner=$ALICE segments=$STORED_SEGMENT_COUNT bytes=$STORED_BYTES" "$(exapp_logs)" \
-  || fail "operator log does not account for Alice's multi-segment browser upload"
+ADMIN_NO_CAPTURE=true
 staging_left="$(docker exec "$EXAPP_CONTAINER" sh -c 'find "$1" -maxdepth 1 -type d -name "upload-*" -print' sh "$CAPTURE_ROOT" || true)"
 [[ -z "$staging_left" ]] || fail "browser upload left staging directories behind: $staging_left"
 
-pass "browser-produced multi-segment WebM capture landed byte-plausibly on the ExApp"
-pass "disk path and server-stamped sidecar attribute the capture only to authenticated Alice"
-log "real-browser Talk source-capture seam passed: $STORED_SEGMENT_COUNT segments, $STORED_BYTES bytes"
+pass "both browser-produced WebM captures landed byte-plausibly on the ExApp"
+pass "disk paths and server-stamped sidecars attribute each capture to its own authenticated user"
+log "real-browser Talk source-capture seam passed: alice $ALICE_SEGMENT_COUNT segments/$ALICE_BYTES bytes, bob $BOB_SEGMENT_COUNT segments/$BOB_BYTES bytes"

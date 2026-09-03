@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   captureAllowedByServer,
-  consentGranted,
   enabledURLFrom,
   fetchTalkRecordingStatus,
+  install,
   normalizeCaptureDeliveryConfig,
   serverCheckIntervalMS,
   pickAudioSender,
@@ -116,10 +116,62 @@ describe("pickAudioSender", () => {
   });
 });
 
-describe("consentGranted", () => {
-  it("defaults to no capture", () => {
-    expect(consentGranted({ getItem: () => null })).toBe(false);
-    expect(consentGranted({ getItem: () => "granted" })).toBe(true);
+// fakeLocalStorage stands in for a browser profile's storage. The production
+// code reads localStorage off globalThis rather than taking it as an argument,
+// because it runs on a Talk page, a Cassini page and here, so the test has to
+// supply it the same way a browser does.
+function fakeLocalStorage(seed: Record<string, string>) {
+  const entries = new Map(Object.entries(seed));
+  return {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => void entries.set(key, value),
+    removeItem: (key: string) => void entries.delete(key),
+    keys: () => [...entries.keys()],
+  };
+}
+
+describe("install", () => {
+  // A browser profile that answered the opt-in this feature used to ask keeps
+  // that answer forever unless something deletes it: nothing reads or writes
+  // the key any more, so it would simply sit there — a recorded answer to a
+  // question this build no longer asks, on a profile whose owner may never open
+  // Cassini again, while docs/privacy.md tells administrators no such answer
+  // exists. Deleting it is the whole point, and it has to happen even where
+  // capture is switched off, which is the one case that returns early.
+  it("forgets an older build's opt-in even when capture is disabled", () => {
+    const storage = fakeLocalStorage({
+      "cassini.sourceCapture.consent": "granted",
+      "cassini.sourceCapture.uploadAttempts": '{"capture-room-1":2}',
+      "unrelated.key": "kept",
+    });
+    const globals = globalThis as { localStorage?: unknown };
+    const original = globals.localStorage;
+    globals.localStorage = storage;
+    try {
+      install({ enabled: false, proxyBase: "" });
+    } finally {
+      globals.localStorage = original;
+    }
+
+    expect(storage.getItem("cassini.sourceCapture.consent")).toBeNull();
+    // Delivery bookkeeping is still live and says nothing about a person.
+    expect(storage.getItem("cassini.sourceCapture.uploadAttempts")).toBe('{"capture-room-1":2}');
+    expect(storage.getItem("unrelated.key")).toBe("kept");
+  });
+
+  it("survives a storage that refuses to be written", () => {
+    const globals = globalThis as { localStorage?: unknown };
+    const original = globals.localStorage;
+    globals.localStorage = {
+      removeItem: () => {
+        throw new Error("storage disabled");
+      },
+    };
+    try {
+      expect(() => install({ enabled: false, proxyBase: "" })).not.toThrow();
+    } finally {
+      globals.localStorage = original;
+    }
   });
 });
 
@@ -323,9 +375,9 @@ describe("stopWithoutRestart", () => {
 });
 
 describe("captureAllowedByServer", () => {
-  // The administrator switch is what makes the per-browser consent and the
-  // missing upload quota acceptable, so this check fails CLOSED: the cost of a
-  // false no is a missing transcript improvement, the cost of a false yes is
+  // The administrator switch is the only thing standing between a recorded call
+  // and every participant's microphone, so this check fails CLOSED: the cost of
+  // a false no is a missing transcript improvement, the cost of a false yes is
   // collecting audio an administrator switched off.
   it("records only on an explicit yes", async () => {
     const yes = async () => new Response(JSON.stringify({ enabled: true }), { status: 200 });

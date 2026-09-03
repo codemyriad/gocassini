@@ -396,7 +396,7 @@ verify() {
   occ app_api:app:list 2>/dev/null | grep -i "$CASSINI_APPSTORE_ID" || true
   if [[ "$CASSINI_SOURCE_CAPTURE" == "1" ]]; then
     if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
-      printf '  ok   %s enabled; participants opt in per docs/source-audio-capture.md "Trying it"\n' "$CAPTURE_COMPANION_ID"
+      printf "  ok   %s enabled; capture follows Talk's recording per docs/source-audio-capture.md \"Trying it\"\n" "$CAPTURE_COMPANION_ID"
     else
       printf '  FAIL %s is not enabled\n' "$CAPTURE_COMPANION_ID" >&2
     fi
