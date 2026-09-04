@@ -3,12 +3,7 @@
   import { HardDrive, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import { NcSetupError, isSetupAvailable, nextcloudUrl, runSetupPlan } from "./operator/ncSetup";
-  import {
-    readStorageFlash,
-    reloadPage,
-    writeStorageFlash,
-    type StorageFlash,
-  } from "./operator/pageReload";
+  import { notifySetupChanged } from "./operator/setupSignal";
   import type { StorageModeOption, StorageStatus, StorageTransitionPreview } from "./operator/types";
 
   // The storage-mode switch, and since D-671 the setup that gets you to one.
@@ -54,27 +49,31 @@
   let preview: StorageTransitionPreview | null = null;
   let previewing = false;
   let previewError = "";
-  // flash is the result of the action that caused the page to reload. The shell
-  // reads its setup health once at mount, so every successful action here ends
-  // in a reload (pageReload.ts) — and the sentence the administrator earned has
-  // to survive it.
-  let flash: StorageFlash | null = null;
+  // outcome is what the last successful action did, kept on screen until the
+  // next one starts. It is ordinary component state: nothing reloads the page,
+  // so there is nothing for it to survive.
+  let outcome: { tone: "success" | "warning"; message: string; detail?: string } | null = null;
   // repairing is the "finish the switch" action, which is separate from
   // `switching` because it has no confirmation prompt: there is nothing to
   // decide, only leftovers to clear.
   let repairing = false;
 
   onMount(() => {
-    flash = readStorageFlash();
     void loadStorage();
   });
 
-  // finishAndReload is how every successful action ends. Reloading is the point
-  // — it is what clears the shell's stale setup notice, which is the papercut —
-  // and the flash is what stops the reload from swallowing the result.
-  function finishAndReload(next: StorageFlash): void {
-    writeStorageFlash(next);
-    reloadPage();
+  // finishAndAnnounce is how every successful action ends: say what happened,
+  // and tell the shell this Nextcloud is not the one it looked at.
+  //
+  // The notify is the fix for the stale "Cassini is not configured" warning.
+  // App.svelte reads its setup health once at mount and nothing wrote it again,
+  // so building the substrate here left every other tab showing the problem it
+  // had just fixed. It re-reads now, in the same session — no page reload, so
+  // the panel's own state, the viewer's playback position and everything else
+  // the page was holding survive.
+  function finishAndAnnounce(next: NonNullable<typeof outcome>): void {
+    outcome = next;
+    notifySetupChanged();
   }
 
   async function loadStorage() {
@@ -84,6 +83,7 @@
     loading = true;
     loadError = "";
     switchError = "";
+    outcome = null;
     try {
       status = await operatorClient.getStorage();
     } catch (error) {
@@ -197,9 +197,11 @@
         // so stopping here is the honest outcome — the per-app detail on screen
         // says what to do, and Nextcloud's Apps page is one click away.
         //
-        // Deliberately no reload: the per-app outcomes are the whole answer here
-        // and they live on `status`, which a reload would discard for a state
-        // that has not usefully changed.
+        // The shell is told anyway. One of the two apps may well have gone in,
+        // and this component cannot tell from here; asking the operator again is
+        // one round trip, where getting it wrong leaves the same stale warning
+        // this whole mechanism exists to remove.
+        notifySetupChanged();
         return;
       }
       if (refreshed) {
@@ -217,10 +219,10 @@
     }
     setupProgress = "Checking…";
     status = await operatorClient.recheckStorage();
-    finishAndReload({
+    finishAndAnnounce({
       tone: "success",
       message: `Setup finished for ${option.label.toLowerCase()} storage.`,
-      detail: "Cassini reloaded this page so every tab shows the instance as it is now.",
+      detail: "Every tab now shows the instance as it is; there is nothing to refresh.",
     });
   }
 
@@ -239,13 +241,17 @@
     switching = true;
     switchError = "";
     setupProgress = "";
+    // Whatever the last action achieved is history the moment a new one starts.
+    // Leaving it would put a success strip directly above the error that
+    // replaced it.
+    outcome = null;
     try {
       if (kind === "setup") {
         await runSetup(target);
       } else {
         status = await operatorClient.putStorage(target.mode === "access_controlled");
         const moved = status.transition?.meetings_moved ?? 0;
-        finishAndReload({
+        finishAndAnnounce({
           tone: status.transition?.source_cleared === false ? "warning" : "success",
           message: `Storage is now ${target.label.toLowerCase()}.`,
           detail:
@@ -289,9 +295,10 @@
     }
     repairing = true;
     switchError = "";
+    outcome = null;
     try {
       status = await operatorClient.finishStorageMigration();
-      finishAndReload({
+      finishAndAnnounce({
         tone: "success",
         message: "The interrupted storage switch was finished.",
         detail: "The leftover copy was cleared; your recordings were not touched.",
@@ -424,19 +431,19 @@
         </div>
       {/if}
 
-      {#if flash}
-        <!-- The result of the action that caused this page to reload. Rendered
-             once; readStorageFlash already cleared it. -->
+      {#if outcome}
+        <!-- What the last successful action did. It stays until the next one
+             starts, because nothing here reloads the page out from under it. -->
         <div
-          class="alert items-start gap-3 text-sm {flash.tone === 'warning'
+          class="alert items-start gap-3 text-sm {outcome.tone === 'warning'
             ? 'alert-warning'
             : 'alert-success'}"
           role="status"
         >
           <div class="grid gap-1">
-            <p class="font-semibold">{flash.message}</p>
-            {#if flash.detail}
-              <p class="text-xs break-words">{flash.detail}</p>
+            <p class="font-semibold">{outcome.message}</p>
+            {#if outcome.detail}
+              <p class="text-xs break-words">{outcome.detail}</p>
             {/if}
           </div>
         </div>
