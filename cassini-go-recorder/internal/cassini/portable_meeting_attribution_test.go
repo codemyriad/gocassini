@@ -635,12 +635,14 @@ func assertWordTimingKeysDeclaredBySchema(t *testing.T, wordTimings map[string]a
 func TestWriteManifestWordTimingsDecodeIntoThePackerModel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.json")
 	streams := []transcribe.AudioStream{{SpeakerID: "spk_host", SpeakerLabel: "Host"}}
-	if err := transcribe.WriteManifest(
-		path, "source.mkv", 250, 250, streams, nil,
-		transcribe.SherpaOnnxBackend, transcribe.ModelID("test-stt"), "cpu",
-		"", false, "", false, nil, nil,
-		&transcribe.WordTimingProvenance{EndsBoundedByAudio: true},
-	); err != nil {
+	if err := transcribe.WriteManifest(path, transcribe.ManifestInput{
+		SrcBasename: "source.mkv", SrcDurationMS: 250, DigestDurationMS: 250,
+		Streams:     streams,
+		STTBackend:  transcribe.SherpaOnnxBackend,
+		STTModelID:  transcribe.ModelID("test-stt"),
+		STTDevice:   "cpu",
+		WordTimings: &transcribe.WordTimingProvenance{EndsBoundedByAudio: true},
+	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	raw, err := os.ReadFile(path)

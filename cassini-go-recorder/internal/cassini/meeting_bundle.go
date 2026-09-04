@@ -141,7 +141,6 @@ func meetingBundleFiles(rootDir string) map[string]string {
 	files := map[string]string{}
 	maybeAddMeetingFile(files, rootDir, "audio", "meeting.webm")
 	maybeAddMeetingFile(files, rootDir, "transcript", "transcript.words.v1.json")
-	maybeAddMeetingFile(files, rootDir, "readable_transcript", "transcript.readable.v1.json")
 	maybeAddMeetingFile(files, rootDir, "captions", "captions.vtt")
 	maybeAddMeetingFile(files, rootDir, "timeline", "timeline.map.v1.json")
 	maybeAddMeetingFile(files, rootDir, "artifact_manifest", "manifest.json")
