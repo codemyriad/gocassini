@@ -44,6 +44,11 @@ type captureJobMatch struct {
 	Stage     string
 	State     string
 	Succeeded bool
+	// fit is how this recording's span sits against the capture's call window,
+	// and it is what separates the recording a capture covers from the one next
+	// to it. Unexported: it is an intermediate of the resolution, not something
+	// a caller acts on.
+	fit int
 }
 
 // captureRecordingWindow is a job's recorded span in wall-clock milliseconds.
@@ -119,6 +124,69 @@ func captureWindowsOverlap(aStart, aEnd, bStart, bEnd int64) bool {
 	return aStart-captureWindowSlackMS <= bEnd && bStart-captureWindowSlackMS <= aEnd
 }
 
+// How a capture's call window sits against a recording's, in the order both
+// halves of the feature prefer them. captureWindowFit in the recorder's
+// internal/transcribe/sourceaudio.go is the same grading, and the comment on
+// captureWindowSlackMS above is why it must not drift.
+//
+// The slack is a fallback, not a widening. A moderator who stops a recording
+// and starts another in the same room produces two recordings a capture can
+// reach and two captures a recording can reach, and "overlaps within a minute
+// of slack" cannot tell either pair apart — so a restart made this refuse an
+// upload it could have attributed, and made the build splice one it should not
+// have. A window that genuinely intersects beats one that only reaches through
+// the slack; what the slack is left doing is what it was written for, rescuing
+// a lone capture whose clock is a few seconds off.
+//
+// The two sides do not measure the recording's own span from the same place —
+// this reads record_started_at and record_finished_at, while the build derives
+// it from the first packet's wall clock — so a capture sitting within seconds of
+// a boundary can be graded differently by each. That was true of the plain
+// overlap too; the grades make it visible rather than new. What it costs is
+// bounded: a rebuild that finds the same captures is a no-op, and the per-meeting
+// rebuild cap stops it repeating.
+const (
+	captureWindowApart = iota
+	captureWindowWithinSlack
+	captureWindowIntersects
+)
+
+func captureWindowFit(aStart, aEnd, bStart, bEnd int64) int {
+	if aStart <= 0 || bStart <= 0 {
+		return captureWindowApart
+	}
+	// Strictly positive shared time, not a touch: a capture that ends at the
+	// instant a recording begins holds no audio inside it, and a moderator's
+	// stop and start are adjacent, so touching is the shape the WRONG capture
+	// has.
+	if captureWindowOverlapMS(aStart, aEnd, bStart, bEnd) > 0 {
+		return captureWindowIntersects
+	}
+	if captureWindowsOverlap(aStart, aEnd, bStart, bEnd) {
+		return captureWindowWithinSlack
+	}
+	return captureWindowApart
+}
+
+// captureSessionOverlapSlackMS mirrors the recorder's constant of the same
+// name: how far two of one participant's captures may overlap each other and
+// still be read as consecutive call sessions rather than as a contradiction.
+const captureSessionOverlapSlackMS = 5_000
+
+// captureWindowOverlapMS is how much two wall-clock spans genuinely share, with
+// no slack at all. Zero or negative means they do not meet.
+func captureWindowOverlapMS(aStart, aEnd, bStart, bEnd int64) int64 {
+	start := aStart
+	if bStart > start {
+		start = bStart
+	}
+	end := aEnd
+	if bEnd < end {
+		end = bEnd
+	}
+	return end - start
+}
+
 // parseStoredMS converts a persisted timestamp to epoch milliseconds. Zero
 // means absent or unreadable; recordingSpanForCapture is what decides what
 // stands in for a missing end, and no caller treats zero as an open window.
@@ -185,7 +253,8 @@ WHERE json_extract(talk_binding, '$.room_token') = ?
 			continue
 		}
 		match.StartMS, match.EndMS = start, end
-		if !captureWindowsOverlap(match.StartMS, match.EndMS, callStartMS, callEndMS) {
+		match.fit = captureWindowFit(match.StartMS, match.EndMS, callStartMS, callEndMS)
+		if match.fit == captureWindowApart {
 			continue
 		}
 		match.Succeeded = match.State == "succeeded"
@@ -194,6 +263,26 @@ WHERE json_extract(talk_binding, '$.room_token') = ?
 	if err := rows.Err(); err != nil {
 		return captureJobMatch{}, fmt.Errorf("iterate jobs for capture: %w", err)
 	}
+	// The recording this capture actually covers beats one it only reaches
+	// through the slack. Without this a restart was unresolvable: the capture
+	// filed after the moderator restarted reaches back into the recording that
+	// stopped a moment earlier, so BOTH matched and the upload was refused as
+	// ambiguous — a refusal that costs the rebuild and leaves the audio on disk
+	// attributed to nothing. Two matches at the same grade are still ambiguous,
+	// which is the case this was written for and the one it keeps refusing.
+	best := captureWindowApart
+	for _, match := range matches {
+		if match.fit > best {
+			best = match.fit
+		}
+	}
+	kept := matches[:0]
+	for _, match := range matches {
+		if match.fit == best {
+			kept = append(kept, match)
+		}
+	}
+	matches = kept
 	switch len(matches) {
 	case 0:
 		return captureJobMatch{}, sql.ErrNoRows

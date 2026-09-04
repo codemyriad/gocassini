@@ -73,13 +73,71 @@ type sourceCaptureSet struct {
 	Digest string
 }
 
+// scannedCapture is one on-disk capture that got past the room and window
+// filters, with what those filters learned about it.
+type scannedCapture struct {
+	dir      string
+	owner    string
+	startMS  int64
+	endMS    int64
+	fit      int
+	segments []captureSegment
+}
+
+// selectOwnerScannedCaptures is selectOwnerCaptures from the recorder's
+// internal/transcribe/sourceaudio.go, applied to what this scan found: the
+// captures that genuinely cover this recording win over the ones that only
+// reach it through the slack, and a participant whose captures still cannot be
+// told apart contributes none rather than the wrong one.
+func selectOwnerScannedCaptures(candidates []scannedCapture) []scannedCapture {
+	best := captureWindowApart
+	for _, candidate := range candidates {
+		if candidate.fit > best {
+			best = candidate.fit
+		}
+	}
+	if best == captureWindowApart {
+		return nil
+	}
+	kept := make([]scannedCapture, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.fit == best {
+			kept = append(kept, candidate)
+		}
+	}
+	if best == captureWindowWithinSlack && len(kept) > 1 {
+		return nil
+	}
+	for i := 0; i < len(kept); i++ {
+		for j := i + 1; j < len(kept); j++ {
+			if captureWindowOverlapMS(kept[i].startMS, kept[i].endMS, kept[j].startMS, kept[j].endMS) > captureSessionOverlapSlackMS {
+				return nil
+			}
+		}
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].dir < kept[j].dir })
+	return kept
+}
+
+// sortedKeys keeps the scan's output independent of map iteration order: the
+// digest is compared against a previous scan's, so it has to be a function of
+// what is on disk and nothing else.
+func sortedKeys(byOwner map[string][]scannedCapture) []string {
+	keys := make([]string, 0, len(byOwner))
+	for key := range byOwner {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // scanSourceCapturesForRecording reports what a build for this recording would
 // find, without running one.
 //
-// It is DiscoverSourceCaptures' selection rule — room, then overlapping call
-// window, skipping the `.superseded` set-aside — reimplemented because the
-// operator and the recorder are separate Go modules. It reads sidecars and
-// stats files; it never writes.
+// It is DiscoverSourceCaptures' selection rule — room, then the graded call
+// window, then per-participant selection, skipping the `.superseded` set-aside
+// — reimplemented because the operator and the recorder are separate Go
+// modules. It reads sidecars and stats files; it never writes.
 //
 // A capture that cannot be read is skipped rather than failing the scan, for
 // the same reason the build skips it: a malformed upload must not stop a
@@ -108,6 +166,7 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 	}
 	var lines []string
 	seenOwners := map[string]struct{}{}
+	candidates := map[string][]scannedCapture{}
 	for _, owner := range owners {
 		if !owner.IsDir() {
 			continue
@@ -148,21 +207,39 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 			if strings.TrimSpace(sidecar.OwnerUserID) == "" || sidecar.RoomToken != token {
 				continue
 			}
-			if !captureWindowsOverlap(sidecar.CallStartWallMS, sidecar.CallEndWallMS, window.StartMS, window.EndMS) {
+			fit := captureWindowFit(sidecar.CallStartWallMS, sidecar.CallEndWallMS, window.StartMS, window.EndMS)
+			if fit == captureWindowApart {
 				continue
 			}
+			candidates[sidecar.OwnerUserID] = append(candidates[sidecar.OwnerUserID], scannedCapture{
+				dir:      dir,
+				owner:    sidecar.OwnerUserID,
+				startMS:  sidecar.CallStartWallMS,
+				endMS:    sidecar.CallEndWallMS,
+				fit:      fit,
+				segments: sidecar.Segments,
+			})
+		}
+	}
+	// Which of a participant's captures this recording gets, decided the way
+	// the build decides it. This scan is what says whether a rebuild would find
+	// anything new, so counting a capture the build will refuse would promise a
+	// rebuild that changes nothing — and missing one it will splice would
+	// settle a debt the audio is still owed.
+	for _, owner := range sortedKeys(candidates) {
+		for _, capture := range selectOwnerScannedCaptures(candidates[owner]) {
 			set.Count++
-			if _, seen := seenOwners[sidecar.OwnerUserID]; !seen {
-				seenOwners[sidecar.OwnerUserID] = struct{}{}
-				set.Owners = append(set.Owners, sidecar.OwnerUserID)
+			if _, seen := seenOwners[capture.owner]; !seen {
+				seenOwners[capture.owner] = struct{}{}
+				set.Owners = append(set.Owners, capture.owner)
 			}
-			for _, segment := range sidecar.Segments {
+			for _, segment := range capture.segments {
 				size := int64(-1)
-				if info, err := os.Stat(filepath.Join(dir, segment.AudioName)); err == nil {
+				if info, err := os.Stat(filepath.Join(capture.dir, segment.AudioName)); err == nil {
 					size = info.Size()
 				}
 				lines = append(lines, fmt.Sprintf("%s\t%d\t%s\t%d",
-					sidecar.OwnerUserID, sidecar.CallStartWallMS, segment.AudioName, size))
+					capture.owner, capture.startMS, segment.AudioName, size))
 			}
 		}
 	}

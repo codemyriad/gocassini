@@ -530,7 +530,7 @@ function workerURL(): string {
   return `${deliveryConfig.proxyBase}/ui/capture-worker.js`;
 }
 
-function startSegment(session: CaptureState, sender: RTCRtpSender): void {
+export function startSegment(session: CaptureState, sender: RTCRtpSender): void {
   // A live track, not merely a present one. An ended track delivers nothing and
   // a recorder on it is a recorder on something Talk is no longer sending.
   if (!sender.track || sender.track.readyState !== "live") {
@@ -547,20 +547,6 @@ function startSegment(session: CaptureState, sender: RTCRtpSender): void {
     // in the middle of somebody's call.
     return;
   }
-  session.segmentStartWallMs = Date.now();
-  session.worker.postMessage({
-    type: "segment-start",
-    dirName: session.dirName,
-    meta: {
-      index,
-      audioName,
-      mimeType,
-      startWallMs: session.segmentStartWallMs,
-      sampleRate: settings.sampleRate ?? null,
-      channelCount: settings.channelCount ?? null,
-    },
-  });
-
   const recorder = new MediaRecorder(new MediaStream([track]), {
     mimeType,
     audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
@@ -578,6 +564,42 @@ function startSegment(session: CaptureState, sender: RTCRtpSender): void {
     });
   };
   recorder.start(TIMESLICE_MS);
+  // Stamped after start() returned, and the worker is told after that.
+  //
+  // This segment's window is what the server measures the uploaded file
+  // against, and the file holds nothing from before the recorder was running.
+  // Constructing the MediaRecorder and starting it is the page's own
+  // bookkeeping, and a window that included it declared audio that was never
+  // recorded.
+  //
+  // Taken here the stamp is a shade INSIDE the recording rather than outside
+  // it: start() begins gathering data and returns, so the file's first sample
+  // can predate this line by however long the return and this call take — one
+  // statement, well under a millisecond. That direction is the one to watch,
+  // because a window narrower than the audio is what would let a truncated
+  // upload past the server's check, and it is why the stamp is not moved any
+  // later than this. Against the tenth of the window that check allows, a
+  // statement is nothing; the 0.4-1.7 s this replaces was not. See stopSegment
+  // for the other end and for why nothing here is derived from the recording.
+  //
+  // Announcing the segment after start() also means a MediaRecorder that throws
+  // on construction leaves no open file handle behind in the worker. The first
+  // chunk cannot arrive for another TIMESLICE_MS and worker messages are applied
+  // in the order they were posted, so the file is open long before it is
+  // written to.
+  session.segmentStartWallMs = Date.now();
+  session.worker.postMessage({
+    type: "segment-start",
+    dirName: session.dirName,
+    meta: {
+      index,
+      audioName,
+      mimeType,
+      startWallMs: session.segmentStartWallMs,
+      sampleRate: settings.sampleRate ?? null,
+      channelCount: settings.channelCount ?? null,
+    },
+  });
   session.recorder = recorder;
 }
 
@@ -596,9 +618,50 @@ export async function stopSegment(session: CaptureState): Promise<void> {
   const index = session.segmentIndex;
   const muteIntervals = session.muteIntervals;
   session.recorder = null;
+  // The instant the recorder is asked to stop, taken BEFORE asking, is the last
+  // instant this segment's file can hold audio for. It is NOT the instant this
+  // function finishes: the two awaits below are onstop and the whole outstanding
+  // chunk hand-off chain, and stamping the segment's end after them declared
+  // between 0.4 and 1.7 s of stopping as if it were recording. On a segment of
+  // ten or twenty seconds that is more than the tenth the server allows between
+  // what a segment declares and what it decodes to, so a departure tail was
+  // refused although nothing had gone wrong — leaving the seconds around
+  // somebody leaving a call as the ones least likely to come from their own
+  // microphone.
+  //
+  // The awaits stay exactly where they are: they are what makes the FILE
+  // complete, and posting segment-stop before them would have the worker close
+  // the handle with the tail of the recording still in flight.
+  //
+  // Why not something closer to the audio itself. The obvious candidate is the
+  // outgoing encoded frames the timing worker already sees, which would give the
+  // instant the microphone last produced to within one 20 ms frame. It is the
+  // wrong witness: those frames come from a different pipeline. Talk mutes with
+  // `enabled = false`, and a disabled track delivers silence to every sink — the
+  // recorder keeps writing it into the file while the sender may stop producing
+  // frames for it, and Opus DTX and a renegotiation do the same. A window ending
+  // at the last frame would then be NARROWER than the audio, which is a worse
+  // failure than the one being fixed: an over-declared window costs a splice and
+  // leaves the recorded track, while an under-declared one makes the decoded
+  // fraction agree with a truncated upload and the check stops catching
+  // anything.
+  //
+  // These two stamps are wrong in the same direction instead, and by an amount
+  // that is a statement rather than a wait. start() returns after gathering has
+  // begun and stop() is called after this line, so the window sits a shade
+  // INSIDE the recording at both ends — sub-millisecond at each, against the
+  // tenth of the window the server's check allows. It is worth naming because
+  // that is the dangerous direction: a window narrower than the audio makes the
+  // decoded fraction agree with a truncated upload. What makes it safe is the
+  // size, and the fact that neither stamp is measured from the recording — a
+  // chunk lost on the way to storage, a short write, or an upload cut off in
+  // flight moves the file by seconds and the window by nothing. What left the
+  // window is the stopping, which was never audio.
+  let stopRequestedWallMs = Date.now();
   await new Promise<void>((resolve) => {
     recorder.onstop = () => resolve();
     try {
+      stopRequestedWallMs = Date.now();
       recorder.stop();
     } catch {
       // Already inactive: nothing more will arrive, so do not wait for an
@@ -610,7 +673,7 @@ export async function stopSegment(session: CaptureState): Promise<void> {
   session.worker.postMessage({
     type: "segment-stop",
     index,
-    stopWallMs: Date.now(),
+    stopWallMs: stopRequestedWallMs,
     muteIntervals,
   });
   session.segmentIndex += 1;

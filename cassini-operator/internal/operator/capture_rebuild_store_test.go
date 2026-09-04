@@ -151,6 +151,62 @@ func TestResolveJobForCaptureRefusesAnAmbiguousMatch(t *testing.T) {
 	}
 }
 
+// R2. The restart. A moderator stops a recording and starts another in the same
+// room; a participant's browser files one capture per call session either side
+// of the seam. With a minute of slack on each side, the capture filed after the
+// restart reached back into the recording that had just stopped, so BOTH
+// recordings matched and the upload was refused as ambiguous — which costs the
+// rebuild and leaves audio on disk attributed to nothing.
+//
+// The recording a capture actually covers now beats one it only reaches through
+// the slack, so each capture resolves to its own recording. The slack has not
+// been narrowed; it has stopped outranking a real overlap.
+func TestResolveJobForCaptureAfterARestartPicksTheRecordingItCovers(t *testing.T) {
+	store := newRebuildTestStore(t)
+	ctx := context.Background()
+	seedRecording(t, store, "before-the-restart", "room-a",
+		stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T10:10:00Z"))
+	seedRecording(t, store, "after-the-restart", "room-a",
+		stamp(t, "2026-09-02T10:12:00Z"), stamp(t, "2026-09-02T10:20:00Z"))
+
+	// The participant rejoined at the restart: their call session began a
+	// minute before the second recording and ran past its end.
+	resolved, err := store.ResolveJobForCapture(ctx, "room-a",
+		ms(t, "2026-09-02T10:11:00Z"), ms(t, "2026-09-02T10:21:00Z"))
+	if err != nil {
+		t.Fatalf("the capture covering the second recording was not resolved: %v", err)
+	}
+	if resolved.JobID != "after-the-restart" {
+		t.Fatalf("resolved to %q, want the recording the capture covers", resolved.JobID)
+	}
+
+	// And the session from before the restart still resolves to its own
+	// recording rather than to the one that followed it.
+	resolved, err = store.ResolveJobForCapture(ctx, "room-a",
+		ms(t, "2026-09-02T09:58:00Z"), ms(t, "2026-09-02T10:11:00Z"))
+	if err != nil {
+		t.Fatalf("the capture covering the first recording was not resolved: %v", err)
+	}
+	if resolved.JobID != "before-the-restart" {
+		t.Fatalf("resolved to %q, want the first recording", resolved.JobID)
+	}
+}
+
+// R2. Preferring a real overlap must not make the ambiguity refusal reachable
+// only through the slack: two recordings that BOTH cover the capture are still
+// two, and picking one would be a coin toss with somebody's words on it.
+func TestResolveJobForCaptureStillRefusesTwoRecordingsThatBothCoverIt(t *testing.T) {
+	store := newRebuildTestStore(t)
+	seedRecording(t, store, "first", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
+	seedRecording(t, store, "second", "room-a", stamp(t, "2026-09-02T10:30:00Z"), stamp(t, "2026-09-02T11:30:00Z"))
+
+	_, err := store.ResolveJobForCapture(context.Background(), "room-a",
+		ms(t, "2026-09-02T10:40:00Z"), ms(t, "2026-09-02T10:50:00Z"))
+	if !errors.Is(err, ErrCaptureJobAmbiguous) {
+		t.Fatalf("two covering recordings resolved to one anyway: err=%v", err)
+	}
+}
+
 // R2. A recorder that died without ever writing an end must not compete for the
 // captures of every call that room holds afterwards.
 //
