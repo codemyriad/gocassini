@@ -3,7 +3,6 @@ package transcribe
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -275,7 +274,7 @@ func TestWriteManifestRecordsSummaryWhenPresent(t *testing.T) {
 	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
 	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "test-llm", true, "summary-model", true, nil, nil, nil, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, Segments: segments, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cuda", SummaryModel: "summary-model", HasSummary: true}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -311,7 +310,7 @@ func TestWriteManifestCountsUniqueLogicalSpeakers(t *testing.T) {
 		{Index: -1, SpeakerID: "merged", SpeakerLabel: "Everyone"}, // synthetic fallback, not a participant
 	}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "", false, "", false, nil, nil, nil, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cuda"}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -331,16 +330,12 @@ func TestWriteManifestCountsUniqueLogicalSpeakers(t *testing.T) {
 func TestWriteTranscriptJSONEmitsEmptySpeakersArrayForSilentRecording(t *testing.T) {
 	tmp := t.TempDir()
 	wordsPath := filepath.Join(tmp, "transcript.words.v1.json")
-	readablePath := filepath.Join(tmp, "transcript.readable.v1.json")
 
 	if err := WriteTranscriptJSON(wordsPath, nil, nil, 45049); err != nil {
 		t.Fatalf("WriteTranscriptJSON: %v", err)
 	}
-	if err := WriteReadableTranscriptJSON(readablePath, nil, nil, 45049); err != nil {
-		t.Fatalf("WriteReadableTranscriptJSON: %v", err)
-	}
 
-	for _, path := range []string{wordsPath, readablePath} {
+	for _, path := range []string{wordsPath} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
@@ -357,7 +352,7 @@ func TestWriteManifestOmitsSummaryWhenAbsent(t *testing.T) {
 	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
 	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "", false, "", false, nil, nil, nil, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, Segments: segments, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cuda"}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -370,88 +365,6 @@ func TestWriteManifestOmitsSummaryWhenAbsent(t *testing.T) {
 	}
 	if strings.Contains(string(raw), `"meetingSummary"`) {
 		t.Errorf("manifest should not mention meetingSummary when absent, got %s", string(raw))
-	}
-}
-
-// One flagged source word must flag exactly one cleaned word even when
-// cleanup shortens the text — the ordinary case. The cleaned→source argmax
-// alone loses the flag there: with fewer slots than source words every slot
-// is wider than a source word, the flagged word straddles two slots and is
-// the argmax of neither, and the summary silently reads the crosstalk word.
-func TestReadableCleanupShrinkNeverLosesTheFlag(t *testing.T) {
-	cases := []struct{ orig, clean, flagged int }{
-		{10, 9, 5}, {8, 7, 4}, {5, 4, 2}, {3, 2, 1}, {10, 7, 5}, {4, 2, 3},
-	}
-	for _, tc := range cases {
-		words := make([]Word, tc.orig)
-		for i := range words {
-			words[i] = Word{Text: fmt.Sprintf("w%d", i), StartMS: int64(i * 100), EndMS: int64((i + 1) * 100)}
-		}
-		words[tc.flagged].LowConfidenceSpeaker = true
-		words[tc.flagged].HasAttributionGap = true
-		words[tc.flagged].AttributionGapDB = 21.5
-
-		cleanTexts := make([]string, tc.clean)
-		for i := range cleanTexts {
-			cleanTexts[i] = fmt.Sprintf("c%d", i)
-		}
-		original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: int64(tc.orig * 100),
-			Text: "orig", Words: words}}
-		readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: int64(tc.orig * 100),
-			Text: strings.Join(cleanTexts, " ")}}
-
-		applied := ApplyReadableText(original, readable)
-		var flagged int
-		var gap float64
-		var hasGap bool
-		for _, w := range applied[0].Words {
-			if w.LowConfidenceSpeaker {
-				flagged++
-				gap = w.AttributionGapDB
-				hasGap = w.HasAttributionGap
-			}
-		}
-		if flagged != 1 {
-			t.Errorf("%d->%d words (flagged source %d): got %d flagged cleaned words, want exactly 1",
-				tc.orig, tc.clean, tc.flagged, flagged)
-			continue
-		}
-		if !hasGap || gap != 21.5 {
-			t.Errorf("%d->%d words: the flagged cleaned word must carry the source gap, got has=%v gap=%.1f",
-				tc.orig, tc.clean, hasGap, gap)
-		}
-	}
-}
-
-// When two contradicted source words collapse into one cleaned word, that
-// word is flagged once and carries the largest measured gap among the flagged
-// contributors — never a smaller gap and never a duplicate flag.
-func TestReadableCleanupCollapsedFlagsCarryTheMaxGap(t *testing.T) {
-	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 400, Text: "a b c d",
-		Words: []Word{
-			{Text: "a", StartMS: 0, EndMS: 100},
-			{Text: "b", StartMS: 100, EndMS: 200},
-			{Text: "c", StartMS: 200, EndMS: 300,
-				LowConfidenceSpeaker: true, HasAttributionGap: true, AttributionGapDB: 12.0},
-			{Text: "d", StartMS: 300, EndMS: 400,
-				LowConfidenceSpeaker: true, HasAttributionGap: true, AttributionGapDB: 30.5},
-		}}}
-	readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 400, Text: "a merged"}}
-
-	applied := ApplyReadableText(original, readable)
-	var flagged int
-	var gap float64
-	for _, w := range applied[0].Words {
-		if w.LowConfidenceSpeaker {
-			flagged++
-			gap = w.AttributionGapDB
-		}
-	}
-	if flagged != 1 {
-		t.Fatalf("two collapsed flagged sources must flag one cleaned word, got %d", flagged)
-	}
-	if gap != 30.5 {
-		t.Errorf("the flagged word must carry the max contributing gap, got %.1f", gap)
 	}
 }
 
@@ -473,7 +386,7 @@ func TestWriteManifestRecordsAttributionProvenance(t *testing.T) {
 	}
 
 	path := filepath.Join(tmp, "manifest.json")
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, attr, nil, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cpu", Attribution: attr}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	raw, err := os.ReadFile(path)
@@ -513,7 +426,7 @@ func TestWriteManifestRecordsAttributionProvenance(t *testing.T) {
 
 	// Absent entirely for a producer that records nothing (legacy callers).
 	legacyPath := filepath.Join(tmp, "manifest-legacy.json")
-	if err := WriteManifest(legacyPath, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil, nil, nil); err != nil {
+	if err := WriteManifest(legacyPath, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cpu"}); err != nil {
 		t.Fatalf("WriteManifest legacy: %v", err)
 	}
 	legacyRaw, err := os.ReadFile(legacyPath)
@@ -554,11 +467,14 @@ func TestWriteManifestWritesWordTimingsOnlyWhenTheCallerEarnedIt(t *testing.T) {
 		return got.Provenance.WordTimings, string(raw)
 	}
 
-	// The leanest possible call: no readable pass, no summary, no additional
-	// transcripts, no attribution record. The earned marker must still be there.
+	// The leanest possible call: no summary, no additional transcripts, no
+	// attribution record. The earned marker must still be there.
 	measured := filepath.Join(tmp, "manifest.json")
-	if err := WriteManifest(measured, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil,
-		&WordTimingProvenance{EndsBoundedByAudio: true}, nil); err != nil {
+	if err := WriteManifest(measured, ManifestInput{
+		SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000,
+		Streams: streams, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cpu",
+		WordTimings: &WordTimingProvenance{EndsBoundedByAudio: true},
+	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	timings, raw := readWordTimings(t, measured)
@@ -579,7 +495,7 @@ func TestWriteManifestWritesWordTimingsOnlyWhenTheCallerEarnedIt(t *testing.T) {
 	// all — not endsBoundedByAudio:false, which a consumer reading the object
 	// rather than the flag could still misread as a producer that measured.
 	unmeasured := filepath.Join(tmp, "manifest-unmeasured.json")
-	if err := WriteManifest(unmeasured, "src.mkv", 1000, 1000, streams, nil, "some-other-engine", ModelID("test-stt"), "cpu", "", false, "", false, nil, nil, nil, nil); err != nil {
+	if err := WriteManifest(unmeasured, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, STTBackend: "some-other-engine", STTModelID: ModelID("test-stt"), STTDevice: "cpu"}); err != nil {
 		t.Fatalf("WriteManifest (unmeasured): %v", err)
 	}
 	absent, rawAbsent := readWordTimings(t, unmeasured)
@@ -607,7 +523,14 @@ func TestWriteManifestRecordsSourceAudioProvenance(t *testing.T) {
 		{SpeakerID: "spk_alice", Owner: "alice", Segments: 3, Placed: 3, Anchors: 24, SplicedMS: 24000},
 		{SpeakerID: "spk_bob", Owner: "bob", Segments: 1, Placed: 1, Anchors: 8, SplicedMS: 8000},
 	}
-	if err := WriteManifest(path, "src.mkv", 30000, 30000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil, nil, reports); err != nil {
+	if err := WriteManifest(path, ManifestInput{
+		SrcBasename: "src.mkv", SrcDurationMS: 30000, DigestDurationMS: 30000,
+		Streams:     streams,
+		STTBackend:  SherpaOnnxBackend,
+		STTModelID:  ModelID("test-stt"),
+		STTDevice:   "cpu",
+		SourceAudio: reports,
+	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	raw, err := os.ReadFile(path)

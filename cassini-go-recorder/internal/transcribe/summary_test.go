@@ -154,15 +154,12 @@ func TestFormatTranscriptForSummaryUsesLabels(t *testing.T) {
 }
 
 func TestDefaultBuildConfigSummaryDisabledToggle(t *testing.T) {
-	// Both LLM and SummaryLLM would be configured from OPENROUTER_API_KEY alone,
-	// but CASSINI_SUMMARY_DISABLED should disable the summary side independently.
+	// Summarisation is configured from OPENROUTER_API_KEY alone;
+	// CASSINI_SUMMARY_DISABLED must turn it off without unsetting the key.
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("CASSINI_SUMMARY_DISABLED", "1")
 
 	cfg := DefaultBuildConfig()
-	if !cfg.LLM.IsConfigured() {
-		t.Error("expected LLM to remain configured when only summary is disabled")
-	}
 	if cfg.SummaryLLM.IsConfigured() {
 		t.Error("expected SummaryLLM to be unconfigured when CASSINI_SUMMARY_DISABLED=1")
 	}
@@ -180,13 +177,10 @@ func TestDefaultBuildConfigSummaryEnabledByDefault(t *testing.T) {
 
 func TestDefaultBuildConfigSummaryModelOverride(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("LLM_MODEL", "cleanup-model")
+	t.Setenv("LLM_MODEL", "base-model")
 	t.Setenv("SUMMARY_MODEL", "summary-model")
 
 	cfg := DefaultBuildConfig()
-	if cfg.LLM.Model != "cleanup-model" {
-		t.Fatalf("expected LLM model override to apply to readable cleanup, got %q", cfg.LLM.Model)
-	}
 	if cfg.SummaryLLM.Model != "summary-model" {
 		t.Fatalf("expected SUMMARY_MODEL override to apply to summary, got %q", cfg.SummaryLLM.Model)
 	}
