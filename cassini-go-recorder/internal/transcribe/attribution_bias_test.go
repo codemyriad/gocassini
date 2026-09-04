@@ -93,7 +93,7 @@ func biasEnvelope(id string, quietBelowDB float64) *SpeakerEnvelope {
 	// a sequence that depends only on the speaker, so the same frame carries
 	// the same dither at every offset in the sweep and the comparison stays
 	// like for like.
-	dither := rand.New(rand.NewSource(int64(len(id)) * 7919))
+	dither := rand.New(rand.NewSource(int64(biasDitherSeed(id))))
 	present := make([]float64, 0, n)
 	for i := 0; i < n; i++ {
 		active := biasActive(i)
@@ -114,6 +114,19 @@ func biasEnvelope(id string, quietBelowDB float64) *SpeakerEnvelope {
 	env.FloorDB = percentileOf(present, attributionFloorPercentile)
 	env.SpeechDB = percentileOf(present, attributionSpeechPercentile)
 	return env
+}
+
+// biasDitherSeed is FNV-1a over the speaker id. Seeding from the id's LENGTH
+// gave alice and carol the same sequence, which is exactly the correlation the
+// dither exists to avoid.
+func biasDitherSeed(id string) uint32 {
+	const offset32, prime32 = 2166136261, 16777619
+	h := uint32(offset32)
+	for i := 0; i < len(id); i++ {
+		h ^= uint32(id[i])
+		h *= prime32
+	}
+	return h
 }
 
 // biasWord is one word with the ground truth of how it came to exist.
