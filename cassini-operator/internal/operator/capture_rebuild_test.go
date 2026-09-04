@@ -50,6 +50,83 @@ func seedRebuildCapture(t *testing.T, root, room, owner string, callStartMS, cal
 	return dir
 }
 
+// R5. This scan says whether a rebuild would find anything new, so it has to
+// select the captures the BUILD will select. A restart puts a neighbouring
+// capture within the matching slack of this recording, and counting one the
+// build refuses promises a rebuild that changes nothing.
+func TestScanSourceCapturesPrefersTheCaptureThatCoversThisRecording(t *testing.T) {
+	root := t.TempDir()
+	window := captureRecordingWindow{
+		StartMS: ms(t, "2026-09-02T10:12:00Z"),
+		EndMS:   ms(t, "2026-09-02T10:20:00Z"),
+	}
+	// The call session from before the moderator restarted: it ended a minute
+	// before this recording began, so only the slack reaches it.
+	seedRebuildCapture(t, root, "room-a", "alice",
+		ms(t, "2026-09-02T09:58:00Z"), ms(t, "2026-09-02T10:11:00Z"), 64)
+	// The session that covers this recording.
+	covering := seedRebuildCapture(t, root, "room-a", "alice",
+		ms(t, "2026-09-02T10:11:30Z"), ms(t, "2026-09-02T10:21:00Z"), 128)
+
+	set, err := scanSourceCapturesForRecording(root, "room-a", window)
+	if err != nil {
+		t.Fatalf("scanSourceCapturesForRecording: %v", err)
+	}
+	if set.Count != 1 {
+		t.Fatalf("counted %d captures for this recording, want only the covering one", set.Count)
+	}
+	if _, err := os.Stat(covering); err != nil {
+		t.Fatalf("the covering capture is not where the test put it: %v", err)
+	}
+
+	// And the digest is the digest of that capture alone. Counting is not
+	// enough: the digest is what a rebuild compares against, so it has to be
+	// the same value a root holding only the right capture would produce.
+	alone := t.TempDir()
+	seedRebuildCapture(t, alone, "room-a", "alice",
+		ms(t, "2026-09-02T10:11:30Z"), ms(t, "2026-09-02T10:21:00Z"), 128)
+	expected, err := scanSourceCapturesForRecording(alone, "room-a", window)
+	if err != nil {
+		t.Fatalf("scanSourceCapturesForRecording (alone): %v", err)
+	}
+	if expected.Digest == "" {
+		t.Fatal("the reference scan produced no digest to compare against")
+	}
+	if set.Digest != expected.Digest {
+		t.Fatalf("the digest carries the neighbouring capture: %s, want %s", set.Digest, expected.Digest)
+	}
+}
+
+// R5. Two captures of one participant that cover this recording AND each other:
+// nobody was in two call sessions at once, so one of them belongs to another
+// recording of this room. The build refuses that participant, and this scan
+// must not count audio the build will not read.
+func TestScanSourceCapturesCountsNothingForAnAmbiguousParticipant(t *testing.T) {
+	root := t.TempDir()
+	window := captureRecordingWindow{
+		StartMS: ms(t, "2026-09-02T10:00:00Z"),
+		EndMS:   ms(t, "2026-09-02T11:00:00Z"),
+	}
+	seedRebuildCapture(t, root, "room-a", "alice",
+		ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:45:00Z"), 64)
+	seedRebuildCapture(t, root, "room-a", "alice",
+		ms(t, "2026-09-02T10:20:00Z"), ms(t, "2026-09-02T10:55:00Z"), 64)
+	// Bob is unambiguous, and one participant's contradiction is not his.
+	seedRebuildCapture(t, root, "room-a", "bob",
+		ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:55:00Z"), 64)
+
+	set, err := scanSourceCapturesForRecording(root, "room-a", window)
+	if err != nil {
+		t.Fatalf("scanSourceCapturesForRecording: %v", err)
+	}
+	if set.Count != 1 {
+		t.Fatalf("counted %d captures, want only bob's", set.Count)
+	}
+	if len(set.Owners) != 1 || set.Owners[0] != "bob" {
+		t.Fatalf("owners are %v, want only bob", set.Owners)
+	}
+}
+
 // R5. The digest is what tells "the same uploads the last build already read"
 // from "audio this meeting has never been transcribed with", and it has to see
 // a segment that grew as different even when every declared field matches.
