@@ -94,7 +94,8 @@ word is:
    (`_work/sourceaudio/source-<speaker>.wav`).
 
 `manifest.provenance.sourceAudio` records `mix_spliced`, the `windows` each
-placed segment covers with its segment index, the `crossfade_ms` and the
+placed segment covers — with the capture and the segment they came from, since
+segment numbering restarts in every capture — the `crossfade_ms` and the
 `render_hz`. The published `.opus` carries none of it: the portable v1 manifest
 is frozen and has no field for it.
 
@@ -103,7 +104,8 @@ mix exactly as before, and a build with no usable upload publishes the audio it
 would have published without the feature at all. `CASSINI_SOURCE_AUDIO_MIX=0`
 turns off the published splice on its own, leaving the transcript spliced — a
 rollback for a deployment that dislikes how the mix sounds, without giving up
-ingestion.
+ingestion. Like the two switches beside it, it takes any boolean, and a value
+that is neither true nor false lands off and says so.
 
 Three consequences worth knowing. The published audio is a different file from
 what an unspliced build would produce, so the meeting's identity — the hash of
