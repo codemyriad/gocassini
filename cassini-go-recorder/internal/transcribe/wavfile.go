@@ -172,8 +172,22 @@ func (w *wavFile) readSamples(at int, dst []float32) error {
 		n = w.samples - at
 	}
 	raw := w.bytes(n * 2)
-	if _, err := w.f.ReadAt(raw, w.dataOffset+int64(at)*2); err != nil && err != io.EOF {
+	read, err := w.f.ReadAt(raw, w.dataOffset+int64(at)*2)
+	if err != nil && err != io.EOF {
 		return fmt.Errorf("read wav samples: %w", err)
+	}
+	// Only the bytes this call actually read are audio.
+	//
+	// ReadAt may return fewer bytes than asked for together with io.EOF, and
+	// raw is the REUSED scratch buffer: converting the whole slice would decode
+	// whatever the previous chunk left there as this chunk's samples — the last
+	// audio this reader saw, repeated at the wrong place, rather than the
+	// silence dst was zeroed to. The clamp above keeps every caller in this
+	// package from asking past the data chunk, so this guards the buffer reuse
+	// rather than a path production takes; what goes unfilled stays silent,
+	// which is what any position past the end of the data already reads as.
+	if short := read / 2; short < n {
+		n = short
 	}
 	for i := 0; i < n; i++ {
 		dst[i] = float32(int16(binary.LittleEndian.Uint16(raw[i*2:]))) / 32768.0

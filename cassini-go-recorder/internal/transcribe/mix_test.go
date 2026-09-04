@@ -291,3 +291,63 @@ func TestOpenWAVTrustsTheFileOverItsHeader(t *testing.T) {
 		t.Fatalf("a header claiming 1000 samples over 100 written read as %d", wav.samples)
 	}
 }
+
+// A short read must come back as silence, never as the previous chunk.
+//
+// readSamples converts through one scratch buffer that is reused call after
+// call, so bytes ReadAt did not fill still hold the samples of the chunk before
+// them. Converting the whole buffer would put that audio into the timeline a
+// second time, at a place it never occupied — a repeat, not silence, and one
+// that no assertion about the recorded floor would catch. openWAV's clamp keeps
+// production off this path today; the buffer reuse is what makes it worth
+// nailing down anyway.
+func TestReadSamplesNeverDecodesTheScratchItDidNotFill(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "short.wav")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := writeWAVHeader(f, 4, 48000); err != nil {
+		t.Fatalf("header: %v", err)
+	}
+	raw := make([]byte, 8)
+	for i, sample := range []int16{9000, -9000, 9000, -9000} {
+		binary.LittleEndian.PutUint16(raw[i*2:], uint16(sample))
+	}
+	if _, err := f.Write(raw); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	wav, err := openWAV(path)
+	if err != nil {
+		t.Fatalf("openWAV: %v", err)
+	}
+	defer wav.Close()
+
+	// The one thing that puts a caller past the data chunk: a sample count that
+	// says more than the file holds. openWAV computes it from the file, so this
+	// is set by hand — which is the point, since the caller is what stands
+	// between this reader and the bug today.
+	wav.samples = 8
+
+	first := make([]float32, 4)
+	if err := wav.readSamples(0, first); err != nil {
+		t.Fatalf("readSamples: %v", err)
+	}
+	if first[0] == 0 {
+		t.Fatal("the first chunk read as silence; the fixture is wrong")
+	}
+	second := make([]float32, 4)
+	if err := wav.readSamples(4, second); err != nil {
+		t.Fatalf("readSamples: %v", err)
+	}
+	for i, sample := range second {
+		if sample != 0 {
+			t.Fatalf("sample %d past the end of the data read as %v, which is the previous chunk's audio, not silence",
+				i, sample)
+		}
+	}
+}
