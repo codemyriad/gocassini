@@ -547,65 +547,6 @@ func TestRotatedStreamInheritsTheSpeakersEstablishedFloor(t *testing.T) {
 	}
 }
 
-// Readable cleanup rewrites text onto interpolated slots. If the flag does not
-// survive that rewrite, the summary filter silently becomes a no-op — and since
-// readable cleanup and summarisation normally share one configured LLM, the
-// no-op is the normal path, not an edge case.
-func TestAttributionSurvivesReadableCleanup(t *testing.T) {
-	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "one two",
-		Words: []Word{
-			{Text: "one", StartMS: 0, EndMS: 500},
-			{Text: "two", StartMS: 500, EndMS: 1000,
-				LowConfidenceSpeaker: true, HasAttributionGap: true, AttributionGapDB: 31.7},
-		}}}
-	readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "One, two."}}
-
-	applied := ApplyReadableText(original, readable)
-	var flagged int
-	var gap float64
-	for _, seg := range applied {
-		for _, w := range seg.Words {
-			if w.LowConfidenceSpeaker {
-				flagged++
-				gap = w.AttributionGapDB
-			}
-		}
-	}
-	if flagged == 0 {
-		t.Fatal("readable cleanup dropped the flag; summary filtering would be a no-op")
-	}
-	if gap != 31.7 {
-		t.Errorf("the measured gap should travel with the flag, got %.1f", gap)
-	}
-	if _, removed := WithoutLowConfidenceWords(applied); removed == 0 {
-		t.Error("the summary filter must still find something to remove after cleanup")
-	}
-}
-
-// A word the evidence did not contradict must not pick up a flag from a
-// neighbour just because the text was rewritten around it.
-func TestReadableCleanupDoesNotSpreadTheFlag(t *testing.T) {
-	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c d",
-		Words: []Word{
-			{Text: "a", StartMS: 0, EndMS: 250},
-			{Text: "b", StartMS: 250, EndMS: 500},
-			{Text: "c", StartMS: 500, EndMS: 750},
-			{Text: "d", StartMS: 750, EndMS: 1000, LowConfidenceSpeaker: true},
-		}}}
-	readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c d"}}
-	applied := ApplyReadableText(original, readable)
-	var flagged int
-	for _, w := range applied[0].Words {
-		if w.LowConfidenceSpeaker {
-			flagged++
-		}
-	}
-	if flagged != 1 {
-		t.Errorf("exactly the overlapping word should be flagged, got %d of %d",
-			flagged, len(applied[0].Words))
-	}
-}
-
 // Older transcripts carry segment text with no word list. There is nothing to
 // filter and nothing to judge them on, so they must not vanish because some
 // other segment was flagged.
@@ -679,67 +620,6 @@ func TestCalibrationIgnoresStreamsTooShortToCharacterise(t *testing.T) {
 	if math.Abs(real.FloorDB-before) > 1 {
 		t.Errorf("a sliver of a stream moved the speaker's floor from %.1f to %.1f",
 			before, real.FloorDB)
-	}
-}
-
-// Readable cleanup routinely changes the word count. Mapping a cleaned word to
-// ANY overlapping source word lets one contradicted word flag a legitimate
-// neighbour, deleting text from the summary that the evidence never questioned.
-//
-// The property to hold is not a word count — cleanup that expands one word into
-// two may legitimately flag both — but containment: a flag must never reach a
-// stretch of time no source word was contradicted in.
-func TestReadableCleanupDoesNotSpreadBeyondTheContradictedSpan(t *testing.T) {
-	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c d",
-		Words: []Word{
-			{Text: "a", StartMS: 0, EndMS: 250},
-			{Text: "b", StartMS: 250, EndMS: 500},
-			{Text: "c", StartMS: 500, EndMS: 750},
-			{Text: "d", StartMS: 750, EndMS: 1000, LowConfidenceSpeaker: true},
-		}}}
-
-	for _, cleaned := range []string{
-		"a b c extra d", // a word inserted before the contradicted one
-		"a b c d e f g", // substantial growth
-		"a d",           // shrink
-		"a b c d",       // unchanged
-	} {
-		readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: cleaned}}
-		applied := ApplyReadableText(original, readable)
-		for _, w := range applied[0].Words {
-			if !w.LowConfidenceSpeaker {
-				continue
-			}
-			// The flagged source word is "d", 750-1000 ms. A cleaned word may
-			// only inherit the flag if it genuinely overlaps that span.
-			if w.EndMS <= 750 || w.StartMS >= 1000 {
-				t.Errorf("cleanup %q: flagged %q at %d-%d, outside the contradicted 750-1000 ms",
-					cleaned, w.Text, w.StartMS, w.EndMS)
-			}
-		}
-	}
-}
-
-// The case the review reported: one inserted word must not cost a legitimate
-// neighbour its place in the summary.
-func TestReadableCleanupInsertionFlagsExactlyTheContradictedWord(t *testing.T) {
-	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c d",
-		Words: []Word{
-			{Text: "a", StartMS: 0, EndMS: 250},
-			{Text: "b", StartMS: 250, EndMS: 500},
-			{Text: "c", StartMS: 500, EndMS: 750},
-			{Text: "d", StartMS: 750, EndMS: 1000, LowConfidenceSpeaker: true},
-		}}}
-	readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c extra d"}}
-	applied := ApplyReadableText(original, readable)
-	var flagged int
-	for _, w := range applied[0].Words {
-		if w.LowConfidenceSpeaker {
-			flagged++
-		}
-	}
-	if flagged != 1 {
-		t.Errorf("one contradicted source word flagged %d cleaned words", flagged)
 	}
 }
 

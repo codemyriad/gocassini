@@ -53,10 +53,6 @@ func TestLoadPortableMeetingSource(t *testing.T) {
 			},
 		},
 	})
-	writePortableJSONFixture(t, filepath.Join(root, "transcript.readable.v1.json"), map[string]any{
-		"version":  "transcript.readable.v1",
-		"segments": []map[string]any{{"id": "readable-1", "text": "hello world"}},
-	})
 	writePortableJSONFixture(t, filepath.Join(root, "transcript.display.v1.json"), map[string]any{
 		"version": "transcript.display.v1",
 		"blocks":  []map[string]any{{"id": "display-1", "text": "hello world"}},
@@ -118,9 +114,6 @@ func TestLoadPortableMeetingSource(t *testing.T) {
 	}
 	if got := manifest.Meeting.ProcessedAtUTC; got != "2026-03-11T00:00:00Z" {
 		t.Fatalf("expected processedAtUtc in portable manifest, got %q", got)
-	}
-	if got := source.ReadableTranscript["version"]; got != "transcript.readable.v1" {
-		t.Fatalf("readable transcript version = %v", got)
 	}
 	if got := source.DisplayTranscript["version"]; got != "transcript.display.v1" {
 		t.Fatalf("display transcript version = %v", got)

@@ -92,8 +92,8 @@ func (m SettingsMigration) Message() string {
 type SettingsMigrationReporter func(SettingsMigration)
 
 // normalizeTranscriptionTerms turns user-entered glossary rows into bounded
-// preferred spellings for readable-transcript cleanup. The first spelling wins
-// when entries differ only by case.
+// preferred spellings for the speech recogniser. The first spelling wins when
+// entries differ only by case.
 func normalizeTranscriptionTerms(terms []string) ([]string, error) {
 	out := make([]string, 0, len(terms))
 	seen := make(map[string]struct{}, len(terms))
@@ -370,7 +370,7 @@ func Save(path string, s STTSettings) error {
 //     graphs could fall back to CPU or allocate another model outside the
 //     operator's GPU/RAM admission budget.
 //   - CASSINI_TRANSCRIPTION_TERMS carries the optional, normalized preferred
-//     spellings used only by LLM readable cleanup.
+//     spellings the recorder biases the speech recogniser towards.
 func (s STTSettings) ChildEnv(base []string) []string {
 	// Always strip the STT keys, then re-append exactly what the policy
 	// dictates. Stripping unconditionally (rather than only when there is no
