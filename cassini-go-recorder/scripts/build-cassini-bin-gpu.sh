@@ -38,6 +38,13 @@ DIST="$REC/dist"
 CACHE="$REC/.build-cache"
 mkdir -p "$DIST" "$CACHE"
 
+MOD_SHERPA_VERSION="$(go -C "$REC" list -m -f '{{.Version}}' github.com/k2-fsa/sherpa-onnx-go | sed 's/^v//')"
+if [[ "$SHERPA_VERSION" != "$MOD_SHERPA_VERSION" ]]; then
+  echo "error: --sherpa-version ($SHERPA_VERSION) does not match cassini-go-recorder/go.mod ($MOD_SHERPA_VERSION)" >&2
+  echo "       update go.mod first or build without overriding --sherpa-version" >&2
+  exit 1
+fi
+
 if [[ -z "$SHERPA_TARBALL" ]]; then
   if [[ "$SHERPA_VERSION" == "1.13.7" ]]; then
     SHERPA_TARBALL="sherpa-onnx-v${SHERPA_VERSION}-cuda-12.x-cudnn-9.x-onnxruntime1.27.1-linux-x64-gpu.tar.bz2"
@@ -91,7 +98,7 @@ go 1.24.0
 
 use $REC
 
-replace github.com/k2-fsa/sherpa-onnx-go-linux v${SHERPA_VERSION} => $SHIM
+replace github.com/k2-fsa/sherpa-onnx-go-linux => $SHIM
 EOF
 
 echo "==> building cassini-bin"
