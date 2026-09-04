@@ -32,9 +32,9 @@ expect_eq() {
   if [[ "$want" == "$got" ]]; then ok "$desc"; else fail "$desc (want '$want', got '$got')"; fi
 }
 
-# --- moving tags are refused ------------------------------------------------
-for moving in latest latest-cuda latest-rocm cuda rocm main stable branch-foo dispatch-20260101; do
-  expect_fail "refuses moving tag '$moving'" exapp_assert_immutable_tag "$moving"
+# --- moving and non-release tags are refused --------------------------------
+for invalid in latest latest-cuda latest-rocm cuda rocm main stable branch-foo dispatch-20260101 nightly develop prod-current v1.0.0; do
+  expect_fail "refuses non-release tag '$invalid'" exapp_assert_immutable_tag "$invalid"
 done
 expect_fail "refuses an empty tag" exapp_assert_immutable_tag ""
 
