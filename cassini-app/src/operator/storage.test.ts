@@ -163,8 +163,10 @@ describe("OperatorClient storage", () => {
             mode: "access_controlled",
             meetings_moved: 3,
             catalog_moved: true,
-            source_root: "Cassini (1)/Recordings",
+            source_root: "CassiniNoACL/Recordings",
             destination_root: "Cassini/Recordings",
+            meetings_already_there: 1,
+            source_cleared: true,
           },
         }),
       ),
@@ -175,10 +177,73 @@ describe("OperatorClient storage", () => {
     expect(status.transition).toMatchObject({
       meetings_moved: 3,
       catalog_moved: true,
-      source_root: "Cassini (1)/Recordings",
+      source_root: "CassiniNoACL/Recordings",
+      meetings_already_there: 1,
+      source_cleared: true,
       leftover_source: "",
-      unmapped_groups: [],
     });
+  });
+
+  // `source_cleared` is the difference between "the switch worked" and "the
+  // switch worked and there is nothing left to do". An operator that omits it —
+  // any build before this one — must not read as a finished tidy-up.
+  it("does not read a missing source_cleared as a finished tidy-up", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...READY_STORAGE,
+          transition: { mode: "default", meetings_moved: 1 },
+        }),
+      ),
+    );
+
+    const status = await new OperatorClient("/operator").putStorage(false);
+
+    expect(status.transition?.source_cleared).toBe(false);
+  });
+
+  // An operator that predates migration_clean must not make the Setup tab offer
+  // a cleanup, because that cleanup DELETES from a root.
+  it("reads an absent migration_clean as a settled instance", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ ...READY_STORAGE })));
+
+    const status = await new OperatorClient("/operator").getStorage();
+
+    expect(status.migration_clean).toBe(true);
+    expect(status.pending_cleanup).toBe("");
+  });
+
+  it("carries an unfinished migration and the root that holds the leftovers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...READY_STORAGE,
+          migration_clean: false,
+          pending_cleanup: "Cassini/Recordings",
+          stranded_root: "Cassini/Recordings",
+          stranded_recordings: 4,
+        }),
+      ),
+    );
+
+    const status = await new OperatorClient("/operator").getStorage();
+
+    expect(status.migration_clean).toBe(false);
+    expect(status.pending_cleanup).toBe("Cassini/Recordings");
+    expect(status.stranded_recordings).toBe(4);
+  });
+
+  it("asks the operator to finish an interrupted migration", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ ...READY_STORAGE }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("/operator").finishStorageMigration();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ action: "finish_migration" });
   });
 });
 
@@ -196,6 +261,7 @@ describe("previewStorageSwitch", () => {
           catalog_present: true,
           destination_meetings: 0,
           nothing_to_move: false,
+          source_readable: true,
           warnings: ["all three become readable by every account"],
         },
       }),
@@ -245,5 +311,60 @@ describe("previewStorageSwitch", () => {
     expect(status.preview?.destination_meetings).toBe(0);
     expect(status.preview?.ready).toBe(false);
     expect(status.preview?.warnings).toEqual([]);
+  });
+});
+
+// A preview that could not read the source must not arrive as one that found
+// nothing. That conflation IS the QA report: a healthy default install with five
+// recordings was previewed as "no published recordings to move".
+describe("preview readability", () => {
+  it("does not read an absent source_readable as a readable source", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          mode: "default",
+          preview: {
+            mode: "access_controlled",
+            ready: true,
+            source_root: "CassiniNoACL/Recordings",
+            destination_root: "Cassini/Recordings",
+            meetings: 0,
+            nothing_to_move: false,
+          },
+        }),
+      ),
+    );
+
+    const status = await new OperatorClient("/operator").previewStorageSwitch(true);
+
+    expect(status.preview?.source_readable).toBe(false);
+    expect(status.preview?.nothing_to_move).toBe(false);
+  });
+
+  it("carries the pending cleanup a switch would run first", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          mode: "default",
+          preview: {
+            mode: "access_controlled",
+            ready: true,
+            source_root: "CassiniNoACL/Recordings",
+            destination_root: "Cassini/Recordings",
+            source_readable: true,
+            meetings: 5,
+            nothing_to_move: false,
+            pending_cleanup: "Cassini/Recordings",
+          },
+        }),
+      ),
+    );
+
+    const status = await new OperatorClient("/operator").previewStorageSwitch(true);
+
+    expect(status.preview?.pending_cleanup).toBe("Cassini/Recordings");
+    expect(status.preview?.meetings).toBe(5);
   });
 });

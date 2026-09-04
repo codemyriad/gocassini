@@ -3,6 +3,12 @@
   import { HardDrive, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import { NcSetupError, isSetupAvailable, nextcloudUrl, runSetupPlan } from "./operator/ncSetup";
+  import {
+    readStorageFlash,
+    reloadPage,
+    writeStorageFlash,
+    type StorageFlash,
+  } from "./operator/pageReload";
   import type { StorageModeOption, StorageStatus, StorageTransitionPreview } from "./operator/types";
 
   // The storage-mode switch, and since D-671 the setup that gets you to one.
@@ -48,10 +54,28 @@
   let preview: StorageTransitionPreview | null = null;
   let previewing = false;
   let previewError = "";
+  // flash is the result of the action that caused the page to reload. The shell
+  // reads its setup health once at mount, so every successful action here ends
+  // in a reload (pageReload.ts) — and the sentence the administrator earned has
+  // to survive it.
+  let flash: StorageFlash | null = null;
+  // repairing is the "finish the switch" action, which is separate from
+  // `switching` because it has no confirmation prompt: there is nothing to
+  // decide, only leftovers to clear.
+  let repairing = false;
 
   onMount(() => {
+    flash = readStorageFlash();
     void loadStorage();
   });
+
+  // finishAndReload is how every successful action ends. Reloading is the point
+  // — it is what clears the shell's stale setup notice, which is the papercut —
+  // and the flash is what stops the reload from swallowing the result.
+  function finishAndReload(next: StorageFlash): void {
+    writeStorageFlash(next);
+    reloadPage();
+  }
 
   async function loadStorage() {
     if (!operatorClient) {
@@ -172,6 +196,10 @@
         // Still missing. Everything left in the plan lives inside those apps,
         // so stopping here is the honest outcome — the per-app detail on screen
         // says what to do, and Nextcloud's Apps page is one click away.
+        //
+        // Deliberately no reload: the per-app outcomes are the whole answer here
+        // and they live on `status`, which a reload would discard for a state
+        // that has not usefully changed.
         return;
       }
       if (refreshed) {
@@ -189,6 +217,11 @@
     }
     setupProgress = "Checking…";
     status = await operatorClient.recheckStorage();
+    finishAndReload({
+      tone: "success",
+      message: `Setup finished for ${option.label.toLowerCase()} storage.`,
+      detail: "Cassini reloaded this page so every tab shows the instance as it is now.",
+    });
   }
 
   // modeOptionFor re-reads one mode from a refreshed status, so a plan can be
@@ -211,6 +244,19 @@
         await runSetup(target);
       } else {
         status = await operatorClient.putStorage(target.mode === "access_controlled");
+        const moved = status.transition?.meetings_moved ?? 0;
+        finishAndReload({
+          tone: status.transition?.source_cleared === false ? "warning" : "success",
+          message: `Storage is now ${target.label.toLowerCase()}.`,
+          detail:
+            (moved === 1 ? "1 recording was copied" : `${moved} recordings were copied`) +
+            (status.transition?.destination_root
+              ? ` into ${status.transition.destination_root}.`
+              : ".") +
+            (status.transition?.source_cleared === false
+              ? ` ${status.transition.leftover_source} still holds a copy — use "Finish the switch" below to clear it.`
+              : ""),
+        });
       }
       pending = null;
       preview = null;
@@ -231,6 +277,34 @@
     } finally {
       switching = false;
       setupProgress = "";
+    }
+  }
+
+  // finishMigration clears the leftovers a switch did not get to. It is the one
+  // recovery action, and it is the same action whichever half of a switch
+  // failed — see the operator's finishMigration.
+  async function finishMigration() {
+    if (!operatorClient || repairing) {
+      return;
+    }
+    repairing = true;
+    switchError = "";
+    try {
+      status = await operatorClient.finishStorageMigration();
+      finishAndReload({
+        tone: "success",
+        message: "The interrupted storage switch was finished.",
+        detail: "The leftover copy was cleared; your recordings were not touched.",
+      });
+    } catch (error) {
+      switchError = asMessage(error);
+      try {
+        status = await operatorClient.getStorage();
+      } catch {
+        // Keep what we had; the error is the thing worth showing.
+      }
+    } finally {
+      repairing = false;
     }
   }
 
@@ -285,6 +359,11 @@
   }
 
   $: transition = status?.transition ?? null;
+  // Where the mode in force keeps recordings. Derived rather than fetched: the
+  // repair banner has to say which root is safe, and a second round trip to
+  // learn it would leave a window where the banner said nothing at all.
+  $: activeRoot =
+    status?.mode === "access_controlled" ? "Cassini/Recordings" : "CassiniNoACL/Recordings";
   $: unresolved = status !== null && status.mode === "";
   // Whether this page can act as the administrator at all. False on the
   // standalone build, which has neither Nextcloud's scripts nor its session.
@@ -342,6 +421,72 @@
             Cassini has not checked this Nextcloud since it started. Setup runs when the app is
             enabled, so disable and re-enable it to see which storage mode is in force.
           </span>
+        </div>
+      {/if}
+
+      {#if flash}
+        <!-- The result of the action that caused this page to reload. Rendered
+             once; readStorageFlash already cleared it. -->
+        <div
+          class="alert items-start gap-3 text-sm {flash.tone === 'warning'
+            ? 'alert-warning'
+            : 'alert-success'}"
+          role="status"
+        >
+          <div class="grid gap-1">
+            <p class="font-semibold">{flash.message}</p>
+            {#if flash.detail}
+              <p class="text-xs break-words">{flash.detail}</p>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      {#if !status.migration_clean}
+        <!-- A switch that stopped part way. The archive is COMPLETE at the mode
+             above — the operator copies before it flips, and only clears
+             afterwards — so this is a tidy-up, not a rescue. Saying that first
+             is what stops it reading as data loss. -->
+        <div class="grid gap-2 rounded-box border border-warning bg-warning/10 p-3" role="status">
+          <p class="text-sm font-semibold">A storage switch did not finish.</p>
+          <p class="text-xs break-words text-base-content/80">
+            Your recordings are all in <code class="break-all">{activeRoot}</code>, which is the mode
+            above and the one Cassini reads.
+            {#if status.pending_cleanup}
+              <code class="break-all">{status.pending_cleanup}</code> still holds a leftover copy that
+              nothing reads.
+            {/if}
+            Finishing the switch clears it.
+          </p>
+          <button
+            class="btn btn-sm btn-warning w-fit"
+            type="button"
+            disabled={repairing || switching}
+            on:click={finishMigration}
+          >
+            {#if repairing}
+              <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              Finishing…
+            {:else}
+              Finish the switch
+            {/if}
+          </button>
+        </div>
+      {:else if status.stranded_recordings > 0}
+        <!-- Not an error: publishing and reading both work. But an archive in the
+             mode that is NOT in force is invisible, and "my recordings are gone"
+             is the worst way to discover a mode nobody switched. -->
+        <div class="grid gap-2 rounded-box border border-info/50 bg-info/10 p-3" role="status">
+          <p class="text-sm font-semibold">
+            {status.stranded_recordings}
+            {status.stranded_recordings === 1 ? "recording is" : "recordings are"} in the other storage
+            mode.
+          </p>
+          <p class="text-xs break-words text-base-content/80">
+            They are in <code class="break-all">{status.stranded_root}</code>, which the
+            {status.mode === "access_controlled" ? "access controlled" : "default"} mode does not read,
+            so they are not listed. Nothing is lost. Switching modes copies them across.
+          </p>
         </div>
       {/if}
 
@@ -527,7 +672,14 @@
                   </p>
                 {:else if preview}
                   <div class="grid gap-1 rounded-box bg-base-100/60 p-2 text-xs">
-                    {#if preview.nothing_to_move}
+                    {#if !preview.source_readable}
+                      <!-- The QA failure, and the one shape this must never
+                           render as "nothing to move": nobody managed to look. -->
+                      <p class="break-words text-base-content/80">
+                        Cassini could not read <code class="break-all">{preview.source_root}</code>,
+                        so it cannot say how many recordings would move.
+                      </p>
+                    {:else if preview.nothing_to_move}
                       <p class="break-words text-base-content/80">
                         There are no published recordings to move. Only the mode changes.
                       </p>
@@ -537,7 +689,7 @@
                           >{preview.meetings}
                           {preview.meetings === 1 ? "recording" : "recordings"}</span
                         >
-                        would move from <code class="break-all">{preview.source_root}</code> to
+                        would be copied from <code class="break-all">{preview.source_root}</code> to
                         <code class="break-all">{preview.destination_root}</code>{preview.catalog_present
                           ? ", along with the meeting index"
                           : ""}.
@@ -618,13 +770,16 @@
             </p>
             <p class="text-xs">
               {transition.meetings_moved}
-              {transition.meetings_moved === 1 ? "recording was" : "recordings were"} moved
+              {transition.meetings_moved === 1 ? "recording was" : "recordings were"} copied
               {#if transition.destination_root}into {transition.destination_root}{/if}.
+              {#if transition.meetings_already_there > 0}
+                {transition.meetings_already_there} were already there.
+              {/if}
             </p>
             {#if transition.leftover_source}
               <p class="text-xs break-words">
-                Some files were left in {transition.leftover_source} and can be removed by hand once
-                you have checked them.
+                {transition.leftover_source} still holds a copy. Use "Finish the switch" above to
+                clear it once you have checked the recordings arrived.
               </p>
             {/if}
           </div>
