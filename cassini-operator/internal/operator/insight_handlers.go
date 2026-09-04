@@ -41,6 +41,13 @@ import (
 //     second means the AppAPI middleware did not run: answering "you may read
 //     nothing" would be a claim about a caller nobody identified, and 404 would
 //     say the meetings do not exist. Both are lies an outage can tell for ever.
+//     A scan that failed reaches here as an EMPTY readable set rather than as an
+//     error — serveFilteredCatalog fails closed by design — so a request that
+//     names meetings and finds NOTHING readable is answered as the outage it
+//     almost certainly is, not as a denial. Somebody generating from a list they
+//     have just browsed cannot legitimately have zero readable meetings, and
+//     "one of these is not available to you" is a claim about a permission
+//     change that a transient PROPFIND failure has no business making.
 //
 // A failure is never an empty 200. Every one of these routes would otherwise
 // have a shape — an empty list, a run with no document — that reads as a fact
@@ -189,8 +196,16 @@ func (s *insightService) create(w http.ResponseWriter, r *http.Request, caller s
 	// intersect the viewer's catalog goes through, so a second reader never means
 	// a second access-control path.
 	readable, catalog, ok := s.exapp.readableMeetingsForCaller(r.Context(), s.client, caller, s.logger)
-	if !ok {
-		writeJSONError(w, http.StatusBadGateway, "Nextcloud Files unavailable")
+	if !ok || len(readable) == 0 {
+		// Empty is an outage here, not an answer. serveFilteredCatalog fails
+		// CLOSED — a per-caller PROPFIND that errors, or a missing recordings
+		// mount, is served as an empty catalog — so `ok` is true for a scan that
+		// never ran, and the loop below would then report a substrate failure as
+		// "one of these meetings is not available to you". Nobody reaches this
+		// handler without having just read a list of their own meetings, so a
+		// readable set of nothing is the failure and not the fact.
+		s.logf("insights: caller=%s has no readable meetings (ok=%t) — refusing as an outage rather than a denial", caller, ok)
+		writeJSONError(w, http.StatusBadGateway, "your meeting list could not be read from Nextcloud")
 		return
 	}
 	for _, id := range request.MeetingIDs {
@@ -438,7 +453,16 @@ func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, i
 		// claim a queued one — that is how a create's own goroutine claims it —
 		// so the refusal is here, and BeginAttempt below remains the lock that
 		// settles two retries pressed at once.
-		writeJSONError(w, http.StatusConflict, "this insight is already running")
+		//
+		// Two refusals, not one sentence for both: a succeeded run is not
+		// running, and telling somebody it is would have them wait for an answer
+		// they already have. Both are 409, because both mean "the state you are
+		// retrying is not the state this run is in".
+		message := "this insight is already running"
+		if existing.Status == insightStatusSucceeded {
+			message = "this insight already has an answer; ask again to run it a second time"
+		}
+		writeJSONError(w, http.StatusConflict, message)
 		return
 	}
 	run, err := s.store.BeginAttempt(r.Context(), id)

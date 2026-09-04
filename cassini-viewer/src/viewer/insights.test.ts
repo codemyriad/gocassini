@@ -185,6 +185,15 @@ describe("filterInsights", () => {
   it("returns everything for an empty query", () => {
     expect(filterInsights([asked, plain], "   ")).toHaveLength(2);
   });
+
+  it("matches the created date the card prints", () => {
+    // The date is on the row, so a date hit is a hit the list can show — which
+    // is the whole rule this filter follows.
+    const august = insight({ id: "i3", createdAt: "2026-08-20T09:00:00Z" });
+    const january = insight({ id: "i4", createdAt: "2026-01-04T09:00:00Z" });
+    expect(filterInsights([august, january], "Aug")).toEqual([august]);
+    expect(filterInsights([august, january], "2026")).toHaveLength(2);
+  });
 });
 
 describe("toggleBrowseType", () => {
@@ -309,6 +318,37 @@ describe("groupBrowseFeedByMonth", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0].label).toBe(UNDATED_MONTH_LABEL);
+  });
+
+  it("keeps the headings in order for a reader west of UTC", () => {
+    // The list orders by one clock, so the grouping has to key off that same
+    // clock or a heading can be hoisted above a later one. An insight created
+    // just after UTC midnight on the 1st displays the previous month in New
+    // York; filing it there put "August 2026" above "September 2026" in a list
+    // whose whole promise is newest-first.
+    const realTZ = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      const groups = groupBrowseFeedByMonth(
+        buildBrowseFeed({
+          meetings: [
+            meeting({ id: "sep1", dateLabel: "2026-09-01 00:30" }),
+            meeting({ id: "aug31", dateLabel: "2026-08-31 12:00" }),
+          ],
+          insights: [insight({ id: "i1", createdAt: "2026-09-01T01:00:00Z" })],
+          types: ALL_BROWSE_TYPES,
+        }),
+      );
+
+      expect(groups.map((group) => group.label)).toEqual(["September 2026", "August 2026"]);
+      expect(groups[0].items.map((item) => item.key)).toEqual([
+        "insight:i1",
+        "meeting:sep1",
+      ]);
+      expect(groups[1].items.map((item) => item.key)).toEqual(["meeting:aug31"]);
+    } finally {
+      process.env.TZ = realTZ;
+    }
   });
 
   it("groups a meeting by the month its own label shows", () => {

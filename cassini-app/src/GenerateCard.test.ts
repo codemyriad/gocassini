@@ -101,4 +101,31 @@ describe("GenerateCard", () => {
     // templates ship with Cassini and there is no PUT behind this panel.
     expect(generateCardSource).toContain("It is not saved as a template.");
   });
+
+  it("never puts a raw workflow id in front of somebody who has no names", () => {
+    // The registry is ADMIN at the proxy, so a non-admin can look nothing up.
+    // Falling back to the id would show them "summarise" where an administrator
+    // reading the same row sees "Meeting summary" — two vocabularies for one
+    // thing. The picker's own substitute is what a reader without names gets.
+    expect(generateCardSource).toContain(
+      'return isAdmin ? run.workflowId : "The template your administrator configured";',
+    );
+  });
+
+  it("offers the question box only where a question can be asked", () => {
+    // `POST insights` refuses a question a workflow has no slot for, and no
+    // prompt this image ships carries one — so an unconditional box is a
+    // control whose every use is a 400. The rule is read off the registry's own
+    // `instruction` bytes, which is what the operator decides on too, so the box
+    // appears by itself the day a question-taking workflow ships.
+    expect(generateCardSource).toContain("workflowTakesQuestion(chosenWorkflowEntry)");
+    expect(generateCardSource).toContain("{#if questionAccepted}");
+    // The other half of the same refusal: a workflow with a slot for a question
+    // cannot run without one.
+    expect(generateCardSource).toContain("questionMissing");
+    expect(generateCardSource).toContain("disabled={creating || questionMissing}");
+    // Text typed against one template must not ride along into another that
+    // would be refused for carrying it.
+    expect(generateCardSource).toContain('question: questionAccepted ? question : ""');
+  });
 });

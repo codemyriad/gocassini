@@ -232,11 +232,12 @@ export function insightsForMeeting(
   return insights.filter((record) => stringsOf(record.meetingIds).includes(meetingId));
 }
 
-// filterInsights is the list's text filter, applied to insights: the question
-// and the workflow id, which are the two things an insight is named by. It
-// deliberately does NOT reach into the answer, for the reason the meeting
-// filter does not reach into transcripts — a hit the list cannot show is a hit
-// that looks like a bug.
+// filterInsights is the list's text filter, applied to insights: the question,
+// the workflow id, and the created date AS THE CARD PRINTS IT. Those three are
+// exactly what an insight row shows, which is the rule — the date is included
+// because it is on the card, and the answer is excluded for the same reason the
+// meeting filter does not reach into transcripts: a hit the list cannot show is
+// a hit that looks like a bug.
 export function filterInsights(
   insights: readonly InsightRecord[],
   query: string,
@@ -358,13 +359,18 @@ const MONTH_FORMAT = new Intl.DateTimeFormat("en-GB", {
 
 // groupBrowseFeedByMonth puts the month headings in, without reordering.
 //
-// Each row is filed under the month IT DISPLAYS, which is not the same clock
-// for the two kinds: a meeting shows its label's own digits and is grouped by
-// them (identical to rooms.groupMeetingsByMonth, so a list with no insights in
-// it is grouped exactly as before), while an insight shows a real instant in
-// the reader's timezone and is grouped by that. Filing either one by the
-// other's clock would put a row under a heading that contradicts the date
-// printed on it.
+// ONE CLOCK for both kinds, and it is UTC — the clock buildBrowseFeed already
+// ordered the list by. This grouping keeps insertion order, so it is only ever
+// correct while the month key is a monotone function of the sort key; filing
+// meetings by their label's own digits (UTC, as rooms.groupMeetingsByMonth
+// does) and insights by the reader's local clock broke exactly that. West of
+// UTC, an insight created just after midnight on the 1st displays the previous
+// month, so the first group emitted was "August", the next "September", and a
+// list whose whole promise is newest-first rendered an older heading above a
+// newer one with the rows to match. A boundary row whose printed local time
+// reads as the month before its heading is a much smaller lie than a heading
+// out of order, and it is the same approximation the meeting rows have always
+// made.
 export function groupBrowseFeedByMonth(
   items: readonly BrowseFeedItem[],
 ): BrowseFeedGroup[] {
@@ -395,7 +401,7 @@ function monthOf(item: BrowseFeedItem): { key: string; label: string } {
     return { key: UNDATED_MONTH_KEY, label: UNDATED_MONTH_LABEL };
   }
   const date = new Date(ms);
-  return monthLabel(date.getFullYear(), date.getMonth());
+  return monthLabel(date.getUTCFullYear(), date.getUTCMonth());
 }
 
 function monthLabel(year: number, monthIndex: number): { key: string; label: string } {

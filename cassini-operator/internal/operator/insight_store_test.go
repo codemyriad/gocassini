@@ -467,68 +467,88 @@ func TestInsightStoreFailsRunsAnOperatorRestartStranded(t *testing.T) {
 	}
 }
 
-// TestInsightStoreReconcilesStrandedRunsOncePerProcess covers the repair the
-// store makes on its own: the first read after a restart fails whatever the dead
-// process left mid-flight, and no later read sweeps again over live work.
-func TestInsightStoreReconcilesStrandedRunsOncePerProcess(t *testing.T) {
+// TestInsightStoreSweepsStrandedRunsByStaleness covers the repair the store
+// makes on its own, and the reason it is keyed on staleness rather than on
+// process start: a run this LIVE process wrote and then failed to move has to
+// become retryable too, where a sweep that latched after its first read left it
+// wedged at 409 until the next restart.
+func TestInsightStoreSweepsStrandedRunsByStaleness(t *testing.T) {
 	ctx := context.Background()
-	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
-	db, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
-	if err != nil {
-		t.Fatalf("OpenStore() error = %v", err)
-	}
-	defer db.Close()
-	store := newInsightStore(db)
+	store := newInsightTestStore(t)
 
-	stranded := func(id string) {
+	// The two package-level knobs the sweep reads. Both are restored, because a
+	// test that moved them permanently would silently disarm every later one.
+	realStart := insightProcessStartedAt
+	insightSweep.Lock()
+	realLast := insightSweep.last
+	insightSweep.Unlock()
+	t.Cleanup(func() {
+		insightProcessStartedAt = realStart
+		insightSweep.Lock()
+		insightSweep.last = realLast
+		insightSweep.Unlock()
+	})
+	// Forget the throttle, so the next read actually sweeps.
+	rearm := func() {
+		t.Helper()
+		insightSweep.Lock()
+		insightSweep.last = time.Time{}
+		insightSweep.Unlock()
+	}
+	running := func(id string, lastWritten time.Time) {
 		t.Helper()
 		seedInsightRun(t, store, id, "alice")
 		if _, err := store.BeginAttempt(ctx, id); err != nil {
 			t.Fatalf("BeginAttempt(%s) error = %v", id, err)
 		}
-		if _, err := db.db.Exec(`UPDATE insight_runs SET updated_at = ? WHERE id = ?`,
-			formatUTCString(insightProcessStartedAt.Add(-time.Hour)), id); err != nil {
+		if _, err := store.db.Exec(`UPDATE insight_runs SET updated_at = ? WHERE id = ?`,
+			formatUTCString(lastWritten), id); err != nil {
 			t.Fatalf("backdate %s: %v", id, err)
 		}
 	}
-	unlatch := func() {
-		t.Helper()
-		insightReconcile.Lock()
-		insightReconcile.done = false
-		insightReconcile.Unlock()
-	}
-	insightReconcile.Lock()
-	previous := insightReconcile.done
-	insightReconcile.Unlock()
-	t.Cleanup(func() {
-		insightReconcile.Lock()
-		insightReconcile.done = previous
-		insightReconcile.Unlock()
-	})
 
-	stranded("ins_00000000000000a1")
-	unlatch()
+	// A crash: written before this process existed, so nothing is going to write
+	// it again whatever its age.
+	running("ins_00000000000000a1", insightProcessStartedAt.Add(-time.Hour))
+	rearm()
 	if run := mustGetInsightRun(t, store, "ins_00000000000000a1"); run.Status != insightStatusFailed {
-		t.Fatalf("the first read left a stranded run at %q", run.Status)
+		t.Fatalf("a run left behind by a dead process is still %q", run.Status)
 	}
 
-	// The sweep has now latched. A second backdated run is this process's own
-	// work as far as anything can tell, and must be left alone.
-	stranded("ins_00000000000000a2")
+	// The throttle: the sweep is a write transaction on the polling path, so a
+	// second read moments later does not pay for it again.
+	running("ins_00000000000000a2", insightProcessStartedAt.Add(-time.Hour))
 	if run := mustGetInsightRun(t, store, "ins_00000000000000a2"); run.Status != insightStatusRunning {
-		t.Fatalf("the store swept twice, moving a live run to %q", run.Status)
+		t.Fatalf("the sweep ran twice inside its own interval, moving a run to %q", run.Status)
+	}
+	rearm()
+	if run := mustGetInsightRun(t, store, "ins_00000000000000a2"); run.Status != insightStatusFailed {
+		t.Fatalf("the sweep latched: a stranded run is still %q on a later read", run.Status)
 	}
 
-	// The eager door does the same repair before it hands the store over, so a
-	// surface that mounts through it never mounts over an unrepaired table.
-	stranded("ins_00000000000000a3")
-	unlatch()
-	eager, err := db.insights()
-	if err != nil {
-		t.Fatalf("insights() error = %v", err)
+	// The live-process wedge, which the old process-start criterion could never
+	// reach. This process has been up for hours; a row it wrote itself and then
+	// stopped writing is past any deadline an attempt has, so it is stranded.
+	insightProcessStartedAt = time.Now().Add(-3 * time.Hour)
+	running("ins_00000000000000b1", time.Now().Add(-(insightRunTimeout + insightSweepGrace + time.Minute)))
+	// And one this process is plausibly still working on, which must survive the
+	// same sweep.
+	running("ins_00000000000000b2", time.Now().Add(-time.Minute))
+	rearm()
+	if run := mustGetInsightRun(t, store, "ins_00000000000000b1"); run.Status != insightStatusFailed {
+		t.Fatalf("a run this process stopped writing is still %q, so retry stays a 409 for ever", run.Status)
 	}
-	if run := mustGetInsightRun(t, eager, "ins_00000000000000a3"); run.Status != insightStatusFailed {
-		t.Fatalf("insights() handed over a store with a stranded run at %q", run.Status)
+	if run := mustGetInsightRun(t, store, "ins_00000000000000b2"); run.Status != insightStatusRunning {
+		t.Fatalf("the sweep failed a live attempt at %q", run.Status)
+	}
+
+	// The point of failing a stranded run rather than leaving it: it is retryable.
+	retried, err := store.BeginAttempt(ctx, "ins_00000000000000b1")
+	if err != nil {
+		t.Fatalf("BeginAttempt(after sweep) error = %v", err)
+	}
+	if retried.AttemptNumber != 2 {
+		t.Fatalf("retry after sweep = attempt %d, want 2", retried.AttemptNumber)
 	}
 }
 

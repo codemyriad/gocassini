@@ -444,9 +444,17 @@ func (c ExAppConfig) renderMeetingsContext(ctx context.Context, staging, catalog
 	stderr.remaining = 8 << 10
 
 	cmd := exec.CommandContext(ctx, c.CassiniBin, args...)
-	cmd.Stdout = &cappedWriter{out: out, remaining: maxContextDocumentBytes}
+	cmd.Stdout = newCappedWriter(out, "context bundle", maxContextDocumentBytes)
 	cmd.Stderr = &stderr
-	cmd.Env = os.Environ()
+	// Not os.Environ(): this child reads three staged files and prints a
+	// document, and it was inheriting the operator's own credentials to do it.
+	// APP_SECRET is the one that matters — a process holding the AppAPI shared
+	// secret can act as ANY account on the instance, so handing it to a child
+	// spawned by any logged-in caller made every bundle request a full
+	// impersonation capability for its duration. The LLM variables go too: this
+	// verb never calls a model. Same environment the insight path's identical
+	// child gets, from the same function, so the two cannot drift (D-700).
+	cmd.Env = contextChildEnv(os.Environ())
 	// Kill the whole process group on ctx cancel so the ffprobe grandchildren
 	// the reader spawns do not outlive an abandoned request.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -515,14 +523,26 @@ func (c *capturedResponse) statusCode() int {
 // truncating. A truncated context document is worse than no document: a
 // consumer would answer a question out of half a transcript and nothing in the
 // bytes would say so.
+//
+// what and limit exist so the refusal names the bound it actually enforced. Two
+// callers pass two different caps — a context bundle here, a much smaller
+// insight document in insight_runtime.go — and a message that quoted whichever
+// one this file happens to know about would send whoever read it looking at the
+// wrong knob (D-700).
 type cappedWriter struct {
 	out       io.Writer
+	what      string
+	limit     int64
 	remaining int64
+}
+
+func newCappedWriter(out io.Writer, what string, limit int64) *cappedWriter {
+	return &cappedWriter{out: out, what: what, limit: limit, remaining: limit}
 }
 
 func (w *cappedWriter) Write(p []byte) (int, error) {
 	if int64(len(p)) > w.remaining {
-		return 0, fmt.Errorf("the context bundle exceeds the %d MiB one request may produce", maxContextDocumentBytes>>20)
+		return 0, fmt.Errorf("the %s exceeds the %d MiB one request may produce", w.what, w.limit>>20)
 	}
 	w.remaining -= int64(len(p))
 	return w.out.Write(p)

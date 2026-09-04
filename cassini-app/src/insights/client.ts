@@ -79,6 +79,29 @@ export function isTerminalStatus(status: InsightStatus): boolean {
   return status === "succeeded" || status === "failed";
 }
 
+// QUESTION_PLACEHOLDER is the token a workflow carries where the caller's own
+// text is spliced in (insight.QuestionPlaceholder in the recorder).
+const QUESTION_PLACEHOLDER = "{{QUESTION}}";
+
+// workflowTakesQuestion reports whether a workflow has somewhere to put a
+// freeform question.
+//
+// It is read off the SAME bytes the operator decides on — the registry's
+// `instruction`, which is the spliced system prompt itself — because
+// `POST insights` refuses a question both ways: given to a workflow with no
+// slot for it the question would be silently dropped, and withheld from one
+// that needs it the prompt would go out with its placeholder still in it. A
+// control the server refuses every use of is worse than no control, so the card
+// asks this before it offers the box (D-700).
+//
+// No workflow this image ships carries the placeholder — internal/insight/
+// workflows/workflows.go says so in as many words — so today this is false for
+// everything and the box is simply absent. The day one ships, it appears on its
+// own rather than waiting for this file to be edited.
+export function workflowTakesQuestion(workflow: { instruction?: string } | null): boolean {
+  return (workflow?.instruction ?? "").includes(QUESTION_PLACEHOLDER);
+}
+
 // InsightRequestError carries the status alongside the sentence, because 409 —
 // a retry that raced the run it was retrying — is not an error to show in red,
 // it is an answer.
@@ -380,7 +403,12 @@ const FAILURE_COPY: Record<
   unknown: {
     title: "The insight failed",
     summary: "The run did not finish, and nothing was written to your files.",
-    fixable: true,
+    // Not fixable, for the reason bad-request is not: the operator classifies
+    // only the four failures it can name, and this is the one it deliberately
+    // left unclassified. Offering "Open AI providers" for it would send an
+    // administrator to a panel nobody said would change the outcome. The
+    // operator's own sentence, repeated below, still carries everything known.
+    fixable: false,
   },
 };
 

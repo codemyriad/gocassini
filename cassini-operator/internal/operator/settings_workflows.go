@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -118,6 +119,12 @@ func (rt *Runtime) readWorkflowRegistry(r *http.Request, bin string) ([]workflow
 	cmd := exec.CommandContext(ctx, bin, "insight", "workflows", "--json")
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// This verb prints a compiled-in constant and reads nothing, so it needs
+	// none of the operator's credentials. It stopped being an ADMIN-only spawn
+	// when POST insights began resolving its workflow through here (D-700):
+	// every logged-in caller can now start this child, and APP_SECRET in a
+	// process is the ability to act as any account on the instance.
+	cmd.Env = contextChildEnv(os.Environ())
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("cassini insight workflows --json: %w: %s", err, strings.TrimSpace(stderr.buf.String()))
 	}

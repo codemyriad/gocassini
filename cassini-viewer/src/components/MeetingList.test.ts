@@ -54,8 +54,13 @@ describe("MeetingList rows", () => {
 
   it("reports what it is showing, because its filter is its own", () => {
     // The shell cannot otherwise say how many picked meetings the current
-    // narrowing hides — the text filter never leaves this component.
-    expect(meetingListSource).toContain('dispatch("visible", visibleMeetings)');
+    // narrowing hides — the text filter never leaves this component. The TYPE
+    // filter has to count the same way: with Meetings switched off the list
+    // draws no meeting rows at all, so reporting the search-filtered set would
+    // leave the selection bar claiming nothing was hidden while every pick was.
+    expect(meetingListSource).toContain(
+      'dispatch("visible", types.meetings ? visibleMeetings : [])',
+    );
   });
 });
 
@@ -101,6 +106,28 @@ describe("MeetingList insights", () => {
     expect(meetingListSource).toContain("Insights could not be listed:");
     expect(meetingListSource).toMatch(
       /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
+    );
+  });
+
+  it("claims you have no insights only where it knows that", () => {
+    // The claim is about the whole archive, so every narrowing has to be off
+    // and the listing has to have come back: a room selected, a search typed, a
+    // listing in flight or a listing that FAILED each make it false, and each
+    // has its own words in the branch below it.
+    expect(meetingListSource).toContain(
+      "feedItems.length === 0 && insightsOnly && !trimmedFilter && " +
+        "selectedRoomName === null && insightsLoaded && !insightsError && totalInsightCount === 0",
+    );
+  });
+
+  it("names the search box after the kinds it is narrowing", () => {
+    // It narrows insights too, and narrows insights ALONE when the Meetings
+    // toggle is off.
+    expect(meetingListSource).toContain(
+      "placeholder={`Search ${matchNounPlural} by name or date`}",
+    );
+    expect(meetingListSource).toContain(
+      "aria-label={`Search ${matchNounPlural} by name or date`}",
     );
   });
 

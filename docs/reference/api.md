@@ -238,8 +238,7 @@ Content-Type: application/json
 
 {
   "meetingIds": ["..."],
-  "workflow": "summarise",
-  "question": "What did we decide about pricing?"
+  "workflow": "summarise"
 }
 ```
 
@@ -248,7 +247,12 @@ Behavior:
 - requires at least one `meetingIds` entry
 - `workflow` is optional — it falls back to the configured insight template, then
   to the shipped default. `cassini insight workflows --json` lists the registry
-- `question` is optional
+- `question` belongs only to a workflow that has somewhere to put one, and is
+  refused **both ways**: sent to a workflow that takes none it would be dropped
+  without being asked, and withheld from one that needs it the prompt would go
+  out with its placeholder still in it. Either mistake is a `400`. No workflow
+  this image ships takes a question yet, so today `question` must be absent or
+  empty
 - returns `201` with the run
 
 ### List the caller's runs
@@ -297,7 +301,7 @@ the `cassini insight` CLI uses, deliberately not the job pipeline's five.
 |---|---|
 | `400` | A request that cannot be run: no meetings, too many, an unknown workflow, a malformed id. Refused before any Nextcloud call |
 | `404` | A meeting, or a run, the caller may not read — indistinguishable from one that does not exist |
-| `409` | A retry against a run that is `queued` or `running` |
+| `409` | A retry against a run that is not `failed` — `queued` or `running` (it is already moving), or `succeeded` (it already has an answer) |
 | `502` | A scan that failed, or a request with no caller identity |
 
 A failure is never an empty `200`.

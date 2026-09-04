@@ -229,6 +229,12 @@ func runInsightRun(ctx context.Context, args []string, stdout, stderr io.Writer)
 	fs.SetOutput(stderr)
 	fs.Var(&contexts, "context", "path to a cassini.meetings.context.v1 JSON bundle; repeat for several")
 	workflowID := fs.String("workflow", workflows.SummariseID, "workflow to run; `cassini insight workflows` lists them")
+	// Only a workflow carrying insight.QuestionPlaceholder has anywhere to put
+	// this, and insight.Run refuses it both ways — a question given to a
+	// workflow with no slot for it would be dropped without being asked, and one
+	// withheld from a workflow that needs it would send the placeholder to the
+	// model. So the flag exists but decides nothing: the workflow's own bytes do.
+	question := fs.String("question", "", "the question to ask, for a workflow that takes one; `cassini insight workflows` shows which do")
 	model := fs.String("model", "", "override the model the configured endpoint is asked for")
 	outPath := fs.String("out", "", "write the insight to this .md file instead of stdout")
 	recordPath := fs.String("record", "", "also write the run record to this .json file")
@@ -242,6 +248,11 @@ func runInsightRun(ctx context.Context, args []string, stdout, stderr io.Writer)
 Run one workflow over the meetings in one or more context bundles and write the
 answer. A bundle is what `+"`cassini meetings context <ids...> --json --out`"+` writes;
 each --context adds one, and they reach the model in the order you name them.
+
+Most workflows ask their own question and take none of yours. A workflow that
+does take one says so in `+"`cassini insight workflows`"+`, and then --question is
+required: a question given to a workflow with no room for it would be dropped
+without being asked, so both mistakes are refused rather than guessed at.
 
 The written document carries its own provenance as frontmatter: which meetings
 it was produced from, which workflow version and content hash, which endpoint
@@ -323,6 +334,7 @@ is not a warning:
 	artifact, runErr := insight.Run(ctx, insight.Request{
 		Workflow:   workflow,
 		Contexts:   bundles,
+		Question:   *question,
 		RenderOpts: meetingcontext.RenderOpts{Timestamps: *timestamps},
 		Provider:   insightProviderFor(cfg),
 	})

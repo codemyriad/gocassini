@@ -41,9 +41,11 @@ artifacts:
 - **Summaries** — an optional `summary.md`, produced only when the LLM step is
   enabled.
 - **Insight runs** — one row per question asked of a set of meetings: who asked,
-  which meetings, which workflow, the status, and where the answer was written.
-  The answer itself is an ordinary file in the asker's Nextcloud Files, not an
-  artifact on the app volume.
+  which meetings, which workflow, **the question text itself** where one was
+  typed, the status, the failure message where one failed, and where the answer
+  was written. The answer itself is an ordinary file in the asker's Nextcloud
+  Files, not an artifact on the app volume; the row, question included, stays on
+  the app volume until that volume is deleted.
 - **Manifests** — internal bundle descriptors (`cassini.json`, `manifest.json`)
   recording each artifact's kind, state, and integrity hashes.
 - **Logs** — per-attempt operator logs (`record.log`, `build.log`, `seal.log`,
@@ -140,8 +142,16 @@ Controls:
   self-hosted endpoint is enough; `OPENROUTER_API_KEY` is needed only when the
   endpoint requires one.
 - **Per-step endpoints in the app's AI settings** — summaries and insights each
-  resolve their own endpoint, so one can be switched off, or pointed at a
-  local model, without the other.
+  resolve their own endpoint, so one can be pointed at a local model without the
+  other. Switching insights off is **not** one of the things this does: an
+  insight step with no endpoint of its own **inherits the summary one**, because
+  the recorder layers `INSIGHT_*` over `SUMMARY_*`, so an insight still reaches
+  whatever the summary step is configured with. To stop insight text leaving
+  your infrastructure, give the insight step an endpoint you accept — a local
+  model — or remove the summary endpoint too. The inherited case is reported as
+  `effective.insight.inherited = true` by `GET <cassini>/operator/settings/llm`,
+  which is how an administrator checks which endpoint an insight will actually
+  reach.
 - **`CASSINI_SUMMARY_DISABLED`** — keep the endpoint configured but stop
   summarising meetings. It means "publish meetings without a summary" and so
   does not disable insights; leave the endpoint unset if the intent is that
@@ -197,7 +207,7 @@ could not use.
   access model.
 - **Insight documents are ordinary Nextcloud files** in the account that asked
   for them. Deleting one deletes the answer; the run row on the app volume
-  remains, recording that the question was asked, until the volume is deleted.
+  remains — with the question text on it — until the volume is deleted.
 - **Published recordings persist in Nextcloud Files** independently of Cassini.
   Removing or disabling the Cassini app does not delete them; they are managed as
   ordinary Nextcloud files.

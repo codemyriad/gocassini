@@ -12,6 +12,7 @@ import {
   readRun,
   resolveInsightsUrl,
   retryInsight,
+  workflowTakesQuestion,
   InsightRequestError,
   MAX_POLL_DELAY_MS,
   type InsightRun,
@@ -284,6 +285,22 @@ describe("what a run says while it runs", () => {
   });
 });
 
+describe("which workflows can be asked a question", () => {
+  it("reads the placeholder off the bytes the operator decides on", () => {
+    // `POST insights` refuses a question both ways — dropped by a workflow with
+    // no slot for it, or withheld from one that needs it — and it decides that
+    // on the registry's `instruction`, the spliced system prompt itself. This
+    // is the same read, so the card cannot offer a box the operator refuses.
+    expect(workflowTakesQuestion({ instruction: "Answer this: {{QUESTION}}" })).toBe(true);
+    expect(workflowTakesQuestion({ instruction: "Summarise the meetings." })).toBe(false);
+    // An unread registry is not a registry of question-taking workflows: a
+    // non-admin cannot list templates at all, and guessing true there would put
+    // the box back in front of the people least able to recover from a 400.
+    expect(workflowTakesQuestion(null)).toBe(false);
+    expect(workflowTakesQuestion({})).toBe(false);
+  });
+});
+
 describe("what a failed run says", () => {
   it("classifies on the operator's reason token, not on its prose", () => {
     // `cassini insight run` maps each reason to an exit code precisely so the
@@ -342,6 +359,24 @@ describe("what a failed run says", () => {
 
     expect(notice?.panel).toBe("");
     expect(notice?.summary).toContain("unknown workflow: decisions");
+  });
+
+  it("offers no fix for a failure the operator would not classify", () => {
+    // The operator tags only the four failures internal/insight names. An
+    // untagged one is precisely the one nobody said AI settings would repair,
+    // so "Open AI providers" would be a link to a panel that changes nothing.
+    const notice = buildRunFailureNotice({
+      run: run({ status: "failed", error: "The insight run stopped unexpectedly." }),
+      isAdmin: true,
+    });
+
+    expect(notice?.title).toBe("The insight failed");
+    expect(notice?.panel).toBe("");
+    expect(notice?.actionLabel).toBe("");
+    // And no "only an administrator can change this" either: that sentence is
+    // for a fix somebody else has to make, and there is no known fix here.
+    expect(notice?.summary).not.toContain("Only a Nextcloud administrator");
+    expect(notice?.summary).toContain("The insight run stopped unexpectedly.");
   });
 
   it("says nothing about a run that has not failed", () => {

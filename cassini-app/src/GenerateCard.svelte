@@ -32,6 +32,7 @@
     pollDelayMs,
     readInsight,
     retryInsight,
+    workflowTakesQuestion,
     InsightRequestError,
     type InsightRun,
   } from "./insights/client";
@@ -103,6 +104,29 @@
     void loadWorkflows();
   }
 
+  // Whether this run may carry a question of your own, decided against the
+  // registry's own bytes rather than assumed.
+  //
+  // `POST insights` refuses a question a workflow has no slot for AND a workflow
+  // that needs one with none given, so an unconditional box is a control every
+  // use of which is a 400: no prompt this image ships carries the placeholder
+  // (internal/insight/workflows/workflows.go states that outright), so today
+  // there is nothing to type into and the box is absent. The day a
+  // question-taking workflow ships it appears by itself.
+  //
+  // It can only be answered for a workflow this card can actually see, which is
+  // one an ADMIN picked: the registry is ADMIN at the proxy, and "this
+  // deployment's default" is resolved server-side out of the LLM settings, which
+  // are ADMIN too. So a deployment that later configures a question-taking
+  // template as its default is told so by the operator's own 400 rather than
+  // guessed at here — loud, and about the one thing this side cannot know.
+  $: chosenWorkflowEntry = workflows.find((workflow) => workflow.id === chosenWorkflow) ?? null;
+  $: questionAccepted = chosenWorkflow !== "" && workflowTakesQuestion(chosenWorkflowEntry);
+  // A workflow with a slot for a question is a workflow that cannot run without
+  // one, so Generate waits for it rather than sending a request the operator
+  // will refuse.
+  $: questionMissing = questionAccepted && question.trim() === "";
+
   onMount(() => {
     void loadRuns();
   });
@@ -139,7 +163,7 @@
   }
 
   async function generate() {
-    if (creating || meetingIds.length === 0) {
+    if (creating || meetingIds.length === 0 || questionMissing) {
       return;
     }
     creating = true;
@@ -148,7 +172,10 @@
       const run = await createInsight({
         meetingIds,
         workflow: chosenWorkflow,
-        question,
+        // Only ever sent to a workflow with somewhere to put it. Text left in
+        // the box by a template that was then switched away from must not ride
+        // along into one that would be refused for carrying it.
+        question: questionAccepted ? question : "",
       });
       // In the list before anything has happened to it, which is the whole
       // point of a record that exists before its content does: otherwise the
@@ -282,12 +309,26 @@
     return error instanceof Error ? error.message : String(error);
   }
 
+  // What names a run in the list: the question it asked, else the template's
+  // display name.
+  //
+  // The registry is ADMIN at the proxy, so a non-admin has no names to look up
+  // and the raw id would put "summarise" and "todos" in front of them where an
+  // administrator reading the same rows sees "Meeting summary" and "Open
+  // actions" — two vocabularies for one thing. Where there is no name to be had,
+  // the picker's own substitute is the honest one: say which template ran
+  // without inventing a word for it. An admin whose registry read merely failed
+  // keeps the id, which is the most they can be told and is a word they can act
+  // on.
   function workflowLabel(run: InsightRun): string {
     if (run.question.trim() !== "") {
       return `“${run.question.trim()}”`;
     }
     const known = workflows.find((workflow) => workflow.id === run.workflowId);
-    return known?.name ?? run.workflowId;
+    if (known) {
+      return known.name;
+    }
+    return isAdmin ? run.workflowId : "The template your administrator configured";
   }
 
   function handleOpenPanel(event: CustomEvent<{ panel: OperatorPanel; href: string }>) {
@@ -333,30 +374,40 @@
         </p>
       {/if}
 
-      <label class="grid gap-1">
-        <span class="text-xs text-base-content/70">Or ask your own question</span>
-        <textarea
-          class="textarea textarea-sm textarea-bordered w-full"
-          rows="2"
-          placeholder="What did we decide about pricing?"
-          bind:value={question}
-        ></textarea>
-      </label>
-      <!-- The prototype's freeform box reads as a saveable prompt. It is not:
-           the question is recorded on the insight it produced and nowhere else,
-           and templates ship with Cassini. -->
-      <p class="text-xs text-base-content/60">
-        Your question is recorded with the insight it produces. It is not saved as a template.
-      </p>
+      <!-- Offered only by a template that has somewhere to put it. A box whose
+           every submission is refused would be worse than none, and no prompt
+           this image ships takes a question yet — see questionAccepted. -->
+      {#if questionAccepted}
+        <label class="grid gap-1">
+          <span class="text-xs text-base-content/70">Ask your own question</span>
+          <textarea
+            class="textarea textarea-sm textarea-bordered w-full"
+            rows="2"
+            placeholder="What did we decide about pricing?"
+            bind:value={question}
+          ></textarea>
+        </label>
+        <!-- The prototype's freeform box reads as a saveable prompt. It is not:
+             the question is recorded on the insight it produced and nowhere
+             else, and templates ship with Cassini. -->
+        <p class="text-xs text-base-content/60">
+          Your question is recorded with the insight it produces. It is not saved as a template.
+        </p>
+      {/if}
 
       <button
         class="btn btn-primary btn-sm"
         type="button"
-        disabled={creating}
+        disabled={creating || questionMissing}
         on:click={generate}
       >
         {creating ? "Starting…" : generateLabel}
       </button>
+      {#if questionMissing}
+        <p class="text-xs text-base-content/70">
+          This template asks whatever you type above, so it needs a question.
+        </p>
+      {/if}
 
       <!-- The instance's key pays for this, so a run is attributable to the
            deployment rather than to the person who asked. Said here rather than

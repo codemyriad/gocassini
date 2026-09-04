@@ -30,10 +30,26 @@ type fakeInsightStore struct {
 	runs    map[string]InsightRun
 	order   []string
 	created []InsightRun
+	// begun counts BeginAttempt calls: a create claims its own attempt in the
+	// background and a retry claims it inside the request, and only a count can
+	// tell which door a run came through.
+	begun int
 	// listErr, getErr and beginErr force the failure paths.
 	listErr  error
 	getErr   error
 	beginErr error
+}
+
+func (f *fakeInsightStore) status(id string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runs[id].Status
+}
+
+func (f *fakeInsightStore) claims() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.begun
 }
 
 func newFakeInsightStore(runs ...InsightRun) *fakeInsightStore {
@@ -92,6 +108,9 @@ func (f *fakeInsightStore) BeginAttempt(_ context.Context, id string) (InsightRu
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Counted, because "which door claimed this attempt" is the whole of the
+	// create/retry difference and a status alone cannot tell them apart.
+	f.begun++
 	run, ok := f.runs[id]
 	if !ok {
 		return InsightRun{}, sql.ErrNoRows
@@ -229,6 +248,33 @@ func TestCreateInsightAnswers404ForAMeetingTheCallerMayNotRead(t *testing.T) {
 	}
 	if len(harness.store.created) != 0 {
 		t.Error("a run was created for a meeting the caller may not read")
+	}
+}
+
+// A per-caller scan that FAILED is served closed, as an EMPTY catalog, so it
+// reaches this handler looking exactly like "you may read nothing". Answering
+// 404 would tell somebody who has just browsed their own meetings that one of
+// them is not theirs, which is a claim about a permission change that a
+// transient PROPFIND failure has no business making.
+func TestCreateInsightAnswers502WhenNothingIsReadableAtAll(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog)
+	store := newFakeInsightStore()
+	service, _ := insightTestService(t, dav.server.URL, insightRegistryCassini(t), store)
+	harness := &insightHandlerHarness{service: service, store: store, dav: dav}
+	service.launchFn = func(id string, _ bool) { harness.launched = append(harness.launched, id) }
+
+	w := harness.do(t, http.MethodPost, "/insights", "alice", `{"meetingIds":["MEETING1"]}`)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("code = %d, want 502 (%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "meeting list") {
+		t.Errorf("body = %s, want it to name the read that failed", w.Body.String())
+	}
+	if len(harness.store.created) != 0 {
+		t.Error("a run was created out of a meeting list nobody could read")
+	}
+	if len(harness.launched) != 0 {
+		t.Error("an attempt was started out of a meeting list nobody could read")
 	}
 }
 
@@ -409,12 +455,20 @@ func TestRetryIsRefusedWhileTheRunIsStillGoing(t *testing.T) {
 	harness := newInsightHandlerHarness(t,
 		InsightRun{ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusRunning, MeetingIDs: []string{"MEETING1"}},
 		InsightRun{ID: "ins_00000000000000a2", CreatedBy: "alice", Status: insightStatusQueued, MeetingIDs: []string{"MEETING1"}},
+		InsightRun{ID: "ins_00000000000000a3", CreatedBy: "alice", Status: insightStatusSucceeded, MeetingIDs: []string{"MEETING1"}},
 	)
-	for _, id := range []string{"ins_00000000000000a1", "ins_00000000000000a2"} {
+	for _, id := range []string{"ins_00000000000000a1", "ins_00000000000000a2", "ins_00000000000000a3"} {
 		w := harness.do(t, http.MethodPost, "/insights/"+id+"/retry", "alice", "")
 		if w.Code != http.StatusConflict {
 			t.Errorf("retry of %s = %d, want 409 (%s)", id, w.Code, w.Body.String())
 		}
+	}
+	// The three refusals are one status code and not one sentence: a succeeded
+	// run is not running, and saying it is would have somebody wait for an
+	// answer they already have.
+	answered := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a3/retry", "alice", "")
+	if strings.Contains(answered.Body.String(), "already running") {
+		t.Errorf("a succeeded run was refused as running: %s", answered.Body.String())
 	}
 	if len(harness.launched) != 0 {
 		t.Errorf("a refused retry still started a run: %v", harness.launched)

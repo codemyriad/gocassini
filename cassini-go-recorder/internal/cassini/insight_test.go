@@ -655,6 +655,44 @@ func TestInsightRunNamesTheWorkflowItWasAskedFor(t *testing.T) {
 	}
 }
 
+// --question exists and reaches the seam that decides what to do with it.
+//
+// The operator's insight run path emits `--question <text>` for a run that
+// carries one (cassini-operator/internal/operator/insight_runtime.go), so a CLI
+// without the flag would exit 2 on "flag provided but not defined" — a bad
+// request nobody made, blamed on the caller. Nothing this image ships takes a
+// question yet, so what is asserted here is the pair that has to hold: the flag
+// parses, and the question genuinely reaches insight.Run rather than being
+// dropped on the way — which insight.Run then refuses, naming the workflow.
+func TestInsightRunPassesTheQuestionToTheWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	bundle := writeContextBundle(t, filepath.Join(dir, "a.json"), insightMeeting("mtg_a", "Monday", "", ""))
+
+	summaryLLMEnv(t, "http://model.invalid/v1")
+	provider := &stubInsightProvider{reply: "# Answer\n"}
+	useInsightProvider(t, provider)
+
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"insight", "run",
+		"--context", bundle,
+		"--workflow", "summarise",
+		"--question", "what did we decide about pricing?",
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstderr: %s", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "not defined") {
+		t.Fatalf("--question is not a flag this command accepts: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "takes no question") {
+		t.Errorf("the refusal does not say the workflow has no room for the question: %s", stderr.String())
+	}
+	if provider.system != "" {
+		t.Error("the model was asked anyway; a question with nowhere to go must stop the run before the call")
+	}
+}
+
 // "The summary is an insight like any other, so it names the template it runs."
 // That claim is only true if the pipeline's summary step and the registry's
 // summarise workflow are the same bytes — which they now are by construction,

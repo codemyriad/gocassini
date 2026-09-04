@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -381,7 +382,14 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 	defer cancel()
 
 	readable, catalog, ok := s.exapp.readableMeetingsForCaller(ctx, s.client, run.CreatedBy, s.logger)
-	if !ok {
+	if !ok || len(readable) == 0 {
+		// An empty readable set is the shape a FAILED scan takes, because
+		// serveFilteredCatalog fails closed (see the same guard in
+		// insight_handlers.go). Reading it as a denial would write "one of these
+		// meetings is no longer available to you" permanently onto the run row —
+		// a card that keeps asserting a permission change nobody made, and says
+		// it again on every retry.
+		s.logf("insights: run=%s caller=%s has no readable meetings (ok=%t) — failing as an outage rather than a denial", run.ID, run.CreatedBy, ok)
 		return "", insightFailure("Cassini could not read your meeting list from Nextcloud. Try again in a moment."), false
 	}
 
@@ -420,7 +428,7 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 	args := append([]string{"meetings", "context", "--local", "--catalog", catalogPath, "--json"}, staged...)
 	// The bundle is the same document published/meetings-context serves over the
 	// same recordings, so it gets that endpoint's bound.
-	if _, err := s.runCassini(ctx, args, s.contextChildEnv(), bundlePath, maxContextDocumentBytes, run.ID); err != nil {
+	if _, err := s.runCassini(ctx, args, contextChildEnv(s.rt.childEnv()), bundlePath, "context bundle", maxContextDocumentBytes, run.ID); err != nil {
 		return "", insightFailure("Cassini could not assemble these meetings into one document. An administrator can check the app log."), false
 	}
 	return bundlePath, InsightOutcome{}, true
@@ -446,7 +454,7 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 	// is what makes a retry re-resolve rather than replay: if the stored provider
 	// were replayed, "no provider configured" and "401" would be exactly the two
 	// failures the retry button could never fix.
-	code, err := s.runCassini(ctx, args, s.insightChildEnv(), documentPath, maxInsightDocumentBytes, run.ID)
+	code, err := s.runCassini(ctx, args, s.insightChildEnv(), documentPath, "insight", maxInsightDocumentBytes, run.ID)
 	if err != nil {
 		return "", "", InsightOutcome{Status: insightStatusFailed, Error: explainInsightExit(ctx, code)}, false
 	}
@@ -598,15 +606,38 @@ func (s *insightService) davExists(ctx context.Context, userID, relPath string) 
 // files, as them, so GET insights/<id> serves the document beside the run and a
 // file the requester has since deleted answers as gone rather than as bytes the
 // operator happened to keep.
+//
+// Deliberately NOT davGetBytes, which reads up to 64 MiB into memory before
+// anything looks at the size. The file is the caller's own and they may replace
+// it with anything: a run whose document has been overwritten with a large file,
+// read concurrently, would allocate that much per in-flight request, and this
+// route has no concurrency bound of its own (`slots` bounds runs, not reads).
+// The operator is the container's main process, so an OOM here takes the
+// recorder supervisor with it. The bound has to be on the READ, not on what the
+// read produced.
+//
+// One byte past the cap, the way stageMeetingForContext draws down its budget:
+// exhaustion is then detectable rather than a silent truncation that would serve
+// half an answer with nothing in the bytes saying so.
 func (s *insightService) fetchInsightDocument(ctx context.Context, caller, relPath string) (string, error) {
-	body, status, err := s.exapp.davGetBytes(ctx, s.client, caller, relPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.exapp.davFileURL(caller, relPath), nil)
 	if err != nil {
 		return "", err
 	}
-	if status < 200 || status >= 300 {
-		return "", fmt.Errorf("GET %s -> %d", relPath, status)
+	s.exapp.setAppAPIDAVHeadersForUser(req, caller)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", err
 	}
-	if len(body) > maxInsightDocumentBytes {
+	defer drainClose(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("GET %s -> %d", relPath, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxInsightDocumentBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(body)) > maxInsightDocumentBytes {
 		return "", fmt.Errorf("%s exceeds the %d MiB an insight may be", relPath, maxInsightDocumentBytes>>20)
 	}
 	return string(body), nil
@@ -620,7 +651,7 @@ func (s *insightService) fetchInsightDocument(ctx context.Context, caller, relPa
 // Staged to a file rather than streamed anywhere, because the child's exit code
 // is only known after its last byte: anything that committed to an answer before
 // finding out the run failed would turn a failure into a successful empty one.
-func (s *insightService) runCassini(ctx context.Context, args, env []string, outPath string, maxBytes int64, runID string) (int, error) {
+func (s *insightService) runCassini(ctx context.Context, args, env []string, outPath, what string, maxBytes int64, runID string) (int, error) {
 	out, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return 0, err
@@ -629,7 +660,10 @@ func (s *insightService) runCassini(ctx context.Context, args, env []string, out
 	stderr.remaining = 8 << 10
 
 	cmd := exec.CommandContext(ctx, s.rt.cfg.CassiniBin, args...)
-	cmd.Stdout = &cappedWriter{out: out, remaining: maxBytes}
+	// what names the thing being bounded, because the two verbs this spawns are
+	// capped at very different sizes and a refusal that named the other one's
+	// cap would be a diagnostic pointing at the wrong number.
+	cmd.Stdout = newCappedWriter(out, what, maxBytes)
 	cmd.Stderr = &stderr
 	cmd.Env = env
 	// Kill the whole process group on cancel so the ffprobe grandchildren the
@@ -672,12 +706,17 @@ func (s *insightService) insightChildEnv() []string {
 // every LLM variable as well. That child reads local files and prints a
 // document; it never calls a model, so an endpoint credential in its environment
 // could only ever be a credential in one more place.
-func (s *insightService) contextChildEnv() []string {
+//
+// A free function over its base environment because the SAME child is spawned
+// from two places — here, and published/meetings-context, which builds the
+// identical bundle over the identical staged recordings. Two spawns of one
+// command must not be able to run with two different environments.
+func contextChildEnv(base []string) []string {
 	drop := operatorOnlySecretEnv()
 	for name := range inheritedLLMEnv() {
 		drop[name] = true
 	}
-	return withoutEnv(s.rt.childEnv(), drop)
+	return withoutEnv(base, drop)
 }
 
 // operatorOnlySecretEnv names the credentials that belong to the operator and to

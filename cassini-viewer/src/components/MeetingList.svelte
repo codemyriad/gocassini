@@ -134,7 +134,14 @@
   // the list is actually showing — and it has to, to say how many picked
   // meetings this narrowing hides (D-626). Reported rather than moved: the
   // filter belongs to the list.
-  $: dispatch("visible", visibleMeetings);
+  //
+  // What is REPORTED is what the list renders, which is not visibleMeetings the
+  // moment the type filter is switched off: with Meetings off the list draws no
+  // meeting rows at all, and reporting the search-filtered set would leave the
+  // selection bar saying "3 meetings selected" over a list showing none of them
+  // and omitting "3 not shown here" — the exact claim
+  // selectionModel.countHiddenByView exists to prevent.
+  $: dispatch("visible", types.meetings ? visibleMeetings : []);
 </script>
 
 <section
@@ -158,10 +165,13 @@
 
       <label class="search-field">
         <Search size={15} aria-hidden="true" />
+        <!-- The label names the kinds the list is currently showing, because
+             this box narrows both of them and narrows insights ALONE when the
+             Meetings toggle is off. -->
         <input
           type="search"
-          placeholder="Search meetings by name or date"
-          aria-label="Search meetings by name or date"
+          placeholder={`Search ${matchNounPlural} by name or date`}
+          aria-label={`Search ${matchNounPlural} by name or date`}
           bind:value={filter}
         />
       </label>
@@ -265,11 +275,22 @@
         <strong>No meetings yet</strong>
         <span>Published recordings appear here.</span>
       </div>
-    {:else if feedItems.length === 0 && insightsOnly && !trimmedFilter}
+    <!-- "You have never made one" is a claim about the whole archive, so every
+         narrowing has to be off and the listing has to have come back before it
+         can be made. A room selected, a search typed, a listing still in flight
+         or a listing that FAILED each make it false — and the branch below
+         already has the right words for all four, including the "Show every
+         room" way out of the room case. -->
+    {:else if feedItems.length === 0 && insightsOnly && !trimmedFilter && selectedRoomName === null && insightsLoaded && !insightsError && totalInsightCount === 0}
       <div class="list-empty">
         <strong>No insights yet</strong>
         <span>Pick some meetings, ask one question of them, and the answer is kept here beside them.</span>
       </div>
+      <!-- Everything the branch above will not claim. The last two arms are the
+           states it is gated on: nothing is narrowing the list and it is still
+           empty, so the reason is the listing itself — and a listing that failed
+           and one still in flight are different facts, neither of which is "you
+           have none". -->
     {:else if feedItems.length === 0}
       <div class="list-empty">
         <strong>Nothing matches</strong>
@@ -278,8 +299,14 @@
             No {matchNoun} in {selectedRoomName} matches that search.
           {:else if selectedRoomName !== null}
             {selectedRoomName} has no {matchNounPlural}.
-          {:else}
+          {:else if trimmedFilter}
             No {matchNoun} matches that search.
+          {:else if insightsOnly && !insightsLoaded}
+            Your insights are still loading.
+          {:else if insightsOnly && insightsError}
+            Your insights could not be listed, so none can be shown here.
+          {:else}
+            There are no {matchNounPlural} to show.
           {/if}
         </span>
         {#if trimmedFilter}

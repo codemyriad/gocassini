@@ -294,12 +294,21 @@ func TestContextChildEnvDropsTheModelCredentialToo(t *testing.T) {
 	t.Setenv("APP_SECRET", "the-appapi-shared-secret")
 	service, _ := insightTestService(t, "http://nextcloud.invalid", "/bin/true", nil)
 
-	env := service.contextChildEnv()
+	env := contextChildEnv(service.rt.childEnv())
 	assertEnvAbsent(t, env, "APP_SECRET")
 	for _, key := range []string{"SUMMARY_BASE_URL", "SUMMARY_API_KEY", "INSIGHT_BASE_URL", "OPENROUTER_API_KEY", "LLM_BASE_URL"} {
 		assertEnvKeyAbsent(t, env, key)
 	}
 	assertEnvKeyPresent(t, env, "PATH")
+
+	// The SAME command is spawned by published/meetings-context over the same
+	// staged recordings, and it was inheriting os.Environ() whole. Two spawns of
+	// one verb must not be able to run with two different environments — the
+	// second is reachable by any logged-in caller, which is where APP_SECRET in
+	// a subprocess stops being theoretical.
+	fromArchive := contextChildEnv(os.Environ())
+	assertEnvAbsent(t, fromArchive, "APP_SECRET")
+	assertEnvKeyPresent(t, fromArchive, "PATH")
 }
 
 func assertEnvPresent(t *testing.T, env []string, want ...string) {
@@ -527,5 +536,225 @@ func TestPerformRefusesAMeetingTheCallerCanNoLongerRead(t *testing.T) {
 	}
 	if len(dav.delivered()) != 0 {
 		t.Error("a refused run wrote into the caller's files")
+	}
+}
+
+// A per-caller scan that FAILED reaches the run path as an empty readable set,
+// because serveFilteredCatalog fails closed. Reading that as a denial would
+// write "no longer available to you" permanently onto the run — a card that
+// keeps asserting a permission change nobody made, and repeats it on retry.
+func TestPerformCallsAnUnreadableMeetingListAnOutageAndNotADenial(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog)
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	service, _ := insightTestService(t, dav.server.URL, bin, nil)
+
+	outcome := service.perform(context.Background(), insightTestRun())
+
+	if outcome.Status != insightStatusFailed {
+		t.Fatalf("status = %q, want failed", outcome.Status)
+	}
+	if !strings.Contains(outcome.Error, "could not read your meeting list") {
+		t.Errorf("error = %q, want it to name the outage", outcome.Error)
+	}
+	if strings.Contains(outcome.Error, "available to you") {
+		t.Errorf("error = %q claims a permission change out of a failed scan", outcome.Error)
+	}
+}
+
+// The document is read back under a bound on the READ, not on what the read
+// produced. The file is the caller's own and they may replace it with anything;
+// a cap checked after the bytes are already in memory buys nothing, and this
+// route has no concurrency bound of its own to fall back on.
+func TestFetchInsightDocumentRefusesMoreThanTheCapWithoutHoldingIt(t *testing.T) {
+	const relPath = ncInsightsRoot + "/2026-09-03-summarise-ins_0123456789abcdef.md"
+	dav := newInsightDAV(t, insightTestCatalog)
+	bin, _ := fakeInsightCassini(t, "", 0)
+	service, _ := insightTestService(t, dav.server.URL, bin, nil)
+
+	dav.holdDocument("alice/"+relPath, strings.Repeat("x", maxInsightDocumentBytes+1))
+	if _, err := service.fetchInsightDocument(context.Background(), "alice", relPath); err == nil {
+		t.Fatal("a document past the cap was served whole")
+	} else if !strings.Contains(err.Error(), "MiB an insight may be") {
+		t.Errorf("error = %v, want it to name the insight cap", err)
+	}
+
+	// One byte under is still an insight, so the refusal is a bound and not an
+	// off-by-one that eats the last legitimate document.
+	dav.holdDocument("alice/"+relPath, strings.Repeat("x", maxInsightDocumentBytes))
+	body, err := service.fetchInsightDocument(context.Background(), "alice", relPath)
+	if err != nil {
+		t.Fatalf("a document exactly at the cap was refused: %v", err)
+	}
+	if len(body) != maxInsightDocumentBytes {
+		t.Errorf("read %d bytes, want the whole %d", len(body), maxInsightDocumentBytes)
+	}
+}
+
+// launch is the lifecycle decision the whole drop turns on: it takes a worker
+// slot FIRST, claims the attempt second, and runs under the operator's context
+// rather than the request's. Each half is pinned here, because a status word
+// that lies about which of them a run is waiting on is indistinguishable on
+// screen from one that is doing the work.
+
+// A create answers 201/queued and claims its own attempt here. Claiming in the
+// handler instead would report `running` for a run still waiting for a worker.
+func TestLaunchClaimsTheAttemptItRunsAndRecordsTheOutcome(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	queued := insightTestRun()
+	queued.Status = insightStatusQueued
+	store := newFakeInsightStore(queued)
+	service, _ := insightTestService(t, dav.server.URL, bin, store)
+
+	service.launch(queued.ID, false)
+
+	if store.claims() != 1 {
+		t.Fatalf("BeginAttempt called %d times, want once: an unclaimed run is claimed here", store.claims())
+	}
+	if got := store.status(queued.ID); got != insightStatusSucceeded {
+		t.Fatalf("status = %q, want succeeded", got)
+	}
+	if len(dav.delivered()) != 1 {
+		t.Fatalf("delivered %d documents, want 1", len(dav.delivered()))
+	}
+	if len(service.slots) != 0 {
+		t.Errorf("%d slots still held after the attempt finished", len(service.slots))
+	}
+}
+
+// A retry claimed the attempt inside the request, because BeginAttempt is the
+// lock that makes its 409 exact. Claiming a second time here would either fail
+// as busy or start a second attempt beside the first.
+func TestLaunchDoesNotClaimAnAttemptTheRequestAlreadyTook(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	claimed := insightTestRun()
+	store := newFakeInsightStore(claimed)
+	service, _ := insightTestService(t, dav.server.URL, bin, store)
+
+	service.launch(claimed.ID, true)
+
+	if store.claims() != 0 {
+		t.Fatalf("BeginAttempt called %d times for an attempt the request already claimed", store.claims())
+	}
+	if got := store.status(claimed.ID); got != insightStatusSucceeded {
+		t.Fatalf("status = %q, want succeeded", got)
+	}
+}
+
+// The slot comes before the claim, which is what makes `queued` mean "waiting
+// for a worker". A run that claimed first would sit at `running` for as long as
+// the queue is deep, which is the one thing that word must not be able to mean.
+func TestLaunchWaitsForASlotBeforeItClaims(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	queued := insightTestRun()
+	queued.Status = insightStatusQueued
+	store := newFakeInsightStore(queued)
+	service, _ := insightTestService(t, dav.server.URL, bin, store)
+
+	for i := 0; i < maxConcurrentInsightRuns; i++ {
+		service.slots <- struct{}{}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		service.launch(queued.ID, false)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	if store.claims() != 0 {
+		t.Fatalf("the attempt was claimed with every slot held; a queued run must stay queued")
+	}
+	if got := store.status(queued.ID); got != insightStatusQueued {
+		t.Fatalf("status = %q while waiting for a worker, want queued", got)
+	}
+
+	<-service.slots
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the attempt never started after a slot was freed")
+	}
+	if got := store.status(queued.ID); got != insightStatusSucceeded {
+		t.Fatalf("status = %q once a slot freed, want succeeded", got)
+	}
+}
+
+// The work runs under rt.ctx, the operator's own lifecycle, and never under the
+// request's: a browser that navigated away must not cancel a run somebody asked
+// for, and shutdown must.
+func TestLaunchStopsWhenTheOperatorDoes(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	queued := insightTestRun()
+	queued.Status = insightStatusQueued
+	store := newFakeInsightStore(queued)
+	service, _ := insightTestService(t, dav.server.URL, bin, store)
+
+	// Every slot held, so the select in launch has exactly one ready case.
+	for i := 0; i < maxConcurrentInsightRuns; i++ {
+		service.slots <- struct{}{}
+	}
+	service.rt.cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		service.launch(queued.ID, false)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("launch kept waiting for a slot after the operator shut down")
+	}
+	if store.claims() != 0 {
+		t.Errorf("an attempt was claimed after shutdown")
+	}
+	if got := store.status(queued.ID); got != insightStatusQueued {
+		t.Errorf("status = %q after shutdown, want the run left as the sweep will find it", got)
+	}
+}
+
+// A child outliving the operator is the failure the process group and rt.ctx
+// exist to prevent, and the run has to say what happened rather than stay
+// running for ever.
+func TestLaunchKillsAnAttemptTheOperatorOutlives(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin := writeFakeCassini(t, `if [ "$1 $2" = "meetings context" ]; then
+  printf '%s' '{"version":"cassini.meetings.context.v1","meetings":[]}'
+  exit 0
+fi
+sleep 600
+exit 0
+`)
+	queued := insightTestRun()
+	queued.Status = insightStatusQueued
+	store := newFakeInsightStore(queued)
+	service, _ := insightTestService(t, dav.server.URL, bin, store)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		service.launch(queued.ID, false)
+	}()
+	for waited := time.Duration(0); store.claims() == 0; waited += 20 * time.Millisecond {
+		if waited > 30*time.Second {
+			t.Fatal("the attempt never claimed its run")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	service.rt.cancel()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the attempt outlived the operator")
+	}
+	if got := store.status(queued.ID); got != insightStatusFailed {
+		t.Fatalf("status = %q after shutdown, want a run that says it did not finish", got)
+	}
+	if len(dav.delivered()) != 0 {
+		t.Error("a killed run still wrote into the caller's files")
 	}
 }

@@ -24,13 +24,27 @@ var errInsightRunBusy = errors.New("insight run is already queued or running")
 var errInsightRunNotRunning = errors.New("insight run is not running")
 
 // insightProcessStartedAt is captured before any run can be written by this
-// process, which is what makes the crash sweep safe to run at any moment: a run
-// this process started is never in scope for it. See reconcileOnce.
+// process. A row last written before it belongs to a process that is gone, which
+// is one of the two proofs of strandedness sweepStranded uses.
 var insightProcessStartedAt = time.Now()
 
-var insightReconcile struct {
+const (
+	// insightSweepGrace is the slack past an attempt's own deadline before a row
+	// that has stopped moving is presumed stranded. An attempt that hits
+	// insightRunTimeout records its own failure, so anything still queued or
+	// running this long afterwards is a row nothing is going to write again.
+	insightSweepGrace = 5 * time.Minute
+
+	// insightSweepInterval is how often a read pays for the sweep. The UPDATE is
+	// a no-op when nothing is stranded, but it is still a write transaction, and
+	// the card polls: once a minute unwedges a run quickly enough while keeping
+	// the cost off the polling path.
+	insightSweepInterval = time.Minute
+)
+
+var insightSweep struct {
 	sync.Mutex
-	done bool
+	last time.Time
 }
 
 // InsightRun is one insight: a question asked once of several meetings, and
@@ -92,49 +106,60 @@ type insightStore struct {
 	db *sql.DB
 }
 
-// newInsightStore returns the run store. The repair a crash makes necessary
-// runs on first use rather than here — see reconcileOnce — so that a constructor
-// stays a constructor.
+// newInsightStore returns the run store. The repair a stranded run makes
+// necessary happens on first use rather than here — see sweepStranded — so that
+// a constructor stays a constructor, and so that a sweep which fails reports
+// itself to the caller that needed it instead of deciding whether the surface
+// mounts at all.
 func newInsightStore(store *Store) *insightStore {
 	return &insightStore{db: store.db}
 }
 
-// insights is newInsightStore with that repair pulled forward, for a caller that
-// would rather not mount a surface over an unrepaired table: it reports the one
-// failure the lazy path can only report later.
-func (s *Store) insights() (*insightStore, error) {
-	store := newInsightStore(s)
-	if err := store.reconcileOnce(context.Background()); err != nil {
-		return nil, err
-	}
-	return store, nil
-}
-
-// reconcileOnce fails, once per process, every run that a crash left queued or
-// running.
+// sweepStranded fails every run that has stopped moving and can never move
+// again.
 //
-// A run is answered inside the request that asked for it; there is no dispatcher
-// to pick a stranded row back up, so a run the operator did not finish will never
-// finish. Failing it makes the card say so and — because the status is the lock —
-// makes it retryable, where leaving it `running` would wedge it at 409 for ever.
+// A run is answered on a goroutine the request that asked for it started; there
+// is no dispatcher to pick a stranded row back up, so a run nothing is going to
+// finish will never finish. Failing it makes the card say so and — because the
+// status is the lock — makes it retryable, where leaving it queued or running
+// would wedge it at 409 for ever.
+//
+// STALENESS, not process start, is the criterion. Latching the sweep after the
+// first read (which is what this did) covered a crash and nothing else: a row
+// this live process wrote and then failed to move — a claim that could not be
+// written, an outcome the store refused, a goroutine that died between the two —
+// was excluded from every later sweep by the very predicate meant to protect it,
+// and stayed unrecoverable until the next restart. So the cutoff is the LATER of
+// two proofs that nothing will write the row again:
+//
+//   - it was last written before this process began, so whatever owned it is
+//     gone; or
+//   - it has not moved for longer than an attempt is allowed to take, so even a
+//     live attempt would have recorded its own timeout by now.
+//
+// Both are "older than", so their union is one comparison against the later of
+// the two, and a row this process is actively working on is outside both.
 //
 // The repair lives here rather than in the operator's startup block because these
-// tables are reached through exactly one door: nothing can observe a run before
-// the first of these calls, so "at startup" and "here" are the same moment, and
-// the repair stays beside the state machine it repairs. It is safe whenever it
-// happens, because it only ever touches rows last written before this process
-// began. A sweep that fails does not latch, so the next caller retries it, and
-// its error reaches that caller rather than a log line.
-func (s *insightStore) reconcileOnce(ctx context.Context) error {
-	insightReconcile.Lock()
-	defer insightReconcile.Unlock()
-	if insightReconcile.done {
+// tables are reached through exactly one door, so it stays beside the state
+// machine it repairs. A sweep that fails does not record itself as done, so the
+// next caller retries it and its error reaches that caller rather than a log
+// line.
+func (s *insightStore) sweepStranded(ctx context.Context) error {
+	insightSweep.Lock()
+	defer insightSweep.Unlock()
+	now := time.Now()
+	if !insightSweep.last.IsZero() && now.Sub(insightSweep.last) < insightSweepInterval {
 		return nil
 	}
-	if _, err := s.MarkInterruptedRunsFailed(ctx, insightProcessStartedAt); err != nil {
+	cutoff := now.Add(-(insightRunTimeout + insightSweepGrace))
+	if insightProcessStartedAt.After(cutoff) {
+		cutoff = insightProcessStartedAt
+	}
+	if _, err := s.MarkInterruptedRunsFailed(ctx, cutoff); err != nil {
 		return err
 	}
-	insightReconcile.done = true
+	insightSweep.last = now
 	return nil
 }
 
@@ -146,7 +171,12 @@ func (s *insightStore) reconcileOnce(ctx context.Context) error {
 // attempt has not happened yet, and a queued run that already named a provider
 // would be claiming an endpoint nothing has resolved.
 func (s *insightStore) CreateRun(ctx context.Context, run InsightRun) error {
-	if !validInsightRunID(run.ID) {
+	// Re-checked here, and not only at the HTTP edge, so that an id which never
+	// came from this operator cannot become a row whichever side of the module
+	// boundary made it. isInsightRunID (insight_runtime.go) is the one definition
+	// of the scheme gocassini's internal/insight package fixed; a second copy of
+	// it here would be a second scheme waiting to drift.
+	if !isInsightRunID(run.ID) {
 		return fmt.Errorf("insight run id %q is not ins_ followed by sixteen hex characters", run.ID)
 	}
 	createdBy := strings.TrimSpace(run.CreatedBy)
@@ -205,7 +235,7 @@ INSERT INTO insight_runs (
 // deliberately the same answer as "not this caller's": the handler turns both
 // into a 404, so the id space leaks nothing about other people's insights.
 func (s *insightStore) GetRun(ctx context.Context, id string) (InsightRun, error) {
-	if err := s.reconcileOnce(ctx); err != nil {
+	if err := s.sweepStranded(ctx); err != nil {
 		return InsightRun{}, err
 	}
 	row := s.db.QueryRowContext(ctx, insightRunSelect+`
@@ -223,7 +253,7 @@ func (s *insightStore) ListRuns(ctx context.Context, createdBy string) ([]Insigh
 	if createdBy == "" {
 		return nil, errors.New("cannot list insight runs without a caller")
 	}
-	if err := s.reconcileOnce(ctx); err != nil {
+	if err := s.sweepStranded(ctx); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, insightRunSelect+`
@@ -263,7 +293,7 @@ ORDER BY created_at DESC, id DESC`, createdBy)
 // visible while the new one runs would make the failed card lie for the length
 // of the run.
 func (s *insightStore) BeginAttempt(ctx context.Context, id string) (InsightRun, error) {
-	if err := s.reconcileOnce(ctx); err != nil {
+	if err := s.sweepStranded(ctx); err != nil {
 		return InsightRun{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -437,20 +467,20 @@ ORDER BY attempt_number DESC`, runID)
 	return attempts, nil
 }
 
-// MarkInterruptedRunsFailed fails every run left queued or running by an
-// operator that died mid-flight, and returns how many it repaired.
+// MarkInterruptedRunsFailed fails every run left queued or running that has not
+// been written since `startedBefore`, and returns how many it repaired.
 //
-// A run is answered inside the request that asked for it; there is no dispatcher
-// to pick a stranded row back up, so a run the operator did not finish will
-// never finish. Failing it makes the card say so and — because the status is the
-// lock — makes it retryable, where leaving it running would wedge it at 409 for
-// ever.
+// Only rows last written before the cutoff are in scope, which is what lets this
+// run at any moment rather than only during startup, and what makes it a no-op
+// when nothing is stranded. sweepStranded owns the choice of cutoff and the
+// reasoning behind it.
 //
-// Only rows last written before `startedBefore` are in scope, which is what lets
-// this run at any moment rather than only during startup: a run this process
-// started is newer than its own start time.
+// One message for the two causes it covers, and it names both rather than
+// asserting either: from the row alone, an operator that restarted mid-run and
+// an attempt that stopped writing are the same evidence, and a sentence that
+// picked one of them would be a guess printed on somebody's card.
 func (s *insightStore) MarkInterruptedRunsFailed(ctx context.Context, startedBefore time.Time) (int64, error) {
-	const message = "The operator restarted before this insight finished. Retry it."
+	const message = "Cassini stopped before this insight finished — it restarted, or the run stopped making progress. Retry it."
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -524,24 +554,6 @@ func scanInsightRun(scanner rowScanner) (InsightRun, error) {
 		return InsightRun{}, err
 	}
 	return run, nil
-}
-
-// validInsightRunID accepts exactly what newInsightRunID (insight_runtime.go)
-// mints: "ins_" and sixteen lowercase hex characters, the scheme gocassini's
-// internal/insight package fixed. The store checks it on the way in so that an
-// id which never came from this operator cannot become a row, whichever side of
-// the module boundary made it.
-func validInsightRunID(id string) bool {
-	const prefix = "ins_"
-	if len(id) != len(prefix)+16 || !strings.HasPrefix(id, prefix) {
-		return false
-	}
-	for _, c := range id[len(prefix):] {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 // encodeInsightIDList stores a source list as JSON in one column. The lists are
