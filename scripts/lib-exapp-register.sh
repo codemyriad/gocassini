@@ -146,27 +146,29 @@ exapp_assert_immutable_tag() {
   local tag="$1"
   [[ -n "$tag" ]] || { exapp_die "no image tag given"; return 1; }
   case "$tag" in
-    latest|latest-*|cuda|rocm|branch-*|dispatch-*|main|stable)
-      echo "error: '$tag' is a moving tag and must never be deployed." >&2
-      echo "       A moving tag is not a rollback target and not reproducible:" >&2
-      echo "       the same registration resolves to different bytes tomorrow." >&2
-      echo "       Deploy a released tag (X.Y.Z[-pre]) instead." >&2
-      return 1
-      ;;
-    sha-*)
-      if [[ "${EXAPP_ALLOW_UNRELEASED_TAG:-0}" != "1" ]]; then
-        echo "error: '$tag' is a raw commit pin, not a released tag." >&2
-        echo "       It is immutable, but the app <version> label will lag the" >&2
-        echo "       code and no App Store release matches it. Cut a release, or" >&2
-        echo "       pass --allow-unreleased if this is a deliberate hotfix." >&2
-        return 1
-      fi
-      ;;
     *[!0-9.a-zA-Z_-]*)
       exapp_die "image tag contains characters a Docker tag cannot hold: $tag"
       return 1
       ;;
   esac
+
+  if [[ "$tag" =~ ^sha-[0-9a-fA-F]+$ ]]; then
+    if [[ "${EXAPP_ALLOW_UNRELEASED_TAG:-0}" != "1" ]]; then
+      echo "error: '$tag' is a raw commit pin, not a released tag." >&2
+      echo "       It is immutable, but the app <version> label will lag the" >&2
+      echo "       code and no App Store release matches it. Cut a release, or" >&2
+      echo "       pass --allow-unreleased if this is a deliberate hotfix." >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if [[ ! "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+    echo "error: '$tag' is not a released tag and must never be deployed." >&2
+    echo "       A moving or non-release tag is not reproducible and not a rollback target." >&2
+    echo "       Deploy a released tag (X.Y.Z[-pre]) instead, or pass --allow-unreleased for sha-* pins." >&2
+    return 1
+  fi
 }
 
 # exapp_image_tag_for_device TAG DEVICE
@@ -193,12 +195,17 @@ exapp_assert_pullable() {
   local ref="$1" raw kids digest failed=0
   command -v docker >/dev/null 2>&1 \
     || { exapp_die "docker is required to verify $ref is pullable"; return 1; }
+  command -v jq >/dev/null 2>&1 \
+    || { exapp_die "jq is required to verify image manifests for $ref"; return 1; }
 
   if ! raw="$(docker buildx imagetools inspect --raw "$ref" 2>/dev/null)"; then
     echo "error: $ref does not resolve in the registry." >&2
     return 1
   fi
-  kids="$(printf '%s' "$raw" | jq -r '.manifests[]?.digest' 2>/dev/null || true)"
+  if ! kids="$(printf '%s' "$raw" | jq -r '.manifests[]?.digest // empty' 2>/dev/null)"; then
+    echo "error: failed to parse manifest index for $ref." >&2
+    return 1
+  fi
   if [[ -z "$kids" ]]; then
     return 0   # single manifest, already proven by the successful inspect
   fi
@@ -346,10 +353,11 @@ exapp_register_app() {
     || { exapp_die "exapp_register_app needs --app-id, --daemon and --info-xml"; return 2; }
 
   if (( replace )) && exapp_app_is_registered "$app_id"; then
-    if (( force_unregister )); then
-      exapp_unregister_app "$app_id" --force || true
-    else
-      exapp_unregister_app "$app_id" || true
+    local -a unregister_args=("$app_id")
+    (( force_unregister )) && unregister_args+=(--force)
+    if ! exapp_unregister_app "${unregister_args[@]}"; then
+      exapp_die "app_api:app:unregister failed for $app_id prior to re-registration"
+      return 1
     fi
   fi
 
@@ -379,7 +387,18 @@ exapp_register_app() {
 
   if (( enable_cycle )); then
     exapp_log "Cycling enable state to force PUT /enabled on the container"
-    occ app_api:app:disable "$app_id" >/dev/null 2>&1 || true
+    local disable_rc=0
+    if ! occ app_api:app:disable "$app_id" >/dev/null 2>&1; then
+      disable_rc=$?
+      if (( disable_rc == 124 || disable_rc == 255 )); then
+        exapp_die "app_api:app:disable did not complete (exit $disable_rc)"
+        return "$disable_rc"
+      fi
+      if occ app_api:app:list 2>/dev/null | grep -qE "^[[:space:]]*${app_id}[[:space:](:].*\[enabled\]"; then
+        exapp_die "app_api:app:disable failed to disable $app_id (exit $disable_rc)"
+        return "$disable_rc"
+      fi
+    fi
     occ app_api:app:enable "$app_id" >/dev/null
   fi
 }
