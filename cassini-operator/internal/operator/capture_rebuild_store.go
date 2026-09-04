@@ -47,7 +47,7 @@ type captureJobMatch struct {
 }
 
 // captureRecordingWindow is a job's recorded span in wall-clock milliseconds.
-// Both ends are always resolved: see effectiveRecordingEndMS for what stands in
+// Both ends are always resolved: see recordingSpanForCapture for what stands in
 // when a recording has no finish time.
 type captureRecordingWindow struct {
 	StartMS int64
@@ -120,7 +120,7 @@ func captureWindowsOverlap(aStart, aEnd, bStart, bEnd int64) bool {
 }
 
 // parseStoredMS converts a persisted timestamp to epoch milliseconds. Zero
-// means absent or unreadable; effectiveRecordingEndMS is what decides what
+// means absent or unreadable; recordingSpanForCapture is what decides what
 // stands in for a missing end, and no caller treats zero as an open window.
 func parseStoredMS(value sql.NullString) int64 {
 	raw := strings.TrimSpace(value.String)
@@ -339,8 +339,9 @@ type sourceAudioRebuildCandidate struct {
 	// the quiet period is measured from. Zero when it predates this column.
 	UploadedAt time.Time
 	Window     captureRecordingWindow
-	// RecordedAt is when the recording ended, or started when it never
-	// finished. The retention bound is measured from it.
+	// RecordedAt is when the recording ended, and the retention bound is
+	// measured from it. Zero for a recording that never wrote an end, which is
+	// refused before the bound is reached — see considerSourceAudioRebuild.
 	RecordedAt time.Time
 }
 

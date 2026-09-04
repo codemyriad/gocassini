@@ -93,7 +93,7 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 	if root == "" || token == "" || window.StartMS <= 0 {
 		return set, nil
 	}
-	// window.EndMS is already resolved by effectiveRecordingEndMS, so this and
+	// window.EndMS is already resolved by recordingSpanForCapture, so this and
 	// the resolver ask the identical question of the identical span. Deriving a
 	// second end here is how the two disagreed about a recording with no finish
 	// time: the resolver attributed the upload and this found no capture for it,
@@ -346,6 +346,20 @@ func (rt *Runtime) considerSourceAudioRebuild(candidate sourceAudioRebuildCandid
 	// so acting on the first arrival would transcribe the meeting again for
 	// each of the others in turn.
 	if !candidate.UploadedAt.IsZero() && now.Sub(candidate.UploadedAt) < quiet {
+		return
+	}
+	// A recorder that stopped without ever writing an end. It produced no run
+	// bundle, so there is nothing to rebuild from and never will be.
+	//
+	// Named here rather than left to fall through the capture scan below. That
+	// scan would report "no capture is on disk for it any more" — the window it
+	// was given is empty, so it finds nothing — which is a false statement about
+	// a directory that is right there, and the one an administrator reads while
+	// wondering where a participant's audio went.
+	if candidate.Window.StartMS <= 0 {
+		rt.logger.Printf("source audio: job=%s (state=%s) never finished recording, so it has no run bundle to rebuild from and its late upload cannot reach a transcript; not rebuilding",
+			candidate.JobID, candidate.State)
+		rt.settleSourceAudioDebt(candidate)
 		return
 	}
 	// The retention bound. A capture older than the window the sweep enforces

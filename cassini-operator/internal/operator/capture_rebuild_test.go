@@ -466,13 +466,15 @@ func TestARecordingWithNoRunBundleSettlesRatherThanLooping(t *testing.T) {
 	rt.sourceAudioRebuildQuiet.Store(int64(time.Nanosecond))
 	ctx := context.Background()
 
-	seedRecording(t, rt.store, "job-1", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
+	// What the recorder dying with the operator actually leaves: no finish
+	// time, no run bundle. The capture IS on disk, which is why the refusal has
+	// to say the right thing about it.
+	seedRecording(t, rt.store, "job-1", "room-a", stamp(t, "2026-09-02T10:00:00Z"), "")
 	seedRebuildCapture(t, rt.cfg.CaptureRoot, "room-a", "alice",
 		ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:55:00Z"), 1024)
 	if err := rt.store.NoteSourceAudioUpload(ctx, "job-1", nowUTCString()); err != nil {
 		t.Fatalf("NoteSourceAudioUpload: %v", err)
 	}
-	// The recorder died with the operator: interrupted, and with no bundle.
 	setJobState(t, rt.store, "job-1", "record", "interrupted")
 
 	rt.dispatchSourceAudioRebuilds()
@@ -483,8 +485,73 @@ func TestARecordingWithNoRunBundleSettlesRatherThanLooping(t *testing.T) {
 	if job.SourceAudioRebuild.Pending {
 		t.Fatal("a recording that can never be rebuilt stayed owed for ever")
 	}
-	if got := logs.String(); !strings.Contains(got, "no run bundle to rebuild from") {
+	got := logs.String()
+	if !strings.Contains(got, "no run bundle to rebuild from") {
 		t.Fatalf("the refusal is not in the log, so nobody can act on it: %q", got)
+	}
+	if strings.Contains(got, "no capture is on disk") {
+		t.Fatalf("the refusal blames a missing capture that is sitting right there: %q", got)
+	}
+}
+
+// A job whose recording finished but whose run bundle is gone is the OTHER way
+// a rerun is refused for good, and it must be told apart from the one above:
+// the capture is on disk and the window is real, so only the rerun path can
+// say why nothing will happen.
+func TestAFinishedRecordingWithNoBundleAlsoSettles(t *testing.T) {
+	logs := &syncBuffer{}
+	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0))
+	defer cleanup()
+	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	rt.sourceAudioRebuildQuiet.Store(int64(time.Nanosecond))
+	ctx := context.Background()
+
+	seedRecording(t, rt.store, "job-1", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
+	seedRebuildCapture(t, rt.cfg.CaptureRoot, "room-a", "alice",
+		ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:55:00Z"), 1024)
+	if err := rt.store.NoteSourceAudioUpload(ctx, "job-1", nowUTCString()); err != nil {
+		t.Fatalf("NoteSourceAudioUpload: %v", err)
+	}
+	// Finished, terminal, and with no artifact_run_path: retention took the
+	// bundle, so QueueRerunAttempt has nothing to build from.
+	setJobState(t, rt.store, "job-1", "done", "succeeded")
+
+	rt.dispatchSourceAudioRebuilds()
+	job, err := rt.store.GetJob(ctx, "job-1")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job.SourceAudioRebuild.Pending {
+		t.Fatal("a meeting whose run bundle is gone stayed owed for ever")
+	}
+	if got := logs.String(); !strings.Contains(got, "no run bundle to rebuild from") {
+		t.Fatalf("the refusal is not in the log: %q", got)
+	}
+}
+
+// R6. The counters reach the status payload the panel reads, not only the
+// store method that computes them.
+func TestOperatorStatusReportsPendingRebuilds(t *testing.T) {
+	rt, cleanup := rebuildRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	if got := rt.sourceCaptureStatus(); got.RebuildsPending != 0 || got.RebuildsRun != 0 {
+		t.Fatalf("an installation with no late uploads reports %d pending / %d run", got.RebuildsPending, got.RebuildsRun)
+	}
+
+	seedRecording(t, rt.store, "job-1", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
+	setJobState(t, rt.store, "job-1", "done", "succeeded")
+	if err := rt.store.NoteSourceAudioUpload(ctx, "job-1", nowUTCString()); err != nil {
+		t.Fatalf("NoteSourceAudioUpload: %v", err)
+	}
+	if err := rt.store.NoteSourceAudioRebuildQueued(ctx, "job-1"); err != nil {
+		t.Fatalf("NoteSourceAudioRebuildQueued: %v", err)
+	}
+
+	status := rt.sourceCaptureStatus()
+	if status.RebuildsPending != 1 || status.RebuildsRun != 1 {
+		t.Fatalf("source_capture reports %d pending / %d run, want 1 and 1", status.RebuildsPending, status.RebuildsRun)
 	}
 }
 
