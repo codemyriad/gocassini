@@ -5,7 +5,7 @@
 # account and the Team folder appear at all, and whether the folder is mapped.
 # They are one-line boolean tests, which is exactly the shape that inverts
 # silently: nothing downstream fails loudly when a stack quietly comes up in the
-# other model, it just produces a `mode_mismatch` an hour later in an e2e log.
+# other model, it just produces a missing Team folder an hour later in an e2e log.
 #
 # The defaults are the load-bearing part. The harness has always built the
 # access-controlled substrate and every e2e suite asserts it, so an absent or
@@ -54,15 +54,16 @@ harness_storage_mode_is_acl || fail "acl-enabled did not mean access-controlled"
 
 export CASSINI_HARNESS_STORAGE_MODE=default
 if harness_storage_mode_is_acl; then
-  fail "default was treated as access-controlled — a mapped Team folder would win the Cassini path"
+  fail "default was treated as access-controlled — the stack would be built for a mode the app is not in"
 fi
 unset CASSINI_HARNESS_STORAGE_MODE
 
 # --- what the ExApp is told ---------------------------------------------------
 #
 # The mode the app starts in has to follow the mode the stack is built for. A
-# stack built default while the app boots access-controlled is the
-# `mode_mismatch` state: publishing refused, nothing naming the cause.
+# stack built default while the app boots access-controlled is an instance whose
+# Team folder is missing: publishing refused, with the missing prerequisite named
+# but nothing saying the two flags disagreed.
 
 expect_exapp_mode() {
   local want="$1" got
@@ -100,7 +101,7 @@ unset CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD CASSINI_HARNESS_STORAGE_MODE
 #
 # The predicates above decide what gets BUILT. This section pins how the choice
 # reaches the ExApp, because the two failing to line up is invisible until an
-# e2e reports `mode_mismatch` an hour later.
+# e2e reports a missing prerequisite an hour later.
 
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MANIFEST="$ROOT/appinfo/info.xml"

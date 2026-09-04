@@ -202,7 +202,7 @@ says which:
 
   * the catalog was written without its owner-only permissions being re-applied,
     which would leave the full archive index readable by every signed-in account
-    — check Cassini/Recordings/catalog.json in the Files app; or
+    — check <archive root>/catalog.json in the Files app; or
   * a re-tagged recording was CREATED rather than overwritten, meaning it has no
     permissions of its own and inherits the folder's grant to every signed-in
     account — the error names the file; check it in the Files app.
@@ -221,7 +221,7 @@ It ended unexpectedly (exit $status). That is not one of the codes it reports
 for itself, so the container or the container CLI failed rather than the
 backfill.
 
-Check Cassini/Recordings/catalog.json in the Files app before re-running:
+Check <archive root>/catalog.json in the Files app before re-running:
 whether anything was written is unknown.
 EOF
     ;;
