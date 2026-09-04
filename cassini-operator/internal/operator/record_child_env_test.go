@@ -23,8 +23,11 @@ func TestRecordChildEnvCarriesTheResolvedTalkSecret(t *testing.T) {
 // This guards the composition point where those branches were merged.
 func TestRecordChildEnvCombinesSTTLLMAndTalkPolicies(t *testing.T) {
 	rt := &Runtime{
-		cfg:      Config{TalkSharedSecret: "generated-secret"},
-		settings: STTSettings{Quality: sttQualityBest},
+		cfg: Config{TalkSharedSecret: "generated-secret"},
+		settings: STTSettings{
+			Quality:            sttQualityBest,
+			TranscriptionTerms: []string{"Gocassini", "Nextcloud Talk"},
+		},
 		llm: LLMSettings{
 			Providers: []LLMProvider{{ID: "local", BaseURL: "http://qwen.internal:8000/v1"}},
 			Summary:   LLMStep{Enabled: true, Provider: "local", Model: "qwen"},
@@ -35,6 +38,7 @@ func TestRecordChildEnvCombinesSTTLLMAndTalkPolicies(t *testing.T) {
 	want := map[string]string{
 		talkRecordingSecretEnv: "generated-secret",
 		envSTTQuality:          sttQualityBest,
+		envTranscriptionTerms:  `["Gocassini","Nextcloud Talk"]`,
 		"SUMMARY_BASE_URL":     "http://qwen.internal:8000/v1",
 		"SUMMARY_MODEL":        "qwen",
 	}

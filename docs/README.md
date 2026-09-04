@@ -203,13 +203,6 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 
 Flagged so readers do not mistake intent for current behavior:
 
-- **Summarisation is WIP.** It works, but `summary.md` is **not yet embedded**
-  in the portable `.opus` and is **not** in `manifest.json`. It _is_ included in
-  the static-site bundle as an optional sidecar. A local/privacy-focused
-  summariser (avoiding the third-party OpenRouter step) is a separate future
-  effort.
-- **The portable `.opus` viewer** renders transcript + metadata; it does not yet
-  render an embedded summary from `.opus` (published artifact directories do).
 - **Group folders ACL inheritance is version-sensitive.** Per-recording access
   control is unconditional and provisioned automatically, but it still requires
   the Team folders and Everyone Group apps, and it is worth validating traversal
@@ -221,5 +214,3 @@ Flagged so readers do not mistake intent for current behavior:
 - Work on the media pipeline: [Mental model](./mental-model.md) → [Core pipeline](./core-pipeline.md) → [Artifacts and filesystem](./reference/artifacts-and-filesystem.md)
 - Work on the browser apps: [Quick start](./quick-start.md) → [Control panel](./components/control-panel.md) → [Viewer](./components/viewer.md)
 - Install on Nextcloud: [ExApp install](./exapp-install.md) → [Env-var reference](./exapp-talk-env-vars.md)
-  </content>
-  </invoke>
