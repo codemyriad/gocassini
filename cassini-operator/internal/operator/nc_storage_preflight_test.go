@@ -501,17 +501,16 @@ func TestPreflightStillSeesAMountedFolderWhenTheEveryoneAppIsOff(t *testing.T) {
 	}
 }
 
-// An unanswerable apps question no longer blocks the default model, and the
-// change of direction is deliberate.
+// An unanswerable apps question splits the two halves of the default model
+// apart, and that split is the whole point.
 //
-// In the first pass the question was "is a Team folder mounted over the path I
-// am about to write to", about a path the ACCESS-CONTROLLED model legitimately
-// mounts — so "we could not look" had to fail closed, or an access-controlled
-// archive could be served to everybody. The question is now about
-// `CassiniNoACL`, which nothing legitimately mounts, so an unasked question is
-// not evidence of a hazard. Failing closed there would blank a working archive
-// every time Nextcloud hiccuped on one OCS call.
-func TestPreflightKeepsDefaultModeWhenNextcloudWillNotSayWhichAppsAreOn(t *testing.T) {
+// WRITING refuses: the model's safety argument is that `CassiniNoACL/Recordings`
+// is private, this check is the only thing that confirms it, and publishing
+// under an unanswered question puts every recording into a folder that might be
+// shared. READING carries on: serving that tree as its owner discloses only what
+// the default mode is defined to disclose, and blanking a working archive every
+// time one OCS call hiccups is the papercut this branch set out to remove.
+func TestPreflightSplitsReadFromWriteWhenNextcloudWillNotSayWhichAppsAreOn(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
@@ -525,17 +524,21 @@ func TestPreflightKeepsDefaultModeWhenNextcloudWillNotSayWhichAppsAreOn(t *testi
 	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
 
 	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
-	if !snap.OK {
-		t.Fatalf("substrate = %+v; one unanswered OCS call must not blank a private archive", snap)
+	if snap.OK {
+		t.Fatalf("substrate = %+v; publishing must not proceed while nobody can say whether the default root is private", snap)
 	}
+	if snap.Step != storageStepModeMismatch+":"+storageStepDefaultRootUnknown {
+		t.Fatalf("step = %q, want the unknown-root mismatch", snap.Step)
+	}
+	// But reads keep working, which is the half that used to break on every
+	// restart. Publishing is refused; the archive is still listed.
 	if !ncStorageServesAsOwner() {
 		t.Fatal("the read proxy stopped serving the private default root because an unrelated question went unanswered")
 	}
-	// The unanswered question is still recorded as unanswered — it is what makes
-	// the ACCESS-CONTROLLED model unavailable, which is a real consequence.
+	// The unanswered question is recorded as unanswered on BOTH folder axes.
 	probe, _ := ncAccessSubstrate.lastProbe()
-	if probe.FolderProbed {
-		t.Fatal("an unanswerable apps question was recorded as an answered folder question")
+	if probe.FolderProbed || probe.DefaultRootProbed {
+		t.Fatalf("an unanswerable apps question was recorded as an answered folder question: %+v", probe)
 	}
 	if ready, _, _ := probe.accessControlReady(); ready {
 		t.Fatal("access control reported ready on an instance whose apps could not be listed")
@@ -899,11 +902,25 @@ func TestProbeRefusesAFolderListItCouldNotUnderstand(t *testing.T) {
 			if ok, _, _ := probe.accessControlReady(); ok {
 				t.Fatal("access control was accepted on a folder list the probe could not read")
 			}
-			// The default model is unaffected, and that asymmetry is the point of
-			// the split: its root is not in that list, so nothing about the list
-			// is evidence about it.
-			if ok, step, detail := probe.sanity(false); !ok {
-				t.Fatalf("the default mode was refused on an unreadable folder list (%s: %s) — its root is not in that list", step, detail)
+			// And the default model refuses to WRITE, because the same list is
+			// the only thing that could have said whether anything is mounted
+			// over its own root.
+			if probe.DefaultRootProbed {
+				t.Fatal("an unreadable folder list was recorded as an answer about the default root")
+			}
+			if ok, step, _ := probe.sanity(false); ok {
+				t.Fatal("the default mode was accepted for writing on an unreadable folder list")
+			} else if step != storageStepModeMismatch+":"+storageStepDefaultRootUnknown {
+				t.Fatalf("step = %q, want the unknown-root mismatch", step)
+			}
+			// Reading is the half that carries on: nothing legitimately mounts a
+			// group folder at CassiniNoACL, and an archive that stops listing on
+			// every transient OCS error is the failure this branch removed.
+			resetStorageMode(t)
+			ncStorage.set(false, storageModeSourceConfigured, true)
+			ncAccessSubstrate.setProbe(probe)
+			if !ncStorageServesAsOwner() {
+				t.Fatal("the read path stopped serving the private default root on an unreadable folder list")
 			}
 		})
 	}

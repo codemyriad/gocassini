@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 )
 
 // GET/PUT <base>/storage — the admin surface of the storage-mode opt-in
@@ -134,6 +135,15 @@ const (
 	// half failed — see finishMigration.
 	storageActionFinishMigration = "finish_migration"
 )
+
+// ncStorageSwitchTimeout bounds a whole mode switch, as opposed to
+// ncProvisionTimeout, which bounds one HTTP call to Nextcloud.
+//
+// It is generous because the operation is a server-side copy of an entire
+// archive and the alternative to finishing is leaving an instance unsettled. It
+// exists at all so that a switch against a Nextcloud that has stopped answering
+// cannot hold the provisioning lock for the life of the process.
+const ncStorageSwitchTimeout = 60 * time.Minute
 
 // storageUpdate is the PUT body: the same field name the config file uses, so
 // there is one vocabulary for this decision end to end.
@@ -291,45 +301,37 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 	}
 	want := *in.AccessControlEnabled
 
-	// Already there — but "already there" has two readings, and the first pass
-	// only implemented one of them.
+	// Everything below happens inside switchStorageMode, under the provisioning
+	// lock, and that is load-bearing rather than tidy.
 	//
-	// A settled instance answers its current state: a double-click on the active
-	// button, or a retry of a request whose response was lost, must not re-run a
-	// copy. An UNSETTLED one is the state QA got stuck in — a switch that stopped
-	// after the flip, so the recorded mode already equals the request while a
-	// stale copy of the archive sits at the other root. Short-circuiting there
-	// made the one action that would repair it unreachable from the UI, which is
-	// why the recovery is wired to exactly this request.
-	if current, resolved := ncStorage.mode(); resolved && current == want {
-		if ncStorage.migrationClean() {
-			writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
-			return
-		}
-		result, err := c.finishStorageMigration(r.Context(), rt.logger)
-		if err != nil {
-			rt.logger.Printf("finishing the interrupted storage migration failed: %v", err)
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		c.preflightNCStorage(r.Context(), rt.logger)
-		writeJSON(w, http.StatusOK, c.storageStatus(rt, &result))
-		return
-	}
+	// "Already there" has two readings and the first pass only implemented one.
+	// A SETTLED instance answers its current state: a double-click, or a retry of
+	// a request whose response was lost, must not re-run a copy. An UNSETTLED one
+	// is the state QA got stuck in — a switch that stopped after the flip, so the
+	// recorded mode already equals the request while a stale copy sits at the
+	// other root — and short-circuiting there made the one action that would
+	// repair it unreachable from the UI.
+	//
+	// Deciding either of those HERE would decide it outside the lock, which is
+	// how two concurrent PUTs for the same target both get past it and the second
+	// one migrates a root onto itself.
+	//
+	// It also no longer forces a cleanup before a switch. That looked prudent and
+	// was a dead end: after a failure before the flip the "stale" root is the
+	// TARGET, so on an instance that already had recordings there, finishMigration
+	// correctly refuses to clear them — and every retry of the switch then failed
+	// on the cleanup instead of running. The migration merges into its
+	// destination and skips names already present, so there was nothing the
+	// cleanup was protecting it from.
+	//
+	// The context is deliberately not the request's. This is the one call that
+	// COPIES an entire archive over WebDAV and rewrites the recorded mode; a
+	// browser that navigates away, or a proxy that gives up, must not abort it
+	// half way. Same reasoning as the POST handler above, with more at stake.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), ncStorageSwitchTimeout)
+	defer cancel()
 
-	// A dirty state is finished BEFORE a new switch starts, so the copy never has
-	// to reason about somebody else's leftovers at its destination — and so an
-	// administrator who asks for the other mode does not silently inherit a
-	// partial copy as if it were an archive.
-	if !ncStorage.migrationClean() {
-		if _, err := c.finishStorageMigration(r.Context(), rt.logger); err != nil {
-			rt.logger.Printf("could not finish the previous storage migration before switching: %v", err)
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-
-	result, err := c.switchStorageMode(r.Context(), want, rt.logger)
+	result, err := c.switchStorageMode(ctx, want, rt.logger)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errTransitionNotReady) {
@@ -341,6 +343,14 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 		writeJSONError(w, status, err.Error())
 		return
 	}
+	if result.Mode == "" {
+		// A no-op: the mode asked for is the one in force and the instance is
+		// settled. Nothing moved and nothing needs re-probing, so this stays as
+		// cheap as the double-click that usually causes it.
+		writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
+		return
+	}
+	c.preflightNCStorage(ctx, rt.logger)
 	writeJSON(w, http.StatusOK, c.storageStatus(rt, &result))
 }
 

@@ -1130,3 +1130,199 @@ func TestSwitchStaysInTheOldModeWhenTheFlipCannotBeWritten(t *testing.T) {
 		t.Fatalf("a switch that could not record its mode deleted %d path(s)", deleted)
 	}
 }
+
+// --- Migrating a root onto itself ------------------------------------------------
+//
+// recordingsRootFor is a two-way switch, so if the "current" mode ever equals the
+// target the source and destination are the SAME string. Everything downstream
+// then agrees that the switch succeeded: every name is already at the
+// destination, so nothing is copied; the verification compares a listing with
+// itself; and step 7 deletes the archive it was supposed to be protecting. The
+// API reports a successful switch over an empty tree.
+//
+// Two ways in, and both are closed here.
+
+// An unresolved mode reads as `default`, so a PUT asking for `default` used to
+// walk straight into it — the handler's short-circuit is gated on `resolved`, so
+// it does not catch this, and it is the one call site in the package that
+// discarded that second return value.
+func TestSwitchRefusesWhenNoModeHasBeenResolved(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	ncStorage.setPath(filepath.Join(t.TempDir(), storageSettingsFileName))
+
+	mock := newTransitionMock()
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	mock.addFile(ncDefaultRecordingsRoot+"/catalog.json", catalogWith("m1"))
+
+	cfg := testExAppConfig(mock.server(t).URL)
+	if _, err := cfg.switchStorageMode(context.Background(), false, log.New(io.Discard, "", 0)); err == nil {
+		t.Fatal("switchStorageMode(false) succeeded on an unresolved mode — it would have migrated the default root onto itself")
+	}
+	if !mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the archive was deleted by a switch that had no mode to switch from")
+	}
+	mock.mu.Lock()
+	deleted := len(mock.deleted)
+	mock.mu.Unlock()
+	if deleted != 0 {
+		t.Fatalf("a refused switch deleted %d path(s)", deleted)
+	}
+}
+
+// Two requests asking for the same target. The handler's "already there" check
+// runs OUTSIDE the provisioning lock, so both get past it while the mode is
+// still the old one; the first switch flips, and the second then arrives with
+// current == target. The decision has to be re-taken under the lock.
+func TestSwitchReTakesTheAlreadyThereDecisionUnderTheLock(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	mock.addFile(ncDefaultRecordingsRoot+"/catalog.json", catalogWith("m1"))
+	cfg := testExAppConfig(mock.server(t).URL)
+	logger := log.New(io.Discard, "", 0)
+
+	// The first switch is the real one.
+	if _, err := cfg.switchStorageMode(context.Background(), true, logger); err != nil {
+		t.Fatalf("first switchStorageMode(true) error = %v", err)
+	}
+	if !mock.has(ncACLRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the first switch did not deliver the recording")
+	}
+
+	// The second is the one that used to migrate the Team folder onto itself and
+	// empty it, reporting success.
+	result, err := cfg.switchStorageMode(context.Background(), true, logger)
+	if err != nil {
+		t.Fatalf("second switchStorageMode(true) error = %v", err)
+	}
+	if result.Mode != "" {
+		t.Fatalf("the second switch reported a transition %+v; asking for the mode already in force is a no-op", result)
+	}
+	if !mock.has(ncACLRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the second switch emptied the archive it was asked to switch to")
+	}
+}
+
+// The same trap, guarded a second time at the point of harm — so that a future
+// caller that gets the mode check wrong fails loudly instead of deleting.
+func TestMigrateRefusesARootOntoItself(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock := newTransitionMock()
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	_, err := cfg.migrateStorageLocked(context.Background(), &http.Client{}, false, false, log.New(io.Discard, "", 0))
+	if err == nil {
+		t.Fatal("migrateStorageLocked ran with source == destination")
+	}
+	if !strings.Contains(err.Error(), "onto itself") {
+		t.Fatalf("error %q does not name what it refused", err)
+	}
+	if !mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the archive was deleted despite the refusal")
+	}
+}
+
+// --- "We could not look" is not "there is nothing there" -------------------------
+
+// The adoption's most dangerous input. A failed Team-folder listing leaves
+// FolderMounted false, exactly as a genuinely unmounted folder does — and
+// treating that as "no Team folder" takes a LIVE access-controlled archive,
+// copies it into the tree the operator serves to every caller as its owner, and
+// then empties the Team folder it came from.
+func TestAdoptionRefusesWhenTheTeamFolderQuestionWasNotAnswered(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock, cfg := adoptionMock(t)
+	mock.addFile(ncLegacyDefaultRecordingsRoot+"/meetings/private.opus", "audio")
+
+	// A probe that never got an answer about the folder list: FolderProbed false,
+	// FolderMounted false — which is what a transient OCS failure produces.
+	cfg.adoptLegacyDefaultArchive(context.Background(), &http.Client{},
+		ncStorageProbe{ServiceAccount: true, FolderProbed: false}, log.New(io.Discard, "", 0))
+
+	if mock.has(ncDefaultRecordingsRoot + "/meetings/private.opus") {
+		t.Fatal("an archive of unknown storage was copied into the openly-served default root")
+	}
+	if !mock.has(ncLegacyDefaultRecordingsRoot + "/meetings/private.opus") {
+		t.Fatal("the archive was removed from where it was")
+	}
+}
+
+// The counterpart: an ANSWERED "nothing is mounted" still adopts. Failing closed
+// must not mean failing always.
+func TestAdoptionStillRunsOnAnAnsweredUnmountedFolder(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock, cfg := adoptionMock(t)
+	mock.addFile(ncLegacyDefaultRecordingsRoot+"/meetings/m1.opus", "audio")
+	cfg.adoptLegacyDefaultArchive(context.Background(), &http.Client{},
+		ncStorageProbe{ServiceAccount: true, FolderProbed: true}, log.New(io.Discard, "", 0))
+
+	if !mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatalf("an answered, unmounted folder did not adopt; files: %v", mock.files)
+	}
+}
+
+// --- The pre-switch cleanup that wedged --------------------------------------------
+
+// A switch interrupted before the flip leaves the instance dirty with the
+// recorded mode naming the SOURCE — so the "stale" root finishMigration would
+// clear is the TARGET. On an instance that already had recordings there, that
+// refusal is correct and used to be fatal: the handler ran the cleanup as a hard
+// precondition of every switch and returned 500 when it declined, so the switch
+// could never run again.
+//
+// The cleanup is gone from that path. The migration merges into its destination
+// and skips names already present, which is all the cleanup was protecting it
+// from.
+func TestSwitchRunsAfterAFailedCleanupWouldHaveRefused(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	settings := setStorageMode(t, false)
+	ncStorage.set(false, storageModeSourceConfigured, false)
+	if err := SaveStorageSettings(settings, false, storageModeSourceUser, false); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	// A stranded recording at the TARGET that is not at the active root — the
+	// exact shape that makes finishMigration decline.
+	mock.addFile(ncACLRecordingsRoot+"/meetings/stranded.opus", "audio-x")
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/storage", strings.NewReader(`{"access_control_enabled":true}`))
+	cfg.storageHandler(rt).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /storage = %d, want 200 — a cleanup that correctly refuses must not wedge the switch (%s)", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{ncACLRecordingsRoot + "/meetings/m1.opus", ncACLRecordingsRoot + "/meetings/stranded.opus"} {
+		if !mock.has(want) {
+			t.Errorf("%s is not at the destination after the switch", want)
+		}
+	}
+	if !ncStorage.migrationClean() {
+		t.Fatal("the switch left the instance unsettled")
+	}
+}

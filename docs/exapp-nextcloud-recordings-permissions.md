@@ -468,7 +468,8 @@ it rather than matching prose.
                                          write share delete
 "step": "group_folder_acl"             → occ groupfolders:permissions <id> --enable
 "step": "group_folder_manager"         → occ groupfolders:permissions <id> -m --user cassini
-"step": "mode_mismatch:default_root_shadowed"
+"step": "mode_mismatch:default_root_shadowed"   // something IS mounted there
+"step": "mode_mismatch:default_root_unknown"    // nobody could say (writes only)
                                        → a Team folder is mounted at CassiniNoACL,
                                          which is where the default mode keeps its
                                          recordings; unmap or rename it, or turn
@@ -927,6 +928,7 @@ restore the org-wide readability a pre-access-control archive had. See
 | Publishes fail with "the recordings storage is not ready" | Deliberate: writing somewhere the read path is not looking would leave recordings nobody can open | Fix the state above, or set `CASSINI_PUBLISH_SINK=local` to keep recordings on the app's own volume |
 | A recording is refused in Talk, with "The recording failed" | A prerequisite of the selected mode is missing, so the call would be captured and then not publishable | Open Cassini → Setup; the missing thing and its command are there |
 | `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | `occ group:add cassini` and `occ user:add --group=cassini cassini`, then re-enable Cassini |
+| `state=unavailable`, `step=mode_mismatch:default_root_unknown` | Nobody could say whether anything is mounted at `CassiniNoACL`. Publishing is refused, because the default mode's safety argument is that this tree is private and nothing confirmed it. **Reading is unaffected** — the archive still lists — which is the deliberate asymmetry: an unconfirmed write puts recordings somewhere they may not belong, an unconfirmed read serves a tree that in this mode is open by design | Check that Nextcloud is answering (this usually means the apps list or the Team-folder list failed), then disable and re-enable Cassini |
 | `state=unavailable`, `step=mode_mismatch:default_root_shadowed` | A Team folder is mounted at `CassiniNoACL`, which is where the default mode keeps recordings. A mounted folder wins that path, so writes would land in a shared folder and owner-identity reads would serve it to everyone mapped there | `occ groupfolders:list`, then `occ groupfolders:group <id> <group> --delete` to unmap it (or rename the folder) — or turn access control on in Cassini → Setup if that is what this instance was meant to be |
 | `state=unavailable`, `step=mode_mismatch:access_controlled_archive` | The upgrade latch: nothing recorded a mode, so Cassini fell back to `default`, but the `Cassini` Team folder still holds recordings the default mode does not read | Set `CASSINI_STORAGE_MODE=access_controlled` and re-enable Cassini, or turn access control on in Cassini → Setup. If the instance really is meant to be open, switch to the default mode there and Cassini copies those recordings across |
 | The Setup tab says "A storage switch did not finish" | `migration_clean` is false: a switch stopped between copying and tidying up. The archive is complete at the mode shown; the other root holds a copy nothing reads | Press **Finish the switch** (or `POST /operator/storage {"action":"finish_migration"}`). It refuses only if the leftovers are not also at the active root |
