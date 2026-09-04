@@ -632,29 +632,135 @@ fi
 
 [[ -s "$LOG_DIR/build.log" ]] || fail "build.log is empty for job $JOB_ID"
 
-# Assert build log for Alice
-grep -Eiq "source audio: .*alice.* transcribing from participant capture spliced over [1-9][0-9]* ms of their recorded track \([1-9][0-9]*/[1-9][0-9]* segments, 0 skipped," \
-  "$LOG_DIR/build.log" || {
+# --- the splice, per participant --------------------------------------------
+#
+# What this asserts, and what it deliberately does not.
+#
+# It used to demand "0 skipped", and that was a coin flip on a live recording.
+# Alice records three stretches here: one sealed by the microphone switch, one
+# sealed by the page reload, one sealed when she leaves the call. The last two
+# end at an abrupt boundary, where the capture's sidecar stamps the segment's
+# window from the call clock while the MediaRecorder's final chunk is still on
+# its way — so the file arrives holding slightly less audio than it declares.
+# The splice leaves out a segment holding under 90% of its declared window
+# (minSegmentDecodedFraction in internal/transcribe/sourceaudio.go; "Abrupt-page
+# tail" in docs/source-audio-capture.md), which is the right thing to do with a
+# file that disagrees with its own manifest, and the recorded track stands there
+# instead.
+#
+# Measured across seven runs of this leg, Alice's last segment held 86.7% to
+# 96.2% of what it declared — two of the seven under the threshold. Her
+# reload-sealed segment held 93.0% to 94.4%, her switch-sealed one 100%, and
+# Bob's single segment 97.6% to 98.8%: his thirty-odd seconds absorb the same
+# half-second of missing tail that costs Alice's eleven-second segment a tenth
+# of its window. A required check cannot be a coin flip, and the pipeline was
+# not misbehaving on the runs that lost.
+#
+# So the demand is no longer "nothing was skipped". It is "the splice did its
+# job, and whatever it left out is what the pipeline says it leaves out":
+#
+#   * the line exists at all — a splice that did not happen is still a failure;
+#   * placed + skipped accounts for every segment that arrived, so a counter
+#     that drifts from the segments is caught;
+#   * at least MIN_PLACED segments landed;
+#   * at least MIN_SPLICED_MS of the recorded track was replaced, sized from the
+#     schedule this leg drives the browsers through (see the calls below);
+#   * every skipped segment has its reason on the build log, and every one of
+#     those reasons is the short-tail one. A skip for any other reason — a
+#     placement that would not fit, a decode that failed, a window that landed
+#     nowhere — fails the run, and so does a skip with no reason at all.
+#
+# A splice that is actually broken cannot get through that: breaking placement,
+# decoding or overlay changes the reason, breaking the render drops the line,
+# and quietly splicing almost nothing fails the milliseconds floor.
+
+# The one skipped-segment reason this leg tolerates.
+BENIGN_SKIP_REASON='holds [0-9]+ ms of the [0-9]+ ms it declares \([0-9]+%\); the audio does not match the sidecar'
+# Not a skip at all: a segment used only across the window it declared. It is
+# tolerated but never counts as the explanation for a skip.
+BENIGN_PARTIAL_REASON='partly used: holds [0-9]+ ms under a [0-9]+ ms window; only the first [0-9]+ ms of it was used'
+
+# assert_participant_splice <who> <min_segments> <min_placed> <min_spliced_ms>
+assert_participant_splice() {
+  local who="$1" min_segments="$2" min_placed="$3" min_spliced_ms="$4"
+  local line spliced placed segments skipped explained unexplained n
+
+  # No match is the interesting case here, not an error: `|| true` so that the
+  # diagnosis below runs instead of set -e taking the leg down with an ERR trap.
+  line="$(grep -Ei "^ *source audio: .*${who}.* transcribing from participant capture spliced over [0-9]+ ms of their recorded track \([0-9]+/[0-9]+ segments, [0-9]+ skipped," \
+    "$LOG_DIR/build.log" | tail -1 || true)"
+  if [[ -z "$line" ]]; then
     log "--- build.log excerpt ---"
     grep -E "source audio" "$LOG_DIR/build.log" || true
-    fail "build log does not assert successful splice for Alice with 0 skipped"
-  }
-if grep -Eiq "source audio: .*alice.*keeping the recorded audio" "$LOG_DIR/build.log"; then
-  fail "Alice has 'keeping the recorded audio' in build log"
-fi
+    fail "build log records no participant-capture splice for ${who}"
+  fi
 
-# Assert build log for Bob
-grep -Eiq "source audio: .*bob.* transcribing from participant capture spliced over [1-9][0-9]* ms of their recorded track \([1-9][0-9]*/[1-9][0-9]* segments, 0 skipped," \
-  "$LOG_DIR/build.log" || {
+  read -r spliced placed segments skipped <<<"$(sed -E \
+    's#.*spliced over ([0-9]+) ms of their recorded track \(([0-9]+)/([0-9]+) segments, ([0-9]+) skipped,.*#\1 \2 \3 \4#' \
+    <<<"$line")"
+  for n in "$spliced" "$placed" "$segments" "$skipped"; do
+    [[ "$n" =~ ^[0-9]+$ ]] || fail "could not read ${who}'s splice counts from: $line"
+  done
+
+  (( segments >= min_segments )) \
+    || fail "the build saw $segments segment(s) of ${who}'s capture, want at least $min_segments: $line"
+  (( placed + skipped == segments )) \
+    || fail "${who}: $placed placed plus $skipped skipped is not the $segments segment(s) that arrived: $line"
+  (( placed >= min_placed )) \
+    || fail "only $placed of ${who}'s $segments segment(s) were spliced, want at least $min_placed: $line"
+  (( spliced >= min_spliced_ms )) \
+    || fail "${who}'s splice covers $spliced ms of their recorded track, want at least $min_spliced_ms ms: $line"
+
+  # Every skip explained, and explained by the one reason this leg accepts.
+  explained="$(grep -Eci "^ *source audio: .*${who}.*: segment [0-9]+ not spliced: ${BENIGN_SKIP_REASON}" \
+    "$LOG_DIR/build.log" || true)"
+  if (( explained != skipped )); then
     log "--- build.log excerpt ---"
     grep -E "source audio" "$LOG_DIR/build.log" || true
-    fail "build log does not assert successful splice for Bob with 0 skipped"
-  }
-if grep -Eiq "source audio: .*bob.*keeping the recorded audio" "$LOG_DIR/build.log"; then
-  fail "Bob has 'keeping the recorded audio' in build log"
-fi
+    fail "${who} had $skipped skipped segment(s) and $explained of them are the documented short-tail case"
+  fi
+  # And nothing else the splice declined is left unaccounted for.
+  unexplained="$(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ (not spliced|partly used):" "$LOG_DIR/build.log" \
+    | grep -Ecv "(${BENIGN_SKIP_REASON}|${BENIGN_PARTIAL_REASON})" || true)"
+  if (( unexplained != 0 )); then
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "${who}'s splice declined $unexplained segment(s) for a reason this leg does not accept"
+  fi
 
-pass "build log asserts participant capture splice for Alice and Bob with 0 skipped"
+  # A whole speaker refused is a different event, and its own failure. The
+  # per-segment lines above deliberately do not use these words — they say "the
+  # recorded track stands there" — and a unit test pins the two apart, so this
+  # needs no anchor that a later suffix on the refusal line could slip past.
+  if grep -Eiq "^ *source audio: .*${who}.*keeping the recorded audio" "$LOG_DIR/build.log"; then
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "${who}'s upload went unused; the build kept their recorded audio"
+  fi
+
+  pass "${who}: $placed of $segments segment(s) spliced over $spliced ms of their recorded track ($skipped skipped, all documented)"
+}
+
+# Alice is driven through three recorded stretches of at least 8.5 s each — one
+# before the microphone switch, one before the page reload, one after it — and
+# runs of this leg splice 27.5-28.5 s of her track when all three land, 17.5 s
+# when the last is short of its window. Two of her three stretches, less a
+# couple of seconds of slack, is 15 s.
+ALICE_MIN_SEGMENTS=3
+ALICE_MIN_PLACED=2
+ALICE_MIN_SPLICED_MS=15000
+# Bob records one segment spanning the whole call: he joins before the recording
+# starts and leaves after Alice's reload, so he is talking through all three of
+# her stretches. Runs of this leg splice 30.0-32.0 s of his track. His segment
+# cannot be partly placed — if it were skipped the render would fail and there
+# would be no line at all — so his floor is here to catch a splice that lands
+# and covers almost nothing.
+BOB_MIN_SEGMENTS=1
+BOB_MIN_PLACED=1
+BOB_MIN_SPLICED_MS=20000
+
+assert_participant_splice "$ALICE" "$ALICE_MIN_SEGMENTS" "$ALICE_MIN_PLACED" "$ALICE_MIN_SPLICED_MS"
+assert_participant_splice "$BOB" "$BOB_MIN_SEGMENTS" "$BOB_MIN_PLACED" "$BOB_MIN_SPLICED_MS"
 
 # Assert published meeting manifest records provenance.sourceAudio
 CANONICAL_MEETING="$(jq -r '.job.artifact_meeting_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
@@ -675,11 +781,28 @@ done
 [[ -n "$ARTIFACT_MEETING_PATH" ]] || fail "meeting manifest.json not found inside container for job $JOB_ID"
 docker exec "$EXAPP_CONTAINER" cat "$ARTIFACT_MEETING_PATH/manifest.json" >"$LOG_DIR/meeting-manifest.json"
 
-jq -e --arg alice "$ALICE" --arg bob "$BOB" '
+# The same demand as the build log above, against the artifact a consumer reads,
+# and with the same numbers rather than a second set that could drift from them.
+# The per-segment reasons are checked on the log alone: the build prints the
+# manifest's own rejection strings verbatim, so a second regex pass over the
+# same words here would only be a second place to get the escaping wrong.
+jq -e --arg alice "$ALICE" --arg bob "$BOB" \
+  --argjson aSegments "$ALICE_MIN_SEGMENTS" --argjson aPlaced "$ALICE_MIN_PLACED" \
+  --argjson aSpliced "$ALICE_MIN_SPLICED_MS" \
+  --argjson bSegments "$BOB_MIN_SEGMENTS" --argjson bPlaced "$BOB_MIN_PLACED" \
+  --argjson bSpliced "$BOB_MIN_SPLICED_MS" '
   .provenance.sourceAudio as $sa
-  | ($sa | type == "array" and length >= 2)
-  and any($sa[]; .owner == $alice and (.speaker_id | test($alice; "i")) and .spliced_ms > 0 and .skipped == 0)
-  and any($sa[]; .owner == $bob and (.speaker_id | test($bob; "i")) and .spliced_ms > 0 and .skipped == 0)
+  | def spliced($owner; $minSegments; $minPlaced; $minSplicedMS):
+      any($sa[];
+        .owner == $owner
+        and (.speaker_id | test($owner; "i"))
+        and .segments >= $minSegments
+        and .placed >= $minPlaced
+        and (.placed + .skipped) == .segments
+        and .spliced_ms >= $minSplicedMS);
+    ($sa | type == "array" and length >= 2)
+    and spliced($alice; $aSegments; $aPlaced; $aSpliced)
+    and spliced($bob; $bSegments; $bPlaced; $bSpliced)
 ' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
   log "--- meeting manifest.json provenance ---"
   jq '.provenance // {}' "$LOG_DIR/meeting-manifest.json" || true
