@@ -737,8 +737,7 @@ try {
     response.request().method() === "POST" && response.url().includes("/operator/capture/upload")
   );
 
-  // Both listeners are armed before either participant leaves.
-  const aliceUploadResponse = alicePage.waitForResponse(captureUpload, { timeout: 45_000 });
+  // Bob's upload listener is armed before he leaves.
   const bobUploadResponse = bobPage.waitForResponse(captureUpload, { timeout: 90_000 });
 
   // Bob leaves first while the recording is still running on Alice's side.
@@ -753,9 +752,9 @@ try {
   assert(bobUpload.status() === 202, `bob: source capture upload returned HTTP ${bobUpload.status()}: ${result.bob.upload.body}`);
   result.bob.afterLeaveOPFS = await waitForDrainedCaptureStorage(bobPage, "bob");
 
-  // Alice leaves second. As the moderator and final participant, her leave
-  // stops the recording and triggers her own capture upload. Because Bob has
-  // already uploaded, both captures are safely on disk when the operator builds.
+  // Alice leaves second. Arm her upload listener immediately before she leaves
+  // so its timeout is not consumed while waiting for Bob's departure and drain.
+  const aliceUploadResponse = alicePage.waitForResponse(captureUpload, { timeout: 45_000 });
   await leaveCall(alicePage, "alice");
   aliceLeft = true;
   const aliceUpload = await aliceUploadResponse;

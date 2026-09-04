@@ -378,6 +378,7 @@ func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int
 		// false record: absence is the honest answer, and it is the one shape
 		// every existing consumer already handles.
 		WordTimings: wordTimings,
+		SourceAudio: sourceAudio,
 	}
 	if hasReadable {
 		prov.ReadableCleanup = &provStep{

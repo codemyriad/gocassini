@@ -643,8 +643,8 @@ docker exec "$EXAPP_CONTAINER" cat "$ARTIFACT_MEETING_PATH/manifest.json" >"$LOG
 jq -e --arg alice "$ALICE" --arg bob "$BOB" '
   .provenance.sourceAudio as $sa
   | ($sa | type == "array" and length >= 2)
-  and any($sa[]; (.owner == $alice or (.speaker_id | test($alice; "i"))) and .spliced_ms > 0 and .skipped == 0)
-  and any($sa[]; (.owner == $bob or (.speaker_id | test($bob; "i"))) and .spliced_ms > 0 and .skipped == 0)
+  and any($sa[]; .owner == $alice and (.speaker_id | test($alice; "i")) and .spliced_ms > 0 and .skipped == 0)
+  and any($sa[]; .owner == $bob and (.speaker_id | test($bob; "i")) and .spliced_ms > 0 and .skipped == 0)
 ' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
   log "--- meeting manifest.json provenance ---"
   jq '.provenance // {}' "$LOG_DIR/meeting-manifest.json" || true
