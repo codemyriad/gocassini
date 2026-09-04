@@ -3,7 +3,7 @@ name: Deploy Preview
 # Branch-preview pipeline. Behavior:
 #   * UI-only changes always publish a per-branch viewer pointed at main's
 #     processed meetings (cheap, runs on ubuntu-latest, parallel across branches).
-#   * Processing changes (cassini-go-recorder, ops/process-recordings.sh,
+#   * Processing changes (cassini-go-recorder, scripts/process-recordings.sh,
 #     bin/cassini, or this workflow) DO NOT auto-reprocess. They publish a
 #     UI-only preview unless the developer opts in by:
 #       - including [preview] or [preview:N] in the HEAD commit message, OR
@@ -107,7 +107,7 @@ jobs:
           if echo "$CHANGED" | grep -qE '^(cassini-viewer/|\.github/workflows/deploy-preview\.yml$)'; then
             ui_changed=true
           fi
-          if echo "$CHANGED" | grep -qE '^(cassini-go-recorder/|ops/process-recordings\.sh$|bin/cassini$|\.github/workflows/deploy-preview\.yml$)'; then
+          if echo "$CHANGED" | grep -qE '^(cassini-go-recorder/|scripts/process-recordings\.sh$|bin/cassini$|\.github/workflows/deploy-preview\.yml$)'; then
             processing_changed=true
           fi
 
@@ -371,7 +371,7 @@ jobs:
       - name: Process recordings with GPU
         env:
           DEVICE: cuda
-          # OPENROUTER_API_KEY intentionally unset: ops/process-recordings.sh
+          # OPENROUTER_API_KEY intentionally unset: scripts/process-recordings.sh
           # (lines 22-24) skips the readable-transcript LLM cleanup when the
           # key is missing. The LLM pass was the dominant per-meeting wall-clock
           # cost on this preview pipeline; skipping it keeps opt-in previews
@@ -382,7 +382,7 @@ jobs:
           PROCESSED_DIR="$PROC_DIR" \
           CASSINI_BIN="${GITHUB_WORKSPACE}/cassini-go-recorder/dist/cassini-bin" \
           CASSINI_CACHE_ROOT="$CASSINI_CACHE_ROOT" \
-          bash ops/process-recordings.sh
+          bash scripts/process-recordings.sh
 
       - name: Verify at least one meeting was processed
         run: |
@@ -425,7 +425,7 @@ jobs:
           set -euo pipefail
           rclone copy "${EXPORT_DIR}/" \
             "codemyriad:cassini-processed/${ENCODED_BRANCH}/"
-          HASH="$(git rev-parse HEAD:cassini-go-recorder HEAD:ops/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)"
+          HASH="$(git rev-parse HEAD:cassini-go-recorder HEAD:scripts/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)"
           echo "$HASH" | rclone rcat "codemyriad:cassini-processed/${ENCODED_BRANCH}/.processing-hash"
 
       - name: Cleanup temp files
