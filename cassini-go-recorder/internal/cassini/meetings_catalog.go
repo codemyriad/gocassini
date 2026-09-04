@@ -3,8 +3,10 @@ package cassini
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"path"
 	"sort"
@@ -128,14 +130,137 @@ func (l meetingsListing) Entries() []meetingsCatalogEntry {
 // when the caller genuinely has none and when the recordings substrate is
 // mis-provisioned. That ambiguity is the server's deliberate fail-closed
 // behaviour, so this returns success and lets the caller say so.
+//
+// It is the FALLBACK path since D-701 — see fetchMeetings — kept because the
+// CLI ships on laptops and is not upgraded in lockstep with the app it talks
+// to. Against a current app the list route answers instead, and does not have
+// this ambiguity.
 func (c *meetingsClient) fetchCatalog(ctx context.Context) (meetingsListing, error) {
 	target, err := c.catalogURL()
 	if err != nil {
 		return meetingsListing{}, err
 	}
-	resp, err := c.get(ctx, target, c.json)
+	body, header, err := c.readListing(ctx, target)
 	if err != nil {
 		return meetingsListing{}, err
+	}
+	var catalog meetingsCatalog
+	if err := json.Unmarshal(body, &catalog); err != nil {
+		return meetingsListing{}, fmt.Errorf("parse catalog from %s: %w", meetingsTargetLabel(target), err)
+	}
+	return decodeMeetingsListing(catalog, header, target)
+}
+
+// errMeetingsListAbsent means the app does not serve the list route: one older
+// than D-701, or one publishing to the local sink. Distinct from every other
+// failure, because it is the only one the caller answers by asking catalog.json
+// instead. A 502 is emphatically NOT this — falling back on it would restore
+// exactly the empty-list-on-outage ambiguity the route removes.
+var errMeetingsListAbsent = errors.New("this Cassini app does not serve the meetings list route")
+
+// meetingsListEnvelope is the list route's body: the catalog envelope, plus
+// what the server narrowed away.
+type meetingsListEnvelope struct {
+	meetingsCatalog
+	Excluded *struct {
+		Total   int `json:"total"`
+		Undated int `json:"undated"`
+	} `json:"excluded"`
+}
+
+// fetchMeetings returns the caller's meetings and how the filter narrowed them,
+// preferring the server-side list route and falling back to the catalog.
+//
+// The reason to prefer it is not speed — a catalog is small and the round trip
+// is dominated by the app's per-caller scan either way. It is that the route
+// distinguishes "you may read nothing" from "the archive is unreachable", which
+// catalog.json cannot: it answers a valid empty list for both, and an agent
+// acting on that reads an outage as a truthful empty archive.
+func (c *meetingsClient) fetchMeetings(ctx context.Context, filter meetingsFilter) (meetingsListing, meetingsFilterResult, error) {
+	listing, result, err := c.fetchFilteredListing(ctx, filter)
+	switch {
+	case err == nil:
+		return listing, result, nil
+	case errors.Is(err, errMeetingsListAbsent):
+		// Fall through to the catalog.
+	default:
+		return meetingsListing{}, meetingsFilterResult{}, err
+	}
+
+	listing, err = c.fetchCatalog(ctx)
+	if err != nil {
+		return meetingsListing{}, meetingsFilterResult{}, err
+	}
+	return listing, applyMeetingsFilter(listing.Items, filter), nil
+}
+
+// fetchFilteredListing GETs the list route with the filter as query parameters.
+//
+// The items come back already narrowed, so the counts that explain a short list
+// are the SERVER's rather than this build's — applying applyMeetingsFilter over
+// an already-filtered set would report every count as zero and leave a short
+// list unexplained.
+func (c *meetingsClient) fetchFilteredListing(ctx context.Context, filter meetingsFilter) (meetingsListing, meetingsFilterResult, error) {
+	target, err := c.meetingsListURL(filter)
+	if err != nil {
+		return meetingsListing{}, meetingsFilterResult{}, err
+	}
+	body, header, err := c.readListing(ctx, target)
+	if err != nil {
+		var httpErr *meetingsHTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
+			return meetingsListing{}, meetingsFilterResult{}, errMeetingsListAbsent
+		}
+		return meetingsListing{}, meetingsFilterResult{}, err
+	}
+
+	var envelope meetingsListEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return meetingsListing{}, meetingsFilterResult{}, fmt.Errorf(
+			"parse meeting list from %s: %w", meetingsTargetLabel(target), err)
+	}
+	listing, err := decodeMeetingsListing(envelope.meetingsCatalog, header, target)
+	if err != nil {
+		return meetingsListing{}, meetingsFilterResult{}, err
+	}
+	result := meetingsFilterResult{items: listing.Items}
+	if envelope.Excluded != nil {
+		result.excluded = envelope.Excluded.Total
+		result.undated = envelope.Excluded.Undated
+	}
+	return listing, result, nil
+}
+
+// meetingsListURL is the list route with the filter encoded as query
+// parameters, in exactly the layout the server parses back.
+func (c *meetingsClient) meetingsListURL(filter meetingsFilter) (*url.URL, error) {
+	root, err := c.appRootURL()
+	if err != nil {
+		return nil, err
+	}
+	target, err := root.Parse(meetingsListPath)
+	if err != nil {
+		return nil, fmt.Errorf("build meeting list URL: %w", err)
+	}
+	query := url.Values{}
+	if filter.hasFrom {
+		query.Set("from", filter.from.Format(meetingsFilterStampLayout))
+	}
+	if filter.hasTo {
+		query.Set("to", filter.to.Format(meetingsFilterStampLayout))
+	}
+	if filter.room != "" {
+		query.Set("room", filter.room)
+	}
+	target.RawQuery = query.Encode()
+	return target, nil
+}
+
+// readListing GETs a listing route and returns its body, bounded.
+func (c *meetingsClient) readListing(ctx context.Context, target *url.URL) ([]byte, http.Header, error) {
+	resp, err := c.get(ctx, target, c.json)
+	if err != nil {
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
@@ -143,30 +268,32 @@ func (c *meetingsClient) fetchCatalog(ctx context.Context) (meetingsListing, err
 	// truncating the JSON into a parse error that blames the server's syntax.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCatalogBytes+1))
 	if err != nil {
-		return meetingsListing{}, fmt.Errorf("read catalog from %s: %w", target.Redacted(), err)
+		return nil, nil, fmt.Errorf("read catalog from %s: %w", meetingsTargetLabel(target), err)
 	}
 	if len(body) > maxCatalogBytes {
-		return meetingsListing{}, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"catalog from %s is larger than %d MiB, which no real meeting list is: refusing to keep reading it into memory",
-			target.Redacted(), maxCatalogBytes>>20)
+			meetingsTargetLabel(target), maxCatalogBytes>>20)
 	}
+	return body, resp.Header, nil
+}
 
-	var catalog meetingsCatalog
-	if err := json.Unmarshal(body, &catalog); err != nil {
-		return meetingsListing{}, fmt.Errorf("parse catalog from %s: %w", target.Redacted(), err)
-	}
+// decodeMeetingsListing turns a decoded envelope into the display-ordered
+// listing. Shared by both fetch paths so the two cannot disagree about version
+// checking, id trimming, skip counting or ordering.
+func decodeMeetingsListing(catalog meetingsCatalog, header http.Header, target *url.URL) (meetingsListing, error) {
 	if catalog.Version != meetingsCatalogVersion {
 		return meetingsListing{}, fmt.Errorf("unsupported catalog version %q (this build reads %q)", catalog.Version, meetingsCatalogVersion)
 	}
 
 	listing := meetingsListing{
 		Version: catalog.Version,
-		Source:  meetingsSource(resp.Header),
+		Source:  meetingsSource(header),
 	}
 	for i, raw := range catalog.Meetings {
 		var entry meetingsCatalogEntry
 		if err := json.Unmarshal(raw, &entry); err != nil {
-			return meetingsListing{}, fmt.Errorf("parse catalog entry %d from %s: %w", i, target.Redacted(), err)
+			return meetingsListing{}, fmt.Errorf("parse catalog entry %d from %s: %w", i, meetingsTargetLabel(target), err)
 		}
 		// A JSON null decodes into a zero entry without error, and an entry with
 		// no id cannot be fetched or referred to. Drop both rather than listing

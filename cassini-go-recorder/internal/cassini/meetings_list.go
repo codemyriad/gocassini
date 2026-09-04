@@ -73,7 +73,9 @@ room at all is matched by no --room value.
 	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
-	listing, err := client.fetchCatalog(ctx)
+	// Server-side where the app supports it, client-side against an older one.
+	// The counts that explain a short list come from whichever side filtered.
+	listing, result, err := client.fetchMeetings(ctx, filter)
 	if err != nil {
 		return reportMeetingsError(stderr, "list", cfg, err)
 	}
@@ -83,8 +85,6 @@ room at all is matched by no --room value.
 	// that never hears the list may be incomplete, and so the warnings describe
 	// the whole catalog rather than the slice that survived it.
 	warnAboutMeetingsSource(stderr, listing)
-
-	result := applyMeetingsFilter(listing.Items, filter)
 
 	if *asJSON {
 		if err := writeMeetingsCatalogJSON(stdout, listing, filter, result); err != nil {

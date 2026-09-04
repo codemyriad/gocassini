@@ -21,6 +21,7 @@ import {
 } from "./loadArtifact";
 import {
   loadMeetingCatalog,
+  loadMeetingsList,
   type MeetingCatalog,
   type MeetingCatalogEntry,
 } from "./catalog";
@@ -89,5 +90,67 @@ export class StaticCatalogProvider implements DataProvider {
 
   loadBundledArtifact(): Promise<LoadedArtifact> {
     return loadBundledArtifact();
+  }
+}
+
+// OperatorListProvider reads the meeting list from the operator's
+// `published/meetings-list` endpoint (D-701) instead of from catalog.json.
+//
+// Only the LIST comes from there. Everything else — artifacts, summaries,
+// transcript switching — is an asset fetch that has not changed, so it is
+// delegated to a wrapped StaticCatalogProvider rather than reimplemented. That
+// also keeps a single PortableMeetingStore behind both, so the portable
+// manifest cache is not split in half.
+//
+// Why the viewer wants the endpoint at all, given it fetches the whole list
+// either way and filters client-side: catalog.json cannot distinguish a
+// substrate failure from an empty archive. It answers 200 with an empty catalog
+// when the per-caller scan fails or the recordings mount is missing, and
+// App.svelte then replaces the list with nothing — the archive silently blanks
+// during a Nextcloud hiccup, and recovers only on the next poll that happens to
+// succeed. The endpoint reports those as an error status, which throws, and the
+// refresh path already knows how to keep the last known-good list and surface
+// the reason.
+//
+// Server-side narrowing (from/to/room) is deliberately NOT used yet. The list
+// view filters and groups client-side over the full set, and moving that to the
+// server is a separate decision about a much larger archive than any deployment
+// currently has.
+export class OperatorListProvider implements DataProvider {
+  private readonly assets = new StaticCatalogProvider();
+  // Latched once the endpoint answers 404, so a deployment that does not serve
+  // it does not pay a failed request on every refresh poll. The cost is that an
+  // operator upgraded while this tab stays open keeps using catalog.json until
+  // a reload — strictly no worse than the behaviour before this class existed.
+  private endpointAbsent = false;
+
+  async loadCatalog(): Promise<MeetingCatalog | null> {
+    if (!this.endpointAbsent) {
+      const result = await loadMeetingsList();
+      if (result.status === "ok") {
+        return result.catalog;
+      }
+      this.endpointAbsent = true;
+    }
+    // catalog.json remains the fallback for an operator older than the
+    // endpoint, and for one publishing to the local sink, which does not serve
+    // it. A failure HERE still throws, exactly as it did before.
+    return this.assets.loadCatalog();
+  }
+
+  loadMeetingForEntry(entry: MeetingCatalogEntry): Promise<LoadedArtifact> {
+    return this.assets.loadMeetingForEntry(entry);
+  }
+
+  loadMeetingSummary(entry: MeetingCatalogEntry): Promise<PortableMeetingSummary | null> {
+    return this.assets.loadMeetingSummary(entry);
+  }
+
+  switchTranscript(entry: MeetingCatalogEntry, transcriptId: string): Promise<LoadedArtifact> {
+    return this.assets.switchTranscript(entry, transcriptId);
+  }
+
+  loadBundledArtifact(): Promise<LoadedArtifact> {
+    return this.assets.loadBundledArtifact();
   }
 }
