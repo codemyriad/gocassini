@@ -1383,9 +1383,26 @@ func pruneSourceAudioWorkDir(bundleDir string) {
 // that dislikes what the published audio sounds like can go back without
 // turning off ingestion, which is the larger and more useful half of the
 // feature.
-func mixSpliceEnabled() bool {
-	return strings.TrimSpace(os.Getenv("CASSINI_SOURCE_AUDIO_MIX")) != "0"
+func mixSpliceEnabled() (bool, string) {
+	raw := strings.TrimSpace(os.Getenv(envMixSpliceEnabled))
+	if raw == "" {
+		return true, ""
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		// The convention the other two ingestion switches already follow: a
+		// value that is neither true nor false lands OFF and says so, rather
+		// than being read as "not exactly 0, so on" and quietly doing the thing
+		// the administrator was trying to stop.
+		return false, fmt.Sprintf("%s=%q is not a boolean, so it is read as off", envMixSpliceEnabled, raw)
+	}
+	if enabled {
+		return true, ""
+	}
+	return false, fmt.Sprintf("disabled by configuration (%s=%s)", envMixSpliceEnabled, raw)
 }
+
+const envMixSpliceEnabled = "CASSINI_SOURCE_AUDIO_MIX"
 
 // ApplySourceAudio splices each speaker's own browser-captured audio over their
 // recorded track, wherever a segment was uploaded and can be placed, and feeds
@@ -1416,7 +1433,21 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 	if timelineSamples <= 0 {
 		return nil
 	}
-	spliceMix := mixSpliceEnabled()
+	// What discovery actually selected, before anything is done with it.
+	//
+	// Every later line is per speaker, so a participant whose upload was never
+	// found at all produced no output whatsoever — and "no line for Alice" then
+	// looked exactly like a splice that failed silently, when the upload had
+	// simply not been selected for this recording. One line here separates the
+	// two without having to reason backwards from a build log.
+	owners := make([]string, 0, len(captures))
+	for owner, dirs := range captures {
+		owners = append(owners, fmt.Sprintf("%s(%d)", owner, len(dirs)))
+	}
+	sort.Strings(owners)
+	fmt.Fprintf(stdout, "  source audio: %d capture(s) selected for this recording over %d ms: %s\n",
+		len(captures), timelineMS, strings.Join(owners, " "))
+	spliceMix, mixSkipReason := mixSpliceEnabled()
 
 	// The bundle's work directory is created on first use, never before it. A
 	// build that finds no upload it can use — because nobody who uploaded was
@@ -1458,12 +1489,17 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 	// stream seen first abandoned the splice.
 	var reports []SourceRenderReport
 	done := map[string]bool{}
+	// Owners whose upload found a track in this recording. The rest uploaded
+	// for a call they were not recorded in, which is a legitimate outcome and
+	// silent today; saying so is what tells it apart from a splice that failed.
+	matched := map[string]bool{}
 	for i := range streams {
 		stream := &streams[i]
 		dirs, ok := captures[stream.ParticipantID]
 		if !ok || stream.ParticipantID == "" || done[stream.ParticipantID] {
 			continue
 		}
+		matched[stream.ParticipantID] = true
 		done[stream.ParticipantID] = true
 		idxs := participantStreams[stream.ParticipantID]
 		anchorless := false
@@ -1562,7 +1598,7 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 			mix.Substitute(idxs, renderPath)
 			report.MixSpliced = true
 		} else {
-			report.MixSkipReason = "disabled by configuration (CASSINI_SOURCE_AUDIO_MIX=0)"
+			report.MixSkipReason = mixSkipReason
 		}
 		if len(idxs) > 1 {
 			fmt.Fprintf(stdout, "  source audio: %s has %d streams in this recording; one render covers them all\n",
@@ -1579,6 +1615,11 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 				stream.SpeakerLabel, report.MixSkipReason)
 		}
 		reports = append(reports, report)
+	}
+	for owner := range captures {
+		if !matched[owner] {
+			fmt.Fprintf(stdout, "  source audio: %s uploaded for this call but has no track in the recording; nothing to splice onto\n", owner)
+		}
 	}
 	// A run that created the work directory and then had every render fail must
 	// still leave the bundle as a build with ingestion off would.

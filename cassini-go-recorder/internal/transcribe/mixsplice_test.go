@@ -401,8 +401,8 @@ func TestTheMixSpliceCanBeTurnedOffOnItsOwn(t *testing.T) {
 	if len(reports) != 1 || reports[0].MixSpliced {
 		t.Fatalf("the off switch did not stop the mix splice: %+v", reports)
 	}
-	if reports[0].MixSkipReason == "" {
-		t.Fatal("the manifest does not say why the mix was left alone")
+	if !strings.Contains(reports[0].MixSkipReason, "CASSINI_SOURCE_AUDIO_MIX=0") {
+		t.Fatalf("the manifest does not say why the mix was left alone: %q", reports[0].MixSkipReason)
 	}
 	if reports[0].Placed != 1 {
 		t.Fatalf("the transcript splice was placed %d times; the off switch is only about the mix", reports[0].Placed)
@@ -539,7 +539,7 @@ func TestTheSpliceNeverWritesIntoTheMixsRecordedTracks(t *testing.T) {
 // not in the audio. The revert has to be all or nothing.
 func TestRevertingIngestionPutsBothSidesBack(t *testing.T) {
 	streams := []AudioStream{
-		{ParticipantID: "alice", SpeakerID: "spk_alice", SourceAudioPath: "/work/source-alice.wav"},
+		{ParticipantID: "alice", SpeakerID: "spk_alice"},
 		{ParticipantID: "alice", SpeakerID: "spk_alice_2", SuppressTranscription: true},
 		{ParticipantID: "bob", SpeakerID: "spk_bob"},
 	}
@@ -636,4 +636,42 @@ func fileDigest(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(raw))
+}
+
+// The off switch follows the convention its two siblings already follow: a
+// value that is neither true nor false lands OFF and says so, rather than being
+// read as "not exactly 0, so on" and quietly doing the thing an administrator
+// was trying to stop.
+func TestTheMixSwitchReadsBooleansTheWayItsSiblingsDo(t *testing.T) {
+	cases := []struct {
+		value   string
+		enabled bool
+		reason  string
+	}{
+		{value: "", enabled: true},
+		{value: "1", enabled: true},
+		{value: "true", enabled: true},
+		{value: "0", enabled: false, reason: "CASSINI_SOURCE_AUDIO_MIX=0"},
+		{value: "false", enabled: false, reason: "CASSINI_SOURCE_AUDIO_MIX=false"},
+		{value: "off", enabled: false, reason: "not a boolean"},
+		{value: "yes please", enabled: false, reason: "not a boolean"},
+	}
+	for _, tc := range cases {
+		t.Run("value "+tc.value, func(t *testing.T) {
+			t.Setenv("CASSINI_SOURCE_AUDIO_MIX", tc.value)
+			enabled, reason := mixSpliceEnabled()
+			if enabled != tc.enabled {
+				t.Fatalf("%q read as enabled=%v, want %v", tc.value, enabled, tc.enabled)
+			}
+			if tc.reason == "" {
+				if reason != "" {
+					t.Fatalf("%q left a reason %q although the splice is on", tc.value, reason)
+				}
+				return
+			}
+			if !strings.Contains(reason, tc.reason) {
+				t.Fatalf("%q gave the reason %q, want it to mention %q", tc.value, reason, tc.reason)
+			}
+		})
+	}
 }

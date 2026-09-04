@@ -526,8 +526,13 @@ logged-in user. The client fails closed at every one of those.
 - **Attribution.** The cross-track attribution stage still measures the recorded
   tracks, not the ingested ones. Now that the published audio is spliced too,
   this shows more: a word transcribed from an upload where the recorded track
-  was silent — a reload gap — is measured against silence and may be flagged
-  low-confidence even though it is plainly audible in the published mix.
+  was silent — a dropout, a reload gap — is measured against silence and may be
+  flagged low-confidence even though it is plainly audible in the published mix.
+  Flagged words are excluded from the generated summary, and with
+  `CASSINI_ATTRIBUTION_DROP=1` they are removed from the transcript outright, so
+  on that setting a word somebody can hear in the meeting can be missing from
+  what they read. Until attribution measures the spliced render, an installation
+  running ingestion should leave dropping off.
 - **Level matching at the seams.** The crossfade removes the click, not a
   loudness step: the browser capture has its own gain and the recorded track has
   whatever the SFU delivered, and nothing equalises the two.
