@@ -743,7 +743,33 @@ type SourceRenderReport struct {
 	// manifest states rather than one a reader has to take on trust.
 	CrossfadeMS int `json:"crossfade_ms"`
 	RenderHz    int `json:"render_hz"`
+	// TranscriptSource names the transcription pass whose words this splice is
+	// answerable for. Every other field here describes AUDIO; this one is the
+	// only field that says anything about the transcript, and the two can come
+	// apart.
+	//
+	//   "per-participant" — this speaker's spliced audio was decoded under
+	//   their own speaker id, so the words carrying that id came from the audio
+	//   described above.
+	//
+	//   "merged-mix" — the per-participant pass came back too thin and the
+	//   whole transcript was re-decoded from the mixed track under the
+	//   synthetic "merged" speaker (ensureMergedFallback). Everything above is
+	//   still true of the published audio, and of the mix that was decoded,
+	//   which carries this splice too. What is NOT true is any per-speaker
+	//   reading of it: no word in the transcript carries this speaker's id at
+	//   all, so this report cannot be saying where their words came from.
+	//
+	// Empty when the splice went unused altogether — the recorded track was
+	// transcribed and the rejections say why.
+	TranscriptSource string `json:"transcript_source,omitempty"`
 }
+
+// The two values TranscriptSource takes. See the field.
+const (
+	transcriptSourcePerParticipant = "per-participant"
+	transcriptSourceMergedMix      = "merged-mix"
+)
 
 // minSegmentDecodedFraction is how much of the audio a segment DECLARES it must
 // actually decode to before its audio is used.
@@ -816,6 +842,10 @@ type SpliceWindow struct {
 func (r *SourceRenderReport) markUnused(reason string) {
 	r.MixSpliced = false
 	r.MixSkipReason = ""
+	// Nothing was transcribed from this splice either, so it is answerable for
+	// no pass at all. Leaving "per-participant" here would name the recorded
+	// track's own words as having come from an upload that was thrown away.
+	r.TranscriptSource = ""
 	// Every segment that arrived went unused, however far the render got before
 	// it was thrown away. Leaving Skipped where it was would leave the placed
 	// ones unaccounted for: two segments, none placed, none skipped.
@@ -1425,6 +1455,43 @@ func resampleForTranscription(renderPath, outPath string) error {
 	)
 }
 
+// noteMergedFallbackTranscript records that the words in this build's
+// transcript came from the merged-mix fallback pass, not from each speaker's
+// own spliced audio — in the manifest, and in the build log, in the same words.
+//
+// The splice itself stands: the mix the fallback decoded carries the uploads,
+// and so does the audio people play back, so this is not a report of something
+// that did not happen. What cannot stand is the per-speaker reading of it.
+// After the fallback replaces the transcript, every word belongs to the
+// synthetic "merged" speaker; there is no word carrying Alice's id for her
+// report to be describing the origin of. Observed on the demo: a job that
+// spliced 52,542 ms, logged "per-participant transcription thin (0 words)",
+// recovered five words from the mix — and named the upload as the source of
+// Alice's words, of which there were none.
+//
+// A report whose splice went unused is left alone: it already says so, and its
+// TranscriptSource is empty because it is answerable for no pass at all.
+func noteMergedFallbackTranscript(reports []SourceRenderReport, streams []AudioStream, stdout io.Writer) {
+	labels := make(map[string]string, len(streams))
+	for _, stream := range streams {
+		if _, seen := labels[stream.SpeakerID]; !seen {
+			labels[stream.SpeakerID] = stream.SpeakerLabel
+		}
+	}
+	for i := range reports {
+		if reports[i].TranscriptSource != transcriptSourcePerParticipant {
+			continue
+		}
+		reports[i].TranscriptSource = transcriptSourceMergedMix
+		label := labels[reports[i].SpeakerID]
+		if label == "" {
+			label = reports[i].SpeakerID
+		}
+		fmt.Fprintf(stdout, "  source audio: %s: the merged-mix fallback replaced the per-participant transcript, so no word in it carries their speaker id; the splice above describes the published audio, not where any speaker's words came from (transcript_source=%s)\n",
+			label, transcriptSourceMergedMix)
+	}
+}
+
 // revertSourceAudio undoes ingestion for the whole build: every stream goes
 // back to its recorded track, and every report says the upload went unused.
 //
@@ -1691,6 +1758,10 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 		}
 		stream.SourceAudioPath = transcriptPath
 		stream.SuppressTranscription = false
+		// The per-participant pass is about to be handed this render under this
+		// speaker's id. If the merged-mix fallback later replaces the whole
+		// transcript, noteMergedFallbackTranscript revises this.
+		report.TranscriptSource = transcriptSourcePerParticipant
 		if spliceMix {
 			mix.Substitute(idxs, renderPath)
 			report.MixSpliced = true

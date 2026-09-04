@@ -192,10 +192,16 @@ type provenanceInfo struct {
 	SpeechToText *provStep              `json:"speechToText,omitempty"`
 	Attribution  *AttributionProvenance `json:"attribution,omitempty"`
 	WordTimings  *WordTimingProvenance  `json:"wordTimings,omitempty"`
-	// SourceAudio lists the speakers whose transcript was built from audio
-	// captured in their own browser rather than from what the SFU delivered.
-	// A reader deserves to know which words came from a different recording of
-	// the meeting, and the fit quality that placed them.
+	// SourceAudio lists the speakers whose audio had their own browser capture
+	// spliced over what the SFU delivered. A reader deserves to know which part
+	// of the meeting came from a different recording of it, and the fit quality
+	// that placed it.
+	//
+	// Each entry describes AUDIO. Whether the words in the transcript came from
+	// that audio is a separate question, and each entry answers it separately
+	// in transcript_source: the merged-mix fallback can replace the whole
+	// transcript after the splice, and then no word carries any of these
+	// speakers' ids at all.
 	SourceAudio    []SourceRenderReport `json:"sourceAudio,omitempty"`
 	MeetingSummary *provStep            `json:"meetingSummary,omitempty"`
 }
