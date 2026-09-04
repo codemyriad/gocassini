@@ -179,12 +179,19 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	ncStorage.set(enableAccessControl, storageModeSourceConfigured, false)
 	result.Mode = storageModeName(enableAccessControl)
 	if err := c.recordStorageMode(enableAccessControl, storageModeSourceUser, false, logger); err != nil {
-		// The bytes are at the destination and this process is using it, but the
-		// file still names the old mode — and a restart would read the file. Say
-		// exactly that, and refresh the record so /status describes the archive as
-		// it now is.
+		// The flip is the settings write, so a write that failed is a flip that
+		// did not happen. Nothing is lost: the copy is verified at the
+		// destination and the source has not been touched, so BOTH roots hold a
+		// complete archive and either mode is coherent.
+		//
+		// The preflight below re-reads the file and puts this process back in the
+		// mode the file still names, which is the right resolution and the reason
+		// this message must not claim otherwise — an earlier draft said Cassini
+		// would keep using the new mode until it restarted, which the very next
+		// line makes false.
+		result.Mode = storageModeName(current)
 		c.preflightNCStorageLocked(ctx, client, logger)
-		return result, fmt.Errorf("every recording is now in %s, but the new mode could not be saved: %w — Cassini is using it for as long as it stays running; set it again once the volume is writable", destination, err)
+		return result, fmt.Errorf("every recording was copied into %s, but the new mode could not be saved: %w — Cassini is still in %s mode, where the recordings also still are, so nothing is lost and the switch can simply be asked for again once the volume is writable", destination, err, storageModeName(current))
 	}
 
 	// 7. Empty the source. Its collections stay: an empty `meetings` directory is

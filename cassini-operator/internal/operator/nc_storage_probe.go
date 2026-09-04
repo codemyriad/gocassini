@@ -154,15 +154,16 @@ const (
 	storageStepServiceAccount = "owner_account"
 	storageStepUniversalGroup = "universal_group"
 	storageStepGroupFolder    = "group_folder"
-	storageStepFolderMount    = "group_folder_mount"
 	storageStepFolderACL      = "group_folder_acl"
 	storageStepFolderManager  = "group_folder_manager"
-	// storageStepFolderUnknown means the Team-folder question could not be
-	// answered. Still reported, but it is no longer disqualifying for the DEFAULT
-	// model: since the two models have separate roots, whether a `Cassini` Team
-	// folder exists says nothing about whether `CassiniNoACL/Recordings` is
-	// private.
-	storageStepFolderUnknown = "group_folder_unknown"
+	// `group_folder_mount` and `group_folder_unknown` used to live here. Both
+	// were reasons to refuse the DEFAULT model — a `Cassini` Team folder was
+	// mounted over the path it wrote to, or nobody could say whether one was.
+	// Since the two models have separate roots, neither question is about the
+	// default model's tree any more, and neither is emitted. They are named here
+	// rather than silently dropped because a monitor keyed on them will now see
+	// nothing, which is the correct outcome and an alarming one to discover.
+	//
 	// storageStepDefaultRootShadowed means a Team folder is mounted over the
 	// default model's own root, which is the one thing that could stop it being
 	// the service account's private directory. It replaces the first pass's
@@ -385,7 +386,7 @@ func (p ncStorageProbe) unclaimedAccessControlledArchive() (bool, string) {
 		return false, ""
 	}
 	return true, fmt.Sprintf(
-		"nothing has recorded which storage mode this instance uses, so Cassini fell back to %q — but the %q Team folder still holds %d recording(s), which the default mode does not read. This is what an access-controlled installation looks like to a Cassini that has not been told: turn access control on in the Setup tab, or set %s=%s and re-enable the app. If this instance really is meant to be open, switch to the default mode from the Setup tab and Cassini will copy those recordings across",
+		"nothing has recorded which storage mode this instance uses, so Cassini fell back to %q — but the %q Team folder still holds %d recording(s), which the default mode does not read. This is what an access-controlled installation looks like to a Cassini that has not been told. Turn access control on in the Setup tab, or set %s=%s and re-enable the app. If this instance really is meant to be open, turn access control on first and then switch back to the default mode: that switch is what copies those recordings into the open tree",
 		storageModeDefault, ncRecordingsMount, p.ACLArchiveMeetings, envStorageMode, storageModeAccessControlled)
 }
 
