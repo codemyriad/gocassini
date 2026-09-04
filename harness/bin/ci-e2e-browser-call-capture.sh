@@ -575,6 +575,41 @@ pass "operator job $JOB_ID reached stage=done state=succeeded"
 curl -sS -u admin:admin "$PROXY_URL/operator/jobs/$JOB_ID" >"$JOB_DETAIL_FILE" 2>"$LOG_DIR/job-detail.err" \
   || fail "failed to fetch job detail for $JOB_ID"
 
+# A build is queued the moment Talk says the recording stopped, and the browsers
+# start uploading on that same signal — so the first attempt can legitimately be
+# built before somebody's capture has landed. That is the race the late-upload
+# rebuild exists for: the operator notices the newer upload sequence and runs
+# another attempt. Asserting on whichever attempt finished first is asserting on
+# a coin toss; the checks below belong to the attempt that saw every upload.
+#
+# source_audio_rebuild.pending is the operator's own answer to "is anybody's
+# audio still owed a build". Waiting for it to clear — through the rebuild's
+# quiet period and the attempt it queues — is what makes the rest of this leg
+# deterministic.
+log "waiting for the operator to settle any pending source-audio rebuild for job $JOB_ID"
+REBUILD_DEADLINE=$(( SECONDS + 420 ))
+while (( SECONDS < REBUILD_DEADLINE )); do
+  curl -sS -u admin:admin "$PROXY_URL/operator/jobs/$JOB_ID" >"$JOB_DETAIL_FILE" 2>"$LOG_DIR/job-detail.err" \
+    || fail "failed to fetch job detail for $JOB_ID"
+  if jq -e '
+    (.job.source_audio_rebuild.pending // false) == false
+    and .job.stage == "done" and .job.state == "succeeded"
+  ' "$JOB_DETAIL_FILE" >/dev/null 2>&1; then
+    break
+  fi
+  if jq -e '.job.state == "failed" or .job.state == "interrupted"' "$JOB_DETAIL_FILE" >/dev/null 2>&1; then
+    fail "operator job $JOB_ID failed while settling its source-audio rebuild: $(jq -c '.job' "$JOB_DETAIL_FILE")"
+  fi
+  sleep 5
+done
+jq -e '(.job.source_audio_rebuild.pending // false) == false' "$JOB_DETAIL_FILE" >/dev/null 2>&1 || {
+  log "--- job source_audio_rebuild ---"
+  jq -c '.job.source_audio_rebuild // {}' "$JOB_DETAIL_FILE" || true
+  fail "job $JOB_ID still owes a source-audio rebuild; the build below would be asserting on an attempt that never saw every upload"
+}
+REBUILD_SUMMARY="$(jq -r '.job.source_audio_rebuild // {} | "uploads=\(.upload_seq // 0) built=\(.built_seq // 0) rebuilds=\(.rebuild_count // 0)"' "$JOB_DETAIL_FILE")"
+pass "every uploaded capture reached a completed build ($REBUILD_SUMMARY)"
+
 CURRENT_ATTEMPT="$(jq -r '.job.current_attempt_number // 1' "$JOB_DETAIL_FILE")"
 BUILD_LOG_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
   .attempts[] | select(.attempt_number == $att) | .build_log_path // empty
