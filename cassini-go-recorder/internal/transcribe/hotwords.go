@@ -21,8 +21,10 @@ import (
 // Two hard requirements come from sherpa-onnx itself
 // (offline-recognizer-transducer-nemo-impl.h):
 //
-//  1. hotwords are read only under decoding_method=modified_beam_search;
-//     greedy search ignores the file entirely.
+//  1. hotwords are read only under decoding_method=modified_beam_search. Every
+//     transducer pass therefore runs beam search, whether or not a vocabulary
+//     is set: one decoder for everyone, rather than a decoder that changes
+//     under the operator depending on whether a text box is empty.
 //  2. modeling_unit must be "bpe" AND bpe_vocab must name a real file. With
 //     bpe_vocab empty the recognizer fails to construct; with modeling_unit
 //     left unset the terms are tokenised as whole words, fail to encode, and
@@ -58,21 +60,32 @@ const (
 	envHintsScore    = "CASSINI_STT_HINTS_SCORE"
 )
 
-// DecoderHints is the resolved biasing configuration for one recognizer.
-// A nil *DecoderHints means the pass runs unbiased on greedy search.
-type DecoderHints struct {
-	// File is the path to the hotwords file sherpa-onnx reads.
-	File string
+// DecoderConfig is the resolved decoder setup for one recognizer: which search
+// to run, and the hotword biasing to run it with. A nil *DecoderConfig leaves
+// sherpa on its own default, which is greedy search.
+type DecoderConfig struct {
+	// Method is the sherpa decoding_method. Transducer models always run
+	// modified beam search; CTC models keep greedy search because sherpa has no
+	// hotword support for them and the wider beam would buy nothing.
+	Method string
+	// MaxActivePaths is the beam width, meaningful only under beam search.
+	MaxActivePaths int
+
+	// HotwordsFile is the path to the hotwords file, empty when this pass is
+	// unbiased. The remaining three fields are only meaningful alongside it.
+	HotwordsFile string
 	// Score is the per-token bonus.
 	Score float32
-	// TermCount is how many terms File holds, for provenance.
+	// TermCount is how many terms HotwordsFile holds, for provenance.
 	TermCount int
-	// BpeVocabFile is the vocabulary the terms are encoded with: the bundle's
-	// own, or one derived from tokens.txt. Held here rather than read back off
-	// ModelPaths so the recognizer uses the vocabulary these hints were
-	// actually resolved against.
+	// BpeVocabFile is the vocabulary the terms are encoded with. Held here
+	// rather than read back off ModelPaths so the recognizer uses the
+	// vocabulary these hints were actually resolved against.
 	BpeVocabFile string
 }
+
+// Biased reports whether this pass carries hotwords.
+func (d *DecoderConfig) Biased() bool { return d != nil && d.HotwordsFile != "" }
 
 // ParseVocabulary reads the JSON array the operator passes in
 // CASSINI_TRANSCRIPTION_TERMS and returns bounded, de-duplicated terms.
@@ -156,28 +169,47 @@ func writeHotwordsFile(dir string, terms []string) (string, error) {
 // It never returns an error for an unusable model: a vocabulary the decoder
 // cannot take is an operator-visible fact, not a build failure. Only a genuine
 // I/O failure writing the file is an error.
-func resolveHints(workDir string, terms []string, paths ModelPaths) (*DecoderHints, *HintsProvenance, error) {
-	if len(terms) == 0 {
-		return nil, nil, nil
-	}
-	if envBool(envHintsDisabled) {
-		return nil, &HintsProvenance{
+func resolveDecoder(workDir string, terms []string, paths ModelPaths) (*DecoderConfig, *HintsProvenance, error) {
+	// A CTC model cannot beam-search for hotwords in sherpa, so it keeps the
+	// decoder it has always had. If a vocabulary is configured, say plainly
+	// that this tier cannot use it.
+	if paths.EncoderFile == "" {
+		cfg := &DecoderConfig{Method: decodingGreedySearch}
+		if len(terms) == 0 {
+			return cfg, nil, nil
+		}
+		return cfg, &HintsProvenance{
 			TermCount: len(terms),
 			Applied:   false,
-			Reason:    "disabled by configuration (" + envHintsDisabled + ")",
+			Reason:    "this quality tier uses a CTC model, which cannot take decoder hints; choose balanced or best",
 		}, nil
 	}
-	if paths.EncoderFile == "" {
-		return nil, &HintsProvenance{
-			TermCount: len(terms),
-			Applied:   false,
-			Reason:    "this model is CTC; decoder biasing needs a transducer model",
+
+	// Every transducer pass runs modified beam search, vocabulary or not. One
+	// code path is the point: the decoder does not change under the operator
+	// depending on whether a text box happens to be empty.
+	cfg := &DecoderConfig{Method: decodingModifiedBeamSearch, MaxActivePaths: hotwordsMaxActivePaths}
+
+	if len(terms) == 0 {
+		return cfg, nil, nil
+	}
+	if envBool(envHintsDisabled) {
+		return cfg, &HintsProvenance{
+			TermCount:      len(terms),
+			DecodingMethod: cfg.Method,
+			Applied:        false,
+			Reason:         "disabled by configuration (" + envHintsDisabled + ")",
 		}, nil
 	}
 	if paths.BpeVocabFile == "" {
-		return nil, &HintsProvenance{
-			TermCount: len(terms),
-			Applied:   false,
+		// The loud half of the silent-no-op guard. Without bpe.vocab the terms
+		// cannot be encoded; without modeling_unit=bpe alongside it they encode
+		// wrongly and bias nothing while the recognizer looks healthy. Refusing
+		// to claim the hints is what keeps that failure visible.
+		return cfg, &HintsProvenance{
+			TermCount:      len(terms),
+			DecodingMethod: cfg.Method,
+			Applied:        false,
 			Reason: "this model bundle ships no bpe.vocab, which the decoder needs to encode the terms; " +
 				"rebuild the bundle with upstream scripts/nemo/generate_bpe_vocab.py",
 		}, nil
@@ -187,14 +219,16 @@ func resolveHints(workDir string, terms []string, paths ModelPaths) (*DecoderHin
 	if err != nil {
 		return nil, nil, err
 	}
-	score := hintsScore()
-	return &DecoderHints{File: path, Score: score, TermCount: len(terms), BpeVocabFile: paths.BpeVocabFile},
-		&HintsProvenance{
-			TermCount:      len(terms),
-			Score:          score,
-			DecodingMethod: decodingModifiedBeamSearch,
-			Applied:        true,
-		}, nil
+	cfg.HotwordsFile = path
+	cfg.Score = hintsScore()
+	cfg.TermCount = len(terms)
+	cfg.BpeVocabFile = paths.BpeVocabFile
+	return cfg, &HintsProvenance{
+		TermCount:      len(terms),
+		Score:          cfg.Score,
+		DecodingMethod: cfg.Method,
+		Applied:        true,
+	}, nil
 }
 
 // hintsScore reads the operator override, falling back to the default. A score

@@ -57,13 +57,40 @@ func TestVocabularyForBuildPrefersConfiguredSpelling(t *testing.T) {
 	}
 }
 
-func TestResolveHintsWithoutVocabularyRecordsNothing(t *testing.T) {
-	hints, prov, err := resolveHints(t.TempDir(), nil, transducerPaths(t))
+// Beam search is unconditional on a transducer: the decoder must not change
+// under the operator depending on whether the vocabulary box happens to be
+// empty. An empty vocabulary leaves no hints provenance, because there was
+// nothing to apply and nothing to explain.
+func TestResolveDecoderWithoutVocabularyStillBeamSearches(t *testing.T) {
+	dec, prov, err := resolveDecoder(t.TempDir(), nil, transducerPaths(t))
 	if err != nil {
-		t.Fatalf("resolveHints: %v", err)
+		t.Fatalf("resolveDecoder: %v", err)
 	}
-	if hints != nil || prov != nil {
-		t.Fatalf("an unset vocabulary must leave no trace, got hints=%v prov=%v", hints, prov)
+	if dec == nil || dec.Method != decodingModifiedBeamSearch {
+		t.Fatalf("a transducer must beam-search regardless of vocabulary, got %+v", dec)
+	}
+	if dec.Biased() {
+		t.Error("an empty vocabulary must not produce hotwords")
+	}
+	if prov != nil {
+		t.Errorf("no vocabulary means nothing to explain, got %+v", prov)
+	}
+}
+
+// A CTC model has no hotword support in sherpa, so it keeps greedy search. The
+// wider beam would buy nothing and cost decode time.
+func TestResolveDecoderKeepsGreedySearchForCTC(t *testing.T) {
+	dir := t.TempDir()
+	ctc := ModelPaths{ModelFile: filepath.Join(dir, "model.onnx"), TokensFile: filepath.Join(dir, "tokens.txt")}
+	dec, prov, err := resolveDecoder(dir, nil, ctc)
+	if err != nil {
+		t.Fatalf("resolveDecoder: %v", err)
+	}
+	if dec == nil || dec.Method != decodingGreedySearch {
+		t.Fatalf("CTC must stay on greedy search, got %+v", dec)
+	}
+	if prov != nil {
+		t.Errorf("no vocabulary means nothing to explain, got %+v", prov)
 	}
 }
 
@@ -72,17 +99,17 @@ func TestResolveHintsWithoutVocabularyRecordsNothing(t *testing.T) {
 func TestResolveHintsReportsCTCModelAsUnapplied(t *testing.T) {
 	dir := t.TempDir()
 	ctc := ModelPaths{ModelFile: filepath.Join(dir, "model.onnx"), TokensFile: filepath.Join(dir, "tokens.txt")}
-	hints, prov, err := resolveHints(dir, []string{"Librocco"}, ctc)
+	hints, prov, err := resolveDecoder(dir, []string{"Librocco"}, ctc)
 	if err != nil {
-		t.Fatalf("resolveHints: %v", err)
+		t.Fatalf("resolveDecoder: %v", err)
 	}
-	if hints != nil {
+	if hints.Biased() {
 		t.Error("a CTC model must not produce usable hints")
 	}
 	if prov == nil || prov.Applied {
 		t.Fatalf("expected an unapplied provenance record, got %+v", prov)
 	}
-	if prov.TermCount != 1 || !strings.Contains(prov.Reason, "CTC") {
+	if prov.TermCount != 1 || !strings.Contains(prov.Reason, "CTC") || !strings.Contains(prov.Reason, "balanced") {
 		t.Errorf("provenance must name the reason, got %+v", prov)
 	}
 }
@@ -90,12 +117,12 @@ func TestResolveHintsReportsCTCModelAsUnapplied(t *testing.T) {
 func TestResolveHintsWritesHotwordsAndRecordsProvenance(t *testing.T) {
 	dir := t.TempDir()
 	paths := transducerPaths(t)
-	hints, prov, err := resolveHints(dir, []string{"Librocco", "Aire Spaces"}, paths)
+	hints, prov, err := resolveDecoder(dir, []string{"Librocco", "Aire Spaces"}, paths)
 	if err != nil {
-		t.Fatalf("resolveHints: %v", err)
+		t.Fatalf("resolveDecoder: %v", err)
 	}
-	if hints == nil || prov == nil || !prov.Applied {
-		t.Fatalf("expected applied hints, got hints=%v prov=%+v", hints, prov)
+	if !hints.Biased() || prov == nil || !prov.Applied {
+		t.Fatalf("expected applied hints, got hints=%+v prov=%+v", hints, prov)
 	}
 	if prov.DecodingMethod != decodingModifiedBeamSearch {
 		t.Errorf("hotwords require %s, provenance says %q", decodingModifiedBeamSearch, prov.DecodingMethod)
@@ -103,7 +130,7 @@ func TestResolveHintsWritesHotwordsAndRecordsProvenance(t *testing.T) {
 	if prov.TermCount != 2 || hints.TermCount != 2 {
 		t.Errorf("term count mismatch: prov=%d hints=%d", prov.TermCount, hints.TermCount)
 	}
-	body, err := os.ReadFile(hints.File)
+	body, err := os.ReadFile(hints.HotwordsFile)
 	if err != nil {
 		t.Fatalf("read hotwords file: %v", err)
 	}
@@ -116,11 +143,11 @@ func TestResolveHintsWritesHotwordsAndRecordsProvenance(t *testing.T) {
 // because an operator disabled biasing must not look like one that applied it.
 func TestResolveHintsRecordsTheDisableSwitch(t *testing.T) {
 	t.Setenv(envHintsDisabled, "1")
-	hints, prov, err := resolveHints(t.TempDir(), []string{"Librocco"}, transducerPaths(t))
+	hints, prov, err := resolveDecoder(t.TempDir(), []string{"Librocco"}, transducerPaths(t))
 	if err != nil {
-		t.Fatalf("resolveHints: %v", err)
+		t.Fatalf("resolveDecoder: %v", err)
 	}
-	if hints != nil {
+	if hints.Biased() {
 		t.Error("the disable switch must produce no hints")
 	}
 	if prov == nil || prov.Applied || !strings.Contains(prov.Reason, envHintsDisabled) {
@@ -147,11 +174,11 @@ func TestHintsScoreRejectsUnusableOverrides(t *testing.T) {
 func TestResolveHintsReportsMissingBpeVocabAsUnapplied(t *testing.T) {
 	dir := t.TempDir()
 	paths := ModelPaths{EncoderFile: filepath.Join(dir, "encoder.onnx"), TokensFile: filepath.Join(dir, "tokens.txt")}
-	hints, prov, err := resolveHints(dir, []string{"Librocco"}, paths)
+	hints, prov, err := resolveDecoder(dir, []string{"Librocco"}, paths)
 	if err != nil {
-		t.Fatalf("resolveHints: %v", err)
+		t.Fatalf("resolveDecoder: %v", err)
 	}
-	if hints != nil {
+	if hints.Biased() {
 		t.Error("a bundle without bpe.vocab must not produce usable hints")
 	}
 	if prov == nil || prov.Applied || !strings.Contains(prov.Reason, "bpe.vocab") {
@@ -160,7 +187,7 @@ func TestResolveHintsReportsMissingBpeVocabAsUnapplied(t *testing.T) {
 }
 
 // transducerPaths builds a model layout that can take hints: an encoder plus a
-// tokens file a BPE vocabulary can be derived from.
+// tokens file and a BPE vocabulary.
 func transducerPaths(t *testing.T) ModelPaths {
 	t.Helper()
 	dir := t.TempDir()

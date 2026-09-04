@@ -136,14 +136,14 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// pass runs, so every pass in this build is biased identically and the
 	// manifest can state what actually happened.
 	vocabulary := vocabularyForBuild(cfg.Vocabulary, streams)
-	hints, hintsProv, err := resolveHints(outputDir, vocabulary, modelPaths)
+	decoder, hintsProv, err := resolveDecoder(outputDir, vocabulary, modelPaths)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(stdout, "  decoder: %s\n", decoder.Method)
 	if hintsProv != nil {
 		if hintsProv.Applied {
-			fmt.Fprintf(stdout, "  decoder hints: %d term(s), score=%.2f, %s\n",
-				hintsProv.TermCount, hintsProv.Score, hintsProv.DecodingMethod)
+			fmt.Fprintf(stdout, "  decoder hints: %d term(s), score=%.2f\n", hintsProv.TermCount, hintsProv.Score)
 		} else {
 			fmt.Fprintf(stdout, "  decoder hints: %d term(s) NOT applied: %s\n",
 				hintsProv.TermCount, hintsProv.Reason)
@@ -156,7 +156,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		Backend:    backend,
 		Device:     cfg.Device,
 		NumThreads: cfg.NumThreads,
-		Hints:      hints,
+		Decoder:    decoder,
 		Guarantee:  wordEnds,
 	}
 
@@ -306,9 +306,8 @@ type passConfig struct {
 	Backend    string
 	Device     string
 	NumThreads int
-	// Hints biases the decoder towards the configured vocabulary; nil runs the
-	// pass unbiased.
-	Hints     *DecoderHints
+	// Decoder selects the search and any hotword biasing for this pass.
+	Decoder   *DecoderConfig
 	Guarantee *wordEndGuarantee
 }
 
@@ -320,7 +319,7 @@ func (p passConfig) withThreads(n int) passConfig {
 }
 
 func (p passConfig) newRecognizer() (SpeechRecognizer, error) {
-	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Hints, p.Guarantee)
+	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee)
 }
 
 func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, pass passConfig, stdout io.Writer) ([]AudioStream, []Segment, error) {
@@ -552,10 +551,11 @@ feed:
 // models reuse the primary pass's decode instead of re-running ffmpeg over
 // every track.
 //
-// Decoder hints are deliberately NOT inherited. The hotwords file is encoded
-// with the primary model's BPE vocabulary, and handing it to a different model
-// would either be rejected or, worse, silently encode the terms wrongly. Each
-// additional model resolves its own.
+// The decoder is deliberately NOT inherited. The hotwords file is encoded with
+// the primary model's BPE vocabulary, and handing it to a different model would
+// either be rejected or, worse, silently encode the terms wrongly; a different
+// model may also not support beam search at all. Each additional model resolves
+// its own.
 func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex string, primary passConfig, cfg BuildConfig, envCache *speakerEnvelopeCache, stdout io.Writer) ([]AdditionalTranscript, error) {
 	if len(cfg.AdditionalModels) == 0 {
 		return nil, nil
@@ -584,7 +584,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		extra := primary
 		extra.ModelPaths = modelPaths
 		extra.VADPath = vadPath
-		extra.Hints, _, err = resolveHints(outputDir, vocabularyForBuild(cfg.Vocabulary, streams), modelPaths)
+		extra.Decoder, _, err = resolveDecoder(outputDir, vocabularyForBuild(cfg.Vocabulary, streams), modelPaths)
 		if err != nil {
 			return nil, err
 		}

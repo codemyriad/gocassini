@@ -132,11 +132,17 @@ The operator-configured vocabulary reaches the recorder as
 `CASSINI_TRANSCRIPTION_TERMS`, a JSON array of preferred spellings. It is
 applied to the **decoder**, not to finished text.
 
-When a vocabulary is set and the model can take it, `hotwords.go` writes a
-hotwords file into the build directory and the recognizer switches from greedy
-search to `modified_beam_search` with a context graph built from the terms. A
-term is only ever emitted where the acoustics already support it, so the
-vocabulary cannot introduce a word nobody said.
+Transducer models always decode with `modified_beam_search`, whether or not a
+vocabulary is set. Hotwords are only read under beam search, and a decoder that
+changed under the operator depending on whether a text box happened to be empty
+would be worse than one that is simply always the same. When a vocabulary is set
+and the model can take it, `hotwords.go` writes a hotwords file into the build
+directory and the recognizer builds a context graph from the terms. A term is
+only ever emitted where the acoustics already support it, so the vocabulary
+cannot introduce a word nobody said.
+
+The CTC tier keeps greedy search. sherpa-onnx has no hotword support for CTC, so
+the wider beam would cost decode time and buy nothing.
 
 Two conditions have to hold, both imposed by sherpa-onnx:
 
@@ -154,9 +160,10 @@ When neither holds, the build records `provenance.speechToText.hints` with
 `applied: false` and a reason, and decodes unbiased. A vocabulary that could not
 be applied is always visible in the manifest rather than silently ignored.
 
-Beam search costs decode time relative to greedy search, which is why hints stay
-off until a vocabulary is actually configured. Measured on CPU with Parakeet TDT
-0.6B v3 over 30 s and 45 s of real meeting audio, decode went from 1.79 s to
-2.60 s and from 3.19 s to 4.34 s: roughly 40 percent more, still several times
-faster than realtime. Switching decoders changes transcription slightly for
-unhinted text too, so it is not enabled unless a vocabulary is set.
+Beam search costs 1.3x to 1.5x the decode time of greedy search, and changes
+transcription for every word rather than only for the listed terms. Measured on
+CPU with Parakeet TDT 0.6B v3 over 32.9 s and 45 s of real meeting audio: worst
+realtime factor 0.091, so an hour of meeting decodes in about five and a half
+minutes. Memory is unchanged. On one clip beam search lost a sentence; on
+another it gained words. It is a different decoder, not a better one, and the
+question of which is more accurate needs the scored corpus in D-681.

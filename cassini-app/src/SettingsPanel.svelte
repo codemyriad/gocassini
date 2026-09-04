@@ -341,8 +341,8 @@
           <span class="text-xs text-base-content/60">
             Up to 100 terms and 100 characters per term. Participant display names are supplied
             automatically. A term is only written where the audio already supports it, so this
-            corrects spellings without putting words in anyone's mouth. Transcribing with a
-            vocabulary is slower.
+            corrects spellings without putting words in anyone's mouth. The <em>fast</em> quality
+            tier cannot use a vocabulary; choose <em>balanced</em> or <em>best</em>.
           </span>
         </label>
       </section>

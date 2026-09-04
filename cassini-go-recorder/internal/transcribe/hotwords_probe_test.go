@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"math"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,13 +39,19 @@ func TestProbeHotwordsOnRealAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := func(terms []string) string {
-		hints, prov, err := resolveHints(t.TempDir(), terms, paths)
+	run := func(terms []string, force string) string {
+		dec, prov, err := resolveDecoder(t.TempDir(), terms, paths)
+		if force != "" && dec != nil {
+			dec.Method = force
+			if force == decodingGreedySearch {
+				dec.MaxActivePaths = 0
+			}
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("hints=%+v prov=%+v", hints, prov)
-		rec, err := NewRecognizer(paths, vad, "cpu", 12, hints)
+		t.Logf("decoder=%+v prov=%+v", dec, prov)
+		rec, err := NewRecognizer(paths, vad, "cpu", 12, dec)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +61,13 @@ func TestProbeHotwordsOnRealAudio(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("DECODE %v for %.1fs of audio", time.Since(start).Round(time.Millisecond), float64(len(samples))/float64(paths.SampleRate))
+		elapsed := time.Since(start)
+		audio := float64(len(samples)) / float64(paths.SampleRate)
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
+		t.Logf("RESULT method=%s biased=%v wall=%v audio=%.1fs rtf=%.3f peakHeapMB=%.0f words=%d",
+			dec.Method, dec.Biased(), elapsed.Round(time.Millisecond), audio,
+			elapsed.Seconds()/audio, float64(ms.Sys)/1e6, len(words))
 		parts := make([]string, len(words))
 		for i, w := range words {
 			parts[i] = w.Text
@@ -66,6 +79,7 @@ func TestProbeHotwordsOnRealAudio(t *testing.T) {
 	if v := os.Getenv("CASSINI_PROBE_TERMS"); v != "" {
 		terms = strings.Split(v, ",")
 	}
-	t.Logf("BASELINE: %s", run(nil))
-	t.Logf("BIASED:   %s", run(terms))
+	t.Logf("GREEDY-NOHINTS: %s", run(nil, decodingGreedySearch))
+	t.Logf("BEAM-NOHINTS:   %s", run(nil, ""))
+	t.Logf("BEAM-HINTS:     %s", run(terms, ""))
 }

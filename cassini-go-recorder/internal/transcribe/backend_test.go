@@ -47,7 +47,7 @@ func TestResolveRecognizerBackendPrefersExplicitThenEnv(t *testing.T) {
 // factory is the whole integration surface.
 func TestRegisteredBackendIsUsedForConstruction(t *testing.T) {
 	stub := &stubRecognizer{words: []Word{{Text: "hello", StartMS: 0, EndMS: 100}}}
-	if err := RegisterRecognizerBackend("test-stub", func(ModelPaths, string, string, int, *DecoderHints) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend("test-stub", func(ModelPaths, string, string, int, *DecoderConfig) (SpeechRecognizer, error) {
 		return stub, nil
 	}); err != nil {
 		t.Fatalf("register: %v", err)
@@ -88,7 +88,7 @@ func TestUnknownBackendIsAnErrorNamingWhatExists(t *testing.T) {
 }
 
 func TestRegisterRejectsIncompleteBackends(t *testing.T) {
-	if err := RegisterRecognizerBackend("", func(ModelPaths, string, string, int, *DecoderHints) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend("", func(ModelPaths, string, string, int, *DecoderConfig) (SpeechRecognizer, error) {
 		return &stubRecognizer{}, nil
 	}); err == nil {
 		t.Error("an empty id must be rejected")
@@ -99,7 +99,7 @@ func TestRegisterRejectsIncompleteBackends(t *testing.T) {
 }
 
 func TestBackendReturningNilRecognizerIsAnError(t *testing.T) {
-	if err := RegisterRecognizerBackend("nil-rec", func(ModelPaths, string, string, int, *DecoderHints) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend("nil-rec", func(ModelPaths, string, string, int, *DecoderConfig) (SpeechRecognizer, error) {
 		return nil, nil
 	}); err != nil {
 		t.Fatalf("register: %v", err)
