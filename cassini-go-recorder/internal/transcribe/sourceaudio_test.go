@@ -789,6 +789,75 @@ func TestDecodeSourceSegmentEnforcesTheCeiling(t *testing.T) {
 	}
 }
 
+// A decode that never reaches ffmpeg must not leak the pipe it would have read
+// it through.
+//
+// os/exec closes both ends of a StdoutPipe inside Start — and only there. A
+// return between opening the pipe and starting the command therefore leaked two
+// descriptors every time, and both of the returns that sat in that gap are disk
+// failures: the file that cannot be created, the header that cannot be written.
+// A build that hits one of those hits it for every segment of every upload, and
+// a build worker holds its descriptors for as long as it runs.
+func TestDecodeSourceSegmentToFileClosesItsPipeWhenItNeverStarts(t *testing.T) {
+	openFDs := func(t *testing.T) int {
+		t.Helper()
+		entries, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Skip("no /proc/self/fd to count open descriptors with")
+		}
+		return len(entries)
+	}
+	// Enough attempts that two descriptors each is unmistakable next to the
+	// noise of the runtime opening and closing its own files.
+	const attempts = 32
+	dir := t.TempDir()
+	input := filepath.Join(dir, "segment.webm")
+	if err := os.WriteFile(input, []byte("not media"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	t.Run("the output file cannot be created", func(t *testing.T) {
+		before := openFDs(t)
+		outPath := filepath.Join(dir, "no-such-directory", "decoded.wav")
+		for i := 0; i < attempts; i++ {
+			_, err := decodeSourceSegmentToFile(context.Background(), input, outPath, 48000, time.Second, 48000)
+			if err == nil {
+				t.Fatal("a decode into a directory that does not exist succeeded")
+			}
+			if !strings.Contains(err.Error(), "create decoded segment") {
+				t.Fatalf("the decode failed somewhere else: %v", err)
+			}
+		}
+		if after := openFDs(t); after > before+2 {
+			t.Fatalf("%d failed decodes left %d descriptors open, from %d", attempts, after-before, before)
+		}
+	})
+
+	t.Run("the header cannot be written", func(t *testing.T) {
+		// /dev/full opens and then refuses every write with ENOSPC, which is
+		// the failure this path exists for: a disk that filled between the
+		// create and the header.
+		full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+		if err != nil {
+			t.Skip("no writable /dev/full to fail a header write against")
+		}
+		_ = full.Close()
+		before := openFDs(t)
+		for i := 0; i < attempts; i++ {
+			_, err := decodeSourceSegmentToFile(context.Background(), input, "/dev/full", 48000, time.Second, 48000)
+			if err == nil {
+				t.Fatal("a decode whose header could not be written succeeded")
+			}
+			if !strings.Contains(err.Error(), "decoded segment header") {
+				t.Fatalf("the decode failed somewhere else: %v", err)
+			}
+		}
+		if after := openFDs(t); after > before+2 {
+			t.Fatalf("%d failed decodes left %d descriptors open, from %d", attempts, after-before, before)
+		}
+	})
+}
+
 // --- the splice --------------------------------------------------------------
 //
 // Ingestion lays a participant's own recording over their recorded track rather

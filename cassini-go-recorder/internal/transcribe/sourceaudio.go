@@ -1154,16 +1154,12 @@ func decodeSourceSegmentToFile(ctx context.Context, path, outPath string, sample
 		args = append(args, "-t", strconv.FormatFloat(float64(maxSamples)/float64(sampleRate)+1, 'f', 3, 64))
 	}
 	args = append(args, "-f", "s16le", "-")
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return 0, fmt.Errorf("open PCM pipe: %w", err)
-	}
-	var stderr boundedBuffer
-	stderr.limit = 8192
-	cmd.Stderr = &stderr
-
+	// The output file first, the pipe second, and that order is the fix rather
+	// than a preference. StdoutPipe opens a pipe whose two ends os/exec closes
+	// only inside Start; a return between the two — the create that fails on a
+	// full disk, the header write that fails with it — leaked both descriptors,
+	// once per segment, for as long as the build ran. Nothing can fail between
+	// the pipe and Start now, and Start closes both ends itself when it fails.
 	out, err := os.Create(outPath)
 	if err != nil {
 		return 0, fmt.Errorf("create decoded segment: %w", err)
@@ -1176,6 +1172,15 @@ func decodeSourceSegmentToFile(ctx context.Context, path, outPath string, sample
 	}()
 	if err := writeWAVHeader(out, 0, sampleRate); err != nil {
 		return 0, fmt.Errorf("write decoded segment header: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	var stderr boundedBuffer
+	stderr.limit = 8192
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return 0, fmt.Errorf("open PCM pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
