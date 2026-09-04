@@ -291,15 +291,15 @@ func buildPublishedPortableTags(t *testing.T, opts portableFixtureOptions, audio
 	}}
 	if opts.withDerived {
 		inputs = append(inputs, portable.TranscriptInput{
-			ID:                 "readable",
-			Role:               portable.RoleReadableCleanup,
+			ID:                 "display",
+			Role:               portable.RoleDisplay,
 			Default:            true,
-			Format:             "transcript.readable.v1",
+			Format:             "transcript.display.v1",
 			SourceTranscriptID: portable.RoleRawASR,
 			Body: map[string]any{
-				"version": "transcript.readable.v1",
-				"segments": []any{map[string]any{
-					"id": "readable-1", "text": strings.Join(opts.words, " "),
+				"version": "transcript.display.v1",
+				"blocks": []any{map[string]any{
+					"id": "display-1", "text": strings.Join(opts.words, " "),
 				}},
 			},
 		})

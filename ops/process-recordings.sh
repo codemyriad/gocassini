@@ -3,7 +3,7 @@
 # .opus files in /mnt/data/cassini/processed/ using the native cassini binary
 # with sherpa-onnx for STT.
 #
-# Set OPENROUTER_API_KEY for LLM-based readable transcript cleanup.
+# Set OPENROUTER_API_KEY to generate meeting summaries.
 # Set DEVICE=cuda to use GPU acceleration (default: cpu).
 #
 # Can be run on any host that has ffmpeg, or from inside container 100:
@@ -20,7 +20,7 @@ export CASSINI_CACHE_ROOT="${CASSINI_CACHE_ROOT:-/mnt/data/cassini/.cache}"
 export LD_LIBRARY_PATH="${CASSINI_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
-  echo "warn: OPENROUTER_API_KEY not set — readable transcript (LLM cleanup) will be skipped" >&2
+  echo "warn: OPENROUTER_API_KEY not set — meeting summaries will be skipped" >&2
 fi
 
 mkdir -p "$PROCESSED_DIR"

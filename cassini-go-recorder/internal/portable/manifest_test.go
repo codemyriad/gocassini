@@ -60,9 +60,6 @@ func TestBuildPublishedOpusTagsIncludesProcessingProvenance(t *testing.T) {
 			Backend: "local-asr", Engine: "asr-engine", Model: "meeting-model",
 			Device: "cpu", Language: "en",
 		},
-		ReadableCleanup: &ProcessingStep{
-			Backend: "local-cleanup", Engine: "cleanup-engine", Model: "cleanup-model", Source: "generated",
-		},
 	}
 	tags := publishedFixtureTags(t, manifest)
 
@@ -70,8 +67,6 @@ func TestBuildPublishedOpusTagsIncludesProcessingProvenance(t *testing.T) {
 		"CASSINI_FORMAT":            Format,
 		"CASSINI_STT_ENGINE":        "asr-engine",
 		"CASSINI_STT_MODEL":         "meeting-model",
-		"CASSINI_READABLE_ENGINE":   "cleanup-engine",
-		"CASSINI_READABLE_SOURCE":   "generated",
 		"CASSINI_RECORDED_AT_LOCAL": "2026-03-13T11:00:00",
 		"CASSINI_PROCESSED_AT":      "2026-03-13T10:02:00Z",
 	}
@@ -157,5 +152,101 @@ func TestValidatePublishedManifestRejectsUnsupportedShapes(t *testing.T) {
 				t.Fatalf("error = %v, want message containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// A file written before the LLM cleanup step was withdrawn may still carry a
+// readable-cleanup entry. Such a file must stay readable: the entry is skipped,
+// not rejected. Failing here would turn an older meeting into an error and take
+// its perfectly good raw transcript down with it, which is a worse outcome than
+// the field we removed.
+func TestValidatePublishedManifestSkipsWithdrawnReadableCleanupEntries(t *testing.T) {
+	manifest := publishedManifestFixture(Meeting{
+		Title: "Weekly Sync", RecordedAtLocal: "2026-03-13T11:00:00",
+	})
+	// Round-trip through the real producer so the raw entry is exactly what a
+	// published file carries, then graft on the shape an older producer wrote.
+	var wire Manifest
+	if err := json.Unmarshal(encodePublishedFixture(t, manifest).Main.JSON, &wire); err != nil {
+		t.Fatalf("decode encoded manifest: %v", err)
+	}
+	if len(wire.Transcripts) == 0 {
+		t.Fatal("fixture produced no raw transcript entry")
+	}
+	wire.ReadableTranscripts = []TranscriptEntry{{
+		ID: "readable", Role: RoleWithdrawnReadableCleanup, Format: "transcript.readable.v1",
+		SourceTranscriptID: wire.Transcripts[0].ID,
+		PayloadRef:         wire.Transcripts[0].PayloadRef,
+	}}
+
+	if err := ValidatePublishedManifest(wire); err != nil {
+		t.Fatalf("a withdrawn readable-cleanup entry must be skipped, not rejected: %v", err)
+	}
+}
+
+// The role is withdrawn for producers, not merely renamed: nothing may write a
+// new one. Keeping the constant is only about recognising old files.
+func TestPackTranscriptsRefusesToWriteAWithdrawnReadableCleanupEntry(t *testing.T) {
+	body := TranscriptBody{
+		Format: "cassini.words.v1", WordCount: 1,
+		Items: []TranscriptItem{{Speaker: "spk_0", StartMS: 0, EndMS: 10, Text: "hi"}},
+	}
+	_, err := EncodePublishedManifest(publishedManifestFixture(Meeting{Title: "x"}), []TranscriptInput{
+		{ID: "parakeet", Role: RoleRawASR, Default: true, Body: body},
+		{ID: "old", Role: RoleWithdrawnReadableCleanup, SourceTranscriptID: "parakeet", Body: body},
+	}, DefaultPayloadChunkSize)
+	if err == nil {
+		t.Fatal("packing a readable-cleanup entry must fail: nothing produces them any more")
+	}
+	if !strings.Contains(err.Error(), "unknown role") {
+		t.Errorf("error should name the unknown role, got %v", err)
+	}
+}
+
+// The build records decoder-hint provenance; the packer must carry it into the
+// published file. Dropping it here would be worse than never recording it: an
+// operator would see a build log claiming hints were applied and a published
+// meeting that cannot corroborate it.
+func TestProcessingStepCarriesHintsThroughTheWire(t *testing.T) {
+	buildManifestJSON := []byte(`{
+	  "speechToText": {
+	    "backend": "sherpa-onnx",
+	    "model": "parakeet-tdt-0.6b-v3",
+	    "hints": {"termCount": 12, "score": 2, "decodingMethod": "modified_beam_search", "applied": true}
+	  }
+	}`)
+	var prov Provenance
+	if err := json.Unmarshal(buildManifestJSON, &prov); err != nil {
+		t.Fatalf("decode build provenance: %v", err)
+	}
+	if prov.SpeechToText == nil || prov.SpeechToText.Hints == nil {
+		t.Fatal("hints were dropped decoding the build manifest")
+	}
+	if got := prov.SpeechToText.Hints; got.TermCount != 12 || !got.Applied || got.DecodingMethod != "modified_beam_search" {
+		t.Fatalf("hints decoded wrongly: %+v", got)
+	}
+
+	round, err := json.Marshal(prov)
+	if err != nil {
+		t.Fatalf("re-encode: %v", err)
+	}
+	if !strings.Contains(string(round), `"hints"`) || !strings.Contains(string(round), `"termCount":12`) {
+		t.Errorf("hints did not survive the round-trip: %s", round)
+	}
+}
+
+// An unapplied record must survive too. That is the case an operator most needs
+// to see, because it is the one where the setting they configured did nothing.
+func TestProcessingStepCarriesUnappliedHints(t *testing.T) {
+	var prov Provenance
+	if err := json.Unmarshal([]byte(`{"speechToText":{"backend":"sherpa-onnx","hints":{"termCount":3,"applied":false,"reason":"no bpe.vocab"}}}`), &prov); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	round, err := json.Marshal(prov)
+	if err != nil {
+		t.Fatalf("re-encode: %v", err)
+	}
+	if !strings.Contains(string(round), `"applied":false`) || !strings.Contains(string(round), "no bpe.vocab") {
+		t.Errorf("the unapplied reason was lost: %s", round)
 	}
 }
