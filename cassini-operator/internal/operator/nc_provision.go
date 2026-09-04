@@ -94,21 +94,6 @@ var provisionMu sync.Mutex
 // setup. An instance's administrator does not change during one container run.
 var resolvedProvisioningUser atomic.Pointer[any]
 
-// firstPathSegment returns the first path component of a slash path, e.g.
-// "Cassini/Recordings" -> "Cassini". It names the group folder mount point,
-// which is the root the recordings tree lives under.
-func firstPathSegment(p string) string {
-	p = strings.Trim(p, "/")
-	if i := strings.IndexByte(p, '/'); i >= 0 {
-		return p[:i]
-	}
-	return p
-}
-
-// ncRecordingsMount is the group folder mount point ("Cassini"): the first
-// segment of the canonical recordings root.
-var ncRecordingsMount = firstPathSegment(ncRecordingsRoot)
-
 // provisioningUser is the administrator used only for privileged setup. The
 // explicit environment override wins; otherwise a discovered administrator is
 // cached, with the conventional `admin` id as the fallback.
@@ -490,7 +475,7 @@ func (c ExAppConfig) provisionNCFilesAccessLocked(ctx context.Context, logger *l
 	// 8. Materialize the canonical collections so the directory exists right after
 	//    install, before any recording. MKCOL of the mount root is a harmless 405.
 	mkcolFailed := false
-	for _, dir := range []string{ncRecordingsRoot, ncRecordingsRoot + "/meetings"} {
+	for _, dir := range []string{ncACLRecordingsRoot, ncACLRecordingsRoot + "/meetings"} {
 		if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
 			logger.Printf("nc provision: mkcol %s: %v", dir, err)
 			ncAccessSubstrate.degraded("mkcol:"+dir, fmt.Errorf("the canonical collection %q could not be created: %w", dir, err))
@@ -502,7 +487,7 @@ func (c ExAppConfig) provisionNCFilesAccessLocked(ctx context.Context, logger *l
 	}
 
 	ncAccessSubstrate.succeed()
-	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s audience_group=%s", folderID, ncRecordingsMount, ncRecordingsRoot, ncRecordingsOwner, ncRecordingsEveryoneGroup)
+	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s audience_group=%s", folderID, ncRecordingsMount, ncACLRecordingsRoot, ncRecordingsOwner, ncRecordingsEveryoneGroup)
 }
 
 // containerACLRules grants the owner full control and the virtual all-users
@@ -734,12 +719,32 @@ func (c ExAppConfig) ensureRecordingsFolder(ctx context.Context, client *http.Cl
 // ocs.data as an object keyed by folder id (or an empty array when there are
 // none), so both shapes are tolerated.
 func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount string) (gfFolder, bool, error) {
-	status, body, err := c.apiGet(ctx, client, c.gfURL("/folders"))
+	folders, err := c.listFolders(ctx, client, mount)
 	if err != nil {
 		return gfFolder{}, false, err
 	}
+	if f, ok := lowestIDMatch(folders, mount); ok {
+		return f, true, nil
+	}
+	return gfFolder{}, false, nil
+}
+
+// listFolders reads every Team folder on the instance, once.
+//
+// It exists so a caller that has to ask about TWO mount points — the probe,
+// which checks both the access-controlled model's `Cassini` and whether anything
+// has been mounted over the default model's own root — pays for one round trip
+// rather than two, and gets one answer rather than two that could disagree.
+//
+// `subject` names the folder the caller is really asking about, and appears only
+// in error messages.
+func (c ExAppConfig) listFolders(ctx context.Context, client *http.Client, subject string) ([]gfFolder, error) {
+	status, body, err := c.apiGet(ctx, client, c.gfURL("/folders"))
+	if err != nil {
+		return nil, err
+	}
 	if refusal := ocsRefusal(status, body); refusal != "" {
-		return gfFolder{}, false, fmt.Errorf("list folders -> %s", refusal)
+		return nil, fmt.Errorf("list folders -> %s", refusal)
 	}
 	var env struct {
 		OCS struct {
@@ -747,7 +752,7 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 		} `json:"ocs"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
-		return gfFolder{}, false, fmt.Errorf("decode folders list: %w", err)
+		return nil, fmt.Errorf("decode folders list: %w", err)
 	}
 	// `null` is not "no folders". An empty instance answers `[]`, and a JSON null
 	// unmarshals into a map without error and leaves it nil — which would read as
@@ -755,7 +760,7 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 	// same reason as the undecodable shapes below: on an instance that really is
 	// access-controlled, that answer is a disclosure.
 	if bytes.Equal(bytes.TrimSpace(env.OCS.Data), []byte("null")) {
-		return gfFolder{}, false, fmt.Errorf("decode folders list: ocs.data is null, which is not an answer about whether a %q folder exists", mount)
+		return nil, fmt.Errorf("decode folders list: ocs.data is null, which is not an answer about whether a %q folder exists", subject)
 	}
 	// The list is an object keyed by folder id, or an empty array. Collect all
 	// folders and pick the lowest-id match deterministically: if a duplicate
@@ -767,17 +772,11 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 		for _, f := range asMap {
 			folders = append(folders, f)
 		}
-		if f, ok := lowestIDMatch(folders, mount); ok {
-			return f, true, nil
-		}
-		return gfFolder{}, false, nil
+		return folders, nil
 	}
 	var asArr []gfFolder
 	if err := json.Unmarshal(env.OCS.Data, &asArr); err == nil {
-		if f, ok := lowestIDMatch(asArr, mount); ok {
-			return f, true, nil
-		}
-		return gfFolder{}, false, nil
+		return asArr, nil
 	}
 	// Neither shape decoded. This must be an ERROR, not "there is no such
 	// folder", and the difference is a disclosure.
@@ -793,7 +792,7 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 	//
 	// An unanswered question is not a negative answer. Returning an error makes
 	// the probe record FolderProbed=false, which fails closed.
-	return gfFolder{}, false, fmt.Errorf("decode folders list: ocs.data is neither an object keyed by folder id nor an array (%d bytes)", len(env.OCS.Data))
+	return nil, fmt.Errorf("decode folders list: ocs.data is neither an object keyed by folder id nor an array (%d bytes)", len(env.OCS.Data))
 }
 
 // lowestIDMatch returns the folder with the given mount point that has the
@@ -1102,7 +1101,7 @@ func parseOCSGroupList(body []byte) ([]string, error) {
 // switches to `everyone`. A missing catalog is the normal fresh-install state;
 // startup sync will create and protect it later.
 func (c ExAppConfig) protectExistingCatalog(ctx context.Context, client *http.Client) error {
-	_, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	_, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/catalog.json")
 	if err != nil {
 		return err
 	}
@@ -1112,7 +1111,7 @@ func (c ExAppConfig) protectExistingCatalog(ctx context.Context, client *http.Cl
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("inspect catalog -> %d", status)
 	}
-	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json", catalogProtectionACLRules()); err != nil {
+	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/catalog.json", catalogProtectionACLRules()); err != nil {
 		return err
 	}
 	return nil

@@ -62,7 +62,7 @@ func (c ExAppConfig) ncFilesAccessApplier(_ *log.Logger) ncFilesAccessApplier {
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}
 	return func(ctx context.Context, jobID string, mappings []aclMapping, public bool) error {
-		opusRel := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
+		opusRel := ncACLRecordingsRoot + "/meetings/" + jobID + ".opus"
 		if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, opusRel, mappings, public); err != nil {
 			return fmt.Errorf("acl opus: %w", err)
 		}
@@ -286,7 +286,7 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 	if err := rt.applyNCFilesAccessFn(ctx, jobID, mappings, binding.Public); err != nil {
 		return err
 	}
-	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s public=%t root=%s", jobID, len(mappings), source, binding.Public, ncRecordingsRoot)
+	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s public=%t root=%s", jobID, len(mappings), source, binding.Public, ncACLRecordingsRoot)
 	return nil
 }
 
@@ -297,7 +297,7 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 // and serves the catalog filtered to that set. Fails CLOSED: any scan error
 // yields an empty catalog, never the unfiltered one.
 func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger) {
-	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/catalog.json")
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files read: authoritative catalog fetch failed: %v", err)
@@ -317,7 +317,7 @@ func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWr
 		return
 	}
 
-	names, mounted, perr := c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
+	names, mounted, perr := c.davPropfindNames(ctx, client, caller, ncACLRecordingsRoot+"/meetings")
 	if perr != nil {
 		if logger != nil {
 			logger.Printf("nc files read: per-caller scan failed caller=%s: %v — serving empty (fail closed)", caller, perr)
@@ -366,7 +366,7 @@ func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWr
 // yields the empty one, never an error page the viewer would render as
 // "HTTP 502".
 func (c ExAppConfig) serveOwnerCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, logger *log.Logger) {
-	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncDefaultRecordingsRoot+"/catalog.json")
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files read: catalog fetch failed: %v", err)
@@ -452,7 +452,7 @@ func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) 
 // error is returned so callers never expose a partially migrated tree through
 // the broad root grant.
 func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) error {
-	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings")
+	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/meetings")
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files access: self-heal scan failed: %v", err)
@@ -476,7 +476,7 @@ func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Cl
 				next = ensureProtectedRules(rules)
 			}
 		}
-		relPath := ncRecordingsRoot + "/meetings/" + base
+		relPath := ncACLRecordingsRoot + "/meetings/" + base
 		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, next); err != nil {
 			if logger != nil {
 				logger.Printf("nc files access: self-heal %s failed: %v", base, err)

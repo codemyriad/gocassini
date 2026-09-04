@@ -233,7 +233,7 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 	}
 
 	if dryRun {
-		b.printf("dry run: destination is empty; would upload %d file(s) into %s and write catalog.json", len(local.uploads), ncRecordingsRoot)
+		b.printf("dry run: destination is empty; would upload %d file(s) into %s and write catalog.json", len(local.uploads), ncACLRecordingsRoot)
 		for _, u := range local.uploads {
 			b.printf("  would upload %s", u.remote)
 		}
@@ -244,9 +244,9 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 	// no longer promise that re-running is safe.
 	b.wrote = true
 	for _, dir := range []string{
-		path.Dir(ncRecordingsRoot),     // Cassini
-		ncRecordingsRoot,               // Cassini/Recordings
-		ncRecordingsRoot + "/meetings", // Cassini/Recordings/meetings
+		path.Dir(ncACLRecordingsRoot),     // Cassini
+		ncACLRecordingsRoot,               // Cassini/Recordings
+		ncACLRecordingsRoot + "/meetings", // Cassini/Recordings/meetings
 	} {
 		if dir == "." || dir == "" {
 			continue
@@ -286,7 +286,7 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 	if err := b.writeCatalog(ctx, local.catalog); err != nil {
 		return err
 	}
-	b.printf("done: %d recording(s) in %s", len(local.uploads), ncRecordingsRoot)
+	b.printf("done: %d recording(s) in %s", len(local.uploads), ncACLRecordingsRoot)
 	if !b.public {
 		// Deliberately does NOT offer a re-run with --public: the destination is
 		// now populated, so the guard would refuse. Widening after the fact is
@@ -313,7 +313,7 @@ func (b *backfillNCFiles) writeCatalog(ctx context.Context, catalog siteCatalog)
 		return fmt.Errorf("marshal catalog: %w", err)
 	}
 	body = append(body, '\n')
-	remote := ncRecordingsRoot + "/catalog.json"
+	remote := ncACLRecordingsRoot + "/catalog.json"
 	// Rules before bytes, for the same reason as the recordings above (D-594),
 	// and on a leaf the guard has just proven is absent: PUTting the body
 	// outright creates the authoritative unfiltered index of every migrated
@@ -368,7 +368,7 @@ func (b *backfillNCFiles) writeCatalog(ctx context.Context, catalog siteCatalog)
 // on, never the error: davGetBytes returns a nil error for a 403 or a 500, so
 // "err == nil" does not mean "the file is not there".
 func (b *backfillNCFiles) guardDestinationIsEmpty(ctx context.Context) error {
-	catalogRemote := ncRecordingsRoot + "/catalog.json"
+	catalogRemote := ncACLRecordingsRoot + "/catalog.json"
 	raw, status, err := b.cfg.davGetBytes(ctx, b.client, ncRecordingsOwner, catalogRemote)
 	switch {
 	case err != nil && status == 0:
@@ -394,7 +394,7 @@ func (b *backfillNCFiles) guardDestinationIsEmpty(ctx context.Context) error {
 			errBackfillRefused, catalogRemote, status)
 	}
 
-	meetingsRemote := ncRecordingsRoot + "/meetings"
+	meetingsRemote := ncACLRecordingsRoot + "/meetings"
 	names, visible, err := b.cfg.davPropfindNames(ctx, b.client, ncRecordingsOwner, meetingsRemote)
 	if err != nil {
 		return fmt.Errorf("list %s: %w", meetingsRemote, err)
@@ -480,7 +480,7 @@ func loadBackfillSource(siteRoot string) (backfillSource, error) {
 				return backfillSource{}, fmt.Errorf("catalog entry %q points at directory %s, not a portable .opus. "+
 					"This archive predates portable meetings and cannot be backfilled", id, asset)
 			}
-			remote := ncRecordingsRoot + "/" + filepath.ToSlash(asset)
+			remote := ncACLRecordingsRoot + "/" + filepath.ToSlash(asset)
 			if seen[remote] {
 				continue
 			}

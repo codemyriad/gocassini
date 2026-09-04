@@ -74,9 +74,9 @@ const (
 	// acts as, not a home directory — the recordings are in shared group-folder
 	// storage either way. That is why changing it needs no data migration.
 	ncRecordingsOwner = "cassini"
-	// ncRecordingsRoot is the canonical recordings root inside the owner's
-	// Files (relative to the user's WebDAV home). Hard-coded for now (D-529).
-	ncRecordingsRoot = "Cassini/Recordings"
+	// The archive root is no longer one constant: each storage model has its own,
+	// and they are in nc_storage_paths.go. See recordingsRootFor.
+	//
 	// ncRecordingsEveryoneGroup is the virtual all-users group supplied by the
 	// Nextcloud Everyone Group app. It gives every account a read-only Team-folder
 	// mount from account creation; per-file ACLs deny it for private meetings and
@@ -299,13 +299,21 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 		// nothing is mounted over the canonical path. Everything else here
 		// treats the per-caller path as the default, which is the direction that
 		// fails closed.
-		readAs := caller
-		if ncStorageServesAsOwner() {
-			readAs = ncRecordingsOwner
+		// Since D-616's followups this decides the ROOT as well, because the two
+		// are one question. The default model's archive is the service account's
+		// own CassiniNoACL/Recordings, which no Team folder can shadow; the
+		// access-controlled one is inside the Cassini Team folder, where reading
+		// as the caller is what makes Nextcloud enforce the per-file ACL. Pairing
+		// the wrong identity with the wrong root is the disclosure this guard
+		// exists to prevent, so neither is chosen without the other.
+		servesAsOwner := ncStorageServesAsOwner()
+		readAs, root := caller, ncACLRecordingsRoot
+		if servesAsOwner {
+			readAs, root = ncRecordingsOwner, ncDefaultRecordingsRoot
 		}
 
 		if relPath == "catalog.json" {
-			if readAs != caller {
+			if servesAsOwner {
 				// Default model: every account that may open the Cassini app may
 				// read every recording, so the authoritative catalog IS the
 				// caller's catalog. Nothing is filtered because nothing is
@@ -322,7 +330,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 		// meetings/<id>.opus: under access control this fetches AS the caller so
 		// Nextcloud enforces the per-file ACL — a non-readable meeting 404s and
 		// never leaks.
-		davURL := c.davFileURL(readAs, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
+		davURL := c.davFileURL(readAs, root+"/"+strings.TrimPrefix(relPath, "/"))
 		req, err := http.NewRequestWithContext(r.Context(), r.Method, davURL, nil)
 		if err != nil {
 			if logger != nil {

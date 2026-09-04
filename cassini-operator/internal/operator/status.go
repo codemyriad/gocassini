@@ -104,6 +104,15 @@ type statusRecordingsAccess struct {
 	// same as "default": nobody has decided yet.
 	Mode       string `json:"mode,omitempty"`
 	ModeSource string `json:"mode_source,omitempty"`
+	// Root is where THIS mode keeps recordings, so a monitor or an administrator
+	// reading /status does not have to know which constant goes with which mode.
+	Root string `json:"root,omitempty"`
+	// MigrationClean is false when a mode switch stopped before it finished
+	// tidying up. It is deliberately NOT a health failure: the archive is
+	// complete at Root, publishing and recording are unaffected, and the only
+	// consequence is a stale copy at the other root. The Setup tab has a button
+	// for it; /status is where a monitor would notice it.
+	MigrationClean *bool `json:"migration_clean,omitempty"`
 	// Prerequisites reports the native Nextcloud apps an ExApp cannot install
 	// for itself, so a missing one is named rather than inferred.
 	Prerequisites []statusPrerequisite `json:"prerequisites,omitempty"`

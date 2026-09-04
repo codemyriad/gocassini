@@ -123,6 +123,28 @@ type StorageSettings struct {
 	// removed derivation ("derived") still appear on installs from that build
 	// and are simply displayed.
 	Source string `json:"source,omitempty"`
+
+	// MigrationClean records whether the LAST migration finished tidying up.
+	//
+	//	true / absent   settled. The root named by AccessControlEnabled holds the
+	//	                archive and the other one holds nothing.
+	//	false           a migration is in flight, or one stopped part way. The
+	//	                root named by AccessControlEnabled STILL holds a complete
+	//	                archive — that is the invariant the whole sequence exists
+	//	                to keep — and the OTHER root holds leftovers that nothing
+	//	                reads.
+	//
+	// The pointer is what makes "absent" mean settled. Every file written before
+	// this field existed describes an install that is not mid-migration, and
+	// reading those as dirty would offer every upgrading instance a cleanup it
+	// does not need — one that DELETES from a root, which is not a button to
+	// arm on a guess.
+	//
+	// One flag is enough because the recovery does not depend on which half
+	// failed: whatever went wrong, the archive is at the recorded mode's root and
+	// the leftovers are at the other one, so "clear the root the mode does not
+	// name" finishes every case. See finishMigration.
+	MigrationClean *bool `json:"migration_clean,omitempty"`
 }
 
 // storageModeFromEnv reads the declared initial mode.
@@ -166,6 +188,10 @@ func (s StorageSettings) AccessControlled() bool {
 // Mode names the recorded decision for humans and for the UI.
 func (s StorageSettings) Mode() string { return storageModeName(s.AccessControlled()) }
 
+// Clean reports whether the last migration finished. An absent flag is clean —
+// see MigrationClean.
+func (s StorageSettings) Clean() bool { return s.MigrationClean == nil || *s.MigrationClean }
+
 func storageModeName(accessControlled bool) string {
 	if accessControlled {
 		return storageModeAccessControlled
@@ -207,14 +233,18 @@ func LoadStorageSettings(path string) (StorageSettings, error) {
 // SaveStorageSettings records a decision atomically (temp file + rename), so a
 // crash mid-write cannot leave a truncated file that the loader above would
 // then refuse — which would take the operator's storage mode with it.
-func SaveStorageSettings(path string, accessControlEnabled bool, source string) error {
+func SaveStorageSettings(path string, accessControlEnabled bool, source string, migrationClean bool) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("storage settings path must not be empty")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir storage settings dir: %w", err)
 	}
-	data, err := json.MarshalIndent(StorageSettings{AccessControlEnabled: &accessControlEnabled, Source: source}, "", "  ")
+	data, err := json.MarshalIndent(StorageSettings{
+		AccessControlEnabled: &accessControlEnabled,
+		Source:               source,
+		MigrationClean:       &migrationClean,
+	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal storage settings: %w", err)
 	}
@@ -250,6 +280,10 @@ type ncStorageModeState struct {
 	resolved             bool
 	accessControlEnabled bool
 	source               string
+	// clean mirrors StorageSettings.MigrationClean for the readers that must not
+	// touch the disk — /status, /storage, and the PUT that decides whether a
+	// request for the mode already in force is a no-op or a repair.
+	clean bool
 }
 
 var ncStorage ncStorageModeState
@@ -266,14 +300,25 @@ func (s *ncStorageModeState) settingsPath() string {
 	return s.path
 }
 
-// set records the mode this process is operating under. source is
-// storageModeSourceConfigured or storageModeSourceDerived.
-func (s *ncStorageModeState) set(accessControlEnabled bool, source string) {
+// set records the mode this process is operating under, and whether the last
+// migration finished tidying up.
+func (s *ncStorageModeState) set(accessControlEnabled bool, source string, clean bool) {
 	s.mu.Lock()
 	s.resolved = true
 	s.accessControlEnabled = accessControlEnabled
 	s.source = source
+	s.clean = clean
 	s.mu.Unlock()
+}
+
+// migrationClean reports the recorded cleanup state. It answers `true` for an
+// unresolved process: nothing has migrated, so there is nothing to finish, and
+// offering a cleanup on the strength of a mode nobody has decided would be a
+// DELETE against a root chosen by default.
+func (s *ncStorageModeState) migrationClean() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return !s.resolved || s.clean
 }
 
 // mode returns the resolved mode. resolved is false when nothing has decided
@@ -313,5 +358,6 @@ func (s *ncStorageModeState) reset() {
 	s.resolved = false
 	s.accessControlEnabled = false
 	s.source = ""
+	s.clean = false
 	s.mu.Unlock()
 }
