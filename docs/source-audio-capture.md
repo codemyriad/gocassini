@@ -119,15 +119,39 @@ there would put a step in instead, which is the click they exist to remove.
 
 The splice holds no timeline in memory: it works on the file a chunk at a time,
 so the Go heap it needs is a few tens of kilobytes however long the meeting is.
-Temporary **disk** is a different matter and always was. The mixdown decodes
-every track to a full-timeline 48 kHz WAV under `TMPDIR` — about 690 MB per
-speaker per two hours — and a spliced speaker's render is another one of those
-while it is being made. The render replaces the tracks it was built from, which
-are deleted as it takes their place, so the peak stays at roughly the decoded
-tracks plus one render plus one decoded segment rather than growing with the
-number of participants who uploaded. A host whose `TMPDIR` is a small tmpfs will
-still run out on a long meeting; the operator image points `TMPDIR` at its data
+That is a straight win over the render this replaced, which held whole-timeline
+`float32` buffers — 460 MB each at 16 kHz for a two-hour meeting, and it needed
+several.
+
+Temporary **disk** pays for it, and the trade is worth stating in numbers. Three
+kinds of file live under `TMPDIR` while a meeting is built, each a full-timeline
+48 kHz mono WAV for a two-hour call:
+
+| file | size (2 h) | how many at once |
+| --- | --- | --- |
+| a decoded recorded track, one per stream | ~690 MB | every stream, until the splice replaces it |
+| a participant's render | ~690 MB | one |
+| the decoded upload being overlaid (`segment.wav`) | up to ~700 MB | one |
+
+So the peak is roughly **the decoded tracks plus two more files of the same
+size**: about 4.2 GB while a four-speaker two-hour meeting with an upload is
+mixed. It does not grow with the number of participants who uploaded — a
+spliced speaker's render takes the place of the tracks it was built from and
+they are deleted as it does, and with `CASSINI_SOURCE_AUDIO_MIX=0` the render is
+deleted outright once the recogniser's copy of it exists.
+
+That is about 1.4 GB more than a build needed before this change, and not
+because the tracks got bigger. The mixdown decoded the same tracks before; it
+deleted them when it returned, and ingestion ran afterwards, from the MKV, into
+memory. Now ingestion runs between the decode and the encode, so the tracks are
+still there while the render and the decoded segment are made. The cost moved
+from RAM to disk. A host whose `TMPDIR` is a small tmpfs will run out on a long
+meeting sooner than it used to; the operator image points `TMPDIR` at its data
 volume for exactly this reason.
+
+The bundle pays for one more file per spliced speaker, unchanged by this branch:
+the 16 kHz transcription input under `_work/sourceaudio/`, about 230 MB for a
+two-hour meeting, which lives as long as the bundle does.
 
 ## Timing: two clocks, and which one does what
 
