@@ -75,7 +75,7 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 	ncAccessSubstrate.setProbe(probe)
 	logger.Printf("nc storage: probe %s", summarizeProbe(probe))
 
-	accessControlled, source := c.resolveStorageMode(probe, logger)
+	accessControlled, source, recordAfterSanity := c.resolveStorageMode(logger)
 	ncStorage.set(accessControlled, source)
 	ncAccessSubstrate.setMode(storageModeName(accessControlled), source)
 
@@ -83,6 +83,23 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 		logger.Printf("nc storage: mode=%s is not usable (%s): %s", storageModeName(accessControlled), step, detail)
 		ncAccessSubstrate.unavailable(step, errors.New(detail))
 		return
+	}
+
+	// The fallback is written down HERE, after the gate agreed — not where it was
+	// decided.
+	//
+	// A recorded mode is never reconsidered, so recording a `default` that this
+	// instance cannot actually run is how an administrator gets stuck: the file
+	// would then shadow CASSINI_STORAGE_MODE, and the deploy option they reach
+	// for to fix the mismatch would be ignored. Deciding late costs one probe per
+	// enable until the instance is coherent, and keeps every escape hatch open.
+	//
+	// A DECLARED mode is already on disk by this point, deliberately. That is a
+	// decision rather than a fallback, and an administrator who set it should be
+	// able to read it back even while the storage behind it is still missing.
+	if recordAfterSanity {
+		c.persistInitialMode(ncStorage.settingsPath(), accessControlled, source,
+			fmt.Sprintf("this instance is coherent with the %q mode it fell back to", storageModeName(accessControlled)), logger)
 	}
 
 	if err := c.arrangeRecordingsTree(ctx, client, accessControlled, logger); err != nil {
@@ -93,90 +110,81 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 	logger.Printf("nc storage: ready mode=%s source=%s root=%s owner=%s", storageModeName(accessControlled), source, ncRecordingsRoot, ncRecordingsOwner)
 }
 
-// resolveStorageMode returns the mode this process operates under, and where it
-// came from.
+// resolveStorageMode returns the mode this process operates under, where it came
+// from, and whether the caller must write it down once the sanity gate agrees.
 //
-// A flag that is already on disk is used verbatim and never re-derived. A flag
-// that is absent is derived from the probe AND persisted, so the derivation
-// happens exactly once in an install's life: after that the recorded value is
-// what an administrator can reason about, and a Nextcloud that changes
-// underneath the app cannot quietly change who may read the archive.
+//	recorded on disk               use it verbatim. Nothing re-opens it, ever.
+//	CASSINI_STORAGE_MODE declared  that mode, written down immediately
+//	otherwise                      default, written down only if it survives
+//	                               the sanity gate
 //
-// A failed write is not fatal — the derived mode still governs this process, so
-// the app works — but it is logged loudly, because the derivation would then
-// run again on the next enable.
-func (c ExAppConfig) resolveStorageMode(probe ncStorageProbe, logger *log.Logger) (accessControlled bool, source string) {
+// It never looks at the probe. Cassini used to derive the mode from the
+// instance, and that made who can read the archive a function of what Nextcloud
+// happened to look like on whichever enabled edge fired first — which on a stack
+// still being assembled is the wrong instant. An access-controlled Nextcloud
+// with no recorded mode and no declaration now lands on `default`, finds its
+// Team folder in the way, and is reported as a mismatch that refuses to publish.
+// That is loud and recoverable, where a wrong inference is silent and permanent.
+//
+// The deploy option is what skips that: a deployment that KNOWS which model it
+// wants says so, and is believed.
+func (c ExAppConfig) resolveStorageMode(logger *log.Logger) (accessControlled bool, source string, recordAfterSanity bool) {
 	path := ncStorage.settingsPath()
 	if path != "" {
 		settings, err := LoadStorageSettings(path)
 		switch {
 		case err != nil:
-			// An unreadable file must not fall through to a derivation: the
-			// derived answer for an instance whose Team folder has since been
-			// removed is `default`, which would publish the next recording where
-			// every account can read it. Keep the safe model and say why.
+			// An unreadable file must not fall through to the default: the
+			// default model serves the whole archive as its owner, so one bad
+			// byte on an access-controlled install would publish the next
+			// recording where every account can read it. Keep the safe model,
+			// say why, and write nothing over a file we could not read.
 			logger.Printf("ERROR: nc storage: %v — keeping access control ON until the file is readable or removed", err)
-			return true, storageModeSourceConfigured
+			return true, storageModeSourceConfigured, false
 		case settings.Configured():
-			// A DERIVED default gets reconsidered, in one direction only.
-			//
-			// The derivation happens once, on whichever enabled edge comes
-			// first, and that is not always a moment the instance is finished:
-			// a substrate built with `occ` moments earlier may not have reached
-			// the web workers the probe asks, so a fully access-controlled
-			// Nextcloud can derive `default` and be stuck with it — publishing
-			// refused, `mode_mismatch` forever, and no way back. That is not
-			// hypothetical; it is what the installed-ExApp e2e caught.
-			//
-			// Adopting access control here can only ever NARROW who can read the
-			// archive, so it cannot cause the disclosure the latch exists to
-			// prevent. A mode an administrator CHOSE is never touched.
-			if !settings.Chosen() && !settings.AccessControlled() && probe.deriveAccessControlEnabled() {
-				logger.Printf("nc storage: the recorded %q mode was derived, but this instance has a complete access-controlled substrate — adopting access control (a derived mode is only ever reconsidered towards the more restrictive one)", storageModeDefault)
-				if err := SaveStorageSettings(path, true, storageModeSourceDerived); err != nil {
-					logger.Printf("ERROR: nc storage: could not persist the corrected mode to %s: %v", path, err)
-				}
-				return true, storageModeSourceDerived
-			}
-			return settings.AccessControlled(), storageModeSourceConfigured
+			return settings.AccessControlled(), storageModeSourceConfigured, false
 		}
 	}
-	// Nothing recorded yet. A deployment that DECLARED which model it wants is
-	// believed before anything is guessed — deriving is a reading of whatever
-	// Nextcloud looked like at this instant, and on a stack still being built
-	// that instant is the wrong one.
+
+	// Nothing recorded. A declaration is a decision, so it is written down now —
+	// an administrator who set the deploy option should be able to read the mode
+	// back even if this instance's storage turns out not to match it yet.
 	//
 	// An unrecognised value is not silently ignored: starting an instance in a
 	// mode nobody asked for is the failure this variable exists to prevent.
 	declared, ok, raw := storageModeFromEnv(os.Getenv)
 	switch {
 	case ok:
-		return c.persistInitialMode(path, declared, storageModeSourceEnv,
+		c.persistInitialMode(path, declared, storageModeSourceEnv,
 			fmt.Sprintf("%s=%s declared the initial storage mode %q", envStorageMode, raw, storageModeName(declared)), logger)
+		return declared, storageModeSourceEnv, false
 	case raw != "":
-		logger.Printf("ERROR: nc storage: %s=%q is not %s; ignoring it and deriving the mode from this instance instead", envStorageMode, raw, storageModeEnvValues)
+		logger.Printf("ERROR: nc storage: %s=%q is not %s; ignoring it and starting in %q instead", envStorageMode, raw, storageModeEnvValues, storageModeDefault)
 	}
 
-	derived := probe.deriveAccessControlEnabled()
-	return c.persistInitialMode(path, derived, storageModeSourceDerived,
-		fmt.Sprintf("no storage mode was recorded; derived %q from this instance", storageModeName(derived)), logger)
+	// The fallback, and it is deliberately NOT written down here — see the
+	// caller. A `default` that turns out to be wrong for this instance (a Team
+	// folder is mounted over the canonical path) must not be recorded, because a
+	// recorded mode is never reconsidered and would then shadow the very deploy
+	// option an administrator would reach for to fix it.
+	logger.Printf("nc storage: no storage mode recorded and none declared by %s; starting in %q, which needs no third-party Nextcloud apps", envStorageMode, storageModeDefault)
+	return false, storageModeSourceDefault, true
 }
 
 // persistInitialMode writes the first decision an install makes and says where
 // it came from. A failed write is not fatal — the mode still governs this
-// process — but it is loud, because the decision would then be made again on
-// the next enable, possibly differently.
-func (c ExAppConfig) persistInitialMode(path string, accessControlled bool, source, why string, logger *log.Logger) (bool, string) {
+// process — but it is logged loudly, because the decision would then be made
+// again on the next enable.
+func (c ExAppConfig) persistInitialMode(path string, accessControlled bool, source, why string, logger *log.Logger) {
 	if path == "" {
 		logger.Printf("nc storage: %s; no settings path configured, so it governs this process only", why)
-		return accessControlled, source
+		return
 	}
 	if err := SaveStorageSettings(path, accessControlled, source); err != nil {
 		logger.Printf("ERROR: nc storage: %s, but it could not be written to %s: %v — it will be decided again on the next enable", why, path, err)
-	} else {
-		logger.Printf("nc storage: %s and wrote %s", why, path)
+		return
 	}
-	return accessControlled, source
+	logger.Printf("nc storage: %s and wrote %s", why, path)
 }
 
 // arrangeRecordingsTree makes the archive's own directories and, under access

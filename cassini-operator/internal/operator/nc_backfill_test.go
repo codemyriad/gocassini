@@ -554,7 +554,9 @@ func TestBackfillCommandRefusesOutsideAnExApp(t *testing.T) {
 		t.Setenv(name, "")
 	}
 	var stdout, stderr bytes.Buffer
-	code := runBackfillNCFiles(context.Background(), []string{"--dry-run"}, &stdout, &stderr)
+	settings := filepath.Join(t.TempDir(), storageSettingsFileName)
+	mustSaveMode(t, settings, true)
+	code := runBackfillNCFiles(context.Background(), []string{"--dry-run", "--storage-settings", settings}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2 outside an ExApp", code)
 	}
@@ -575,7 +577,9 @@ func TestBackfillConfigFailureReportsNothingWasWritten(t *testing.T) {
 	t.Setenv("APP_SECRET", "")
 
 	var stdout, stderr bytes.Buffer
-	code := runBackfillNCFiles(context.Background(), []string{"--dry-run"}, &stdout, &stderr)
+	settings := filepath.Join(t.TempDir(), storageSettingsFileName)
+	mustSaveMode(t, settings, true)
+	code := runBackfillNCFiles(context.Background(), []string{"--dry-run", "--storage-settings", settings}, &stdout, &stderr)
 	if code != backfillExitNotStarted {
 		t.Fatalf("exit = %d, want %d (nothing was written)\nstderr: %s", code, backfillExitNotStarted, &stderr)
 	}
@@ -642,12 +646,88 @@ func TestBackfillExitCodesDistinguishWrittenFromNotWritten(t *testing.T) {
 			t.Setenv("APP_SECRET", "sekret")
 			t.Setenv("APP_VERSION", "1.2.3")
 
+			settings := filepath.Join(t.TempDir(), storageSettingsFileName)
+			mustSaveMode(t, settings, true)
+
 			var stdout, stderr bytes.Buffer
 			got := runBackfillNCFiles(context.Background(),
-				[]string{"--site-root", tc.siteRoot}, &stdout, &stderr)
+				[]string{"--site-root", tc.siteRoot, "--storage-settings", settings}, &stdout, &stderr)
 			if got != tc.want {
 				t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s", got, tc.want, &stdout, &stderr)
 			}
 		})
+	}
+}
+
+// The backfill only applies to the Team-folder model. Everything it writes
+// carries ACL rules, and those mean nothing in the service account's own home —
+// so in the default model it would either write rules nothing enforces or
+// re-derive an audience for recordings an administrator left open on purpose.
+//
+// It is human-invoked and no e2e exercises it, so the refusal is pinned here.
+func TestBackfillRefusesOutsideTheAccessControlledMode(t *testing.T) {
+	cases := []struct {
+		name     string
+		write    func(t *testing.T, path string)
+		wantCode int
+		wantSays []string
+	}{
+		{
+			name:     "the default model",
+			write:    func(t *testing.T, path string) { mustSaveMode(t, path, false) },
+			wantCode: backfillExitNothingToDo,
+			wantSays: []string{storageModeDefault, storageModeAccessControlled, "Setup tab", "nothing was written"},
+		},
+		{
+			name:     "no mode recorded yet",
+			write:    func(t *testing.T, path string) {},
+			wantCode: backfillExitNotStarted,
+			wantSays: []string{"no storage mode is recorded"},
+		},
+		{
+			name: "a settings file that cannot be read",
+			write: func(t *testing.T, path string) {
+				if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+			},
+			wantCode: backfillExitNotStarted,
+			wantSays: []string{"cannot read the storage mode", "will not guess"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), storageSettingsFileName)
+			tc.write(t, path)
+			var stderr strings.Builder
+			if code := refuseBackfillOutsideAccessControl(path, &stderr); code != tc.wantCode {
+				t.Fatalf("exit code = %d, want %d (stderr: %s)", code, tc.wantCode, stderr.String())
+			}
+			for _, want := range tc.wantSays {
+				if !strings.Contains(strings.ToLower(stderr.String()), strings.ToLower(want)) {
+					t.Errorf("stderr never says %q:\n%s", want, stderr.String())
+				}
+			}
+		})
+	}
+}
+
+// And it proceeds on the model it was written for.
+func TestBackfillProceedsInTheAccessControlledMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	mustSaveMode(t, path, true)
+	var stderr strings.Builder
+	if code := refuseBackfillOutsideAccessControl(path, &stderr); code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr: %s)", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("wrote to stderr on the supported mode: %s", stderr.String())
+	}
+}
+
+func mustSaveMode(t *testing.T, path string, accessControlled bool) {
+	t.Helper()
+	if err := SaveStorageSettings(path, accessControlled, storageModeSourceUser); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 }

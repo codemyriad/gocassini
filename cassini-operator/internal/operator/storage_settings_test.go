@@ -133,7 +133,7 @@ func TestUnresolvedStorageModeFailsClosed(t *testing.T) {
 
 func TestResolvedStorageModeIsReportedVerbatim(t *testing.T) {
 	resetStorageMode(t)
-	ncStorage.set(false, storageModeSourceDerived)
+	ncStorage.set(false, storageModeSourceDefault)
 
 	accessControlled, resolved := ncStorage.mode()
 	if !resolved || accessControlled {
@@ -143,8 +143,8 @@ func TestResolvedStorageModeIsReportedVerbatim(t *testing.T) {
 		t.Fatal("accessControlled() must answer false once the mode is resolved to default")
 	}
 	mode, source := ncStorage.snapshot()
-	if mode != storageModeDefault || source != storageModeSourceDerived {
-		t.Fatalf("snapshot() = (%q, %q), want (%q, %q)", mode, source, storageModeDefault, storageModeSourceDerived)
+	if mode != storageModeDefault || source != storageModeSourceDefault {
+		t.Fatalf("snapshot() = (%q, %q), want (%q, %q)", mode, source, storageModeDefault, storageModeSourceDefault)
 	}
 }
 
@@ -213,18 +213,26 @@ func TestStorageModeFromEnvKeepsAnUnknownValueForTheErrorMessage(t *testing.T) {
 	}
 }
 
-// A declared mode is as explicit as a button, so it is never reconsidered.
-func TestAStatedModeIsNeverReconsidered(t *testing.T) {
-	for _, source := range []string{storageModeSourceUser, storageModeSourceEnv} {
-		if !(StorageSettings{Source: source}).Chosen() {
-			t.Errorf("source %q must count as stated", source)
+// Source is recorded and displayed, never branched on. An earlier build used it
+// to decide whether a recorded mode could be reconsidered against the live
+// instance, which made the file non-authoritative — it could say `default` while
+// the app acted access-controlled. This pins that the field survived that
+// deletion as pure forensics, including for values that build wrote.
+func TestSourceIsRecordedForEveryWayAModeCanBeDecided(t *testing.T) {
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	for _, source := range []string{storageModeSourceUser, storageModeSourceEnv, storageModeSourceDefault, "derived", ""} {
+		if err := SaveStorageSettings(path, true, source); err != nil {
+			t.Fatalf("SaveStorageSettings(%q) error = %v", source, err)
 		}
-	}
-	if (StorageSettings{Source: storageModeSourceDerived}).Chosen() {
-		t.Error("a derived mode must remain reconsiderable")
-	}
-	// A file written before the field existed: those were all derivations.
-	if (StorageSettings{}).Chosen() {
-		t.Error("a file with no source must read as derived")
+		got, err := LoadStorageSettings(path)
+		if err != nil {
+			t.Fatalf("LoadStorageSettings() error = %v", err)
+		}
+		if got.Source != source {
+			t.Errorf("source round-tripped as %q, want %q", got.Source, source)
+		}
+		if !got.Configured() || !got.AccessControlled() {
+			t.Errorf("source %q changed how the flag reads: %+v", source, got)
+		}
 	}
 }

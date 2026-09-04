@@ -327,12 +327,19 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	} else if raw != "" {
 		// Refused at startup rather than only on the enabled edge, because this
 		// is where a deploy option's typo is cheapest to notice.
-		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and the storage mode derived from the instance instead", envStorageMode, raw, storageModeEnvValues)
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and this install will start in %q instead", envStorageMode, raw, storageModeEnvValues, storageModeDefault)
+	} else {
+		// Nothing recorded, nothing declared. Say so here rather than leaving an
+		// administrator to infer it from silence: on an instance that IS
+		// access-controlled this is the line that precedes the mode_mismatch,
+		// and CASSINI_STORAGE_MODE is what would have avoided it.
+		logger.Printf("storage_mode -> %s (nothing recorded, nothing declared by %s; the mode is never inferred from the instance)", storageModeDefault, envStorageMode)
 	}
 
 	// The preflight remains tied to the AppAPI enabled edge, but not to the
 	// eager whole-archive uploader removed by D-613.
 	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
+	exappCfg.preflightOnRestart(runtime.ctx, logger)
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -467,10 +474,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	// deploy (APP_PERSISTENT_STORAGE set) paths left unset or still at their
 	// baked image defaults land on the AppAPI volume instead of overlayfs.
 	persistRoot := persistentStorageRoot()
-	fs.StringVar(&cfg.DBPath, "db", exAppDataPathDefault(persistRoot,
-		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
-		imageDefaultDBPath, "operator/jobs.sqlite3",
-		filepath.Join(defaultDataRoot, "jobs.sqlite3")), "SQLite database path")
+	fs.StringVar(&cfg.DBPath, "db", defaultDBPath(persistRoot, defaultDataRoot), "SQLite database path")
 	fs.StringVar(&cfg.WorkRoot, "work-root", exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, ""),
 		imageDefaultWorkRoot, "operator/jobs",
@@ -564,6 +568,19 @@ func defaultSiteRoot(persistRoot, dataRoot string) string {
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
 		imageDefaultSiteRoot, "site/published",
 		filepath.Join(dataRoot, "site"))
+}
+
+// defaultDBPath is where the job database lands when nothing overrides it.
+//
+// Factored out because the one-shot commands need it too: storage_settings.json
+// lives beside the database, and a command that has to know which storage model
+// this installation runs cannot ask the running operator — it is a separate
+// process with its own empty ncStorage.
+func defaultDBPath(persistRoot, dataRoot string) string {
+	return exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
+		imageDefaultDBPath, "operator/jobs.sqlite3",
+		filepath.Join(dataRoot, "jobs.sqlite3"))
 }
 
 func parsePositiveIntEnvAny(names []string, fallback int) (int, error) {

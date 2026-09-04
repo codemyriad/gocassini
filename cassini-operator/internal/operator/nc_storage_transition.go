@@ -647,3 +647,147 @@ func (c ExAppConfig) davPropfindChildren(ctx context.Context, client *http.Clien
 	}
 	return out, true, nil
 }
+
+// storageTransitionPreview is what a mode switch WOULD do, computed without
+// touching anything.
+//
+// The transition is the riskiest operation in the feature: it relocates an
+// entire published archive and, going into the Team folder, makes every
+// already-published recording readable by every account. Before this existed an
+// administrator pressed a button and found out afterwards — the dialog stated
+// the policy but none of the facts, so "41 meetings, 3.2 GB, and by the way
+// there is a leftover staging root from a run that died" was invisible until it
+// was history.
+type storageTransitionPreview struct {
+	// Mode is the mode being previewed, not the one in force.
+	Mode string `json:"mode"`
+	// Ready is sanityForTarget: whether the switch could run at all.
+	Ready  bool   `json:"ready"`
+	Step   string `json:"step,omitempty"`
+	Detail string `json:"detail,omitempty"`
+
+	SourceRoot      string `json:"source_root,omitempty"`
+	DestinationRoot string `json:"destination_root,omitempty"`
+
+	// Meetings is how many would move. Zero with a source present means the
+	// tree is there but empty, which is different from having no tree at all.
+	Meetings       int  `json:"meetings"`
+	CatalogPresent bool `json:"catalog_present"`
+
+	// DestinationMeetings is what is already at the destination. Non-zero is
+	// not fatal — the transition merges — but it is the single most important
+	// thing to say out loud before merging somebody's archive.
+	DestinationMeetings int `json:"destination_meetings"`
+
+	// NothingToMove distinguishes "this is a no-op" from "this will move 41
+	// meetings", which the confirmation copy has to say differently.
+	NothingToMove bool `json:"nothing_to_move"`
+
+	// Warnings are things an administrator should read before confirming.
+	// Present tense, one sentence each, ordered most-surprising first.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// previewStorageModeSwitch answers what switchStorageMode would do. It issues
+// PROPFINDs and nothing else — no MKCOL, no MOVE, no PROPPATCH.
+//
+// It deliberately shares switchStorageMode's discovery calls rather than
+// re-deriving them: findStrandedRecordingsRoot is what decides where the archive
+// actually is, and a preview that located it differently from the move would be
+// worse than no preview at all.
+func (c ExAppConfig) previewStorageModeSwitch(ctx context.Context, enableAccessControl bool, logger *log.Logger) (storageTransitionPreview, error) {
+	if !c.appAPIActive() {
+		return storageTransitionPreview{}, fmt.Errorf("storage mode can only be changed in a Nextcloud (AppAPI) deployment")
+	}
+	// The same lock the move takes, so a preview cannot read a tree a
+	// concurrent transition is half way through relocating.
+	provisionMu.Lock()
+	defer provisionMu.Unlock()
+
+	out := storageTransitionPreview{Mode: storageModeName(enableAccessControl)}
+	client := &http.Client{Timeout: ncProvisionTimeout}
+	probe, err := c.probeNCStorage(ctx, client, logger)
+	if err != nil {
+		return out, fmt.Errorf("could not inspect this Nextcloud: %w", err)
+	}
+	out.Ready, out.Step, out.Detail = probe.sanityForTarget(enableAccessControl)
+
+	if enableAccessControl {
+		out.DestinationRoot = ncRecordingsRoot
+		// Going in, the archive is wherever the mount displaced it to — which is
+		// exactly what the move looks up, so ask the same question.
+		if out.SourceRoot, err = c.findStrandedRecordingsRoot(ctx, client); err != nil {
+			return out, fmt.Errorf("look for an existing archive in %q's home: %w", ncRecordingsOwner, err)
+		}
+	} else {
+		out.SourceRoot = ncRecordingsRoot
+		out.DestinationRoot = ncStorageStagingRoot
+	}
+
+	if out.SourceRoot != "" {
+		out.Meetings, out.CatalogPresent = c.countArchiveAt(ctx, client, out.SourceRoot)
+	}
+	out.NothingToMove = out.Meetings == 0 && !out.CatalogPresent
+
+	// What is already where this is about to write. Only meaningful going in:
+	// the opt-out destination is a staging root the move creates itself.
+	if enableAccessControl {
+		out.DestinationMeetings, _ = c.countArchiveAt(ctx, client, out.DestinationRoot)
+	}
+
+	out.Warnings = previewWarnings(out, enableAccessControl)
+	return out, nil
+}
+
+// countArchiveAt reports how many meetings are under a recordings root, and
+// whether it carries a catalog.
+//
+// A tree that is absent or unreadable counts as zero rather than erroring: the
+// preview's job is to describe what it can see, and "we could not look" is
+// already carried by Ready/Step from the sanity check.
+func (c ExAppConfig) countArchiveAt(ctx context.Context, client *http.Client, root string) (meetings int, catalog bool) {
+	names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, root+"/meetings")
+	if err == nil && visible {
+		meetings = len(names)
+	}
+	siblings, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, root)
+	if err == nil && visible {
+		for _, name := range siblings {
+			if name == "catalog.json" {
+				catalog = true
+				break
+			}
+		}
+	}
+	return meetings, catalog
+}
+
+// previewWarnings is the copy an administrator reads before confirming. It says
+// what is surprising, not what is normal — a preview that warns about everything
+// is one nobody reads.
+func previewWarnings(p storageTransitionPreview, enableAccessControl bool) []string {
+	var out []string
+	if p.DestinationMeetings > 0 {
+		out = append(out, fmt.Sprintf(
+			"%s already holds %d recording(s). They stay where they are and the moved ones are merged in beside them.",
+			p.DestinationRoot, p.DestinationMeetings))
+	}
+	if p.SourceRoot != "" && p.SourceRoot != ncRecordingsRoot && p.SourceRoot != ncStorageStagingRoot {
+		out = append(out, fmt.Sprintf(
+			"The archive is at %q rather than %q — Nextcloud renamed it when the Team folder took that path. It will be moved back and the empty directory removed.",
+			p.SourceRoot, ncRecordingsRoot))
+	}
+	if p.SourceRoot == ncStorageStagingRoot {
+		out = append(out, fmt.Sprintf(
+			"%s is left over from an earlier switch that did not finish. Its recordings will be moved back in.", ncStorageStagingRoot))
+	}
+	if enableAccessControl && p.Meetings > 0 {
+		out = append(out, fmt.Sprintf(
+			"All %d moved recording(s) will be readable by every account. Cassini does not guess who was in a past meeting; narrow them afterwards from Files → Advanced permissions.", p.Meetings))
+	}
+	if !enableAccessControl && p.Meetings > 0 {
+		out = append(out, fmt.Sprintf(
+			"All %d recording(s) lose their access rules. After this, everyone who can open Cassini can read every one — including the ones restricted to a call's participants.", p.Meetings))
+	}
+	return out
+}

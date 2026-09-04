@@ -3,7 +3,7 @@
   import { HardDrive, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import { NcSetupError, isSetupAvailable, nextcloudUrl, runSetupPlan } from "./operator/ncSetup";
-  import type { StorageModeOption, StorageStatus } from "./operator/types";
+  import type { StorageModeOption, StorageStatus, StorageTransitionPreview } from "./operator/types";
 
   // The storage-mode switch, and since D-671 the setup that gets you to one.
   //
@@ -42,6 +42,12 @@
   let switching = false;
   // setupProgress is the step being performed, for the run's own feedback.
   let setupProgress = "";
+  // preview is what the pending switch WOULD do, fetched before the
+  // confirmation renders its buttons. Null while it is still being fetched, or
+  // when the pending action is a setup rather than a move.
+  let preview: StorageTransitionPreview | null = null;
+  let previewing = false;
+  let previewError = "";
 
   onMount(() => {
     void loadStorage();
@@ -77,6 +83,41 @@
       return;
     }
     pending = option;
+    if (pendingKind === "switch") {
+      void loadPreview(option);
+    }
+  }
+
+  // loadPreview asks the operator what this switch would actually do.
+  //
+  // It runs when the prompt OPENS, not when it is confirmed, because the whole
+  // point is that the numbers are on screen while the administrator decides. A
+  // preview that fails does not block the switch — the transition has its own
+  // guards, and refusing to let somebody proceed because we could not count
+  // their recordings would be worse than proceeding without the count — but it
+  // says so rather than rendering an empty diff as "nothing to move".
+  async function loadPreview(option: StorageModeOption) {
+    if (!operatorClient) {
+      return;
+    }
+    preview = null;
+    previewError = "";
+    previewing = true;
+    const asked = option.mode;
+    try {
+      const next = await operatorClient.previewStorageSwitch(option.mode === "access_controlled");
+      // The prompt may have been cancelled or re-pointed while this was in
+      // flight; a diff for a mode nobody is looking at must not appear.
+      if (pending?.mode === asked) {
+        preview = next.preview;
+      }
+    } catch (error) {
+      if (pending?.mode === asked) {
+        previewError = asMessage(error);
+      }
+    } finally {
+      previewing = false;
+    }
   }
 
   // requestSetupFor offers to build the mode that is ALREADY in force but not
@@ -93,6 +134,8 @@
 
   function cancelSwitch() {
     pending = null;
+    preview = null;
+    previewError = "";
   }
 
   // runSetup performs everything the browser may perform, asks the operator to
@@ -170,9 +213,11 @@
         status = await operatorClient.putStorage(target.mode === "access_controlled");
       }
       pending = null;
+      preview = null;
     } catch (error) {
       switchError = asMessage(error);
       pending = null;
+      preview = null;
       // Re-read rather than trusting the pre-switch snapshot. Most failures
       // change nothing — the operator refuses before it touches anything — but
       // one does not: a transition that fails AFTER moving the archive has
@@ -203,6 +248,18 @@
       }
     }
     if (error instanceof OperatorHttpError) {
+      if (error.status === 404) {
+        // AppAPI learns an ExApp's routes from the manifest it was REGISTERED
+        // with. An installation still on a manifest that predates this tab
+        // therefore 404s every request it makes, and the symptom — a Setup tab
+        // whose buttons all fail — says nothing about the cause. Re-registering
+        // is what refreshes the routes.
+        return (
+          "This Nextcloud does not know about Cassini's storage routes, which happens when the app " +
+          "was updated in place from a version that predates them. Re-register the app in Nextcloud " +
+          "(External Apps → remove and add Cassini again, keeping its data), or use the commands below."
+        );
+      }
       return error.message;
     }
     return error instanceof Error ? error.message : String(error);
@@ -220,7 +277,10 @@
 
   function modeSourceLabel(source: string): string {
     if (source === "configured") return "Chosen";
+    // Written by a build that inferred the mode from the instance. Nothing
+    // produces it any more, but installs from that build still carry it.
     if (source === "derived") return "Detected from this Nextcloud";
+    if (source === "default") return "Default, nothing chose otherwise";
     return source || "—";
   }
 
@@ -454,6 +514,53 @@
               {:else}
                 <p class="text-sm font-semibold">Switch to {pending.label.toLowerCase()}?</p>
                 <p class="text-xs break-words text-base-content/80">{pending.consequence}</p>
+                <!-- The policy is above; these are the FACTS. What actually
+                     moves, from where, and what is already at the destination.
+                     Fetched when this prompt opened, so the numbers are on
+                     screen while the decision is being made rather than in the
+                     result afterwards. -->
+                {#if previewing}
+                  <p class="text-xs text-base-content/60" aria-live="polite">
+                    <span class="loading loading-spinner loading-xs align-middle" aria-hidden="true"
+                    ></span>
+                    Working out what would move…
+                  </p>
+                {:else if preview}
+                  <div class="grid gap-1 rounded-box bg-base-100/60 p-2 text-xs">
+                    {#if preview.nothing_to_move}
+                      <p class="break-words text-base-content/80">
+                        There are no published recordings to move. Only the mode changes.
+                      </p>
+                    {:else}
+                      <p class="break-words text-base-content/80">
+                        <span class="font-semibold"
+                          >{preview.meetings}
+                          {preview.meetings === 1 ? "recording" : "recordings"}</span
+                        >
+                        would move from <code class="break-all">{preview.source_root}</code> to
+                        <code class="break-all">{preview.destination_root}</code>{preview.catalog_present
+                          ? ", along with the meeting index"
+                          : ""}.
+                      </p>
+                    {/if}
+                    {#each preview.warnings as warning (warning)}
+                      <p class="flex items-start gap-1.5 break-words text-warning">
+                        <span class="mt-0.5 shrink-0" aria-hidden="true">•</span>
+                        <span>{warning}</span>
+                      </p>
+                    {/each}
+                  </div>
+                {:else if previewError}
+                  <!-- Not a blocker: the transition has its own guards, and
+                       refusing to proceed because we could not COUNT the
+                       recordings would be worse than proceeding without the
+                       count. But an empty diff must never read as "nothing to
+                       move" when nobody managed to look. -->
+                  <p class="text-xs break-words text-warning">
+                    Cassini could not work out what would move ({previewError}). The switch itself
+                    still checks before it writes.
+                  </p>
+                {/if}
               {/if}
             </div>
           </div>

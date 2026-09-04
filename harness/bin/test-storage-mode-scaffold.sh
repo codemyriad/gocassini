@@ -96,4 +96,36 @@ harness_skip_storage_scaffold || fail "skip flag lost when combined with a mode"
 harness_storage_mode_is_acl || fail "mode lost when combined with the skip flag"
 unset CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD CASSINI_HARNESS_STORAGE_MODE
 
-echo "PASS: storage-mode and scaffold-skip predicates default to the substrate the e2e suites assert"
+# --- the registration contract ------------------------------------------------
+#
+# The predicates above decide what gets BUILT. This section pins how the choice
+# reaches the ExApp, because the two failing to line up is invisible until an
+# e2e reports `mode_mismatch` an hour later.
+
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+MANIFEST="$ROOT/appinfo/info.xml"
+STACK_LIB="$SCRIPT_DIR/lib/stack.sh"
+SANDBOX_WIRE="$ROOT/sandbox/wire-cassini.sh"
+
+# Declared exactly once. AppAPI injects deploy options at container creation and
+# silently drops undeclared keys, so a duplicate or a typo here is a variable
+# that never arrives.
+declared="$(grep -c '<name>CASSINI_STORAGE_MODE</name>' "$MANIFEST" || true)"
+[[ "$declared" == "1" ]] \
+  || fail "appinfo/info.xml declares CASSINI_STORAGE_MODE $declared times, want exactly 1"
+
+# The harness passes it through registration, and derives it from the same
+# predicate that decides what is built rather than hard-coding a second default.
+# shellcheck disable=SC2016 # the literal `$(...)` IS the pattern being matched.
+grep -qF -- '--env "CASSINI_STORAGE_MODE=$(harness_exapp_storage_mode)"' "$STACK_LIB" \
+  || fail "lib/stack.sh does not pass CASSINI_STORAGE_MODE through AppAPI registration from harness_exapp_storage_mode"
+
+# The dogfood box states its mode rather than letting it fall back. Switching it
+# to the default model would move a real archive and make every recording
+# readable by every account on that instance, so it must never happen by
+# omission.
+# shellcheck disable=SC2016 # the literal `${...}` IS the pattern being matched.
+grep -qF 'CASSINI_STORAGE_MODE=${CASSINI_STORAGE_MODE:-access_controlled}' "$SANDBOX_WIRE" \
+  || fail "sandbox/wire-cassini.sh does not declare access_controlled; the dogfood archive must not depend on a fallback"
+
+echo "PASS: storage-mode predicates default to the substrate the e2e suites assert, and reach the ExApp intact"

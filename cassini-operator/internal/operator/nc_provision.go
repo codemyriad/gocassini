@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -219,6 +220,53 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 		// rejected: running at process start deterministically gets 401.
 		c.preflightNCStorage(ctx, logger)
 	}
+}
+
+// preflightOnRestart closes the restart-convergence gap (D-541/D-669): the
+// substrate record is a process-wide singleton written only by the enabled edge,
+// so a bare container restart left it at `unknown` and publishing refused until
+// an administrator disabled and re-enabled the app.
+//
+//	before                          after
+//	------                          -----
+//	start ──▶ mode loaded           start ──▶ mode loaded
+//	          substrate = unknown             │
+//	          publish REFUSED                 └─▶ preflight
+//	               ▲                                   │
+//	               │  the only writer            substrate proven
+//	         enabled edge                        publish WORKS
+//
+// It runs ONLY when a mode is already recorded, and that condition is doing two
+// jobs. It is the signal that this install has completed a preflight before —
+// so this is a restart rather than a first registration, which matters because
+// AppAPI rejects act-as-user calls during registration and a startup run would
+// deterministically 401 and log a failure for every new install. And it means
+// nothing here can decide a mode: the file already did, and this run only
+// re-proves it against Nextcloud.
+//
+// This is cheap now in a way it was not when D-669 was written. The enabled edge
+// used to CREATE the substrate; since D-616 it probes, sanity-checks, and MKCOLs
+// the app's own collections. Re-running that is a handful of reads and
+// idempotent creates, with no partial-build risk.
+//
+// Asynchronous, because an unreachable Nextcloud must not stop the operator from
+// serving /status — which is how an administrator finds out it is unreachable.
+// Both paths take provisionMu, so a startup run and an enable cannot interleave.
+func (c ExAppConfig) preflightOnRestart(ctx context.Context, logger *log.Logger) {
+	if !c.appAPIActive() {
+		return
+	}
+	settings, err := LoadStorageSettings(ncStorage.settingsPath())
+	if err != nil || !settings.Configured() {
+		// No recorded mode: either a first registration, or an install whose
+		// fallback has not survived a sanity gate yet. Either way the enabled
+		// edge is the right place, and it is about to fire.
+		return
+	}
+	go func() {
+		logger.Printf("nc storage: re-proving the recorded %q mode at startup (the enabled edge is not the only writer any more)", settings.Mode())
+		c.preflightNCStorage(ctx, logger)
+	}()
 }
 
 // provisionNCFilesAccess first establishes the ownership/provisioning
@@ -701,6 +749,14 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 	if err := json.Unmarshal(body, &env); err != nil {
 		return gfFolder{}, false, fmt.Errorf("decode folders list: %w", err)
 	}
+	// `null` is not "no folders". An empty instance answers `[]`, and a JSON null
+	// unmarshals into a map without error and leaves it nil — which would read as
+	// an authoritative "there is no Cassini Team folder here". Reject it for the
+	// same reason as the undecodable shapes below: on an instance that really is
+	// access-controlled, that answer is a disclosure.
+	if bytes.Equal(bytes.TrimSpace(env.OCS.Data), []byte("null")) {
+		return gfFolder{}, false, fmt.Errorf("decode folders list: ocs.data is null, which is not an answer about whether a %q folder exists", mount)
+	}
 	// The list is an object keyed by folder id, or an empty array. Collect all
 	// folders and pick the lowest-id match deterministically: if a duplicate
 	// mount point ever exists, every run must resolve to the same folder rather
@@ -721,8 +777,23 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 		if f, ok := lowestIDMatch(asArr, mount); ok {
 			return f, true, nil
 		}
+		return gfFolder{}, false, nil
 	}
-	return gfFolder{}, false, nil
+	// Neither shape decoded. This must be an ERROR, not "there is no such
+	// folder", and the difference is a disclosure.
+	//
+	// Group Folders returns every folder on the instance in one list, and Go
+	// fails the WHOLE decode if any single record does not fit gfFolder — one
+	// unrelated folder whose `acl` comes back as 0 rather than false is enough.
+	// Swallowed as "absent", that answer passes the default mode's sanity check
+	// on an instance that really does have a mapped, ACL-enabled Cassini Team
+	// folder: the substrate records `provisioned`, and the read proxy then
+	// serves the entire archive as the ACL manager to every authenticated
+	// account.
+	//
+	// An unanswered question is not a negative answer. Returning an error makes
+	// the probe record FolderProbed=false, which fails closed.
+	return gfFolder{}, false, fmt.Errorf("decode folders list: ocs.data is neither an object keyed by folder id nor an array (%d bytes)", len(env.OCS.Data))
 }
 
 // lowestIDMatch returns the folder with the given mount point that has the

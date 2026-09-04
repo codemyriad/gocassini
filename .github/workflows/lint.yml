@@ -193,6 +193,10 @@ jobs:
           ./harness/bin/test-av-drift-pair-requirement.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-stack-resume.sh
+          # The storage-mode dimension: which substrate a stack is built with,
+          # and which mode the ExApp is told to start in. Pure predicates plus
+          # greps over tracked files -- no Docker, no stack, no network.
+          ./harness/bin/test-storage-mode-scaffold.sh
           # The synthetic-meeting generator's self-overlap slide: a slid
           # turn is recorded at its slid start, the declared duration is
           # recomputed after sliding, and every track shares that extent.

@@ -197,4 +197,29 @@ export interface StorageStatus {
   modes: StorageModeOption[];
   transition: StorageTransition | null;
   installs: AppInstallOutcome[];
+  // preview is present only on the response to a preview request. Nothing has
+  // happened when it is set.
+  preview: StorageTransitionPreview | null;
+}
+
+// StorageTransitionPreview is what a mode switch WOULD do, before it does any
+// of it — the facts the confirmation states alongside the policy.
+export interface StorageTransitionPreview {
+  // mode is the mode being previewed, not the one in force.
+  mode: StorageMode;
+  // ready is whether the switch could run at all; step/detail say why not.
+  ready: boolean;
+  step: string;
+  detail: string;
+  source_root: string;
+  destination_root: string;
+  meetings: number;
+  catalog_present: boolean;
+  // destination_meetings is what is already where this would write. Not fatal —
+  // the transition merges — but the single most important thing to say out loud
+  // before merging somebody's archive.
+  destination_meetings: number;
+  nothing_to_move: boolean;
+  // warnings are one sentence each, most-surprising first.
+  warnings: string[];
 }

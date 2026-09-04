@@ -80,6 +80,9 @@ type storageStatusResponse struct {
 	Transition *storageTransitionResult `json:"transition,omitempty"`
 	// Installs is present only on the POST that attempted app installs.
 	Installs []appInstallOutcome `json:"installs,omitempty"`
+	// Preview is present only on the POST that asked what a mode switch would
+	// do. Nothing has happened when it is set.
+	Preview *storageTransitionPreview `json:"preview,omitempty"`
 }
 
 // storageAction is the POST body. Two verbs share one route because AppAPI
@@ -88,6 +91,9 @@ type storageStatusResponse struct {
 // exactly the administrators who most need it.
 type storageAction struct {
 	Action string `json:"action"`
+	// AccessControlEnabled names the mode a `preview` asks about. Ignored by
+	// every other action.
+	AccessControlEnabled *bool `json:"access_control_enabled"`
 }
 
 const (
@@ -101,6 +107,11 @@ const (
 	// backend can on releases that predate the password-confirmation hardening
 	// or where the administrator has set a bypass range.
 	storageActionInstallApps = "install_apps"
+	// storageActionPreview reports what a mode switch WOULD do, without doing
+	// any of it. The transition relocates an entire published archive and — going
+	// into the Team folder — makes every already-published recording readable by
+	// every account, so the confirmation has to state facts and not only policy.
+	storageActionPreview = "preview"
 )
 
 // storageUpdate is the PUT body: the same field name the config file uses, so
@@ -170,6 +181,22 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		// caller reaching for "look again" would guess.
 		c.preflightNCStorage(ctx, rt.logger)
 		writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
+	case storageActionPreview:
+		if in.AccessControlEnabled == nil {
+			writeJSONError(w, http.StatusBadRequest, "access_control_enabled is required and must be true or false")
+			return
+		}
+		preview, err := c.previewStorageModeSwitch(ctx, *in.AccessControlEnabled, rt.logger)
+		if err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		// Answered alongside the current state, so the panel renders the diff
+		// and the mode it is diffing against from one response — two round
+		// trips could straddle a concurrent change.
+		resp := c.storageStatus(rt, nil)
+		resp.Preview = &preview
+		writeJSON(w, http.StatusOK, resp)
 	case storageActionInstallApps:
 		installs, err := c.attemptAppInstalls(ctx, rt.logger)
 		if err != nil {
@@ -184,7 +211,7 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp.Installs = installs
 		writeJSON(w, http.StatusOK, resp)
 	default:
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q or %q", in.Action, storageActionRecheck, storageActionInstallApps))
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q, %q or %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview))
 	}
 }
 

@@ -46,6 +46,9 @@ STACK_TOPOLOGY=(
   --services full
   --cassini installed-exapp
   --recording-backend installed-exapp
+  # This scenario verifies per-participant privacy, so it deliberately exercises
+  # the Team-folder ACL model instead of inheriting the dependency-free default.
+  --storage-mode acl-enabled
 )
 
 mkdir -p "$LOG_DIR"

@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Offline, no-Docker contract test for the two native Nextcloud prerequisites.
 #
-# Recordings live in a Team folder whose broad read mount is the virtual
-# `everyone` group, so the substrate needs two PHP apps an ExApp cannot install
-# for itself: `groupfolders` and `group_everyone`. Since D-554 neither is
-# optional — there is no mode that serves recordings without them — and since
-# PR #171 a missing `everyone` group makes the provisioner return BEFORE the
-# Team folder is created, which is a silent no-op rather than a visible error.
+# In the ACCESS-CONTROLLED storage model, recordings live in a Team folder whose
+# broad read mount is the virtual `everyone` group, so the substrate needs two
+# PHP apps an ExApp cannot install for itself: `groupfolders` and
+# `group_everyone`. A missing `everyone` group makes the provisioner return
+# BEFORE the Team folder is created (PR #171), which is a silent no-op rather
+# than a visible error — hence a contract test rather than a runtime check.
+#
+# What changed in D-616: those apps are prerequisites of a MODE, not of Cassini.
+# The default model needs neither. So this file can no longer assert that
+# bootstrap installs them unconditionally — it asserts that bootstrap installs
+# them on the access-controlled path and is ABLE to skip them otherwise, which
+# is the property the storage-mode dimension added.
 #
 # The bootstrap assertion here is the one real check rescued from
 # test-exapp-access-control.sh, which was deleted with the
@@ -22,7 +28,8 @@ MANIFEST="$ROOT/appinfo/info.xml"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# 1. The harness must provide both apps before the enabled edge fires.
+# 1. The harness must still be able to provide both apps before the enabled edge
+#    fires — that is what every access-controlled e2e assertion rests on.
 for app in groupfolders group_everyone; do
   grep -qF "app:install $app" "$BOOTSTRAP" \
     || fail "bootstrap does not install required Nextcloud app $app"
@@ -30,10 +37,30 @@ for app in groupfolders group_everyone; do
     || fail "bootstrap does not enable required Nextcloud app $app"
 done
 
+# 1b. ...and it must be able NOT to. A stack asked for the default model, or for
+#     no storage scaffold at all, must not be failed for their absence — that is
+#     the state a production Nextcloud is in before anybody sets Cassini up, and
+#     being able to stand it up is the point of the dimension.
+#
+#     Asserted on the predicates rather than on the surrounding shell, because
+#     the shape of the conditional is not the contract; what is required is that
+#     the required-app check consults them at all.
+grep -q 'harness_storage_mode_is_acl' "$BOOTSTRAP" \
+  || fail "bootstrap requires the prerequisite apps unconditionally; --storage-mode default must not be failed for their absence"
+grep -q 'harness_skip_storage_scaffold' "$BOOTSTRAP" \
+  || fail "bootstrap does not honour --debug-skip-storage-scaffold"
+grep -q 'local -a required_apps=(spreed)' "$BOOTSTRAP" \
+  || fail "the hard-required app list is no longer just spreed; the other two are one mode's prerequisites"
+
 # 2. The sandbox is a dogfood instance people keep real recordings on, so its
 #    enable is HARD — no `|| true`. bootstrap.sh only tries; a throwaway test
 #    stack can survive a miss, a dogfood box cannot. Since the AIO rewrite
 #    (D-515) the sandbox is wired by wire-cassini.sh, not deploy.sh.
+#
+#    The dogfood box runs the ACCESS-CONTROLLED model and says so explicitly
+#    (see 2b). Switching it to the default model would move its archive and make
+#    every recording readable by every account on the instance, so the mode is
+#    declared rather than left to a fallback.
 for app in groupfolders group_everyone; do
   # ${app} braced: bare "$app[" reads as an array subscript to shellcheck (SC1087),
   # and the bracket here opens a POSIX character class, not an index.
