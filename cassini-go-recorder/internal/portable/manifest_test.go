@@ -202,3 +202,51 @@ func TestPackTranscriptsRefusesToWriteAWithdrawnReadableCleanupEntry(t *testing.
 		t.Errorf("error should name the unknown role, got %v", err)
 	}
 }
+
+// The build records decoder-hint provenance; the packer must carry it into the
+// published file. Dropping it here would be worse than never recording it: an
+// operator would see a build log claiming hints were applied and a published
+// meeting that cannot corroborate it.
+func TestProcessingStepCarriesHintsThroughTheWire(t *testing.T) {
+	buildManifestJSON := []byte(`{
+	  "speechToText": {
+	    "backend": "sherpa-onnx",
+	    "model": "parakeet-tdt-0.6b-v3",
+	    "hints": {"termCount": 12, "score": 2, "decodingMethod": "modified_beam_search", "applied": true}
+	  }
+	}`)
+	var prov Provenance
+	if err := json.Unmarshal(buildManifestJSON, &prov); err != nil {
+		t.Fatalf("decode build provenance: %v", err)
+	}
+	if prov.SpeechToText == nil || prov.SpeechToText.Hints == nil {
+		t.Fatal("hints were dropped decoding the build manifest")
+	}
+	if got := prov.SpeechToText.Hints; got.TermCount != 12 || !got.Applied || got.DecodingMethod != "modified_beam_search" {
+		t.Fatalf("hints decoded wrongly: %+v", got)
+	}
+
+	round, err := json.Marshal(prov)
+	if err != nil {
+		t.Fatalf("re-encode: %v", err)
+	}
+	if !strings.Contains(string(round), `"hints"`) || !strings.Contains(string(round), `"termCount":12`) {
+		t.Errorf("hints did not survive the round-trip: %s", round)
+	}
+}
+
+// An unapplied record must survive too. That is the case an operator most needs
+// to see, because it is the one where the setting they configured did nothing.
+func TestProcessingStepCarriesUnappliedHints(t *testing.T) {
+	var prov Provenance
+	if err := json.Unmarshal([]byte(`{"speechToText":{"backend":"sherpa-onnx","hints":{"termCount":3,"applied":false,"reason":"no bpe.vocab"}}}`), &prov); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	round, err := json.Marshal(prov)
+	if err != nil {
+		t.Fatalf("re-encode: %v", err)
+	}
+	if !strings.Contains(string(round), `"applied":false`) || !strings.Contains(string(round), "no bpe.vocab") {
+		t.Errorf("the unapplied reason was lost: %s", round)
+	}
+}

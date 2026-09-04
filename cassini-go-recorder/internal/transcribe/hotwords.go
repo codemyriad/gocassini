@@ -114,6 +114,14 @@ func NormalizeVocabulary(terms []string) []string {
 		if term == "" || len([]rune(term)) > maxVocabularyTermRunes {
 			continue
 		}
+		// sherpa reads a trailing whitespace-separated token beginning with ":"
+		// as a per-phrase boost, so "Alice :100000" would silently override the
+		// score this build recorded, and a bare ":2" would contribute no phrase
+		// at all while still being counted. Neither is a spelling, so drop the
+		// term rather than letting glossary text steer the decoder's grammar.
+		if fields := strings.Fields(term); strings.HasPrefix(fields[len(fields)-1], ":") {
+			continue
+		}
 		key := strings.ToLower(term)
 		if _, ok := seen[key]; ok {
 			continue
@@ -194,6 +202,11 @@ func resolveDecoder(workDir string, terms []string, paths ModelPaths) (*DecoderC
 		return cfg, nil, nil
 	}
 	if envBool(envHintsDisabled) {
+		// The kill switch restores the previous decoder as well as dropping the
+		// hotwords. Turning biasing off while leaving beam search on would give
+		// an operator no way back to the output they had before, which is the
+		// one thing a kill switch has to be able to do.
+		cfg = &DecoderConfig{Method: decodingGreedySearch}
 		return cfg, &HintsProvenance{
 			TermCount:      len(terms),
 			DecodingMethod: cfg.Method,

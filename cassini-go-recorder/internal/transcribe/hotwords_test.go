@@ -201,3 +201,31 @@ func transducerPaths(t *testing.T) ModelPaths {
 	}
 	return ModelPaths{EncoderFile: filepath.Join(dir, "encoder.onnx"), TokensFile: tokens, BpeVocabFile: vocab}
 }
+
+// sherpa parses a trailing ":n" token as a per-phrase boost, so glossary text
+// must not be able to reach that grammar. A term ending in one is dropped: it
+// is not a spelling, and honouring it would let the vocabulary silently
+// override the score this build recorded in provenance.
+func TestNormalizeVocabularyRejectsHotwordScoreSyntax(t *testing.T) {
+	got := NormalizeVocabulary([]string{"Alice :100000", ":2", "Librocco", "Aire Spaces"})
+	if len(got) != 2 || got[0] != "Librocco" || got[1] != "Aire Spaces" {
+		t.Fatalf("got %v, want the two ordinary terms only", got)
+	}
+}
+
+// The kill switch has to be able to restore the output an operator had before
+// this feature existed. Dropping the hotwords but leaving beam search on would
+// leave them with a third behaviour and no way back.
+func TestHintsDisabledSwitchAlsoRestoresGreedySearch(t *testing.T) {
+	t.Setenv(envHintsDisabled, "1")
+	dec, prov, err := resolveDecoder(t.TempDir(), []string{"Librocco"}, transducerPaths(t))
+	if err != nil {
+		t.Fatalf("resolveDecoder: %v", err)
+	}
+	if dec.Method != decodingGreedySearch {
+		t.Errorf("decoder = %q, want the previous greedy search back", dec.Method)
+	}
+	if dec.Biased() || prov == nil || prov.Applied {
+		t.Errorf("hints must be off and recorded as such, got dec=%+v prov=%+v", dec, prov)
+	}
+}

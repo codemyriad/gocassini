@@ -195,6 +195,12 @@ func readPortableTranscriptBodies(tags map[string]string, manifest portable.Mani
 		bodies.WordCounts[entry.ID] = len(body.Items)
 	}
 	for _, entry := range manifest.ReadableTranscripts {
+		// A withdrawn readable-cleanup body is skipped, not decoded. Its shape
+		// is not a words transcript, so validating it would report a perfectly
+		// good legacy file as carrying an unreadable body.
+		if entry.Role == portable.RoleWithdrawnReadableCleanup {
+			continue
+		}
 		_, warnings, err := decodeTranscriptBody(tags, entry)
 		bodies.Warnings = append(bodies.Warnings, warnings...)
 		if err != nil {

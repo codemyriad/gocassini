@@ -341,8 +341,9 @@
           <span class="text-xs text-base-content/60">
             Up to 100 terms and 100 characters per term. Participant display names are supplied
             automatically. A term is only written where the audio already supports it, so this
-            corrects spellings without putting words in anyone's mouth. The <em>fast</em> quality
-            tier cannot use a vocabulary; choose <em>balanced</em> or <em>best</em>.
+            corrects spellings without putting words in anyone's mouth. It needs a transcription
+            model that ships a BPE vocabulary, which the <em>fast</em> tier never does; when a
+            vocabulary cannot be used, the build records that and says why.
           </span>
         </label>
       </section>

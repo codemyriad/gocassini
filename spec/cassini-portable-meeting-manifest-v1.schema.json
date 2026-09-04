@@ -202,7 +202,21 @@
         "baseUrl": { "type": "string" },
         "host": { "type": "string" },
         "source": { "type": "string" },
-        "version": { "type": "string" }
+        "version": { "type": "string" },
+        "hints": { "$ref": "#/$defs/hintsProvenance" }
+      }
+    },
+    "hintsProvenance": {
+      "type": "object",
+      "description": "Decoder biasing applied to a speech-to-text step. Absent means the pass ran unbiased. applied=false with a reason means a vocabulary was configured but could not be used.",
+      "additionalProperties": false,
+      "required": ["termCount", "applied"],
+      "properties": {
+        "termCount": { "type": "integer", "minimum": 0 },
+        "score": { "type": "number" },
+        "decodingMethod": { "type": "string" },
+        "applied": { "type": "boolean" },
+        "reason": { "type": "string" }
       }
     },
     "attributionProvenance": {

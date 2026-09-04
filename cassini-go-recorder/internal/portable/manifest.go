@@ -145,6 +145,22 @@ type ProcessingStep struct {
 	Host     string `json:"host,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Version  string `json:"version,omitempty"`
+	// Hints records decoder biasing for a speech-to-text step. It mirrors the
+	// build manifest's shape field for field so the packer can carry it into
+	// the published file by plain JSON round-trip. Without this the record
+	// would be written by the build and then silently dropped at pack time,
+	// which is worse than not recording it at all.
+	Hints *HintsProvenance `json:"hints,omitempty"`
+}
+
+// HintsProvenance says what decoder biasing a speech-to-text pass actually
+// applied, and when it could not, why. Absent means the pass ran unbiased.
+type HintsProvenance struct {
+	TermCount      int     `json:"termCount"`
+	Score          float32 `json:"score,omitempty"`
+	DecodingMethod string  `json:"decodingMethod,omitempty"`
+	Applied        bool    `json:"applied"`
+	Reason         string  `json:"reason,omitempty"`
 }
 
 type Meeting struct {

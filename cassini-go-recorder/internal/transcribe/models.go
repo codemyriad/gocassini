@@ -257,7 +257,12 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 	if !modelDirValid(modelDir, required) {
 		return ModelPaths{}, fmt.Errorf("model %s is still incomplete after download", id)
 	}
-	return paths, nil
+	// Re-resolve after the download. The paths above were computed against an
+	// empty directory, and BpeVocabFile is set only when the file is actually
+	// on disk, so returning the pre-download value would leave the first build
+	// after a fetch believing the bundle has no BPE vocabulary and decoding
+	// unbiased, while every later build sees the same file and uses it.
+	return resolveModelPaths(modelDir, spec), nil
 }
 
 // modelLockWait bounds how long one build waits for another process to finish

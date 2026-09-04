@@ -207,6 +207,11 @@ it. Display entries also require it and name the words transcript they came
 from. When switching words transcripts, consumers should
 use only a derived entry whose source id matches the newly selected entry.
 
+A speech-to-text step may carry a `hints` record describing the decoder biasing
+that ran. It is absent when the pass ran unbiased; `applied: false` with a
+`reason` means a vocabulary was configured but could not be used, which is a
+different thing from no vocabulary at all and must not be reported as success.
+
 Processing provenance is keyed by transcript id:
 
 ```json
