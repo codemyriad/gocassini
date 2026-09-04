@@ -15,19 +15,19 @@ func readyProbe() ncStorageProbe {
 			{Name: ncAppGroupFolders, State: ncPrerequisiteEnabled},
 			{Name: ncAppEveryoneGroup, State: ncPrerequisiteEnabled},
 		},
-		NativeApps:     true,
-		ServiceAccount: true,
-		OwnerGroup:     true,
-		EveryoneGroup:  true,
-		Folder:         gfFolder{ID: "7", MountPoint: ncRecordingsMount, ACL: true},
-		FolderProbed:   true,
-		FolderPresent:  true,
-		FolderMounted:  true,
-		ACLEnabled:     true,
-		EveryoneRead:   true,
-		OwnerAll:       true,
-		OwnerManages:   true,
-		RecordingsRoot: true,
+		NativeApps:        true,
+		ServiceAccount:    true,
+		OwnerGroup:        true,
+		EveryoneGroup:     true,
+		Folder:            gfFolder{ID: "7", MountPoint: ncRecordingsMount, ACL: true},
+		FolderProbed:      true,
+		FolderPresent:     true,
+		FolderMounted:     true,
+		ACLEnabled:        true,
+		EveryoneRead:      true,
+		OwnerAll:          true,
+		OwnerManages:      true,
+		ACLRecordingsRoot: true,
 	}
 }
 
@@ -66,7 +66,7 @@ func TestAccessControlIsNotReadyWhenAnythingIsMissing(t *testing.T) {
 			p.OwnerAll = false
 			p.ACLEnabled = false
 			p.OwnerManages = false
-			p.RecordingsRoot = false
+			p.ACLRecordingsRoot = false
 		}},
 		{"Cassini/Recordings is a private home tree, not a Team folder", func(p *ncStorageProbe) {
 			p.FolderPresent = false
@@ -75,7 +75,7 @@ func TestAccessControlIsNotReadyWhenAnythingIsMissing(t *testing.T) {
 			p.OwnerAll = false
 			p.ACLEnabled = false
 			p.OwnerManages = false
-			p.PrivateRoot = true
+			p.DefaultRecordingsRoot = true
 		}},
 		{"no everyone group", func(p *ncStorageProbe) { p.EveryoneGroup = false }},
 		{"advanced ACL is off", func(p *ncStorageProbe) { p.ACLEnabled = false }},
@@ -167,60 +167,74 @@ func TestDefaultModeNeedsOnlyTheServiceAccount(t *testing.T) {
 	}
 }
 
-// Running in default mode with a mounted Team folder is the mismatch that has
-// to be caught: the mount wins the canonical path, so every write the default
-// model believes it is making into a private home lands inside the shared
-// folder instead (measured, D-660).
-func TestSanityCatchesDefaultModeUnderAMountedTeamFolder(t *testing.T) {
+// A mounted `Cassini` Team folder is no longer a reason to refuse the default
+// mode. It was, when both models addressed `Cassini/Recordings`: the mount won
+// that path, so every write the default model believed it was making into a
+// private home landed inside the shared folder instead (measured, D-660).
+//
+// Since the roots were split it is not merely harmless, it is the ORDINARY
+// state: an opt-out empties the Team folder and leaves it mounted, so refusing
+// here would make every opted-out instance permanently unable to publish.
+func TestDefaultModeToleratesAMountedTeamFolder(t *testing.T) {
 	probe := readyProbe()
+	if probe.FolderMounted != true {
+		t.Fatal("the fixture is supposed to have a mounted Team folder")
+	}
+	if ok, step, detail := probe.sanity(false); !ok {
+		t.Fatalf("sanity(default) = false (%s: %s) with an emptied Team folder still mounted at %q", step, detail, ncRecordingsMount)
+	}
+}
+
+// The one mount that DOES disqualify the default model is one over its own root.
+// Nothing Cassini does creates it, but the model's whole safety argument is
+// "this tree is private", and that claim is worth checking rather than assuming.
+func TestSanityCatchesATeamFolderOverTheDefaultRoot(t *testing.T) {
+	probe := readyProbe()
+	probe.DefaultRootShadowed = true
 
 	ok, step, detail := probe.sanity(false)
 	if ok {
-		t.Fatal("sanity(default) = true while a Cassini Team folder is mapped to a group")
+		t.Fatalf("sanity(default) = true while a Team folder is mounted at %q", ncDefaultRecordingsMount)
 	}
-	if !strings.HasPrefix(step, storageStepModeMismatch) {
-		t.Fatalf("step = %q, want a %q-prefixed step", step, storageStepModeMismatch)
+	if step != storageStepModeMismatch+":"+storageStepDefaultRootShadowed {
+		t.Fatalf("step = %q, want %q", step, storageStepModeMismatch+":"+storageStepDefaultRootShadowed)
 	}
-	if !strings.Contains(detail, ncRecordingsMount) {
+	if !strings.Contains(detail, ncDefaultRecordingsMount) {
 		t.Fatalf("detail %q does not name the folder that is in the way", detail)
 	}
 
-	// The same instance passes once nothing is mounted over the path.
-	probe.FolderMounted = false
+	probe.DefaultRootShadowed = false
 	if ok, step, detail := probe.sanity(false); !ok {
-		t.Fatalf("sanity(default) = false (%s: %s) with no mount in the way", step, detail)
+		t.Fatalf("sanity(default) = false (%s: %s) with nothing over the default root", step, detail)
 	}
 }
 
-// The default model's safety rests on nothing being mounted over the canonical
-// path. "We could not look" is not evidence of that, and treating it as such is
-// how an access-controlled archive gets served to everybody: the probe skips
-// the Team-folder read, FolderMounted stays false, sanity passes, and the read
-// proxy switches to reading as the owner.
-func TestSanityRefusesDefaultModeWhenTheFolderCouldNotBeLookedAt(t *testing.T) {
+// An unanswerable folder list no longer disqualifies the default model, and the
+// asymmetry is the point. The first pass had to refuse, because the question was
+// about `Cassini` — a path the access-controlled model legitimately mounts, so
+// "we could not look" could be hiding an access-controlled archive that reading
+// as the owner would hand to everybody. The question is now about
+// `CassiniNoACL`, which nothing legitimately mounts, so an unasked question is
+// not evidence of a hazard — and treating it as one would blank a working
+// archive every time Nextcloud hiccuped.
+func TestDefaultModeSurvivesAFolderListItCouldNotRead(t *testing.T) {
 	probe := ncStorageProbe{AdminUser: "admin", ServiceAccount: true, FolderProbed: false}
-
-	ok, step, detail := probe.sanity(false)
-	if ok {
-		t.Fatal("sanity(default) = true without ever answering whether a Team folder is mounted")
-	}
-	if step != storageStepModeMismatch+":"+storageStepFolderUnknown {
-		t.Fatalf("step = %q, want %q", step, storageStepModeMismatch+":"+storageStepFolderUnknown)
-	}
-	if !strings.Contains(detail, ncRecordingsMount) {
-		t.Fatalf("detail %q does not name what could not be checked", detail)
+	if ok, step, detail := probe.sanity(false); !ok {
+		t.Fatalf("sanity(default) = false (%s: %s) merely because the Team-folder list could not be read", step, detail)
 	}
 }
 
-// Switching INTO default mode is exactly the operation that clears a mounted
-// folder, so it must not be refused by the mount it is about to remove.
-func TestSanityForTargetDoesNotBlockTheOptOutOnItsOwnPrecondition(t *testing.T) {
+// Switching INTO default mode asks the same question as running in it, since
+// the split. The two entry points are kept apart anyway, because the asymmetry
+// was load-bearing in the first pass and losing the distinction silently is how
+// it would come back wrong.
+func TestSanityForTargetAgreesWithSanityForTheDefaultMode(t *testing.T) {
 	probe := readyProbe()
 	if ok, step, detail := probe.sanityForTarget(false); !ok {
-		t.Fatalf("sanityForTarget(default) = false (%s: %s) — the opt-out cannot be blocked by the mount it removes", step, detail)
+		t.Fatalf("sanityForTarget(default) = false (%s: %s)", step, detail)
 	}
-	if ok, _, _ := probe.sanity(false); ok {
-		t.Fatal("sanity(default) must still refuse to RUN in default mode under a mounted folder")
+	if ok, _, _ := probe.sanity(false); !ok {
+		t.Fatal("sanity(default) disagreed with sanityForTarget(default)")
 	}
 }
 

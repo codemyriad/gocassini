@@ -29,7 +29,7 @@ func setStorageMode(t *testing.T, accessControlled bool) string {
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
 	ncStorage.setPath(path)
-	ncStorage.set(accessControlled, storageModeSourceConfigured)
+	ncStorage.set(accessControlled, storageModeSourceConfigured, true)
 	return path
 }
 
@@ -63,7 +63,7 @@ func TestStorageSettingsAbsentFileIsNotADecision(t *testing.T) {
 func TestStorageSettingsRoundTripBothValues(t *testing.T) {
 	for _, want := range []bool{true, false} {
 		path := filepath.Join(t.TempDir(), storageSettingsFileName)
-		if err := SaveStorageSettings(path, want, storageModeSourceUser); err != nil {
+		if err := SaveStorageSettings(path, want, storageModeSourceUser, true); err != nil {
 			t.Fatalf("SaveStorageSettings(%t) error = %v", want, err)
 		}
 		settings, err := LoadStorageSettings(path)
@@ -104,7 +104,7 @@ func TestStorageSettingsRefusesAnUnparseableFile(t *testing.T) {
 func TestStorageSettingsSaveIsAtomicAndLeavesNoTempFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, storageSettingsFileName)
-	if err := SaveStorageSettings(path, true, storageModeSourceUser); err != nil {
+	if err := SaveStorageSettings(path, true, storageModeSourceUser, true); err != nil {
 		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
@@ -133,7 +133,7 @@ func TestUnresolvedStorageModeFailsClosed(t *testing.T) {
 
 func TestResolvedStorageModeIsReportedVerbatim(t *testing.T) {
 	resetStorageMode(t)
-	ncStorage.set(false, storageModeSourceDefault)
+	ncStorage.set(false, storageModeSourceDefault, true)
 
 	accessControlled, resolved := ncStorage.mode()
 	if !resolved || accessControlled {
@@ -221,7 +221,7 @@ func TestStorageModeFromEnvKeepsAnUnknownValueForTheErrorMessage(t *testing.T) {
 func TestSourceIsRecordedForEveryWayAModeCanBeDecided(t *testing.T) {
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
 	for _, source := range []string{storageModeSourceUser, storageModeSourceEnv, storageModeSourceDefault, "derived", ""} {
-		if err := SaveStorageSettings(path, true, source); err != nil {
+		if err := SaveStorageSettings(path, true, source, true); err != nil {
 			t.Fatalf("SaveStorageSettings(%q) error = %v", source, err)
 		}
 		got, err := LoadStorageSettings(path)
@@ -234,5 +234,61 @@ func TestSourceIsRecordedForEveryWayAModeCanBeDecided(t *testing.T) {
 		if !got.Configured() || !got.AccessControlled() {
 			t.Errorf("source %q changed how the flag reads: %+v", source, got)
 		}
+	}
+}
+
+// --- migration_clean -----------------------------------------------------------
+
+// Absent means SETTLED. Every storage_settings.json written before this field
+// existed describes an install that is not mid-migration, and reading those as
+// unsettled would offer every upgrading instance a cleanup it does not need —
+// one that DELETES from a root, which is not a button to arm on a guess.
+func TestStorageSettingsAbsentMigrationCleanReadsAsSettled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	if err := os.WriteFile(path, []byte(`{"access_control_enabled":true,"source":"user"}`), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	settings, err := LoadStorageSettings(path)
+	if err != nil {
+		t.Fatalf("LoadStorageSettings() error = %v", err)
+	}
+	if settings.MigrationClean != nil {
+		t.Fatalf("MigrationClean = %v, want absent", *settings.MigrationClean)
+	}
+	if !settings.Clean() {
+		t.Fatal("a file with no migration_clean read as an unfinished migration")
+	}
+}
+
+func TestStorageSettingsMigrationCleanRoundTrips(t *testing.T) {
+	for _, clean := range []bool{true, false} {
+		path := filepath.Join(t.TempDir(), storageSettingsFileName)
+		if err := SaveStorageSettings(path, true, storageModeSourceUser, clean); err != nil {
+			t.Fatalf("SaveStorageSettings(clean=%t) error = %v", clean, err)
+		}
+		settings, err := LoadStorageSettings(path)
+		if err != nil {
+			t.Fatalf("LoadStorageSettings() error = %v", err)
+		}
+		if settings.Clean() != clean {
+			t.Fatalf("Clean() = %t, want %t", settings.Clean(), clean)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile() error = %v", err)
+		}
+		if !strings.Contains(string(raw), `"migration_clean"`) {
+			t.Fatalf("%s does not name the flag an administrator would read:\n%s", storageSettingsFileName, raw)
+		}
+	}
+}
+
+// An unresolved process reports settled. Nothing has migrated, so there is
+// nothing to finish — and offering a cleanup would DELETE from a root chosen on
+// the strength of a mode nobody has decided.
+func TestUnresolvedStorageModeReportsSettled(t *testing.T) {
+	resetStorageMode(t)
+	if !ncStorage.migrationClean() {
+		t.Fatal("an unresolved mode reported an unfinished migration")
 	}
 }

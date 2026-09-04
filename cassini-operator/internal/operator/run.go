@@ -315,9 +315,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	ncStorage.setPath(storageSettingsPath(cfg))
 	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
 		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
-		ncStorage.set(true, storageModeSourceConfigured)
+		// Clean: an unreadable file is not evidence of a half-done migration.
+		ncStorage.set(true, storageModeSourceConfigured, true)
 	} else if settings.Configured() {
-		ncStorage.set(settings.AccessControlled(), storageModeSourceConfigured)
+		ncStorage.set(settings.AccessControlled(), storageModeSourceConfigured, settings.Clean())
 		logger.Printf("storage_mode -> %s (recorded, source=%s)", settings.Mode(), settings.Source)
 	} else if declared, ok, raw := storageModeFromEnv(os.Getenv); ok {
 		// Declared but not yet recorded: the first enabled edge will persist it.

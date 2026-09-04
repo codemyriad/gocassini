@@ -31,9 +31,9 @@ import (
 //	   │                            exists?                          cassini manages?
 //	   └───────────────────────────────────┼───────────────────────────────┘
 //	                                       ▼
-//	                          Cassini/Recordings as `cassini`
-//	                          (a private home tree only when no
-//	                           Team folder is mounted over it)
+//	                    Cassini/Recordings          (in the Team folder)
+//	                    CassiniNoACL/Recordings     (the private home tree)
+//	                    both read as `cassini`; they cannot shadow each other
 //
 // Every call here is a GET or a PROPFIND. Nothing is created, nothing is
 // mapped, nothing is PROPPATCHed. That is the first-pass contract: the
@@ -87,15 +87,37 @@ type ncStorageProbe struct {
 	OwnerAll      bool
 	OwnerManages  bool
 
-	// RecordingsRoot is true when Cassini/Recordings is reachable as the
-	// service account, whichever storage it resolves to.
-	RecordingsRoot bool
-	// PrivateRoot is true when that root is the service account's OWN
-	// directory rather than a mounted Team folder. There is no property to read
-	// for this: a mounted Team folder wins the canonical path and the home
-	// directory of the same name is renamed out of the way by the server (D-660
-	// bench), so "reachable, and nothing is mounted over it" IS the test.
-	PrivateRoot bool
+	// DefaultRootShadowed is true when a Team folder is mounted over the DEFAULT
+	// model's own root — the one thing that could stop `CassiniNoACL/Recordings`
+	// being the service account's private directory.
+	//
+	// It should never be true. Cassini never creates a folder there and nothing
+	// suggests one; it exists because the default model's entire safety argument
+	// is "this tree is private", and that claim is worth checking rather than
+	// assuming. Note the asymmetry with the first pass: the check used to be
+	// about `Cassini`, which the access-controlled model legitimately mounts, so
+	// an unanswered question had to be treated as dangerous. Nothing legitimately
+	// mounts anything here, so an unanswered question is not evidence of a
+	// hazard — see ncStorageServesAsOwner.
+	DefaultRootShadowed bool
+
+	// ACLRecordingsRoot is true when the access-controlled archive's meetings
+	// collection is reachable as the service account, and ACLArchiveMeetings is
+	// how many recordings are in it.
+	//
+	// The COUNT is what makes the upgrade latch possible. An access-controlled
+	// install that upgrades into this build has nothing recorded, falls back to
+	// `default`, and — since the roots no longer collide — would find nothing in
+	// its way and quietly start publishing into a fresh empty private tree while
+	// its real archive sat unread in the Team folder. Knowing the Team folder
+	// still holds recordings is what turns that into a refusal.
+	ACLRecordingsRoot  bool
+	ACLArchiveMeetings int
+	// DefaultRecordingsRoot and DefaultArchiveMeetings are the same pair for the
+	// default model's own root. Its absence is not a fault: the tree is created
+	// on demand by the preflight.
+	DefaultRecordingsRoot  bool
+	DefaultArchiveMeetings int
 }
 
 // prereqEnabled reports whether one native app was positively reported as
@@ -136,10 +158,18 @@ const (
 	storageStepFolderACL      = "group_folder_acl"
 	storageStepFolderManager  = "group_folder_manager"
 	// storageStepFolderUnknown means the Team-folder question could not be
-	// answered. Under the default model that is disqualifying rather than
-	// merely unfortunate: the model's safety rests on nothing being mounted
-	// over the canonical path, and "we could not look" is not evidence of that.
+	// answered. Still reported, but it is no longer disqualifying for the DEFAULT
+	// model: since the two models have separate roots, whether a `Cassini` Team
+	// folder exists says nothing about whether `CassiniNoACL/Recordings` is
+	// private.
 	storageStepFolderUnknown = "group_folder_unknown"
+	// storageStepDefaultRootShadowed means a Team folder is mounted over the
+	// default model's own root, which is the one thing that could stop it being
+	// the service account's private directory. It replaces the first pass's
+	// `group_folder_mount`, which fired whenever the ACCESS-CONTROLLED model's
+	// folder was mounted — a state that is now perfectly ordinary, because an
+	// opt-out leaves that folder in place, emptied.
+	storageStepDefaultRootShadowed = "default_root_shadowed"
 	// storageStepModeMismatch means the recorded mode and the storage disagree.
 	// Nothing is missing; the two just are not the same thing, and writing
 	// under that disagreement is how recordings end up somewhere nobody is
@@ -210,13 +240,17 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 		// an answer, and it is the one that makes a deps-free instance usable.
 		probe.FolderProbed = true
 	default:
-		folder, ok, err := c.findFolder(ctx, client, ncRecordingsMount)
+		// One listing, two questions. The access-controlled model's `Cassini`
+		// folder, and whether anything at all has been mounted over the default
+		// model's own root — asking twice would cost two round trips and could
+		// return two answers that disagree.
+		folders, err := c.listFolders(ctx, client, ncRecordingsMount)
 		if err != nil {
 			logger.Printf("nc storage: list Team folders: %v", err)
 			break
 		}
 		probe.FolderProbed = true
-		if ok {
+		if folder, ok := lowestIDMatch(folders, ncRecordingsMount); ok {
 			probe.Folder = folder
 			probe.FolderPresent = true
 			probe.ACLEnabled = folder.ACL
@@ -227,18 +261,29 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 			probe.FolderMounted = folder.anyGroupMapped()
 			probe.OwnerManages = folder.hasManager("user", ncRecordingsOwner)
 		}
+		if shadow, ok := lowestIDMatch(folders, ncDefaultRecordingsMount); ok {
+			probe.DefaultRootShadowed = shadow.anyGroupMapped()
+		}
 	}
 
-	// The one WebDAV read. It answers as the service account, so an instance
-	// where the account does not exist would only get a 401 — skip it and let
-	// the missing account be the diagnosis.
+	// Two WebDAV reads, one per model's root. They answer as the service account,
+	// so an instance where the account does not exist would only get a 401 — skip
+	// them and let the missing account be the diagnosis.
 	if probe.ServiceAccount {
-		_, visible, err := c.davPropfindNames(ctx, client, ncRecordingsOwner, ncRecordingsRoot)
-		if err != nil {
-			logger.Printf("nc storage: inspect %s as %q: %v", ncRecordingsRoot, ncRecordingsOwner, err)
+		// The meetings collection rather than the root, because the interesting
+		// question about the other model's tree is not "does it exist" but "does
+		// it still hold recordings" — see ACLArchiveMeetings.
+		if names, visible, err := c.davPropfindNames(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/meetings"); err != nil {
+			logger.Printf("nc storage: inspect %s as %q: %v", ncACLRecordingsRoot, ncRecordingsOwner, err)
 		} else {
-			probe.RecordingsRoot = visible
-			probe.PrivateRoot = visible && !probe.FolderMounted
+			probe.ACLRecordingsRoot = visible
+			probe.ACLArchiveMeetings = len(names)
+		}
+		if names, visible, err := c.davPropfindNames(ctx, client, ncRecordingsOwner, ncDefaultRecordingsRoot+"/meetings"); err != nil {
+			logger.Printf("nc storage: inspect %s as %q: %v", ncDefaultRecordingsRoot, ncRecordingsOwner, err)
+		} else {
+			probe.DefaultRecordingsRoot = visible
+			probe.DefaultArchiveMeetings = len(names)
 		}
 	}
 	return probe, nil
@@ -299,6 +344,51 @@ func (p ncStorageProbe) defaultReady() (ok bool, step, detail string) {
 	return true, "", ""
 }
 
+// strandedArchiveMeetings reports how many recordings are sitting in the model
+// that is NOT in force. Zero is the ordinary answer.
+func (p ncStorageProbe) strandedArchiveMeetings(accessControlled bool) int {
+	if accessControlled {
+		return p.DefaultArchiveMeetings
+	}
+	// Only a MOUNTED Team folder counts. An unmounted one is not reachable by
+	// anybody, including the switch that would carry its contents across, so
+	// reporting it would offer an action that cannot work.
+	if !p.FolderMounted {
+		return 0
+	}
+	return p.ACLArchiveMeetings
+}
+
+// storageStepStrandedACLArchive names the upgrade latch: this instance fell back
+// to the default model because nothing had recorded one, but its Team folder
+// still holds recordings — so it is almost certainly an access-controlled
+// install that has never been told which model it is in.
+const storageStepStrandedACLArchive = "access_controlled_archive"
+
+// unclaimedAccessControlledArchive reports whether a FALLBACK default mode would
+// strand an existing access-controlled archive.
+//
+// This is the upgrade latch, and it is the one thing the path split took away
+// that had to be put back. In the first pass the latch was free: both models
+// wanted `Cassini/Recordings`, so an access-controlled install falling back to
+// `default` found its own Team folder in the way and refused. With separate
+// roots nothing is in the way — the fallback would find an empty private tree,
+// report itself healthy, and publish into it while every existing recording sat
+// unread in the Team folder. No disclosure, but a silently vanished archive,
+// which is not a better failure.
+//
+// It applies ONLY to the fallback. A recorded or declared `default` on an
+// instance whose Team folder still holds recordings is an administrator's
+// decision plus a tidy-up (see migration_clean), not a misconfiguration.
+func (p ncStorageProbe) unclaimedAccessControlledArchive() (bool, string) {
+	if !p.FolderMounted || p.ACLArchiveMeetings == 0 {
+		return false, ""
+	}
+	return true, fmt.Sprintf(
+		"nothing has recorded which storage mode this instance uses, so Cassini fell back to %q — but the %q Team folder still holds %d recording(s), which the default mode does not read. This is what an access-controlled installation looks like to a Cassini that has not been told: turn access control on in the Setup tab, or set %s=%s and re-enable the app. If this instance really is meant to be open, switch to the default mode from the Setup tab and Cassini will copy those recordings across",
+		storageModeDefault, ncRecordingsMount, p.ACLArchiveMeetings, envStorageMode, storageModeAccessControlled)
+}
+
 func missingServiceAccountDetail() string {
 	return fmt.Sprintf(
 		"the %q service account does not exist; every recording is written and read as it, so nothing can be stored without it — create it with `occ group:add %s` and `occ user:add --group=%s %s`",
@@ -323,14 +413,21 @@ func missingServiceAccountDetail() string {
 //
 //	access controlled, not ready   something the model needs is missing. The
 //	                               step names it and the detail says what to run.
-//	default, but mounted           nothing is missing — there is a `Cassini`
-//	                               Team folder mapped to a group, so it wins the
-//	                               canonical path and every write the default
-//	                               model makes lands inside the shared folder
-//	                               instead of the service account's own home
-//	                               (measured, D-660). Publishing under that
-//	                               belief puts recordings somewhere the read
-//	                               path is not looking.
+//	default, root shadowed         nothing is missing — but a Team folder is
+//	                               mounted over `CassiniNoACL`, which is the one
+//	                               thing that could stop the default model's tree
+//	                               being private. A mounted Team folder wins the
+//	                               path and the home directory of the same name
+//	                               is renamed out of the way (measured, D-660),
+//	                               so writes would land in a shared folder and
+//	                               owner-identity reads would serve it to
+//	                               everybody.
+//
+// What is deliberately NOT a mismatch any more: a mounted `Cassini` Team folder
+// while the default model is in force. The first pass had to refuse there,
+// because both models addressed that path. They no longer do — and an emptied
+// `Cassini` folder left mounted is exactly what a completed opt-out looks like,
+// so refusing would make every opted-out instance permanently unpublishable.
 func (p ncStorageProbe) sanity(accessControlled bool) (ok bool, step, detail string) {
 	if accessControlled {
 		return p.accessControlReady()
@@ -338,21 +435,11 @@ func (p ncStorageProbe) sanity(accessControlled bool) (ok bool, step, detail str
 	if ready, step, detail := p.defaultReady(); !ready {
 		return false, step, detail
 	}
-	if !p.FolderProbed {
-		// Refusing here is what keeps an unanswered question from being read as
-		// a clean bill of health. The default model serves the whole archive as
-		// its owner, so "no Team folder is in the way" has to be something we
-		// KNOW, not something we failed to disprove.
-		return false, storageStepModeMismatch + ":" + storageStepFolderUnknown,
+	if p.DefaultRootShadowed {
+		return false, storageStepModeMismatch + ":" + storageStepDefaultRootShadowed,
 			fmt.Sprintf(
-				"Cassini could not determine whether a %q Team folder is mounted over %q, so it will not assume there is none — a mounted folder would put recordings somewhere the default mode is not looking. Check that Nextcloud is answering and re-enable Cassini",
-				ncRecordingsMount, ncRecordingsRoot)
-	}
-	if p.FolderMounted {
-		return false, storageStepModeMismatch + ":" + storageStepFolderMount,
-			fmt.Sprintf(
-				"access control is off, but a %q Team folder is still mapped to a group. A mounted Team folder wins the %q path, so recordings would be written into the shared folder rather than %q's own home. This is also what an access-controlled installation looks like to a Cassini that has not been told which mode it is in: if that is this instance, turn access control on in the Setup tab, or set %s=%s and re-enable the app. Otherwise unmap the Team folder's groups (`occ groupfolders:group <id> <group> --delete`) once its recordings have been moved out",
-				ncRecordingsMount, ncRecordingsMount, ncRecordingsOwner, envStorageMode, storageModeAccessControlled)
+				"a Team folder is mounted at %q, which is where the default storage mode keeps its recordings. A mounted Team folder wins that path, so recordings would be written into a shared folder rather than %q's own private tree, and everyone mapped to that folder could read them. Unmap or rename that Team folder (`occ groupfolders:list`, then `occ groupfolders:group <id> <group> --delete`), or turn access control on in the Setup tab if this instance was meant to be access-controlled",
+				ncDefaultRecordingsMount, ncRecordingsOwner)
 	}
 	return true, "", ""
 }
@@ -370,7 +457,9 @@ func summarizeProbe(p ncStorageProbe) string {
 		fmt.Sprintf("team_folder=%t", p.FolderPresent),
 		fmt.Sprintf("mounted=%t", p.FolderMounted),
 		fmt.Sprintf("acl=%t", p.ACLEnabled),
-		fmt.Sprintf("private_root=%t", p.PrivateRoot),
+		fmt.Sprintf("acl_root=%t/%d", p.ACLRecordingsRoot, p.ACLArchiveMeetings),
+		fmt.Sprintf("default_root=%t/%d", p.DefaultRecordingsRoot, p.DefaultArchiveMeetings),
+		fmt.Sprintf("default_root_shadowed=%t", p.DefaultRootShadowed),
 	}
 	return strings.Join(fields, " ")
 }
