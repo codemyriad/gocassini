@@ -639,22 +639,30 @@ fi
 # It used to demand "0 skipped", and that was a coin flip on a live recording.
 # Alice records three stretches here: one sealed by the microphone switch, one
 # sealed by the page reload, one sealed when she leaves the call. The last two
-# end at an abrupt boundary, where the capture's sidecar stamps the segment's
-# window from the call clock while the MediaRecorder's final chunk is still on
-# its way — so the file arrives holding slightly less audio than it declares.
-# The splice leaves out a segment holding under 90% of its declared window
-# (minSegmentDecodedFraction in internal/transcribe/sourceaudio.go; "Abrupt-page
-# tail" in docs/source-audio-capture.md), which is the right thing to do with a
-# file that disagrees with its own manifest, and the recorded track stands there
+# end at an abrupt boundary, and the capture used to stamp the segment's window
+# from the clock either side of the recording rather than from the recording —
+# the end taken after MediaRecorder's onstop and every outstanding chunk
+# hand-off had settled, the start taken before the recorder was constructed. So
+# the file arrived holding less audio than it declared. The splice leaves out a
+# segment holding under 90% of its declared window (minSegmentDecodedFraction in
+# internal/transcribe/sourceaudio.go), which is the right thing to do with a
+# file that disagrees with its own manifest, and the recorded track stood there
 # instead.
 #
-# Measured across seven runs of this leg, Alice's last segment held 86.7% to
-# 96.2% of what it declared — two of the seven under the threshold. Her
-# reload-sealed segment held 93.0% to 94.4%, her switch-sealed one 100%, and
-# Bob's single segment 97.6% to 98.8%: his thirty-odd seconds absorb the same
-# half-second of missing tail that costs Alice's eleven-second segment a tenth
-# of its window. A required check cannot be a coin flip, and the pipeline was
-# not misbehaving on the runs that lost.
+# Measured across seven runs of this leg BEFORE that was fixed, Alice's last
+# segment held 86.7% to 96.2% of what it declared — two of the seven under the
+# threshold. Her reload-sealed segment held 93.0% to 94.4%, her switch-sealed
+# one 100%, and Bob's single segment 97.6% to 98.8%: his thirty-odd seconds
+# absorbed the same half-second of missing tail that cost Alice's eleven-second
+# segment a tenth of its window. A required check cannot be a coin flip, and the
+# pipeline was not misbehaving on the runs that lost.
+#
+# The window is now stamped where the recorder was started and asked to stop
+# (startSegment and stopSegment in cassini-app/src/capture/payload.ts), so the
+# stopping is no longer declared as audio and a healthy departure tail is
+# expected to splice. The tolerated skip stays, because a reload can still lose
+# a real chunk; what changed is ALICE_MIN_PLACED, which is where "the departure
+# tail splices" is actually asserted.
 #
 # So the demand is no longer "nothing was skipped". It is "the splice did its
 # job, and whatever it left out is what the pipeline says it leaves out":
@@ -730,15 +738,23 @@ SPLICE_LINE_REASON='transcribing from participant capture spliced over [0-9]+ ms
 # one holding 10% of it, so without a floor an upload truncated to nothing would
 # arrive wearing a permitted sentence.
 #
-# Seven tenths, and proportional rather than a fixed number of milliseconds,
-# because of where the loss comes from. On a clean stop the capture stamps the
-# segment's end AFTER MediaRecorder's final chunk has been handed over
-# (stopSegment in cassini-app/src/capture/payload.ts), so the shortfall is the
-# stop and the encoder spin-up, not a dropped chunk: it is latency, and latency
-# grows with how loaded the runner is. Measured here it runs 0.4-1.7 s, which on
-# these segments is 4-13% of the window; a fixed cap near that would be a new
-# coin flip on a slow machine, while seven tenths still tolerates four and a half
-# seconds of it and refuses anything that lost a third of its audio.
+# Seven tenths, and proportional rather than a fixed number of milliseconds.
+#
+# It was sized for the stop latency, which is gone: the capture used to stamp
+# the segment's end after MediaRecorder's onstop and every outstanding chunk
+# hand-off had settled, so the stopping itself was declared as audio — measured
+# here 0.4-1.7 s, 4-13% of these segments, growing with how loaded the runner
+# was. It is now stamped where the recorder was asked to stop (stopSegment in
+# cassini-app/src/capture/payload.ts).
+#
+# That is an argument for tightening this and it is refused, because what is
+# left is a WORSE loss, not a smaller one. A segment that still comes up short
+# lost something real: a reload can drop the not-yet-written tail of the current
+# MediaRecorder chunk, up to about two seconds, and two seconds of Alice's
+# shortest eight-and-a-half-second stretch is under a quarter of it. A floor at
+# eight tenths would fail this required leg on that legitimate outcome. Seven
+# tenths still refuses anything that lost a third of its audio, and the
+# assertion that the fix works is ALICE_MIN_PLACED below, where it belongs.
 MIN_HELD_NUM=7
 MIN_HELD_DEN=10
 MAX_HELD_NUM=9
@@ -839,12 +855,19 @@ assert_participant_splice() {
 # Runs of this leg splice 27.5-28.5 s of her track with all three placed and
 # 17.5 s with the last one short, and account for 27.3-30.5 s either way, so
 # 24 s of accounted audio leaves better than three seconds of slack under the
-# lowest run measured. One placed segment is the floor for the count, because
-# both of her abruptly sealed segments may legitimately lose their tails in the
-# same run; 8 s is her shortest single stretch.
+# lowest run measured.
+#
+# TWO placed segments, not one. One was the floor while the stop latency was
+# being declared as audio and either abruptly-sealed segment could lose its
+# splice to it; across the seven runs measured then, never more than one of the
+# three was skipped. Now that the window is stamped from the recording, all
+# three are expected to land, and two leaves room for one genuinely lost chunk
+# without letting a regression that stops splicing departures through. The
+# spliced floor follows it: with two of her three stretches placed the runs
+# measured cover 17.5 s, so 15 s keeps two and a half seconds of slack.
 ALICE_MIN_SEGMENTS=3
-ALICE_MIN_PLACED=1
-ALICE_MIN_SPLICED_MS=8000
+ALICE_MIN_PLACED=2
+ALICE_MIN_SPLICED_MS=15000
 ALICE_MIN_ACCOUNTED_MS=24000
 # Bob records one segment spanning the whole call: he joins before the recording
 # starts and leaves after Alice's reload, so he is talking through all three of

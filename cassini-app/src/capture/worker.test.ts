@@ -236,3 +236,64 @@ describe("recovery sidecar", () => {
     expect(opfs.files.has("capture.json")).toBe(true);
   });
 });
+
+
+// The window a segment declares is what the server measures the uploaded file
+// against: a segment holding under 90% of it is left out of the splice and the
+// recorded track stands there instead. The page stamps that window from the
+// recorder's own start and stop (startSegment and stopSegment in payload.ts),
+// and the worker must carry it through untouched.
+//
+// Deriving it here instead was tried and abandoned. The obvious source is the
+// encoded frames this worker already sees, which would date the microphone to
+// within one 20 ms frame — but they are a different pipeline. Talk mutes with
+// `enabled = false`, and a disabled track delivers silence to every sink: the
+// recorder keeps writing it while the sender may stop producing frames for it,
+// as Opus DTX and a renegotiation also can. A window ending at the last frame
+// would then be narrower than the audio, and a window narrower than the audio
+// makes the decoded fraction agree with a truncated upload — the check stops
+// catching anything. The page's two stamps bracket the audio from outside, so
+// they can only ever be the wider of the two.
+describe("the window a segment declares", () => {
+  it("carries the page's stamps into the sidecar rather than deriving its own", async () => {
+    await send({ type: "timing-active", active: true });
+    await send({ type: "capture-start", dirName: DIR, base });
+    // The page stamped this after MediaRecorder.start() returned.
+    vi.setSystemTime(10_000);
+    await send({ type: "segment-start", dirName: DIR, meta: segmentMeta(0, 10_000) });
+    vi.setSystemTime(20_000);
+    await send({ type: "chunk", index: 0, buffer: new Uint8Array([1, 2, 3]).buffer });
+    // The page asked the recorder to stop at 21_000 and finished waiting for
+    // onstop and the last chunk 1.4 s later, which is when segment-stop reaches
+    // this worker. The stamp it carries is the request, and the worker must not
+    // substitute its own clock for it.
+    vi.setSystemTime(22_400);
+    await send({ type: "segment-stop", index: 0, stopWallMs: 21_000, muteIntervals: [] });
+    await send({ type: "finalize", dirName: DIR, base: { ...base, callEndWallMs: 22_400 } });
+
+    const finalized = posted.find((message) => message.type === "finalized");
+    const segment = (finalized?.sidecar as CaptureSidecar).segments[0];
+    expect(segment.startWallMs).toBe(10_000);
+    expect(segment.stopWallMs).toBe(21_000);
+  });
+
+  it("declares the whole window even when the file is a fraction of it", async () => {
+    // The case the fraction gate exists for. Three bytes reach OPFS for an
+    // eleven-second segment, and the window still says eleven seconds, because
+    // nothing about it is measured from the recording. A window that shrank to
+    // fit the file would agree with any truncation.
+    await send({ type: "timing-active", active: true });
+    await send({ type: "capture-start", dirName: DIR, base });
+    vi.setSystemTime(10_000);
+    await send({ type: "segment-start", dirName: DIR, meta: segmentMeta(0, 10_000) });
+    vi.setSystemTime(20_000);
+    await send({ type: "chunk", index: 0, buffer: new Uint8Array([1, 2, 3]).buffer });
+    await send({ type: "segment-stop", index: 0, stopWallMs: 21_000, muteIntervals: [] });
+    await send({ type: "finalize", dirName: DIR, base: { ...base, callEndWallMs: 21_000 } });
+
+    const finalized = posted.find((message) => message.type === "finalized");
+    const segment = (finalized?.sidecar as CaptureSidecar).segments[0];
+    expect(segment.stopWallMs - segment.startWallMs).toBe(11_000);
+    expect(opfs.files.get("segment-0.webm")?.bytes.byteLength).toBe(3);
+  });
+});
