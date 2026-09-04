@@ -179,7 +179,12 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// failed, was interrupted or was deferred stamps nothing, so its uploads
 	// stay owed and the next dispatcher pass judges the job again.
 	if consumedSourceAudio > 0 {
-		if err := rt.store.MarkSourceAudioBuilt(context.Background(), task.JobID, consumedSourceAudio, sourceAudioDigest); err != nil {
+		// Retried like every other write in this mechanism. A busy database at
+		// the one moment a build finishes would otherwise leave the debt
+		// standing and cost a whole redundant re-transcription.
+		if err := retrySourceAudioWrite(context.Background(), func() error {
+			return rt.store.MarkSourceAudioBuilt(context.Background(), task.JobID, consumedSourceAudio, sourceAudioDigest)
+		}); err != nil {
 			rt.logger.Printf("source audio: could not record what id=%s consumed: %v", task.JobID, err)
 		}
 	}
@@ -195,6 +200,14 @@ func (rt *Runtime) sourceAudioConsumption(jobID string) (int64, string) {
 	if rt.store == nil {
 		return 0, ""
 	}
+	// Nothing is consumed with ingestion off. The build below is not given
+	// --source-audio at all, so stamping the counter would record that a build
+	// had read audio it was never shown — and turning ingestion on afterwards
+	// would find no debt and never use it. Leaving the debt owed is what makes
+	// that switch recoverable.
+	if !sourceAudioIngestEnabled() {
+		return 0, ""
+	}
 	seq, err := rt.store.SourceAudioUploadSeq(context.Background(), jobID)
 	if err != nil {
 		rt.logger.Printf("source audio: could not read the upload counter for id=%s: %v", jobID, err)
@@ -205,9 +218,12 @@ func (rt *Runtime) sourceAudioConsumption(jobID string) (int64, string) {
 	}
 	set, err := rt.sourceCaptureSetForJob(context.Background(), jobID)
 	if err != nil {
-		// The counter alone is still worth stamping: it stops the same uploads
-		// being owed for ever. An empty digest simply means the next rebuild
-		// cannot prove the capture set is unchanged and will run once more.
+		// The counter alone is still worth stamping, and it settles the debt:
+		// a build that could not read the capture root will not read it any
+		// better on a second pass, and leaving the debt owed would re-run this
+		// meeting on every scan. The empty digest records that this build
+		// cannot say what it consumed, so a genuinely new upload afterwards is
+		// still owed a rebuild and simply cannot be proved redundant.
 		rt.logger.Printf("source audio: could not read the captures for id=%s: %v", jobID, err)
 		return seq, ""
 	}

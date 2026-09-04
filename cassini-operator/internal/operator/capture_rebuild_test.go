@@ -445,6 +445,119 @@ func TestARebuildPastTheRetentionWindowIsRefused(t *testing.T) {
 	if got := jobAttemptCount(t, rt, "job-1"); got != 1 {
 		t.Fatalf("a meeting past the capture retention window was rebuilt: %d attempts", got)
 	}
+	job, err := rt.store.GetJob(ctx, "job-1")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job.SourceAudioRebuild.Pending {
+		t.Fatal("the refusal left the debt owed, so it would be re-decided every fifteen seconds for ever")
+	}
+}
+
+// A recording that never produced a run bundle — an interrupted RECORDING, as
+// opposed to an interrupted rebuild — can never be rebuilt from. Left owed it
+// would be re-decided on every scan for the life of the installation, and would
+// hold one of the scan's slots against every meeting that could be rebuilt.
+func TestARecordingWithNoRunBundleSettlesRatherThanLooping(t *testing.T) {
+	logs := &syncBuffer{}
+	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0))
+	defer cleanup()
+	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	rt.sourceAudioRebuildQuiet.Store(int64(time.Nanosecond))
+	ctx := context.Background()
+
+	seedRecording(t, rt.store, "job-1", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
+	seedRebuildCapture(t, rt.cfg.CaptureRoot, "room-a", "alice",
+		ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:55:00Z"), 1024)
+	if err := rt.store.NoteSourceAudioUpload(ctx, "job-1", nowUTCString()); err != nil {
+		t.Fatalf("NoteSourceAudioUpload: %v", err)
+	}
+	// The recorder died with the operator: interrupted, and with no bundle.
+	setJobState(t, rt.store, "job-1", "record", "interrupted")
+
+	rt.dispatchSourceAudioRebuilds()
+	job, err := rt.store.GetJob(ctx, "job-1")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job.SourceAudioRebuild.Pending {
+		t.Fatal("a recording that can never be rebuilt stayed owed for ever")
+	}
+	if got := logs.String(); !strings.Contains(got, "no run bundle to rebuild from") {
+		t.Fatalf("the refusal is not in the log, so nobody can act on it: %q", got)
+	}
+}
+
+// R5 from the other side: a job that has spent its ceiling must not occupy the
+// scan's candidate list. Its debt is deliberately never settled, so a handful
+// of them would otherwise fill the scan and starve every other meeting in the
+// installation of its rebuild.
+func TestCappedJobsDoNotStarveTheRebuildScan(t *testing.T) {
+	rt, cleanup := rebuildRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// More capped jobs than the scan's own limit, all older than the one that
+	// still has an allowance, so they sort ahead of it.
+	for i := 0; i < 20; i++ {
+		id := fmt.Sprintf("spent-%02d", i)
+		seedRecording(t, rt.store, id, fmt.Sprintf("room-spent-%02d", i),
+			stamp(t, "2026-09-01T10:00:00Z"), stamp(t, "2026-09-01T11:00:00Z"))
+		setJobState(t, rt.store, id, "done", "succeeded")
+		if err := rt.store.NoteSourceAudioUpload(ctx, id, stamp(t, "2026-09-01T12:00:00Z")); err != nil {
+			t.Fatalf("NoteSourceAudioUpload: %v", err)
+		}
+		if _, err := rt.store.db.Exec(
+			`UPDATE jobs SET source_audio_rebuild_count = ?, updated_at = ? WHERE id = ?`,
+			maxSourceAudioRebuilds, stamp(t, "2026-09-01T12:00:00Z"), id); err != nil {
+			t.Fatalf("spend the ceiling: %v", err)
+		}
+	}
+
+	window := captureRecordingWindow{StartMS: ms(t, "2026-09-02T10:00:00Z"), EndMS: ms(t, "2026-09-02T11:00:00Z")}
+	seedFinishedRecording(t, rt, "job-live", "room-live", window)
+	seedRebuildCapture(t, rt.cfg.CaptureRoot, "room-live", "alice",
+		ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:55:00Z"), 1024)
+	if err := rt.store.NoteSourceAudioUpload(ctx, "job-live", nowUTCString()); err != nil {
+		t.Fatalf("NoteSourceAudioUpload: %v", err)
+	}
+
+	rt.dispatchSourceAudioRebuilds()
+	waitForJobState(t, rt.store, "job-live", "succeeded")
+	if got := jobAttemptCount(t, rt, "job-live"); got != 2 {
+		t.Fatalf("twenty meetings that had spent their ceiling starved the one that had not: %d attempts", got)
+	}
+}
+
+// R1/R5. With ingestion off the build is not given the capture root at all, so
+// it must not stamp the counter: doing so would record that a build had read
+// audio it was never shown, and turning ingestion on afterwards would find no
+// debt and never use it.
+func TestABuildWithIngestionOffDoesNotConsumeTheDebt(t *testing.T) {
+	rt, cleanup := rebuildRuntime(t)
+	defer cleanup()
+	ctx := context.Background()
+	t.Setenv(envSourceAudioIngestEnabled, "0")
+
+	window := captureRecordingWindow{StartMS: ms(t, "2026-09-02T10:00:00Z"), EndMS: ms(t, "2026-09-02T11:00:00Z")}
+	seedFinishedRecording(t, rt, "job-1", "room-a", window)
+	seedRebuildCapture(t, rt.cfg.CaptureRoot, "room-a", "alice",
+		ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:55:00Z"), 1024)
+	if err := rt.store.NoteSourceAudioUpload(ctx, "job-1", nowUTCString()); err != nil {
+		t.Fatalf("NoteSourceAudioUpload: %v", err)
+	}
+
+	seq, digest := rt.sourceAudioConsumption("job-1")
+	if seq != 0 || digest != "" {
+		t.Fatalf("a build with ingestion off claimed to consume %d uploads (digest %q)", seq, digest)
+	}
+	job, err := rt.store.GetJob(ctx, "job-1")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if !job.SourceAudioRebuild.Pending {
+		t.Fatal("the debt was consumed with ingestion off; turning it on later would never use the audio")
+	}
 }
 
 // R5. At most maxSourceAudioRebuilds per meeting. Beyond that something is

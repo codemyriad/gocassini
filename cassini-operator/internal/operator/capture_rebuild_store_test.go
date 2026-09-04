@@ -151,6 +151,42 @@ func TestResolveJobForCaptureRefusesAnAmbiguousMatch(t *testing.T) {
 	}
 }
 
+// R2. A recording with no finish time — one the operator died in the middle of
+// — must not swallow every later call in the same room. An unbounded end makes
+// a dead recording from last month overlap the standup that happens in that
+// room tomorrow, which is a wrong attribution on its own and, once two of them
+// do it, an ambiguity that stops every later rebuild in that room.
+func TestAnUnfinishedRecordingDoesNotSwallowLaterCalls(t *testing.T) {
+	store := newRebuildTestStore(t)
+	ctx := context.Background()
+
+	// A recording that started last month and never finished. Its row stopped
+	// changing when it died, which is the only upper bound there is.
+	seedRecording(t, store, "died", "room-a", stamp(t, "2026-08-02T10:00:00Z"), "")
+	if _, err := store.db.Exec(`UPDATE jobs SET updated_at = ?, state = 'interrupted' WHERE id = ?`,
+		stamp(t, "2026-08-02T10:20:00Z"), "died"); err != nil {
+		t.Fatalf("set updated_at: %v", err)
+	}
+	seedRecording(t, store, "today", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
+
+	got, err := store.ResolveJobForCapture(ctx, "room-a", ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:55:00Z"))
+	if err != nil {
+		t.Fatalf("a capture from today could not be resolved because a dead recording still matched everything: %v", err)
+	}
+	if got.JobID != "today" {
+		t.Fatalf("today's capture resolved to %q", got.JobID)
+	}
+
+	// And the dead recording still owns a capture from its own moment.
+	got, err = store.ResolveJobForCapture(ctx, "room-a", ms(t, "2026-08-02T10:05:00Z"), ms(t, "2026-08-02T10:15:00Z"))
+	if err != nil {
+		t.Fatalf("ResolveJobForCapture: %v", err)
+	}
+	if got.JobID != "died" {
+		t.Fatalf("a capture from the interrupted recording's own call resolved to %q", got.JobID)
+	}
+}
+
 // R1. The counters are the whole mechanism: a gap means audio arrived that no
 // build has seen, and a wave of uploads is one gap rather than one each.
 func TestSourceAudioCountersOweAndClearOneRebuild(t *testing.T) {

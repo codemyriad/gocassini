@@ -47,11 +47,35 @@ type captureJobMatch struct {
 }
 
 // captureRecordingWindow is a job's recorded span in wall-clock milliseconds.
-// EndMS is zero while the recording is still running, which the overlap check
-// reads as "still open".
+// Both ends are always resolved: see effectiveRecordingEndMS for what stands in
+// when a recording has no finish time.
 type captureRecordingWindow struct {
 	StartMS int64
 	EndMS   int64
+}
+
+// effectiveRecordingEndMS is where a recording's window ends for the purpose of
+// matching captures to it.
+//
+// record_finished_at when it is there. When it is not, the recording is either
+// still running or was cut short by a crash, and neither may be given an
+// unbounded end: that makes a dead recording from last month overlap every call
+// that room ever holds again, which is a wrong attribution on its own and, once
+// two of them do it, an ambiguity that stops every later rebuild in that room.
+//
+// updated_at is the bound. Nothing about a recording can have happened after
+// the last time its row changed, so it is an upper bound that is honest for a
+// live recording (the row is written as the job moves) and tight for a dead one
+// (it stops at the crash). record_started_at is the last resort, which with the
+// overlap slack still matches a capture from the same moment.
+func effectiveRecordingEndMS(startedAt, finishedAt, updatedAt sql.NullString) int64 {
+	if end := parseStoredMS(finishedAt); end > 0 {
+		return end
+	}
+	if end := parseStoredMS(updatedAt); end > 0 {
+		return end
+	}
+	return parseStoredMS(startedAt)
 }
 
 // captureWindowSlackMS mirrors windowsOverlap in the recorder's
@@ -76,8 +100,8 @@ func captureWindowsOverlap(aStart, aEnd, bStart, bEnd int64) bool {
 }
 
 // parseStoredMS converts a persisted timestamp to epoch milliseconds. Zero
-// means "absent or unreadable", which every caller treats as an open end rather
-// than as an instant.
+// means absent or unreadable; effectiveRecordingEndMS is what decides what
+// stands in for a missing end, and no caller treats zero as an open window.
 func parseStoredMS(value sql.NullString) int64 {
 	raw := strings.TrimSpace(value.String)
 	if !value.Valid || raw == "" {
@@ -114,7 +138,7 @@ func (s *Store) ResolveJobForCapture(ctx context.Context, roomToken string, call
 		return captureJobMatch{}, errors.New("no room token")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, stage, state, record_started_at, record_finished_at
+SELECT id, stage, state, record_started_at, record_finished_at, updated_at
 FROM jobs
 WHERE json_extract(talk_binding, '$.room_token') = ?
   AND record_started_at IS NOT NULL`, token)
@@ -129,23 +153,17 @@ WHERE json_extract(talk_binding, '$.room_token') = ?
 			match      captureJobMatch
 			startedAt  sql.NullString
 			finishedAt sql.NullString
+			updatedAt  sql.NullString
 		)
-		if err := rows.Scan(&match.JobID, &match.Stage, &match.State, &startedAt, &finishedAt); err != nil {
+		if err := rows.Scan(&match.JobID, &match.Stage, &match.State, &startedAt, &finishedAt, &updatedAt); err != nil {
 			return captureJobMatch{}, fmt.Errorf("scan job for capture: %w", err)
 		}
 		match.StartMS = parseStoredMS(startedAt)
-		match.EndMS = parseStoredMS(finishedAt)
+		match.EndMS = effectiveRecordingEndMS(startedAt, finishedAt, updatedAt)
 		if match.StartMS <= 0 {
 			continue
 		}
-		end := match.EndMS
-		if end <= 0 {
-			// Still recording. An upload arriving now belongs to it, and the
-			// build that has not started yet will read the counter when it
-			// claims its work.
-			end = callEndMS
-		}
-		if !captureWindowsOverlap(match.StartMS, end, callStartMS, callEndMS) {
+		if !captureWindowsOverlap(match.StartMS, match.EndMS, callStartMS, callEndMS) {
 			continue
 		}
 		match.Succeeded = match.State == "succeeded"
@@ -171,16 +189,19 @@ WHERE json_extract(talk_binding, '$.room_token') = ?
 // RecordingWindowForJob reads the span a job recorded, which is the window its
 // captures are discovered against.
 func (s *Store) RecordingWindowForJob(ctx context.Context, jobID string) (captureRecordingWindow, error) {
-	var startedAt, finishedAt sql.NullString
+	var startedAt, finishedAt, updatedAt sql.NullString
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT record_started_at, record_finished_at FROM jobs WHERE id = ?`, jobID).
-		Scan(&startedAt, &finishedAt); err != nil {
+		`SELECT record_started_at, record_finished_at, updated_at FROM jobs WHERE id = ?`, jobID).
+		Scan(&startedAt, &finishedAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return captureRecordingWindow{}, ErrNoSuchJob
 		}
 		return captureRecordingWindow{}, fmt.Errorf("read recording window: %w", err)
 	}
-	return captureRecordingWindow{StartMS: parseStoredMS(startedAt), EndMS: parseStoredMS(finishedAt)}, nil
+	return captureRecordingWindow{
+		StartMS: parseStoredMS(startedAt),
+		EndMS:   effectiveRecordingEndMS(startedAt, finishedAt, updatedAt),
+	}, nil
 }
 
 // NoteSourceAudioUpload records that audio arrived for a recording.
@@ -319,6 +340,12 @@ type sourceAudioRebuildCandidate struct {
 //     of an upload would hide that. Their debt is not lost: whenever an
 //     administrator does rerun them, that build reads the counter when it
 //     claims its work and the audio is used.
+//
+// Jobs that have spent their rebuild ceiling are filtered here rather than by
+// the caller. Their debt is deliberately never settled -- settling it would
+// claim the audio was used -- so they stay in the partial index for ever, and a
+// caller-side check would let a handful of them fill the LIMIT below and starve
+// every other job in the installation of its rebuild.
 func (s *Store) ListJobsAwaitingSourceAudioRebuild(ctx context.Context, limit int) ([]sourceAudioRebuildCandidate, error) {
 	if limit <= 0 {
 		limit = 16
@@ -328,12 +355,13 @@ SELECT id, json_extract(talk_binding, '$.room_token'),
        stage, state,
        source_audio_upload_seq, source_audio_built_seq,
        source_audio_built_digest, source_audio_rebuild_count,
-       source_audio_upload_at, record_started_at, record_finished_at
+       source_audio_upload_at, record_started_at, record_finished_at, updated_at
 FROM jobs
 WHERE source_audio_upload_seq > source_audio_built_seq
   AND state IN ('succeeded', 'interrupted')
+  AND source_audio_rebuild_count < ?
 ORDER BY updated_at ASC
-LIMIT ?`, limit)
+LIMIT ?`, maxSourceAudioRebuilds, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query jobs awaiting source audio rebuild: %w", err)
 	}
@@ -348,23 +376,23 @@ LIMIT ?`, limit)
 			uploadedAt  sql.NullString
 			startedAt   sql.NullString
 			finishedAt  sql.NullString
+			updatedAt   sql.NullString
 		)
 		if err := rows.Scan(&candidate.JobID, &roomToken, &candidate.Stage, &candidate.State,
 			&candidate.UploadSeq, &candidate.BuiltSeq, &builtDigest, &candidate.RebuildCount,
-			&uploadedAt, &startedAt, &finishedAt); err != nil {
+			&uploadedAt, &startedAt, &finishedAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan job awaiting source audio rebuild: %w", err)
 		}
 		candidate.RoomToken = strings.TrimSpace(roomToken.String)
 		candidate.BuiltDigest = strings.TrimSpace(builtDigest.String)
-		candidate.Window = captureRecordingWindow{StartMS: parseStoredMS(startedAt), EndMS: parseStoredMS(finishedAt)}
+		candidate.Window = captureRecordingWindow{
+			StartMS: parseStoredMS(startedAt),
+			EndMS:   effectiveRecordingEndMS(startedAt, finishedAt, updatedAt),
+		}
 		if ms := parseStoredMS(uploadedAt); ms > 0 {
 			candidate.UploadedAt = time.UnixMilli(ms).UTC()
 		}
-		recordedMS := candidate.Window.EndMS
-		if recordedMS <= 0 {
-			recordedMS = candidate.Window.StartMS
-		}
-		if recordedMS > 0 {
+		if recordedMS := candidate.Window.EndMS; recordedMS > 0 {
 			candidate.RecordedAt = time.UnixMilli(recordedMS).UTC()
 		}
 		candidates = append(candidates, candidate)

@@ -93,10 +93,11 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 	if root == "" || token == "" || window.StartMS <= 0 {
 		return set, nil
 	}
-	end := window.EndMS
-	if end <= 0 {
-		end = window.StartMS
-	}
+	// window.EndMS is already resolved by effectiveRecordingEndMS, so this and
+	// the resolver ask the identical question of the identical span. Deriving a
+	// second end here is how the two disagreed about a recording with no finish
+	// time: the resolver attributed the upload and this found no capture for it,
+	// which settled the debt and dropped the audio.
 	roomDir := filepath.Join(root, token)
 	owners, err := os.ReadDir(roomDir)
 	if err != nil {
@@ -147,7 +148,7 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 			if strings.TrimSpace(sidecar.OwnerUserID) == "" || sidecar.RoomToken != token {
 				continue
 			}
-			if !captureWindowsOverlap(sidecar.CallStartWallMS, sidecar.CallEndWallMS, window.StartMS, end) {
+			if !captureWindowsOverlap(sidecar.CallStartWallMS, sidecar.CallEndWallMS, window.StartMS, window.EndMS) {
 				continue
 			}
 			set.Count++
@@ -341,13 +342,6 @@ func (rt *Runtime) dispatchSourceAudioRebuilds() {
 // considerSourceAudioRebuild decides one candidate. Split out so each refusal
 // has one place to be read and one place to be tested.
 func (rt *Runtime) considerSourceAudioRebuild(candidate sourceAudioRebuildCandidate, now time.Time, quiet, maxAge time.Duration) {
-	// The ceiling. Settling the debt would say the audio was used; leaving it
-	// owed keeps the counters honest about what this meeting is still missing,
-	// and the row is cheap to skip because the partial index only holds rows
-	// with a gap.
-	if candidate.RebuildCount >= maxSourceAudioRebuilds {
-		return
-	}
 	// The wave. Every browser in the room starts uploading on the same signal,
 	// so acting on the first arrival would transcribe the meeting again for
 	// each of the others in turn.
@@ -407,13 +401,7 @@ func (rt *Runtime) considerSourceAudioRebuild(candidate sourceAudioRebuildCandid
 	rerun, err := rt.store.QueueRerunAttempt(rt.ctx, job, nowUTCString())
 	if err != nil {
 		if errors.Is(err, ErrJobNotEligibleForRerun) {
-			// The ordinary answer while a build is still running, or forever
-			// for a recording that never produced a ready bundle. Silent on
-			// purpose: this scan runs every fifteen seconds and a line each
-			// time would bury everything else in the log. The debt stays owed,
-			// so a job that becomes eligible later is picked up then — which is
-			// exactly the "the build is still going, queue the rebuild after
-			// it" case.
+			rt.refuseIneligibleSourceAudioRebuild(candidate)
 			return
 		}
 		if rt.ctx.Err() == nil {
@@ -432,6 +420,32 @@ func (rt *Runtime) considerSourceAudioRebuild(candidate sourceAudioRebuildCandid
 	rt.logger.Printf("source audio: rebuilding job=%s as attempt %d from %d capture(s) (%s); audio arrived after its transcript was made",
 		candidate.JobID, rerun.CurrentAttemptNumber, set.Count, strings.Join(set.Owners, ", "))
 	rt.kickRequeueScan()
+}
+
+// refuseIneligibleSourceAudioRebuild decides what a rerun refusal meant.
+//
+// Two very different things arrive here. A job whose state moved since the scan
+// listed it — a worker claimed it, an administrator reran it — is a race, and
+// the right answer is to say nothing and let the next pass judge it again. A
+// job still sitting in the state it was listed in was refused for the other
+// reason QueueRerunAttempt has: there is no ready run bundle to build from,
+// which is what an interrupted RECORDING leaves behind. That is permanent, and
+// leaving it owed means re-deciding it every fifteen seconds for the life of
+// the installation while it holds one of the scan's LIMIT slots against every
+// job that could actually be rebuilt.
+func (rt *Runtime) refuseIneligibleSourceAudioRebuild(candidate sourceAudioRebuildCandidate) {
+	job, err := rt.store.GetJob(rt.ctx, candidate.JobID)
+	if err != nil {
+		return
+	}
+	if job.State != candidate.State {
+		// Moved under us. Silent: the next pass judges it afresh, and this scan
+		// runs every fifteen seconds.
+		return
+	}
+	rt.logger.Printf("source audio: job=%s (state=%s) has no run bundle to rebuild from, so its late upload cannot reach a transcript; not rebuilding",
+		candidate.JobID, candidate.State)
+	rt.settleSourceAudioDebt(candidate)
 }
 
 // settleSourceAudioDebt marks the owed uploads as accounted for without
