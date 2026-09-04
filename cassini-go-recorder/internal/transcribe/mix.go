@@ -94,7 +94,7 @@ func PrepareMix(mkv string, streams []AudioStream) (*meetingMix, error) {
 			return nil, fmt.Errorf("decode track %d for mix: %w", stream.Index, err)
 		}
 		mix.tracks[i] = trackPath
-		wav, err := openWAV(trackPath)
+		wav, err := openWAVForRead(trackPath)
 		if err != nil {
 			mix.Close()
 			return nil, fmt.Errorf("read decoded track %d: %w", stream.Index, err)

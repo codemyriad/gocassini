@@ -53,7 +53,18 @@ const wavChunkScanLimit = 64
 // is an error, which the caller turns into "keeping the recorded audio" rather
 // than into a silently mispositioned splice.
 func openWAV(path string) (*wavFile, error) {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	return openWAVMode(path, os.O_RDWR)
+}
+
+// openWAVForRead is openWAV for a file this process only reads: the decoded
+// recorded tracks, and a decoded segment. Asking for write access to them would
+// refuse a build on a read-only recording directory for no reason.
+func openWAVForRead(path string) (*wavFile, error) {
+	return openWAVMode(path, os.O_RDONLY)
+}
+
+func openWAVMode(path string, flag int) (*wavFile, error) {
+	f, err := os.OpenFile(path, flag, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open wav: %w", err)
 	}

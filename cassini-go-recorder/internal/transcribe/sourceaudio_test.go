@@ -873,7 +873,7 @@ func spliceOnFloorFading(t *testing.T, recorded []float32, dirs []string, base S
 	if err != nil {
 		t.Fatalf("openWAV: %v", err)
 	}
-	report, renderErr := renderSourceTrack(context.Background(), floor, dirs, base, dir, sampleRate, outSamples, fadeSamples)
+	report, renderErr := renderSourceTrack(context.Background(), floor, dirs, base, "", dir, sampleRate, outSamples, fadeSamples)
 	if err := floor.Close(); err != nil {
 		t.Fatalf("close floor: %v", err)
 	}
@@ -1168,10 +1168,10 @@ func TestSpliceRefusesADegenerateTimeline(t *testing.T) {
 		t.Fatalf("openWAV: %v", err)
 	}
 	defer floor.Close()
-	if _, err := renderSourceTrack(context.Background(), floor, nil, testBase(), dir, 0, 100, 0); err == nil {
+	if _, err := renderSourceTrack(context.Background(), floor, nil, testBase(), "", dir, 0, 100, 0); err == nil {
 		t.Fatal("a zero sample rate was accepted")
 	}
-	if _, err := renderSourceTrack(context.Background(), floor, nil, testBase(), dir, 16000, 0, 0); err == nil {
+	if _, err := renderSourceTrack(context.Background(), floor, nil, testBase(), "", dir, 16000, 0, 0); err == nil {
 		t.Fatal("a zero-length timeline was accepted")
 	}
 }

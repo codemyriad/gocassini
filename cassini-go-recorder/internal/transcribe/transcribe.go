@@ -140,7 +140,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		// participant's other streams dropped from transcription while their
 		// audio is back in the mix.
 		fmt.Fprintf(stdout, "  source audio: the spliced mix would not encode (%v); publishing the recorded mix and transcribing the recorded tracks\n", err)
-		revertSourceAudio(streams, sourceAudio, "the spliced mix would not encode: "+err.Error())
+		revertSourceAudio(streams, sourceAudio, outputDir, "the spliced mix would not encode: "+err.Error())
 		if revertErr := mix.RevertSubstitutions(); revertErr != nil {
 			return fmt.Errorf("mix audio: %w (after %v)", revertErr, err)
 		}

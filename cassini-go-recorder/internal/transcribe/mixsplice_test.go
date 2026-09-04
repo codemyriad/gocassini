@@ -543,12 +543,29 @@ func TestRevertingIngestionPutsBothSidesBack(t *testing.T) {
 		{ParticipantID: "alice", SpeakerID: "spk_alice_2", SuppressTranscription: true},
 		{ParticipantID: "bob", SpeakerID: "spk_bob"},
 	}
-	reports := []SourceRenderReport{{
-		SpeakerID: "spk_alice", Owner: "alice", Segments: 2, Placed: 2, SplicedMS: 24000,
-		CoverageMS: 24000, Anchors: 16, MixSpliced: true, CrossfadeMS: 15, RenderHz: 48000,
-		Windows: []SpliceWindow{{FromMS: 1000, ToMS: 13000}},
-	}}
-	revertSourceAudio(streams, reports, "the spliced mix would not encode: boom")
+	reports := []SourceRenderReport{
+		{
+			SpeakerID: "spk_alice", Owner: "alice", Segments: 2, Placed: 2, SplicedMS: 24000,
+			CoverageMS: 24000, Anchors: 16, MixSpliced: true, CrossfadeMS: 15, RenderHz: 48000,
+			Windows: []SpliceWindow{{FromMS: 1000, ToMS: 13000}},
+		},
+		// Bob's upload was already refused on its own terms, before the mix was
+		// encoded. The encode failure is not his reason.
+		{
+			SpeakerID: "spk_bob", Owner: "bob", Segments: 1, Skipped: 1, RenderHz: 48000,
+			Rejections: []string{"segment 0: anchors disagree by 150.0 ms RMS; keeping the recorded audio there"},
+		},
+	}
+	bundle := t.TempDir()
+	work := filepath.Join(bundle, "_work", "sourceaudio")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	streams[0].SourceAudioPath = filepath.Join(work, "source-alice.wav")
+	if err := os.WriteFile(streams[0].SourceAudioPath, []byte("audio"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	revertSourceAudio(streams, reports, bundle, "the spliced mix would not encode: boom")
 
 	for i := range streams {
 		if streams[i].SourceAudioPath != "" {
@@ -565,8 +582,19 @@ func TestRevertingIngestionPutsBothSidesBack(t *testing.T) {
 	if got.Segments != 2 || got.Owner != "alice" {
 		t.Fatalf("the report lost the diagnosis of what arrived: %+v", got)
 	}
+	if got.Skipped != got.Segments {
+		t.Fatalf("%d of %d segments are unaccounted for: %+v", got.Segments-got.Skipped, got.Segments, got)
+	}
 	if len(got.Rejections) != 1 || !strings.Contains(got.Rejections[0], "would not encode") {
 		t.Fatalf("the report does not say why the upload went unused: %v", got.Rejections)
+	}
+	if bob := reports[1]; len(bob.Rejections) != 1 || strings.Contains(bob.Rejections[0], "would not encode") {
+		t.Fatalf("an upload refused before the mix was encoded was blamed on the encode: %v", bob.Rejections)
+	}
+	// The rendered transcription input goes with the revert, and the work
+	// directory with it, so the bundle is what a build with no upload leaves.
+	if _, err := os.Stat(filepath.Join(bundle, "_work")); !os.IsNotExist(err) {
+		t.Fatal("reverting left the ingestion work directory in the bundle")
 	}
 }
 

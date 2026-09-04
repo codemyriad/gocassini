@@ -768,6 +768,10 @@ type SpliceWindow struct {
 func (r *SourceRenderReport) markUnused(reason string) {
 	r.MixSpliced = false
 	r.MixSkipReason = ""
+	// Every segment that arrived went unused, however far the render got before
+	// it was thrown away. Leaving Skipped where it was would leave the placed
+	// ones unaccounted for: two segments, none placed, none skipped.
+	r.Skipped = r.Segments
 	r.Placed = 0
 	r.SplicedMS = 0
 	r.CoverageMS = 0
@@ -815,8 +819,8 @@ func (r *SourceRenderReport) markUnused(reason string) {
 // transcription input are both this file: the mix encodes it, and the 16 kHz
 // track handed to the recogniser is a resample of it. There is no second
 // placement to disagree with the first.
-func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base SourceTimeBase, scratchDir string, sampleRate, timelineSamples, fadeSamples int) (SourceRenderReport, error) {
-	report := SourceRenderReport{RenderHz: sampleRate}
+func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base SourceTimeBase, owner, scratchDir string, sampleRate, timelineSamples, fadeSamples int) (SourceRenderReport, error) {
+	report := SourceRenderReport{Owner: owner, RenderHz: sampleRate}
 	if sampleRate <= 0 || timelineSamples <= 0 {
 		// An error rather than a division by zero. Production passes 48 kHz and
 		// a measured timeline, but a caller that gets this wrong should be told
@@ -920,7 +924,7 @@ func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base 
 			// that was actually laid over the recorded track rather than
 			// everything the file decoded to.
 			decodedMS = int64(float64(decoded) * 1000 / float64(sampleRate))
-			source, err := openWAV(segmentPath)
+			source, err := openWAVForRead(segmentPath)
 			if err != nil {
 				skip(segment, "decoded audio: %v", err)
 				continue
@@ -1085,10 +1089,12 @@ func decodeSourceSegmentToFile(ctx context.Context, path, outPath string, sample
 		"-ar", strconv.Itoa(sampleRate),
 	}
 	if maxSamples > 0 {
-		// A second past the ceiling, so a file that simply loops forever is
-		// stopped by ffmpeg itself — cheaply, with a clean exit — while a file
-		// that merely contradicts its sidecar still trips the byte ceiling
-		// below and is refused with a reason rather than silently truncated.
+		// A second PAST the byte ceiling below, deliberately, so that the
+		// ceiling is what a file exceeding its declared window meets: it is
+		// refused with a reason rather than silently truncated to whatever
+		// ffmpeg felt like emitting. This is the outer bound behind it — a
+		// second line against an input an outsider chose, for the case where
+		// the byte accounting is ever wrong.
 		args = append(args, "-t", strconv.FormatFloat(float64(maxSamples)/float64(sampleRate)+1, 'f', 3, 64))
 	}
 	args = append(args, "-f", "s16le", "-")
@@ -1229,7 +1235,7 @@ func writeParticipantFloor(trackPaths []string, timelineSamples, sampleRate int,
 		}
 	}()
 	for _, path := range trackPaths {
-		track, err := openWAV(path)
+		track, err := openWAVForRead(path)
 		if err != nil {
 			return err
 		}
@@ -1332,14 +1338,41 @@ func resampleForTranscription(renderPath, outPath string) error {
 // leave a rejoined participant's sibling streams suppressed while their
 // recorded audio is back in the mix, so words audible in the meeting would be
 // missing from the transcript entirely.
-func revertSourceAudio(streams []AudioStream, reports []SourceRenderReport, reason string) {
+func revertSourceAudio(streams []AudioStream, reports []SourceRenderReport, bundleDir, reason string) {
 	for i := range streams {
+		// The rendered transcription input goes with it. A bundle that used no
+		// upload must hold no upload: leaving a couple of hundred megabytes of
+		// audio nothing references is both a surprise to whoever finds it and a
+		// copy of a participant's recording living past its purpose.
+		if streams[i].SourceAudioPath != "" {
+			_ = os.Remove(streams[i].SourceAudioPath)
+		}
 		streams[i].SourceAudioPath = ""
 		streams[i].SuppressTranscription = false
 	}
 	for i := range reports {
+		if reports[i].Placed == 0 {
+			// Already refused, for its own reason, before the mix was even
+			// encoded. Adding the encode failure to it would claim this upload
+			// had been in the spliced mix when it never was.
+			continue
+		}
 		reports[i].markUnused(reason)
 	}
+	pruneSourceAudioWorkDir(bundleDir)
+}
+
+// pruneSourceAudioWorkDir removes the bundle's ingestion work directory when
+// nothing was left in it, so a build that used no upload leaves the bundle a
+// build with ingestion switched off would leave. os.Remove refuses a directory
+// that still holds something, which is exactly the test wanted here.
+func pruneSourceAudioWorkDir(bundleDir string) {
+	if strings.TrimSpace(bundleDir) == "" {
+		return
+	}
+	work := filepath.Join(bundleDir, "_work")
+	_ = os.Remove(filepath.Join(work, "sourceaudio"))
+	_ = os.Remove(work)
 }
 
 // mixSpliceEnabled reports whether the published mix carries the splice.
@@ -1450,7 +1483,13 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 		}
 
 		renderPath := mix.RenderPath(stream.SpeakerID)
-		report := SourceRenderReport{SpeakerID: stream.SpeakerID, RenderHz: mixRenderHz}
+		report := SourceRenderReport{
+			SpeakerID: stream.SpeakerID,
+			// The join key, so a failure before any sidecar was read still says
+			// whose upload went unused.
+			Owner:    stream.ParticipantID,
+			RenderHz: mixRenderHz,
+		}
 		transcriptPath := ""
 		// Every failure below ends here: the render and any half-written
 		// transcription input are removed, the report is stripped of the
@@ -1483,7 +1522,7 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 		// The decoded segment is scratch that belongs with the render, not with
 		// the bundle: putting it beside the tracks keeps the bundle's work
 		// directory for the one file that has to survive the build.
-		rendered, err := renderSourceTrack(ctx, floor, dirs, stream.TimeBase, mix.dir,
+		rendered, err := renderSourceTrack(ctx, floor, dirs, stream.TimeBase, stream.ParticipantID, mix.dir,
 			mixRenderHz, timelineSamples, mixSpliceCrossfadeMS*mixRenderHz/1000)
 		syncErr := floor.f.Sync()
 		closeErr := floor.Close()
@@ -1541,5 +1580,8 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 		}
 		reports = append(reports, report)
 	}
+	// A run that created the work directory and then had every render fail must
+	// still leave the bundle as a build with ingestion off would.
+	pruneSourceAudioWorkDir(bundleDir)
 	return reports
 }
