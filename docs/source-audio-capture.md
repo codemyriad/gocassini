@@ -105,11 +105,27 @@ turns off the published splice on its own, leaving the transcript spliced — a
 rollback for a deployment that dislikes how the mix sounds, without giving up
 ingestion.
 
-Two consequences worth knowing. The published audio is a different file from
+Three consequences worth knowing. The published audio is a different file from
 what an unspliced build would produce, so the meeting's identity — the hash of
-its Opus essence — changes when a rebuild adds audio. And the render is
+its Opus essence — changes when a rebuild adds audio. The render is
 per-participant, so a rejoined participant's several tracks collapse into one
-mix input; the mix counts them once, not twice.
+mix input; the mix counts them once, not twice. And where two of a participant's
+segments abut — a microphone change mid-call — the published audio passes
+through the recorded track for the length of two fades, about thirty
+milliseconds of the same speaker as the SFU heard them. Suppressing the fades
+there would put a step in instead, which is the click they exist to remove.
+
+The splice holds no timeline in memory: it works on the file a chunk at a time,
+so the Go heap it needs is a few tens of kilobytes however long the meeting is.
+Temporary **disk** is a different matter and always was. The mixdown decodes
+every track to a full-timeline 48 kHz WAV under `TMPDIR` — about 690 MB per
+speaker per two hours — and a spliced speaker's render is another one of those
+while it is being made. The render replaces the tracks it was built from, which
+are deleted as it takes their place, so the peak stays at roughly the decoded
+tracks plus one render plus one decoded segment rather than growing with the
+number of participants who uploaded. A host whose `TMPDIR` is a small tmpfs will
+still run out on a long meeting; the operator image points `TMPDIR` at its data
+volume for exactly this reason.
 
 ## Timing: two clocks, and which one does what
 

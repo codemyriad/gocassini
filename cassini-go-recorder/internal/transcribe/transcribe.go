@@ -132,16 +132,17 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		if !mix.Substituted() {
 			return fmt.Errorf("mix audio: %w", err)
 		}
-		// The encoder refused the spliced inputs. The transcript still has its
-		// render, so fall back to the recorded mix rather than lose a whole
-		// meeting to an improvement in its playback.
-		fmt.Fprintf(stdout, "  source audio: the spliced mix would not encode (%v); publishing the recorded mix\n", err)
-		mix.RevertSubstitutions()
-		for i := range sourceAudio {
-			if sourceAudio[i].MixSpliced {
-				sourceAudio[i].MixSpliced = false
-				sourceAudio[i].MixSkipReason = "the spliced mix would not encode: " + err.Error()
-			}
+		// The encoder refused the spliced inputs. Fall back to the build this
+		// meeting would have had without ingestion at all rather than lose it
+		// to an improvement in its playback — and fall back on BOTH sides. A
+		// recorded mix under a spliced transcript is the very thing this build
+		// order exists to prevent, and it would also leave a rejoined
+		// participant's other streams dropped from transcription while their
+		// audio is back in the mix.
+		fmt.Fprintf(stdout, "  source audio: the spliced mix would not encode (%v); publishing the recorded mix and transcribing the recorded tracks\n", err)
+		revertSourceAudio(streams, sourceAudio, "the spliced mix would not encode: "+err.Error())
+		if revertErr := mix.RevertSubstitutions(); revertErr != nil {
+			return fmt.Errorf("mix audio: %w (after %v)", revertErr, err)
 		}
 		if err := mix.Encode(webmPath); err != nil {
 			return fmt.Errorf("mix audio: %w", err)

@@ -127,6 +127,7 @@ func TestMixInputsCollapseARejoinedParticipant(t *testing.T) {
 		tracks:      []string{"track-01.wav", "track-02.wav", "track-03.wav"},
 		replacement: make([]string, 3),
 		sibling:     make([]bool, 3),
+		removed:     make([]bool, 3),
 		useAmix:     true,
 	}
 	if got, want := mix.Inputs(), []string{"track-01.wav", "track-02.wav", "track-03.wav"}; !reflect.DeepEqual(got, want) {
@@ -145,7 +146,12 @@ func TestMixInputsCollapseARejoinedParticipant(t *testing.T) {
 		t.Fatal("a substituted mix does not say so")
 	}
 
-	mix.RevertSubstitutions()
+	// Reverting the substitution alone (the decoded tracks come back with it;
+	// TestTheSpliceNeverWritesIntoTheMixsRecordedTracks checks that against a
+	// real recording).
+	if err := mix.RevertSubstitutions(); err != nil {
+		t.Fatalf("RevertSubstitutions: %v", err)
+	}
 	if got, want := mix.Inputs(), []string{"track-01.wav", "track-02.wav", "track-03.wav"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("reverting left the inputs as %q, want %q", got, want)
 	}
@@ -160,6 +166,7 @@ func TestMixKeepsItsEncodePathWhenSubstitutionCollapsesInputs(t *testing.T) {
 		tracks:      []string{"track-01.wav", "track-02.wav"},
 		replacement: make([]string, 2),
 		sibling:     make([]bool, 2),
+		removed:     make([]bool, 2),
 		useAmix:     true,
 	}
 	mix.Substitute([]int{0, 1}, "render-alice.wav")

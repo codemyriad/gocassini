@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -479,10 +480,12 @@ func TestARejoinedParticipantIsCountedOnceInTheMix(t *testing.T) {
 	}
 }
 
-// The mix's own decoded tracks are read, never written: the render is a copy,
-// so a failure anywhere in the splice leaves the recorded material exactly as
-// it was decoded.
-func TestTheSpliceNeverWritesToTheMixsRecordedTracks(t *testing.T) {
+// The splice renders onto a copy, never onto the decoded tracks. A speaker who
+// was not spliced must find their track exactly as it was decoded, and a
+// spliced speaker's track is removed rather than rewritten — the render holds
+// every sample of it, and keeping both would double the temporary disk a long
+// meeting needs.
+func TestTheSpliceNeverWritesIntoTheMixsRecordedTracks(t *testing.T) {
 	requireFFMediaTools(t)
 	specs := twoSpeakerSpecs()
 	mkv, streams := spliceFixture(t, specs)
@@ -507,13 +510,93 @@ func TestTheSpliceNeverWritesToTheMixsRecordedTracks(t *testing.T) {
 	if len(reports) != 1 || !reports[0].MixSpliced {
 		t.Fatalf("nothing was spliced: %+v", reports)
 	}
-	for i, path := range mix.tracks {
-		if fileDigest(t, path) != before[i] {
-			t.Fatalf("the splice wrote into decoded track %d; the recorded material must be read only", i)
+	// Bob did not upload, so his decoded track is untouched.
+	if fileDigest(t, mix.tracks[1]) != before[1] {
+		t.Fatal("the splice wrote into a track belonging to a speaker who did not upload")
+	}
+	if _, err := os.Stat(mix.tracks[0]); !os.IsNotExist(err) {
+		t.Fatal("alice's decoded track survived her substitution; the temporary disk doubles for every spliced speaker")
+	}
+	if mix.Inputs()[0] != mix.RenderPath(streams[0].SpeakerID) {
+		t.Fatalf("the mix takes %q rather than alice's render", mix.Inputs()[0])
+	}
+
+	// And reverting brings the recorded mix back, byte-identically decoded, so
+	// a failed spliced encode does not cost the meeting.
+	if err := mix.RevertSubstitutions(); err != nil {
+		t.Fatalf("RevertSubstitutions: %v", err)
+	}
+	if fileDigest(t, mix.tracks[0]) != before[0] {
+		t.Fatal("the re-decoded track does not match the one the splice replaced")
+	}
+	if got, want := mix.Inputs(), mix.tracks; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("after reverting the mix takes %q, want the recorded tracks %q", got, want)
+	}
+}
+
+// The failure this branch could most easily introduce: publishing the recorded
+// mix while transcribing a spliced one, so the transcript quotes words that are
+// not in the audio. The revert has to be all or nothing.
+func TestRevertingIngestionPutsBothSidesBack(t *testing.T) {
+	streams := []AudioStream{
+		{ParticipantID: "alice", SpeakerID: "spk_alice", SourceAudioPath: "/work/source-alice.wav"},
+		{ParticipantID: "alice", SpeakerID: "spk_alice_2", SuppressTranscription: true},
+		{ParticipantID: "bob", SpeakerID: "spk_bob"},
+	}
+	reports := []SourceRenderReport{{
+		SpeakerID: "spk_alice", Owner: "alice", Segments: 2, Placed: 2, SplicedMS: 24000,
+		CoverageMS: 24000, Anchors: 16, MixSpliced: true, CrossfadeMS: 15, RenderHz: 48000,
+		Windows: []SpliceWindow{{FromMS: 1000, ToMS: 13000}},
+	}}
+	revertSourceAudio(streams, reports, "the spliced mix would not encode: boom")
+
+	for i := range streams {
+		if streams[i].SourceAudioPath != "" {
+			t.Fatalf("stream %d still transcribes from a render the mix no longer carries", i)
+		}
+		if streams[i].SuppressTranscription {
+			t.Fatalf("stream %d is still dropped from transcription although its audio is back in the mix", i)
 		}
 	}
-	if mix.Inputs()[0] == mix.tracks[0] {
-		t.Fatal("the mix still takes alice's recorded track rather than the render")
+	got := reports[0]
+	if got.MixSpliced || got.Placed != 0 || got.SplicedMS != 0 || len(got.Windows) != 0 {
+		t.Fatalf("the report still claims a splice nothing used: %+v", got)
+	}
+	if got.Segments != 2 || got.Owner != "alice" {
+		t.Fatalf("the report lost the diagnosis of what arrived: %+v", got)
+	}
+	if len(got.Rejections) != 1 || !strings.Contains(got.Rejections[0], "would not encode") {
+		t.Fatalf("the report does not say why the upload went unused: %v", got.Rejections)
+	}
+}
+
+// A capture in the root that belongs to nobody in this recording must leave the
+// bundle exactly as a build with ingestion switched off would — no empty work
+// directory to explain to whoever finds it.
+func TestAnUnrelatedUploadLeavesTheBundleAlone(t *testing.T) {
+	requireFFMediaTools(t)
+	specs := twoSpeakerSpecs()
+	mkv, streams := spliceFixture(t, specs)
+
+	root := t.TempDir()
+	segment := syntheticSegmentDelayed(10_000, 10, 1000, 0, 0)
+	segment.AudioName = "segment-0.webm"
+	// Charlie was in the room, but not in this call: no track, no floor.
+	writeCaptureAt(t, root, "room1", "charlie", segment, 10, 1100)
+
+	control := t.TempDir()
+	reference, _, _ := runSplicedBuild(t, mkv, append([]AudioStream(nil), streams...), "", "", control)
+
+	bundle := t.TempDir()
+	webm, reports, _ := runSplicedBuild(t, mkv, append([]AudioStream(nil), streams...), root, "room1", bundle)
+	if len(reports) != 0 {
+		t.Fatalf("an upload from somebody not in the call produced %+v", reports)
+	}
+	if _, err := os.Stat(filepath.Join(bundle, "_work")); !os.IsNotExist(err) {
+		t.Fatal("an unusable upload left a work directory in the bundle")
+	}
+	if mixAudioSHA256(t, reference) != mixAudioSHA256(t, webm) {
+		t.Fatal("an unusable upload changed the published audio")
 	}
 }
 

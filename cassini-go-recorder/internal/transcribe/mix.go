@@ -19,10 +19,21 @@ import (
 //
 // Nothing about the encode itself changed. With no substitution, Inputs returns
 // the same files in the same order and mixEncodeArgs returns the same argument
-// list, so a build with no usable upload produces a byte-identical meeting.webm
-// to the one the previous code produced. That is a property with a test on it.
+// list, so a build with no usable upload publishes the same AUDIO the previous
+// code published — sample for sample, which is what a test checks. Not the same
+// file bytes: Matroska stamps a fresh random segment identifier into every WebM
+// ffmpeg writes, so two encodes of the same samples have never produced the same
+// file. What is identical is what travels into every transcript as media.sha256
+// and whose Opus essence becomes the published meeting's identity.
 type meetingMix struct {
 	dir string
+	// mkv and decoded are what a decoded track can be rebuilt from. A
+	// substituted track is deleted, because keeping it doubles the temporary
+	// disk a long meeting needs; if the spliced encode then fails, the recorded
+	// mix has to be reconstructible, and re-running the same deterministic
+	// decode is cheaper than carrying gigabytes against a rare failure.
+	mkv     string
+	decoded []AudioStream
 	// tracks[i] is the decoded WAV for streams[i], in stream order.
 	tracks []string
 	// replacement[i], when set, stands in for streams[i] in the encode: a
@@ -33,6 +44,11 @@ type meetingMix struct {
 	// render sums them, so feeding them to amix as well would play their words
 	// twice at double amplitude.
 	sibling []bool
+	// removed[i] means Substitute deleted the decoded track, so reverting has
+	// to decode it again. Tracked rather than inferred from the file being
+	// missing: a stat that fails for some other reason would otherwise decide,
+	// silently, to rebuild a track that is already there.
+	removed []bool
 	// TimelineSamples is the longest decoded track, which is exactly what
 	// amix=duration=longest produces. It is the timeline the splice places
 	// against — measured from the recorded material rather than from the
@@ -58,13 +74,16 @@ func PrepareMix(mkv string, streams []AudioStream) (*meetingMix, error) {
 	}
 	mix := &meetingMix{
 		dir:         workDir,
+		mkv:         mkv,
+		decoded:     append([]AudioStream(nil), streams...),
 		tracks:      make([]string, len(streams)),
 		replacement: make([]string, len(streams)),
 		sibling:     make([]bool, len(streams)),
+		removed:     make([]bool, len(streams)),
 		useAmix:     len(streams) > 1,
 	}
 	for i, stream := range streams {
-		trackPath := filepath.Join(workDir, fmt.Sprintf("track-%02d.wav", i+1))
+		trackPath := mix.trackPath(i)
 		// Decode each participant track to a gap-preserving WAV first. Mixing
 		// directly from sparse MKV tracks risks flattening timestamp gaps, which
 		// turns turn-taking speech into artificial overlap in the final artifact.
@@ -117,9 +136,20 @@ func (m *meetingMix) TrackPaths(streamIdx []int) []string {
 	return paths
 }
 
+// trackPath is where stream i's decoded audio lives.
+func (m *meetingMix) trackPath(i int) string {
+	return filepath.Join(m.dir, fmt.Sprintf("track-%02d.wav", i+1))
+}
+
 // Substitute makes `path` stand in for every one of a participant's streams:
 // it takes the place of the first, and the rest drop out of the mix because
 // their audio is already summed into it.
+//
+// The decoded tracks it replaces are deleted. They are the largest thing on
+// disk — 690 MB each for a two-hour meeting — and the render already contains
+// every sample of them, so keeping both would make the temporary space a build
+// needs grow with the number of participants who uploaded rather than staying
+// where it has always been. RevertSubstitutions puts them back.
 func (m *meetingMix) Substitute(streamIdx []int, path string) {
 	if len(streamIdx) == 0 {
 		return
@@ -127,6 +157,11 @@ func (m *meetingMix) Substitute(streamIdx []int, path string) {
 	m.replacement[streamIdx[0]] = path
 	for _, idx := range streamIdx[1:] {
 		m.sibling[idx] = true
+	}
+	for _, idx := range streamIdx {
+		if err := os.Remove(m.tracks[idx]); err == nil {
+			m.removed[idx] = true
+		}
 	}
 }
 
@@ -140,14 +175,28 @@ func (m *meetingMix) Substituted() bool {
 	return false
 }
 
-// RevertSubstitutions puts the recorded tracks back. The renders are left on
-// disk — the transcript still reads a derivative of them — but the published
-// mix goes back to being exactly what it would have been without ingestion.
-func (m *meetingMix) RevertSubstitutions() {
+// RevertSubstitutions puts the recorded tracks back, decoding again the ones
+// Substitute deleted, so the mix encodes exactly what it would have encoded
+// without ingestion.
+//
+// The decode is the same deterministic ffmpeg call on the same unmodified
+// recording, so what comes back is what was there. The caller must also put the
+// transcription side back (revertSourceAudio): a build that publishes the
+// recorded mix while transcribing a spliced one would break the whole point of
+// the feature, which is that the two are the same audio.
+func (m *meetingMix) RevertSubstitutions() error {
 	for i := range m.replacement {
 		m.replacement[i] = ""
 		m.sibling[i] = false
+		if !m.removed[i] {
+			continue
+		}
+		if err := decodeTrackWithSparseGaps(m.mkv, m.decoded[i], 48000, m.tracks[i]); err != nil {
+			return fmt.Errorf("decode track %d again for the unspliced mix: %w", m.decoded[i].Index, err)
+		}
+		m.removed[i] = false
 	}
+	return nil
 }
 
 // Inputs lists the files the encoder mixes, in stream order.

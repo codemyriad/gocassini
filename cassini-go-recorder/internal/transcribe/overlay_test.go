@@ -341,6 +341,57 @@ func TestOverlayFileWindowHandlesTheAwkwardGeometries(t *testing.T) {
 		}
 	})
 
+	t.Run("two windows that abut", func(t *testing.T) {
+		// A microphone change mid-call ends one segment and starts the next.
+		// Every window fades at both edges, so where two of them meet the
+		// published audio passes through the recorded track for the length of
+		// two fades — thirty milliseconds of the same speaker, recorded rather
+		// than uploaded.
+		//
+		// That is the deliberate trade, and this is what has to hold for it to
+		// be the right one: the handover is gradual. Suppressing the fades at an
+		// abutting seam would put a step there instead, which is the click the
+		// crossfade exists to remove, so the dip stays and the discontinuity
+		// does not.
+		dir := t.TempDir()
+		floor, path := newFloor(t, dir, sampleRate*4)
+		first := newSource(t, dir, "first.wav", sampleRate, -0.5)
+		_, firstTo, err := overlayFileWindow(floor, first, sampleRate, Placement{OffsetMS: 500, Rate: 1}, sampleRate, 160)
+		if err != nil {
+			t.Fatalf("overlayFileWindow: %v", err)
+		}
+		second := newSource(t, dir, "second.wav", sampleRate, -0.5)
+		secondFrom, _, err := overlayFileWindow(floor, second, sampleRate, Placement{OffsetMS: 1500, Rate: 1}, sampleRate, 160)
+		if err != nil {
+			t.Fatalf("overlayFileWindow: %v", err)
+		}
+		_ = floor.Close()
+		_ = first.Close()
+		_ = second.Close()
+		if secondFrom != firstTo {
+			t.Fatalf("the two windows do not abut: %d then %d", firstTo, secondFrom)
+		}
+		got := readWAVFloats(t, path)
+		// No step anywhere across the seam: every sample is within one fade
+		// step of the one before it.
+		step := 0.75/160 + 2.0/32768
+		for i := firstTo - 200; i < secondFrom+200 && i < len(got); i++ {
+			if jump := math.Abs(float64(got[i] - got[i-1])); jump > step {
+				t.Fatalf("sample %d at the seam jumps by %v, more than the %v a fade allows", i, jump, step)
+			}
+		}
+		// The uploaded audio stands on both sides, and the excursion between
+		// them is bounded by the two fades.
+		if got[firstTo-200] > -0.4 || got[secondFrom+200] > -0.4 {
+			t.Fatal("the uploaded audio does not stand on both sides of the seam")
+		}
+		for i := 0; i < len(got); i++ {
+			if got[i] > 0.25+1.0/32768 {
+				t.Fatalf("sample %d is %v, past the recorded value the fade returns to", i, got[i])
+			}
+		}
+	})
+
 	t.Run("a later window nested inside an earlier one", func(t *testing.T) {
 		dir := t.TempDir()
 		floor, path := newFloor(t, dir, sampleRate*4)

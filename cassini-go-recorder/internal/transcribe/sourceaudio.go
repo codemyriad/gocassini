@@ -747,9 +747,38 @@ const mixSpliceCrossfadeMS = 15
 // upload"; SplicedMS is the union of these, which is the different question of
 // how much of the timeline the capture is answerable for.
 type SpliceWindow struct {
-	FromMS  int64 `json:"from_ms"`
-	ToMS    int64 `json:"to_ms"`
-	Segment int   `json:"segment"`
+	FromMS int64 `json:"from_ms"`
+	ToMS   int64 `json:"to_ms"`
+	// Capture and Segment name which upload this came from. Both, because
+	// segment indexes restart at zero in every capture: a participant who
+	// rejoined uploads one capture per session, and "segment 0" alone would
+	// name two different stretches of audio.
+	Capture int `json:"capture"`
+	Segment int `json:"segment"`
+}
+
+// markUnused says the splice was not used after all: neither the published mix
+// nor the transcript carries it, and the recorded track stands.
+//
+// The counters go with it. A report that still claimed placed segments and
+// spliced milliseconds would tell a reader that some of what they are hearing
+// came from an upload, when the render it came from was deleted and nothing
+// downstream ever saw it. What survives is the diagnosis — how many segments
+// arrived, what the capture declared, and why it went unused.
+func (r *SourceRenderReport) markUnused(reason string) {
+	r.MixSpliced = false
+	r.MixSkipReason = ""
+	r.Placed = 0
+	r.SplicedMS = 0
+	r.CoverageMS = 0
+	r.Anchors = 0
+	r.ResidualMS = 0
+	r.RatePPM = 0
+	r.CrossfadeMS = 0
+	r.Windows = nil
+	if reason != "" {
+		r.Rejections = append(r.Rejections, reason)
+	}
 }
 
 // renderSourceTrack lays every placeable segment a speaker uploaded over their
@@ -915,6 +944,7 @@ func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base 
 			report.Windows = append(report.Windows, SpliceWindow{
 				FromMS:  int64(from) * 1000 / int64(sampleRate),
 				ToMS:    int64(to) * 1000 / int64(sampleRate),
+				Capture: i,
 				Segment: segment.Index,
 			})
 			report.CoverageMS += decodedMS
@@ -1292,6 +1322,26 @@ func resampleForTranscription(renderPath, outPath string) error {
 	)
 }
 
+// revertSourceAudio undoes ingestion for the whole build: every stream goes
+// back to its recorded track, and every report says the upload went unused.
+//
+// It exists for one case — the spliced mix failed to encode — and it has to be
+// all or nothing. Reverting the published audio alone would leave the
+// transcript built from uploads that are not in the file people play back,
+// which is the exact defect this branch was written to remove; and it would
+// leave a rejoined participant's sibling streams suppressed while their
+// recorded audio is back in the mix, so words audible in the meeting would be
+// missing from the transcript entirely.
+func revertSourceAudio(streams []AudioStream, reports []SourceRenderReport, reason string) {
+	for i := range streams {
+		streams[i].SourceAudioPath = ""
+		streams[i].SuppressTranscription = false
+	}
+	for i := range reports {
+		reports[i].markUnused(reason)
+	}
+}
+
 // mixSpliceEnabled reports whether the published mix carries the splice.
 //
 // An off switch for the published audio alone: with CASSINI_SOURCE_AUDIO_MIX=0
@@ -1333,18 +1383,28 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 	if timelineSamples <= 0 {
 		return nil
 	}
-	// After the early returns, never before them. A build for a room nobody
-	// uploaded for must touch the bundle exactly as much as a build with
-	// ingestion switched off does, which is not at all.
-	workDir, err := WorkPath(bundleDir, "sourceaudio")
-	if err == nil {
-		err = os.MkdirAll(workDir, 0o755)
-	}
-	if err != nil {
-		fmt.Fprintf(stdout, "  source audio: no work directory: %v\n", err)
-		return nil
-	}
 	spliceMix := mixSpliceEnabled()
+
+	// The bundle's work directory is created on first use, never before it. A
+	// build that finds no upload it can use — because nobody who uploaded was
+	// in this call, or because every capture was refused — must leave the
+	// bundle exactly as a build with ingestion switched off would, and an empty
+	// _work/sourceaudio to explain to whoever finds it is not that.
+	workDir := ""
+	ensureWorkDir := func() (string, error) {
+		if workDir != "" {
+			return workDir, nil
+		}
+		path, err := WorkPath(bundleDir, "sourceaudio")
+		if err == nil {
+			err = os.MkdirAll(path, 0o755)
+		}
+		if err != nil {
+			return "", fmt.Errorf("no work directory: %w", err)
+		}
+		workDir = path
+		return workDir, nil
+	}
 
 	// One participant can own several MKV streams: a rejoin, or a rotation
 	// where the RTP identity changed mid-call. The render spans the WHOLE
@@ -1391,9 +1451,19 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 
 		renderPath := mix.RenderPath(stream.SpeakerID)
 		report := SourceRenderReport{SpeakerID: stream.SpeakerID, RenderHz: mixRenderHz}
+		transcriptPath := ""
+		// Every failure below ends here: the render and any half-written
+		// transcription input are removed, the report is stripped of the
+		// splice it did not deliver, and the speaker keeps their recorded audio
+		// in the published mix and in the transcript alike. A report still
+		// claiming placed segments would tell a reader that part of what they
+		// are hearing came from an upload, when nothing downstream ever saw it.
 		keepRecorded := func(err error) {
-			report.Rejections = append(report.Rejections, err.Error())
+			report.markUnused(err.Error())
 			_ = os.Remove(renderPath)
+			if transcriptPath != "" {
+				_ = os.Remove(transcriptPath)
+			}
 			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
 			reports = append(reports, report)
 		}
@@ -1410,7 +1480,10 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 			keepRecorded(err)
 			continue
 		}
-		rendered, err := renderSourceTrack(ctx, floor, dirs, stream.TimeBase, workDir,
+		// The decoded segment is scratch that belongs with the render, not with
+		// the bundle: putting it beside the tracks keeps the bundle's work
+		// directory for the one file that has to survive the build.
+		rendered, err := renderSourceTrack(ctx, floor, dirs, stream.TimeBase, mix.dir,
 			mixRenderHz, timelineSamples, mixSpliceCrossfadeMS*mixRenderHz/1000)
 		syncErr := floor.f.Sync()
 		closeErr := floor.Close()
@@ -1431,7 +1504,12 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 			continue
 		}
 
-		transcriptPath := filepath.Join(workDir, "source-"+stream.SpeakerID+".wav")
+		dir, err := ensureWorkDir()
+		if err != nil {
+			keepRecorded(err)
+			continue
+		}
+		transcriptPath = filepath.Join(dir, "source-"+stream.SpeakerID+".wav")
 		if err := resampleForTranscription(renderPath, transcriptPath); err != nil {
 			keepRecorded(err)
 			continue
