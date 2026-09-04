@@ -762,6 +762,15 @@ type SourceRenderReport struct {
 	//
 	// Empty when the splice went unused altogether — the recorded track was
 	// transcribed and the rejections say why.
+	//
+	// It describes the PRIMARY transcript (transcript.words.v1.json), as every
+	// other key under provenance does; a sibling transcript from an additional
+	// model carries its own record under files.transcripts[].
+	//
+	// It says nothing about the published mix, which is mix_spliced's job: with
+	// CASSINI_SOURCE_AUDIO_MIX=0 a splice can feed the transcript and not the
+	// mix, and after a merged-mix fallback in that configuration it fed
+	// neither.
 	TranscriptSource string `json:"transcript_source,omitempty"`
 }
 
@@ -1487,8 +1496,17 @@ func noteMergedFallbackTranscript(reports []SourceRenderReport, streams []AudioS
 		if label == "" {
 			label = reports[i].SpeakerID
 		}
-		fmt.Fprintf(stdout, "  source audio: %s: the merged-mix fallback replaced the per-participant transcript, so no word in it carries their speaker id; the splice above describes the published audio, not where any speaker's words came from (transcript_source=%s)\n",
-			label, transcriptSourceMergedMix)
+		// What the splice is still true of depends on whether the published mix
+		// took it. With CASSINI_SOURCE_AUDIO_MIX=0 it did not, and the mix the
+		// fallback transcribed is the recorded one, so this render reached
+		// neither — saying it describes the published audio would be the same
+		// kind of false claim this function exists to remove.
+		reached := "the splice above describes the published audio, and the mix this transcript was decoded from"
+		if !reports[i].MixSpliced {
+			reached = "the splice above reached neither the published mix (see mix_skip_reason) nor this transcript"
+		}
+		fmt.Fprintf(stdout, "  source audio: %s: the merged-mix fallback replaced the per-participant transcript, so no word in it carries their speaker id; %s, not where any speaker's words came from (transcript_source=%s)\n",
+			label, reached, transcriptSourceMergedMix)
 	}
 }
 

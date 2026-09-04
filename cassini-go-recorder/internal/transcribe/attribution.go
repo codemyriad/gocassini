@@ -55,7 +55,11 @@ const (
 // relative to that track's own quiet baseline.
 type SpeakerEnvelope struct {
 	SpeakerID string
-	// FrameDB is the log-RMS of each frame in dBFS.
+	// FrameDB is the log-RMS of each frame in dBFS, except where
+	// capIngestedDynamicRange has raised the quietest frames of an ingested
+	// speaker to the baseline the recorded tracks establish — below that, one
+	// microphone's silence is not distinguishable from another's, and this
+	// envelope exists to be compared with theirs.
 	FrameDB []float64
 	// Present marks frames that carry real captured audio. Decoding puts every
 	// track on the shared meeting timeline, which means a participant who joined
@@ -305,10 +309,24 @@ func capIngestedDynamicRange(envelopes []*SpeakerEnvelope) {
 			recorded = snr
 		}
 	}
-	// No usable recorded reference, or one so degenerate that honouring it
-	// would crush the ingested track's range to nothing and stop it ever being
-	// a rival. Either way, leave the envelopes as measured.
-	if math.IsInf(recorded, -1) || recorded <= 0 {
+	// No usable recorded reference, or one too shallow to be used as a
+	// yardstick. Either way, leave the envelopes as measured.
+	//
+	// The lower bound is not arbitrary and it is not a tidiness check: it is
+	// the range ownerQuietDuring needs to exist. Clamping this envelope's
+	// frames up to SpeechDB-recorded bounds how far below their own speech
+	// reference this speaker can ever measure — at recorded dB, exactly. A word
+	// is only FLAGGABLE when its owner sits at least quietOwnerShortfallDB
+	// below that reference, so a reference narrower than that would make every
+	// word on this track unflaggable for the whole meeting: their ghosts would
+	// become undetectable, quietly, as the price of correcting everybody
+	// else's. That is a worse failure than the bias, so below this the
+	// correction declines and the envelope stands as measured.
+	//
+	// A meeting where no recorded track shows even this much between its quiet
+	// and its loud levels is also one where the recorded tracks are not a
+	// usable yardstick for anything.
+	if math.IsInf(recorded, -1) || recorded < quietOwnerShortfallDB {
 		return
 	}
 	for _, env := range envelopes {

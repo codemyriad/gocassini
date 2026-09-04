@@ -200,3 +200,63 @@ func TestAHealthyParticipantPassKeepsThePerSpeakerClaim(t *testing.T) {
 		t.Errorf("the build log mentions the merged mix on a build that did not use it:\n%s", log)
 	}
 }
+
+// The merged fallback appends a synthetic speaker with Index -1, standing for
+// the whole mix rather than for a track. An additional model configured on the
+// same build was then handed it and asked ffmpeg for "-map 0:-1", which took
+// the build down with "Invalid argument" after the primary transcript had
+// already been written.
+func TestAnAdditionalModelSurvivesTheMergedFallback(t *testing.T) {
+	requireFFMediaTools(t)
+	stubModelEnsurers(t)
+	registerVaryingBackend(t, "additional-after-fallback-stub", fixedTimedWords(2), fixedTimedWords(20))
+
+	mkv, _ := spliceFixture(t, twoSpeakerSpecs())
+	outDir := t.TempDir()
+	var log bytes.Buffer
+	if err := BuildMeetingArtifact(context.Background(), mkv, outDir, BuildConfig{
+		Backend:          "additional-after-fallback-stub",
+		Device:           "cpu",
+		CacheDir:         t.TempDir(),
+		AdditionalModels: []ModelID{"second-model"},
+	}, &log); err != nil {
+		t.Fatalf("BuildMeetingArtifact: %v\n%s", err, log.String())
+	}
+	if !strings.Contains(log.String(), "per-participant transcription thin") {
+		t.Fatalf("the fixture did not fire the merged fallback:\n%s", log.String())
+	}
+	// And the sibling transcript is there, not merely un-crashed.
+	if _, err := os.Stat(filepath.Join(outDir, "transcript-second-model.words.v1.json")); err != nil {
+		t.Fatalf("the additional transcript was not written: %v", err)
+	}
+}
+
+// The mix-splice off switch leaves a build where the upload fed the transcript
+// and not the published audio. If the fallback then replaces the transcript,
+// the render reached neither, and neither the log nor the manifest may say it
+// is in the published mix.
+func TestTheFallbackLogDoesNotClaimAPublishedMixThatKeptTheRecordedTrack(t *testing.T) {
+	reports := []SourceRenderReport{
+		{SpeakerID: "spk_alice", Owner: "alice", Placed: 1, SplicedMS: 4000,
+			MixSpliced: false, MixSkipReason: "disabled by configuration (CASSINI_SOURCE_AUDIO_MIX=0)",
+			TranscriptSource: transcriptSourcePerParticipant},
+	}
+	var log bytes.Buffer
+	noteMergedFallbackTranscript(reports, []AudioStream{{SpeakerID: "spk_alice", SpeakerLabel: "Alice"}}, &log)
+
+	line := log.String()
+	if strings.Contains(line, "describes the published audio") {
+		t.Errorf("the log claims the published audio carries a splice the mix refused:\n%s", line)
+	}
+	if !strings.Contains(line, "reached neither the published mix") {
+		t.Errorf("the log does not say where the splice ended up:\n%s", line)
+	}
+	// The transcript question still has its own answer: the words came from the
+	// mixed pass, and mix_spliced / mix_skip_reason answer the audio question.
+	if reports[0].TranscriptSource != transcriptSourceMergedMix {
+		t.Errorf("transcript_source = %q, want %q", reports[0].TranscriptSource, transcriptSourceMergedMix)
+	}
+	if reports[0].MixSpliced {
+		t.Error("the mix-splice record was rewritten")
+	}
+}

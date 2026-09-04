@@ -12,8 +12,10 @@ package transcribe
 // published mix, which carries the same splice.
 
 import (
+	"bytes"
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -98,6 +100,17 @@ func TestTheEnvelopeMeasuresTheAudioTheWordsCameFrom(t *testing.T) {
 	}
 	if envelopes[1].FromSourceAudio {
 		t.Fatal("bob has no upload; his envelope must not be marked as one")
+	}
+	// The frame-for-frame claim below is about the DECODE, so the fixture is
+	// built to give both tracks the same usable range and leave
+	// capIngestedDynamicRange nothing to do. Assert that rather than rely on
+	// it: if the fixture drifts, the clamp would silently become the thing
+	// under test.
+	aliceRange := envelopes[0].SpeechDB - envelopes[0].FloorDB
+	bobRange := envelopes[1].SpeechDB - envelopes[1].FloorDB
+	if aliceRange > bobRange+0.5 {
+		t.Fatalf("the fixture no longer isolates the decode: alice's range is %.1f dB against bob's %.1f dB, so the ingested cap has clamped her frames",
+			aliceRange, bobRange)
 	}
 
 	// The same audio, decoded the plain way and folded by the reference
@@ -209,6 +222,39 @@ func TestSuppressedSiblingStreamsGetNoSecondEnvelope(t *testing.T) {
 	}
 	if len(both) != 2 {
 		t.Fatalf("got %d envelopes with nothing suppressed, want 2", len(both))
+	}
+}
+
+// One person alone in a recording can own several streams: remux emits a fresh
+// one on every rotation or rejoin. Attribution compares PARTICIPANTS, so that
+// meeting must skip the stage rather than decode both tracks and then find
+// there was never a rival to measure against.
+func TestOneParticipantWithSeveralStreamsIsNotAMeeting(t *testing.T) {
+	streams := []AudioStream{
+		{Index: 0, SpeakerID: "spk_solo", SpeakerLabel: "Solo"},
+		{Index: 1, SpeakerID: "spk_solo", SpeakerLabel: "Solo"}, // they rejoined
+	}
+	segments := []Segment{{SpeakerID: "spk_solo", StartMS: 0, EndMS: 800, Text: "hello there",
+		Words: []Word{{Text: "hello", StartMS: 0, EndMS: 400}, {Text: "there", StartMS: 410, EndMS: 800}}}}
+
+	var out bytes.Buffer
+	report := &AttributionProvenance{Mode: "annotate"}
+	// A path that cannot be decoded: if the stage tried anyway, its decode
+	// warning would appear here.
+	got := applyAttributionReported(filepath.Join(t.TempDir(), "does-not-exist.mkv"),
+		streams, segments, 16000, BuildConfig{}, nil, &out, report)
+	if report.Ran || report.Reason == "" {
+		t.Errorf("a single-participant skip must be recorded, got ran=%v reason=%q", report.Ran, report.Reason)
+	}
+	if strings.Contains(out.String(), "measuring cross-track") || strings.Contains(out.String(), "warn:") {
+		t.Errorf("attribution decoded a meeting with one participant in it: %q", out.String())
+	}
+	for _, seg := range got {
+		for _, w := range seg.Words {
+			if w.HasAttributionGap {
+				t.Errorf("word %q carries evidence from a meeting with no rival track", w.Text)
+			}
+		}
 	}
 }
 

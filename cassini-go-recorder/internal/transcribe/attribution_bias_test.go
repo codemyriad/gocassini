@@ -30,6 +30,7 @@ package transcribe
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"testing"
 )
@@ -46,6 +47,14 @@ const (
 	// biasQuietBelowDB is where a recorded track's quiet frames sit. The
 	// ingested speaker's spliced track is this plus the swept offset.
 	biasQuietBelowDB = 34.0
+	// biasJitterDB dithers every frame so no level in the scene is a constant.
+	biasJitterDB = 2.0
+	// biasGapToleranceDB is how far a gap may move before the sweep calls it a
+	// change. Dithered levels do not reconstruct exactly under the correction —
+	// frames below the recorded baseline are raised TO it, which is the point —
+	// so the invariant asserted is the decision plus a gap that has not moved
+	// by more than the dither could explain.
+	biasGapToleranceDB = 2 * biasJitterDB
 )
 
 var biasSpeakers = []string{"alice", "bob", "carol"}
@@ -78,6 +87,13 @@ func biasEnvelope(id string, quietBelowDB float64) *SpeakerEnvelope {
 	env.FrameDB = make([]float64, n)
 	env.Present = make([]bool, n)
 	speech := biasSpeechDBFS[id]
+	// Real speech, bleed and room tone are not flat, and a scene of perfect
+	// steps would let the correction pass by reconstructing one constant from
+	// another. Every frame is dithered by a deterministic +/-biasJitterDB, from
+	// a sequence that depends only on the speaker, so the same frame carries
+	// the same dither at every offset in the sweep and the comparison stays
+	// like for like.
+	dither := rand.New(rand.NewSource(int64(len(id)) * 7919))
 	present := make([]float64, 0, n)
 	for i := 0; i < n; i++ {
 		active := biasActive(i)
@@ -90,6 +106,7 @@ func biasEnvelope(id string, quietBelowDB float64) *SpeakerEnvelope {
 		default:
 			level = speech - quietBelowDB
 		}
+		level += (dither.Float64()*2 - 1) * biasJitterDB
 		env.FrameDB[i] = level
 		env.Present[i] = true
 		present = append(present, level)
@@ -251,7 +268,7 @@ func TestOneIngestedSpeakerDoesNotMoveEveryonesCrosstalkVerdict(t *testing.T) {
 		got := runBiasScene(offset, true)
 		t.Logf("ingested floor %2.0f dB lower: %v", offset, got)
 		if got.thresholdFound != baseline.thresholdFound ||
-			math.Abs(got.thresholdDB-baseline.thresholdDB) > 1e-9 {
+			math.Abs(got.thresholdDB-baseline.thresholdDB) > biasGapToleranceDB {
 			t.Errorf("a %.0f dB floor offset on one ingested speaker moved the meeting's crosstalk threshold: %v, baseline %v",
 				offset, got, baseline)
 		}
@@ -264,11 +281,11 @@ func TestOneIngestedSpeakerDoesNotMoveEveryonesCrosstalkVerdict(t *testing.T) {
 				t.Errorf("a %.0f dB floor offset changed the flags on %s words: %d, baseline %d",
 					offset, kind, got.flaggedByKind[kind], baseline.flaggedByKind[kind])
 			}
-			if math.Abs(got.medianGapByKind[kind]-baseline.medianGapByKind[kind]) > 1e-9 {
+			if math.Abs(got.medianGapByKind[kind]-baseline.medianGapByKind[kind]) > biasGapToleranceDB {
 				t.Errorf("a %.0f dB floor offset moved the median gap on %s words to %.1f dB, baseline %.1f dB",
 					offset, kind, got.medianGapByKind[kind], baseline.medianGapByKind[kind])
 			}
-			if math.Abs(got.spreadGapByKind[kind]-baseline.spreadGapByKind[kind]) > 1e-9 {
+			if math.Abs(got.spreadGapByKind[kind]-baseline.spreadGapByKind[kind]) > biasGapToleranceDB {
 				t.Errorf("a %.0f dB floor offset spread the gaps on %s words to %.1f dB, baseline %.1f dB",
 					offset, kind, got.spreadGapByKind[kind], baseline.spreadGapByKind[kind])
 			}
@@ -312,8 +329,8 @@ func TestWithoutTheCorrectionAnIngestedSpeakerSilencesCrosstalkDetection(t *test
 		t.Fatalf("expected the ghost gaps to smear without the correction, spread %.1f dB (baseline %.1f dB)",
 			worst.spreadGapByKind["ghost"], baseline.spreadGapByKind["ghost"])
 	}
-	if baseline.spreadGapByKind["ghost"] > 1e-9 {
-		t.Fatalf("the baseline ghost mode is not a single spike (%.1f dB), so the smear above is not the correction's doing",
+	if baseline.spreadGapByKind["ghost"] > biasGapToleranceDB {
+		t.Fatalf("the baseline ghost mode is already %.1f dB wide, so the smear above is not the ingested floor's doing",
 			baseline.spreadGapByKind["ghost"])
 	}
 }
@@ -340,6 +357,43 @@ func TestTheCorrectionDoesNothingWithoutIngestion(t *testing.T) {
 					offset, env.SpeakerID, before[i], env.FloorDB)
 			}
 		}
+	}
+
+	// A recorded reference too shallow to be a yardstick must be declined
+	// rather than honoured. Honouring it would clamp every frame of the
+	// ingested track to within `recorded` dB of its own speech reference, and
+	// ownerQuietDuring needs quietOwnerShortfallDB of room below that reference
+	// to fire at all — so the speaker's own ghosts would stop being flaggable
+	// for the whole meeting as the price of correcting everybody else's.
+	shallow := &SpeakerEnvelope{SpeakerID: "bob", HopMS: attributionHopMS,
+		FrameDB:  []float64{-40, -36, -34, -33, -32, -31, -30, -30, -30, -30, -30, -30},
+		SpeechDB: -30, FloorDB: -36}
+	shallow.Present = make([]bool, len(shallow.FrameDB))
+	for i := range shallow.Present {
+		shallow.Present[i] = true
+	}
+	if snr := shallow.SpeechDB - shallow.FloorDB; snr >= quietOwnerShortfallDB {
+		t.Fatalf("the fixture is not shallow: %.1f dB", snr)
+	}
+	ingested := biasEnvelope("alice", biasQuietBelowDB+25)
+	ingested.FromSourceAudio = true
+	floorBefore, framesBefore := ingested.FloorDB, append([]float64(nil), ingested.FrameDB...)
+	capIngestedDynamicRange([]*SpeakerEnvelope{ingested, shallow})
+	if ingested.FloorDB != floorBefore {
+		t.Errorf("a %.1f dB recorded reference moved the ingested floor from %.1f to %.1f",
+			shallow.SpeechDB-shallow.FloorDB, floorBefore, ingested.FloorDB)
+	}
+	for i := range framesBefore {
+		if ingested.FrameDB[i] != framesBefore[i] {
+			t.Fatalf("frame %d was clamped against a reference too shallow to use", i)
+		}
+	}
+	// The property the guard is protecting, checked directly: the ingested
+	// speaker's quiet stretches still read as a quiet owner.
+	quietWord := Word{Text: "ghost", StartMS: int64(biasTurnFrames+5) * attributionHopMS,
+		EndMS: int64(biasTurnFrames+8) * attributionHopMS}
+	if !ownerQuietDuring(quietWord, "alice", []*SpeakerEnvelope{ingested, shallow}) {
+		t.Error("the ingested speaker can no longer read as a quiet owner, so none of their words could ever be flagged")
 	}
 
 	// And when EVERY speaker was ingested there is no recorded reference and no

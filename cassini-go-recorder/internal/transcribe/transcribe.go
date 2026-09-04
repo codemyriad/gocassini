@@ -497,15 +497,26 @@ func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, 
 	return transcribeStreamsParallel(ctx, mkvPath, streams, pass, conc, stdout)
 }
 
-// transcribableStreams filters out streams suppressed by source-audio
-// ingestion. Returns everything when nothing is suppressed, which is every
-// build that has no uploads.
+// transcribableStreams filters out the streams a transcription pass must not
+// decode: those suppressed by source-audio ingestion, and the synthetic
+// merged-fallback speaker.
+//
+// The merged speaker carries Index -1 because it stands for the whole mix
+// rather than for a track. ensureMergedFallback appends it to the streams it
+// returns when it replaces the transcript, so an additional model configured on
+// the same build was handed it, asked ffmpeg for "-map 0:-1", and took the
+// whole build down with "Invalid argument" after the primary transcript had
+// already been written.
+//
+// Returns everything when nothing is suppressed and no fallback fired, which is
+// every ordinary build.
 func transcribableStreams(streams []AudioStream) []AudioStream {
 	keep := streams[:0:0]
 	for _, stream := range streams {
-		if !stream.SuppressTranscription {
-			keep = append(keep, stream)
+		if stream.SuppressTranscription || stream.Index < 0 {
+			continue
 		}
+		keep = append(keep, stream)
 	}
 	return keep
 }
@@ -882,6 +893,15 @@ func (c *speakerEnvelopeCache) envelopes(mkvPath string, streams []AudioStream, 
 	return envs, nil
 }
 
+// distinctSpeakers counts the participants these streams belong to.
+func distinctSpeakers(streams []AudioStream) int {
+	seen := make(map[string]struct{}, len(streams))
+	for _, s := range streams {
+		seen[s.SpeakerID] = struct{}{}
+	}
+	return len(seen)
+}
+
 // segmentsBelongToAnyStream reports whether at least one segment is attributed
 // to one of the given participant streams.
 func segmentsBelongToAnyStream(segments []Segment, streams []AudioStream) bool {
@@ -936,7 +956,12 @@ func applyAttributionReported(mkvPath string, streams []AudioStream, segments []
 	// synthetic merged speaker, and no stream whose audio is already inside a
 	// sibling's spliced render. See measurableStreams.
 	realStreams := measurableStreams(streams)
-	if len(realStreams) < 2 {
+	// Participants, not streams. Remux emits a fresh stream on every rotation
+	// or rejoin, so one person alone in a recording can own several of them,
+	// and counting streams let that meeting past a guard written about
+	// participants: every track decoded, every envelope built, and then
+	// AttributionGapDB declining every word because there was never a rival.
+	if distinctSpeakers(realStreams) < 2 {
 		// Attribution compares tracks against each other; with one participant
 		// there is nothing for a word to be misattributed away from.
 		if report != nil {
