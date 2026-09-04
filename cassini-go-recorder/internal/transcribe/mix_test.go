@@ -1,10 +1,14 @@
 package transcribe
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -76,9 +80,18 @@ func mixAudioSHA256(t *testing.T, path string) string {
 	return digest
 }
 
-// Splitting the mix into a decode phase and an encode phase must not change one
-// sample of what it produces when nothing is spliced in between.
-func TestPrepareMixEncodeMatchesMixDownToWebMSampleForSample(t *testing.T) {
+// What this proves, exactly: the encoder is deterministic, and TimelineSamples
+// describes the mix that comes out of it.
+//
+// It used to claim more. It compared MixDownToWebM against PrepareMix plus
+// Encode as if the two were the old code and the new one — but MixDownToWebM
+// *is* PrepareMix plus Encode now, so both sides run the same functions and the
+// comparison cannot fail however the split is broken. Determinism is still
+// worth pinning, because it is what makes every "the audio did not change"
+// assertion in this package mean anything; the claim about the split is checked
+// against base's own code in
+// TestTheTwoPhaseMixReproducesTheMixdownItReplaced.
+func TestTheEncoderIsDeterministicAndTimelineSamplesDescribesIt(t *testing.T) {
 	requireFFMediaTools(t)
 	dir := t.TempDir()
 	meeting := buildOffsetMeeting(t, dir, 1.5)
@@ -102,7 +115,7 @@ func TestPrepareMixEncodeMatchesMixDownToWebMSampleForSample(t *testing.T) {
 		t.Fatalf("Encode: %v", err)
 	}
 	if mixAudioSHA256(t, oneCall) != mixAudioSHA256(t, twoPhase) {
-		t.Fatal("the two-phase mix produced different audio from the one-call mix")
+		t.Fatal("two encodes of the same decoded tracks produced different audio")
 	}
 
 	// The timeline the splice places against is the longest decoded track,
@@ -115,6 +128,144 @@ func TestPrepareMixEncodeMatchesMixDownToWebMSampleForSample(t *testing.T) {
 	timelineMS := int64(mix.TimelineSamples) * 1000 / 48000
 	if deltaMS(encodedMS, timelineMS) > 100 {
 		t.Fatalf("TimelineSamples says %d ms, the encoded mix is %d ms", timelineMS, encodedMS)
+	}
+}
+
+// baseMixDownToWebM is the mixdown as it stood BEFORE this branch: a verbatim
+// copy of MixDownToWebM from internal/transcribe/audio.go at 8726367, the
+// commit this branch starts from.
+//
+// It is here because the promise "a build with no usable upload publishes
+// exactly the audio it published before" is a claim about code that no longer
+// exists, and the only honest way to check a claim about old code is to run it.
+// The alternative — a PCM digest checked in beside a fixture MKV — would pin
+// the libopus build that produced the digest as firmly as it pins this package,
+// so it would fail on any machine whose ffmpeg differs by a patch release while
+// saying nothing about whether the split preserved anything.
+//
+// Do not tidy it towards the current code, and do not call it from anything but
+// the test below. Its entire value is that it is the old implementation.
+func baseMixDownToWebM(mkv string, streams []AudioStream, outPath string) error {
+	if len(streams) == 0 {
+		return fmt.Errorf("no streams to mix")
+	}
+
+	workDir, err := os.MkdirTemp("", "cassini-mix-*")
+	if err != nil {
+		return fmt.Errorf("create mix work dir: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+
+	trackPaths := make([]string, len(streams))
+	for i, stream := range streams {
+		trackPath := filepath.Join(workDir, fmt.Sprintf("track-%02d.wav", i+1))
+		if err := decodeTrackWithSparseGaps(mkv, stream, 48000, trackPath); err != nil {
+			return fmt.Errorf("decode track %d for mix: %w", stream.Index, err)
+		}
+		trackPaths[i] = trackPath
+	}
+
+	if len(trackPaths) == 1 {
+		return runFFmpegQuiet(
+			"-y",
+			"-v", "error",
+			"-i", trackPaths[0],
+			"-map", "0:a:0",
+			"-ac", "1",
+			"-ar", "48000",
+			"-c:a", "libopus",
+			"-b:a", "64k",
+			"-vbr", "on",
+			"-compression_level", "10",
+			"-application", "voip",
+			outPath,
+		)
+	}
+
+	args := []string{"-y", "-v", "error"}
+	var filterInputs strings.Builder
+	for _, trackPath := range trackPaths {
+		args = append(args, "-i", trackPath)
+	}
+	for i := range trackPaths {
+		filterInputs.WriteString(fmt.Sprintf("[%d:a]", i))
+	}
+	filter := fmt.Sprintf("%samix=inputs=%d:duration=longest:normalize=0,alimiter=limit=0.95[out]", filterInputs.String(), len(trackPaths))
+
+	args = append(args,
+		"-filter_complex", filter,
+		"-map", "[out]",
+		"-ac", "1",
+		"-ar", "48000",
+		"-c:a", "libopus",
+		"-b:a", "64k",
+		"-vbr", "on",
+		"-compression_level", "10",
+		"-application", "voip",
+		outPath,
+	)
+	return runFFmpegQuiet(args...)
+}
+
+// The claim this branch makes to every meeting that uses none of it: the audio
+// is what the old mixdown published, sample for sample.
+//
+// Checked against the old mixdown itself, running in this process against this
+// machine's ffmpeg, over the whole path a real build takes — PrepareMix, then
+// ApplySourceAudio with an empty capture root, which is what ingestion does for
+// every meeting nobody uploaded for, then Encode. Both the amix path and the
+// single-track path, because they are different argument lists and only one of
+// them is exercised by a two-speaker fixture.
+func TestTheTwoPhaseMixReproducesTheMixdownItReplaced(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	meeting := buildOffsetMeeting(t, dir, 1.5)
+	probed, _, err := ProbeMKV(meeting)
+	if err != nil {
+		t.Fatalf("ProbeMKV: %v", err)
+	}
+	if len(probed) < 2 {
+		t.Fatalf("the fixture has %d streams; the amix path needs two", len(probed))
+	}
+
+	for _, tc := range []struct {
+		name    string
+		streams []AudioStream
+	}{
+		{name: "two tracks, through amix", streams: probed},
+		{name: "one track, without amix", streams: probed[:1]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caseDir := t.TempDir()
+			before := filepath.Join(caseDir, "before-the-split.webm")
+			if err := baseMixDownToWebM(meeting, tc.streams, before); err != nil {
+				t.Fatalf("the mixdown this branch replaced: %v", err)
+			}
+
+			mix, err := PrepareMix(meeting, tc.streams)
+			if err != nil {
+				t.Fatalf("PrepareMix: %v", err)
+			}
+			defer mix.Close()
+			spliced := append([]AudioStream(nil), tc.streams...)
+			var log bytes.Buffer
+			if reports := ApplySourceAudio(context.Background(), mix, spliced, t.TempDir(), "room1",
+				t.TempDir(), &log); reports != nil {
+				t.Fatalf("an empty capture root reported %v", reports)
+			}
+			for i := range spliced {
+				if spliced[i].SourceAudioPath != "" || spliced[i].SuppressTranscription {
+					t.Fatalf("stream %d was rerouted although nobody uploaded", i)
+				}
+			}
+			after := filepath.Join(caseDir, "after-the-split.webm")
+			if err := mix.Encode(after); err != nil {
+				t.Fatalf("Encode: %v", err)
+			}
+			if mixAudioSHA256(t, before) != mixAudioSHA256(t, after) {
+				t.Fatal("the split mixdown published different audio from the one it replaced")
+			}
+		})
 	}
 }
 
