@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -140,6 +141,12 @@ type Runtime struct {
 	// maxBuildResourceDeferrals bounds transient retry churn. Permanent
 	// conditions block immediately; repeated pressure blocks at this ceiling.
 	maxBuildResourceDeferrals int
+	// sourceAudioRebuildQuiet is how long the newest late capture upload must
+	// have been settled before the meeting is rebuilt for it (D-698). Zero
+	// means the package default; tests shrink it so a wave can be observed
+	// coalescing without waiting a minute. Atomic because the requeue
+	// dispatcher reads it on its own goroutine while a test is changing it.
+	sourceAudioRebuildQuiet atomic.Int64
 	// sealJobFn packs one attempt's `.meeting` into its immutable `.opus`
 	// (D-583). It is a seam for the same reason buildJobFn and publishJobFn
 	// are: tests drive the pipeline without an ffmpeg subprocess.
@@ -1213,6 +1220,11 @@ type Job struct {
 	// TalkStoppedAt records that spreed acknowledged the stopped callback for
 	// this recording (D-551 repointed it from the retired Talk upload).
 	TalkStoppedAt *string `json:"talk_stopped_at"`
+	// SourceAudioRebuild reports participant audio that arrived after this
+	// meeting's transcript was made, and whether a rebuild for it is still
+	// owed (D-698). Present on every job so a reader never has to tell
+	// "nothing owed" from "this operator does not know about rebuilds".
+	SourceAudioRebuild SourceAudioRebuildState `json:"source_audio_rebuild"`
 }
 
 func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
@@ -1489,7 +1501,9 @@ SELECT id, provider, request_json, stage, state,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
-       talk_binding, talk_stopped_at
+       talk_binding, talk_stopped_at,
+       source_audio_upload_seq, source_audio_built_seq,
+       source_audio_rebuild_count, source_audio_upload_at
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -1526,7 +1540,9 @@ SELECT id, provider, request_json, stage, state,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
-       talk_binding, talk_stopped_at
+       talk_binding, talk_stopped_at,
+       source_audio_upload_seq, source_audio_built_seq,
+       source_audio_rebuild_count, source_audio_upload_at
 FROM jobs
 WHERE id = ?`, id)
 	job, err := scanJob(row)
@@ -1570,6 +1586,10 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var completedAt sql.NullString
 	var talkBinding sql.NullString
 	var talkStoppedAt sql.NullString
+	var sourceAudioUploadSeq int64
+	var sourceAudioBuiltSeq int64
+	var sourceAudioRebuildCount int
+	var sourceAudioUploadAt sql.NullString
 
 	err := scanner.Scan(
 		&job.ID,
@@ -1610,6 +1630,10 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&completedAt,
 		&talkBinding,
 		&talkStoppedAt,
+		&sourceAudioUploadSeq,
+		&sourceAudioBuiltSeq,
+		&sourceAudioRebuildCount,
+		&sourceAudioUploadAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1617,6 +1641,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 		}
 		return Job{}, fmt.Errorf("scan job: %w", err)
 	}
+
+	job.SourceAudioRebuild = sourceAudioRebuildStateFrom(
+		sourceAudioUploadSeq, sourceAudioBuiltSeq, sourceAudioRebuildCount, sourceAudioUploadAt.String)
 
 	job.ArtifactRunPath = nullableStringPtr(artifactRunPath)
 	job.ArtifactMeetingPath = nullableStringPtr(artifactMeetingPath)
