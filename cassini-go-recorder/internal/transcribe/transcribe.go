@@ -97,14 +97,68 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	}
 	fmt.Fprintf(stdout, "  found %d audio stream(s), duration %d ms\n", len(streams), srcDurationMS)
 
-	// --- 2. Mix down to meeting.webm ---
+	// --- 2. Mix down to meeting.webm, splicing in participant captures ---
+	//
+	// One render, two consumers. Each participant's recorded track is decoded
+	// onto the meeting timeline first; a participant who uploaded their own
+	// microphone recording gets that laid over their track wherever it has
+	// audio; and the result is both what the encoder mixes and — resampled to
+	// 16 kHz — what the recogniser hears. So every word in the transcript can
+	// be heard in the published audio, at the same instant, because the two
+	// come from the same samples rather than from two placements that agree
+	// approximately.
+	//
+	// The published audio used to stay the recorded mix, on the argument that
+	// playback should be the meeting as the room heard it. That argument lost:
+	// a transcript quoting words that are inaudible in the recording is worse
+	// than a mix that is a little cleaner than the call was.
 	webmPath := filepath.Join(outputDir, "meeting.webm")
 	fmt.Fprintln(stdout, "  mixing audio to meeting.webm...")
-	if err := MixDownToWebM(mkvPath, streams, webmPath); err != nil {
+	mix, err := PrepareMix(mkvPath, streams)
+	if err != nil {
 		return fmt.Errorf("mix audio: %w", err)
 	}
+	defer mix.Close()
 
-	// Compute SHA-256 of the decoded PCM for integrity tracking.
+	var sourceAudio []SourceRenderReport
+	if cfg.SourceAudioDir != "" {
+		// ApplySourceAudio creates its own work directory, and only once it has
+		// a capture to render. Ingestion is on by default, so the ordinary case
+		// is a build with no upload for this room, and that build has to leave
+		// the bundle byte for byte what a build without ingestion would leave —
+		// not an empty _work/sourceaudio to explain to whoever finds it.
+		sourceAudio = ApplySourceAudio(ctx, mix, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, stdout)
+	}
+	if err := mix.Encode(webmPath); err != nil {
+		if !mix.Substituted() {
+			return fmt.Errorf("mix audio: %w", err)
+		}
+		// The encoder refused the spliced inputs. Fall back to the build this
+		// meeting would have had without ingestion at all rather than lose it
+		// to an improvement in its playback — and fall back on BOTH sides. A
+		// recorded mix under a spliced transcript is the very thing this build
+		// order exists to prevent, and it would also leave a rejoined
+		// participant's other streams dropped from transcription while their
+		// audio is back in the mix.
+		fmt.Fprintf(stdout, "  source audio: the spliced mix would not encode (%v); publishing the recorded mix and transcribing the recorded tracks\n", err)
+		revertSourceAudio(streams, sourceAudio, outputDir, "the spliced mix would not encode: "+err.Error())
+		if revertErr := mix.RevertSubstitutions(); revertErr != nil {
+			return fmt.Errorf("mix audio: %w (after %v)", revertErr, err)
+		}
+		if err := mix.Encode(webmPath); err != nil {
+			return fmt.Errorf("mix audio: %w", err)
+		}
+	}
+	// The decoded tracks and renders are large — a two-hour meeting is hundreds
+	// of megabytes per speaker — and nothing after this point reads them. Free
+	// them before the model download and the transcription pass rather than at
+	// the end of the build.
+	mix.Close()
+
+	// Compute SHA-256 of the decoded PCM for integrity tracking. After the
+	// splice, not before it: this hash travels in every transcript as
+	// media.sha256, and it has to describe the meeting.webm that was actually
+	// published rather than an intermediate nobody kept.
 	sha256hex, _, err := PCMsha256FromWebM(webmPath)
 	if err != nil {
 		return fmt.Errorf("compute audio hash: %w", err)
@@ -118,22 +172,6 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// metadata can vastly overstate it. The measured playable mix is a safer
 	// allocation hint for per-speaker PCM; packet PTS still controls timing.
 	setPCMCapacityDurationHints(streams, audioDurationMS)
-
-	// --- 2b. Ingest participant-captured source audio ---
-	// Deliberately after the mixdown and before transcription. The published
-	// audio stays the recorded mix — that is the meeting as it happened, and as
-	// everyone in the room heard it — while the TRANSCRIPT is built from the
-	// cleaner source where one is available. Substituting the mix as well would
-	// change what playback means, and the viewer seeks against it.
-	var sourceAudio []SourceRenderReport
-	if cfg.SourceAudioDir != "" {
-		// ApplySourceAudio creates its own work directory, and only once it has
-		// a capture to render. Ingestion is on by default, so the ordinary case
-		// is a build with no upload for this room, and that build has to leave
-		// the bundle byte for byte what a build without ingestion would leave —
-		// not an empty _work/sourceaudio to explain to whoever finds it.
-		sourceAudio = ApplySourceAudio(ctx, mkvPath, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, 16000, audioDurationMS, stdout)
-	}
 
 	// --- 3. Download / verify STT model and VAD ---
 	fmt.Fprintf(stdout, "  ensuring model %s is cached...\n", cfg.ModelID)

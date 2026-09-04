@@ -449,11 +449,14 @@ func TestTranscribableStreamsDropsSuppressed(t *testing.T) {
 	}
 }
 
-func TestWriteWAV16RoundTrips(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "out.wav")
+func TestFloorWriterRoundTripsAtTheDecoderScale(t *testing.T) {
+	dir := t.TempDir()
 	samples := []float32{0, 0.5, -0.5, 1, -1, 2, -2} // last two clamp
-	if err := writeWAV16(path, samples, 16000); err != nil {
-		t.Fatalf("writeWAV16: %v", err)
+	track := filepath.Join(dir, "track.wav")
+	writeFloorWAV(t, track, samples, 16000)
+	path := filepath.Join(dir, "out.wav")
+	if err := writeParticipantFloor([]string{track}, len(samples), 16000, path); err != nil {
+		t.Fatalf("writeParticipantFloor: %v", err)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -497,18 +500,14 @@ func TestSplicedWAVLeavesTheRecordedFloorBitExact(t *testing.T) {
 		recorded[i] = float32(int16(1+(i%7)*2341)) / 32768
 	}
 
-	path := filepath.Join(t.TempDir(), "spliced.wav")
-	if err := writeWAV16(path, recorded, sampleRate); err != nil {
-		t.Fatalf("writeWAV16: %v", err)
+	dir := t.TempDir()
+	track := filepath.Join(dir, "track.wav")
+	writeFloorWAV(t, track, recorded, sampleRate)
+	path := filepath.Join(dir, "spliced.wav")
+	if err := writeParticipantFloor([]string{track}, outSamples, sampleRate, path); err != nil {
+		t.Fatalf("writeParticipantFloor: %v", err)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	back, err := readPCM16LEFloats(bytes.NewReader(raw[44:]), outSamples)
-	if err != nil {
-		t.Fatalf("readPCM16LEFloats: %v", err)
-	}
+	back := readWAVFloats(t, path)
 	if len(back) != outSamples {
 		t.Fatalf("read back %d samples, want %d", len(back), outSamples)
 	}
@@ -665,19 +664,25 @@ func TestSourceDecodeTimeoutIsBounded(t *testing.T) {
 	}
 }
 
-// A WAV that cannot be written must say so. Reporting success on a truncated
-// file hands it to the transcription pass as if it were whole, and that
-// failure is fatal to a build that would otherwise have published.
-func TestWriteWAV16ReportsAFailedWrite(t *testing.T) {
+// A render that cannot be written must say so. Reporting success on a truncated
+// file hands it to the mix and to the transcription pass as if it were whole,
+// and that failure is fatal to a build that would otherwise have published.
+func TestFloorWriterReportsAFailedWrite(t *testing.T) {
 	dir := t.TempDir()
+	track := filepath.Join(dir, "track.wav")
+	writeFloorWAV(t, track, []float32{0.5, -0.5, 0}, 16000)
 	// A directory is not a file: Create fails, and the error must surface.
-	if err := writeWAV16(dir, []float32{0.1, -0.1}, 16000); err == nil {
+	if err := writeParticipantFloor([]string{track}, 3, 16000, dir); err == nil {
 		t.Fatal("writing over a directory reported success")
+	}
+	// And a floor with no track behind it is refused rather than written empty.
+	if err := writeParticipantFloor(nil, 3, 16000, filepath.Join(dir, "empty.wav")); err == nil {
+		t.Fatal("a floor with no recorded track reported success")
 	}
 
 	good := filepath.Join(dir, "ok.wav")
-	if err := writeWAV16(good, []float32{0.5, -0.5, 0}, 16000); err != nil {
-		t.Fatalf("writeWAV16: %v", err)
+	if err := writeParticipantFloor([]string{track}, 3, 16000, good); err != nil {
+		t.Fatalf("writeParticipantFloor: %v", err)
 	}
 	info, err := os.Stat(good)
 	if err != nil {
@@ -761,18 +766,96 @@ func TestDecodeSourceSegmentEnforcesTheCeiling(t *testing.T) {
 		t.Skipf("could not synthesise input: %v: %s", err, out)
 	}
 
+	out := filepath.Join(dir, "decoded.wav")
 	// A ceiling below the real length must be refused, through the real path.
-	if _, err := decodeSourceSegment(context.Background(), src, 16000, 30*time.Second, 16000); err == nil {
-		t.Fatal("decode past the ceiling was accepted through decodeSourceSegment")
+	if _, err := decodeSourceSegmentToFile(context.Background(), src, out, 16000, 30*time.Second, 16000); err == nil {
+		t.Fatal("decode past the ceiling was accepted through decodeSourceSegmentToFile")
 	}
-	// A ceiling above it decodes normally.
-	samples, err := decodeSourceSegment(context.Background(), src, 16000, 30*time.Second, 16000*60)
+	// A ceiling above it decodes normally, into a WAV the renderer can open.
+	samples, err := decodeSourceSegmentToFile(context.Background(), src, out, 16000, 30*time.Second, 16000*60)
 	if err != nil {
-		t.Fatalf("decodeSourceSegment: %v", err)
+		t.Fatalf("decodeSourceSegmentToFile: %v", err)
 	}
-	if len(samples) < 16000*9 {
-		t.Fatalf("decoded %d samples, want about ten seconds", len(samples))
+	if samples < 16000*9 {
+		t.Fatalf("decoded %d samples, want about ten seconds", samples)
 	}
+	decoded, err := openWAV(out)
+	if err != nil {
+		t.Fatalf("the decoded segment is not a readable WAV: %v", err)
+	}
+	defer decoded.Close()
+	if decoded.samples != samples {
+		t.Fatalf("the decoded WAV declares %d samples, want the %d that were written", decoded.samples, samples)
+	}
+}
+
+// A decode that never reaches ffmpeg must not leak the pipe it would have read
+// it through.
+//
+// os/exec closes both ends of a StdoutPipe inside Start — and only there. A
+// return between opening the pipe and starting the command therefore leaked two
+// descriptors every time, and both of the returns that sat in that gap are disk
+// failures: the file that cannot be created, the header that cannot be written.
+// A build that hits one of those hits it for every segment of every upload, and
+// a build worker holds its descriptors for as long as it runs.
+func TestDecodeSourceSegmentToFileClosesItsPipeWhenItNeverStarts(t *testing.T) {
+	openFDs := func(t *testing.T) int {
+		t.Helper()
+		entries, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Skip("no /proc/self/fd to count open descriptors with")
+		}
+		return len(entries)
+	}
+	// Enough attempts that two descriptors each is unmistakable next to the
+	// noise of the runtime opening and closing its own files.
+	const attempts = 32
+	dir := t.TempDir()
+	input := filepath.Join(dir, "segment.webm")
+	if err := os.WriteFile(input, []byte("not media"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	t.Run("the output file cannot be created", func(t *testing.T) {
+		before := openFDs(t)
+		outPath := filepath.Join(dir, "no-such-directory", "decoded.wav")
+		for i := 0; i < attempts; i++ {
+			_, err := decodeSourceSegmentToFile(context.Background(), input, outPath, 48000, time.Second, 48000)
+			if err == nil {
+				t.Fatal("a decode into a directory that does not exist succeeded")
+			}
+			if !strings.Contains(err.Error(), "create decoded segment") {
+				t.Fatalf("the decode failed somewhere else: %v", err)
+			}
+		}
+		if after := openFDs(t); after > before+2 {
+			t.Fatalf("%d failed decodes left %d descriptors open, from %d", attempts, after-before, before)
+		}
+	})
+
+	t.Run("the header cannot be written", func(t *testing.T) {
+		// /dev/full opens and then refuses every write with ENOSPC, which is
+		// the failure this path exists for: a disk that filled between the
+		// create and the header.
+		full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+		if err != nil {
+			t.Skip("no writable /dev/full to fail a header write against")
+		}
+		_ = full.Close()
+		before := openFDs(t)
+		for i := 0; i < attempts; i++ {
+			_, err := decodeSourceSegmentToFile(context.Background(), input, "/dev/full", 48000, time.Second, 48000)
+			if err == nil {
+				t.Fatal("a decode whose header could not be written succeeded")
+			}
+			if !strings.Contains(err.Error(), "decoded segment header") {
+				t.Fatalf("the decode failed somewhere else: %v", err)
+			}
+		}
+		if after := openFDs(t); after > before+2 {
+			t.Fatalf("%d failed decodes left %d descriptors open, from %d", attempts, after-before, before)
+		}
+	})
 }
 
 // --- the splice --------------------------------------------------------------
@@ -791,6 +874,79 @@ func recordedMarker(n int, value float32) []float32 {
 		out[i] = value
 	}
 	return out
+}
+
+// --- the splice, rendered to a file ------------------------------------------
+//
+// The renderer works on a meeting-length WAV in place, because at the mix's
+// 48 kHz a two-hour timeline is 1.4 GB and the splice needs several of them.
+// These helpers put the file-based renderer back into the shape the properties
+// below are stated in: a floor in, a rendered timeline out. The assertions are
+// stronger for it — "outside the window the recorded track survives" is checked
+// on the bytes the mix and the recogniser actually read, not on a slice that
+// still has a quantisation step ahead of it.
+
+// writeFloorWAV writes a mono 16-bit floor for the renderer to work on.
+func writeFloorWAV(t *testing.T, path string, samples []float32, sampleRate int) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create floor: %v", err)
+	}
+	defer f.Close()
+	if err := writeWAVHeader(f, len(samples), sampleRate); err != nil {
+		t.Fatalf("write floor header: %v", err)
+	}
+	raw := make([]byte, len(samples)*2)
+	for i, sample := range samples {
+		s := uint16(s16FromFloat32(sample))
+		raw[i*2] = byte(s)
+		raw[i*2+1] = byte(s >> 8)
+	}
+	if _, err := f.Write(raw); err != nil {
+		t.Fatalf("write floor: %v", err)
+	}
+}
+
+// readWAVFloats reads a whole mono WAV back as floats.
+func readWAVFloats(t *testing.T, path string) []float32 {
+	t.Helper()
+	wav, err := openWAV(path)
+	if err != nil {
+		t.Fatalf("openWAV: %v", err)
+	}
+	defer wav.Close()
+	out := make([]float32, wav.samples)
+	if err := wav.readSamples(0, out); err != nil {
+		t.Fatalf("readSamples: %v", err)
+	}
+	return out
+}
+
+// spliceOnFloor renders a capture over a floor by way of the real file-based
+// path, and hands back what the file holds afterwards.
+func spliceOnFloor(t *testing.T, recorded []float32, dirs []string, base SourceTimeBase, sampleRate, outSamples int) ([]float32, SourceRenderReport, error) {
+	t.Helper()
+	return spliceOnFloorFading(t, recorded, dirs, base, sampleRate, outSamples, 0)
+}
+
+// spliceOnFloorFading is spliceOnFloor with the crossfade the published mix
+// uses. Hard edges by default, because that is what the boundary properties
+// below are about.
+func spliceOnFloorFading(t *testing.T, recorded []float32, dirs []string, base SourceTimeBase, sampleRate, outSamples, fadeSamples int) ([]float32, SourceRenderReport, error) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "render.wav")
+	writeFloorWAV(t, path, recorded, sampleRate)
+	floor, err := openWAV(path)
+	if err != nil {
+		t.Fatalf("openWAV: %v", err)
+	}
+	report, renderErr := renderSourceTrack(context.Background(), floor, dirs, base, "", dir, sampleRate, outSamples, fadeSamples)
+	if err := floor.Close(); err != nil {
+		t.Fatalf("close floor: %v", err)
+	}
+	return readWAVFloats(t, path), report, renderErr
 }
 
 // The boundary property, stated as narrowly as it can be: a segment overlaid in
@@ -913,7 +1069,7 @@ func TestSpliceUsesBothSidesOfAReloadAndKeepsTheRecordedAudioInTheGap(t *testing
 	recorded := recordedMarker(outSamples, 0.25)
 	original := append([]float32(nil), recorded...)
 
-	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	out, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err != nil {
 		t.Fatalf("a reloader's capture was refused: %v", err)
 	}
@@ -941,13 +1097,6 @@ func TestSpliceUsesBothSidesOfAReloadAndKeepsTheRecordedAudioInTheGap(t *testing
 	}
 	if report.SplicedMS < 38_000 || report.SplicedMS > 42_000 {
 		t.Fatalf("report claims %d ms spliced, want about 40000", report.SplicedMS)
-	}
-	// The caller's own slice is never mutated: it is the fallback if the WAV
-	// write fails, and the evidence that a splice changed only what it says.
-	for i := range recorded {
-		if math.Float32bits(recorded[i]) != math.Float32bits(original[i]) {
-			t.Fatalf("SpliceSourceTrack mutated the caller's recorded track at sample %d", i)
-		}
 	}
 }
 
@@ -979,7 +1128,7 @@ func TestSpliceSkipsAnUnplaceableSegmentAndKeepsTheRest(t *testing.T) {
 
 	recorded := recordedMarker(outSamples, 0.25)
 	original := append([]float32(nil), recorded...)
-	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	out, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err != nil {
 		t.Fatalf("one unplaceable segment refused the whole speaker: %v", err)
 	}
@@ -1022,7 +1171,7 @@ func TestSpliceSkipsASegmentWhoseAudioDoesNotMatchItsSidecar(t *testing.T) {
 	})
 
 	recorded := recordedMarker(outSamples, 0.25)
-	_, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	_, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err == nil {
 		t.Fatal("a segment whose audio contradicts its sidecar was used")
 	}
@@ -1031,6 +1180,69 @@ func TestSpliceSkipsASegmentWhoseAudioDoesNotMatchItsSidecar(t *testing.T) {
 	}
 	if len(report.Rejections) != 1 || !strings.Contains(report.Rejections[0], "does not match the sidecar") {
 		t.Fatalf("the skip does not say why: %v", report.Rejections)
+	}
+}
+
+// Where "far less" stops, from both sides.
+//
+// minSegmentDecodedFraction is the only thing standing between a file that
+// disagrees with its own manifest and a splice that trusts its timing claims
+// anyway, and no test held it to a number: the case above uses five seconds of
+// a declared sixty, which would pass at any threshold worth having. The
+// browser-capture CI leg cannot hold it either — it sees the segments the
+// splice REFUSED and their figures, never the ones it accepted — so lowering
+// the constant is invisible everywhere else. One point either side of it here.
+func TestSpliceHoldsTheDecodedFractionToNinetyPercent(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
+
+	// Twenty seconds declared, so a percentage point is 200 ms — far wider than
+	// anything the decode can round away, since the segment is written as WAV
+	// and resampled sample for sample.
+	for _, tc := range []struct {
+		name    string
+		seconds float64
+		placed  int
+	}{
+		{name: "89% of the declared window is not enough", seconds: 17.8, placed: 0},
+		{name: "91% of it is", seconds: 18.2, placed: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			segment := syntheticSegmentDelayed(0, 20, 1000, 0, 0)
+			segment.AudioName = "segment-0.webm"
+			writeToneSegment(t, dir, segment.AudioName, tc.seconds, 440)
+			writeSidecar(t, dir, SourceSidecar{
+				Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+				CallStartWallMS: segment.StartWallMS, CallEndWallMS: segment.StopWallMS,
+				Segments: []SourceSegment{segment},
+			})
+
+			recorded := recordedMarker(outSamples, 0.25)
+			_, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
+			if report.Placed != tc.placed {
+				t.Fatalf("%.1f s under a 20 s window placed %d segment(s), want %d: %v (err %v)",
+					tc.seconds, report.Placed, tc.placed, report.Rejections, err)
+			}
+			if tc.placed == 0 {
+				if err == nil {
+					t.Fatal("a segment under the threshold was used")
+				}
+				if len(report.Rejections) != 1 || !strings.Contains(report.Rejections[0], "does not match the sidecar") {
+					t.Fatalf("the skip does not say why: %v", report.Rejections)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a segment over the threshold was refused: %v (%v)", err, report.Rejections)
+			}
+			if report.Skipped != 0 {
+				t.Fatalf("a segment over the threshold was skipped: %v", report.Rejections)
+			}
+		})
 	}
 }
 
@@ -1059,9 +1271,9 @@ func TestSpliceOverlaysOnlyTheWindowASegmentDeclares(t *testing.T) {
 
 	recorded := recordedMarker(outSamples, 0.25)
 	original := append([]float32(nil), recorded...)
-	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	out, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err != nil {
-		t.Fatalf("SpliceSourceTrack: %v", err)
+		t.Fatalf("renderSourceTrack: %v", err)
 	}
 	if report.Placed != 1 {
 		t.Fatalf("placed %d segments, want 1", report.Placed)
@@ -1080,16 +1292,24 @@ func TestSpliceOverlaysOnlyTheWindowASegmentDeclares(t *testing.T) {
 
 // A degenerate call is an error, not a division by zero.
 func TestSpliceRefusesADegenerateTimeline(t *testing.T) {
-	if _, _, err := SpliceSourceTrack(context.Background(), nil, nil, testBase(), 0, 100); err == nil {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "render.wav")
+	writeFloorWAV(t, path, make([]float32, 100), 16000)
+	floor, err := openWAV(path)
+	if err != nil {
+		t.Fatalf("openWAV: %v", err)
+	}
+	defer floor.Close()
+	if _, err := renderSourceTrack(context.Background(), floor, nil, testBase(), "", dir, 0, 100, 0); err == nil {
 		t.Fatal("a zero sample rate was accepted")
 	}
-	if _, _, err := SpliceSourceTrack(context.Background(), nil, nil, testBase(), 16000, 0); err == nil {
+	if _, err := renderSourceTrack(context.Background(), floor, nil, testBase(), "", dir, 16000, 0, 0); err == nil {
 		t.Fatal("a zero-length timeline was accepted")
 	}
 }
 
-// A capture that contributes nothing is an error rather than a WAV identical to
-// the recorded track, so the caller leaves the stream alone.
+// A capture that contributes nothing is an error, and leaves the render exactly
+// as it found it, so the caller can throw it away and keep the recorded track.
 func TestSpliceRefusesWhenNoSegmentCanBePlaced(t *testing.T) {
 	const sampleRate = 16000
 	const outSamples = sampleRate * 120
@@ -1104,12 +1324,14 @@ func TestSpliceRefusesWhenNoSegmentCanBePlaced(t *testing.T) {
 	})
 
 	recorded := recordedMarker(outSamples, 0.25)
-	samples, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	samples, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err == nil {
 		t.Fatal("a capture with nothing placeable produced a track")
 	}
-	if samples != nil {
-		t.Fatal("a refused splice still returned audio")
+	for i := range samples {
+		if math.Float32bits(samples[i]) != math.Float32bits(recorded[i]) {
+			t.Fatalf("sample %d of the render changed although nothing could be placed", i)
+		}
 	}
 	if report.Segments != 1 || report.Placed != 0 {
 		t.Fatalf("report claims %d segments and %d placed", report.Segments, report.Placed)
@@ -1147,11 +1369,11 @@ func TestSpliceUsesEveryCaptureDirectory(t *testing.T) {
 
 	recorded := recordedMarker(outSamples, 0.25)
 	original := append([]float32(nil), recorded...)
-	out, report, err := SpliceSourceTrack(context.Background(), recorded,
+	out, report, err := spliceOnFloor(t, recorded,
 		[]string{write("session-1", first, 20, 440), write("session-2", second, 20, 660)},
 		testBase(), sampleRate, outSamples)
 	if err != nil {
-		t.Fatalf("SpliceSourceTrack: %v", err)
+		t.Fatalf("renderSourceTrack: %v", err)
 	}
 	if report.Placed != 2 {
 		t.Fatalf("placed %d segments across two captures, want 2", report.Placed)

@@ -575,6 +575,41 @@ pass "operator job $JOB_ID reached stage=done state=succeeded"
 curl -sS -u admin:admin "$PROXY_URL/operator/jobs/$JOB_ID" >"$JOB_DETAIL_FILE" 2>"$LOG_DIR/job-detail.err" \
   || fail "failed to fetch job detail for $JOB_ID"
 
+# A build is queued the moment Talk says the recording stopped, and the browsers
+# start uploading on that same signal — so the first attempt can legitimately be
+# built before somebody's capture has landed. That is the race the late-upload
+# rebuild exists for: the operator notices the newer upload sequence and runs
+# another attempt. Asserting on whichever attempt finished first is asserting on
+# a coin toss; the checks below belong to the attempt that saw every upload.
+#
+# source_audio_rebuild.pending is the operator's own answer to "is anybody's
+# audio still owed a build". Waiting for it to clear — through the rebuild's
+# quiet period and the attempt it queues — is what makes the rest of this leg
+# deterministic.
+log "waiting for the operator to settle any pending source-audio rebuild for job $JOB_ID"
+REBUILD_DEADLINE=$(( SECONDS + 420 ))
+while (( SECONDS < REBUILD_DEADLINE )); do
+  curl -sS -u admin:admin "$PROXY_URL/operator/jobs/$JOB_ID" >"$JOB_DETAIL_FILE" 2>"$LOG_DIR/job-detail.err" \
+    || fail "failed to fetch job detail for $JOB_ID"
+  if jq -e '
+    (.job.source_audio_rebuild.pending // false) == false
+    and .job.stage == "done" and .job.state == "succeeded"
+  ' "$JOB_DETAIL_FILE" >/dev/null 2>&1; then
+    break
+  fi
+  if jq -e '.job.state == "failed" or .job.state == "interrupted"' "$JOB_DETAIL_FILE" >/dev/null 2>&1; then
+    fail "operator job $JOB_ID failed while settling its source-audio rebuild: $(jq -c '.job' "$JOB_DETAIL_FILE")"
+  fi
+  sleep 5
+done
+jq -e '(.job.source_audio_rebuild.pending // false) == false' "$JOB_DETAIL_FILE" >/dev/null 2>&1 || {
+  log "--- job source_audio_rebuild ---"
+  jq -c '.job.source_audio_rebuild // {}' "$JOB_DETAIL_FILE" || true
+  fail "job $JOB_ID still owes a source-audio rebuild; the build below would be asserting on an attempt that never saw every upload"
+}
+REBUILD_SUMMARY="$(jq -r '.job.source_audio_rebuild // {} | "uploads=\(.upload_seq // 0) built=\(.built_seq // 0) rebuilds=\(.rebuild_count // 0)"' "$JOB_DETAIL_FILE")"
+pass "every uploaded capture reached a completed build ($REBUILD_SUMMARY)"
+
 CURRENT_ATTEMPT="$(jq -r '.job.current_attempt_number // 1' "$JOB_DETAIL_FILE")"
 BUILD_LOG_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
   .attempts[] | select(.attempt_number == $att) | .build_log_path // empty
@@ -597,29 +632,235 @@ fi
 
 [[ -s "$LOG_DIR/build.log" ]] || fail "build.log is empty for job $JOB_ID"
 
-# Assert build log for Alice
-grep -Eiq "source audio: .*alice.* transcribing from participant capture spliced over [1-9][0-9]* ms of their recorded track \([1-9][0-9]*/[1-9][0-9]* segments, 0 skipped," \
-  "$LOG_DIR/build.log" || {
+# --- the splice, per participant --------------------------------------------
+#
+# What this asserts, and what it deliberately does not.
+#
+# It used to demand "0 skipped", and that was a coin flip on a live recording.
+# Alice records three stretches here: one sealed by the microphone switch, one
+# sealed by the page reload, one sealed when she leaves the call. The last two
+# end at an abrupt boundary, where the capture's sidecar stamps the segment's
+# window from the call clock while the MediaRecorder's final chunk is still on
+# its way — so the file arrives holding slightly less audio than it declares.
+# The splice leaves out a segment holding under 90% of its declared window
+# (minSegmentDecodedFraction in internal/transcribe/sourceaudio.go; "Abrupt-page
+# tail" in docs/source-audio-capture.md), which is the right thing to do with a
+# file that disagrees with its own manifest, and the recorded track stands there
+# instead.
+#
+# Measured across seven runs of this leg, Alice's last segment held 86.7% to
+# 96.2% of what it declared — two of the seven under the threshold. Her
+# reload-sealed segment held 93.0% to 94.4%, her switch-sealed one 100%, and
+# Bob's single segment 97.6% to 98.8%: his thirty-odd seconds absorb the same
+# half-second of missing tail that costs Alice's eleven-second segment a tenth
+# of its window. A required check cannot be a coin flip, and the pipeline was
+# not misbehaving on the runs that lost.
+#
+# So the demand is no longer "nothing was skipped". It is "the splice did its
+# job, and whatever it left out is what the pipeline says it leaves out":
+#
+#   * the line exists at all — a splice that did not happen is still a failure;
+#   * placed + skipped accounts for every segment that arrived, so a counter
+#     that drifts from the segments is caught;
+#   * at least MIN_PLACED segments landed;
+#   * at least MIN_SPLICED_MS of the recorded track was replaced;
+#   * the splice ACCOUNTS FOR at least MIN_ACCOUNTED_MS: what it replaced, plus
+#     the declared length of every segment it named a reason for. This is the
+#     floor that does the work, because it does not care how the capture was cut
+#     into segments — only that between splicing and explaining, the whole
+#     recorded stretch is answered for;
+#   * every skipped segment has its reason on the build log; every one of those
+#     reasons is the short-tail one; AND the segment held between MIN_HELD and
+#     MAX_HELD of the window it declared, which is the band that reason can
+#     honestly describe. A skip for any other reason — a placement that would
+#     not fit, a decode that failed, a window that landed nowhere — fails the
+#     run, and so does a skip with no reason at all, and so does a segment
+#     missing far more of its audio than a stopping recorder explains.
+#
+# The last clause is the one that keeps this honest. "The audio does not match
+# the sidecar" is printed for a segment holding 89% of its window and for one
+# holding 10% of it, so accepting the reason alone would accept a regression
+# that truncated an upload to nothing; and accepting it at any percentage would
+# accept the pipeline changing its mind about which segments to drop. The band
+# is written out where those two constants are defined.
+#
+# What this deliberately does NOT assert is how many of Alice's three segments
+# landed. Two of them end at an abrupt boundary and either can lose its tail;
+# both losing it at once is unlikely but legitimate, and a required check that
+# fails on a legitimate outcome is the flake this replaces. MIN_ACCOUNTED_MS
+# holds the line instead, because a skipped segment's declared length still
+# counts towards it.
+#
+# What it cannot prove — worth writing down rather than implying: every number
+# here is the build's own account of itself. An overlay that computed a window
+# and copied no samples would report exactly these counts, and both browsers
+# play the same fake microphone, so "the window is audible" cannot tell an
+# upload from the recorded track. The assertion that would catch it is the
+# spliced-versus-control differential below, and it is off by default because it
+# costs a second build. What this block catches is a splice that stops placing,
+# stops covering, or starts declining segments for reasons the pipeline does not
+# document.
+
+# The one skipped-segment reason this leg tolerates — the WHOLE reason, matched
+# to the end of the line wherever it is used, because a prefix would let a future
+# "...does not match the sidecar; and the decode failed too" through as benign.
+# The two millisecond figures are capture groups, so the deficit is read with
+# this same expression rather than with a second one that could drift from it.
+BENIGN_SKIP_REASON='holds ([0-9]+) ms of the ([0-9]+) ms it declares \([0-9]+%\); the audio does not match the sidecar; the recorded track stands there'
+# Not a skip at all: a segment used only across the window it declared. It is
+# tolerated but never counts as the explanation for a skip.
+BENIGN_PARTIAL_REASON='partly used: holds [0-9]+ ms under a [0-9]+ ms window; only the first [0-9]+ ms of it was used'
+# The participant-agnostic half of the splice line, kept in one place because a
+# unit test reads it from this file and matches a real build log against it.
+SPLICE_LINE_REASON='transcribing from participant capture spliced over [0-9]+ ms of their recorded track \([0-9]+/[0-9]+ segments, [0-9]+ skipped,'
+# The band a legitimately short segment falls in, as integer fractions of the
+# window it declared. Between them they say: the splice dropped this segment for
+# the reason it gives, and the segment lost a sealing boundary rather than its
+# contents.
+#
+# The upper bound is minSegmentDecodedFraction itself. Without it the leg would
+# accept that constant being RAISED: every segment that lost a normal tail would
+# start being skipped, each with a permitted message, and two thirds of
+# somebody's upload would quietly stop reaching the transcript. (Lowering it is
+# invisible from here — the leg sees the segments the splice refused, never the
+# ones it accepted — and is held by a unit test in internal/transcribe instead.)
+#
+# The lower bound is what makes the reason mean something. "The audio does not
+# match the sidecar" is printed for a segment holding 89% of its window and for
+# one holding 10% of it, so without a floor an upload truncated to nothing would
+# arrive wearing a permitted sentence.
+#
+# Seven tenths, and proportional rather than a fixed number of milliseconds,
+# because of where the loss comes from. On a clean stop the capture stamps the
+# segment's end AFTER MediaRecorder's final chunk has been handed over
+# (stopSegment in cassini-app/src/capture/payload.ts), so the shortfall is the
+# stop and the encoder spin-up, not a dropped chunk: it is latency, and latency
+# grows with how loaded the runner is. Measured here it runs 0.4-1.7 s, which on
+# these segments is 4-13% of the window; a fixed cap near that would be a new
+# coin flip on a slow machine, while seven tenths still tolerates four and a half
+# seconds of it and refuses anything that lost a third of its audio.
+MIN_HELD_NUM=7
+MIN_HELD_DEN=10
+MAX_HELD_NUM=9
+MAX_HELD_DEN=10
+
+# assert_participant_splice <who> <min_segments> <min_placed> <min_spliced_ms> <min_accounted_ms>
+assert_participant_splice() {
+  local who="$1" min_segments="$2" min_placed="$3" min_spliced_ms="$4" min_accounted_ms="$5"
+  local line spliced placed segments skipped explained unexplained n
+  local skip_line held declared accounted
+
+  # No match is the interesting case here, not an error: `|| true` so that the
+  # diagnosis below runs instead of set -e taking the leg down with an ERR trap.
+  line="$(grep -Ei "^ *source audio: .*${who}.* ${SPLICE_LINE_REASON}" \
+    "$LOG_DIR/build.log" | tail -1 || true)"
+  if [[ -z "$line" ]]; then
     log "--- build.log excerpt ---"
     grep -E "source audio" "$LOG_DIR/build.log" || true
-    fail "build log does not assert successful splice for Alice with 0 skipped"
-  }
-if grep -Eiq "source audio: .*alice.*keeping the recorded audio" "$LOG_DIR/build.log"; then
-  fail "Alice has 'keeping the recorded audio' in build log"
-fi
+    fail "build log records no participant-capture splice for ${who}"
+  fi
 
-# Assert build log for Bob
-grep -Eiq "source audio: .*bob.* transcribing from participant capture spliced over [1-9][0-9]* ms of their recorded track \([1-9][0-9]*/[1-9][0-9]* segments, 0 skipped," \
-  "$LOG_DIR/build.log" || {
+  read -r spliced placed segments skipped <<<"$(sed -E \
+    's#.*spliced over ([0-9]+) ms of their recorded track \(([0-9]+)/([0-9]+) segments, ([0-9]+) skipped,.*#\1 \2 \3 \4#' \
+    <<<"$line")"
+  for n in "$spliced" "$placed" "$segments" "$skipped"; do
+    [[ "$n" =~ ^[0-9]+$ ]] || fail "could not read ${who}'s splice counts from: $line"
+  done
+
+  (( segments >= min_segments )) \
+    || fail "the build saw $segments segment(s) of ${who}'s capture, want at least $min_segments: $line"
+  (( placed + skipped == segments )) \
+    || fail "${who}: $placed placed plus $skipped skipped is not the $segments segment(s) that arrived: $line"
+  (( placed >= min_placed )) \
+    || fail "only $placed of ${who}'s $segments segment(s) were spliced, want at least $min_placed: $line"
+  (( spliced >= min_spliced_ms )) \
+    || fail "${who}'s splice covers $spliced ms of their recorded track, want at least $min_spliced_ms ms: $line"
+
+  # Every skip explained, by the one reason this leg accepts, and by a deficit
+  # that reason can actually account for. The declared length of each explained
+  # segment joins the spliced milliseconds: a segment the splice named a reason
+  # for is answered for, one it lost silently is not.
+  explained=0
+  accounted="$spliced"
+  while IFS= read -r skip_line; do
+    [[ -n "$skip_line" ]] || continue
+    # The same expression that selected the line reads its numbers, so the two
+    # cannot come to disagree about which figure is which.
+    read -r held declared <<<"$(sed -E "s#.*${BENIGN_SKIP_REASON}.*#\\1 \\2#" <<<"$skip_line")"
+    if ! [[ "$held" =~ ^[0-9]+$ && "$declared" =~ ^[0-9]+$ ]]; then
+      fail "could not read the deficit from ${who}'s skip line: $skip_line"
+    fi
+    if (( held * MIN_HELD_DEN < declared * MIN_HELD_NUM )); then
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "${who} lost $(( declared - held )) ms of a $declared ms segment, further under it than a stopping recorder explains: $skip_line"
+    fi
+    if (( held * MAX_HELD_DEN > declared * MAX_HELD_NUM )); then
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "${who} had a segment holding $held of $declared ms skipped, above the ${MAX_HELD_NUM}/${MAX_HELD_DEN} of its window the splice drops segments under: $skip_line"
+    fi
+    explained=$(( explained + 1 ))
+    accounted=$(( accounted + declared ))
+  done < <(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ not spliced: ${BENIGN_SKIP_REASON}\$" \
+    "$LOG_DIR/build.log" || true)
+  if (( explained != skipped )); then
     log "--- build.log excerpt ---"
     grep -E "source audio" "$LOG_DIR/build.log" || true
-    fail "build log does not assert successful splice for Bob with 0 skipped"
-  }
-if grep -Eiq "source audio: .*bob.*keeping the recorded audio" "$LOG_DIR/build.log"; then
-  fail "Bob has 'keeping the recorded audio' in build log"
-fi
+    fail "${who} had $skipped skipped segment(s) and $explained of them are the documented short-tail case"
+  fi
+  (( accounted >= min_accounted_ms )) \
+    || fail "${who}'s splice covers $spliced ms and explains $(( accounted - spliced )) ms more, $accounted ms of the $min_accounted_ms ms this leg recorded them for"
+  # And nothing else the splice declined is left unaccounted for.
+  unexplained="$(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ (not spliced|partly used):" "$LOG_DIR/build.log" \
+    | grep -Ecv "(${BENIGN_SKIP_REASON}\$|${BENIGN_PARTIAL_REASON}\$)" || true)"
+  if (( unexplained != 0 )); then
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "${who}'s splice declined $unexplained segment(s) for a reason this leg does not accept"
+  fi
 
-pass "build log asserts participant capture splice for Alice and Bob with 0 skipped"
+  # A whole speaker refused is a different event, and its own failure. The
+  # per-segment lines above deliberately do not use these words — they say "the
+  # recorded track stands there" — and a unit test pins the two apart, so this
+  # needs no anchor that a later suffix on the refusal line could slip past.
+  if grep -Eiq "^ *source audio: .*${who}.*keeping the recorded audio" "$LOG_DIR/build.log"; then
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "${who}'s upload went unused; the build kept their recorded audio"
+  fi
+
+  pass "${who}: $placed of $segments segment(s) spliced over $spliced ms of their recorded track ($skipped skipped, $accounted ms accounted for)"
+}
+
+# Alice is driven through three recorded stretches of at least 8.5 s each — one
+# before the microphone switch, one before the page reload, one after it — so
+# her capture arrives as three segments declaring 28.4-30.5 s between them.
+# Runs of this leg splice 27.5-28.5 s of her track with all three placed and
+# 17.5 s with the last one short, and account for 27.3-30.5 s either way, so
+# 24 s of accounted audio leaves better than three seconds of slack under the
+# lowest run measured. One placed segment is the floor for the count, because
+# both of her abruptly sealed segments may legitimately lose their tails in the
+# same run; 8 s is her shortest single stretch.
+ALICE_MIN_SEGMENTS=3
+ALICE_MIN_PLACED=1
+ALICE_MIN_SPLICED_MS=8000
+ALICE_MIN_ACCOUNTED_MS=24000
+# Bob records one segment spanning the whole call: he joins before the recording
+# starts and leaves after Alice's reload, so he is talking through all three of
+# her stretches. Runs of this leg splice 30.0-32.0 s of his track. His segment
+# cannot be partly placed — if it were skipped the render would fail and there
+# would be no line at all — so his floors are here to catch a splice that lands
+# and covers almost nothing.
+BOB_MIN_SEGMENTS=1
+BOB_MIN_PLACED=1
+BOB_MIN_SPLICED_MS=20000
+BOB_MIN_ACCOUNTED_MS=20000
+
+assert_participant_splice "$ALICE" \
+  "$ALICE_MIN_SEGMENTS" "$ALICE_MIN_PLACED" "$ALICE_MIN_SPLICED_MS" "$ALICE_MIN_ACCOUNTED_MS"
+assert_participant_splice "$BOB" \
+  "$BOB_MIN_SEGMENTS" "$BOB_MIN_PLACED" "$BOB_MIN_SPLICED_MS" "$BOB_MIN_ACCOUNTED_MS"
 
 # Assert published meeting manifest records provenance.sourceAudio
 CANONICAL_MEETING="$(jq -r '.job.artifact_meeting_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
@@ -640,11 +881,45 @@ done
 [[ -n "$ARTIFACT_MEETING_PATH" ]] || fail "meeting manifest.json not found inside container for job $JOB_ID"
 docker exec "$EXAPP_CONTAINER" cat "$ARTIFACT_MEETING_PATH/manifest.json" >"$LOG_DIR/meeting-manifest.json"
 
-jq -e --arg alice "$ALICE" --arg bob "$BOB" '
+# The same demand as the build log above, against the artifact a consumer reads,
+# and from the same constants rather than a second set that could drift from
+# them. The build prints the manifest's own rejection strings verbatim, so the
+# accounted-milliseconds floor can be recomputed here from `rejections` — which
+# is the point: if the log and the manifest ever stopped saying the same thing,
+# one of these two would fail.
+jq -e --arg alice "$ALICE" --arg bob "$BOB" \
+  --argjson aSegments "$ALICE_MIN_SEGMENTS" --argjson aPlaced "$ALICE_MIN_PLACED" \
+  --argjson aSpliced "$ALICE_MIN_SPLICED_MS" --argjson aAccounted "$ALICE_MIN_ACCOUNTED_MS" \
+  --argjson bSegments "$BOB_MIN_SEGMENTS" --argjson bPlaced "$BOB_MIN_PLACED" \
+  --argjson bSpliced "$BOB_MIN_SPLICED_MS" --argjson bAccounted "$BOB_MIN_ACCOUNTED_MS" \
+  --argjson minHeldNum "$MIN_HELD_NUM" --argjson minHeldDen "$MIN_HELD_DEN" \
+  --argjson maxHeldNum "$MAX_HELD_NUM" --argjson maxHeldDen "$MAX_HELD_DEN" \
+  --arg skipReason "$BENIGN_SKIP_REASON" '
   .provenance.sourceAudio as $sa
-  | ($sa | type == "array" and length >= 2)
-  and any($sa[]; .owner == $alice and (.speaker_id | test($alice; "i")) and .spliced_ms > 0 and .skipped == 0)
-  and any($sa[]; .owner == $bob and (.speaker_id | test($bob; "i")) and .spliced_ms > 0 and .skipped == 0)
+  # Every segment the splice named a short-tail reason for, as {held, declared}.
+  # The same expression the build log is read with, whole and anchored: a
+  # rejection that merely opens with these words is a different rejection, and
+  # must not be counted as this one.
+  | def shortTails:
+      [ (.rejections // [])[]
+        | select(test("^segment [0-9]+ not spliced: " + $skipReason + "$"))
+        | match($skipReason).captures
+        | {held: (.[0].string | tonumber), declared: (.[1].string | tonumber)} ];
+    def spliced($owner; $minSegments; $minPlaced; $minSplicedMS; $minAccountedMS):
+      any($sa[];
+        .owner == $owner
+        and (.speaker_id | test($owner; "i"))
+        and .segments >= $minSegments
+        and .placed >= $minPlaced
+        and (.placed + .skipped) == .segments
+        and .spliced_ms >= $minSplicedMS
+        and (shortTails | length) == .skipped
+        and all(shortTails[]; (.held * $minHeldDen) >= (.declared * $minHeldNum))
+        and all(shortTails[]; (.held * $maxHeldDen) <= (.declared * $maxHeldNum))
+        and (.spliced_ms + ([shortTails[].declared] | add // 0)) >= $minAccountedMS);
+    ($sa | type == "array" and length >= 2)
+    and spliced($alice; $aSegments; $aPlaced; $aSpliced; $aAccounted)
+    and spliced($bob; $bSegments; $bPlaced; $bSpliced; $bAccounted)
 ' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
   log "--- meeting manifest.json provenance ---"
   jq '.provenance // {}' "$LOG_DIR/meeting-manifest.json" || true
@@ -653,3 +928,184 @@ jq -e --arg alice "$ALICE" --arg bob "$BOB" '
 
 pass "meeting manifest provenance.sourceAudio records successful splice for both Alice and Bob"
 
+
+# --- the published audio carries the same splice -----------------------------
+#
+# Both browsers play Chromium's fake microphone, so what the SFU recorded and
+# what each participant uploaded are the same signal. That rules out a spectral
+# proof here — "the upload is audible" cannot be told from "the recorded track
+# is audible" when the two are the same tone. What this leg can prove, and does,
+# is the chain: the build says it spliced the published mix and over which
+# windows; the published .opus is the audio that mix produced; and those windows
+# are not silence in it. The content differential, which is the only assertion
+# that distinguishes spliced audio from recorded audio, needs a second build and
+# is gated on E2E_MIX_CONTROL=1 below.
+
+jq -e --arg alice "$ALICE" --arg bob "$BOB" '
+  .provenance.sourceAudio as $sa
+  | .digestDurationMs as $dur
+  | def spliced($owner):
+      any($sa[];
+        .owner == $owner
+        and .mix_spliced == true
+        and .render_hz == 48000
+        and .crossfade_ms == 15
+        and (.windows | type == "array" and length >= 1)
+        and all(.windows[]; .from_ms >= 0 and .to_ms > .from_ms and .to_ms <= ($dur + 1000)));
+    spliced($alice) and spliced($bob)
+' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
+  log "--- meeting manifest.json provenance ---"
+  jq '.provenance.sourceAudio // []' "$LOG_DIR/meeting-manifest.json" || true
+  fail "meeting manifest does not record a spliced published mix with windows inside the recording for both Alice and Bob"
+}
+pass "meeting manifest records that the published mix carries each participant's splice"
+
+for who in "$ALICE" "$BOB"; do
+  grep -Eiq "source audio: .*${who}.*the published mix carries the same splice \([1-9][0-9]* window\(s\), 15 ms crossfade\)" \
+    "$LOG_DIR/build.log" || {
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "build log does not say the published mix carries ${who}'s splice"
+    }
+done
+if grep -Eiq "the published mix keeps the recorded track" "$LOG_DIR/build.log"; then
+  log "--- build.log excerpt ---"
+  grep -E "source audio" "$LOG_DIR/build.log" || true
+  fail "build log says the published mix kept the recorded track"
+fi
+pass "build log says the published mix carries the splice for Alice and Bob"
+
+# The sealed .opus is a stream copy of meeting.webm's Opus packets, so the two
+# decode to the same samples. Equal over everything they share is the proof that
+# what was published is what the splice produced.
+#
+# Over what they SHARE, because the two containers do not agree about the last
+# fraction of a millisecond and are not meant to: Ogg carries a sample-exact
+# final granule, Matroska a block duration, and ffmpeg has been seen to
+# normalise the Ogg granule on this very stream copy (see
+# maxPortableMeetingIdentityPasses in internal/cassini/portable_meeting.go).
+# A run where the .opus decoded five samples short of the .webm — 0.1 ms of
+# codec tail, and byte-identical everywhere else — failed this leg while the
+# published audio was perfect. So the LENGTHS are allowed one Opus frame of
+# slack in either direction, and the SAMPLES are compared, which is the claim
+# that matters.
+ATTEMPT_OPUS="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+  .attempts[] | select(.attempt_number == $att) | .artifact_opus_path // empty
+' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+CANONICAL_OPUS="$(jq -r '.job.artifact_opus_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+
+PUBLISHED_OPUS=""
+for cand in "$CANONICAL_OPUS" "$ATTEMPT_OPUS" \
+  "/nc_app_gocassini_data/operator/jobs/current/${JOB_ID}.opus"; do
+  if [[ -n "$cand" ]] && docker exec "$EXAPP_CONTAINER" test -f "$cand"; then
+    PUBLISHED_OPUS="$cand"
+    break
+  fi
+done
+[[ -n "$PUBLISHED_OPUS" ]] || fail "published .opus not found inside container for job $JOB_ID"
+
+decode_pcm() {
+  # $1 = path inside the container, $2 = host output file
+  docker exec "$EXAPP_CONTAINER" ffmpeg -v error -i "$1" \
+    -vn -sn -dn -ac 1 -ar 48000 -f s16le - >"$2" 2>"$LOG_DIR/decode.err" \
+    || fail "could not decode $1 inside the container"
+  [[ -s "$2" ]] || fail "decoding $1 produced no audio"
+}
+
+decode_pcm "$ARTIFACT_MEETING_PATH/meeting.webm" "$LOG_DIR/mix.pcm"
+decode_pcm "$PUBLISHED_OPUS" "$LOG_DIR/published.pcm"
+
+MIX_BYTES="$(wc -c <"$LOG_DIR/mix.pcm")"
+PUBLISHED_BYTES="$(wc -c <"$LOG_DIR/published.pcm")"
+# One 20 ms Opus frame of mono 48 kHz s16: 960 samples, 1920 bytes.
+LENGTH_SLACK_BYTES=1920
+LENGTH_DELTA=$((PUBLISHED_BYTES - MIX_BYTES))
+if [[ "$LENGTH_DELTA" -lt 0 ]]; then
+  LENGTH_DELTA=$((-LENGTH_DELTA))
+fi
+if [[ "$LENGTH_DELTA" -gt "$LENGTH_SLACK_BYTES" ]]; then
+  fail "the published .opus holds $PUBLISHED_BYTES bytes of audio against the mix's $MIX_BYTES, further apart than one Opus frame"
+fi
+SHARED_BYTES="$MIX_BYTES"
+if [[ "$PUBLISHED_BYTES" -lt "$SHARED_BYTES" ]]; then
+  SHARED_BYTES="$PUBLISHED_BYTES"
+fi
+MIX_SUM="$(head -c "$SHARED_BYTES" "$LOG_DIR/mix.pcm" | sha256sum | cut -d' ' -f1)"
+PUBLISHED_SUM="$(head -c "$SHARED_BYTES" "$LOG_DIR/published.pcm" | sha256sum | cut -d' ' -f1)"
+[[ "$MIX_SUM" == "$PUBLISHED_SUM" ]] \
+  || fail "the published .opus does not carry the spliced mix's audio"
+pass "the published .opus carries exactly the audio the spliced mix produced ($SHARED_BYTES bytes compared, $LENGTH_DELTA of container tail apart)"
+
+# Every window the splice claims must hold audible audio in the published file.
+# A render that went wrong — a misplaced overlay, a floor that never got its
+# recorded samples — shows up here as silence where a participant was speaking.
+WINDOW_COUNT=0
+while read -r from_ms to_ms; do
+  [[ -n "$from_ms" ]] || continue
+  from_s="$(awk -v v="$from_ms" 'BEGIN { printf "%.3f", v / 1000 }')"
+  to_s="$(awk -v v="$to_ms" 'BEGIN { printf "%.3f", v / 1000 }')"
+  MEAN_DB="$(docker exec "$EXAPP_CONTAINER" ffmpeg -hide_banner -nostats \
+    -i "$PUBLISHED_OPUS" -af "atrim=start=${from_s}:end=${to_s},volumedetect" \
+    -f null - 2>&1 | sed -n 's/.*mean_volume: \(-\?[0-9.]*\) dB.*/\1/p' | tail -1)"
+  [[ -n "$MEAN_DB" ]] || fail "could not measure the published audio over ${from_s}s..${to_s}s"
+  awk -v db="$MEAN_DB" 'BEGIN { exit (db > -60) ? 0 : 1 }' \
+    || fail "the published audio is silent (${MEAN_DB} dB) over the spliced window ${from_s}s..${to_s}s"
+  WINDOW_COUNT=$((WINDOW_COUNT + 1))
+done < <(jq -r '.provenance.sourceAudio[]?.windows[]? | "\(.from_ms) \(.to_ms)"' "$LOG_DIR/meeting-manifest.json")
+[[ "$WINDOW_COUNT" -ge 2 ]] || fail "only $WINDOW_COUNT spliced windows were measured, want at least one each for Alice and Bob"
+pass "every spliced window holds audible audio in the published .opus ($WINDOW_COUNT windows)"
+
+# The content differential. This is the one assertion that tells spliced audio
+# from recorded audio in a leg where both sides are the same fake microphone,
+# and it costs a second build — a whole transcription pass — so it is opt-in.
+#
+# Before the first spliced window the two mixes are the same samples entering
+# the same encoder, so their PCM is identical; inside a window it is not, because
+# the uploaded audio took a different route (browser Opus, decoded and rate
+# corrected) from the one the SFU delivered.
+if [[ "${E2E_MIX_CONTROL:-0}" == "1" ]]; then
+  RUN_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+    .attempts[] | select(.attempt_number == $att) | .artifact_run_path // empty
+  ' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+  [[ -z "$RUN_PATH" ]] && RUN_PATH="$(jq -r '.job.artifact_run_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+  [[ -n "$RUN_PATH" ]] || fail "no run path recorded for job $JOB_ID; cannot build the control mix"
+
+  docker exec "$EXAPP_CONTAINER" rm -rf /tmp/cassini-control.meeting
+  # No --source-audio, so this build never looks for an upload: the same
+  # recording.mkv through the same mix, without the splice.
+  docker exec "$EXAPP_CONTAINER" sh -c \
+    '"${CASSINI_BIN:-cassini}" build "$1" --out /tmp/cassini-control.meeting' sh "$RUN_PATH" \
+    >"$LOG_DIR/control-build.log" 2>&1 \
+    || { tail -40 "$LOG_DIR/control-build.log"; fail "the control build (no --source-audio) failed"; }
+  decode_pcm "/tmp/cassini-control.meeting/meeting.webm" "$LOG_DIR/control.pcm"
+
+  FIRST_WINDOW_MS="$(jq -r '[.provenance.sourceAudio[]?.windows[]?.from_ms] | min' "$LOG_DIR/meeting-manifest.json")"
+  PREFIX_BYTES="$(awk -v ms="$FIRST_WINDOW_MS" 'BEGIN {
+    s = (ms - 100) / 1000; if (s < 0) s = 0; printf "%d", int(s * 48000) * 2
+  }')"
+  if [[ "$PREFIX_BYTES" -gt 0 ]]; then
+    CONTROL_PREFIX="$(head -c "$PREFIX_BYTES" "$LOG_DIR/control.pcm" | sha256sum | cut -d' ' -f1)"
+    PUBLISHED_PREFIX="$(head -c "$PREFIX_BYTES" "$LOG_DIR/mix.pcm" | sha256sum | cut -d' ' -f1)"
+    [[ "$CONTROL_PREFIX" == "$PUBLISHED_PREFIX" ]] \
+      || fail "the spliced mix differs from the control mix before the first spliced window; the splice ran outside its windows"
+  fi
+
+  DIFFERED=0
+  while read -r from_ms to_ms; do
+    [[ -n "$from_ms" ]] || continue
+    from_b="$(awk -v ms="$from_ms" 'BEGIN { printf "%d", int((ms + 50) / 1000 * 48000) * 2 }')"
+    to_b="$(awk -v ms="$to_ms" 'BEGIN { printf "%d", int((ms - 50) / 1000 * 48000) * 2 }')"
+    [[ "$to_b" -gt "$from_b" ]] || continue
+    len=$((to_b - from_b))
+    a="$(tail -c "+$((from_b + 1))" "$LOG_DIR/mix.pcm" | head -c "$len" | sha256sum | cut -d' ' -f1)"
+    b="$(tail -c "+$((from_b + 1))" "$LOG_DIR/control.pcm" | head -c "$len" | sha256sum | cut -d' ' -f1)"
+    if [[ "$a" != "$b" ]]; then
+      DIFFERED=$((DIFFERED + 1))
+    fi
+  done < <(jq -r '.provenance.sourceAudio[]?.windows[]? | "\(.from_ms) \(.to_ms)"' "$LOG_DIR/meeting-manifest.json")
+  [[ "$DIFFERED" -ge 1 ]] \
+    || fail "the spliced mix is identical to the control mix inside every spliced window; nothing was actually spliced into the published audio"
+  pass "the published mix differs from an unspliced control build inside the spliced windows and matches it before them"
+else
+  log "skipping the spliced-versus-control mix differential (set E2E_MIX_CONTROL=1; it costs a second build)"
+fi
