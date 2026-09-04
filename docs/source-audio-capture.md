@@ -65,12 +65,51 @@ attempts to flip it back.
 **It is the same signal the SFU encoded**, one step earlier. That is what makes
 verifying an upload against the server's own recording meaningful later.
 
-The recording remains the record; an upload only feeds the transcript, and both
-stay on disk to compare. Nothing in ingestion writes to the recorded tracks: the
-published mix is built from them before an upload is looked at, and the splice
-below produces a separate WAV under `_work/sourceaudio/` that only the
-transcription pass reads. When a transcript says something the meeting does not,
-the audio to check it against is still there.
+The recording remains the record, and both it and the upload stay on disk to
+compare. Nothing in ingestion writes to `recording.mkv` or to the tracks decoded
+from it: the splice below renders each participant onto a separate file, and the
+published mix and the transcript are both made from that render. When a
+transcript says something the meeting does not, the audio to check it against is
+still there.
+
+## What the published audio contains
+
+The published mix carries the same splice the transcript was made from. Wherever
+a participant's upload could be placed, the published audio holds the upload;
+everywhere else it holds the recorded track, unchanged. So every word in the
+transcript can be heard in the meeting people play back — which is the point:
+a transcript quoting words that are inaudible in the recording is worse than a
+mix that is a little cleaner than the call was.
+
+There is one render and two consumers, so the two cannot disagree about where a
+word is:
+
+1. Each recorded track is decoded onto the meeting timeline at 48 kHz, exactly
+   as the mixdown has always done.
+2. A participant with a usable upload gets their tracks summed into one render
+   and the upload laid over it, window by window, with a 15 ms linear crossfade
+   at each edge so the handover does not click.
+3. The encoder mixes that render in place of their recorded tracks, and the
+   speech recogniser is handed a 16 kHz resample of the very same file
+   (`_work/sourceaudio/source-<speaker>.wav`).
+
+`manifest.provenance.sourceAudio` records `mix_spliced`, the `windows` each
+placed segment covers with its segment index, the `crossfade_ms` and the
+`render_hz`. The published `.opus` carries none of it: the portable v1 manifest
+is frozen and has no field for it.
+
+A speaker whose upload was refused, or absent, keeps their recorded audio in the
+mix exactly as before, and a build with no usable upload publishes the audio it
+would have published without the feature at all. `CASSINI_SOURCE_AUDIO_MIX=0`
+turns off the published splice on its own, leaving the transcript spliced — a
+rollback for a deployment that dislikes how the mix sounds, without giving up
+ingestion.
+
+Two consequences worth knowing. The published audio is a different file from
+what an unspliced build would produce, so the meeting's identity — the hash of
+its Opus essence — changes when a rebuild adds audio. And the render is
+per-participant, so a rejoined participant's several tracks collapse into one
+mix input; the mix counts them once, not twice.
 
 ## Timing: two clocks, and which one does what
 
@@ -468,10 +507,18 @@ logged-in user. The client fails closed at every one of those.
   `CASSINI_SOURCE_AUDIO_INGEST=0`.
 - **Rebuild on late upload.** An upload arriving after the meeting was published
   does not trigger a rebuild; only a manual rerun picks it up.
-- **The published mix.** Ingestion changes the transcript only. The playable
-  audio stays the recorded mix, which is what the viewer seeks against.
 - **Attribution.** The cross-track attribution stage still measures the recorded
-  tracks, not the ingested ones.
+  tracks, not the ingested ones. Now that the published audio is spliced too,
+  this shows more: a word transcribed from an upload where the recorded track
+  was silent — a reload gap — is measured against silence and may be flagged
+  low-confidence even though it is plainly audible in the published mix.
+- **Level matching at the seams.** The crossfade removes the click, not a
+  loudness step: the browser capture has its own gain and the recorded track has
+  whatever the SFU delivered, and nothing equalises the two.
+- **Stale playback after a rebuild.** A late upload republishes the meeting as a
+  new attempt, and the published audio now changes with it rather than only the
+  transcript. The viewer's stale serving of a republished meeting is therefore
+  audible — old audio against a new transcript — until the cache refreshes.
 - **Verification of an upload against the recorder's own audio** (see above).
 - **The second copy of ingested audio.** Captures themselves are now bounded and
   swept — see the capture quota and retention settings — but with ingestion on
