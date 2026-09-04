@@ -20,6 +20,11 @@ type BuildConfig struct {
 	SummaryLLM       LLMConfig  // optional; if not configured, skip summary generation
 	NumThreads       int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
 	Quality          STTQuality // "" = balanced; picks model/device when not explicitly set
+	// Vocabulary lists preferred spellings for names and project terms. It is
+	// biasing evidence for the decoder itself (see hotwords.go), not a
+	// post-processing rewrite: a term is only ever emitted where the acoustics
+	// already support it.
+	Vocabulary []string
 	// Backend selects the speech decoder ("" = CASSINI_STT_BACKEND, else the
 	// bundled sherpa-onnx). See backend.go.
 	Backend string
@@ -126,7 +131,36 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// records what its decoder declared, and the claim survives only if all of
 	// them made it. See wordEndGuarantee in backend.go.
 	wordEnds := &wordEndGuarantee{}
-	segments, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, backend, cfg.Device, cfg.NumThreads, stdout, wordEnds)
+
+	// Resolve the operator's vocabulary into decoder biasing once, before any
+	// pass runs, so every pass in this build is biased identically and the
+	// manifest can state what actually happened.
+	vocabulary := vocabularyForBuild(cfg.Vocabulary, streams)
+	decoder, hintsProv, err := resolveDecoder(outputDir, vocabulary, modelPaths)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "  decoder: %s\n", decoder.Method)
+	if hintsProv != nil {
+		if hintsProv.Applied {
+			fmt.Fprintf(stdout, "  decoder hints: %d term(s), score=%.2f\n", hintsProv.TermCount, hintsProv.Score)
+		} else {
+			fmt.Fprintf(stdout, "  decoder hints: %d term(s) NOT applied: %s\n",
+				hintsProv.TermCount, hintsProv.Reason)
+		}
+	}
+
+	pass := passConfig{
+		ModelPaths: modelPaths,
+		VADPath:    vadPath,
+		Backend:    backend,
+		Device:     cfg.Device,
+		NumThreads: cfg.NumThreads,
+		Decoder:    decoder,
+		Guarantee:  wordEnds,
+	}
+
+	segments, err := transcribePass(ctx, mkvPath, streams, pass, stdout)
 	if err != nil {
 		return err
 	}
@@ -135,7 +169,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// that defeats the VAD even when the mixed timeline clearly contains
 	// speech. Fall back to transcribing the already-mixed meeting.webm under
 	// a synthetic "merged" speaker so the bundle still ships usable content.
-	streams, segments, err = ensureMergedFallback(ctx, webmPath, streams, segments, modelPaths, vadPath, backend, cfg.Device, cfg.NumThreads, stdout, wordEnds)
+	streams, segments, err = ensureMergedFallback(ctx, webmPath, streams, segments, pass, stdout)
 	if err != nil {
 		return err
 	}
@@ -163,12 +197,15 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		return fmt.Errorf("write transcript: %w", err)
 	}
 
-	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, streams, audioDurationMS, sha256hex, backend, cfg, envCache, stdout, wordEnds)
+	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, streams, audioDurationMS, sha256hex, pass, cfg, envCache, stdout)
 	if err != nil {
 		return err
 	}
 
-	// --- 8. Captions, from the canonical transcript ---
+	// --- 8. Captions ---
+	// Captions come from the transcript itself. They used to be a by-product of
+	// the LLM cleanup step, so a deployment with no LLM configured got none;
+	// nothing about a caption file needs a model, so it is written every time.
 	if err := WriteCaptionsVTT(filepath.Join(outputDir, "captions.vtt"), streams, segments); err != nil {
 		return fmt.Errorf("write captions: %w", err)
 	}
@@ -192,7 +229,22 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// --- 10. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
-	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, audioDurationMS, streams, segments, backend, cfg.ModelID, cfg.Device, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts, attrProv, wordEnds.provenance()); err != nil {
+	if err := WriteManifest(manifestPath, ManifestInput{
+		SrcBasename:      srcBasename,
+		SrcDurationMS:    srcDurationMS,
+		DigestDurationMS: audioDurationMS,
+		Streams:          streams,
+		Segments:         segments,
+		STTBackend:       backend,
+		STTModelID:       cfg.ModelID,
+		STTDevice:        cfg.Device,
+		Hints:            hintsProv,
+		SummaryModel:     cfg.SummaryLLM.Model,
+		HasSummary:       hasSummary,
+		Additional:       additionalTranscripts,
+		Attribution:      attrProv,
+		WordTimings:      wordEnds.provenance(),
+	}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
@@ -243,7 +295,34 @@ func shouldFireMergedFallback(segments []Segment) bool {
 	return CountWords(segments) < minWordsBeforeMergedFallback
 }
 
-func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, modelPaths ModelPaths, vadPath, backend, device string, numThreads int, stdout io.Writer, guarantee *wordEndGuarantee) ([]AudioStream, []Segment, error) {
+// passConfig is everything one transcription pass needs to build a recognizer.
+// These six values were threaded through five functions individually; grouping
+// them keeps a new decoder setting from having to be added in five places, and
+// makes it impossible to build a recognizer for a pass while forgetting the
+// hints or the word-end guarantee that belong to it.
+type passConfig struct {
+	ModelPaths ModelPaths
+	VADPath    string
+	Backend    string
+	Device     string
+	NumThreads int
+	// Decoder selects the search and any hotword biasing for this pass.
+	Decoder   *DecoderConfig
+	Guarantee *wordEndGuarantee
+}
+
+// withThreads returns a copy running on a different thread budget, for the
+// parallel path where each worker gets a share.
+func (p passConfig) withThreads(n int) passConfig {
+	p.NumThreads = n
+	return p
+}
+
+func (p passConfig) newRecognizer() (SpeechRecognizer, error) {
+	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee)
+}
+
+func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, pass passConfig, stdout io.Writer) ([]AudioStream, []Segment, error) {
 	if !shouldFireMergedFallback(segments) {
 		return streams, segments, nil
 	}
@@ -257,7 +336,7 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 		StartTimeMS:  0,
 	}
 
-	rec, err := newRecognizerForPass(backend, modelPaths, vadPath, device, numThreads, guarantee)
+	rec, err := pass.newRecognizer()
 	if err != nil {
 		return streams, segments, fmt.Errorf("create recognizer for merged fallback: %w", err)
 	}
@@ -280,7 +359,7 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	// must not itself depend on VAD. Transcribe(useVAD=false) decodes this
 	// ~75s mix in short overlapping windows (see transcribeNonVADChunked) so
 	// no single low-confidence int8 span can zero the whole transcript.
-	words, err := rec.Transcribe(samples, modelPaths.SampleRate, false /*useVAD*/)
+	words, err := rec.Transcribe(samples, pass.ModelPaths.SampleRate, false /*useVAD*/)
 	if err != nil {
 		return streams, segments, fmt.Errorf("transcribe merged fallback: %w", err)
 	}
@@ -330,20 +409,20 @@ func minimumMergedFallbackWords(participantWords int) int {
 
 // transcribePass runs one full transcription pass over every speaker stream
 // using the given recognizer config. Returns merged + sorted segments.
-func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, backend, device string, numThreads int, stdout io.Writer, guarantee *wordEndGuarantee) ([]Segment, error) {
-	conc := resolveStreamConcurrency(len(streams), numThreads, device)
+func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, pass passConfig, stdout io.Writer) ([]Segment, error) {
+	conc := resolveStreamConcurrency(len(streams), pass.NumThreads, pass.Device)
 	if conc <= 1 {
-		return transcribeStreamsSequential(ctx, mkvPath, streams, modelPaths, vadPath, backend, device, numThreads, stdout, guarantee)
+		return transcribeStreamsSequential(ctx, mkvPath, streams, pass, stdout)
 	}
-	return transcribeStreamsParallel(ctx, mkvPath, streams, modelPaths, vadPath, backend, device, numThreads, conc, stdout, guarantee)
+	return transcribeStreamsParallel(ctx, mkvPath, streams, pass, conc, stdout)
 }
 
 // transcribeStreamsSequential transcribes each speaker stream one at a time with
 // a single shared recognizer. Used when concurrency resolves to 1 (single
 // speaker, tight thread budget, or low free RAM).
-func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, backend, device string, numThreads int, stdout io.Writer, guarantee *wordEndGuarantee) ([]Segment, error) {
-	fmt.Fprintf(stdout, "  loading recognizer (device=%s)...\n", device)
-	rec, err := newRecognizerForPass(backend, modelPaths, vadPath, device, numThreads, guarantee)
+func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []AudioStream, pass passConfig, stdout io.Writer) ([]Segment, error) {
+	fmt.Fprintf(stdout, "  loading recognizer (device=%s)...\n", pass.Device)
+	rec, err := pass.newRecognizer()
 	if err != nil {
 		return nil, fmt.Errorf("create recognizer: %w", err)
 	}
@@ -361,7 +440,7 @@ func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []
 		if err != nil {
 			return nil, fmt.Errorf("extract audio for %s: %w", stream.SpeakerLabel, err)
 		}
-		words, err := rec.Transcribe(samples, modelPaths.SampleRate, true /*useVAD*/)
+		words, err := rec.Transcribe(samples, pass.ModelPaths.SampleRate, true /*useVAD*/)
 		if err != nil {
 			return nil, fmt.Errorf("transcribe %s: %w", stream.SpeakerLabel, err)
 		}
@@ -378,12 +457,12 @@ func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []
 // resolveStreamConcurrency), so this never oversubscribes or OOMs the host.
 // Per-speaker results are written by index, so the merged output is independent
 // of completion order. The first error cancels the rest.
-func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, backend, device string, numThreads, conc int, stdout io.Writer, guarantee *wordEndGuarantee) ([]Segment, error) {
-	threadsPer := numThreads / conc
+func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []AudioStream, pass passConfig, conc int, stdout io.Writer) ([]Segment, error) {
+	threadsPer := pass.NumThreads / conc
 	if threadsPer < 1 {
 		threadsPer = 1
 	}
-	fmt.Fprintf(stdout, "  transcribing %d streams, concurrency=%d (%d threads each, device=%s)...\n", len(streams), conc, threadsPer, device)
+	fmt.Fprintf(stdout, "  transcribing %d streams, concurrency=%d (%d threads each, device=%s)...\n", len(streams), conc, threadsPer, pass.Device)
 
 	perSpeakerSegs := make([][]Segment, len(streams))
 	type streamJob struct {
@@ -416,7 +495,7 @@ func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []Au
 
 	worker := func() {
 		defer wg.Done()
-		rec, err := newRecognizerForPass(backend, modelPaths, vadPath, device, threadsPer, guarantee)
+		rec, err := pass.withThreads(threadsPer).newRecognizer()
 		if err != nil {
 			fail(fmt.Errorf("create recognizer: %w", err))
 			return
@@ -432,7 +511,7 @@ func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []Au
 				fail(fmt.Errorf("extract audio for %s: %w", j.stream.SpeakerLabel, err))
 				return
 			}
-			words, err := rec.Transcribe(samples, modelPaths.SampleRate, true /*useVAD*/)
+			words, err := rec.Transcribe(samples, pass.ModelPaths.SampleRate, true /*useVAD*/)
 			if err != nil {
 				fail(fmt.Errorf("transcribe %s: %w", j.stream.SpeakerLabel, err))
 				return
@@ -466,10 +545,18 @@ feed:
 
 // runAdditionalTranscripts re-transcribes the same audio with each model in
 // cfg.AdditionalModels and writes a sibling transcript file per model.
-// backend is the already-validated recognizer id from BuildMeetingArtifact and
-// envCache carries the per-track attribution envelopes so extra models reuse
-// the primary pass's decode instead of re-running ffmpeg over every track.
-func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex, backend string, cfg BuildConfig, envCache *speakerEnvelopeCache, stdout io.Writer, guarantee *wordEndGuarantee) ([]AdditionalTranscript, error) {
+// primary is the primary pass's configuration: each additional model reuses its
+// backend, device, thread budget and word-end guarantee, and swaps in its own
+// model paths. envCache carries the per-track attribution envelopes so extra
+// models reuse the primary pass's decode instead of re-running ffmpeg over
+// every track.
+//
+// The decoder is deliberately NOT inherited. The hotwords file is encoded with
+// the primary model's BPE vocabulary, and handing it to a different model would
+// either be rejected or, worse, silently encode the terms wrongly; a different
+// model may also not support beam search at all. Each additional model resolves
+// its own.
+func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex string, primary passConfig, cfg BuildConfig, envCache *speakerEnvelopeCache, stdout io.Writer) ([]AdditionalTranscript, error) {
 	if len(cfg.AdditionalModels) == 0 {
 		return nil, nil
 	}
@@ -494,7 +581,14 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		if err != nil {
 			return nil, fmt.Errorf("ensure additional model %s: %w", modelID, err)
 		}
-		segs, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, backend, cfg.Device, cfg.NumThreads, stdout, guarantee)
+		extra := primary
+		extra.ModelPaths = modelPaths
+		extra.VADPath = vadPath
+		extra.Decoder, _, err = resolveDecoder(outputDir, vocabularyForBuild(cfg.Vocabulary, streams), modelPaths)
+		if err != nil {
+			return nil, err
+		}
+		segs, err := transcribePass(ctx, mkvPath, streams, extra, stdout)
 		if err != nil {
 			return nil, fmt.Errorf("additional transcribe %s: %w", modelID, err)
 		}
@@ -508,7 +602,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
 			return nil, fmt.Errorf("write additional transcript %s: %w", id, err)
 		}
-		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: backend})
+		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: primary.Backend})
 	}
 	return out, nil
 }
@@ -536,6 +630,7 @@ func sanitizeTranscriptID(id string) string {
 // DefaultBuildConfig returns a BuildConfig populated from standard environment
 // variables. The caller should override Device and CacheDir as needed.
 func DefaultBuildConfig() BuildConfig {
+	// Summarisation is the only remaining LLM step in the pipeline.
 	summaryLLM := DefaultLLMConfig()
 	summaryLLM.APIKey = os.Getenv("OPENROUTER_API_KEY")
 	summaryLLM.BaseURL = os.Getenv("OPENROUTER_BASE_URL")
@@ -583,6 +678,7 @@ func DefaultBuildConfig() BuildConfig {
 		Backend:          ResolveRecognizerBackend(""),
 		SkipAttribution:  envBool("CASSINI_ATTRIBUTION_DISABLED"),
 		DropCrosstalk:    envBool("CASSINI_ATTRIBUTION_DROP"),
+		Vocabulary:       ParseVocabulary(os.Getenv("CASSINI_TRANSCRIPTION_TERMS")),
 	}
 }
 
@@ -671,8 +767,6 @@ func writeTranscriptWithHash(path string, version string, streams []AudioStream,
 	switch version {
 	case transcriptWordsVersion:
 		return writeJSON(path, buildTranscriptFile(streams, segments, audioDurationMS, sha256hex))
-	case readableTranscriptVersion:
-		return writeJSON(path, buildReadableTranscriptFile(streams, segments, audioDurationMS, sha256hex))
 	default:
 		return fmt.Errorf("unsupported transcript version %q", version)
 	}

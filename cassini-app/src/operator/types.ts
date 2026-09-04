@@ -109,6 +109,7 @@ export interface SettingsEffective {
 export interface Settings {
   quality: SettingsQuality;
   device_override: string;
+  transcription_terms: string[];
   source: string;
   detected_gpu: boolean;
   cores: number;
@@ -119,6 +120,7 @@ export interface Settings {
 export interface SettingsUpdate {
   quality: SettingsQuality;
   device_override: string;
+  transcription_terms: string[];
 }
 
 // --- LLM settings (D-696): mirror GET/PUT <basePath>/settings/llm. Keys are

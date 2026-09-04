@@ -154,8 +154,8 @@ func TestFormatTranscriptForSummaryUsesLabels(t *testing.T) {
 }
 
 func TestDefaultBuildConfigSummaryDisabledToggle(t *testing.T) {
-	// Both LLM and SummaryLLM would be configured from OPENROUTER_API_KEY alone,
-	// but CASSINI_SUMMARY_DISABLED should disable the summary side independently.
+	// Summarisation is configured from OPENROUTER_API_KEY alone;
+	// CASSINI_SUMMARY_DISABLED must turn it off without unsetting the key.
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
 	t.Setenv("CASSINI_SUMMARY_DISABLED", "1")
 
@@ -177,7 +177,7 @@ func TestDefaultBuildConfigSummaryEnabledByDefault(t *testing.T) {
 
 func TestDefaultBuildConfigSummaryModelOverride(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("LLM_MODEL", "cleanup-model")
+	t.Setenv("LLM_MODEL", "base-model")
 	t.Setenv("SUMMARY_MODEL", "summary-model")
 
 	cfg := DefaultBuildConfig()
