@@ -534,9 +534,11 @@ jobs:
     # the operator's Go handler and onto the ExApp's disk. No browser: the leg
     # stands in for the payload at its upload request, so what it proves is the
     # seam the browser e2e (ci.yml capture-e2e) and the Go unit tests both
-    # stop short of. Advisory rather than required while the feature is
-    # experimental; it uses the same exact-image classification as the Talk
-    # gate above so an image change always exercises it.
+    # stop short of. A REQUIRED check on main and on
+    # feat/source-audio-capture since 2026-09-04: a red run here blocks the
+    # merge. It uses the same exact-image classification as the Talk gate
+    # above, so an image change always exercises it, and a change that touches
+    # nothing relevant skips it — a skipped required check passes.
     name: Faithful installed ExApp source-capture leg (CPU)
     runs-on: ubuntu-latest
     needs: [classify-changes, build-image]
@@ -583,8 +585,10 @@ jobs:
     # official recording is active; Bob is the same-call no-consent control.
     # The leg accepts success only when Alice's distinct browser-produced WebM
     # segments cross AppAPI's multipart proxy and land under her ExApp owner
-    # path. Advisory, like the server-only capture leg above, while source
-    # capture remains experimental.
+    # path, and that the build spliced each upload into the published audio.
+    # A REQUIRED check on main and on feat/source-audio-capture since
+    # 2026-09-04, like the server-only capture leg above: a red run here blocks
+    # the merge.
     name: Real browser Talk source-capture seam (CPU)
     runs-on: ubuntu-latest
     needs: [classify-changes, build-image]
