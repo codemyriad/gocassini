@@ -735,10 +735,20 @@ if grep -Eiq "the published mix keeps the recorded track" "$LOG_DIR/build.log"; 
 fi
 pass "build log says the published mix carries the splice for Alice and Bob"
 
-# The sealed .opus is a stream copy of meeting.webm's Opus packets, so its
-# decoded audio has the mix's decoded audio as a prefix — Ogg keeps the encoder
-# padding WebM drops. Equal over the mix's own length is the proof that what was
-# published is what the splice produced.
+# The sealed .opus is a stream copy of meeting.webm's Opus packets, so the two
+# decode to the same samples. Equal over everything they share is the proof that
+# what was published is what the splice produced.
+#
+# Over what they SHARE, because the two containers do not agree about the last
+# fraction of a millisecond and are not meant to: Ogg carries a sample-exact
+# final granule, Matroska a block duration, and ffmpeg has been seen to
+# normalise the Ogg granule on this very stream copy (see
+# maxPortableMeetingIdentityPasses in internal/cassini/portable_meeting.go).
+# A run where the .opus decoded five samples short of the .webm — 0.1 ms of
+# codec tail, and byte-identical everywhere else — failed this leg while the
+# published audio was perfect. So the LENGTHS are allowed one Opus frame of
+# slack in either direction, and the SAMPLES are compared, which is the claim
+# that matters.
 ATTEMPT_OPUS="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
   .attempts[] | select(.attempt_number == $att) | .artifact_opus_path // empty
 ' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
@@ -767,13 +777,24 @@ decode_pcm "$PUBLISHED_OPUS" "$LOG_DIR/published.pcm"
 
 MIX_BYTES="$(wc -c <"$LOG_DIR/mix.pcm")"
 PUBLISHED_BYTES="$(wc -c <"$LOG_DIR/published.pcm")"
-[[ "$PUBLISHED_BYTES" -ge "$MIX_BYTES" ]] \
-  || fail "the published .opus holds $PUBLISHED_BYTES bytes of audio, less than the mix's $MIX_BYTES"
-MIX_SUM="$(sha256sum <"$LOG_DIR/mix.pcm" | cut -d' ' -f1)"
-PUBLISHED_SUM="$(head -c "$MIX_BYTES" "$LOG_DIR/published.pcm" | sha256sum | cut -d' ' -f1)"
+# One 20 ms Opus frame of mono 48 kHz s16: 960 samples, 1920 bytes.
+LENGTH_SLACK_BYTES=1920
+LENGTH_DELTA=$((PUBLISHED_BYTES - MIX_BYTES))
+if [[ "$LENGTH_DELTA" -lt 0 ]]; then
+  LENGTH_DELTA=$((-LENGTH_DELTA))
+fi
+if [[ "$LENGTH_DELTA" -gt "$LENGTH_SLACK_BYTES" ]]; then
+  fail "the published .opus holds $PUBLISHED_BYTES bytes of audio against the mix's $MIX_BYTES, further apart than one Opus frame"
+fi
+SHARED_BYTES="$MIX_BYTES"
+if [[ "$PUBLISHED_BYTES" -lt "$SHARED_BYTES" ]]; then
+  SHARED_BYTES="$PUBLISHED_BYTES"
+fi
+MIX_SUM="$(head -c "$SHARED_BYTES" "$LOG_DIR/mix.pcm" | sha256sum | cut -d' ' -f1)"
+PUBLISHED_SUM="$(head -c "$SHARED_BYTES" "$LOG_DIR/published.pcm" | sha256sum | cut -d' ' -f1)"
 [[ "$MIX_SUM" == "$PUBLISHED_SUM" ]] \
   || fail "the published .opus does not carry the spliced mix's audio"
-pass "the published .opus carries exactly the audio the spliced mix produced"
+pass "the published .opus carries exactly the audio the spliced mix produced ($SHARED_BYTES bytes compared, $LENGTH_DELTA of container tail apart)"
 
 # Every window the splice claims must hold audible audio in the published file.
 # A render that went wrong — a misplaced overlay, a floor that never got its
