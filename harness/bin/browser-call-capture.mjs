@@ -652,7 +652,10 @@ try {
   };
   await alicePage.waitForFunction(captureStarted, null, { timeout });
   await bobPage.waitForFunction(captureStarted, null, { timeout });
-  await delay(3_200);
+  // Allow each segment to record enough audio (>=8 seconds) to collect at
+  // least minPlacementAnchors (8 anchors, sampled at 1 per 50 frames / 1s) so
+  // FitPlacement can place every segment rather than keeping the recorded track.
+  await delay(8_500);
   result.bob.duringRecordingOPFS = await opfsSnapshot(bobPage);
   assert(result.bob.duringRecordingOPFS.length === 1,
     `Bob buffered ${result.bob.duringRecordingOPFS.length} captures for one recorded call`);
@@ -664,7 +667,7 @@ try {
   result.alice.microphoneSwitch = await switchMicrophone(alicePage);
   result.alice.mediaImmediatelyAfterSwitch = await mediaSnapshot(alicePage);
   const bytesImmediatelyAfterSwitch = result.alice.mediaImmediatelyAfterSwitch.audioBytesSent;
-  await delay(3_200);
+  await delay(8_500);
   result.alice.mediaAfterSwitch = await waitForAudioFlow(alicePage, "alice", bytesImmediatelyAfterSwitch + 2_000);
   const afterSwitchOPFS = await opfsSnapshot(alicePage);
   const segmentFiles = segmentFilesIn(afterSwitchOPFS);
@@ -701,8 +704,9 @@ try {
     return sealed > before;
   }, segmentFiles.length, { timeout });
   // Keep talking on the far side of the seam, long enough for the rejoined
-  // segment to hold real audio rather than a container header.
-  await delay(4_000);
+  // segment to hold real audio rather than a container header, and to collect
+  // >= 8 placement anchors.
+  await delay(8_500);
   result.alice.duringRecordingOPFS = await opfsSnapshot(alicePage);
   const capturesAfter = result.alice.duringRecordingOPFS.map((capture) => capture.dirName);
   const bytesBefore = segmentBytesIn(afterSwitchOPFS);
@@ -733,22 +737,12 @@ try {
     response.request().method() === "POST" && response.url().includes("/operator/capture/upload")
   );
 
-  // Both listeners are armed before either participant leaves. Bob's upload is
-  // normally triggered by his own leave, but if this Talk stops the recording
-  // when the moderator who started it goes, Talk's confirmed recording-off
-  // uploads Bob's capture at that moment instead — and a listener armed after
-  // Alice left would wait out its timeout on an upload that already happened.
-  const aliceUploadResponse = alicePage.waitForResponse(captureUpload, { timeout: 45_000 });
+  // Bob's upload listener is armed before he leaves.
   const bobUploadResponse = bobPage.waitForResponse(captureUpload, { timeout: 90_000 });
 
-  await leaveCall(alicePage, "alice");
-  aliceLeft = true;
-  const aliceUpload = await aliceUploadResponse;
-  const observedAliceUploads = await persistObservedUploadBodies(alicePage, "alice", aliceUploadEvidence, 1);
-  result.alice.upload = observedAliceUploads.at(-1);
-  assert(result.alice.upload.status === aliceUpload.status(), "alice: page and Playwright disagreed on upload HTTP status");
-  assert(aliceUpload.status() === 202, `alice: source capture upload returned HTTP ${aliceUpload.status()}: ${result.alice.upload.body}`);
-
+  // Bob leaves first while the recording is still running on Alice's side.
+  // Bob's leave triggers his own capture upload and storage drain, ensuring his
+  // capture is fully written to disk before Alice's departure stops the call.
   await leaveCall(bobPage, "bob");
   bobLeft = true;
   const bobUpload = await bobUploadResponse;
@@ -756,9 +750,19 @@ try {
   result.bob.upload = observedBobUploads.at(-1);
   assert(result.bob.upload.status === bobUpload.status(), "bob: page and Playwright disagreed on upload HTTP status");
   assert(bobUpload.status() === 202, `bob: source capture upload returned HTTP ${bobUpload.status()}: ${result.bob.upload.body}`);
-
-  result.alice.afterLeaveOPFS = await waitForDrainedCaptureStorage(alicePage, "alice");
   result.bob.afterLeaveOPFS = await waitForDrainedCaptureStorage(bobPage, "bob");
+
+  // Alice leaves second. Arm her upload listener immediately before she leaves
+  // so its timeout is not consumed while waiting for Bob's departure and drain.
+  const aliceUploadResponse = alicePage.waitForResponse(captureUpload, { timeout: 45_000 });
+  await leaveCall(alicePage, "alice");
+  aliceLeft = true;
+  const aliceUpload = await aliceUploadResponse;
+  const observedAliceUploads = await persistObservedUploadBodies(alicePage, "alice", aliceUploadEvidence, 1);
+  result.alice.upload = observedAliceUploads.at(-1);
+  assert(result.alice.upload.status === aliceUpload.status(), "alice: page and Playwright disagreed on upload HTTP status");
+  assert(aliceUpload.status() === 202, `alice: source capture upload returned HTTP ${aliceUpload.status()}: ${result.alice.upload.body}`);
+  result.alice.afterLeaveOPFS = await waitForDrainedCaptureStorage(alicePage, "alice");
   // Nothing per participant is stored anywhere in either browser: capture
   // followed Talk's recording and left no trace of its own behind.
   result.alice.captureStorageKeys = await captureStorageKeys(alicePage);

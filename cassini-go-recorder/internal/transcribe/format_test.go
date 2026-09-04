@@ -595,3 +595,40 @@ func TestWriteManifestWritesWordTimingsOnlyWhenTheCallerEarnedIt(t *testing.T) {
 		t.Errorf("provenance.speechToText went missing:\n%s", rawAbsent)
 	}
 }
+
+func TestWriteManifestRecordsSourceAudioProvenance(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "manifest.json")
+	streams := []AudioStream{
+		{Index: 0, ParticipantID: "alice", SpeakerID: "spk_alice", SpeakerLabel: "Alice"},
+		{Index: 1, ParticipantID: "bob", SpeakerID: "spk_bob", SpeakerLabel: "Bob"},
+	}
+	reports := []SourceRenderReport{
+		{SpeakerID: "spk_alice", Owner: "alice", Segments: 3, Placed: 3, Anchors: 24, SplicedMS: 24000},
+		{SpeakerID: "spk_bob", Owner: "bob", Segments: 1, Placed: 1, Anchors: 8, SplicedMS: 8000},
+	}
+	if err := WriteManifest(path, "src.mkv", 30000, 30000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil, nil, reports); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var doc struct {
+		Provenance struct {
+			SourceAudio []SourceRenderReport `json:"sourceAudio"`
+		} `json:"provenance"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if len(doc.Provenance.SourceAudio) != 2 {
+		t.Fatalf("sourceAudio = %d entries, want 2: %s", len(doc.Provenance.SourceAudio), raw)
+	}
+	if doc.Provenance.SourceAudio[0].Owner != "alice" || doc.Provenance.SourceAudio[0].Placed != 3 {
+		t.Errorf("alice report = %+v, want owner=alice placed=3", doc.Provenance.SourceAudio[0])
+	}
+	if doc.Provenance.SourceAudio[1].Owner != "bob" || doc.Provenance.SourceAudio[1].Placed != 1 {
+		t.Errorf("bob report = %+v, want owner=bob placed=1", doc.Provenance.SourceAudio[1])
+	}
+}
