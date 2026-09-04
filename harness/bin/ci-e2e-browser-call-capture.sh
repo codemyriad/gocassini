@@ -653,3 +653,163 @@ jq -e --arg alice "$ALICE" --arg bob "$BOB" '
 
 pass "meeting manifest provenance.sourceAudio records successful splice for both Alice and Bob"
 
+
+# --- the published audio carries the same splice -----------------------------
+#
+# Both browsers play Chromium's fake microphone, so what the SFU recorded and
+# what each participant uploaded are the same signal. That rules out a spectral
+# proof here — "the upload is audible" cannot be told from "the recorded track
+# is audible" when the two are the same tone. What this leg can prove, and does,
+# is the chain: the build says it spliced the published mix and over which
+# windows; the published .opus is the audio that mix produced; and those windows
+# are not silence in it. The content differential, which is the only assertion
+# that distinguishes spliced audio from recorded audio, needs a second build and
+# is gated on E2E_MIX_CONTROL=1 below.
+
+jq -e --arg alice "$ALICE" --arg bob "$BOB" '
+  .provenance.sourceAudio as $sa
+  | .digestDurationMs as $dur
+  | def spliced($owner):
+      any($sa[];
+        .owner == $owner
+        and .mix_spliced == true
+        and .render_hz == 48000
+        and .crossfade_ms == 15
+        and (.windows | type == "array" and length >= 1)
+        and all(.windows[]; .from_ms >= 0 and .to_ms > .from_ms and .to_ms <= ($dur + 1000)));
+    spliced($alice) and spliced($bob)
+' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
+  log "--- meeting manifest.json provenance ---"
+  jq '.provenance.sourceAudio // []' "$LOG_DIR/meeting-manifest.json" || true
+  fail "meeting manifest does not record a spliced published mix with windows inside the recording for both Alice and Bob"
+}
+pass "meeting manifest records that the published mix carries each participant's splice"
+
+for who in "$ALICE" "$BOB"; do
+  grep -Eiq "source audio: .*${who}.*the published mix carries the same splice \([1-9][0-9]* window\(s\), 15 ms crossfade\)" \
+    "$LOG_DIR/build.log" || {
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "build log does not say the published mix carries ${who}'s splice"
+    }
+done
+if grep -Eiq "the published mix keeps the recorded track" "$LOG_DIR/build.log"; then
+  log "--- build.log excerpt ---"
+  grep -E "source audio" "$LOG_DIR/build.log" || true
+  fail "build log says the published mix kept the recorded track"
+fi
+pass "build log says the published mix carries the splice for Alice and Bob"
+
+# The sealed .opus is a stream copy of meeting.webm's Opus packets, so its
+# decoded audio has the mix's decoded audio as a prefix — Ogg keeps the encoder
+# padding WebM drops. Equal over the mix's own length is the proof that what was
+# published is what the splice produced.
+ATTEMPT_OPUS="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+  .attempts[] | select(.attempt_number == $att) | .artifact_opus_path // empty
+' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+CANONICAL_OPUS="$(jq -r '.job.artifact_opus_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+
+PUBLISHED_OPUS=""
+for cand in "$CANONICAL_OPUS" "$ATTEMPT_OPUS" \
+  "/nc_app_gocassini_data/operator/jobs/current/${JOB_ID}.opus"; do
+  if [[ -n "$cand" ]] && docker exec "$EXAPP_CONTAINER" test -f "$cand"; then
+    PUBLISHED_OPUS="$cand"
+    break
+  fi
+done
+[[ -n "$PUBLISHED_OPUS" ]] || fail "published .opus not found inside container for job $JOB_ID"
+
+decode_pcm() {
+  # $1 = path inside the container, $2 = host output file
+  docker exec "$EXAPP_CONTAINER" ffmpeg -v error -i "$1" \
+    -vn -sn -dn -ac 1 -ar 48000 -f s16le - >"$2" 2>"$LOG_DIR/decode.err" \
+    || fail "could not decode $1 inside the container"
+  [[ -s "$2" ]] || fail "decoding $1 produced no audio"
+}
+
+decode_pcm "$ARTIFACT_MEETING_PATH/meeting.webm" "$LOG_DIR/mix.pcm"
+decode_pcm "$PUBLISHED_OPUS" "$LOG_DIR/published.pcm"
+
+MIX_BYTES="$(wc -c <"$LOG_DIR/mix.pcm")"
+PUBLISHED_BYTES="$(wc -c <"$LOG_DIR/published.pcm")"
+[[ "$PUBLISHED_BYTES" -ge "$MIX_BYTES" ]] \
+  || fail "the published .opus holds $PUBLISHED_BYTES bytes of audio, less than the mix's $MIX_BYTES"
+MIX_SUM="$(sha256sum <"$LOG_DIR/mix.pcm" | cut -d' ' -f1)"
+PUBLISHED_SUM="$(head -c "$MIX_BYTES" "$LOG_DIR/published.pcm" | sha256sum | cut -d' ' -f1)"
+[[ "$MIX_SUM" == "$PUBLISHED_SUM" ]] \
+  || fail "the published .opus does not carry the spliced mix's audio"
+pass "the published .opus carries exactly the audio the spliced mix produced"
+
+# Every window the splice claims must hold audible audio in the published file.
+# A render that went wrong — a misplaced overlay, a floor that never got its
+# recorded samples — shows up here as silence where a participant was speaking.
+WINDOW_COUNT=0
+while read -r from_ms to_ms; do
+  [[ -n "$from_ms" ]] || continue
+  from_s="$(awk -v v="$from_ms" 'BEGIN { printf "%.3f", v / 1000 }')"
+  to_s="$(awk -v v="$to_ms" 'BEGIN { printf "%.3f", v / 1000 }')"
+  MEAN_DB="$(docker exec "$EXAPP_CONTAINER" ffmpeg -hide_banner -nostats \
+    -i "$PUBLISHED_OPUS" -af "atrim=start=${from_s}:end=${to_s},volumedetect" \
+    -f null - 2>&1 | sed -n 's/.*mean_volume: \(-\?[0-9.]*\) dB.*/\1/p' | tail -1)"
+  [[ -n "$MEAN_DB" ]] || fail "could not measure the published audio over ${from_s}s..${to_s}s"
+  awk -v db="$MEAN_DB" 'BEGIN { exit (db > -60) ? 0 : 1 }' \
+    || fail "the published audio is silent (${MEAN_DB} dB) over the spliced window ${from_s}s..${to_s}s"
+  WINDOW_COUNT=$((WINDOW_COUNT + 1))
+done < <(jq -r '.provenance.sourceAudio[]?.windows[]? | "\(.from_ms) \(.to_ms)"' "$LOG_DIR/meeting-manifest.json")
+[[ "$WINDOW_COUNT" -ge 2 ]] || fail "only $WINDOW_COUNT spliced windows were measured, want at least one each for Alice and Bob"
+pass "every spliced window holds audible audio in the published .opus ($WINDOW_COUNT windows)"
+
+# The content differential. This is the one assertion that tells spliced audio
+# from recorded audio in a leg where both sides are the same fake microphone,
+# and it costs a second build — a whole transcription pass — so it is opt-in.
+#
+# Before the first spliced window the two mixes are the same samples entering
+# the same encoder, so their PCM is identical; inside a window it is not, because
+# the uploaded audio took a different route (browser Opus, decoded and rate
+# corrected) from the one the SFU delivered.
+if [[ "${E2E_MIX_CONTROL:-0}" == "1" ]]; then
+  RUN_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+    .attempts[] | select(.attempt_number == $att) | .artifact_run_path // empty
+  ' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+  [[ -z "$RUN_PATH" ]] && RUN_PATH="$(jq -r '.job.artifact_run_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+  [[ -n "$RUN_PATH" ]] || fail "no run path recorded for job $JOB_ID; cannot build the control mix"
+
+  docker exec "$EXAPP_CONTAINER" rm -rf /tmp/cassini-control.meeting
+  # No --source-audio, so this build never looks for an upload: the same
+  # recording.mkv through the same mix, without the splice.
+  docker exec "$EXAPP_CONTAINER" sh -c \
+    '"${CASSINI_BIN:-cassini}" build "$1" --out /tmp/cassini-control.meeting' sh "$RUN_PATH" \
+    >"$LOG_DIR/control-build.log" 2>&1 \
+    || { tail -40 "$LOG_DIR/control-build.log"; fail "the control build (no --source-audio) failed"; }
+  decode_pcm "/tmp/cassini-control.meeting/meeting.webm" "$LOG_DIR/control.pcm"
+
+  FIRST_WINDOW_MS="$(jq -r '[.provenance.sourceAudio[]?.windows[]?.from_ms] | min' "$LOG_DIR/meeting-manifest.json")"
+  PREFIX_BYTES="$(awk -v ms="$FIRST_WINDOW_MS" 'BEGIN {
+    s = (ms - 100) / 1000; if (s < 0) s = 0; printf "%d", int(s * 48000) * 2
+  }')"
+  if [[ "$PREFIX_BYTES" -gt 0 ]]; then
+    CONTROL_PREFIX="$(head -c "$PREFIX_BYTES" "$LOG_DIR/control.pcm" | sha256sum | cut -d' ' -f1)"
+    PUBLISHED_PREFIX="$(head -c "$PREFIX_BYTES" "$LOG_DIR/mix.pcm" | sha256sum | cut -d' ' -f1)"
+    [[ "$CONTROL_PREFIX" == "$PUBLISHED_PREFIX" ]] \
+      || fail "the spliced mix differs from the control mix before the first spliced window; the splice ran outside its windows"
+  fi
+
+  DIFFERED=0
+  while read -r from_ms to_ms; do
+    [[ -n "$from_ms" ]] || continue
+    from_b="$(awk -v ms="$from_ms" 'BEGIN { printf "%d", int((ms + 50) / 1000 * 48000) * 2 }')"
+    to_b="$(awk -v ms="$to_ms" 'BEGIN { printf "%d", int((ms - 50) / 1000 * 48000) * 2 }')"
+    [[ "$to_b" -gt "$from_b" ]] || continue
+    len=$((to_b - from_b))
+    a="$(tail -c "+$((from_b + 1))" "$LOG_DIR/mix.pcm" | head -c "$len" | sha256sum | cut -d' ' -f1)"
+    b="$(tail -c "+$((from_b + 1))" "$LOG_DIR/control.pcm" | head -c "$len" | sha256sum | cut -d' ' -f1)"
+    if [[ "$a" != "$b" ]]; then
+      DIFFERED=$((DIFFERED + 1))
+    fi
+  done < <(jq -r '.provenance.sourceAudio[]?.windows[]? | "\(.from_ms) \(.to_ms)"' "$LOG_DIR/meeting-manifest.json")
+  [[ "$DIFFERED" -ge 1 ]] \
+    || fail "the spliced mix is identical to the control mix inside every spliced window; nothing was actually spliced into the published audio"
+  pass "the published mix differs from an unspliced control build inside the spliced windows and matches it before them"
+else
+  log "skipping the spliced-versus-control mix differential (set E2E_MIX_CONTROL=1; it costs a second build)"
+fi
