@@ -14,6 +14,7 @@
     shareableAppUrl,
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
+  import { onSetupChanged } from "./operator/setupSignal";
   import { applySurface, readSurface, type Surface } from "./surfaceRouting";
 
   // The Cassini in-Nextcloud shell (D-420). It hosts role-gated surfaces fed
@@ -116,17 +117,16 @@
     applySurfaceFromLocation();
   }
 
-  onMount(async () => {
-    themeMode = resolveThemeMode();
-
-    // Optimistic anti-flash hint: if Nextcloud already tells us the user is an
-    // admin, show the operator tab immediately instead of waiting a round-trip.
-    if (isLikelyAdminHint(window) === true) {
-      operatorAvailable = true;
-    }
-    applySurfaceFromLocation();
-    window.addEventListener("popstate", handlePopState);
-
+  // readInstanceState asks the operator what this deployment is, and is the ONLY
+  // writer of operatorAvailable and setupNotice.
+  //
+  // It used to be inline in onMount, which made the verdict a snapshot of the
+  // moment the page opened: an administrator who fixed their instance on the
+  // Setup tab came back to Browse and was still told Cassini was not configured,
+  // until they reloaded the browser by hand. It is a function now so the Setup
+  // tab can ask for it again (setupSignal.ts) — the notice goes away in the same
+  // session, with no reload and nothing else on the page thrown away.
+  async function readInstanceState(): Promise<void> {
     // Authoritative: probe the ADMIN-gated operator boundary (an operator that
     // answered -> show). Alongside it, ask the USER-level setup endpoint whether
     // this deployment can serve recordings at all — the two are independent, so
@@ -170,9 +170,37 @@
     // Reconcile the active surface with the probe result (e.g. an optimistic
     // hint the probe denied, or a stale #surface=operator we can't honour).
     applySurfaceFromLocation();
+  }
+
+  // stopListeningForSetupChanges is assigned in onMount and called in onDestroy.
+  // A component that mounts twice would otherwise leave the first instance's
+  // listener behind, writing into state nothing renders.
+  let stopListeningForSetupChanges: (() => void) | null = null;
+
+  onMount(async () => {
+    themeMode = resolveThemeMode();
+
+    // Optimistic anti-flash hint: if Nextcloud already tells us the user is an
+    // admin, show the operator tab immediately instead of waiting a round-trip.
+    if (isLikelyAdminHint(window) === true) {
+      operatorAvailable = true;
+    }
+    applySurfaceFromLocation();
+    window.addEventListener("popstate", handlePopState);
+
+    // Subscribed BEFORE the first read, not after: the Setup tab cannot act
+    // before this component has mounted, but registering afterwards would make
+    // that ordering a thing to keep true rather than a thing that cannot fail.
+    stopListeningForSetupChanges = onSetupChanged(() => {
+      void readInstanceState();
+    });
+
+    await readInstanceState();
   });
 
   onDestroy(() => {
+    stopListeningForSetupChanges?.();
+    stopListeningForSetupChanges = null;
     if (typeof window !== "undefined") {
       window.removeEventListener("popstate", handlePopState);
     }

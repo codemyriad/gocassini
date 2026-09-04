@@ -212,37 +212,67 @@ describe("StoragePanel on an install whose routes predate the tab", () => {
   });
 });
 
-// --- The stale setup warning, and the reload that clears it ---------------------
+// --- The stale setup warning, and what clears it ---------------------------------
 //
 // QA item 1: after a setup completes, the shell still says Cassini is not
-// configured until the browser is refreshed by hand. App.svelte reads its setup
-// health once, in onMount, and nothing writes it again — so the fix is the
-// refresh the administrator was doing anyway.
+// configured. App.svelte reads its setup health once, in onMount, and nothing
+// wrote it again — so the panel tells it to look again, in the same session.
+// Nothing reloads the page: a reload would fix this one reader by throwing away
+// everything else the page was holding.
 
-describe("StoragePanel reload", () => {
-  it("reloads the page after a setup that finished", () => {
+describe("StoragePanel setup signal", () => {
+  it("never reloads the page", () => {
+    for (const forbidden of ["location.reload", "reloadPage", "window.location.href ="]) {
+      expect(storagePanelSource).not.toContain(forbidden);
+    }
+  });
+
+  it("tells the shell after a setup that finished", () => {
     const runSetup = storagePanelSource.slice(
       storagePanelSource.indexOf("async function runSetup("),
       storagePanelSource.indexOf("function modeOptionFor("),
     );
-    expect(runSetup).toContain("finishAndReload(");
-    // …and AFTER the recheck, so the operator has looked again before the page
-    // that will render its answer is thrown away.
-    expect(runSetup.indexOf("recheckStorage()")).toBeLessThan(runSetup.indexOf("finishAndReload("));
+    expect(runSetup).toContain("finishAndAnnounce(");
+    // …and AFTER the recheck, so the operator has re-probed before the shell
+    // goes and asks it what this instance is.
+    expect(runSetup.indexOf("recheckStorage()")).toBeLessThan(
+      runSetup.indexOf("finishAndAnnounce("),
+    );
   });
 
-  it("reloads the page after a completed mode switch", () => {
+  // Half of the app installs may have succeeded, and this component cannot tell
+  // from here. One round trip beats the stale warning coming back.
+  it("tells the shell even when the app installs did not finish the job", () => {
+    const runSetup = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function runSetup("),
+      storagePanelSource.indexOf("function modeOptionFor("),
+    );
+    const earlyReturn = runSetup.slice(0, runSetup.indexOf("const browserSteps"));
+    expect(earlyReturn).toContain("notifySetupChanged();");
+  });
+
+  it("tells the shell after a completed mode switch", () => {
     const confirmSwitch = storagePanelSource.slice(
       storagePanelSource.indexOf("async function confirmSwitch("),
       storagePanelSource.indexOf("async function finishMigration("),
     );
     expect(confirmSwitch).toContain("operatorClient.putStorage(");
-    expect(confirmSwitch).toContain("finishAndReload(");
+    expect(confirmSwitch).toContain("finishAndAnnounce(");
   });
 
-  // A failed action must leave the error on screen. Reloading there would throw
-  // away the one thing the administrator needs to read.
-  it("does not reload when an action fails", () => {
+  // Every announcement carries the notify, so there is no path that reports
+  // success to the administrator and leaves the rest of the app stale.
+  it("cannot announce success without telling the shell", () => {
+    const announce = storagePanelSource.slice(
+      storagePanelSource.indexOf("function finishAndAnnounce("),
+      storagePanelSource.indexOf("// modeOptionFor"),
+    );
+    expect(announce).toContain("notifySetupChanged()");
+  });
+
+  // A failed action must leave the error on screen and must NOT claim the
+  // instance changed.
+  it("does not announce when an action fails", () => {
     const catchBlock = storagePanelSource.slice(
       storagePanelSource.indexOf("switchError = asMessage(error);"),
       storagePanelSource.indexOf(
@@ -250,18 +280,60 @@ describe("StoragePanel reload", () => {
         storagePanelSource.indexOf("switchError = asMessage(error);"),
       ),
     );
-    expect(catchBlock).not.toContain("finishAndReload");
-    expect(catchBlock).not.toContain("reloadPage");
+    expect(catchBlock).not.toContain("finishAndAnnounce");
+    expect(catchBlock).not.toContain("notifySetupChanged");
   });
 
-  // The reload would otherwise swallow the result. Every reload is preceded by
-  // the flash that carries it across.
-  it("stashes the result before reloading, and renders it once afterwards", () => {
-    expect(storagePanelSource).toContain("writeStorageFlash(next)");
-    expect(storagePanelSource).toContain("reloadPage()");
-    expect(storagePanelSource).toContain("flash = readStorageFlash()");
-    // Exactly one place reloads, so there is no path that reloads without a flash.
-    expect(storagePanelSource.match(/reloadPage\(\)/g) ?? []).toHaveLength(1);
+  // The result stays on screen until the next action starts — and every action
+  // clears it first, so a success strip never sits above the error that
+  // replaced it.
+  it("clears the previous result when a new action starts", () => {
+    for (const starter of ["async function confirmSwitch(", "async function finishMigration("]) {
+      const body = storagePanelSource.slice(
+        storagePanelSource.indexOf(starter),
+        storagePanelSource.indexOf("{", storagePanelSource.indexOf(starter)) + 900,
+      );
+      expect(body).toContain("outcome = null;");
+    }
+  });
+});
+
+// The shell has to be able to act on it: one writer of the notice, called again
+// rather than only at mount, with the listener released on destroy.
+describe("App shell setup refresh", () => {
+  it("re-reads its setup health when the Setup tab says something changed", () => {
+    expect(appSource).toContain('import { onSetupChanged } from "./operator/setupSignal"');
+    expect(appSource).toContain("async function readInstanceState()");
+    expect(appSource).toContain("stopListeningForSetupChanges = onSetupChanged(");
+    expect(appSource).toContain("void readInstanceState();");
+  });
+
+  it("subscribes before the first read, so the ordering cannot come apart", () => {
+    const onMount = appSource.slice(
+      appSource.indexOf("onMount(async () => {"),
+      appSource.indexOf("onDestroy(() => {"),
+    );
+    expect(onMount.indexOf("onSetupChanged(")).toBeLessThan(
+      onMount.indexOf("await readInstanceState();"),
+    );
+  });
+
+  it("releases the listener on destroy", () => {
+    const onDestroy = appSource.slice(appSource.indexOf("onDestroy(() => {"));
+    expect(onDestroy).toContain("stopListeningForSetupChanges?.();");
+  });
+
+  // setupNotice must have exactly one writer, or a refresh becomes a second
+  // source of truth that can disagree with the first.
+  it("writes setupNotice from one place only", () => {
+    const writes = appSource.match(/setupNotice = /g) ?? [];
+    const inReader = appSource
+      .slice(
+        appSource.indexOf("async function readInstanceState()"),
+        appSource.indexOf("let stopListeningForSetupChanges"),
+      )
+      .match(/setupNotice = /g) ?? [];
+    expect(writes.length).toBe(inReader.length);
   });
 });
 
