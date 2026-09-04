@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"os"
@@ -529,4 +530,108 @@ func TestRenderingALongTimelineStaysBounded(t *testing.T) {
 		t.Fatalf("the render allocated %d bytes over a %d-minute timeline; the bound is %d",
 			grew, minutes, budget)
 	}
+}
+
+// A window too short to be faded is left to the recorded track.
+//
+// The head weight is (head+1)/fade, so at three output samples or fewer every
+// weight the formula can produce is 1 and the "crossfade" is a full-amplitude
+// jump from the recorded track to the upload — exactly the click it exists to
+// remove. Four samples is where a ramp first exists, so the boundary is walked
+// one sample at a time. What a refused window costs is at most three samples of
+// somebody's upload, 62 microseconds at the mix's rate, and their recorded
+// audio stands there instead.
+func TestAWindowTooShortToCrossfadeKeepsTheRecordedTrack(t *testing.T) {
+	const sampleRate = 16000
+	const timeline = sampleRate // one second
+	const fade = 240            // 15 ms, the length the published mix asks for
+	const floorValue = float32(0.25)
+	const sourceValue = float32(-0.75)
+	const srcSamples = 1000
+
+	// The segment is placed to end exactly where the timeline does, so the
+	// window it can cover is however many output samples are left after its
+	// start — one, two, three or four.
+	place := func(length int) Placement {
+		return Placement{OffsetMS: float64(timeline-length) * 1000 / float64(sampleRate), Rate: 1}
+	}
+	render := func(t *testing.T, length, fadeSamples int) (int, int, []float32) {
+		t.Helper()
+		dir := t.TempDir()
+		floorPath := filepath.Join(dir, "floor.wav")
+		srcPath := filepath.Join(dir, "src.wav")
+		writeFloorWAV(t, floorPath, recordedMarker(timeline, floorValue), sampleRate)
+		writeFloorWAV(t, srcPath, recordedMarker(srcSamples, sourceValue), sampleRate)
+		floor, err := openWAV(floorPath)
+		if err != nil {
+			t.Fatalf("openWAV: %v", err)
+		}
+		src, err := openWAV(srcPath)
+		if err != nil {
+			t.Fatalf("openWAV: %v", err)
+		}
+		from, to, err := overlayFileWindow(floor, src, srcSamples, place(length), sampleRate, fadeSamples)
+		if err != nil {
+			t.Fatalf("overlayFileWindow: %v", err)
+		}
+		if err := floor.Close(); err != nil {
+			t.Fatalf("close floor: %v", err)
+		}
+		_ = src.Close()
+		return from, to, readWAVFloats(t, floorPath)
+	}
+
+	for _, length := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("%d output sample(s) cannot be faded", length), func(t *testing.T) {
+			from, to, got := render(t, length, fade)
+			if to > from {
+				t.Fatalf("a %d-sample window reported [%d, %d); it cannot be faded, so it must report nothing",
+					length, from, to)
+			}
+			for i, sample := range got {
+				if sample != floorValue {
+					t.Fatalf("sample %d is %v; a window too short to fade must leave the recorded %v alone",
+						i, sample, floorValue)
+				}
+			}
+		})
+	}
+
+	t.Run("four output samples fade rather than step", func(t *testing.T) {
+		from, to, got := render(t, 4, fade)
+		if to-from != 4 {
+			t.Fatalf("the window is [%d, %d), want four samples", from, to)
+		}
+		for i := 0; i < from; i++ {
+			if got[i] != floorValue {
+				t.Fatalf("sample %d before the window is %v, want the recorded %v", i, got[i], floorValue)
+			}
+		}
+		// A ramp: the edges are between the two values rather than at either of
+		// them, which is what "no step" means with two constant sources.
+		for _, edge := range []int{from, to - 1} {
+			if got[edge] <= sourceValue || got[edge] >= floorValue {
+				t.Fatalf("sample %d is %v; the edge of the window neither faded in nor out", edge, got[edge])
+			}
+		}
+		for i := from + 1; i < to-1; i++ {
+			if math.Abs(float64(got[i]-sourceValue)) > 1.0/32768 {
+				t.Fatalf("sample %d in the body of the window is %v, want the uploaded %v", i, got[i], sourceValue)
+			}
+		}
+	})
+
+	// The refusal belongs to the fade, not to the window: a caller that asked
+	// for hard edges still gets every sample it asked for.
+	t.Run("hard edges still splice three samples", func(t *testing.T) {
+		from, to, got := render(t, 3, 0)
+		if to-from != 3 {
+			t.Fatalf("the window is [%d, %d), want the three samples a hard-edged overlay covers", from, to)
+		}
+		for i := from; i < to; i++ {
+			if math.Abs(float64(got[i]-sourceValue)) > 1.0/32768 {
+				t.Fatalf("sample %d is %v, want the uploaded %v", i, got[i], sourceValue)
+			}
+		}
+	})
 }

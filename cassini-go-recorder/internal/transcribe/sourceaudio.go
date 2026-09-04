@@ -364,6 +364,40 @@ func overlayWindow(placement Placement, sampleRate, srcSamples, dstSamples int) 
 	return start, stop
 }
 
+// minFadeSamples is the shortest ramp that is a fade rather than a step.
+//
+// The head weight is (head+1)/fadeSamples, so a one-sample fade puts its very
+// first sample at full weight: the "crossfade" is then a full-amplitude jump
+// from the recorded track to the upload, which is precisely the click the fade
+// exists to remove. Two samples is the shortest ramp that starts below full
+// weight, and with the fade at both ends that makes four output samples the
+// shortest window a crossfade can be applied to at all.
+const minFadeSamples = 2
+
+// effectiveFade is how long a fade can be inside a window of `length` output
+// samples: the requested length, or half the window when the window is too
+// short to carry two of them.
+//
+// It returns less than minFadeSamples for a window that cannot be faded, and
+// the callers then leave that window alone. Skipping rather than scaling
+// further down, because there is nothing left to scale to: at three output
+// samples or fewer, every weight the formula can produce is 1, so "fading" is
+// a full-amplitude step and the honest choice between a step and no splice is
+// no splice. What is given up is at most three samples — 62 microseconds at
+// 48 kHz — of a participant's upload, and what stands there instead is their
+// recorded audio, which is where every other refusal in this file lands.
+func effectiveFade(fadeSamples, length int) int {
+	if fadeSamples <= 0 {
+		return 0
+	}
+	if fadeSamples*2 > length {
+		// Too short to fade both ends at full length. Half the window each way
+		// still removes the discontinuity, which is the point.
+		fadeSamples = length / 2
+	}
+	return fadeSamples
+}
+
 // overlayInto renders the part of [start, stop) that falls inside one chunk of
 // the output timeline.
 //
@@ -393,10 +427,14 @@ func overlayInto(dst []float32, dstBase int, src []float32, srcBase int, start, 
 	if len(dst) == 0 || len(src) == 0 || stop <= start || sampleRate <= 0 || placement.Rate <= 0 {
 		return
 	}
-	if fadeSamples*2 > stop-start {
-		// Too short to fade both ends at full length. Half the window each way
-		// still removes the discontinuity, which is the point.
-		fadeSamples = (stop - start) / 2
+	if fadeSamples > 0 {
+		fadeSamples = effectiveFade(fadeSamples, stop-start)
+		if fadeSamples < minFadeSamples {
+			// Nothing to overlay here: see effectiveFade. The caller asked for a
+			// crossfade and this window cannot carry one, so the recorded floor
+			// stands rather than being stepped over.
+			return
+		}
 	}
 	msPerSample := 1000.0 / float64(sampleRate)
 	from := start
@@ -485,6 +523,13 @@ const overlayChunkSamples = 4096
 func overlayFileWindow(dst *wavFile, src *wavFile, srcSamples int, placement Placement, sampleRate, fadeSamples int) (int, int, error) {
 	start, stop := overlayWindow(placement, sampleRate, srcSamples, dst.samples)
 	if stop <= start {
+		return 0, 0, nil
+	}
+	if fadeSamples > 0 && effectiveFade(fadeSamples, stop-start) < minFadeSamples {
+		// The same refusal overlayInto makes, made here as well so the window
+		// this reports is the window it wrote. A caller that was told [start,
+		// stop) while the file was left untouched would put a splice in the
+		// manifest, and in the published windows, that nobody can hear.
 		return 0, 0, nil
 	}
 	msPerSample := 1000.0 / float64(sampleRate)
@@ -941,7 +986,18 @@ func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base 
 				return report, fmt.Errorf("segment %d: close decoded audio: %w", segment.Index, closeErr)
 			}
 			if to <= from {
-				skip(segment, "places entirely outside the %d ms recording", timelineMS)
+				// Two different refusals reach here, and a reader of the
+				// manifest needs them apart: a segment that lands nowhere on
+				// this timeline, and one that lands on so few samples that the
+				// crossfade would be a step. Asking overlayWindow again rather
+				// than guessing from the geometry, so the two answers can never
+				// drift from each other.
+				if geomFrom, geomTo := overlayWindow(placement, sampleRate, decoded, floor.samples); geomTo > geomFrom {
+					skip(segment, "lands on %d output sample(s), too few to hand over without a click",
+						geomTo-geomFrom)
+				} else {
+					skip(segment, "places entirely outside the %d ms recording", timelineMS)
+				}
 				continue
 			}
 			report.Placed++
