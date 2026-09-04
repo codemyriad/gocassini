@@ -1183,6 +1183,69 @@ func TestSpliceSkipsASegmentWhoseAudioDoesNotMatchItsSidecar(t *testing.T) {
 	}
 }
 
+// Where "far less" stops, from both sides.
+//
+// minSegmentDecodedFraction is the only thing standing between a file that
+// disagrees with its own manifest and a splice that trusts its timing claims
+// anyway, and no test held it to a number: the case above uses five seconds of
+// a declared sixty, which would pass at any threshold worth having. The
+// browser-capture CI leg cannot hold it either — it sees the segments the
+// splice REFUSED and their figures, never the ones it accepted — so lowering
+// the constant is invisible everywhere else. One point either side of it here.
+func TestSpliceHoldsTheDecodedFractionToNinetyPercent(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
+
+	// Twenty seconds declared, so a percentage point is 200 ms — far wider than
+	// anything the decode can round away, since the segment is written as WAV
+	// and resampled sample for sample.
+	for _, tc := range []struct {
+		name    string
+		seconds float64
+		placed  int
+	}{
+		{name: "89% of the declared window is not enough", seconds: 17.8, placed: 0},
+		{name: "91% of it is", seconds: 18.2, placed: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			segment := syntheticSegmentDelayed(0, 20, 1000, 0, 0)
+			segment.AudioName = "segment-0.webm"
+			writeToneSegment(t, dir, segment.AudioName, tc.seconds, 440)
+			writeSidecar(t, dir, SourceSidecar{
+				Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+				CallStartWallMS: segment.StartWallMS, CallEndWallMS: segment.StopWallMS,
+				Segments: []SourceSegment{segment},
+			})
+
+			recorded := recordedMarker(outSamples, 0.25)
+			_, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
+			if report.Placed != tc.placed {
+				t.Fatalf("%.1f s under a 20 s window placed %d segment(s), want %d: %v (err %v)",
+					tc.seconds, report.Placed, tc.placed, report.Rejections, err)
+			}
+			if tc.placed == 0 {
+				if err == nil {
+					t.Fatal("a segment under the threshold was used")
+				}
+				if len(report.Rejections) != 1 || !strings.Contains(report.Rejections[0], "does not match the sidecar") {
+					t.Fatalf("the skip does not say why: %v", report.Rejections)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a segment over the threshold was refused: %v (%v)", err, report.Rejections)
+			}
+			if report.Skipped != 0 {
+				t.Fatalf("a segment over the threshold was skipped: %v", report.Rejections)
+			}
+		})
+	}
+}
+
 // A segment that holds far MORE audio than it declares must not replace the
 // recorded track past the window it claimed. The decoded-versus-declared check
 // only catches a file that is too short, and the decoder's own ceiling allows a
