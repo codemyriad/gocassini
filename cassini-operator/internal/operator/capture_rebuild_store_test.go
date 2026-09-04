@@ -151,39 +151,99 @@ func TestResolveJobForCaptureRefusesAnAmbiguousMatch(t *testing.T) {
 	}
 }
 
-// R2. A recording with no finish time — one the operator died in the middle of
-// — must not swallow every later call in the same room. An unbounded end makes
-// a dead recording from last month overlap the standup that happens in that
-// room tomorrow, which is a wrong attribution on its own and, once two of them
-// do it, an ambiguity that stops every later rebuild in that room.
-func TestAnUnfinishedRecordingDoesNotSwallowLaterCalls(t *testing.T) {
+// R2. A recorder that died without ever writing an end must not compete for the
+// captures of every call that room holds afterwards.
+//
+// The row's own timestamps cannot bound it: the startup sweep rewrites
+// updated_at on every restart, so any window derived from it grows to the
+// present moment each time the operator comes up — and then a recording that
+// crashed last month matches today's standup, which is a wrong attribution on
+// its own and, once two of them do it, an ambiguity that refuses the rebuild
+// for the real recording as well.
+func TestARecordingThatDiedDoesNotCompeteForLaterCaptures(t *testing.T) {
 	store := newRebuildTestStore(t)
 	ctx := context.Background()
 
-	// A recording that started last month and never finished. Its row stopped
-	// changing when it died, which is the only upper bound there is.
 	seedRecording(t, store, "died", "room-a", stamp(t, "2026-08-02T10:00:00Z"), "")
-	if _, err := store.db.Exec(`UPDATE jobs SET updated_at = ?, state = 'interrupted' WHERE id = ?`,
-		stamp(t, "2026-08-02T10:20:00Z"), "died"); err != nil {
-		t.Fatalf("set updated_at: %v", err)
+	setJobState(t, store, "died", "record", "interrupted")
+	// What a restart does to that row: interrupted_at and updated_at move to
+	// the startup epoch, long after the recording it describes.
+	if _, err := store.MarkIncompleteJobsInterrupted(ctx, nowUTCString()); err != nil {
+		t.Fatalf("MarkIncompleteJobsInterrupted: %v", err)
 	}
 	seedRecording(t, store, "today", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
 
 	got, err := store.ResolveJobForCapture(ctx, "room-a", ms(t, "2026-09-02T10:05:00Z"), ms(t, "2026-09-02T10:55:00Z"))
 	if err != nil {
-		t.Fatalf("a capture from today could not be resolved because a dead recording still matched everything: %v", err)
+		t.Fatalf("a capture from today could not be resolved because a dead recording still matched it: %v", err)
 	}
 	if got.JobID != "today" {
 		t.Fatalf("today's capture resolved to %q", got.JobID)
 	}
 
-	// And the dead recording still owns a capture from its own moment.
-	got, err = store.ResolveJobForCapture(ctx, "room-a", ms(t, "2026-08-02T10:05:00Z"), ms(t, "2026-08-02T10:15:00Z"))
-	if err != nil {
-		t.Fatalf("ResolveJobForCapture: %v", err)
+	// Not even for a capture from its own moment: it produced no run bundle, so
+	// there is nothing to rebuild and nothing to attribute the upload to.
+	if _, err := store.ResolveJobForCapture(ctx, "room-a", ms(t, "2026-08-02T10:05:00Z"), ms(t, "2026-08-02T10:15:00Z")); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("a recording that never wrote an end was matched anyway: %v", err)
 	}
-	if got.JobID != "died" {
-		t.Fatalf("a capture from the interrupted recording's own call resolved to %q", got.JobID)
+}
+
+// R2. A recording that is still being made has a genuinely open end, and an
+// upload for it must resolve however late in the call the participant joined.
+// A participant who joins forty minutes in, leaves and uploads is the ordinary
+// case, and any bound taken from the row would refuse them.
+func TestALiveRecordingMatchesAParticipantWhoJoinedLate(t *testing.T) {
+	store := newRebuildTestStore(t)
+	ctx := context.Background()
+
+	seedRecording(t, store, "live", "room-a", stamp(t, "2026-09-02T10:00:00Z"), "")
+	setJobState(t, store, "live", "record", "running")
+
+	got, err := store.ResolveJobForCapture(ctx, "room-a", ms(t, "2026-09-02T10:40:00Z"), ms(t, "2026-09-02T10:55:00Z"))
+	if err != nil {
+		t.Fatalf("a participant who joined forty minutes into a live recording could not be resolved: %v", err)
+	}
+	if got.JobID != "live" {
+		t.Fatalf("the late joiner's capture resolved to %q", got.JobID)
+	}
+
+	// And not to a call that had already ended before it started. A live
+	// recording's window is everything recorded SO FAR: open at the end, and
+	// firmly closed at the beginning.
+	before := ms(t, "2026-09-02T08:00:00Z")
+	if _, err := store.ResolveJobForCapture(ctx, "room-a", before, before+600_000); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("a live recording claimed a capture from a call that ended before it started: %v", err)
+	}
+}
+
+// R6. A job an administrator has to look at never gets an automatic rebuild, so
+// its job JSON must not promise one — and /operator/status must count the same
+// way, or the two disagree about the same row.
+func TestAFailedJobDoesNotPromiseARebuild(t *testing.T) {
+	store := newRebuildTestStore(t)
+	ctx := context.Background()
+	seedRecording(t, store, "job-1", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
+	if err := store.NoteSourceAudioUpload(ctx, "job-1", nowUTCString()); err != nil {
+		t.Fatalf("NoteSourceAudioUpload: %v", err)
+	}
+	setJobState(t, store, "job-1", "done", "failed")
+
+	job, err := store.GetJob(ctx, "job-1")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job.SourceAudioRebuild.Pending {
+		t.Fatal("a failed job promises a rebuild that is never coming")
+	}
+	if job.SourceAudioRebuild.UploadSeq != 1 {
+		t.Fatalf("the arrival was not recorded on the failed job: %+v", job.SourceAudioRebuild)
+	}
+	pending, _, err := store.CountSourceAudioRebuilds(ctx)
+	if err != nil {
+		t.Fatalf("CountSourceAudioRebuilds: %v", err)
+	}
+	if pending != 0 {
+		t.Fatalf("/operator/status counts %d pending rebuilds where the job JSON says none", pending)
 	}
 }
 

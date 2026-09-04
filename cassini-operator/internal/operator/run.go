@@ -1642,7 +1642,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 		return Job{}, fmt.Errorf("scan job: %w", err)
 	}
 
-	job.SourceAudioRebuild = sourceAudioRebuildStateFrom(
+	job.SourceAudioRebuild = sourceAudioRebuildStateFrom(job.State,
 		sourceAudioUploadSeq, sourceAudioBuiltSeq, sourceAudioRebuildCount, sourceAudioUploadAt.String)
 
 	job.ArtifactRunPath = nullableStringPtr(artifactRunPath)

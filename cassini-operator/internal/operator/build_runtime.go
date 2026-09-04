@@ -178,7 +178,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// Only now, and only with the figures read at claim time. A build that
 	// failed, was interrupted or was deferred stamps nothing, so its uploads
 	// stay owed and the next dispatcher pass judges the job again.
-	if consumedSourceAudio > 0 {
+	if hasSourceAudioToRecord(consumedSourceAudio, sourceAudioDigest) {
 		// Retried like every other write in this mechanism. A busy database at
 		// the one moment a build finishes would otherwise leave the debt
 		// standing and cost a whole redundant re-transcription.
@@ -213,9 +213,12 @@ func (rt *Runtime) sourceAudioConsumption(jobID string) (int64, string) {
 		rt.logger.Printf("source audio: could not read the upload counter for id=%s: %v", jobID, err)
 		return 0, ""
 	}
-	if seq == 0 {
-		return 0, ""
-	}
+	// The scan runs even at seq == 0. An upload that landed before the build and
+	// was never attributed -- one for a recording that was still live, say --
+	// leaves the counter at zero while the build reads and splices it anyway, so
+	// skipping the scan here would leave the digest empty and let the very same
+	// capture, re-uploaded afterwards, buy a full re-transcription that produces
+	// the identical transcript.
 	set, err := rt.sourceCaptureSetForJob(context.Background(), jobID)
 	if err != nil {
 		// The counter alone is still worth stamping, and it settles the debt:
@@ -228,6 +231,14 @@ func (rt *Runtime) sourceAudioConsumption(jobID string) (int64, string) {
 		return seq, ""
 	}
 	return seq, set.Digest
+}
+
+// hasSourceAudioToRecord reports whether a finished build has anything worth
+// stamping: uploads it owed, or a capture set it can name. Either alone is
+// enough, and neither means the write is skipped entirely -- which is every
+// installation that never collected a capture.
+func hasSourceAudioToRecord(consumed int64, digest string) bool {
+	return consumed > 0 || digest != ""
 }
 
 func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Duration {
