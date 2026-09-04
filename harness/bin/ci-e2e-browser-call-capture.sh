@@ -663,31 +663,69 @@ fi
 #   * placed + skipped accounts for every segment that arrived, so a counter
 #     that drifts from the segments is caught;
 #   * at least MIN_PLACED segments landed;
-#   * at least MIN_SPLICED_MS of the recorded track was replaced, sized from the
-#     schedule this leg drives the browsers through (see the calls below);
-#   * every skipped segment has its reason on the build log, and every one of
-#     those reasons is the short-tail one. A skip for any other reason — a
-#     placement that would not fit, a decode that failed, a window that landed
-#     nowhere — fails the run, and so does a skip with no reason at all.
+#   * at least MIN_SPLICED_MS of the recorded track was replaced;
+#   * the splice ACCOUNTS FOR at least MIN_ACCOUNTED_MS: what it replaced, plus
+#     the declared length of every segment it named a reason for. This is the
+#     floor that does the work, because it does not care how the capture was cut
+#     into segments — only that between splicing and explaining, the whole
+#     recorded stretch is answered for;
+#   * every skipped segment has its reason on the build log; every one of those
+#     reasons is the short-tail one; AND the segment is short by no more than
+#     MAX_SHORT_TAIL_MS, which is the loss that case can actually cause. A skip
+#     for any other reason — a placement that would not fit, a decode that
+#     failed, a window that landed nowhere — fails the run, and so does a skip
+#     with no reason at all, and so does a segment missing far more audio than a
+#     dropped final chunk can explain.
 #
-# A splice that is actually broken cannot get through that: breaking placement,
-# decoding or overlay changes the reason, breaking the render drops the line,
-# and quietly splicing almost nothing fails the milliseconds floor.
+# The last clause is the one that keeps this honest. "The audio does not match
+# the sidecar" is printed for a segment holding 89% of its window and for one
+# holding 10% of it, so accepting the reason alone would accept a regression
+# that truncated an upload to nothing. The deficit is bounded instead, from the
+# mechanism: the capture hands MediaRecorder chunks to OPFS every TIMESLICE_MS
+# (2000 ms, cassini-app/src/capture/payload.ts), page teardown cannot wait for
+# the asynchronous final chunk, and that timeslice IS the documented loss bound.
+# Measured on this leg the loss runs 0.44-1.72 s.
+#
+# What this deliberately does NOT assert is how many of Alice's three segments
+# landed. Two of them end at an abrupt boundary and either can lose its tail;
+# both losing it at once is unlikely but legitimate, and a required check that
+# fails on a legitimate outcome is the flake this replaces. MIN_ACCOUNTED_MS
+# holds the line instead, because a skipped segment's declared length still
+# counts towards it.
+#
+# What it cannot prove — worth writing down rather than implying: every number
+# here is the build's own account of itself. An overlay that computed a window
+# and copied no samples would report exactly these counts, and both browsers
+# play the same fake microphone, so "the window is audible" cannot tell an
+# upload from the recorded track. The assertion that would catch it is the
+# spliced-versus-control differential below, and it is off by default because it
+# costs a second build. What this block catches is a splice that stops placing,
+# stops covering, or starts declining segments for reasons the pipeline does not
+# document.
 
-# The one skipped-segment reason this leg tolerates.
+# The one skipped-segment reason this leg tolerates, with the two numbers it
+# reports captured so the deficit itself can be bounded.
 BENIGN_SKIP_REASON='holds [0-9]+ ms of the [0-9]+ ms it declares \([0-9]+%\); the audio does not match the sidecar'
 # Not a skip at all: a segment used only across the window it declared. It is
 # tolerated but never counts as the explanation for a skip.
 BENIGN_PARTIAL_REASON='partly used: holds [0-9]+ ms under a [0-9]+ ms window; only the first [0-9]+ ms of it was used'
+# The participant-agnostic half of the splice line, kept in one place because a
+# unit test reads it from this file and matches a real build log against it.
+SPLICE_LINE_REASON='transcribing from participant capture spliced over [0-9]+ ms of their recorded track \([0-9]+/[0-9]+ segments, [0-9]+ skipped,'
+# One MediaRecorder timeslice, plus a quarter of one for a loaded runner. A
+# segment shorter than its window by more than this lost more than a final
+# chunk, whatever the reason says.
+MAX_SHORT_TAIL_MS=2500
 
-# assert_participant_splice <who> <min_segments> <min_placed> <min_spliced_ms>
+# assert_participant_splice <who> <min_segments> <min_placed> <min_spliced_ms> <min_accounted_ms>
 assert_participant_splice() {
-  local who="$1" min_segments="$2" min_placed="$3" min_spliced_ms="$4"
+  local who="$1" min_segments="$2" min_placed="$3" min_spliced_ms="$4" min_accounted_ms="$5"
   local line spliced placed segments skipped explained unexplained n
+  local skip_line held declared accounted
 
   # No match is the interesting case here, not an error: `|| true` so that the
   # diagnosis below runs instead of set -e taking the leg down with an ERR trap.
-  line="$(grep -Ei "^ *source audio: .*${who}.* transcribing from participant capture spliced over [0-9]+ ms of their recorded track \([0-9]+/[0-9]+ segments, [0-9]+ skipped," \
+  line="$(grep -Ei "^ *source audio: .*${who}.* ${SPLICE_LINE_REASON}" \
     "$LOG_DIR/build.log" | tail -1 || true)"
   if [[ -z "$line" ]]; then
     log "--- build.log excerpt ---"
@@ -711,14 +749,35 @@ assert_participant_splice() {
   (( spliced >= min_spliced_ms )) \
     || fail "${who}'s splice covers $spliced ms of their recorded track, want at least $min_spliced_ms ms: $line"
 
-  # Every skip explained, and explained by the one reason this leg accepts.
-  explained="$(grep -Eci "^ *source audio: .*${who}.*: segment [0-9]+ not spliced: ${BENIGN_SKIP_REASON}" \
-    "$LOG_DIR/build.log" || true)"
+  # Every skip explained, by the one reason this leg accepts, and by a deficit
+  # that reason can actually account for. The declared length of each explained
+  # segment joins the spliced milliseconds: a segment the splice named a reason
+  # for is answered for, one it lost silently is not.
+  explained=0
+  accounted="$spliced"
+  while IFS= read -r skip_line; do
+    [[ -n "$skip_line" ]] || continue
+    read -r held declared <<<"$(sed -E \
+      's#.*holds ([0-9]+) ms of the ([0-9]+) ms it declares.*#\1 \2#' <<<"$skip_line")"
+    if ! [[ "$held" =~ ^[0-9]+$ && "$declared" =~ ^[0-9]+$ ]]; then
+      fail "could not read the deficit from ${who}'s skip line: $skip_line"
+    fi
+    if (( declared - held > MAX_SHORT_TAIL_MS )); then
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "${who} lost $(( declared - held )) ms of a $declared ms segment, more than the ${MAX_SHORT_TAIL_MS} ms a dropped final chunk explains: $skip_line"
+    fi
+    explained=$(( explained + 1 ))
+    accounted=$(( accounted + declared ))
+  done < <(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ not spliced: ${BENIGN_SKIP_REASON}" \
+    "$LOG_DIR/build.log" || true)
   if (( explained != skipped )); then
     log "--- build.log excerpt ---"
     grep -E "source audio" "$LOG_DIR/build.log" || true
     fail "${who} had $skipped skipped segment(s) and $explained of them are the documented short-tail case"
   fi
+  (( accounted >= min_accounted_ms )) \
+    || fail "${who}'s splice covers $spliced ms and explains $(( accounted - spliced )) ms more, $accounted ms of the $min_accounted_ms ms this leg recorded them for"
   # And nothing else the splice declined is left unaccounted for.
   unexplained="$(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ (not spliced|partly used):" "$LOG_DIR/build.log" \
     | grep -Ecv "(${BENIGN_SKIP_REASON}|${BENIGN_PARTIAL_REASON})" || true)"
@@ -738,29 +797,37 @@ assert_participant_splice() {
     fail "${who}'s upload went unused; the build kept their recorded audio"
   fi
 
-  pass "${who}: $placed of $segments segment(s) spliced over $spliced ms of their recorded track ($skipped skipped, all documented)"
+  pass "${who}: $placed of $segments segment(s) spliced over $spliced ms of their recorded track ($skipped skipped, $accounted ms accounted for)"
 }
 
 # Alice is driven through three recorded stretches of at least 8.5 s each — one
-# before the microphone switch, one before the page reload, one after it — and
-# runs of this leg splice 27.5-28.5 s of her track when all three land, 17.5 s
-# when the last is short of its window. Two of her three stretches, less a
-# couple of seconds of slack, is 15 s.
+# before the microphone switch, one before the page reload, one after it — so
+# her capture arrives as three segments declaring 28.4-30.5 s between them.
+# Runs of this leg splice 27.5-28.5 s of her track with all three placed and
+# 17.5 s with the last one short, and account for 27.3-30.5 s either way, so
+# 24 s of accounted audio leaves better than three seconds of slack under the
+# lowest run measured. One placed segment is the floor for the count, because
+# both of her abruptly sealed segments may legitimately lose their tails in the
+# same run; 8 s is her shortest single stretch.
 ALICE_MIN_SEGMENTS=3
-ALICE_MIN_PLACED=2
-ALICE_MIN_SPLICED_MS=15000
+ALICE_MIN_PLACED=1
+ALICE_MIN_SPLICED_MS=8000
+ALICE_MIN_ACCOUNTED_MS=24000
 # Bob records one segment spanning the whole call: he joins before the recording
 # starts and leaves after Alice's reload, so he is talking through all three of
 # her stretches. Runs of this leg splice 30.0-32.0 s of his track. His segment
 # cannot be partly placed — if it were skipped the render would fail and there
-# would be no line at all — so his floor is here to catch a splice that lands
+# would be no line at all — so his floors are here to catch a splice that lands
 # and covers almost nothing.
 BOB_MIN_SEGMENTS=1
 BOB_MIN_PLACED=1
 BOB_MIN_SPLICED_MS=20000
+BOB_MIN_ACCOUNTED_MS=20000
 
-assert_participant_splice "$ALICE" "$ALICE_MIN_SEGMENTS" "$ALICE_MIN_PLACED" "$ALICE_MIN_SPLICED_MS"
-assert_participant_splice "$BOB" "$BOB_MIN_SEGMENTS" "$BOB_MIN_PLACED" "$BOB_MIN_SPLICED_MS"
+assert_participant_splice "$ALICE" \
+  "$ALICE_MIN_SEGMENTS" "$ALICE_MIN_PLACED" "$ALICE_MIN_SPLICED_MS" "$ALICE_MIN_ACCOUNTED_MS"
+assert_participant_splice "$BOB" \
+  "$BOB_MIN_SEGMENTS" "$BOB_MIN_PLACED" "$BOB_MIN_SPLICED_MS" "$BOB_MIN_ACCOUNTED_MS"
 
 # Assert published meeting manifest records provenance.sourceAudio
 CANONICAL_MEETING="$(jq -r '.job.artifact_meeting_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
@@ -782,27 +849,37 @@ done
 docker exec "$EXAPP_CONTAINER" cat "$ARTIFACT_MEETING_PATH/manifest.json" >"$LOG_DIR/meeting-manifest.json"
 
 # The same demand as the build log above, against the artifact a consumer reads,
-# and with the same numbers rather than a second set that could drift from them.
-# The per-segment reasons are checked on the log alone: the build prints the
-# manifest's own rejection strings verbatim, so a second regex pass over the
-# same words here would only be a second place to get the escaping wrong.
+# and from the same constants rather than a second set that could drift from
+# them. The build prints the manifest's own rejection strings verbatim, so the
+# accounted-milliseconds floor can be recomputed here from `rejections` — which
+# is the point: if the log and the manifest ever stopped saying the same thing,
+# one of these two would fail.
 jq -e --arg alice "$ALICE" --arg bob "$BOB" \
   --argjson aSegments "$ALICE_MIN_SEGMENTS" --argjson aPlaced "$ALICE_MIN_PLACED" \
-  --argjson aSpliced "$ALICE_MIN_SPLICED_MS" \
+  --argjson aSpliced "$ALICE_MIN_SPLICED_MS" --argjson aAccounted "$ALICE_MIN_ACCOUNTED_MS" \
   --argjson bSegments "$BOB_MIN_SEGMENTS" --argjson bPlaced "$BOB_MIN_PLACED" \
-  --argjson bSpliced "$BOB_MIN_SPLICED_MS" '
+  --argjson bSpliced "$BOB_MIN_SPLICED_MS" --argjson bAccounted "$BOB_MIN_ACCOUNTED_MS" \
+  --argjson maxTail "$MAX_SHORT_TAIL_MS" '
   .provenance.sourceAudio as $sa
-  | def spliced($owner; $minSegments; $minPlaced; $minSplicedMS):
+  # Every segment the splice named a short-tail reason for, as {held, declared}.
+  | def shortTails:
+      [ (.rejections // [])[]
+        | capture("holds (?<held>[0-9]+) ms of the (?<declared>[0-9]+) ms it declares")
+        | {held: (.held | tonumber), declared: (.declared | tonumber)} ];
+    def spliced($owner; $minSegments; $minPlaced; $minSplicedMS; $minAccountedMS):
       any($sa[];
         .owner == $owner
         and (.speaker_id | test($owner; "i"))
         and .segments >= $minSegments
         and .placed >= $minPlaced
         and (.placed + .skipped) == .segments
-        and .spliced_ms >= $minSplicedMS);
+        and .spliced_ms >= $minSplicedMS
+        and (shortTails | length) == .skipped
+        and all(shortTails[]; (.declared - .held) <= $maxTail)
+        and (.spliced_ms + ([shortTails[].declared] | add // 0)) >= $minAccountedMS);
     ($sa | type == "array" and length >= 2)
-    and spliced($alice; $aSegments; $aPlaced; $aSpliced)
-    and spliced($bob; $bSegments; $bPlaced; $bSpliced)
+    and spliced($alice; $aSegments; $aPlaced; $aSpliced; $aAccounted)
+    and spliced($bob; $bSegments; $bPlaced; $bSpliced; $bAccounted)
 ' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
   log "--- meeting manifest.json provenance ---"
   jq '.provenance // {}' "$LOG_DIR/meeting-manifest.json" || true
