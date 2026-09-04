@@ -46,7 +46,7 @@ if [[ -z "$SHERPA_TARBALL" ]]; then
   fi
 fi
 SHERPA_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${SHERPA_TARBALL}"
-SHERPA_EXTRACT="$CACHE/sherpa-onnx-v${SHERPA_VERSION}-gpu"
+SHERPA_EXTRACT="$CACHE/${SHERPA_TARBALL%.tar.bz2}"
 
 if [[ ! -d "$SHERPA_EXTRACT" ]]; then
   echo "==> downloading $SHERPA_TARBALL"
@@ -69,7 +69,7 @@ fi
 
 # Set up a local sherpa-onnx-go-linux clone with the GPU .so swapped in.
 # go.work makes this transparent to the in-tree go.mod.
-SHIM="$CACHE/sherpa-onnx-go-linux-gpu"
+SHIM="$CACHE/sherpa-onnx-go-linux-v${SHERPA_VERSION}-gpu"
 if [[ ! -d "$SHIM/.git" ]]; then
   echo "==> cloning sherpa-onnx-go-linux@v${SHERPA_VERSION}"
   rm -rf "$SHIM"
@@ -87,7 +87,7 @@ done
 # Build with a transient go.work that points sherpa-onnx-go-linux at the shim.
 GOWORK_FILE="$CACHE/go.work"
 cat > "$GOWORK_FILE" <<EOF
-go 1.24
+go 1.24.0
 
 use $REC
 
