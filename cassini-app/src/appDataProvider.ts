@@ -19,7 +19,7 @@ import { listInsights as fetchInsightRuns, readInsight } from "./insights/client
 // absent (see StaticCatalogProvider) rather than a second, browser-side
 // assembly of a published format that would look right and drift.
 export class AppDataProvider extends StaticCatalogProvider {
-  // GET published/meetings-context?id=…&id=… — the same document
+  // GET published/meetings-context?ids=…,… — the same document
   // `cassini meetings context <the same ids in the same order>` prints, byte
   // for byte, because the operator answers it from the one implementation the
   // CLI uses. Nothing here reformats or re-joins anything: the response body IS
@@ -33,11 +33,17 @@ export class AppDataProvider extends StaticCatalogProvider {
       throw new Error("Pick at least one meeting first.");
     }
     const url = new URL(resolvePublishedUrl("meetings-context"));
-    for (const entry of entries) {
-      // Repeated `id` params, in pick order: the document prints its meetings
-      // in the order the caller named them.
-      url.searchParams.append("id", entry.id);
-    }
+    // ONE comma-separated `ids`, in pick order, because the document prints its
+    // meetings in the order the caller named them.
+    //
+    // Not a repeated `id`: AppAPI's proxy is PHP, which collapses repeated
+    // query parameters to the last value unless they carry a `[]` suffix. That
+    // was measured against a real Nextcloud — three ids sent, one id logged —
+    // and it fails in the worst possible way, with a 200 and a bundle of one
+    // meeting that reads like a correct answer to a question nobody asked. The
+    // operator still accepts repeated `id` for callers that are not behind the
+    // proxy; only this wire format changed.
+    url.searchParams.set("ids", entries.map((entry) => entry.id).join(","));
     // Sent explicitly rather than relying on the default, so the bytes cannot
     // change under this caller if the endpoint's default ever does.
     url.searchParams.set("format", "markdown");

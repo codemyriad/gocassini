@@ -5,9 +5,11 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -314,6 +316,55 @@ func TestMeetingsContextFailsLoudly(t *testing.T) {
 
 // Every one of these is refused before a single Nextcloud call: a bad request
 // must cost no downloads and must never half-run.
+// TestMeetingsContextAcceptsCommaSeparatedIDs pins the wire format the app
+// actually uses. AppAPI's proxy is PHP and collapses a repeated `id` to its
+// last value, so the app sends one comma-separated `ids`; a caller reaching the
+// operator directly may still repeat `id`, which is what the CLI-parity golden
+// test does. Giving both is a bad request rather than a silent precedence rule.
+func TestMeetingsContextAcceptsCommaSeparatedIDs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"comma separated", "ids=a,b,c", []string{"a", "b", "c"}},
+		{"comma separated keeps caller order", "ids=c,a,b", []string{"c", "a", "b"}},
+		{"repeated id still works off-proxy", "id=a&id=b", []string{"a", "b"}},
+		{"single", "ids=a", []string{"a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := url.ParseQuery(tc.query)
+			if err != nil {
+				t.Fatalf("ParseQuery(%q): %v", tc.query, err)
+			}
+			got, err := parseMeetingsContextRequest(q)
+			if err != nil {
+				t.Fatalf("parseMeetingsContextRequest(%q): %v", tc.query, err)
+			}
+			if !slices.Equal(got.ids, tc.want) {
+				t.Fatalf("ids = %v, want %v", got.ids, tc.want)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, query string }{
+		{"both forms", "ids=a,b&id=c"},
+		{"empty element", "ids=a,,b"},
+		{"duplicate across the comma list", "ids=a,a"},
+		{"neither form", "format=markdown"},
+	} {
+		t.Run("refuses "+tc.name, func(t *testing.T) {
+			q, err := url.ParseQuery(tc.query)
+			if err != nil {
+				t.Fatalf("ParseQuery(%q): %v", tc.query, err)
+			}
+			if _, err := parseMeetingsContextRequest(q); err == nil {
+				t.Fatalf("parseMeetingsContextRequest(%q) = nil error, want a refusal", tc.query)
+			}
+		})
+	}
+}
+
 func TestMeetingsContextRejectsABadRequestBeforeCallingNextcloud(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("upstream must not be called for a bad request: %s %s", r.Method, r.URL.Path)

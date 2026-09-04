@@ -35,7 +35,7 @@ authorization and Cassini keeps no separate list of who may see what.
         │
         ├── catalog.json  filtered to what the caller may read
         ├── meetings/<id>.opus   ... or 404
-        └── meetings-context?id=…&id=…   the same document `meetings context` prints
+        └── meetings-context?ids=…,…     the same document `meetings context` prints
 ```
 
 Three consequences worth internalising before you build on this:
@@ -304,7 +304,7 @@ Two things follow from that, and both matter if you want the two paths to agree:
 ## 4. The same document, served to the Cassini app
 
 ```text
-GET published/meetings-context?id=<id>&id=<id>[&format=json][&timestamps=true]
+GET published/meetings-context?ids=<id>,<id>[&format=json][&timestamps=true]
 ```
 
 The app needs the same bundle the CLI prints, and "the same" is only true by

@@ -241,8 +241,29 @@ func (q meetingsContextRequest) contentType() string {
 // reaches Nextcloud, so a bad request costs no downloads and cannot half-run.
 func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, error) {
 	var request meetingsContextRequest
-	seen := make(map[string]bool, len(query["id"]))
-	for _, raw := range query["id"] {
+
+	// Ids arrive as one comma-separated `ids`, NOT as a repeated `id`.
+	//
+	// AppAPI's proxy is PHP, and PHP collapses repeated query parameters to the
+	// last value unless they are named with a `[]` suffix. So `?id=a&id=b&id=c`
+	// reaches this handler as a single id — silently, with a 200 and a bundle of
+	// one meeting that reads exactly like a correct answer to a different
+	// question. Measured against a real Nextcloud: three ids in, one id logged.
+	//
+	// A repeated `id` is still accepted, because a caller reaching the operator
+	// directly (the CLI, a test, a standalone deploy) is not behind that proxy
+	// and the golden test compares against `cassini meetings context A B C`.
+	// Only the app's wire format changed.
+	raw := query["id"]
+	if joined := strings.TrimSpace(query.Get("ids")); joined != "" {
+		if len(raw) > 0 {
+			return request, errors.New("give ids as one comma-separated `ids`, or as repeated `id`, not both")
+		}
+		raw = strings.Split(joined, ",")
+	}
+
+	seen := make(map[string]bool, len(raw))
+	for _, raw := range raw {
 		id := strings.TrimSpace(raw)
 		if id == "" {
 			return request, errors.New("an id parameter is empty")
@@ -265,7 +286,7 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 		request.ids = append(request.ids, id)
 	}
 	if len(request.ids) == 0 {
-		return request, errors.New("at least one id parameter is required")
+		return request, errors.New("at least one meeting id is required, as `ids=<id>,<id>`")
 	}
 	if len(request.ids) > maxContextMeetings {
 		return request, fmt.Errorf("a context bundle holds at most %d meetings, got %d", maxContextMeetings, len(request.ids))

@@ -46,7 +46,11 @@ describe("AppDataProvider.loadContextBundle", () => {
     expect(url.origin + url.pathname).toBe(`${PROXY_BASE}published/meetings-context`);
     // Repeated id params, not a joined list, and the order is the order the
     // document prints in.
-    expect(url.searchParams.getAll("id")).toEqual(["b", "a", "c"]);
+    // ONE comma-separated `ids`, in pick order — a repeated `id` would be
+    // collapsed to its last value by AppAPI's PHP proxy, which answers 200 with
+    // a bundle of one meeting rather than failing.
+    expect(url.searchParams.get("ids")).toBe("b,a,c");
+    expect(url.searchParams.getAll("id")).toEqual([]);
     expect(url.searchParams.get("format")).toBe("markdown");
   });
 
