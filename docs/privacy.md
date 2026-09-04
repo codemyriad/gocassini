@@ -51,10 +51,29 @@ artifacts:
   **AppAPI persistent volume** (`APP_PERSISTENT_STORAGE`), under the operator
   work root. They are not exposed to Nextcloud users and are not covered by
   Nextcloud's file access controls — they are internal to the Cassini container.
-- **Published recordings** are written to **Nextcloud Files**, under
-  `Cassini/Recordings/`, by the default `nextcloud-files` publish sink. This is
-  what people in your Nextcloud open and view, subject to the access controls
-  below.
+- **Published recordings** are written to **Nextcloud Files** by the default
+  `nextcloud-files` publish sink, into a dedicated `cassini` service account's
+  Files. **Which path depends on the storage mode**, and the two are different
+  places with different audiences:
+
+  ```text
+    default mode            CassiniNoACL/Recordings/
+                            the `cassini` account's own directory. Nothing is
+                            mounted there and no other account has a mount of
+                            it, so it appears in nobody else's Files; Cassini
+                            reads it as that account and serves it through the
+                            app to everyone who can open the app.
+
+    access-controlled mode  Cassini/Recordings/
+                            inside the `Cassini` Team folder, which every
+                            account has a read mount of. What each account may
+                            actually open is decided per recording by
+                            Nextcloud's advanced file access controls.
+  ```
+
+  This is what people in your Nextcloud open and view, subject to the access
+  controls below. One root holds the archive and the other is empty — except
+  while a mode switch is copying between them, which is described below.
 
 ### Who can read a published recording
 
@@ -63,36 +82,62 @@ app's **Setup** tab. The mode in force is reported by `GET /operator/storage`
 and shown on that tab.
 
 **Default mode.** Every recording is readable by every signed-in account that
-can open Cassini (never anonymously). Recordings live in a dedicated `cassini`
-service account's own folder and Cassini serves them as that account, so there
-is no per-recording permission to enforce. This mode needs no extra Nextcloud
-apps, which is why it is what an instance without them gets.
+can open Cassini (never anonymously). Recordings live in the dedicated `cassini`
+service account's own `CassiniNoACL/Recordings` — a directory no other account
+has a mount of — and Cassini serves them as that account, so there is no
+per-recording permission to enforce, and none is claimed. This mode needs no
+extra Nextcloud apps, which is why it is what an instance without them gets.
 
-**Access-controlled mode.** Each private recording is readable **only by the
-people who had access to the Talk room when it was published** — its attendee
-list, which includes people who were invited but never joined, not only those
-present on the call. This is enforced by Nextcloud's own advanced file access
-controls, not by Cassini keeping a separate copy or its own permission list.
-Recordings of **public** Talk rooms are readable by every signed-in account
-(never anonymously). This mode requires the Team folders and Everyone Group
-apps and a Team folder an administrator sets up (see
+**Access-controlled mode.** Each private recording, in `Cassini/Recordings`
+inside the `Cassini` Team folder, is readable **only by the people who had
+access to the Talk room when it was published** — its attendee list, which
+includes people who were invited but never joined, not only those present on the
+call. This is enforced by Nextcloud's own advanced file access controls, not by
+Cassini keeping a separate copy or its own permission list. Recordings of
+**public** Talk rooms are readable by every signed-in account (never
+anonymously). This mode requires the Team folders and Everyone Group apps and a
+Team folder an administrator sets up (see
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md)).
 
 **Switching to access control does not retroactively restrict anything.**
-Recordings that already existed are moved into the Team folder readable by every
-signed-in account: Cassini does not guess who was in a past meeting. Narrowing
-them is a deliberate act, per recording, from the Files app. Switching the other
-way drops every access rule, and makes every recording readable by everyone who
-can open Cassini.
+Recordings that already existed are copied into the Team folder readable by
+every signed-in account: Cassini does not guess who was in a past meeting.
+Narrowing them is a deliberate act, per recording, from the Files app. Switching
+the other way carries every recording into the private tree with no access rules
+at all — a copy there is outside any Team folder, where per-file rules do not
+exist — so afterwards everyone who can open Cassini can read every recording,
+including the ones that had been restricted to a call's participants.
 
-**An instance that was already access-controlled stays that way.** The mode is
-derived once, on the first start after upgrading, and resolves to access control
-whenever the substrate for it is already in place — so an upgrade never widens
-an existing archive on its own.
+**A switch copies first and deletes afterwards.** Recordings are copied into the
+destination, checked as complete, and only then is the old root emptied — so at
+no point does the mode Cassini reports name a place the archive is not. If a
+switch stops between those steps, both roots hold a copy; the app says so and
+offers a one-click tidy-up, and the leftover copy keeps whatever audience it
+already had. Nothing is exposed early either: while recordings are being copied
+into the Team folder, that folder is held readable by the service account alone,
+and is opened up again only once every recording inside it states its own
+audience.
+
+**Opting out empties the Team folder but leaves it in place.** It is not
+deleted, and its group mappings are not touched. An emptied `Cassini` Team
+folder is the normal end state of an opt-out, and switching back later is
+immediate.
+
+**An upgrade never widens an existing archive.** Nothing is inferred from the
+instance: an install that has never recorded a storage mode starts in `default`.
+If the `Cassini` Team folder is mounted and still holds recordings — what an
+access-controlled installation looks like to a Cassini that has not been told —
+the app **refuses to publish** and says so, rather than starting a fresh archive
+in the private tree and leaving the old one unread. An administrator resolves it
+by turning access control on in the Setup tab, or by setting
+`CASSINI_STORAGE_MODE=access_controlled` and re-enabling the app. No recording
+changes audience while that refusal stands.
 
 **Recordings migrated from an older version are owner-only.** Installations that
 published before recordings moved into Nextcloud Files migrate them with
-`scripts/backfill-nc-files.sh`, run once by hand. The audience a recording had
+`scripts/backfill-nc-files.sh`, run once by hand — a script that applies to the
+access-controlled mode only, and refuses to run in the default mode, where the
+per-recording rules it writes would mean nothing. The audience a recording had
 when it was published cannot be recovered afterwards, so migrated recordings are
 readable only by the `cassini` service account, and access is granted from the
 Files app. That script's `--public` flag instead makes **every** migrated

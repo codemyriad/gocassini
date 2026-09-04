@@ -110,7 +110,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   env is creation-time only, so a release adding a _required_ env var is a
   breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
-- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — the two storage modes and how to switch between them, what per-participant access control needs (Team folders + Everyone Group, a `cassini` service account, a mapped Team folder — none of which Cassini creates for you), and how to manage who can see each recording.
+- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — the two storage modes, each with its own recordings root (`CassiniNoACL/Recordings` for the default one, `Cassini/Recordings` in the Team folder for access control), how switching copies an archive between them, what per-participant access control needs (Team folders + Everyone Group, a `cassini` service account, a mapped Team folder — none of which Cassini creates for you), and how to manage who can see each recording.
 - **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the one optional step that sends data off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
@@ -225,5 +225,3 @@ Flagged so readers do not mistake intent for current behavior:
 - Work on the media pipeline: [Mental model](./mental-model.md) → [Core pipeline](./core-pipeline.md) → [Artifacts and filesystem](./reference/artifacts-and-filesystem.md)
 - Work on the browser apps: [Quick start](./quick-start.md) → [Control panel](./components/control-panel.md) → [Viewer](./components/viewer.md)
 - Install on Nextcloud: [ExApp install](./exapp-install.md) → [Env-var reference](./exapp-talk-env-vars.md)
-  </content>
-  </invoke>

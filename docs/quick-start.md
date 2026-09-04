@@ -45,7 +45,8 @@ From the repo root:
 This one command:
 
 - starts local Nextcloud + AppAPI/HaRP + the full Talk signaling stack;
-- installs the native Team folders and Everyone Group prerequisites;
+- installs the native Team folders and Everyone Group apps — the prerequisites
+  of the access-controlled storage mode;
 - builds and tags the Cassini ExApp image from `appinfo/info.xml`;
 - installs/reinstalls Cassini via AppAPI;
 - passes both Talk secrets as deploy env, and points Talk's `recording_servers`
@@ -55,15 +56,25 @@ The first run is slow — it builds the ExApp image. Later runs without `--build
 reuse the existing image. Keep `--build` when validating changes in the current
 checkout; otherwise the harness deliberately runs the previously built image,
 which may be an older release even though Git is on your feature branch.
-The harness plays the administrator: it enables the Team folders and Everyone
-Group apps and creates the `cassini` service account and its Team folder, so a
-harness stack comes up **access-controlled** — each recording readable only by
-the people who were in the meeting. Cassini itself creates none of that; on a
-Nextcloud where an administrator has not, it runs in its **default** mode
-instead, where recordings live in the `cassini` account's own folder and
-everyone who can open the app can read all of them. Which mode an instance is
-in, what the other one still needs, and how to switch between them is in the
-app's **Setup** tab. See
+
+The harness plays the administrator, and how much of one depends on
+`--storage-mode`. The command above takes its default, `default`: the harness
+creates the `cassini` service account and its group, builds **no Team folder**,
+and registers the ExApp with `CASSINI_STORAGE_MODE=default`. Recordings land in
+that account's own `CassiniNoACL/Recordings`, and everyone who can open the app
+can read all of them. (The two native apps above are installed either way — in
+this mode nothing uses them.)
+
+Add `--storage-mode acl-enabled` and the harness also builds a mapped,
+ACL-enabled `Cassini` Team folder and starts the ExApp **access-controlled**:
+recordings go to `Cassini/Recordings` inside that folder, each readable only by
+the people who were in the meeting. The mode is declared rather than inferred,
+because Cassini infers nothing — on a Nextcloud where nobody has said, it starts
+in `default`. Each mode has its own root, so neither can shadow the other.
+
+Either way it is only the *initial* value: the app records it on its first
+enable, and the **Setup** tab is what changes it afterwards — which mode is in
+force, what the other one still needs, and the switch itself. See
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:

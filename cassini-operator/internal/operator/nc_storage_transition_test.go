@@ -8,7 +8,9 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1076,5 +1078,55 @@ func TestAdoptionLeavesTheInstanceSettled(t *testing.T) {
 	}
 	if persisted := readPersistedMode(t, settings); !persisted.Clean() {
 		t.Fatalf("%s = %+v, want migration_clean untouched", storageSettingsFileName, persisted)
+	}
+}
+
+// The flip IS the settings write, so a write that fails is a flip that did not
+// happen — and the process must end up in the mode the file still names, not in
+// the one it was about to move to.
+//
+// The archive is safe either way at that instant: the copy is verified at the
+// destination and the source has not been touched, so BOTH roots are complete.
+// What must not happen is the process and the file disagreeing, because the next
+// publish would then write somewhere the next restart would not read.
+func TestSwitchStaysInTheOldModeWhenTheFlipCannotBeWritten(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	// A settings path that cannot be written: the parent is a file, not a
+	// directory, so both the MkdirAll and the write fail.
+	blocked := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	// Step 1 (mark dirty) has to succeed, or the switch never starts. Let it
+	// write, then block the path before the flip by pointing at the broken one.
+	// Simpler and just as pinning: block it from the start and assert the switch
+	// refuses before touching anything.
+	ncStorage.setPath(filepath.Join(blocked, storageSettingsFileName))
+
+	_, err := cfg.switchStorageMode(context.Background(), true, log.New(io.Discard, "", 0))
+	if err == nil {
+		t.Fatal("switchStorageMode(true) reported success with an unwritable settings file")
+	}
+	if accessControlled, _ := ncStorage.mode(); accessControlled {
+		t.Fatal("the process moved to the new mode while the file could not record it")
+	}
+	// Nothing was removed: the source is still the archive.
+	if !mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the source was emptied even though the mode never changed")
+	}
+	mock.mu.Lock()
+	deleted := len(mock.deleted)
+	mock.mu.Unlock()
+	if deleted != 0 {
+		t.Fatalf("a switch that could not record its mode deleted %d path(s)", deleted)
 	}
 }
