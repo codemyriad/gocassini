@@ -927,6 +927,11 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			return
 		}
 		logger.Printf("capture upload: room=%s owner=%s segments=%d bytes=%d", sidecar.RoomToken, owner, len(sidecar.Segments), total)
+		// Only the promoted branch, never captureAlreadyStored: an upload whose
+		// bytes are already here adds nothing a rebuild could read, and
+		// counting it would re-transcribe a meeting to produce the identical
+		// transcript (D-698).
+		rt.noteCaptureArrival(sidecar, owner, logger)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -38,9 +38,7 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 7 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 || versions[6] != 7 {
-		t.Fatalf("expected migration versions [1 2 3 4 5 6 7], got %v", versions)
-	}
+	assertMigrationsContiguous(t, migrationVersions(t, store.db))
 	if !sqliteTableExists(t, store.db, "job_attempts") {
 		t.Fatalf("expected job_attempts table to exist")
 	}
@@ -58,9 +56,7 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 7 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 || versions[6] != 7 {
-		t.Fatalf("expected migration versions [1 2 3 4 5 6 7], got %v", versions)
-	}
+	assertMigrationsContiguous(t, migrationVersions(t, store.db))
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
 		t.Fatalf("unexpected legacy job after baseline = %#v", job)
@@ -2999,3 +2995,20 @@ func mustGetJob(t *testing.T, store *Store, id string) Job {
 func strPtr(v string) *string { return &v }
 
 func intPtr(v int) *int { return &v }
+
+// assertMigrationsContiguous checks what the loader actually guarantees — every
+// migration applied, numbered from one with no gaps — rather than a
+// hand-written list. The list version had to be edited by every migration that
+// ever landed, which is churn that tests nothing: a wrong count fails it, and so
+// does a correct one.
+func assertMigrationsContiguous(t *testing.T, versions []int) {
+	t.Helper()
+	if len(versions) == 0 {
+		t.Fatal("no migrations applied")
+	}
+	for i, got := range versions {
+		if want := i + 1; got != want {
+			t.Fatalf("migration versions are not contiguous from 1: got %v, first break at index %d (%d, want %d)", versions, i, got, want)
+		}
+	}
+}

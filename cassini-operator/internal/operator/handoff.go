@@ -54,6 +54,11 @@ func (rt *Runtime) requeueDispatcher() {
 		buildBacklog := rt.dispatchQueuedBuildTasks(dispatchedBuild)
 		sealBacklog := rt.dispatchQueuedSealTasks(dispatchedSeal)
 		publishBacklog := rt.dispatchQueuedPublishTasks(dispatchedPublish)
+		// Late participant audio (D-698). It rides this scan rather than a
+		// timer of its own: the first pass runs immediately after startup, so a
+		// rebuild owed across a restart — or one the operator died in the
+		// middle of — is re-detected here with no recovery path of its own.
+		rt.dispatchSourceAudioRebuilds()
 		delay := requeueScanIdleInterval
 		if buildBacklog || sealBacklog || publishBacklog {
 			delay = requeueScanRetryDelay
