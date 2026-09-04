@@ -5,7 +5,7 @@
 # One implementation, two callers (D-458 / D-565):
 #
 #   * harness/bin/lib/stack.sh   — HaRP daemon, install phase of the e2e stack
-#   * ops/deploy/deploy-exapp.sh — production, registers into an existing
+#   * deploy-exapp.sh (systems)  — production, registers into an existing
 #                                  Nextcloud, never brings a stack up
 #
 # (The AIO sandbox — sandbox/wire-cassini.sh — registers inline against AIO's

@@ -69,7 +69,6 @@ Material that spans components and isn't owned by any single one:
 
 - [Audio glossary](audio-glossary.md) — concepts that recur across recording, remux, transcription, and viewer (containers, codecs, RTP, timestamps, VAD/STT, captions, integrity).
 - [Portable meeting format](portable-meeting-format.md) — the `.opus`-as-meeting-container contract.
-- [Operations notes](proxmox-jellyfin-nvidia.md) — infra-level setup notes for deployment hosts.
 
 ## Reading order for new contributors
 

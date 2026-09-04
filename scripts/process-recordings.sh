@@ -7,7 +7,7 @@
 # Set DEVICE=cuda to use GPU acceleration (default: cpu).
 #
 # Can be run on any host that has ffmpeg, or from inside container 100:
-#   sudo pct exec 100 -- bash /workspace/gocassini/ops/process-recordings.sh
+#   sudo pct exec 100 -- bash /workspace/gocassini/scripts/process-recordings.sh
 set -euo pipefail
 
 RECORDINGS_DIR="${RECORDINGS_DIR:-/mnt/data/cassini/recordings}"
