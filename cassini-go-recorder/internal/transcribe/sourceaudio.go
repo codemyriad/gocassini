@@ -620,6 +620,21 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 // the (deliberately generous) placement check. A capture has to be from this
 // room and from a call overlapping this recording before it is a candidate.
 //
+// Being a candidate is no longer enough to be selected. Room plus "overlaps
+// within a minute of slack" still cannot separate two recordings of one room
+// from each other, so a moderator who stops and restarts had the capture that
+// ended just before this recording competing with the one that covers it. The
+// slack is now a fallback rather than a widening (captureWindowFit), and a
+// participant whose captures still cannot be told apart is REFUSED with a
+// reason rather than resolved by ordering — see selectOwnerCaptures. The second
+// return value carries those reasons, keyed by owner, for the build log.
+//
+// The operator makes the same distinction from the other side, resolving one
+// upload to one recording (ResolveJobForCapture, capture_rebuild_store.go). The
+// two must agree: a capture this splices but the operator cannot attribute is
+// stored and never rebuilt for, and one the operator attributes but this
+// refuses schedules a rebuild that changes nothing.
+//
 // roomToken may be empty when the caller does not know it — building a bare MKV
 // outside the operator, say. The window check still applies; the room check is
 // skipped, and the caller is trusting the window alone.
@@ -628,9 +643,9 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 // discovered as a capture in its own right; see the loop below.
 const supersededSuffix = ".superseded"
 
-func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64) (map[string][]string, error) {
+func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64) (map[string][]string, map[string]string, error) {
 	if strings.TrimSpace(root) == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	roomGlob := "*"
 	if token := strings.TrimSpace(roomToken); token != "" {
@@ -638,10 +653,10 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 	}
 	matches, err := filepath.Glob(filepath.Join(root, roomGlob, "*", "*", "capture.json"))
 	if err != nil {
-		return nil, fmt.Errorf("scan capture root: %w", err)
+		return nil, nil, fmt.Errorf("scan capture root: %w", err)
 	}
 	sort.Strings(matches)
-	found := map[string][]string{}
+	byOwner := map[string][]captureCandidate{}
 	for _, match := range matches {
 		dir := filepath.Dir(match)
 		// The upload handler promotes a re-upload by renaming the previous one
@@ -663,16 +678,187 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 		if roomToken != "" && sidecar.RoomToken != roomToken {
 			continue
 		}
-		if !windowsOverlap(sidecar.CallStartWallMS, sidecar.CallEndWallMS, windowStartMS, windowEndMS) {
+		fit := captureWindowFit(sidecar.CallStartWallMS, sidecar.CallEndWallMS, windowStartMS, windowEndMS)
+		if fit == captureWindowApart {
 			continue
 		}
 		// EVERY matching capture, not just the newest. A participant who left
 		// and rejoined uploads one per session, and both belong to this
 		// recording; keeping only the later one while suppressing their
 		// recorded streams silently dropped the first half of what they said.
-		found[sidecar.OwnerUserID] = append(found[sidecar.OwnerUserID], dir)
+		byOwner[sidecar.OwnerUserID] = append(byOwner[sidecar.OwnerUserID], captureCandidate{
+			dir:     dir,
+			startMS: sidecar.CallStartWallMS,
+			endMS:   sidecar.CallEndWallMS,
+			fit:     fit,
+		})
 	}
-	return found, nil
+	found := map[string][]string{}
+	refused := map[string]string{}
+	for owner, candidates := range byOwner {
+		dirs, reason := selectOwnerCaptures(candidates)
+		if reason != "" {
+			refused[owner] = reason
+			continue
+		}
+		if len(dirs) > 0 {
+			found[owner] = dirs
+		}
+	}
+	return found, refused, nil
+}
+
+// captureCandidate is one upload that got past the room and window filters,
+// with what those filters learned about it.
+type captureCandidate struct {
+	dir     string
+	startMS int64
+	endMS   int64
+	fit     int
+}
+
+// How a capture's call window sits against this recording's, in the order
+// selection prefers them.
+//
+// The grades are what stop a neighbouring capture from winning. "Overlaps, with
+// a minute of slack on each side" cannot tell the capture that covers this
+// recording from the one that ended just before it — and a moderator who stops
+// a recording and starts another in the same room produces exactly that pair,
+// with the participant's browser filing one capture per call session either
+// side of the seam. The slack exists for clock skew at that seam, not to admit
+// a neighbour while the right capture is sitting next to it, so it is a
+// fallback and not a widening.
+const (
+	captureWindowApart = iota
+	captureWindowWithinSlack
+	captureWindowIntersects
+)
+
+// captureWindowFit grades one capture against one recording. windowsOverlap
+// stays the slack tier, unchanged and still shared with the operator's copy, so
+// nothing that used to be a candidate stops being one; what changed is that a
+// capture which genuinely intersects now beats one that only reaches through
+// the slack.
+func captureWindowFit(aStart, aEnd, bStart, bEnd int64) int {
+	if aStart <= 0 || bStart <= 0 {
+		return captureWindowApart
+	}
+	// Strictly positive shared time, not a touch. A capture that ends at the
+	// instant a recording begins holds no audio inside it, and grading that as
+	// a real intersection is exactly how a restart's neighbour would win again:
+	// the moderator's stop and start are adjacent, so touching is the shape the
+	// wrong capture has.
+	if windowOverlapMS(aStart, aEnd, bStart, bEnd) > 0 {
+		return captureWindowIntersects
+	}
+	if windowsOverlap(aStart, aEnd, bStart, bEnd) {
+		return captureWindowWithinSlack
+	}
+	return captureWindowApart
+}
+
+// captureSessionOverlapSlackMS is how far two of one participant's captures may
+// overlap each other and still be read as consecutive sessions.
+//
+// A capture is one call session of one browser page. A reload or a rejoin files
+// a second one that begins where the first ended — they are separate
+// directories precisely because their call starts differ, since the same call
+// start is a re-upload the operator supersedes in place — so sessions MEET, and
+// the seam is stamped by two page loads of one clock a moment apart. Overlap
+// past that is not a rejoin: nobody was in two call sessions at once, so one of
+// the two describes a different recording of this room, and nothing on disk
+// says which.
+const captureSessionOverlapSlackMS = 5_000
+
+// selectOwnerCaptures picks the captures of ONE participant that belong to this
+// recording, or refuses with the reason it cannot tell.
+//
+// Refusing costs this participant their splice and nothing else: their recorded
+// track stands for the whole meeting, which is where it started. Guessing costs
+// another meeting's speech appearing inside this one's transcript, which is not
+// recoverable by hand.
+//
+// One case is refused that is not a mistake by anybody: the same person joined
+// from two devices, so two genuine captures of one owner cover this recording
+// and each other. There is no tie-break worth having there either. The render
+// replaces ALL of that participant's recorded streams at once, so two
+// overlapping captures would be laid over one floor with the later one winning
+// per sample — an outcome nobody could read back from the manifest — and
+// picking "the longer" is a guess wearing a rule. They keep their recorded
+// track, and the build log names both directories.
+func selectOwnerCaptures(candidates []captureCandidate) ([]string, string) {
+	best := captureWindowApart
+	for _, candidate := range candidates {
+		if candidate.fit > best {
+			best = candidate.fit
+		}
+	}
+	if best == captureWindowApart {
+		return nil, ""
+	}
+	kept := make([]captureCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.fit == best {
+			kept = append(kept, candidate)
+		}
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].startMS < kept[j].startMS })
+	if best == captureWindowWithinSlack && len(kept) > 1 {
+		// Nothing this participant uploaded actually covers this recording, and
+		// more than one thing is close enough to be reached through the slack.
+		// The slack can rescue a capture that just misses; it cannot choose
+		// between two that just miss from opposite sides.
+		return nil, fmt.Sprintf(
+			"%d of their captures reach this recording only through the matching slack and none of them covers it (call windows %s), so which one belongs would be a guess",
+			len(kept), describeCaptureWindows(kept))
+	}
+	for i := 0; i < len(kept); i++ {
+		for j := i + 1; j < len(kept); j++ {
+			overlap := windowOverlapMS(kept[i].startMS, kept[i].endMS, kept[j].startMS, kept[j].endMS)
+			if overlap > captureSessionOverlapSlackMS {
+				// Deliberately does not say which of the two shapes this is.
+				// Consecutive sessions cannot overlap, so either one of these
+				// belongs to another recording of this room, or the same person
+				// was in the call twice at once from two devices — and both are
+				// unspliceable for the same reason, since the render replaces
+				// all of this participant's recorded streams with one file.
+				return nil, fmt.Sprintf(
+					"two of their captures overlap each other by %d ms (call windows %s); one call session cannot overlap another, so either one of them belongs to a different recording of this room or the same person was in this call from two devices, and neither can be spliced over one track",
+					overlap, describeCaptureWindows(kept))
+			}
+		}
+	}
+	dirs := make([]string, 0, len(kept))
+	for _, candidate := range kept {
+		dirs = append(dirs, candidate.dir)
+	}
+	sort.Strings(dirs)
+	return dirs, ""
+}
+
+// windowOverlapMS is how much two wall-clock spans genuinely share, with no
+// slack at all. Zero or negative means they do not meet.
+func windowOverlapMS(aStart, aEnd, bStart, bEnd int64) int64 {
+	start := aStart
+	if bStart > start {
+		start = bStart
+	}
+	end := aEnd
+	if bEnd < end {
+		end = bEnd
+	}
+	return end - start
+}
+
+// describeCaptureWindows names the windows a refusal could not choose between,
+// so the build log says which directories an administrator has to look at
+// rather than only that there were two of them.
+func describeCaptureWindows(candidates []captureCandidate) string {
+	parts := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		parts = append(parts, fmt.Sprintf("%s %d-%d", filepath.Base(candidate.dir), candidate.startMS, candidate.endMS))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // windowsOverlap reports whether two wall-clock spans intersect, with a minute
@@ -1519,10 +1705,23 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 	timelineSamples := mix.TimelineSamples
 	timelineMS := int64(timelineSamples) * 1000 / int64(mixRenderHz)
 	windowStartMS, windowEndMS := recordingWallWindow(streams, timelineMS)
-	captures, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS)
+	captures, refused, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS)
 	if err != nil {
 		fmt.Fprintf(stdout, "  source audio: cannot scan %s: %v\n", captureRoot, err)
 		return nil
+	}
+	// Before the early returns below: a participant refused by selection has to
+	// be said out loud whether or not anybody else was selected. Silence here
+	// reads exactly like "they never uploaded", and the difference between the
+	// two is the difference between a missing feature and audio on disk that
+	// nobody could attribute.
+	refusedOwners := make([]string, 0, len(refused))
+	for owner := range refused {
+		refusedOwners = append(refusedOwners, owner)
+	}
+	sort.Strings(refusedOwners)
+	for _, owner := range refusedOwners {
+		fmt.Fprintf(stdout, "  source audio: %s uploaded, but %s; keeping the recorded audio\n", owner, refused[owner])
 	}
 	if len(captures) == 0 {
 		return nil

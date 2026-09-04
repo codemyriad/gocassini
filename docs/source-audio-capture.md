@@ -294,6 +294,32 @@ participant id alone was wrong in two ways that both end with one meeting's
 speech in another's transcript — a later unrelated capture hid the correct
 older one, and two calls close in time each looked plausible.
 
+Overlapping is graded rather than a yes or no. The overlap test allows a minute
+of slack on each side, for a client whose clock is a few seconds off or that
+stopped recording just after the recorder detached — and that slack cannot tell
+two recordings of one room apart. A moderator who stops a recording and starts
+another produces exactly that pair: each participant's browser files one capture
+per call session either side of the seam, and the capture that ended just before
+this recording competed with the one that covers it. So a capture whose window
+genuinely intersects this recording now beats one that only reaches it through
+the slack, and the slack is left doing what it was written for.
+
+Where that is still not enough, selection refuses rather than guesses, and the
+build log says which captures it could not choose between. Two of one
+participant's captures that cover this recording **and** each other cannot both
+be real — nobody is in two call sessions at once — so one of them describes
+another recording of this room and nothing on disk says which. Two that only the
+slack reaches, from opposite sides, are the same problem. Either way that
+participant keeps their recorded track for the whole meeting, which costs them a
+splice; guessing would cost another meeting's speech inside this transcript,
+which no rerun can undo.
+
+The operator makes the same distinction from the other side, resolving one
+upload to one recording so it knows which meeting to rebuild. The two must
+agree: a capture the build splices but the operator cannot attribute is stored
+and never rebuilt for, and one the operator attributes but the build refuses
+schedules a rebuild that changes nothing.
+
 A participant with several tracks in one recording (a rejoin, a stream
 rotation) has their spliced track attached to exactly one of them; the others
 are dropped from transcription, because that track spans the whole timeline and
@@ -594,23 +620,58 @@ logged-in user. The client fails closed at every one of those.
   room resumes them into the capture it starts, or uploads them if the recording
   is over.
 
-  A segment sealed when the participant simply leaves is short of its window
-  too, for a different reason. Nothing is dropped there: the capture stamps the
-  segment's end only after the recorder has stopped and every chunk it produced
-  has been written. But that stamp includes the stopping itself, and the start
-  of the window includes the encoder spinning up, so the file holds a little
-  less audio than the window it declares — by however long those two took.
-  Measured on the browser-capture CI leg, between about half a second and a
-  second and a half, and it grows with how loaded the machine is.
+  A segment sealed when the participant simply leaves used to be short of its
+  window too, for a different reason, and that one is now fixed. Nothing was
+  dropped there: the capture stamps the segment's end only after the recorder
+  has stopped and every chunk it produced has been written. But the stamp was
+  taken at the end of that waiting, and the start of the window was taken before
+  the recorder was even constructed, so the window included the stopping and the
+  starting and the file held a little less audio than it declared — measured on
+  the browser-capture CI leg, between about half a second and a second and a
+  half, growing with how loaded the machine is.
 
-  The splice leaves out a segment holding under 90% of its declared window, so
-  on a segment shorter than about twenty seconds that latency can be a tenth of
-  the window and cost the segment its splice although nothing went wrong. The
-  recorded track stands there instead and the build log says which segment and
-  why — but the seconds either side of a departure are then the ones least
-  likely to come from the participant's own microphone. Stamping the window from
-  the audio actually recorded, rather than from the clock either side of it,
-  would close it.
+  Since the splice leaves out a segment holding under 90% of its declared
+  window, on a segment shorter than about twenty seconds that latency could be a
+  tenth of the window and cost the segment its splice although nothing had gone
+  wrong — making the seconds either side of a departure the ones least likely to
+  come from the participant's own microphone, which is the opposite of what the
+  feature is for.
+
+  The window is now stamped at the recorder's own boundaries: the end is the
+  instant the recorder was asked to stop, taken before asking rather than after
+  the waiting, and the start is the instant `MediaRecorder.start()` returned.
+  The waiting itself is unchanged — it is what makes the file complete — it is
+  simply no longer declared as audio.
+
+  A sharper source was considered and rejected. The outgoing encoded frames
+  already pass through the capture worker on their way to the network and would
+  date the microphone to within one 20 ms frame, but they are a different
+  pipeline: Talk mutes with `enabled = false`, and a disabled track delivers
+  silence to every sink, so the recorder keeps writing while the sender may stop
+  producing frames for it — as Opus DTX and a renegotiation also can. A window
+  ending at the last frame could be *narrower* than the audio, and that is a
+  worse failure than the one being fixed. An over-declared window costs a splice
+  and leaves the recorded track; an under-declared one makes the decoded
+  fraction agree with a truncated upload, and the check stops catching anything.
+
+  The two stamps that were kept are wrong in that same dangerous direction, and
+  the honest thing is to say so and say by how much. `start()` returns after
+  gathering has begun and `stop()` is called after its stamp is taken, so the
+  window sits a shade *inside* the recording at either end — one statement's
+  execution, well under a millisecond, against the tenth of the window the check
+  allows. What makes that safe is the size, and the fact that neither stamp is
+  measured from the recording: a chunk lost on the way to storage, a short
+  write, or an upload cut off in flight moves the file by seconds and the window
+  by nothing, so the 90% check still sees the shortfall.
+
+  One under-declaration is larger and is not touched here. A segment whose page
+  died before it could be sealed is described by the last recovery checkpoint,
+  and those are throttled to one every five seconds while chunks land every two,
+  so the file can hold a few seconds the sidecar never claimed. The splice
+  bounds it — only the declared window plus ten seconds is ever laid over the
+  recorded track, and the excess is reported as "partly used" — but within those
+  few seconds the fraction check is measuring against a window narrower than the
+  audio.
 - **A disabled ExApp still loads the payload.** The companion is a separate
   native app and reads `source_capture_enabled` from AppAPI's ExApp config,
   which outlives disabling the ExApp, so the script tag keeps appearing on Talk

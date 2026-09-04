@@ -322,6 +322,24 @@ func inWindowSidecar(owner string, startMS int64) SourceSidecar {
 	}
 }
 
+// writeCaptureAtCall is writeCapture with the call directory named, for the
+// tests that need one participant to have more than one call session.
+func writeCaptureAtCall(t *testing.T, root, room, owner, call string, sidecar SourceSidecar) string {
+	t.Helper()
+	dir := filepath.Join(root, room, owner, call)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	raw, err := json.Marshal(sidecar)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+	return dir
+}
+
 func TestDiscoverSourceCaptures(t *testing.T) {
 	root := t.TempDir()
 	writeCapture(t, root, "room1", "alice", inWindowSidecar("alice", testWindowStartMS))
@@ -336,7 +354,7 @@ func TestDiscoverSourceCaptures(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	found, _, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
@@ -370,7 +388,7 @@ func TestDiscoverSourceCapturesIsScopedToThisRecording(t *testing.T) {
 	other.RoomToken = "room2"
 	writeCapture(t, root, "room2", "alice", other)
 
-	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	found, _, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
@@ -389,7 +407,7 @@ func TestDiscoverSourceCapturesWithoutARoomTokenStillFiltersByWindow(t *testing.
 	far.RoomToken = "room9"
 	writeCapture(t, root, "room9", "bob", far)
 
-	found, err := DiscoverSourceCaptures(root, "", testWindowStartMS, testWindowEndMS)
+	found, _, err := DiscoverSourceCaptures(root, "", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
@@ -556,25 +574,197 @@ func TestPlausibleOffset(t *testing.T) {
 // their recorded streams silently dropped the first half of what they said.
 func TestDiscoverSourceCapturesKeepsEveryMatchingCapture(t *testing.T) {
 	root := t.TempDir()
+	// A rejoin: two call sessions of one participant, one after the other. Both
+	// belong to this recording, and keeping only the later one while
+	// suppressing their recorded streams silently dropped the first half of
+	// what they said. They do NOT overlap each other — nobody is in two call
+	// sessions at once — which is what tells this apart from the ambiguity the
+	// next test refuses.
 	first := inWindowSidecar("alice", testWindowStartMS)
+	first.CallEndWallMS = testWindowStartMS + 120_000
 	writeCapture(t, root, "room1", "alice", first)
 
-	second := inWindowSidecar("alice", testWindowStartMS+120_000)
-	dir := filepath.Join(root, "room1", "alice", "rejoin")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	raw, _ := json.Marshal(second)
-	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	second := inWindowSidecar("alice", testWindowStartMS+130_000)
+	writeCaptureAtCall(t, root, "room1", "alice", "rejoin", second)
 
-	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	found, refused, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
+	if len(refused) != 0 {
+		t.Fatalf("a plain rejoin was refused: %v", refused)
+	}
 	if len(found["alice"]) != 2 {
 		t.Fatalf("kept %d of alice's captures, want both sessions: %v", len(found["alice"]), found["alice"])
+	}
+}
+
+// The restart: a moderator stops a recording and starts another in the same
+// room, and each participant's browser files one capture per call session
+// either side of the seam. Room plus "overlaps within a minute of slack" cannot
+// tell the two apart, so the capture that ended just before this recording
+// competed with the one that covers it — and whichever the ordering happened to
+// favour laid its audio over the other's floor, or took the whole speaker down
+// with an unreadable sidecar.
+func TestDiscoverSourceCapturesPrefersTheCaptureThatCoversThisRecording(t *testing.T) {
+	root := t.TempDir()
+	// The first recording of the afternoon ran from testWindowStartMS for ten
+	// minutes; this is the SECOND one, starting a minute after it stopped.
+	const secondStartMS = testWindowEndMS + 60_000
+	const secondEndMS = secondStartMS + 600_000
+
+	// Alice's call session for the first recording. It ended thirty seconds
+	// before this recording began, so it does not reach it — except through
+	// the matching slack, which is exactly how it used to be selected.
+	earlier := inWindowSidecar("alice", testWindowStartMS)
+	earlier.CallEndWallMS = secondStartMS - 30_000
+	writeCaptureAtCall(t, root, "room1", "alice", "earlier", earlier)
+
+	// The session that actually covers this recording.
+	current := inWindowSidecar("alice", secondStartMS-5_000)
+	current.CallEndWallMS = secondEndMS + 5_000
+	writeCaptureAtCall(t, root, "room1", "alice", "current", current)
+
+	found, refused, err := DiscoverSourceCaptures(root, "room1", secondStartMS, secondEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if len(refused) != 0 {
+		t.Fatalf("selection refused a case it can decide: %v", refused)
+	}
+	if len(found["alice"]) != 1 {
+		t.Fatalf("selected %d of alice's captures, want only the one covering this recording: %v",
+			len(found["alice"]), found["alice"])
+	}
+	if !strings.HasSuffix(found["alice"][0], "current") {
+		t.Fatalf("selected the neighbouring capture: %v", found["alice"])
+	}
+
+	// And the first recording still gets the earlier capture, not this one.
+	found, _, err = DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if len(found["alice"]) != 1 || !strings.HasSuffix(found["alice"][0], "earlier") {
+		t.Fatalf("the first recording got %v, want only the earlier capture", found["alice"])
+	}
+}
+
+// Two captures that cover this recording AND each other. One participant was
+// not in two call sessions at once, so one of them describes another recording
+// of this room and nothing on disk says which. Splicing either would be a
+// guess, and the guess costs another meeting's speech inside this transcript.
+func TestDiscoverSourceCapturesRefusesTwoCapturesThatOverlapEachOther(t *testing.T) {
+	root := t.TempDir()
+	first := inWindowSidecar("alice", testWindowStartMS)
+	writeCaptureAtCall(t, root, "room1", "alice", "first", first)
+	second := inWindowSidecar("alice", testWindowStartMS+120_000)
+	writeCaptureAtCall(t, root, "room1", "alice", "second", second)
+	// Bob's single capture is unaffected: one participant's ambiguity is not
+	// everybody's.
+	writeCapture(t, root, "room1", "bob", inWindowSidecar("bob", testWindowStartMS))
+
+	found, refused, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if _, ok := found["alice"]; ok {
+		t.Fatalf("an ambiguous pair was resolved rather than refused: %v", found["alice"])
+	}
+	reason := refused["alice"]
+	if !strings.Contains(reason, "overlap each other") {
+		t.Fatalf("the refusal does not say what it could not decide: %q", reason)
+	}
+	// Named, so an administrator can go and look at the two directories.
+	if !strings.Contains(reason, "first") || !strings.Contains(reason, "second") {
+		t.Fatalf("the refusal does not name both captures: %q", reason)
+	}
+	if len(found["bob"]) != 1 {
+		t.Fatalf("bob lost his capture to alice's ambiguity: %v", found["bob"])
+	}
+}
+
+// Neither capture reaches this recording on its own; both are close enough for
+// the slack to pull in. The slack is there to rescue a capture that just
+// misses, not to choose between two that just miss from opposite sides.
+func TestDiscoverSourceCapturesRefusesTwoCapturesThatOnlyTheSlackReaches(t *testing.T) {
+	root := t.TempDir()
+	before := inWindowSidecar("alice", testWindowStartMS-400_000)
+	before.CallEndWallMS = testWindowStartMS - 30_000
+	writeCaptureAtCall(t, root, "room1", "alice", "before", before)
+	after := inWindowSidecar("alice", testWindowEndMS+30_000)
+	after.CallEndWallMS = testWindowEndMS + 400_000
+	writeCaptureAtCall(t, root, "room1", "alice", "after", after)
+
+	found, refused, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if _, ok := found["alice"]; ok {
+		t.Fatalf("two slack-only captures were both selected: %v", found["alice"])
+	}
+	if !strings.Contains(refused["alice"], "matching slack") {
+		t.Fatalf("the refusal does not say the slack was all that reached: %q", refused["alice"])
+	}
+}
+
+// The slack still does its job when there is only one candidate: a client whose
+// clock is a few seconds off, or that stopped recording just before the
+// recorder detached, is still selected.
+func TestDiscoverSourceCapturesStillUsesTheSlackForASingleCapture(t *testing.T) {
+	root := t.TempDir()
+	near := inWindowSidecar("alice", testWindowEndMS+30_000)
+	near.CallEndWallMS = testWindowEndMS + 200_000
+	writeCapture(t, root, "room1", "alice", near)
+
+	found, refused, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if len(refused) != 0 {
+		t.Fatalf("a single slack-reached capture was refused: %v", refused)
+	}
+	if len(found["alice"]) != 1 {
+		t.Fatalf("the slack no longer rescues a single capture: %v", found)
+	}
+}
+
+func TestCaptureWindowFitPrefersARealIntersection(t *testing.T) {
+	const start, end = int64(1_000_000), int64(1_600_000)
+	cases := []struct {
+		name         string
+		aStart, aEnd int64
+		want         int
+	}{
+		{"covers the recording", start - 5_000, end + 5_000, captureWindowIntersects},
+		{"inside it", start + 1_000, end - 1_000, captureWindowIntersects},
+		// Touching is not covering. A capture that ended at the instant this
+		// recording began holds no audio inside it, and that is the shape a
+		// restart's neighbouring capture has.
+		{"touching the start", start - 5_000, start, captureWindowWithinSlack},
+		{"a second past the start", start - 5_000, start + 1_000, captureWindowIntersects},
+		{"touching the end", end, end + 5_000, captureWindowWithinSlack},
+		{"a second before the end", end - 1_000, end + 5_000, captureWindowIntersects},
+		{"ends thirty seconds before it", start - 400_000, start - 30_000, captureWindowWithinSlack},
+		{"starts thirty seconds after it", end + 30_000, end + 400_000, captureWindowWithinSlack},
+		{"well before", start - 900_000, start - 600_000, captureWindowApart},
+		{"well after", end + 600_000, end + 900_000, captureWindowApart},
+		{"unset", 0, 0, captureWindowApart},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := captureWindowFit(tc.aStart, tc.aEnd, start, end)
+			if got != tc.want {
+				t.Fatalf("captureWindowFit(%d,%d,%d,%d) = %d, want %d",
+					tc.aStart, tc.aEnd, start, end, got, tc.want)
+			}
+			// Every fit above captureWindowApart is still an overlap by the
+			// rule the operator shares, so nothing that used to be a candidate
+			// has stopped being one.
+			if (got != captureWindowApart) != windowsOverlap(tc.aStart, tc.aEnd, start, end) {
+				t.Fatalf("captureWindowFit disagrees with windowsOverlap for %d-%d", tc.aStart, tc.aEnd)
+			}
+		})
 	}
 }
 
@@ -627,7 +817,7 @@ func TestDiscoverSourceCapturesIgnoresSupersededDirectories(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	found, _, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
