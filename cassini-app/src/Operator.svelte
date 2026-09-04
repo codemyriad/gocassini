@@ -63,7 +63,18 @@
     return "—";
   }
 
-  export function meetingLabel(requestJSON: string, fallbackId?: string): string {
+  /**
+   * Names a job. The Talk conversation's own display name wins where the
+   * operator has it (D-646); everything below is the fallback for a non-Talk
+   * job, a job whose room-name lookup never completed, and every job recorded
+   * before the operator promoted the room to a column — none of which say
+   * which conversation it was, only which room token it used.
+   */
+  export function meetingLabel(requestJSON: string, fallbackId?: string, roomName?: string | null): string {
+    const room = roomName?.trim();
+    if (room) {
+      return room;
+    }
     const meta = parseRequestJSON(requestJSON);
     if (meta.url) {
       try {
@@ -880,7 +891,7 @@
                     <div class="card-body min-w-0 gap-1 p-3">
                       <div class="flex min-w-0 items-start justify-between gap-2">
                         <p class="min-w-0 flex-1 truncate text-sm font-medium" title={requestUrlLabel(job.request_json)}>
-                          {meetingLabel(job.request_json, job.id)}
+                          {meetingLabel(job.request_json, job.id, job.room_name)}
                         </p>
                         {#if job.current_attempt_number > 1}
                           <span class="badge badge-outline badge-sm shrink-0 border-base-content/20 text-base-content"
@@ -1003,7 +1014,7 @@
                 <section class="grid gap-3 rounded-box border border-base-300 bg-base-200 p-4">
                   <div class="min-w-0">
                     <h3 class="truncate text-lg font-semibold" title={requestUrlLabel(selectedJob.job.request_json)}>
-                      {meetingLabel(selectedJob.job.request_json, selectedJob.job.id)}
+                      {meetingLabel(selectedJob.job.request_json, selectedJob.job.id, selectedJob.job.room_name)}
                     </h3>
                     <p class="text-sm {jobStatusToneClass(selectedJob.job)}">
                       {jobStatusLabel(selectedJob.job)}

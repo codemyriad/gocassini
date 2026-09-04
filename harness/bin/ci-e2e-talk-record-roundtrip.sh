@@ -503,6 +503,74 @@ log "OK published meeting: $PUBLISHED_OPUS"
 wait "$BOT_PID" 2>/dev/null || true
 
 # ============================================================================
+# Phase 7b: assert the published catalog carries the room it was recorded in
+# ============================================================================
+phase 7b "Assert the published catalog carries the room"
+
+# Every hop from Talk to catalog.json is unit-tested and nothing proves the
+# chain. It has broken here before: the exporter re-derives a catalog entry's
+# room from the file on every republish, so a room that reached the catalog
+# once could be silently dropped by the next re-seal (D-640).
+#
+# The .opus lands before catalog.json — the local sink writes the catalog last
+# — so the poll above is not enough to have it on disk yet.
+CATALOG_HOST_PATH="$LOG_DIR/published-catalog.json"
+CATALOG_DEADLINE=$(( SECONDS + 90 ))
+CATALOG_READY=0
+while (( SECONDS < CATALOG_DEADLINE )); do
+  if docker exec "$CONTAINER_NAME" cat /srv/cassini-site/published/catalog.json \
+       >"$CATALOG_HOST_PATH" 2>/dev/null &&
+     CATALOG_PATH="$CATALOG_HOST_PATH" python3 -c \
+       'import json,os,sys; sys.exit(0 if json.load(open(os.environ["CATALOG_PATH"])).get("meetings") else 1)' \
+       2>/dev/null; then
+    CATALOG_READY=1
+    break
+  fi
+  sleep 3
+done
+(( CATALOG_READY == 1 )) || fail "published catalog.json never carried a meeting"
+
+# roomId is a one-way derivation of the Talk token, never the token itself
+# (D-622). Recomputing it here independently is the point: it proves the whole
+# token -> id -> catalog path rather than that some string round-tripped. This
+# harness leaves CASSINI_ROOM_ID_PEPPER unset, so the HMAC key is empty.
+CATALOG_PATH="$CATALOG_HOST_PATH" \
+EXPECT_ROOM_NAME="$ROOM_NAME" \
+EXPECT_ROOM_TOKEN="$ROOM_TOKEN" \
+python3 - <<'PY' || fail "published catalog does not carry the recorded room"
+import hashlib
+import hmac
+import json
+import os
+import sys
+
+with open(os.environ["CATALOG_PATH"], encoding="utf-8") as handle:
+    catalog = json.load(handle)
+meetings = catalog.get("meetings") or []
+if len(meetings) != 1:
+    print(f"expected exactly one published meeting, got {len(meetings)}", file=sys.stderr)
+    sys.exit(1)
+
+entry = meetings[0]
+mac = hmac.new(b"", b"cassini.room.token.v1\x00" + os.environ["EXPECT_ROOM_TOKEN"].encode(), hashlib.sha256)
+expected = {
+    "roomName": os.environ["EXPECT_ROOM_NAME"],
+    "roomId": "rm_" + mac.hexdigest()[:16],
+}
+
+ok = True
+for field, want in expected.items():
+    got = entry.get(field)
+    if got != want:
+        print(f"catalog {field} = {got!r}, want {want!r}", file=sys.stderr)
+        ok = False
+if not ok:
+    print(f"catalog entry: {json.dumps(entry, sort_keys=True)}", file=sys.stderr)
+sys.exit(0 if ok else 1)
+PY
+log "OK catalog carries room: name=$ROOM_NAME"
+
+# ============================================================================
 # Phase 8: assert Cassini uploaded NOTHING to Talk's recording store
 # ============================================================================
 phase 8 "Assert Cassini uploaded nothing to Talk's recording store"

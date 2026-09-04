@@ -135,6 +135,33 @@ describe("Operator meeting label and URL formatting", () => {
     expect(requestUrlLabel(dualPayload)).toBe("https://nextcloud.company.com/call/explicit-room");
   });
 
+  it("prefers the conversation's own name over any token-derived label", () => {
+    const talkPayload = JSON.stringify({
+      baseURL: "https://cloud.example.test",
+      roomToken: "3qbs6123vxx",
+    });
+    const urlPayload = JSON.stringify({ url: "https://nextcloud.company.com/call/room-alpha-123" });
+
+    expect(meetingLabel(talkPayload, "01M1KD3CMJ9J5AJ3QBS6123VXX", "Weekly sync")).toBe("Weekly sync");
+    expect(meetingLabel(urlPayload, undefined, "Weekly sync")).toBe("Weekly sync");
+    expect(meetingLabel("{}", "01M1KD3CMJ9J5AJ3QBS6123VXX", "Weekly sync")).toBe("Weekly sync");
+    // The room name does not replace the meeting URL, which still names the call.
+    expect(requestUrlLabel(talkPayload)).toBe("https://cloud.example.test/call/3qbs6123vxx");
+  });
+
+  it("falls through to the token label when the operator has no room name", () => {
+    const talkPayload = JSON.stringify({
+      baseURL: "https://cloud.example.test",
+      roomToken: "3qbs6123vxx",
+    });
+
+    // A non-Talk job, a lookup that never completed, and every job recorded
+    // before the room became a column all arrive here.
+    expect(meetingLabel(talkPayload, "job-1", null)).toBe("Call 3qbs6123vxx");
+    expect(meetingLabel(talkPayload, "job-1", undefined)).toBe("Call 3qbs6123vxx");
+    expect(meetingLabel(talkPayload, "job-1", "   ")).toBe("Call 3qbs6123vxx");
+  });
+
   it("falls back to short job ID when request JSON contains no room or URL", () => {
     expect(meetingLabel("{}", "01M1KD3CMJ9J5AJ3QBS6123VXX")).toBe("Recording 01M1KD3C");
     expect(meetingLabel("not-valid-json", "01M1KD3CMJ9J5AJ3QBS6123VXX")).toBe("Recording 01M1KD3C");

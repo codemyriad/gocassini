@@ -35,6 +35,10 @@ export interface Job {
   publish_finished_at: string | null;
   interrupted_at: string | null;
   completed_at: string | null;
+  /** The Talk conversation's display name, as it was when this job ran. Null
+   * for a non-Talk job, for a job whose room-name lookup never completed, and
+   * for any job recorded before the operator promoted the room to a column. */
+  room_name: string | null;
 }
 
 export interface JobAttempt {
