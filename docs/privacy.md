@@ -171,7 +171,7 @@ and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
 "No transcript is sent to an LLM unless an endpoint is configured" is a claim
 the people whose meetings are being recorded should be able to check, and until
 now only an administrator could: the AI settings are ADMIN-only, as they must be,
-because they carry the endpoint and its key.
+because they carry the endpoint and any optional key.
 
 So `GET <cassini>/setup`, which any logged-in Nextcloud user may read, answers it
 directly:
