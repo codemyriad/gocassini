@@ -266,7 +266,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 		printPortableTranscriptEntry(out, "transcript", entry, bodies.DefaultID)
 	}
 	for _, entry := range manifest.ReadableTranscripts {
-		printPortableTranscriptEntry(out, "readable_transcript", entry, "")
+		printPortableTranscriptEntry(out, "derived_transcript", entry, "")
 	}
 	if manifest.Provenance != nil {
 		printProcessingStep(out, "speech_to_text", manifest.Provenance.SpeechToText)

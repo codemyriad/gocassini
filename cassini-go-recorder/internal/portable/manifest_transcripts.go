@@ -124,7 +124,7 @@ type TranscriptInput struct {
 	Language           string
 	WordCount          int
 	CreatedAtUTC       string
-	SourceTranscriptID string // required for readable-cleanup / display roles
+	SourceTranscriptID string // required for the display role
 	// Body is the JSON document stored in this transcript's independent chunk
 	// set. Raw transcripts normally use TranscriptBody; readable and display
 	// transcripts retain their native version/segments or version/blocks shape.
