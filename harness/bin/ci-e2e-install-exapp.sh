@@ -469,6 +469,19 @@ if [[ "$propfind_status" != "207" ]]; then
 fi
 log "OK   $TEST_USER sees Cassini/Recordings/meetings: it is a Team folder, not a private home"
 
+# THE MIRROR. The default model's root is a different top-level directory
+# (`CassiniNoACL`), and its whole safety argument is that nobody else has a mount
+# of it. On an ACCESS-CONTROLLED install it should not exist at all — and if it
+# ever does, a third account must not be able to see it, because that would mean
+# something had been mounted over the one path the operator serves as the owner.
+propfind_status=$(curl -sS -X PROPFIND -u "$TEST_USER:$TEST_USER_PASSWORD" -H 'Depth: 1' \
+  -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/remote.php/dav/files/$TEST_USER/CassiniNoACL/Recordings")
+if [[ "$propfind_status" != "404" ]]; then
+  fail "PROPFIND of CassiniNoACL/Recordings as $TEST_USER returned $propfind_status, want 404 — the default mode's root must be private to the ${RECORDINGS_OWNER:-cassini} account, and anything mounted there would be served to every caller as its owner"
+fi
+log "OK   $TEST_USER cannot see CassiniNoACL/Recordings: the default mode's root is private"
+
 
 # --- 7b. Assert proxied routes --------------------------------------------
 

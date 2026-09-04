@@ -138,10 +138,11 @@ harness_bootstrap_core_nextcloud() {
 # matters more than it looks:
 #
 #	acl-enabled   the account, its group, and a mapped, ACL-enabled Team folder.
-#	default       the account and its group, and NOTHING ELSE. A mapped Team
-#	              folder would win the `Cassini` path and put recordings
-#	              somewhere the default model is not looking — which the operator
-#	              reports as `mode_mismatch` and refuses to publish under.
+#	              Its archive is `Cassini/Recordings`, inside that folder.
+#	default       the account and its group, and NOTHING ELSE. Its archive is
+#	              `CassiniNoACL/Recordings` — the account's own directory, which
+#	              the app creates on its first enabled edge, so there is nothing
+#	              for the harness to build.
 #
 # Every step is idempotent and none of them is fatal on its own. A box where
 # these fail leaves Cassini reporting what is missing on /operator/status rather
@@ -173,12 +174,16 @@ harness_bootstrap_recordings_substrate() {
   occ_ignore_failure group:adduser "$owner" "$owner" >/dev/null 2>&1
 
   if ! harness_storage_mode_is_acl; then
-    # The default model wants the account and nothing else. Creating the Team
-    # folder here would be worse than useless: a mapped folder wins the
-    # `Cassini` path, so recordings would land in the shared folder rather than
-    # the account's own home — which the operator detects as `mode_mismatch` and
-    # refuses to publish under.
-    log "Recordings substrate ready for the default storage mode: owner=${owner}, no Team folder"
+    # The default model wants the account and nothing else. Its archive lives in
+    # `CassiniNoACL/Recordings` — the account's OWN directory, which the app
+    # creates on its first enabled edge — so there is nothing here to build.
+    #
+    # It is also nothing to avoid. Building the Team folder here used to be
+    # actively harmful, because both models addressed `Cassini/Recordings` and a
+    # mapped folder wins that path; since the roots were split it would merely be
+    # an unused folder. It is still not built, because a stack should be the
+    # thing it says it is.
+    log "Recordings substrate ready for the default storage mode: owner=${owner}, archive root CassiniNoACL/Recordings, no Team folder"
     return 0
   fi
 

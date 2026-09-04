@@ -231,24 +231,30 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 #### 2.8.1 Recording storage mode
 
 Cassini stores published recordings in one of two models, and which one a stack
-is built for has to be decided rather than inferred. Inferring is what the ExApp
-does when nobody says: it looks at Nextcloud on its first enabled edge and picks
-the model that fits. On a stack still being assembled that is the wrong moment —
-a substrate built with `occ` seconds earlier may not have reached the web
-workers the probe asks — so the harness declares the mode instead.
+is built for has to be decided rather than inferred. The ExApp does not infer:
+with nothing recorded and nothing declared it falls back to `default`, which on
+a stack that IS access-controlled is a loud failure rather than a silent
+re-interpretation. The harness declares the mode so that failure never happens
+by accident.
+
+The two models keep their archives in different places, on purpose — neither can
+shadow the other:
 
 ```text
   --storage-mode default              (default)
     bootstrap: cassini account + group, and nothing else
+    archive:   CassiniNoACL/Recordings — the cassini account's OWN directory,
+               created by the app on its first enabled edge
     ExApp:     CASSINI_STORAGE_MODE=default
-    note:      no Team folder ON PURPOSE. A mapped folder wins the `Cassini`
-               path, so recordings would land somewhere the default model is
-               not looking — which the operator reports as `mode_mismatch`
-               and refuses to publish under.
+    note:      no Team folder, because a stack should be the thing it says it
+               is. It is no longer harmful to have one — the two roots cannot
+               collide — but an unused folder is still a lie about the stack.
 
   --storage-mode acl-enabled
     bootstrap: cassini account + group, groupfolders + group_everyone,
                a mapped ACL-enabled Cassini Team folder
+    archive:   Cassini/Recordings — inside that Team folder, under per-recording
+               advanced ACLs
     ExApp:     CASSINI_STORAGE_MODE=access_controlled
     note:      privacy-focused e2e suites select this explicitly
 
@@ -266,6 +272,17 @@ The mode is only the ExApp's *initial* value. It is recorded in the app's
 `storage_settings.json` on the first enable and the Setup tab is what changes it
 afterwards, so re-registering with a different `--storage-mode` over an existing
 app volume changes nothing.
+
+Switching modes from the Setup tab COPIES the archive from one root to the other,
+verifies it arrived, records the new mode, and only then empties the old root.
+`storage_settings.json` carries a third field, `migration_clean`, which is false
+between the first of those steps and the last — so a stack killed mid-switch
+comes back with its recordings intact at whichever mode the file names, and the
+Setup tab offers one button to clear the leftovers. To inspect it:
+
+```bash
+docker exec nc_app_gocassini cat /nc_app_gocassini_data/operator/storage_settings.json
+```
 
 ### 2.9 Supporting environment variables without stack flags
 
