@@ -15,10 +15,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/stack-env.sh"
 # shellcheck source=./artifacts.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/artifacts.sh"
 # The AppAPI register dance is shared with the production deploy
-# (ops/deploy/deploy-exapp.sh) — one implementation, two callers. See that
+# (deploy-exapp.sh) — one implementation, two callers. See that
 # file's header for the operational rules it encodes.
-# shellcheck source=../../../ops/deploy/lib/exapp-register.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../ops/deploy/lib" && pwd)/exapp-register.sh"
+# shellcheck source=../../../scripts/lib-exapp-register.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../scripts" && pwd)/lib-exapp-register.sh"
 exapp_log() { log "$@"; }
 
 harness_render_full_profile_configs() {

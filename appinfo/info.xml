@@ -6,8 +6,8 @@
   <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
   <description><![CDATA[Cassini records a Nextcloud Talk call without joining as a participant, then
 transcribes and publishes a readable archive in Nextcloud Files. Optionally, it
-can also summarize each meeting when you configure an OpenRouter (or compatible)
-API key. Recording control and job history live in the admin-only control panel;
+can also summarize each meeting when you configure an OpenAI-compatible LLM
+endpoint. Recording control and job history live in the admin-only control panel;
 each private recording is readable only by the people who had access to the Talk
 room (its attendee list) when it was published, enforced by Nextcloud's own
 advanced file ACLs.

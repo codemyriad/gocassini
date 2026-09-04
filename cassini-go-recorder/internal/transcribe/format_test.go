@@ -274,7 +274,7 @@ func TestWriteManifestRecordsSummaryWhenPresent(t *testing.T) {
 	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
 	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "summary-model", true, nil, nil, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, Segments: segments, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cuda", SummaryModel: "summary-model", HasSummary: true}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -310,7 +310,7 @@ func TestWriteManifestCountsUniqueLogicalSpeakers(t *testing.T) {
 		{Index: -1, SpeakerID: "merged", SpeakerLabel: "Everyone"}, // synthetic fallback, not a participant
 	}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "", false, nil, nil, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cuda"}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -330,16 +330,12 @@ func TestWriteManifestCountsUniqueLogicalSpeakers(t *testing.T) {
 func TestWriteTranscriptJSONEmitsEmptySpeakersArrayForSilentRecording(t *testing.T) {
 	tmp := t.TempDir()
 	wordsPath := filepath.Join(tmp, "transcript.words.v1.json")
-	readablePath := filepath.Join(tmp, "transcript.readable.v1.json")
 
 	if err := WriteTranscriptJSON(wordsPath, nil, nil, 45049); err != nil {
 		t.Fatalf("WriteTranscriptJSON: %v", err)
 	}
-	if err := WriteReadableTranscriptJSON(readablePath, nil, nil, 45049); err != nil {
-		t.Fatalf("WriteReadableTranscriptJSON: %v", err)
-	}
 
-	for _, path := range []string{wordsPath, readablePath} {
+	for _, path := range []string{wordsPath} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
@@ -356,7 +352,7 @@ func TestWriteManifestOmitsSummaryWhenAbsent(t *testing.T) {
 	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
 	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "", false, nil, nil, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, Segments: segments, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cuda"}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -390,7 +386,7 @@ func TestWriteManifestRecordsAttributionProvenance(t *testing.T) {
 	}
 
 	path := filepath.Join(tmp, "manifest.json")
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, nil, attr, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cpu", Attribution: attr}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	raw, err := os.ReadFile(path)
@@ -430,7 +426,7 @@ func TestWriteManifestRecordsAttributionProvenance(t *testing.T) {
 
 	// Absent entirely for a producer that records nothing (legacy callers).
 	legacyPath := filepath.Join(tmp, "manifest-legacy.json")
-	if err := WriteManifest(legacyPath, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, nil, nil, nil); err != nil {
+	if err := WriteManifest(legacyPath, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cpu"}); err != nil {
 		t.Fatalf("WriteManifest legacy: %v", err)
 	}
 	legacyRaw, err := os.ReadFile(legacyPath)
@@ -471,11 +467,14 @@ func TestWriteManifestWritesWordTimingsOnlyWhenTheCallerEarnedIt(t *testing.T) {
 		return got.Provenance.WordTimings, string(raw)
 	}
 
-	// The leanest possible call: no readable pass, no summary, no additional
-	// transcripts, no attribution record. The earned marker must still be there.
+	// The leanest possible call: no summary, no additional transcripts, no
+	// attribution record. The earned marker must still be there.
 	measured := filepath.Join(tmp, "manifest.json")
-	if err := WriteManifest(measured, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, nil, nil,
-		&WordTimingProvenance{EndsBoundedByAudio: true}); err != nil {
+	if err := WriteManifest(measured, ManifestInput{
+		SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000,
+		Streams: streams, STTBackend: SherpaOnnxBackend, STTModelID: ModelID("test-stt"), STTDevice: "cpu",
+		WordTimings: &WordTimingProvenance{EndsBoundedByAudio: true},
+	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	timings, raw := readWordTimings(t, measured)
@@ -496,7 +495,7 @@ func TestWriteManifestWritesWordTimingsOnlyWhenTheCallerEarnedIt(t *testing.T) {
 	// all — not endsBoundedByAudio:false, which a consumer reading the object
 	// rather than the flag could still misread as a producer that measured.
 	unmeasured := filepath.Join(tmp, "manifest-unmeasured.json")
-	if err := WriteManifest(unmeasured, "src.mkv", 1000, 1000, streams, nil, "some-other-engine", ModelID("test-stt"), "cpu", "", false, nil, nil, nil); err != nil {
+	if err := WriteManifest(unmeasured, ManifestInput{SrcBasename: "src.mkv", SrcDurationMS: 1000, DigestDurationMS: 1000, Streams: streams, STTBackend: "some-other-engine", STTModelID: ModelID("test-stt"), STTDevice: "cpu"}); err != nil {
 		t.Fatalf("WriteManifest (unmeasured): %v", err)
 	}
 	absent, rawAbsent := readWordTimings(t, unmeasured)

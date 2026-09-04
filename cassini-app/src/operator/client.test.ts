@@ -22,6 +22,7 @@ describe("operator settings client", () => {
 
     expect(settings.quality).toBe("best");
     expect(settings.device_override).toBe("");
+    expect(settings.transcription_terms).toEqual([]);
     expect(settings.source).toBe("auto");
   });
 
@@ -82,24 +83,39 @@ describe("operator settings client", () => {
     });
   });
 
-  it("round-trips a PUT settings payload", async () => {
+  it("sends and reads transcription terms through PUT settings", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return new Response(JSON.stringify({ ...payload, source: "user" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          ...payload,
+          source: "user",
+          transcription_terms: ["Gocassini", "Nextcloud Talk"],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const settings = await new OperatorClient("https://operator.test").putSettings({
       quality: "balanced",
       device_override: "cuda",
+      transcription_terms: [" Gocassini ", "Nextcloud Talk", "gocassini"],
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(JSON.parse(String(request?.body)).transcription_terms).toEqual([
+      " Gocassini ",
+      "Nextcloud Talk",
+      "gocassini",
+    ]);
     expect(settings.quality).toBe("balanced");
     expect(settings.device_override).toBe("cuda");
+    expect(settings.transcription_terms).toEqual(["Gocassini", "Nextcloud Talk"]);
     expect(settings.source).toBe("user");
   });
 });

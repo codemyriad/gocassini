@@ -137,8 +137,9 @@ func llmProviderNameFor(base string) string {
 
 // SeedLLMSettings derives the first-start policy from the deploy environment,
 // mirroring what the recorder would have read by hand: the shared endpoint
-// becomes the one provider and both steps run on it unless their kill-switch
-// is set. With no endpoint the policy is empty and both steps are off.
+// becomes the one provider and the summary step runs on it unless its
+// kill-switch is set. With no endpoint the policy is empty and summaries are
+// off.
 func SeedLLMSettings(getenv func(string) string) LLMSettings {
 	s := LLMSettings{Providers: []LLMProvider{}}
 	key := strings.TrimSpace(getenv(envLLMAPIKey))
@@ -324,8 +325,8 @@ func (s LLMSettings) provider(step LLMStep) (LLMProvider, bool) {
 
 // ChildEnv reconciles base (a copy of os.Environ()) so the persisted LLM
 // policy wins over whatever the container was deployed with. Every inherited
-// LLM variable is stripped — including the shared LLM_BASE_URL both steps
-// would otherwise inherit — and each step gets its own fully resolved
+// LLM variable is stripped — including the shared LLM_BASE_URL the summary
+// would otherwise inherit — and the step gets its own fully resolved
 // endpoint, or nothing at all when it is off. The recorder's kill-switches are
 // never emitted: "off" is simply the absence of an endpoint.
 func (s LLMSettings) ChildEnv(base []string) []string {

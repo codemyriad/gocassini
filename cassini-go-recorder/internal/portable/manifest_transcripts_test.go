@@ -63,7 +63,7 @@ func TestValidateTranscriptID(t *testing.T) {
 		{"parakeet", false},
 		{"canary", false},
 		{"raw-asr", false},
-		{"readable-qwen", false},
+		{"display-qwen", false},
 		{"a", false},
 		{"a1", false},
 		{"a_b_c", true},                 // underscore is not in the published grammar
@@ -93,11 +93,11 @@ func TestValidateTranscriptID(t *testing.T) {
 
 func TestTranscriptIDToTagPrefix(t *testing.T) {
 	cases := map[string]string{
-		"parakeet":      "CASSINI_TX_PARAKEET_PAYLOAD_",
-		"canary":        "CASSINI_TX_CANARY_PAYLOAD_",
-		"raw-asr":       "CASSINI_TX_RAW_ASR_PAYLOAD_",
-		"readable-qwen": "CASSINI_TX_READABLE_QWEN_PAYLOAD_",
-		"a1_b":          "CASSINI_TX_A1_B_PAYLOAD_",
+		"parakeet":     "CASSINI_TX_PARAKEET_PAYLOAD_",
+		"canary":       "CASSINI_TX_CANARY_PAYLOAD_",
+		"raw-asr":      "CASSINI_TX_RAW_ASR_PAYLOAD_",
+		"display-qwen": "CASSINI_TX_DISPLAY_QWEN_PAYLOAD_",
+		"a1_b":         "CASSINI_TX_A1_B_PAYLOAD_",
 	}
 	for id, want := range cases {
 		if got := TranscriptIDToTagPrefix(id); got != want {
@@ -337,9 +337,9 @@ func TestEncodePublishedManifestRejectsBadInputs(t *testing.T) {
 			expectMsg: "more than one default words transcript",
 		},
 		{
-			name: "readable-cleanup without source",
+			name: "display without source",
 			transcripts: []TranscriptInput{
-				{ID: "qwen", Role: RoleReadableCleanup, Body: body},
+				{ID: "qwen", Role: RoleDisplay, Body: body},
 			},
 			expectMsg: "sourceTranscriptId",
 		},
@@ -347,7 +347,7 @@ func TestEncodePublishedManifestRejectsBadInputs(t *testing.T) {
 			name: "unknown source id",
 			transcripts: []TranscriptInput{
 				{ID: "parakeet", Role: RoleRawASR, Body: body, Default: true},
-				{ID: "qwen", Role: RoleReadableCleanup, Body: body, SourceTranscriptID: "nonexistent"},
+				{ID: "qwen", Role: RoleDisplay, Body: body, SourceTranscriptID: "nonexistent"},
 			},
 			expectMsg: "not in this file",
 		},
@@ -385,7 +385,7 @@ func TestBuildPublishedOpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing
 			Body: sampleBody("spk_0", "alpha", "bravo", "charlie"),
 		},
 		{
-			ID: "readable-qwen", Role: RoleReadableCleanup, Default: true,
+			ID: "display-qwen", Role: RoleDisplay, Default: true,
 			SourceTranscriptID: "canary",
 			Body: TranscriptBody{
 				Format: "cassini.readable.v1", WordCount: 2,
@@ -411,8 +411,8 @@ func TestBuildPublishedOpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing
 		"CASSINI_TX_PARAKEET_PAYLOAD_ENCODING",
 		"CASSINI_TX_CANARY_PAYLOAD_CHUNK_COUNT",
 		"CASSINI_TX_CANARY_PAYLOAD_MIME",
-		"CASSINI_TX_READABLE_QWEN_PAYLOAD_CHUNK_COUNT",
-		"CASSINI_TX_READABLE_QWEN_PAYLOAD_MIME",
+		"CASSINI_TX_DISPLAY_QWEN_PAYLOAD_CHUNK_COUNT",
+		"CASSINI_TX_DISPLAY_QWEN_PAYLOAD_MIME",
 		"CASSINI_RECORDED_AT_LOCAL",
 		"CASSINI_DECODE_HINT",
 	}
@@ -427,18 +427,18 @@ func TestBuildPublishedOpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing
 	if got := tags["CASSINI_TRANSCRIPT_DEFAULT"]; got != "canary" {
 		t.Errorf("CASSINI_TRANSCRIPT_DEFAULT = %q", got)
 	}
-	if got := tags["CASSINI_TRANSCRIPT_IDS"]; got != "canary,parakeet,readable-qwen" {
+	if got := tags["CASSINI_TRANSCRIPT_IDS"]; got != "canary,display-qwen,parakeet" {
 		t.Errorf("CASSINI_TRANSCRIPT_IDS = %q", got)
 	}
 	if got := tags["CASSINI_TX_PARAKEET_PAYLOAD_MIME"]; got != TranscriptBodyMIMEWords {
 		t.Errorf("parakeet MIME = %q", got)
 	}
-	if got := tags["CASSINI_TX_READABLE_QWEN_PAYLOAD_MIME"]; got != TranscriptBodyMIMEReadable {
-		t.Errorf("readable MIME = %q", got)
+	if got := tags["CASSINI_TX_DISPLAY_QWEN_PAYLOAD_MIME"]; got != TranscriptBodyMIMEReadable {
+		t.Errorf("derived MIME = %q", got)
 	}
 
 	// Per-transcript chunk presence: chunk 0 must exist for each.
-	for _, prefix := range []string{"CASSINI_TX_PARAKEET_PAYLOAD_", "CASSINI_TX_CANARY_PAYLOAD_", "CASSINI_TX_READABLE_QWEN_PAYLOAD_"} {
+	for _, prefix := range []string{"CASSINI_TX_PARAKEET_PAYLOAD_", "CASSINI_TX_CANARY_PAYLOAD_", "CASSINI_TX_DISPLAY_QWEN_PAYLOAD_"} {
 		if _, ok := tags[prefix+"000"]; !ok {
 			t.Errorf("missing first chunk for %q", prefix)
 		}

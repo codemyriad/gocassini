@@ -50,7 +50,7 @@ func (c LLMConfig) IsConfigured() bool {
 	return !c.Disabled && c.BaseURL != ""
 }
 
-// Segment is a contiguous block of speech from one speaker, used for LLM cleanup.
+// Segment is a contiguous block of speech from one speaker.
 type Segment struct {
 	SpeakerID string
 	StartMS   int64

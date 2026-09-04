@@ -176,10 +176,18 @@ func newVADModelConfig(modelPath string, sampleRate int) sherpa.VadModelConfig {
 	return cfg
 }
 
+// Decoding methods sherpa-onnx accepts for an offline recognizer. Hotwords are
+// read only under modified beam search; greedy search is the faster default
+// every unbiased pass keeps using.
+const (
+	decodingGreedySearch       = "greedy_search"
+	decodingModifiedBeamSearch = "modified_beam_search"
+)
+
 // NewRecognizer creates an offline recognizer from the given model paths and a
 // Silero VAD model. provider is "cpu" or "cuda"; vadModelPath is the path to
 // silero_vad.onnx.
-func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads int) (*Recognizer, error) {
+func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig) (*Recognizer, error) {
 	if numThreads < 1 {
 		numThreads = 4
 	}
@@ -201,6 +209,26 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	cfg.ModelConfig.NumThreads = numThreads
 	cfg.ModelConfig.Provider = provider
 	cfg.ModelConfig.Debug = 0
+
+	// The decoder is chosen by the caller, which is the only place that knows
+	// whether this model can beam-search at all. Hotwords ride along with it:
+	// sherpa reads the file only under modified beam search, and encodes the
+	// terms with the model's own BPE vocabulary, so all four settings move
+	// together or none of them do. Setting the file without modeling_unit is
+	// the silent no-op this pairing exists to prevent.
+	cfg.DecodingMethod = decodingGreedySearch
+	if decoder != nil {
+		if decoder.Method != "" {
+			cfg.DecodingMethod = decoder.Method
+		}
+		cfg.MaxActivePaths = decoder.MaxActivePaths
+		if decoder.Biased() {
+			cfg.HotwordsFile = decoder.HotwordsFile
+			cfg.HotwordsScore = decoder.Score
+			cfg.ModelConfig.ModelingUnit = "bpe"
+			cfg.ModelConfig.BpeVocab = decoder.BpeVocabFile
+		}
+	}
 
 	r := sherpa.NewOfflineRecognizer(&cfg)
 	if r == nil {
