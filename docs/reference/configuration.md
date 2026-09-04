@@ -26,18 +26,23 @@ Optional capability pass-through:
 
 | Variable | Purpose |
 |---|---|
-| `OPENROUTER_API_KEY` | summary capability configuration |
-| `OPENROUTER_BASE_URL` | summary capability configuration |
-| `LLM_BASE_URL` | summary capability configuration |
-| `LLM_MODEL` | summary model (SUMMARY_MODEL overrides) |
-| `SUMMARY_MODEL` | summary generation model |
+| `OPENROUTER_API_KEY` | optional key for the shared LLM endpoint |
+| `OPENROUTER_BASE_URL` | legacy shared LLM endpoint base URL |
+| `LLM_BASE_URL` | shared LLM endpoint base URL |
+| `LLM_MODEL` | shared model, subject to per-step overrides |
+| `SUMMARY_MODEL` | summary model and the fallback for inherited insights |
 | `CASSINI_SUMMARY_DISABLED` | disable summary generation |
 | `CASSINI_STT_BACKEND` | speech-to-text engine id (default `sherpa-onnx`; unknown ids fail the build loudly) |
+| `CASSINI_STT_HINTS_DISABLED` | disable decoder vocabulary biasing without deleting the vocabulary; with non-empty terms, also restore `greedy_search` |
+| `CASSINI_STT_HINTS_SCORE` | override the decoder hotword boost (default `2.0`) |
 | `CASSINI_ATTRIBUTION_DISABLED` | skip the cross-track speaker-attribution measurement |
 | `CASSINI_ATTRIBUTION_DROP` | delete words the attribution evidence contradicts instead of annotating them |
 
-The base URL is what enables these steps; the API key is optional, so a
-self-hosted OpenAI-compatible endpoint with no authentication works.
+A base URL enables an LLM call; an API key is optional, so a keyless self-hosted
+OpenAI-compatible endpoint works. For a recorder run directly, the shared
+variables configure both summaries and insights, subject to the per-step layers
+below. For an operator-run recorder, the shared deployment variables seed
+persisted settings only on first start.
 
 ### Per-step endpoints
 
@@ -66,21 +71,27 @@ write every meeting's summary while a larger hosted one answers a question you
 ask by hand. The bounds are per step for the same reason — a CPU-bound local
 model needs a far longer leash than a hosted API.
 
-`CASSINI_SUMMARY_DISABLED` turns off the summary written at publish time. It
-does not affect `cassini insight run`: that is a document someone asked for by
-name, and turning insights off means removing the endpoint.
+`CASSINI_SUMMARY_DISABLED` disables summary generation for a recorder run
+directly; `cassini insight run` deliberately ignores it. On an operator's first
+start it seeds the persisted summary step as disabled, without disabling an
+insight that inherits the selected summary provider.
 
-When the recorder is run by the operator, these LLM variables only seed the
-operator's own LLM settings on its first start (`llm-settings.json` beside the
-job database; `GET`/`PUT /settings/llm`). After that the persisted settings —
-not the environment — are what every build receives, so endpoints and models
-change without a redeploy. The operator emits the per-step variables itself
-from that file; an insight step with no endpoint of its own emits nothing,
-which is how the fallback above takes effect. Each step also names the workflow
-it runs (`summary.template` / `insight.template`); empty means the workflow
-Cassini ships.
+When the recorder is run by the operator, `OPENROUTER_API_KEY`,
+`OPENROUTER_BASE_URL`/`LLM_BASE_URL`, `LLM_MODEL`, `SUMMARY_MODEL`,
+`CASSINI_SUMMARY_DISABLED`, and the shared request bounds seed
+`llm-settings.json` only on first start. Afterwards `GET`/`PUT /settings/llm` is
+authoritative and the operator strips inherited LLM variables before emitting
+resolved `SUMMARY_*` and `INSIGHT_*` values to each child. An insight with no
+endpoint of its own inherits the selected summary provider, even when summary
+generation itself is disabled.
 
-Those capability variables affect optional build layers. They are not required just to bring the base stack up.
+`insight.template` selects the default workflow for in-app insight runs; empty
+selects the first shipped workflow. `summary.template` is persisted and
+displayed, but the publish pipeline currently always runs the shipped
+`summarise` workflow.
+
+These variables configure optional LLM operations and speech-to-text tuning.
+They are not required just to bring the base stack up.
 
 ## Operator process flags and env vars
 
@@ -189,7 +200,9 @@ Before pulling demo data, set `DEMO_DATA_URL` in a local shell or gitignored `.e
 
 - Change ports in `deployment/.env` when you have local conflicts.
 - Use bind mounts when you want to inspect state from the host filesystem.
-- Leave capability env vars unset unless you are specifically working on summary generation.
+- For installed deployments, manage LLM endpoints and workflows in Cassini Admin
+  after first start; use environment variables for initial seeding, standalone
+  CLI runs, or explicit decoder tuning.
 
 ## See also
 

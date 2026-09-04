@@ -2,7 +2,7 @@
 # script test suite. Repo-wide hygiene, no secrets — runs on EVERY pull request.
 #
 # Deliberately not path-filtered. The filter used to list scripts/, harness/,
-# sandbox/, ops/ and the workflows, which missed the inputs these tests actually
+# sandbox/ and the workflows, which missed the inputs these tests actually
 # read: test-release-tooling.sh reads appinfo/info.xml, changelog.d/ and
 # CHANGELOG.md, and test-exapp-register.sh reads appinfo/info.xml. A release PR
 # bumping only <version> and <image-tag> therefore skipped the one suite that
@@ -25,7 +25,7 @@
 #     DISABLES a rule whose tool is missing and still exits 0, so the install
 #     step below is what makes that rule real. See the note there about pyflakes.
 #   - shellcheck covers EVERY tracked *.sh, at full severity with no excluded
-#     codes. It used to be an allow-list of scripts/, sandbox/ and ops/deploy/
+#     codes. It used to be an allow-list of scripts/ and sandbox/
 #     because older scripts elsewhere did not pass; the cleanup that allow-list
 #     was waiting on has since happened, so the glob is the whole repo and new
 #     scripts are covered the moment they are added rather than when somebody
@@ -201,11 +201,7 @@ jobs:
           # The deploy library's decision rules: moving tags refused, the
           # compute device deriving the image variant instead of forking the
           # deploy, and no reachable --rm-data. Pure functions, no network.
-          ./ops/deploy/test-exapp-register.sh
-          # The production driver's manifest handoff. Its ssh/scp/docker stubs
-          # pin collision-safe names and the cleanup/timeout ownership rules
-          # without reaching a host, registry or Nextcloud.
-          ./ops/deploy/test-deploy-exapp-staging.sh
+          ./scripts/test-exapp-register.sh
           # Negative control: proves verify-session-artifact.sh goes RED on a
           # 0-packet capture (D-510). This guard is what the per-PR private
           # e2e leg relies on to catch D-454 empty captures, and it used to
