@@ -1,6 +1,6 @@
 # Prototype for docs/proposals/transcription-pipeline-shape.
 # sherpa-onnx is pinned to the version the recorder links (cassini-go-recorder/go.mod).
-sherpa-onnx==1.13.1
+sherpa-onnx==1.13.7
 numpy>=1.26
 scipy>=1.11
 jiwer>=3
