@@ -1,0 +1,191 @@
+package transcribe
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestParseVocabularyNormalisesAndDeduplicates(t *testing.T) {
+	got := ParseVocabulary(`["  Nextcloud  ", "nextcloud", "Aire   Spaces", "", "Librocco"]`)
+	want := []string{"Nextcloud", "Aire Spaces", "Librocco"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("term %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// A malformed setting must leave transcription exactly as it was. Failing the
+// build would turn a typo in a text box into a recording that never publishes.
+func TestParseVocabularyIgnoresMalformedInput(t *testing.T) {
+	for _, raw := range []string{"", "   ", "not json", `{"a":1}`, `["ok"`} {
+		if got := ParseVocabulary(raw); got != nil {
+			t.Errorf("ParseVocabulary(%q) = %v, want nil", raw, got)
+		}
+	}
+}
+
+func TestNormalizeVocabularyEnforcesBounds(t *testing.T) {
+	long := strings.Repeat("x", maxVocabularyTermRunes+1)
+	if got := NormalizeVocabulary([]string{long}); got != nil {
+		t.Errorf("an over-long term must be dropped, got %v", got)
+	}
+
+	many := make([]string, maxVocabularyTerms+20)
+	for i := range many {
+		many[i] = string(rune('a'+i%26)) + strings.Repeat("y", i%7+1)
+	}
+	if got := NormalizeVocabulary(many); len(got) > maxVocabularyTerms {
+		t.Errorf("got %d terms, want at most %d", len(got), maxVocabularyTerms)
+	}
+}
+
+// Speaker labels are appended after the configured terms so an operator's
+// explicit spelling wins the case-insensitive de-duplication.
+func TestVocabularyForBuildPrefersConfiguredSpelling(t *testing.T) {
+	got := vocabularyForBuild(
+		[]string{"Silvio Tomatis"},
+		[]AudioStream{{SpeakerLabel: "silvio tomatis"}, {SpeakerLabel: "Chris"}},
+	)
+	if len(got) != 2 || got[0] != "Silvio Tomatis" || got[1] != "Chris" {
+		t.Fatalf("got %v, want [Silvio Tomatis Chris]", got)
+	}
+}
+
+func TestResolveHintsWithoutVocabularyRecordsNothing(t *testing.T) {
+	hints, prov, err := resolveHints(t.TempDir(), nil, transducerPaths(t))
+	if err != nil {
+		t.Fatalf("resolveHints: %v", err)
+	}
+	if hints != nil || prov != nil {
+		t.Fatalf("an unset vocabulary must leave no trace, got hints=%v prov=%v", hints, prov)
+	}
+}
+
+// A CTC model cannot be biased. The build must say so rather than decode
+// unbiased while the operator believes their vocabulary was applied.
+func TestResolveHintsReportsCTCModelAsUnapplied(t *testing.T) {
+	dir := t.TempDir()
+	ctc := ModelPaths{ModelFile: filepath.Join(dir, "model.onnx"), TokensFile: filepath.Join(dir, "tokens.txt")}
+	hints, prov, err := resolveHints(dir, []string{"Librocco"}, ctc)
+	if err != nil {
+		t.Fatalf("resolveHints: %v", err)
+	}
+	if hints != nil {
+		t.Error("a CTC model must not produce usable hints")
+	}
+	if prov == nil || prov.Applied {
+		t.Fatalf("expected an unapplied provenance record, got %+v", prov)
+	}
+	if prov.TermCount != 1 || !strings.Contains(prov.Reason, "CTC") {
+		t.Errorf("provenance must name the reason, got %+v", prov)
+	}
+}
+
+func TestResolveHintsWritesHotwordsAndRecordsProvenance(t *testing.T) {
+	dir := t.TempDir()
+	paths := transducerPaths(t)
+	hints, prov, err := resolveHints(dir, []string{"Librocco", "Aire Spaces"}, paths)
+	if err != nil {
+		t.Fatalf("resolveHints: %v", err)
+	}
+	if hints == nil || prov == nil || !prov.Applied {
+		t.Fatalf("expected applied hints, got hints=%v prov=%+v", hints, prov)
+	}
+	if prov.DecodingMethod != decodingModifiedBeamSearch {
+		t.Errorf("hotwords require %s, provenance says %q", decodingModifiedBeamSearch, prov.DecodingMethod)
+	}
+	if prov.TermCount != 2 || hints.TermCount != 2 {
+		t.Errorf("term count mismatch: prov=%d hints=%d", prov.TermCount, hints.TermCount)
+	}
+	body, err := os.ReadFile(hints.File)
+	if err != nil {
+		t.Fatalf("read hotwords file: %v", err)
+	}
+	if got := string(body); got != "Librocco\nAire Spaces\n" {
+		t.Errorf("hotwords file = %q, want one verbatim term per line", got)
+	}
+}
+
+// The kill switch has to leave a trace: a build that ignored the vocabulary
+// because an operator disabled biasing must not look like one that applied it.
+func TestResolveHintsRecordsTheDisableSwitch(t *testing.T) {
+	t.Setenv(envHintsDisabled, "1")
+	hints, prov, err := resolveHints(t.TempDir(), []string{"Librocco"}, transducerPaths(t))
+	if err != nil {
+		t.Fatalf("resolveHints: %v", err)
+	}
+	if hints != nil {
+		t.Error("the disable switch must produce no hints")
+	}
+	if prov == nil || prov.Applied || !strings.Contains(prov.Reason, envHintsDisabled) {
+		t.Fatalf("expected a disabled provenance record naming the env var, got %+v", prov)
+	}
+}
+
+func TestHintsScoreRejectsUnusableOverrides(t *testing.T) {
+	for _, raw := range []string{"", "0", "-1", "not-a-number"} {
+		t.Setenv(envHintsScore, raw)
+		if got := hintsScore(); got != defaultHotwordsScore {
+			t.Errorf("hintsScore() with %q = %v, want the default %v", raw, got, defaultHotwordsScore)
+		}
+	}
+	t.Setenv(envHintsScore, "3.5")
+	if got := hintsScore(); got != 3.5 {
+		t.Errorf("hintsScore() = %v, want 3.5", got)
+	}
+}
+
+// Upstream ships some Parakeet bundles without bpe.vocab. Deriving one from
+// tokens.txt is what keeps those bundles able to take hints at all.
+func TestEnsureBpeVocabDerivesFromTokensWhenBundleLacksOne(t *testing.T) {
+	dir := t.TempDir()
+	tokens := filepath.Join(dir, "tokens.txt")
+	if err := os.WriteFile(tokens, []byte("<unk> 0\n▁the 1\nlo 2\n\n"), 0o644); err != nil {
+		t.Fatalf("write tokens: %v", err)
+	}
+	paths := ModelPaths{EncoderFile: filepath.Join(dir, "encoder.onnx"), TokensFile: tokens}
+
+	got := EnsureBpeVocab(paths)
+	if got == "" {
+		t.Fatal("expected a derived vocabulary path")
+	}
+	body, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("read derived vocab: %v", err)
+	}
+	// Equal scores are what make SentencePiece fall back to longest-match
+	// tokenization, which is what the hotword encoder needs.
+	if want := "<unk>\t-1.0\n▁the\t-1.0\nlo\t-1.0\n"; string(body) != want {
+		t.Errorf("derived vocab = %q, want %q", body, want)
+	}
+	if second := EnsureBpeVocab(paths); second != got {
+		t.Errorf("derivation must be cached, got %q then %q", got, second)
+	}
+}
+
+// A bundle that ships its own vocabulary must be used as published; deriving
+// over the top of it would replace real merge scores with flat ones.
+func TestEnsureBpeVocabPrefersTheBundledVocabulary(t *testing.T) {
+	paths := ModelPaths{EncoderFile: "enc.onnx", TokensFile: "tokens.txt", BpeVocabFile: "bundled.vocab"}
+	if got := EnsureBpeVocab(paths); got != "bundled.vocab" {
+		t.Errorf("got %q, want the bundled vocabulary", got)
+	}
+}
+
+// transducerPaths builds a model layout that can take hints: an encoder plus a
+// tokens file a BPE vocabulary can be derived from.
+func transducerPaths(t *testing.T) ModelPaths {
+	t.Helper()
+	dir := t.TempDir()
+	tokens := filepath.Join(dir, "tokens.txt")
+	if err := os.WriteFile(tokens, []byte("<unk> 0\n▁a 1\n"), 0o644); err != nil {
+		t.Fatalf("write tokens: %v", err)
+	}
+	return ModelPaths{EncoderFile: filepath.Join(dir, "encoder.onnx"), TokensFile: tokens}
+}

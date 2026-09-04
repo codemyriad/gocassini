@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,24 +15,13 @@ import (
 
 // --- transcript.words.v1.json ---
 
-const (
-	transcriptWordsVersion    = "transcript.words.v1"
-	readableTranscriptVersion = "transcript.readable.v1"
-)
+const transcriptWordsVersion = "transcript.words.v1"
 
 type transcriptFile struct {
 	Version  string                   `json:"version"`
 	Media    transcriptMedia          `json:"media"`
 	Speakers []speakerEntry           `json:"speakers"`
 	Segments []transcriptSegmentEntry `json:"segments"`
-}
-
-type readableTranscriptFile struct {
-	Version                 string                 `json:"version"`
-	Media                   transcriptMedia        `json:"media"`
-	Speakers                []speakerEntry         `json:"speakers"`
-	SourceTranscriptVersion string                 `json:"sourceTranscriptVersion,omitempty"`
-	Segments                []readableSegmentEntry `json:"segments"`
 }
 
 type transcriptMedia struct {
@@ -56,15 +44,6 @@ type transcriptSegmentEntry struct {
 	Words   []wordEntry `json:"words"`
 }
 
-type readableSegmentEntry struct {
-	ID               string   `json:"id"`
-	Speaker          string   `json:"speaker,omitempty"`
-	StartMS          int64    `json:"startMs"`
-	EndMS            int64    `json:"endMs"`
-	Text             string   `json:"text"`
-	SourceSegmentIDs []string `json:"sourceSegmentIds"`
-}
-
 type wordEntry struct {
 	ID      string `json:"id"`
 	Text    string `json:"text"`
@@ -85,31 +64,12 @@ func WriteTranscriptJSON(path string, streams []AudioStream, segments []Segment,
 	return writeJSON(path, buildTranscriptFile(streams, segments, audioDurationMS, ""))
 }
 
-// WriteReadableTranscriptJSON writes transcript.readable.v1.json using the
-// readable transcript contract expected by the viewer.
-func WriteReadableTranscriptJSON(path string, streams []AudioStream, segments []Segment, audioDurationMS int64) error {
-	if err := ValidateSegments(segments); err != nil {
-		return err
-	}
-	return writeJSON(path, buildReadableTranscriptFile(streams, segments, audioDurationMS, ""))
-}
-
 func buildTranscriptFile(streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string) transcriptFile {
 	return transcriptFile{
 		Version:  transcriptWordsVersion,
 		Media:    transcriptMedia{Src: "meeting.webm", DurationMS: audioDurationMS, SHA256: sha256hex},
 		Speakers: buildSpeakerEntries(streams, segments),
 		Segments: buildTranscriptSegmentEntries(segments),
-	}
-}
-
-func buildReadableTranscriptFile(streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string) readableTranscriptFile {
-	return readableTranscriptFile{
-		Version:                 readableTranscriptVersion,
-		Media:                   transcriptMedia{Src: "meeting.webm", DurationMS: audioDurationMS, SHA256: sha256hex},
-		Speakers:                buildSpeakerEntries(streams, segments),
-		SourceTranscriptVersion: transcriptWordsVersion,
-		Segments:                buildReadableSegmentEntries(segments),
 	}
 }
 
@@ -157,27 +117,8 @@ func buildTranscriptSegmentEntries(segments []Segment) []transcriptSegmentEntry 
 	return entries
 }
 
-func buildReadableSegmentEntries(segments []Segment) []readableSegmentEntry {
-	entries := make([]readableSegmentEntry, len(segments))
-	for segIndex, seg := range segments {
-		entries[segIndex] = readableSegmentEntry{
-			ID:               readableSegmentID(segIndex),
-			Speaker:          seg.SpeakerID,
-			StartMS:          seg.StartMS,
-			EndMS:            seg.EndMS,
-			Text:             seg.Text,
-			SourceSegmentIDs: []string{transcriptSegmentID(segIndex)},
-		}
-	}
-	return entries
-}
-
 func transcriptSegmentID(index int) string {
 	return fmt.Sprintf("seg_%06d", index)
-}
-
-func readableSegmentID(index int) string {
-	return fmt.Sprintf("r_seg_%06d", index)
 }
 
 func transcriptWordID(segmentID string, wordIndex int) string {
@@ -229,12 +170,11 @@ type artifactSource struct {
 }
 
 type artifactFiles struct {
-	Audio              string                  `json:"audio"`
-	Transcript         string                  `json:"transcript"`
-	Transcripts        []artifactTranscriptRef `json:"transcripts,omitempty"`
-	ReadableTranscript string                  `json:"readableTranscript,omitempty"`
-	Captions           string                  `json:"captions,omitempty"`
-	Summary            string                  `json:"summary,omitempty"`
+	Audio       string                  `json:"audio"`
+	Transcript  string                  `json:"transcript"`
+	Transcripts []artifactTranscriptRef `json:"transcripts,omitempty"`
+	Captions    string                  `json:"captions,omitempty"`
+	Summary     string                  `json:"summary,omitempty"`
 }
 
 // artifactTranscriptRef describes an additional transcript artifact that the
@@ -249,11 +189,10 @@ type artifactTranscriptRef struct {
 }
 
 type provenanceInfo struct {
-	SpeechToText    *provStep              `json:"speechToText,omitempty"`
-	Attribution     *AttributionProvenance `json:"attribution,omitempty"`
-	WordTimings     *WordTimingProvenance  `json:"wordTimings,omitempty"`
-	ReadableCleanup *provStep              `json:"readableCleanup,omitempty"`
-	MeetingSummary  *provStep              `json:"meetingSummary,omitempty"`
+	SpeechToText   *provStep              `json:"speechToText,omitempty"`
+	Attribution    *AttributionProvenance `json:"attribution,omitempty"`
+	WordTimings    *WordTimingProvenance  `json:"wordTimings,omitempty"`
+	MeetingSummary *provStep              `json:"meetingSummary,omitempty"`
 }
 
 // WordTimingProvenance says how this build decided where a word ends.
@@ -306,6 +245,30 @@ type provStep struct {
 	Backend string `json:"backend"`
 	Model   string `json:"model,omitempty"`
 	Device  string `json:"device,omitempty"`
+	// Hints is set on a speech-to-text step whose decoder was biased towards a
+	// configured vocabulary. Absent means the pass ran unbiased, which is what
+	// every build before this feature did.
+	Hints *HintsProvenance `json:"hints,omitempty"`
+}
+
+// HintsProvenance records the decoder biasing applied to one ASR pass. It says
+// what was asked for and what actually happened, because the two differ: a
+// model whose bundle carries no BPE vocabulary cannot take hints at all, and a
+// build that silently ignored the operator's vocabulary must not read like one
+// that applied it.
+type HintsProvenance struct {
+	// TermCount is how many vocabulary terms were written to the hotwords file.
+	// Zero with Applied false means the vocabulary could not be used.
+	TermCount int `json:"termCount"`
+	// Score is the per-token boost handed to sherpa-onnx.
+	Score float32 `json:"score,omitempty"`
+	// DecodingMethod is the search the decoder actually ran. Hotwords require
+	// modified_beam_search; an unbiased pass stays on greedy_search.
+	DecodingMethod string `json:"decodingMethod,omitempty"`
+	// Applied is false when a vocabulary was configured but could not be
+	// applied. Reason then says why, in words an operator can act on.
+	Applied bool   `json:"applied"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // WriteManifest writes manifest.json summarising the build. srcDurationMS is
@@ -323,67 +286,85 @@ type provStep struct {
 // the answer on its own: it depends on which decoder ran (see
 // AudioBoundedWordEnds in backend.go), and a manifest that asserted it here
 // would claim it for every future backend too.
-func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttBackend string, sttModelID ModelID, sttDevice, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript, attribution *AttributionProvenance, wordTimings *WordTimingProvenance) error {
+// ManifestInput carries everything WriteManifest needs to describe one build.
+// It is a struct rather than a parameter list because the list had grown past
+// the point where a reader could tell the two device strings and the three
+// booleans apart at a call site.
+type ManifestInput struct {
+	SrcBasename      string
+	SrcDurationMS    int64
+	DigestDurationMS int64
+	Streams          []AudioStream
+	Segments         []Segment
+
+	STTBackend string
+	STTModelID ModelID
+	STTDevice  string
+	// Hints records the decoder biasing applied to this build, or nil when the
+	// build ran without a vocabulary.
+	Hints *HintsProvenance
+
+	SummaryModel string
+	HasSummary   bool
+
+	Additional  []AdditionalTranscript
+	Attribution *AttributionProvenance
+	WordTimings *WordTimingProvenance
+}
+
+func WriteManifest(path string, in ManifestInput) error {
 	wordCount := 0
-	for _, seg := range segments {
+	for _, seg := range in.Segments {
 		wordCount += len(seg.Words)
 	}
 
 	files := artifactFiles{
 		Audio:      "meeting.webm",
 		Transcript: "transcript.words.v1.json",
+		Captions:   "captions.vtt",
 	}
-	if len(additional) > 0 {
-		primaryID := sanitizeTranscriptID(string(sttModelID))
+	if len(in.Additional) > 0 {
+		primaryID := sanitizeTranscriptID(string(in.STTModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 			ID: primaryID, Path: "transcript.words.v1.json", Role: "raw-asr", Default: true,
-			Provenance: &provStep{Backend: sttBackend, Model: string(sttModelID), Device: sttDevice},
+			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, Hints: in.Hints},
 		})
-		for _, extra := range additional {
+		for _, extra := range in.Additional {
 			extraBackend := extra.Backend
 			if extraBackend == "" {
 				// Additional passes run on the primary pass's backend unless
 				// the producer recorded otherwise.
-				extraBackend = sttBackend
+				extraBackend = in.STTBackend
 			}
 			files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 				ID: extra.ID, Path: extra.Path, Role: "raw-asr",
-				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: sttDevice},
+				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: in.STTDevice},
 			})
 		}
 	}
-	if hasReadable {
-		files.ReadableTranscript = "transcript.readable.v1.json"
-		files.Captions = "captions.vtt"
-	}
-	if hasSummary {
+	if in.HasSummary {
 		files.Summary = "summary.md"
 	}
 
 	prov := &provenanceInfo{
 		SpeechToText: &provStep{
-			Backend: sttBackend,
-			Model:   string(sttModelID),
-			Device:  sttDevice,
+			Backend: in.STTBackend,
+			Model:   string(in.STTModelID),
+			Device:  in.STTDevice,
+			Hints:   in.Hints,
 		},
-		Attribution: attribution,
+		Attribution: in.Attribution,
 		// nil here writes no wordTimings key at all, which is what a consumer
 		// reads as "these ends were not measured, run the legacy repair". A
 		// caller that cannot prove the guarantee must pass nil rather than a
 		// false record: absence is the honest answer, and it is the one shape
 		// every existing consumer already handles.
-		WordTimings: wordTimings,
+		WordTimings: in.WordTimings,
 	}
-	if hasReadable {
-		prov.ReadableCleanup = &provStep{
-			Backend: "openai-compatible",
-			Model:   llmModel,
-		}
-	}
-	if hasSummary {
+	if in.HasSummary {
 		prov.MeetingSummary = &provStep{
 			Backend: "openai-compatible",
-			Model:   summaryModel,
+			Model:   in.SummaryModel,
 		}
 	}
 
@@ -392,14 +373,14 @@ func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int
 		Version:     "1",
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Source: artifactSource{
-			Basename:        srcBasename,
-			DurationMS:      srcDurationMS,
-			RecordedAtLocal: meetingtime.InferRecordedAtLocal(srcBasename),
+			Basename:        in.SrcBasename,
+			DurationMS:      in.SrcDurationMS,
+			RecordedAtLocal: meetingtime.InferRecordedAtLocal(in.SrcBasename),
 		},
 		Files:            files,
-		SpeakerCount:     logicalSpeakerCount(streams),
-		SegmentCount:     len(segments),
-		DigestDurationMS: digestDurationMS,
+		SpeakerCount:     logicalSpeakerCount(in.Streams),
+		SegmentCount:     len(in.Segments),
+		DigestDurationMS: in.DigestDurationMS,
 		WordCount:        wordCount,
 		Provenance:       prov,
 	}
@@ -709,139 +690,4 @@ func ValidateSegments(segments []Segment) error {
 		}
 	}
 	return nil
-}
-
-// ApplyReadableText replaces segment text with LLM-cleaned text while
-// keeping original word-level timestamps.
-func ApplyReadableText(original, readable []Segment) []Segment {
-	out := make([]Segment, len(original))
-	copy(out, original)
-	for i := range out {
-		if i < len(readable) {
-			out[i].Text = readable[i].Text
-			// Re-distribute word timings proportionally over the cleaned text.
-			out[i].Words = redistributeWords(out[i].Words, readable[i].Text)
-		}
-	}
-	return out
-}
-
-// redistributeWords keeps original timestamps but splits cleaned text
-// proportionally across the original word slots.
-func redistributeWords(origWords []Word, cleanedText string) []Word {
-	cleanWords := strings.Fields(cleanedText)
-	if len(cleanWords) == 0 || len(origWords) == 0 {
-		return origWords
-	}
-
-	// Map cleaned words onto the original time slots proportionally.
-	out := make([]Word, len(cleanWords))
-	origN := len(origWords)
-	cleanN := len(cleanWords)
-	segStart := origWords[0].StartMS
-	segEnd := origWords[origN-1].EndMS
-	totalMS := segEnd - segStart
-	if totalMS <= 0 {
-		totalMS = 1
-	}
-
-	// Carry attribution provenance across the rewrite. Cleaned words are new
-	// text on interpolated slots, so the mapping has to be temporal — and it
-	// has to hold in both directions:
-	//
-	// cleaned→source: each cleaned word inherits the measurement of its
-	// SINGLE best-overlapping source word. "Any overlap" would let one
-	// contradicted source word flag two cleaned words, deleting legitimate
-	// neighbouring text from the summary.
-	//
-	// source→cleaned: every flagged source word must end up flagging some
-	// cleaned word. The first direction alone guarantees nothing when cleanup
-	// shortens the text (the ordinary case): every slot is then wider than a
-	// source word, the flagged word straddles two slots and is the argmax of
-	// neither, and the flag silently vanishes — readable cleanup and
-	// summarisation normally share one configured LLM, so the summary would
-	// read the crosstalk word while the canonical transcript shows it
-	// flagged. A flagged source not already represented through the first
-	// direction marks exactly its best-overlapping cleaned word, so the flag
-	// can neither vanish nor spread to non-overlapping neighbours.
-	bestSrc := make([]int, cleanN)
-	slotStart := make([]int64, cleanN)
-	slotEnd := make([]int64, cleanN)
-	// flaggedGap marks cleaned words whose gap already came from a flagged
-	// source; further flagged contributions take the max. A gap inherited
-	// from an unflagged source only is kept as-is.
-	flaggedGap := make([]bool, cleanN)
-	for i, w := range cleanWords {
-		t0 := segStart + int64(math.Round(float64(i)*float64(totalMS)/float64(cleanN)))
-		t1 := segStart + int64(math.Round(float64(i+1)*float64(totalMS)/float64(cleanN)))
-		if t1 > segEnd {
-			t1 = segEnd
-		}
-		out[i] = Word{Text: w, StartMS: t0, EndMS: t1}
-		slotStart[i], slotEnd[i] = t0, t1
-		best, bestOverlap := -1, int64(0)
-		for j, orig := range origWords {
-			overlap := minInt64(t1, orig.EndMS) - maxInt64(t0, orig.StartMS)
-			if overlap > bestOverlap {
-				best, bestOverlap = j, overlap
-			}
-		}
-		bestSrc[i] = best
-		if best >= 0 {
-			src := origWords[best]
-			out[i].HasAttributionGap = src.HasAttributionGap
-			out[i].AttributionGapDB = src.AttributionGapDB
-			if src.LowConfidenceSpeaker {
-				out[i].LowConfidenceSpeaker = true
-				flaggedGap[i] = src.HasAttributionGap
-			}
-		}
-	}
-
-	represented := make([]bool, origN)
-	for _, j := range bestSrc {
-		if j >= 0 {
-			represented[j] = true
-		}
-	}
-	for j, orig := range origWords {
-		if !orig.LowConfidenceSpeaker || represented[j] {
-			continue
-		}
-		i := bestSlotForSourceWord(orig, slotStart, slotEnd, segStart, totalMS, cleanN)
-		out[i].LowConfidenceSpeaker = true
-		if orig.HasAttributionGap && (!flaggedGap[i] || orig.AttributionGapDB > out[i].AttributionGapDB) {
-			out[i].AttributionGapDB = orig.AttributionGapDB
-			out[i].HasAttributionGap = true
-			flaggedGap[i] = true
-		}
-	}
-	return out
-}
-
-// bestSlotForSourceWord picks the cleaned slot a flagged source word marks:
-// the one with the largest overlap, falling back to the slot containing the
-// word's midpoint for zero-duration words and dead ties across a boundary.
-func bestSlotForSourceWord(orig Word, slotStart, slotEnd []int64, segStart, totalMS int64, cleanN int) int {
-	best, bestOverlap, tied := -1, int64(0), false
-	for i := range slotStart {
-		overlap := minInt64(slotEnd[i], orig.EndMS) - maxInt64(slotStart[i], orig.StartMS)
-		if overlap > bestOverlap {
-			best, bestOverlap, tied = i, overlap, false
-		} else if overlap == bestOverlap && overlap > 0 {
-			tied = true
-		}
-	}
-	if best >= 0 && !tied {
-		return best
-	}
-	mid := (orig.StartMS + orig.EndMS) / 2
-	i := int((mid - segStart) * int64(cleanN) / totalMS)
-	if i < 0 {
-		i = 0
-	}
-	if i >= cleanN {
-		i = cleanN - 1
-	}
-	return i
 }

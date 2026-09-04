@@ -121,8 +121,8 @@ func (g *wordEndGuarantee) provenance() *WordTimingProvenance {
 // newRecognizerForPass builds a recognizer for one transcription pass and
 // records its word-end guarantee in the same step, so a new construction site
 // cannot pick up the recognizer while forgetting what it promises.
-func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider string, numThreads int, guarantee *wordEndGuarantee) (SpeechRecognizer, error) {
-	rec, err := NewRecognizerForBackend(id, paths, vadModelPath, provider, numThreads)
+func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider string, numThreads int, hints *DecoderHints, guarantee *wordEndGuarantee) (SpeechRecognizer, error) {
+	rec, err := NewRecognizerForBackend(id, paths, vadModelPath, provider, numThreads, hints)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,9 @@ func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider st
 // RecognizerFactory constructs a recognizer for an already-resolved model and
 // device. Resolution (quality tier -> model, auto -> cpu/cuda) stays in
 // policy.go so every backend inherits the same host-adaptive behaviour.
-type RecognizerFactory func(paths ModelPaths, vadModelPath, provider string, numThreads int) (SpeechRecognizer, error)
+// hints is nil for an unbiased pass; a backend that cannot bias must ignore it
+// rather than fail, because the vocabulary is advisory by design.
+type RecognizerFactory func(paths ModelPaths, vadModelPath, provider string, numThreads int, hints *DecoderHints) (SpeechRecognizer, error)
 
 // SherpaOnnxBackend is the id of the bundled in-process decoder.
 const SherpaOnnxBackend = "sherpa-onnx"
@@ -141,8 +143,8 @@ const SherpaOnnxBackend = "sherpa-onnx"
 var (
 	backendMu       sync.RWMutex
 	backendRegistry = map[string]RecognizerFactory{
-		SherpaOnnxBackend: func(paths ModelPaths, vadModelPath, provider string, numThreads int) (SpeechRecognizer, error) {
-			return NewRecognizer(paths, vadModelPath, provider, numThreads)
+		SherpaOnnxBackend: func(paths ModelPaths, vadModelPath, provider string, numThreads int, hints *DecoderHints) (SpeechRecognizer, error) {
+			return NewRecognizer(paths, vadModelPath, provider, numThreads, hints)
 		},
 	}
 )
@@ -217,7 +219,7 @@ func errUnknownBackend(id string) error {
 // NewRecognizerForBackend builds a recognizer from the named backend. An
 // unknown id is an error naming what is available rather than a silent
 // fallback.
-func NewRecognizerForBackend(id string, paths ModelPaths, vadModelPath, provider string, numThreads int) (SpeechRecognizer, error) {
+func NewRecognizerForBackend(id string, paths ModelPaths, vadModelPath, provider string, numThreads int, hints *DecoderHints) (SpeechRecognizer, error) {
 	id = ResolveRecognizerBackend(id)
 	backendMu.RLock()
 	factory, ok := backendRegistry[id]
@@ -225,7 +227,7 @@ func NewRecognizerForBackend(id string, paths ModelPaths, vadModelPath, provider
 	if !ok {
 		return nil, errUnknownBackend(id)
 	}
-	rec, err := factory(paths, vadModelPath, provider, numThreads)
+	rec, err := factory(paths, vadModelPath, provider, numThreads, hints)
 	if err != nil {
 		return nil, err
 	}

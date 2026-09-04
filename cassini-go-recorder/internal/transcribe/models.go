@@ -63,9 +63,12 @@ type modelSpec struct {
 	WeightsFile string
 
 	TokensFile string
-	ModelType  string // sherpa-onnx model type hint
-	SampleRate int
-	FeatureDim int
+	// BpeVocabFile names the bundle's SentencePiece vocabulary when it ships
+	// one. Optional: a bundle without it simply cannot take decoder hints.
+	BpeVocabFile string
+	ModelType    string // sherpa-onnx model type hint
+	SampleRate   int
+	FeatureDim   int
 }
 
 var knownModels = map[ModelID]modelSpec{
@@ -81,36 +84,39 @@ var knownModels = map[ModelID]modelSpec{
 	ModelParakeet06B: {
 		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
 			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
-		EncoderFile: "encoder.int8.onnx",
-		DecoderFile: "decoder.int8.onnx",
-		JoinerFile:  "joiner.int8.onnx",
-		TokensFile:  "tokens.txt",
-		ModelType:   "nemo_transducer",
-		SampleRate:  16000,
-		FeatureDim:  80,
+		EncoderFile:  "encoder.int8.onnx",
+		DecoderFile:  "decoder.int8.onnx",
+		JoinerFile:   "joiner.int8.onnx",
+		TokensFile:   "tokens.txt",
+		BpeVocabFile: "bpe.vocab",
+		ModelType:    "nemo_transducer",
+		SampleRate:   16000,
+		FeatureDim:   80,
 	},
 	ModelParakeet06BV3Int8: {
 		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
 			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
-		EncoderFile: "encoder.int8.onnx",
-		DecoderFile: "decoder.int8.onnx",
-		JoinerFile:  "joiner.int8.onnx",
-		TokensFile:  "tokens.txt",
-		ModelType:   "nemo_transducer",
-		SampleRate:  16000,
-		FeatureDim:  128,
+		EncoderFile:  "encoder.int8.onnx",
+		DecoderFile:  "decoder.int8.onnx",
+		JoinerFile:   "joiner.int8.onnx",
+		TokensFile:   "tokens.txt",
+		BpeVocabFile: "bpe.vocab",
+		ModelType:    "nemo_transducer",
+		SampleRate:   16000,
+		FeatureDim:   128,
 	},
 	ModelParakeet06BV3: {
 		URL: "https://assets.gocassini.codemyriad.io/" +
 			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v3.tar.bz2",
-		EncoderFile: "encoder.onnx",
-		DecoderFile: "decoder.onnx",
-		JoinerFile:  "joiner.onnx",
-		WeightsFile: "encoder.weights",
-		TokensFile:  "tokens.txt",
-		ModelType:   "nemo_transducer",
-		SampleRate:  16000,
-		FeatureDim:  128,
+		EncoderFile:  "encoder.onnx",
+		DecoderFile:  "decoder.onnx",
+		JoinerFile:   "joiner.onnx",
+		WeightsFile:  "encoder.weights",
+		TokensFile:   "tokens.txt",
+		BpeVocabFile: "bpe.vocab",
+		ModelType:    "nemo_transducer",
+		SampleRate:   16000,
+		FeatureDim:   128,
 	},
 }
 
@@ -129,9 +135,14 @@ type ModelPaths struct {
 	WeightsFile string
 
 	TokensFile string
-	ModelType  string
-	SampleRate int
-	FeatureDim int
+	// BpeVocabFile is the model's SentencePiece vocabulary, present only in
+	// bundles that ship one. It is what sherpa-onnx encodes hotwords with, so
+	// its absence is exactly what makes a bundle unable to take decoder hints.
+	// Never a required file: bundles published without it decode fine unbiased.
+	BpeVocabFile string
+	ModelType    string
+	SampleRate   int
+	FeatureDim   int
 }
 
 // envBundledModelRoot names the read-only directory where an image bakes its
@@ -374,6 +385,17 @@ func resolveModelPaths(modelDir string, spec modelSpec) ModelPaths {
 		}
 	} else {
 		p.ModelFile = filepath.Join(modelDir, spec.ModelFile)
+	}
+	// The BPE vocabulary is resolved only when the bundle on disk actually has
+	// one. Upstream publishes the same model with and without it, so presence
+	// is a property of the downloaded bundle, not of the model id, and a
+	// declared-but-absent path would make sherpa fail to load a model that
+	// decodes perfectly well without hints.
+	if spec.BpeVocabFile != "" && modelDir != "" {
+		candidate := filepath.Join(modelDir, spec.BpeVocabFile)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Size() > 0 {
+			p.BpeVocabFile = candidate
+		}
 	}
 	return p
 }

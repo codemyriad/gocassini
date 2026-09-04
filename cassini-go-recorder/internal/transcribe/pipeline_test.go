@@ -32,7 +32,7 @@ func (r *fixedWordsRecognizer) Close() {}
 // every Transcribe call, registered exactly like a real second engine.
 func registerFixedBackend(t *testing.T, id string, words []Word) {
 	t.Helper()
-	if err := RegisterRecognizerBackend(id, func(ModelPaths, string, string, int) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend(id, func(ModelPaths, string, string, int, *DecoderHints) (SpeechRecognizer, error) {
 		return &fixedWordsRecognizer{words: words}, nil
 	}); err != nil {
 		t.Fatalf("register %s: %v", id, err)
@@ -497,7 +497,7 @@ func (r *boundedWordsRecognizer) WordEndsAreBoundedByAudio() bool { return true 
 // audio-bounded word-end guarantee, registered exactly like a real engine.
 func registerBoundedBackend(t *testing.T, id string, words []Word) {
 	t.Helper()
-	if err := RegisterRecognizerBackend(id, func(ModelPaths, string, string, int) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend(id, func(ModelPaths, string, string, int, *DecoderHints) (SpeechRecognizer, error) {
 		return &boundedWordsRecognizer{fixedWordsRecognizer{words: words}}, nil
 	}); err != nil {
 		t.Fatalf("register %s: %v", id, err)

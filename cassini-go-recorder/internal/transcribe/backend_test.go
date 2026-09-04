@@ -47,7 +47,7 @@ func TestResolveRecognizerBackendPrefersExplicitThenEnv(t *testing.T) {
 // factory is the whole integration surface.
 func TestRegisteredBackendIsUsedForConstruction(t *testing.T) {
 	stub := &stubRecognizer{words: []Word{{Text: "hello", StartMS: 0, EndMS: 100}}}
-	if err := RegisterRecognizerBackend("test-stub", func(ModelPaths, string, string, int) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend("test-stub", func(ModelPaths, string, string, int, *DecoderHints) (SpeechRecognizer, error) {
 		return stub, nil
 	}); err != nil {
 		t.Fatalf("register: %v", err)
@@ -58,7 +58,7 @@ func TestRegisteredBackendIsUsedForConstruction(t *testing.T) {
 		backendMu.Unlock()
 	})
 
-	rec, err := NewRecognizerForBackend("test-stub", ModelPaths{}, "", "cpu", 1)
+	rec, err := NewRecognizerForBackend("test-stub", ModelPaths{}, "", "cpu", 1, nil)
 	if err != nil {
 		t.Fatalf("construct: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestRegisteredBackendIsUsedForConstruction(t *testing.T) {
 // Silently falling back to a different engine would make the artifact's
 // provenance a lie, so an unknown id has to fail loudly.
 func TestUnknownBackendIsAnErrorNamingWhatExists(t *testing.T) {
-	_, err := NewRecognizerForBackend("does-not-exist", ModelPaths{}, "", "cpu", 1)
+	_, err := NewRecognizerForBackend("does-not-exist", ModelPaths{}, "", "cpu", 1, nil)
 	if err == nil {
 		t.Fatal("expected an error for an unknown backend")
 	}
@@ -88,7 +88,7 @@ func TestUnknownBackendIsAnErrorNamingWhatExists(t *testing.T) {
 }
 
 func TestRegisterRejectsIncompleteBackends(t *testing.T) {
-	if err := RegisterRecognizerBackend("", func(ModelPaths, string, string, int) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend("", func(ModelPaths, string, string, int, *DecoderHints) (SpeechRecognizer, error) {
 		return &stubRecognizer{}, nil
 	}); err == nil {
 		t.Error("an empty id must be rejected")
@@ -99,7 +99,7 @@ func TestRegisterRejectsIncompleteBackends(t *testing.T) {
 }
 
 func TestBackendReturningNilRecognizerIsAnError(t *testing.T) {
-	if err := RegisterRecognizerBackend("nil-rec", func(ModelPaths, string, string, int) (SpeechRecognizer, error) {
+	if err := RegisterRecognizerBackend("nil-rec", func(ModelPaths, string, string, int, *DecoderHints) (SpeechRecognizer, error) {
 		return nil, nil
 	}); err != nil {
 		t.Fatalf("register: %v", err)
@@ -109,7 +109,7 @@ func TestBackendReturningNilRecognizerIsAnError(t *testing.T) {
 		delete(backendRegistry, "nil-rec")
 		backendMu.Unlock()
 	})
-	if _, err := NewRecognizerForBackend("nil-rec", ModelPaths{}, "", "cpu", 1); err == nil {
+	if _, err := NewRecognizerForBackend("nil-rec", ModelPaths{}, "", "cpu", 1, nil); err == nil {
 		t.Error("a backend that returns no recognizer must be an error, not a nil deref later")
 	}
 }
