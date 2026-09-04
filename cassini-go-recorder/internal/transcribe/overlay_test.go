@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -632,6 +633,70 @@ func TestAWindowTooShortToCrossfadeKeepsTheRecordedTrack(t *testing.T) {
 			if math.Abs(float64(got[i]-sourceValue)) > 1.0/32768 {
 				t.Fatalf("sample %d is %v, want the uploaded %v", i, got[i], sourceValue)
 			}
+		}
+	})
+}
+
+// Summing a participant's tracks into one render puts the sum through s16
+// before the mix's alimiter=limit=0.95 ever sees it, and s16 has no room past
+// full scale: what the limiter would have ridden down, the render would
+// hard-clip. The disjointness that makes the sum safe is checked rather than
+// asserted in a comment, and a participant whose tracks really do overlap goes
+// back to the mix path that has always handled them.
+func TestWriteParticipantFloorRefusesOverlappingTracksThatWouldClip(t *testing.T) {
+	const sampleRate = 16000
+	const timeline = sampleRate
+
+	write := func(t *testing.T, dir, name string, from, to int, value float32) string {
+		t.Helper()
+		samples := make([]float32, timeline)
+		for i := from; i < to; i++ {
+			samples[i] = value
+		}
+		path := filepath.Join(dir, name)
+		writeFloorWAV(t, path, samples, sampleRate)
+		return path
+	}
+
+	t.Run("an overlap that would clip is refused", func(t *testing.T) {
+		dir := t.TempDir()
+		first := write(t, dir, "track-01.wav", 0, sampleRate/2, 0.6)
+		second := write(t, dir, "track-02.wav", sampleRate/4, sampleRate*3/4, 0.6)
+		out := filepath.Join(dir, "render.wav")
+		err := writeParticipantFloor([]string{first, second}, timeline, sampleRate, out)
+		if err == nil {
+			t.Fatal("two tracks summing to 1.2 produced a floor; the render clipped where the mix would have limited")
+		}
+		if !strings.Contains(err.Error(), "overlap") {
+			t.Fatalf("the refusal does not say the tracks overlap: %v", err)
+		}
+	})
+
+	t.Run("an overlap that fits is summed as before", func(t *testing.T) {
+		dir := t.TempDir()
+		first := write(t, dir, "track-01.wav", 0, sampleRate/2, 0.3)
+		second := write(t, dir, "track-02.wav", sampleRate/4, sampleRate*3/4, 0.3)
+		out := filepath.Join(dir, "render.wav")
+		if err := writeParticipantFloor([]string{first, second}, timeline, sampleRate, out); err != nil {
+			t.Fatalf("a sum that stays inside full scale was refused: %v", err)
+		}
+		got := readWAVFloats(t, out)
+		if mid := got[sampleRate*3/8]; math.Abs(float64(mid)-0.6) > 1.0/32768 {
+			t.Fatalf("the overlap sums to %v, want 0.6: the check must not change what it lets through", mid)
+		}
+	})
+
+	t.Run("one track at full scale is not an overlap", func(t *testing.T) {
+		dir := t.TempDir()
+		first := write(t, dir, "track-01.wav", 0, sampleRate/2, 1)
+		second := write(t, dir, "track-02.wav", sampleRate/2, timeline, -1)
+		out := filepath.Join(dir, "render.wav")
+		if err := writeParticipantFloor([]string{first, second}, timeline, sampleRate, out); err != nil {
+			t.Fatalf("two disjoint full-scale tracks were refused: %v", err)
+		}
+		got := readWAVFloats(t, out)
+		if got[0] < 0.99 || got[timeline-1] != -1 {
+			t.Fatalf("full-scale samples came back as %v and %v", got[0], got[timeline-1])
 		}
 	})
 }

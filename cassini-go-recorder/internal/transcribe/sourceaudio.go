@@ -1342,6 +1342,29 @@ func writeParticipantFloor(trackPaths []string, timelineSamples, sampleRate int,
 				sum[i] += one[i]
 			}
 		}
+		if len(tracks) > 1 {
+			// The disjointness above, checked instead of assumed.
+			//
+			// Summing several tracks into one file means the sum meets s16
+			// before the mix's alimiter=limit=0.95 ever sees it, and s16 has no
+			// room past full scale: what a limiter would have ridden down, this
+			// file would hard-clip. On the recorded tracks the participant's
+			// stints do not overlap, so the sum never leaves [-1, 1] and this
+			// costs nothing; a sum that does leave it says the tracks overlap
+			// after all, which is the one case where summing them here is not
+			// what amix would have done. Refusing sends the participant back to
+			// exactly that path — their separate tracks, into amix, under the
+			// limiter — rather than publishing distortion the recording never
+			// had. A single track cannot reach here: its own samples are
+			// already inside the range.
+			for i := 0; i < n; i++ {
+				if sum[i] > 1 || sum[i] < -1 {
+					return fmt.Errorf(
+						"this participant's %d recorded tracks overlap: their sum reaches %.3f at %d ms, past what one track can hold, and summing them would clip where the mix would have limited",
+						len(tracks), sum[i], int64(at+i)*1000/int64(sampleRate))
+				}
+			}
+		}
 		for i := 0; i < n; i++ {
 			s := uint16(s16FromFloat32(sum[i]))
 			raw[i*2] = byte(s)
