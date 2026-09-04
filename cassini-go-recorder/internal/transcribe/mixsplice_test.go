@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -616,7 +617,7 @@ func TestRevertingIngestionPutsBothSidesBack(t *testing.T) {
 		// encoded. The encode failure is not his reason.
 		{
 			SpeakerID: "spk_bob", Owner: "bob", Segments: 1, Skipped: 1, RenderHz: 48000,
-			Rejections: []string{"segment 0: anchors disagree by 150.0 ms RMS; keeping the recorded audio there"},
+			Rejections: []string{"segment 0 not spliced: anchors disagree by 150.0 ms RMS; the recorded track stands there"},
 		},
 	}
 	bundle := t.TempDir()
@@ -736,5 +737,157 @@ func TestTheMixSwitchReadsBooleansTheWayItsSiblingsDo(t *testing.T) {
 				t.Fatalf("%q gave the reason %q, want it to mention %q", tc.value, reason, tc.reason)
 			}
 		})
+	}
+}
+
+// The build log has to say WHY a segment was left out, not only how many were.
+//
+// It used to say only the count. A browser-capture CI run that placed two of
+// three segments therefore reported "1 skipped" and nothing else, and finding
+// out which segment — and whether the pipeline had done something legitimate or
+// something broken — meant opening the artifact manifest, or dividing stored
+// bytes by declared milliseconds and guessing. The reason belongs beside the
+// count, in words a person and a grep can both read.
+func TestTheBuildLogSaysWhyASegmentWasNotSpliced(t *testing.T) {
+	requireFFMediaTools(t)
+
+	specs := twoSpeakerSpecs()
+	mkv, streams := spliceFixture(t, specs)
+
+	// One capture, two segments. The first is honest and lands. The second
+	// declares twenty seconds and holds five, which is the shape a page that
+	// went away mid-chunk uploads, and the splice leaves it out.
+	root := t.TempDir()
+	good := syntheticSegmentDelayed(4000, 10, 1000, 0, 0)
+	good.AudioName = "segment-0.webm"
+	lying := syntheticSegmentDelayed(16000, 20, 1000, 0, 0)
+	lying.Index = 1
+	lying.AudioName = "segment-1.webm"
+	dir := filepath.Join(root, "room1", "alice", strconv.FormatInt(good.StartWallMS, 10))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir capture: %v", err)
+	}
+	writeToneSegment(t, dir, good.AudioName, 10, 1100)
+	writeToneSegment(t, dir, lying.AudioName, 5, 1100)
+	writeSidecar(t, dir, SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: good.StartWallMS, CallEndWallMS: lying.StopWallMS,
+		Segments: []SourceSegment{good, lying},
+	})
+
+	_, reports, log := runSplicedBuild(t, mkv, streams, root, "room1", t.TempDir())
+
+	if len(reports) != 1 {
+		t.Fatalf("got %d reports, want one for alice: %v", len(reports), reports)
+	}
+	report := reports[0]
+	if report.Placed != 1 || report.Skipped != 1 || report.Segments != 2 {
+		t.Fatalf("placed %d, skipped %d of %d segments, want 1 and 1 of 2: %v",
+			report.Placed, report.Skipped, report.Segments, report.Rejections)
+	}
+	// The invariant the browser-capture CI leg leans on: every segment either
+	// landed or was skipped, and a counter that drifts from the segment count is
+	// a bug in its own right.
+	if report.Placed+report.Skipped != report.Segments {
+		t.Fatalf("%d placed plus %d skipped is not the %d segments that arrived",
+			report.Placed, report.Skipped, report.Segments)
+	}
+
+	if !strings.Contains(log, "(1/2 segments, 1 skipped,") {
+		t.Fatalf("the build log does not carry the splice counts:\n%s", log)
+	}
+	// The two shapes harness/bin/ci-e2e-browser-call-capture.sh parses, in its
+	// own words. That leg is a required check on this branch and on main, so a
+	// reshaped line has to break a unit test here rather than every open pull
+	// request over there.
+	for _, want := range []*regexp.Regexp{
+		regexp.MustCompile(`(?im)^ *source audio: .*alice.* transcribing from participant capture spliced over [0-9]+ ms of their recorded track \([0-9]+/[0-9]+ segments, [0-9]+ skipped,`),
+		regexp.MustCompile(`(?im)^ *source audio: .*alice.*: segment [0-9]+ not spliced: holds [0-9]+ ms of the [0-9]+ ms it declares \([0-9]+%\); the audio does not match the sidecar`),
+	} {
+		if !want.MatchString(log) {
+			t.Fatalf("the build log no longer matches what the browser-capture CI leg parses (%s):\n%s", want, log)
+		}
+	}
+	// The reason, naming the segment, on its own line beside the counts.
+	var skipLines []string
+	for _, line := range strings.Split(log, "\n") {
+		if strings.Contains(line, "not spliced:") {
+			skipLines = append(skipLines, line)
+		}
+	}
+	if len(skipLines) != report.Skipped {
+		t.Fatalf("%d segment(s) were skipped and the log explains %d:\n%s", report.Skipped, len(skipLines), log)
+	}
+	for _, want := range []string{
+		"source audio: ",
+		"segment 1 not spliced:",
+		"the audio does not match the sidecar",
+		"the recorded track stands there",
+	} {
+		if !strings.Contains(skipLines[0], want) {
+			t.Fatalf("the skip line %q does not say %q", skipLines[0], want)
+		}
+	}
+	// Every rejection the manifest carries is in the log, word for word, so the
+	// two can never tell different stories about the same build.
+	for _, rejection := range report.Rejections {
+		if !strings.Contains(log, rejection) {
+			t.Fatalf("the build log does not carry the manifest's rejection %q:\n%s", rejection, log)
+		}
+	}
+	// And a skipped segment must not read as a refused speaker. The whole-
+	// speaker refusal says "keeping the recorded audio", and the browser-capture
+	// CI leg fails the run when it sees those words: a per-segment skip inside a
+	// splice that worked is a different event and must not borrow them.
+	if strings.Contains(log, "keeping the recorded audio") {
+		t.Fatalf("a per-segment skip reads as a speaker whose upload went unused:\n%s", log)
+	}
+}
+
+// The clamp note is not a skip, and the log must not let the two be confused.
+//
+// A segment holding more audio than it declared is used across the window it
+// declared and no further: nothing was left out, and a reader counting skips
+// from the log would be wrong to count this one. The two rejections therefore
+// open with different words, and this pins them apart.
+func TestTheBuildLogTellsAPartlyUsedSegmentFromASkippedOne(t *testing.T) {
+	requireFFMediaTools(t)
+
+	specs := twoSpeakerSpecs()
+	mkv, streams := spliceFixture(t, specs)
+
+	// Declares ten seconds, holds twenty-five: past the declared window plus the
+	// checkpoint slack, so the overrun is clamped and the segment still lands.
+	root := t.TempDir()
+	overlong := syntheticSegmentDelayed(2000, 10, 1000, 0, 0)
+	overlong.AudioName = "segment-0.webm"
+	dir := filepath.Join(root, "room1", "alice", strconv.FormatInt(overlong.StartWallMS, 10))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir capture: %v", err)
+	}
+	writeToneSegment(t, dir, overlong.AudioName, 25, 1100)
+	writeSidecar(t, dir, SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: overlong.StartWallMS, CallEndWallMS: overlong.StopWallMS,
+		Segments: []SourceSegment{overlong},
+	})
+
+	_, reports, log := runSplicedBuild(t, mkv, streams, root, "room1", t.TempDir())
+
+	if len(reports) != 1 {
+		t.Fatalf("got %d reports, want one for alice: %v", len(reports), reports)
+	}
+	report := reports[0]
+	if report.Placed != 1 || report.Skipped != 0 {
+		t.Fatalf("placed %d and skipped %d, want 1 and 0: %v", report.Placed, report.Skipped, report.Rejections)
+	}
+	if len(report.Rejections) != 1 || !strings.Contains(report.Rejections[0], "partly used:") {
+		t.Fatalf("the clamp did not record itself as a partial use: %v", report.Rejections)
+	}
+	if !strings.Contains(log, "partly used: holds") {
+		t.Fatalf("the build log does not carry the clamp note:\n%s", log)
+	}
+	if strings.Contains(log, "not spliced:") {
+		t.Fatalf("a clamped segment reads as a skipped one:\n%s", log)
 	}
 }

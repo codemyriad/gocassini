@@ -717,9 +717,12 @@ type SourceRenderReport struct {
 	// nothing but the recorded audio staying where it was.
 	Skipped int `json:"skipped"`
 	// Rejections says what the splice declined to do and why. Every skipped
-	// segment has an entry; so does a segment that was used only across the
-	// window it declared, which is not a skip but is still the splice refusing
-	// part of what arrived.
+	// segment has an entry, reading "segment N not spliced: ..."; so does a
+	// segment that was used only across the window it declared, reading
+	// "segment N partly used: ...", which is not a skip but is still the splice
+	// refusing part of what arrived. The two openings are load-bearing: these
+	// lines are printed into the build log beside the splice counts, and a
+	// reader has to be able to pair one with a skip and not the other.
 	Rejections []string `json:"rejections,omitempty"`
 	// MixSpliced says whether the PUBLISHED audio carries this splice too, so
 	// that every word in the transcript can be heard in playback. False means
@@ -900,10 +903,16 @@ func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base 
 		loaded = append(loaded, sidecar)
 	}
 
+	// "not spliced" rather than the bare index, and deliberately not the words
+	// the whole-speaker refusal uses ("keeping the recorded audio"): these lines
+	// are printed next to the splice counts now, and a reader — the
+	// browser-capture CI leg included — has to be able to tell one segment left
+	// out of a splice that happened from a speaker whose upload went unused
+	// entirely. The two are as far apart as a report can put them.
 	skip := func(segment SourceSegment, format string, args ...any) {
 		report.Skipped++
 		report.Rejections = append(report.Rejections,
-			fmt.Sprintf("segment %d: %s; keeping the recorded audio there", segment.Index,
+			fmt.Sprintf("segment %d not spliced: %s; the recorded track stands there", segment.Index,
 				fmt.Sprintf(format, args...)))
 	}
 
@@ -960,8 +969,12 @@ func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base 
 			// for an allocation and wrong for a clamp that says how much
 			// recorded audio may be replaced.
 			if limit := int((segmentMS + segmentOverrunSlackMS) * int64(sampleRate) / 1000); limit > 0 && decoded > limit {
+				// "partly used", against the skips' "not spliced": both are
+				// rejections and only one of them left a segment out, so the
+				// two shapes have to be distinguishable by something better
+				// than counting.
 				report.Rejections = append(report.Rejections, fmt.Sprintf(
-					"segment %d holds %d ms under a %d ms window; only the first %d ms of it was used",
+					"segment %d partly used: holds %d ms under a %d ms window; only the first %d ms of it was used",
 					segment.Index, decodedMS, segmentMS, segmentMS+segmentOverrunSlackMS))
 				decoded = limit
 			}
@@ -1705,6 +1718,15 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 		// This line's prefix is matched verbatim by the browser-capture CI leg.
 		fmt.Fprintf(stdout, "  source audio: %s transcribing from participant capture spliced over %d ms of their recorded track (%d/%d segments, %d skipped, %d anchors, %.1f ms residual, %.0f ppm drift)\n",
 			stream.SpeakerLabel, report.SplicedMS, report.Placed, report.Segments, report.Skipped, report.Anchors, report.ResidualMS, report.RatePPM)
+		// Why, next to how many. Until now "1 skipped" reached the log and the
+		// reason for it reached only the manifest, so diagnosing a segment the
+		// splice declined meant opening the artifact — or, in CI, inferring the
+		// segment from its bytes-per-millisecond. One line per rejection, in
+		// the same words the manifest carries, so that the count above is never
+		// the whole story a reader gets.
+		for _, rejection := range report.Rejections {
+			fmt.Fprintf(stdout, "  source audio: %s: %s\n", stream.SpeakerLabel, rejection)
+		}
 		if report.MixSpliced {
 			fmt.Fprintf(stdout, "  source audio: %s: the published mix carries the same splice (%d window(s), %d ms crossfade)\n",
 				stream.SpeakerLabel, len(report.Windows), report.CrossfadeMS)

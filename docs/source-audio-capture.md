@@ -593,6 +593,19 @@ logged-in user. The client fails closed at every one of those.
   chunks and their recovery sidecar survive in OPFS; the next Talk page in that
   room resumes them into the capture it starts, or uploads them if the recording
   is over.
+
+  A segment sealed when the participant simply leaves loses a tail too, for the
+  same reason: its window is stamped from the call clock while the recorder's
+  last chunk is still on its way, so the file holds a little less than the
+  sidecar declares. Measured on the browser-capture CI leg, half a second to a
+  second and a half. The splice leaves out a segment holding under 90% of its
+  declared window, so on a segment shorter than about twenty seconds that lag
+  can be a tenth of the window and cost that segment its splice although nothing
+  went wrong. The recorded track stands there instead, and the build log says
+  which segment and why — but the last few seconds before somebody leaves are
+  the ones most likely to come from the recording rather than from their own
+  microphone. Stamping the segment's window from the last chunk actually written
+  rather than from the call clock would close it.
 - **A disabled ExApp still loads the payload.** The companion is a separate
   native app and reads `source_capture_enabled` from AppAPI's ExApp config,
   which outlives disabling the ExApp, so the script tag keeps appearing on Talk
