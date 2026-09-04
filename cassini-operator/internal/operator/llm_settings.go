@@ -21,8 +21,8 @@ import (
 )
 
 // LLMSettings is the operator-owned, persisted LLM policy: the endpoints an
-// administrator has registered and which one the meeting summary runs on. It lives beside
-// settings.json on the AppAPI volume and is the single source of the
+// administrator has registered and which ones summaries and insights run on.
+// It lives beside settings.json on the AppAPI volume and is the single source of the
 // recorder's LLM environment: ChildEnv strips every inherited LLM variable and
 // re-emits exactly what the policy says, so changing endpoints never needs an
 // ExApp redeploy (D-696).
@@ -375,9 +375,12 @@ func (s LLMSettings) provider(step LLMStep) (LLMProvider, bool) {
 // endpoint, or nothing at all when it is off. The recorder's kill-switches are
 // never emitted: "off" is simply the absence of an endpoint.
 //
-// An insight step that is off is the one case where absence is not silence:
-// the recorder layers INSIGHT_* over SUMMARY_*, so emitting nothing here leaves
-// insights running on the summary endpoint (D-719).
+// An insight step with no endpoint of its own normally inherits the emitted
+// SUMMARY_* values. When summary generation is disabled but still has a
+// selected provider, no SUMMARY_* values can be emitted without turning it
+// back on, so ChildEnv materialises that provider as INSIGHT_* instead. The
+// summary switch therefore never disables an insight somebody asks for
+// (D-719).
 func (s LLMSettings) ChildEnv(base []string) []string {
 	drop := inheritedLLMEnv()
 	out := make([]string, 0, len(base)+8)
@@ -392,7 +395,13 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 		out = append(out, kv)
 	}
 	out = s.appendStepEnv(out, llmStepSummary, s.Summary)
+	_, ownInsight := s.provider(s.Insight)
 	out = s.appendStepEnv(out, llmStepInsight, s.Insight)
+	if !s.Summary.Enabled && !ownInsight {
+		inherited := s.Summary
+		inherited.Enabled = true
+		out = s.appendStepEnv(out, llmStepInsight, inherited)
+	}
 	return out
 }
 
@@ -503,7 +512,9 @@ func (s LLMSettings) effectiveInsight() *llmEffectiveStep {
 	if step := s.effectiveStep(s.Insight); step != nil {
 		return step
 	}
-	step := s.effectiveStep(s.Summary)
+	inherited := s.Summary
+	inherited.Enabled = true
+	step := s.effectiveStep(inherited)
 	if step == nil {
 		return nil
 	}

@@ -53,9 +53,8 @@ in these docs should be read in light of them.
   `index.html` + `assets/` — is served from the image by default and embedded
   into the export only on `--rebuild-viewer`)
   is fully viewable with no server or central app. The viewer can also **embed**
-  inside the Nextcloud page. Nuance: the summary currently ships as a
-  static-site sidecar and is **not yet embedded** in the portable `.opus`
-  (see [WIP gaps](#wip-gaps)).
+  inside the Nextcloud page. When present, the summary is embedded in the
+  portable `.opus` alongside the transcript.
 
 ---
 
@@ -134,8 +133,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   the **transcription (build) stage**; live capture itself remains CPU-bound.
   Requires the NVIDIA driver +
   Container Toolkit on the engine running the ExApp. See
-  [GPU transcription (CUDA)](./exapp-install.md#gpu-transcription-cuda) and, for
-  Docker-in-LXC hosts, [Proxmox NVIDIA passthrough](./proxmox-jellyfin-nvidia.md).
+  [GPU transcription (CUDA)](./exapp-install.md#gpu-transcription-cuda).
 
 ### Summarisation & the privacy caveat
 
@@ -198,7 +196,6 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 ### Proposals & operations notes
 
 - [Branch previews](./branch-previews.md) — per-branch viewer deployments.
-- [Proxmox Jellyfin NVIDIA passthrough](./proxmox-jellyfin-nvidia.md) — host GPU setup pitfalls.
 
 ---
 

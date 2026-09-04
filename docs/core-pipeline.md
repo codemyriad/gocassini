@@ -102,7 +102,7 @@ In the current pipeline, build:
 4. computes decoded-audio integrity hashes
 5. runs speech-to-text
 6. writes the canonical word-timed transcript
-7. writes captions
+7. writes `captions.vtt`
 8. optionally generates `summary.md`
 9. writes `manifest.json`
 10. finalizes either a `.meeting` bundle or a portable `.opus`
@@ -114,11 +114,11 @@ Core outputs normally include:
 - `cassini.json`
 - `meeting.webm`
 - `transcript.words.v1.json`
+- `captions.vtt`
 - `manifest.json`
 
 Optional outputs may include:
 
-- `captions.vtt`
 - `summary.md`
 
 ### Optional layers inside build

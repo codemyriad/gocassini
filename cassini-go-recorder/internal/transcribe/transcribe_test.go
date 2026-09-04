@@ -92,7 +92,7 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 		Path:    "transcript.parakeet-v2.json",
 		ModelID: ModelParakeet06BV3,
 	}}
-	if err := WriteManifest(path, "source.mkv", sourceDurationMS, playableDurationMS, streams, segments, "fake-engine", ModelParakeet06B, "cuda", "", false, additional, nil, nil); err != nil {
+	if err := WriteManifest(path, ManifestInput{SrcBasename: "source.mkv", SrcDurationMS: sourceDurationMS, DigestDurationMS: playableDurationMS, Streams: streams, Segments: segments, STTBackend: "fake-engine", STTModelID: ModelParakeet06B, STTDevice: "cuda", Additional: additional}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 

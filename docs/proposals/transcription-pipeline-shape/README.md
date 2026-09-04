@@ -253,7 +253,7 @@ it instead of replacing the decoder.
 Diarization costs **no new runtime dependency**. Twelve diarization symbols are already exported from the
 `libsherpa-onnx-c-api.so` the recorder links today — ten matching
 `SherpaOnnxOfflineSpeakerDiarization*` plus `SherpaOnnxCreate…` and `SherpaOnnxDestroy…`
-(v1.13.1, verified with `nm -D --defined-only`); only
+(v1.13.7, verified with `nm -D --defined-only`); only
 the Go wrapper is missing, plus two ONNX files on the download path `EnsureModel` already
 implements.
 

@@ -540,13 +540,9 @@
           {#if insightWorkflowUnknown}
             <span class="text-xs text-warning">{unknownWorkflowWarning}</span>
           {/if}
-          <!-- Same caveat as the summary step's, and for the same reason:
-               nothing runs an insight from here yet, so the field is stored and
-               served and read by nobody. Delete this line when the operator
-               spawns a run. -->
           <span class="text-xs text-base-content/50">
-            Saved with the policy. Nothing runs an insight from the Operator yet; `cassini insight
-            run --workflow` names one on the command line.
+            Used as the default for in-app insight runs; an individual run can still choose another
+            workflow.
           </span>
         </label>
         <!-- One list for both steps: the registry is what the recorder ships,

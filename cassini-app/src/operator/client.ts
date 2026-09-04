@@ -215,6 +215,7 @@ function normalizeSettings(raw: unknown): Settings {
   return {
     quality: normalizeQuality(value.quality),
     device_override: asString(value.device_override),
+    transcription_terms: asStringArray(value.transcription_terms),
     source: asString(value.source) || "auto",
     detected_gpu: value.detected_gpu === true,
     cores: typeof value.cores === "number" && Number.isFinite(value.cores) ? value.cores : 0,
@@ -237,6 +238,12 @@ function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
+}
 
 // normalizeLLMSettings mirrors normalizeSettings: tolerate contract drift so
 // the panel always has a renderable shape, and never carry a raw key even if a

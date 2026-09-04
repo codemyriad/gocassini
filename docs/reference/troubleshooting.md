@@ -179,17 +179,36 @@ This is often expected.
 Stopping the record subprocess is not the same as cancelling all downstream work.
 If the recorder finalized a usable `.run`, the job may continue into build and publish.
 
-## I expected a summary or cleaned-up transcript, but it is missing
+## I expected a summary, but it is missing
 
 ### Meaning
 
-Readable cleanup and summary generation are optional capability layers.
+Summary generation is an optional capability layer. Transcripts are never
+rewritten by a model, so a missing summary is the only LLM-shaped output that
+can go missing from the automatic build pipeline.
 
 ### What to check
 
 - whether the relevant LLM-related env vars were configured
 - whether summary generation was explicitly disabled
-- whether the base build still succeeded without those optional outputs
+- whether the base build still succeeded without that optional output
+
+## My vocabulary terms are not showing up in the transcript
+
+### Meaning
+
+The vocabulary biases the decoder; it does not rewrite finished text. A term is
+only written where the audio already supports it, and some models cannot be
+biased at all.
+
+### What to check
+
+- `provenance.speechToText.hints` in the build manifest. `applied: false` names
+  the reason, most often a model bundle with no `bpe.vocab` or the `fast`
+  quality tier, which uses a CTC model that cannot be biased
+- whether `CASSINI_STT_HINTS_DISABLED` is set
+- whether the speaker genuinely said the term. Biasing raises a spelling's
+  score, it does not insert words
 
 See:
 

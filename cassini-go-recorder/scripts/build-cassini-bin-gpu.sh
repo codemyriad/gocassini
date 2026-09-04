@@ -18,14 +18,16 @@
 #   libonnxruntime_providers_*.so    — CUDA EP and shared providers
 #
 # Usage:
-#   scripts/build-cassini-bin-gpu.sh [--sherpa-version 1.13.1]
+#   scripts/build-cassini-bin-gpu.sh [--sherpa-version 1.13.7]
 
 set -euo pipefail
 
-SHERPA_VERSION="1.13.1"
+SHERPA_VERSION="1.13.7"
+SHERPA_TARBALL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sherpa-version) SHERPA_VERSION="$2"; shift 2 ;;
+    --sherpa-tarball) SHERPA_TARBALL="$2"; shift 2 ;;
     -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -36,9 +38,22 @@ DIST="$REC/dist"
 CACHE="$REC/.build-cache"
 mkdir -p "$DIST" "$CACHE"
 
-SHERPA_TARBALL="sherpa-onnx-v${SHERPA_VERSION}-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2"
+MOD_SHERPA_VERSION="$(go -C "$REC" list -m -f '{{.Version}}' github.com/k2-fsa/sherpa-onnx-go | sed 's/^v//')"
+if [[ "$SHERPA_VERSION" != "$MOD_SHERPA_VERSION" ]]; then
+  echo "error: --sherpa-version ($SHERPA_VERSION) does not match cassini-go-recorder/go.mod ($MOD_SHERPA_VERSION)" >&2
+  echo "       update go.mod first or build without overriding --sherpa-version" >&2
+  exit 1
+fi
+
+if [[ -z "$SHERPA_TARBALL" ]]; then
+  if [[ "$SHERPA_VERSION" == "1.13.7" ]]; then
+    SHERPA_TARBALL="sherpa-onnx-v${SHERPA_VERSION}-cuda-12.x-cudnn-9.x-onnxruntime1.27.1-linux-x64-gpu.tar.bz2"
+  else
+    SHERPA_TARBALL="sherpa-onnx-v${SHERPA_VERSION}-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2"
+  fi
+fi
 SHERPA_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${SHERPA_TARBALL}"
-SHERPA_EXTRACT="$CACHE/sherpa-onnx-v${SHERPA_VERSION}-gpu"
+SHERPA_EXTRACT="$CACHE/${SHERPA_TARBALL%.tar.bz2}"
 
 if [[ ! -d "$SHERPA_EXTRACT" ]]; then
   echo "==> downloading $SHERPA_TARBALL"
@@ -61,7 +76,7 @@ fi
 
 # Set up a local sherpa-onnx-go-linux clone with the GPU .so swapped in.
 # go.work makes this transparent to the in-tree go.mod.
-SHIM="$CACHE/sherpa-onnx-go-linux-gpu"
+SHIM="$CACHE/sherpa-onnx-go-linux-v${SHERPA_VERSION}-gpu"
 if [[ ! -d "$SHIM/.git" ]]; then
   echo "==> cloning sherpa-onnx-go-linux@v${SHERPA_VERSION}"
   rm -rf "$SHIM"
@@ -79,11 +94,11 @@ done
 # Build with a transient go.work that points sherpa-onnx-go-linux at the shim.
 GOWORK_FILE="$CACHE/go.work"
 cat > "$GOWORK_FILE" <<EOF
-go 1.22
+go 1.24.0
 
 use $REC
 
-replace github.com/k2-fsa/sherpa-onnx-go-linux v${SHERPA_VERSION} => $SHIM
+replace github.com/k2-fsa/sherpa-onnx-go-linux => $SHIM
 EOF
 
 echo "==> building cassini-bin"
