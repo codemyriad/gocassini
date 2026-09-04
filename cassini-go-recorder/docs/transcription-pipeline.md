@@ -141,13 +141,22 @@ vocabulary cannot introduce a word nobody said.
 Two conditions have to hold, both imposed by sherpa-onnx:
 
 1. the model must be a transducer. The `nemo_ctc` tier cannot be biased.
-2. the terms must be encodable with the model's BPE vocabulary. Bundles that
-   ship `bpe.vocab` use it; for bundles that do not, `EnsureBpeVocab` derives an
-   equivalent one from `tokens.txt` once per model directory.
+2. the model bundle must ship `bpe.vocab`, and `modeling_unit` must be `bpe`.
+   These two are the dangerous pair: with an empty `bpe_vocab` sherpa fails to
+   construct the recognizer (loud), but with `modeling_unit` left unset the
+   terms are tokenised as whole words, fail to encode, and the biasing is
+   silently a no-op while everything looks healthy. Upstream publishes some
+   Parakeet archives without `bpe.vocab`; regenerate those bundles with
+   upstream `scripts/nemo/generate_bpe_vocab.py` rather than deriving a
+   flat-score substitute at runtime.
 
 When neither holds, the build records `provenance.speechToText.hints` with
 `applied: false` and a reason, and decodes unbiased. A vocabulary that could not
 be applied is always visible in the manifest rather than silently ignored.
 
 Beam search costs decode time relative to greedy search, which is why hints stay
-off until a vocabulary is actually configured.
+off until a vocabulary is actually configured. Measured on CPU with Parakeet TDT
+0.6B v3 over 30 s and 45 s of real meeting audio, decode went from 1.79 s to
+2.60 s and from 3.19 s to 4.34 s: roughly 40 percent more, still several times
+faster than realtime. Switching decoders changes transcription slightly for
+unhinted text too, so it is not enabled unless a vocabulary is set.

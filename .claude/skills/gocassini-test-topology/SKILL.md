@@ -38,7 +38,7 @@ The local and CI test harness standardizes on explicit service topologies via `c
 | `full` | `db`, `nextcloud`, `appapi-harp`, `reverse-proxy`, `nats`, `janus`, `signaling`, `coturn` | Full local Talk media path for recorder/player E2E and operator debugging. |
 | `full-remote` | Full local stack + `signaling-public-proxy` | Remote browser / macOS host-net testing requiring public HTTPS routing. |
 
-Use `./bin/cassini dev stack plan --services <mode>` to inspect the resolved services, ports, and environment before starting a stack.
+Use `./bin/cassini dev stack plan --services <mode>` (e.g. `--services full`) to inspect resolved services, ports, and environment before starting a stack. (Note: `full-remote` requires `--public-mode remote-https`, an HTTPS public URL or host, and a non-loopback media host, provided via flags or `CASSINI_HARNESS_*` environment variables).
 
 ---
 

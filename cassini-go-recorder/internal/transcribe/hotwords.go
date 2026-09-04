@@ -23,8 +23,11 @@ import (
 //
 //  1. hotwords are read only under decoding_method=modified_beam_search;
 //     greedy search ignores the file entirely.
-//  2. the terms are encoded with the model's own BPE vocabulary, so a model
-//     bundle without bpe.vocab cannot take hints at all.
+//  2. modeling_unit must be "bpe" AND bpe_vocab must name a real file. With
+//     bpe_vocab empty the recognizer fails to construct; with modeling_unit
+//     left unset the terms are tokenised as whole words, fail to encode, and
+//     the biasing is silently a no-op while everything looks healthy. A model
+//     bundle without bpe.vocab therefore cannot take hints at all.
 //
 // A build that cannot meet both records that in provenance rather than
 // pretending the vocabulary was applied.
@@ -147,78 +150,6 @@ func writeHotwordsFile(dir string, terms []string) (string, error) {
 	return path, nil
 }
 
-// derivedBpeVocabName is the file EnsureBpeVocab writes when a bundle ships
-// without one. The distinct name keeps it from being mistaken for the
-// upstream artifact, and lets a later bundle that does ship bpe.vocab win.
-const derivedBpeVocabName = "bpe.derived.vocab"
-
-// EnsureBpeVocab returns a usable BPE vocabulary path for a transducer model,
-// deriving one from tokens.txt when the bundle does not ship it.
-//
-// Upstream publishes some Parakeet archives without bpe.vocab (the 0.6b v2 and
-// v3 int8 bundles), and sherpa-onnx needs one to encode hotwords. A vocabulary
-// whose entries all carry the same score makes SentencePiece fall back to
-// longest-match tokenization, which is exactly what the hotword encoder needs
-// to turn a term into the same token sequence the decoder would emit.
-//
-// This runs once per model directory, not once per transcription: the result
-// is cached next to the model. A read-only bundle directory (a baked image) is
-// not an error; it just means no derivation is possible there, and the caller
-// records that the vocabulary could not be applied.
-func EnsureBpeVocab(paths ModelPaths) string {
-	if paths.BpeVocabFile != "" {
-		return paths.BpeVocabFile
-	}
-	if paths.EncoderFile == "" || paths.TokensFile == "" {
-		return ""
-	}
-	dir := filepath.Dir(paths.TokensFile)
-	derived := filepath.Join(dir, derivedBpeVocabName)
-	if info, err := os.Stat(derived); err == nil && !info.IsDir() && info.Size() > 0 {
-		return derived
-	}
-
-	tokens, err := os.ReadFile(paths.TokensFile)
-	if err != nil {
-		return ""
-	}
-	var sb strings.Builder
-	for _, line := range strings.Split(string(tokens), "\n") {
-		// tokens.txt is "<piece> <id>" per line. Only the piece matters here;
-		// a line without one (the trailing newline) is skipped.
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		sb.WriteString(fields[0])
-		sb.WriteString("\t-1.0\n")
-	}
-	if sb.Len() == 0 {
-		return ""
-	}
-	// Write through a temporary file so a concurrent build never observes a
-	// half-written vocabulary, and so a failed write leaves no partial file.
-	tmp, err := os.CreateTemp(dir, derivedBpeVocabName+".*")
-	if err != nil {
-		return ""
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.WriteString(sb.String()); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return ""
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return ""
-	}
-	if err := os.Rename(tmpName, derived); err != nil {
-		os.Remove(tmpName)
-		return ""
-	}
-	return derived
-}
-
 // resolveHints turns a configured vocabulary into either a usable DecoderHints
 // or a provenance record explaining why the vocabulary could not be applied.
 //
@@ -243,12 +174,12 @@ func resolveHints(workDir string, terms []string, paths ModelPaths) (*DecoderHin
 			Reason:    "this model is CTC; decoder biasing needs a transducer model",
 		}, nil
 	}
-	bpeVocab := EnsureBpeVocab(paths)
-	if bpeVocab == "" {
+	if paths.BpeVocabFile == "" {
 		return nil, &HintsProvenance{
 			TermCount: len(terms),
 			Applied:   false,
-			Reason:    "this model bundle carries no bpe.vocab and one could not be derived from tokens.txt",
+			Reason: "this model bundle ships no bpe.vocab, which the decoder needs to encode the terms; " +
+				"rebuild the bundle with upstream scripts/nemo/generate_bpe_vocab.py",
 		}, nil
 	}
 
@@ -257,7 +188,7 @@ func resolveHints(workDir string, terms []string, paths ModelPaths) (*DecoderHin
 		return nil, nil, err
 	}
 	score := hintsScore()
-	return &DecoderHints{File: path, Score: score, TermCount: len(terms), BpeVocabFile: bpeVocab},
+	return &DecoderHints{File: path, Score: score, TermCount: len(terms), BpeVocabFile: paths.BpeVocabFile},
 		&HintsProvenance{
 			TermCount:      len(terms),
 			Score:          score,
