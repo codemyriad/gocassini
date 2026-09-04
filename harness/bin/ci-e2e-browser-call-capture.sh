@@ -670,21 +670,19 @@ fi
 #     into segments — only that between splicing and explaining, the whole
 #     recorded stretch is answered for;
 #   * every skipped segment has its reason on the build log; every one of those
-#     reasons is the short-tail one; AND the segment is short by no more than
-#     MAX_SHORT_TAIL_MS, which is the loss that case can actually cause. A skip
-#     for any other reason — a placement that would not fit, a decode that
-#     failed, a window that landed nowhere — fails the run, and so does a skip
-#     with no reason at all, and so does a segment missing far more audio than a
-#     dropped final chunk can explain.
+#     reasons is the short-tail one; AND the segment held between MIN_HELD and
+#     MAX_HELD of the window it declared, which is the band that reason can
+#     honestly describe. A skip for any other reason — a placement that would
+#     not fit, a decode that failed, a window that landed nowhere — fails the
+#     run, and so does a skip with no reason at all, and so does a segment
+#     missing far more of its audio than a stopping recorder explains.
 #
 # The last clause is the one that keeps this honest. "The audio does not match
 # the sidecar" is printed for a segment holding 89% of its window and for one
 # holding 10% of it, so accepting the reason alone would accept a regression
-# that truncated an upload to nothing. The deficit is bounded instead, from the
-# mechanism: the capture hands MediaRecorder chunks to OPFS every TIMESLICE_MS
-# (2000 ms, cassini-app/src/capture/payload.ts), page teardown cannot wait for
-# the asynchronous final chunk, and that timeslice IS the documented loss bound.
-# Measured on this leg the loss runs 0.44-1.72 s.
+# that truncated an upload to nothing; and accepting it at any percentage would
+# accept the pipeline changing its mind about which segments to drop. The band
+# is written out where those two constants are defined.
 #
 # What this deliberately does NOT assert is how many of Alice's three segments
 # landed. Two of them end at an abrupt boundary and either can lose its tail;
@@ -715,16 +713,36 @@ BENIGN_PARTIAL_REASON='partly used: holds [0-9]+ ms under a [0-9]+ ms window; on
 # The participant-agnostic half of the splice line, kept in one place because a
 # unit test reads it from this file and matches a real build log against it.
 SPLICE_LINE_REASON='transcribing from participant capture spliced over [0-9]+ ms of their recorded track \([0-9]+/[0-9]+ segments, [0-9]+ skipped,'
-# One MediaRecorder timeslice, plus a quarter of one for a loaded runner. A
-# segment shorter than its window by more than this lost more than a final
-# chunk, whatever the reason says.
-MAX_SHORT_TAIL_MS=2500
-# minSegmentDecodedFraction, as a pair of integers. A skipped segment must be
-# under this fraction of its declared window, or the splice is not dropping
-# segments for the reason it says it is — raising that constant would otherwise
-# leave healthy segments unspliced with every message here still permitted.
-MIN_DECODED_NUM=9
-MIN_DECODED_DEN=10
+# The band a legitimately short segment falls in, as integer fractions of the
+# window it declared. Between them they say: the splice dropped this segment for
+# the reason it gives, and the segment lost a sealing boundary rather than its
+# contents.
+#
+# The upper bound is minSegmentDecodedFraction itself. Without it the leg would
+# accept that constant being RAISED: every segment that lost a normal tail would
+# start being skipped, each with a permitted message, and two thirds of
+# somebody's upload would quietly stop reaching the transcript. (Lowering it is
+# invisible from here — the leg sees the segments the splice refused, never the
+# ones it accepted — and is held by a unit test in internal/transcribe instead.)
+#
+# The lower bound is what makes the reason mean something. "The audio does not
+# match the sidecar" is printed for a segment holding 89% of its window and for
+# one holding 10% of it, so without a floor an upload truncated to nothing would
+# arrive wearing a permitted sentence.
+#
+# Seven tenths, and proportional rather than a fixed number of milliseconds,
+# because of where the loss comes from. On a clean stop the capture stamps the
+# segment's end AFTER MediaRecorder's final chunk has been handed over
+# (stopSegment in cassini-app/src/capture/payload.ts), so the shortfall is the
+# stop and the encoder spin-up, not a dropped chunk: it is latency, and latency
+# grows with how loaded the runner is. Measured here it runs 0.4-1.7 s, which on
+# these segments is 4-13% of the window; a fixed cap near that would be a new
+# coin flip on a slow machine, while seven tenths still tolerates four and a half
+# seconds of it and refuses anything that lost a third of its audio.
+MIN_HELD_NUM=7
+MIN_HELD_DEN=10
+MAX_HELD_NUM=9
+MAX_HELD_DEN=10
 
 # assert_participant_splice <who> <min_segments> <min_placed> <min_spliced_ms> <min_accounted_ms>
 assert_participant_splice() {
@@ -772,20 +790,15 @@ assert_participant_splice() {
     if ! [[ "$held" =~ ^[0-9]+$ && "$declared" =~ ^[0-9]+$ ]]; then
       fail "could not read the deficit from ${who}'s skip line: $skip_line"
     fi
-    if (( declared - held > MAX_SHORT_TAIL_MS )); then
+    if (( held * MIN_HELD_DEN < declared * MIN_HELD_NUM )); then
       log "--- build.log excerpt ---"
       grep -E "source audio" "$LOG_DIR/build.log" || true
-      fail "${who} lost $(( declared - held )) ms of a $declared ms segment, more than the ${MAX_SHORT_TAIL_MS} ms a dropped final chunk explains: $skip_line"
+      fail "${who} lost $(( declared - held )) ms of a $declared ms segment, further under it than a stopping recorder explains: $skip_line"
     fi
-    # And the segment really is under the fraction the splice drops segments at.
-    # Without this the leg would accept a raised minSegmentDecodedFraction:
-    # every segment that lost a normal tail would start being skipped, each with
-    # a permitted message and a permitted deficit, and two thirds of somebody's
-    # upload would quietly stop reaching the transcript.
-    if (( held * MIN_DECODED_DEN > declared * MIN_DECODED_NUM )); then
+    if (( held * MAX_HELD_DEN > declared * MAX_HELD_NUM )); then
       log "--- build.log excerpt ---"
       grep -E "source audio" "$LOG_DIR/build.log" || true
-      fail "${who} had a segment holding $held of $declared ms skipped, above the ${MIN_DECODED_NUM}/${MIN_DECODED_DEN} of its window the splice drops segments under: $skip_line"
+      fail "${who} had a segment holding $held of $declared ms skipped, above the ${MAX_HELD_NUM}/${MAX_HELD_DEN} of its window the splice drops segments under: $skip_line"
     fi
     explained=$(( explained + 1 ))
     accounted=$(( accounted + declared ))
@@ -879,8 +892,8 @@ jq -e --arg alice "$ALICE" --arg bob "$BOB" \
   --argjson aSpliced "$ALICE_MIN_SPLICED_MS" --argjson aAccounted "$ALICE_MIN_ACCOUNTED_MS" \
   --argjson bSegments "$BOB_MIN_SEGMENTS" --argjson bPlaced "$BOB_MIN_PLACED" \
   --argjson bSpliced "$BOB_MIN_SPLICED_MS" --argjson bAccounted "$BOB_MIN_ACCOUNTED_MS" \
-  --argjson maxTail "$MAX_SHORT_TAIL_MS" \
-  --argjson decodedNum "$MIN_DECODED_NUM" --argjson decodedDen "$MIN_DECODED_DEN" \
+  --argjson minHeldNum "$MIN_HELD_NUM" --argjson minHeldDen "$MIN_HELD_DEN" \
+  --argjson maxHeldNum "$MAX_HELD_NUM" --argjson maxHeldDen "$MAX_HELD_DEN" \
   --arg skipReason "$BENIGN_SKIP_REASON" '
   .provenance.sourceAudio as $sa
   # Every segment the splice named a short-tail reason for, as {held, declared}.
@@ -901,8 +914,8 @@ jq -e --arg alice "$ALICE" --arg bob "$BOB" \
         and (.placed + .skipped) == .segments
         and .spliced_ms >= $minSplicedMS
         and (shortTails | length) == .skipped
-        and all(shortTails[]; (.declared - .held) <= $maxTail)
-        and all(shortTails[]; (.held * $decodedDen) <= (.declared * $decodedNum))
+        and all(shortTails[]; (.held * $minHeldDen) >= (.declared * $minHeldNum))
+        and all(shortTails[]; (.held * $maxHeldDen) <= (.declared * $maxHeldNum))
         and (.spliced_ms + ([shortTails[].declared] | add // 0)) >= $minAccountedMS);
     ($sa | type == "array" and length >= 2)
     and spliced($alice; $aSegments; $aPlaced; $aSpliced; $aAccounted)
