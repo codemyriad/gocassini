@@ -182,13 +182,31 @@ export interface StorageTransition {
   catalog_moved: boolean;
   source_root: string;
   destination_root: string;
+  // meetings_already_there is how many of the source's recordings were already
+  // at the destination and so were not copied again. Non-zero on a re-run after
+  // a partial failure, which is the case worth naming out loud.
+  meetings_already_there: number;
+  // source_cleared is false when the archive arrived but the tidy-up did not
+  // finish. The switch worked; there is a leftover copy and a button for it.
+  source_cleared: boolean;
   leftover_source: string;
-  unmapped_groups: string[];
 }
 
 export interface StorageStatus {
   mode: StorageMode;
   mode_source: string;
+  // migration_clean is false when a mode switch stopped before it finished
+  // tidying up. The archive is complete at the mode's own root — that is the
+  // invariant the operator keeps — and pending_cleanup names the root holding
+  // the leftovers.
+  migration_clean: boolean;
+  pending_cleanup: string;
+  // stranded_root / stranded_recordings report an archive sitting in the mode
+  // that is NOT in force. Not an error: publishing and reading both work. It is
+  // the thing an administrator most needs told, because the symptom is "my
+  // recordings are gone" and the cause is a mode nobody switched.
+  stranded_root: string;
+  stranded_recordings: number;
   ok: boolean;
   state: string;
   step: string;
@@ -213,6 +231,11 @@ export interface StorageTransitionPreview {
   detail: string;
   source_root: string;
   destination_root: string;
+  // source_readable says the source tree was actually listed. Without it a
+  // failed PROPFIND and an empty archive are the same zero, and the dialog says
+  // "there are no published recordings to move" on the strength of a question
+  // nobody managed to ask — which is exactly what QA saw.
+  source_readable: boolean;
   meetings: number;
   catalog_present: boolean;
   // destination_meetings is what is already where this would write. Not fatal —
@@ -220,6 +243,9 @@ export interface StorageTransitionPreview {
   // before merging somebody's archive.
   destination_meetings: number;
   nothing_to_move: boolean;
+  // pending_cleanup is set when an earlier switch did not finish, so the
+  // administrator is told the stale root is cleared before this one starts.
+  pending_cleanup: string;
   // warnings are one sentence each, most-surprising first.
   warnings: string[];
 }

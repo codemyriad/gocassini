@@ -321,7 +321,7 @@ function adminNotice(
       steps: [
         {
           label:
-            "Open the Setup tab above and pick the storage mode you want. Switching moves the recordings that are already published",
+            "Open the Setup tab above and pick the storage mode you want. Switching copies the recordings that are already published, and nothing is removed until they have arrived",
           commands: [],
         },
       ],

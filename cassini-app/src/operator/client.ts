@@ -172,6 +172,23 @@ export class OperatorClient {
     );
   }
 
+  // finishStorageMigration completes a switch that stopped part way.
+  //
+  // It clears the root the recorded mode does NOT name and marks the instance
+  // settled. One action covers every way a migration can stop, because the
+  // operator's invariant makes them the same shape: whatever happened, the
+  // recorded mode names a root holding a complete archive and the other one
+  // holds something nothing reads.
+  async finishStorageMigration(): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "finish_migration" }),
+      }),
+    );
+  }
+
   // installStorageApps asks the operator to attempt the native app installs.
   //
   // This is the one part of the setup the browser cannot do — those routes want
@@ -301,6 +318,13 @@ function normalizeStorage(raw: unknown): StorageStatus {
     step: asString(value.step),
     detail: asString(value.detail),
     checked_at: asString(value.checked_at),
+    // Absent reads as SETTLED, matching the operator's own absent-means-clean
+    // rule. An older operator that does not send the field must not make the
+    // Setup tab offer a cleanup that DELETES from a root.
+    migration_clean: value.migration_clean !== false,
+    pending_cleanup: asString(value.pending_cleanup),
+    stranded_root: asString(value.stranded_root),
+    stranded_recordings: asCount(value.stranded_recordings),
     modes: normalizeStorageModes(value.modes),
     transition: normalizeStorageTransition(value.transition),
     installs: normalizeInstalls(value.installs),
@@ -324,10 +348,12 @@ function normalizeStoragePreview(value: unknown): StorageTransitionPreview | nul
     detail: asString(row.detail),
     source_root: asString(row.source_root),
     destination_root: asString(row.destination_root),
+    source_readable: row.source_readable === true,
     meetings: asCount(row.meetings),
     catalog_present: row.catalog_present === true,
     destination_meetings: asCount(row.destination_meetings),
     nothing_to_move: row.nothing_to_move === true,
+    pending_cleanup: asString(row.pending_cleanup),
     warnings: Array.isArray(row.warnings)
       ? row.warnings.filter((w): w is string => typeof w === "string" && w !== "")
       : [],
@@ -439,7 +465,8 @@ function normalizeStorageTransition(value: unknown): StorageTransition | null {
     catalog_moved: row.catalog_moved === true,
     source_root: asString(row.source_root),
     destination_root: asString(row.destination_root),
+    meetings_already_there: asCount(row.meetings_already_there),
+    source_cleared: row.source_cleared === true,
     leftover_source: asString(row.leftover_source),
-    unmapped_groups: asStringArray(row.unmapped_groups),
   };
 }

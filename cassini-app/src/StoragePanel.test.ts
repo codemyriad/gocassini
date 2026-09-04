@@ -211,3 +211,114 @@ describe("StoragePanel on an install whose routes predate the tab", () => {
     expect(storagePanelSource).toContain("Re-register the app in Nextcloud");
   });
 });
+
+// --- The stale setup warning, and the reload that clears it ---------------------
+//
+// QA item 1: after a setup completes, the shell still says Cassini is not
+// configured until the browser is refreshed by hand. App.svelte reads its setup
+// health once, in onMount, and nothing writes it again — so the fix is the
+// refresh the administrator was doing anyway.
+
+describe("StoragePanel reload", () => {
+  it("reloads the page after a setup that finished", () => {
+    const runSetup = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function runSetup("),
+      storagePanelSource.indexOf("function modeOptionFor("),
+    );
+    expect(runSetup).toContain("finishAndReload(");
+    // …and AFTER the recheck, so the operator has looked again before the page
+    // that will render its answer is thrown away.
+    expect(runSetup.indexOf("recheckStorage()")).toBeLessThan(runSetup.indexOf("finishAndReload("));
+  });
+
+  it("reloads the page after a completed mode switch", () => {
+    const confirmSwitch = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function confirmSwitch("),
+      storagePanelSource.indexOf("async function finishMigration("),
+    );
+    expect(confirmSwitch).toContain("operatorClient.putStorage(");
+    expect(confirmSwitch).toContain("finishAndReload(");
+  });
+
+  // A failed action must leave the error on screen. Reloading there would throw
+  // away the one thing the administrator needs to read.
+  it("does not reload when an action fails", () => {
+    const catchBlock = storagePanelSource.slice(
+      storagePanelSource.indexOf("switchError = asMessage(error);"),
+      storagePanelSource.indexOf(
+        "} finally {",
+        storagePanelSource.indexOf("switchError = asMessage(error);"),
+      ),
+    );
+    expect(catchBlock).not.toContain("finishAndReload");
+    expect(catchBlock).not.toContain("reloadPage");
+  });
+
+  // The reload would otherwise swallow the result. Every reload is preceded by
+  // the flash that carries it across.
+  it("stashes the result before reloading, and renders it once afterwards", () => {
+    expect(storagePanelSource).toContain("writeStorageFlash(next)");
+    expect(storagePanelSource).toContain("reloadPage()");
+    expect(storagePanelSource).toContain("flash = readStorageFlash()");
+    // Exactly one place reloads, so there is no path that reloads without a flash.
+    expect(storagePanelSource.match(/reloadPage\(\)/g) ?? []).toHaveLength(1);
+  });
+});
+
+// --- Recovering from a switch that did not finish --------------------------------
+
+describe("StoragePanel recovery", () => {
+  it("offers one action to finish an unfinished migration", () => {
+    expect(storagePanelSource).toContain("{#if !status.migration_clean}");
+    expect(storagePanelSource).toContain("A storage switch did not finish.");
+    expect(storagePanelSource).toContain("on:click={finishMigration}");
+    expect(storagePanelSource).toContain("operatorClient.finishStorageMigration()");
+  });
+
+  // The banner has to say the archive is SAFE, because the honest description of
+  // this state is a tidy-up and the alarming reading is data loss.
+  it("says where the recordings are before offering to clear anything", () => {
+    const start = storagePanelSource.indexOf("{#if !status.migration_clean}");
+    const banner = storagePanelSource.slice(
+      start,
+      storagePanelSource.indexOf("on:click={finishMigration}", start),
+    );
+    expect(banner).toContain("Your recordings are all in");
+    expect(banner).toContain("activeRoot");
+  });
+
+  it("names an archive left in the mode that is not in force", () => {
+    expect(storagePanelSource).toContain("status.stranded_recordings > 0");
+    expect(storagePanelSource).toContain("status.stranded_root");
+    expect(storagePanelSource).toContain("Nothing is lost.");
+  });
+
+  // The two are mutually exclusive on purpose: while a migration is unfinished
+  // the other root's contents ARE the leftovers, and calling them stranded would
+  // invite a switch where the answer is a cleanup.
+  it("does not offer both a cleanup and a switch for the same files", () => {
+    expect(storagePanelSource).toContain(
+      "{:else if status.stranded_recordings > 0}",
+    );
+  });
+});
+
+// --- The preliminary check (QA item 2) -------------------------------------------
+
+describe("StoragePanel preview", () => {
+  // The QA report: five recordings, and the dialog said none would move. The
+  // operator now distinguishes "the tree is empty" from "we could not look", and
+  // the panel has to render the difference or the distinction buys nothing.
+  it("never renders an unreadable source as nothing to move", () => {
+    const dialog = storagePanelSource.slice(
+      storagePanelSource.indexOf("{:else if preview}"),
+      storagePanelSource.indexOf("{:else if previewError}"),
+    );
+    expect(dialog).toContain("{#if !preview.source_readable}");
+    expect(dialog).toContain("Cassini could not read");
+    // The unreadable branch comes FIRST, so nothing_to_move cannot win it.
+    expect(dialog.indexOf("!preview.source_readable")).toBeLessThan(
+      dialog.indexOf("preview.nothing_to_move"),
+    );
+  });
+});
