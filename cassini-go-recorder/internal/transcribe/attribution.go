@@ -55,7 +55,11 @@ const (
 // relative to that track's own quiet baseline.
 type SpeakerEnvelope struct {
 	SpeakerID string
-	// FrameDB is the log-RMS of each frame in dBFS.
+	// FrameDB is the log-RMS of each frame in dBFS, except where
+	// capIngestedDynamicRange has raised the quietest frames of an ingested
+	// speaker to the baseline the recorded tracks establish — below that, one
+	// microphone's silence is not distinguishable from another's, and this
+	// envelope exists to be compared with theirs.
 	FrameDB []float64
 	// Present marks frames that carry real captured audio. Decoding puts every
 	// track on the shared meeting timeline, which means a participant who joined
@@ -75,6 +79,10 @@ type SpeakerEnvelope struct {
 	FloorDB  float64
 	SpeechDB float64
 	HopMS    int64
+	// FromSourceAudio marks an envelope measured on a participant's spliced
+	// render rather than on the track the SFU delivered. The two are not
+	// interchangeable as evidence: see capIngestedDynamicRange.
+	FromSourceAudio bool
 }
 
 // aboveFloor reports how far the loudest part of [startMS,endMS] sits above
@@ -123,6 +131,31 @@ func (e *SpeakerEnvelope) aboveFloor(startMS, endMS int64) (float64, bool) {
 	return sum/float64(k) - e.FloorDB, true
 }
 
+// measurableStreams keeps the streams attribution can measure as independent
+// evidence, and drops the two kinds it cannot.
+//
+// The merged-fallback speaker (Index < 0) is a synthetic mix of everyone: it
+// has no track of its own to compare against and must never become a rival.
+//
+// A stream suppressed by source-audio ingestion is already inside another
+// stream's envelope. The splice renders one file per participant spanning the
+// whole meeting timeline — every one of their recorded streams, with their
+// upload laid over it — and points ONE of their streams at that render while
+// suppressing the siblings (sourceaudio.go). Measuring a suppressed sibling as
+// well would give that participant two envelopes over the same audio: a
+// duplicate rival for every word, and a second floor for
+// calibrateByLogicalSpeaker to pool as if it were independent evidence.
+func measurableStreams(streams []AudioStream) []AudioStream {
+	keep := make([]AudioStream, 0, len(streams))
+	for _, s := range streams {
+		if s.Index < 0 || s.SuppressTranscription {
+			continue
+		}
+		keep = append(keep, s)
+	}
+	return keep
+}
+
 // BuildSpeakerEnvelopes decodes each participant track once and reduces it to a
 // level envelope on the shared timeline. This is cheap next to ASR: it is the
 // same ffmpeg decode the transcription pass already performs, plus arithmetic.
@@ -141,15 +174,18 @@ func BuildSpeakerEnvelopes(mkvPath string, streams []AudioStream, sampleRate int
 		return nil, fmt.Errorf("attribution: bad frame/hop for sample rate %d", sampleRate)
 	}
 
+	streams = measurableStreams(streams)
 	envelopes := make([]*SpeakerEnvelope, 0, len(streams))
 	for _, stream := range streams {
 		env, err := buildSpeakerEnvelopeStreaming(mkvPath, stream, frame, hop)
 		if err != nil {
 			return nil, fmt.Errorf("attribution: decode %s: %w", stream.SpeakerLabel, err)
 		}
+		env.FromSourceAudio = stream.SourceAudioPath != ""
 		envelopes = append(envelopes, env)
 	}
 	calibrateByLogicalSpeaker(envelopes)
+	capIngestedDynamicRange(envelopes)
 	if progress != nil {
 		for _, env := range envelopes {
 			fmt.Fprintf(progress, "    envelope %s: floor %.1f dB, speech %.1f dB\n",
@@ -181,10 +217,6 @@ func BuildSpeakerEnvelopes(mkvPath string, streams []AudioStream, sampleRate int
 // Streams too short to characterise anything are ignored, so a fragment of a
 // stream cannot drag a speaker's floor down.
 func calibrateByLogicalSpeaker(envelopes []*SpeakerEnvelope) {
-	// minCalibrationFrames is ~160 ms at the standard hop: enough for a floor
-	// estimate to mean something, short enough that a brief rejoin still counts.
-	const minCalibrationFrames = 10
-
 	type speakerLevels struct {
 		floorDB  float64
 		speechDB float64
@@ -192,15 +224,7 @@ func calibrateByLogicalSpeaker(envelopes []*SpeakerEnvelope) {
 	}
 	levels := map[string]*speakerLevels{}
 	for _, env := range envelopes {
-		var present int
-		if len(env.Present) == len(env.FrameDB) {
-			for _, ok := range env.Present {
-				if ok {
-					present++
-				}
-			}
-		}
-		if present < minCalibrationFrames {
+		if env.presentFrames() < minCalibrationFrames {
 			continue
 		}
 		agg, ok := levels[env.SpeakerID]
@@ -220,6 +244,113 @@ func calibrateByLogicalSpeaker(envelopes []*SpeakerEnvelope) {
 		if agg, ok := levels[env.SpeakerID]; ok && agg.found {
 			env.FloorDB = agg.floorDB
 			env.SpeechDB = agg.speechDB
+		}
+	}
+}
+
+// minCalibrationFrames is ~160 ms at the standard hop: enough for a floor
+// estimate to mean something, short enough that a brief rejoin still counts.
+const minCalibrationFrames = 10
+
+// presentFrames counts the frames that carry captured audio.
+func (e *SpeakerEnvelope) presentFrames() int {
+	if len(e.Present) != len(e.FrameDB) {
+		return 0
+	}
+	var n int
+	for _, ok := range e.Present {
+		if ok {
+			n++
+		}
+	}
+	return n
+}
+
+// capIngestedDynamicRange stops a participant's own recording from making them
+// everybody else's rival.
+//
+// Crosstalk is a relative judgement: a word is a bleed candidate because some
+// OTHER track sat further above its own floor than the owning track sat above
+// its own. That comparison assumes every track's floor was read off the same
+// kind of silence. Ingestion breaks the assumption for one speaker at a time.
+// The SFU track only exists where packets arrived, so its 20th percentile is
+// read off whatever the network delivered — comfort noise, bleed, the quiet
+// end of speech. The spliced render also holds the participant's own capture
+// across the stretches the SFU sent nothing for, and that audio is continuous
+// and undamaged, so its 20th percentile lands on the microphone's real noise
+// floor, tens of dB lower. Every level on that track then measures that much
+// further "above its own floor" than the same voice on a recorded track would,
+// and the excess is not evidence about who was speaking.
+//
+// Measured on a synthetic three-speaker meeting where one speaker is spliced
+// (attribution_bias_test.go): with the ingested floor 10 dB below the others'
+// the crosstalk mode smears until EstimateCrosstalkThresholdDB declines
+// altogether — 120 flagged crosstalk words become 0, silently, for the whole
+// meeting. At 25 dB the same. So this is not a rounding difference; left alone
+// it decides whether the stage works at all.
+//
+// The correction is the narrowest one that removes it: an ingested speaker may
+// not be credited with a deeper usable range than the recorded tracks in the
+// same meeting establish. Their levels still come from the audio the words were
+// decoded from — that is the whole point of measuring the splice — but the
+// baseline those levels are expressed against is the one everybody else is
+// measured against too.
+//
+// Deliberately a no-op unless the meeting mixes the two kinds of evidence. A
+// build with no uploads has no ingested envelope; a build where everybody
+// uploaded has no recorded reference and no asymmetry to correct either.
+func capIngestedDynamicRange(envelopes []*SpeakerEnvelope) {
+	recorded := math.Inf(-1)
+	for _, env := range envelopes {
+		if env.FromSourceAudio || env.presentFrames() < minCalibrationFrames {
+			continue
+		}
+		if snr := env.SpeechDB - env.FloorDB; snr > recorded {
+			recorded = snr
+		}
+	}
+	// No usable recorded reference, or one too shallow to be used as a
+	// yardstick. Either way, leave the envelopes as measured.
+	//
+	// The lower bound is not arbitrary and it is not a tidiness check: it is
+	// the range ownerQuietDuring needs to exist. Clamping this envelope's
+	// frames up to SpeechDB-recorded bounds how far below their own speech
+	// reference this speaker can ever measure — at recorded dB, exactly. A word
+	// is only FLAGGABLE when its owner sits at least quietOwnerShortfallDB
+	// below that reference, so a reference narrower than that would make every
+	// word on this track unflaggable for the whole meeting: their ghosts would
+	// become undetectable, quietly, as the price of correcting everybody
+	// else's. That is a worse failure than the bias, so below this the
+	// correction declines and the envelope stands as measured.
+	//
+	// A meeting where no recorded track shows even this much between its quiet
+	// and its loud levels is also one where the recorded tracks are not a
+	// usable yardstick for anything.
+	if math.IsInf(recorded, -1) || recorded < quietOwnerShortfallDB {
+		return
+	}
+	for _, env := range envelopes {
+		if !env.FromSourceAudio {
+			continue
+		}
+		floor := env.SpeechDB - recorded
+		if floor <= env.FloorDB {
+			continue
+		}
+		env.FloorDB = floor
+		// The frames go up with it. Raising the floor alone would leave this
+		// track's quiet stretches sitting BELOW their own floor, which reads as
+		// "everybody else was louder than the owner" on exactly the windows
+		// where nobody was speaking at all — a third population of gaps that
+		// EstimateCrosstalkThresholdDB has to fit, and in the measurement it
+		// either smeared the crosstalk mode away entirely (delta 15 dB: 120
+		// flagged became 0) or joined it (delta 20-30 dB: 120 became 180).
+		// Below this baseline one microphone's silence is not distinguishable
+		// from another's, so it is not recorded as if it were.
+		for i, db := range env.FrameDB {
+			if db < floor {
+				env.FrameDB[i] = floor
+			}
 		}
 	}
 }
@@ -290,17 +421,39 @@ func envelopeFromSamples(speakerID string, samples []float32, frame, hop int, ho
 // keep pipe overhead negligible.
 const attributionReadChunkBytes = 16 * 1024
 
-// buildSpeakerEnvelopeStreaming decodes one participant track with the same
-// ffmpeg invocation ExtractSpeakerFloats uses and folds the PCM into an
-// envelope as it arrives. Peak allocation is O(frames) plus fixed chunk
-// buffers — the track's PCM is never materialised as a whole.
+// buildSpeakerEnvelopeStreaming decodes one participant with the same ffmpeg
+// invocation ExtractSpeakerFloats uses and folds the PCM into an envelope as it
+// arrives. Peak allocation is O(frames) plus fixed chunk buffers — the audio is
+// never materialised as a whole.
+//
+// The same invocation, deliberately: attribution must judge the audio the words
+// were decoded FROM, or it is answering a different question than the one it
+// reports on. A speaker whose upload was spliced in is transcribed from
+// stream.SourceAudioPath, so measuring their recorded track instead scores a
+// word recovered from the upload against whatever the SFU delivered there —
+// nothing, where the track was silent. That reads as a quiet owner under
+// somebody else's speech, which is exactly the crosstalk signature: the word is
+// flagged, kept out of the summary, and under CASSINI_ATTRIBUTION_DROP deleted,
+// while being plainly audible in the published mix that carries the same
+// splice.
+//
+// The spliced file is already mono, 16 kHz and on the meeting timeline (it is
+// the render the mix encodes, resampled), so it is read as a plain file and
+// none of the sparse-timeline machinery applies — the same simplification
+// ExtractSpeakerFloats makes. ExtractStreamFloatsAt keeps its own contract, a
+// caller asking for a recorded track gets the recorded track: the splice's own
+// floor is a different need from this one.
 func buildSpeakerEnvelopeStreaming(mkvPath string, stream AudioStream, frame, hop int) (*SpeakerEnvelope, error) {
 	args := []string{
 		"-v", "error",
 		"-y",
-		"-i", mkvPath,
 	}
-	args = append(args, sparseTimelineDecodeArgs(stream, 16000)...)
+	if stream.SourceAudioPath != "" {
+		args = append(args, "-i", stream.SourceAudioPath)
+	} else {
+		args = append(args, "-i", mkvPath)
+		args = append(args, sparseTimelineDecodeArgs(stream, 16000)...)
+	}
 	args = append(args,
 		"-vn",
 		"-sn",
