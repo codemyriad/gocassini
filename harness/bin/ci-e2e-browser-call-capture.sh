@@ -703,9 +703,12 @@ fi
 # stops covering, or starts declining segments for reasons the pipeline does not
 # document.
 
-# The one skipped-segment reason this leg tolerates, with the two numbers it
-# reports captured so the deficit itself can be bounded.
-BENIGN_SKIP_REASON='holds [0-9]+ ms of the [0-9]+ ms it declares \([0-9]+%\); the audio does not match the sidecar'
+# The one skipped-segment reason this leg tolerates — the WHOLE reason, matched
+# to the end of the line wherever it is used, because a prefix would let a future
+# "...does not match the sidecar; and the decode failed too" through as benign.
+# The two millisecond figures are capture groups, so the deficit is read with
+# this same expression rather than with a second one that could drift from it.
+BENIGN_SKIP_REASON='holds ([0-9]+) ms of the ([0-9]+) ms it declares \([0-9]+%\); the audio does not match the sidecar; the recorded track stands there'
 # Not a skip at all: a segment used only across the window it declared. It is
 # tolerated but never counts as the explanation for a skip.
 BENIGN_PARTIAL_REASON='partly used: holds [0-9]+ ms under a [0-9]+ ms window; only the first [0-9]+ ms of it was used'
@@ -716,6 +719,12 @@ SPLICE_LINE_REASON='transcribing from participant capture spliced over [0-9]+ ms
 # segment shorter than its window by more than this lost more than a final
 # chunk, whatever the reason says.
 MAX_SHORT_TAIL_MS=2500
+# minSegmentDecodedFraction, as a pair of integers. A skipped segment must be
+# under this fraction of its declared window, or the splice is not dropping
+# segments for the reason it says it is — raising that constant would otherwise
+# leave healthy segments unspliced with every message here still permitted.
+MIN_DECODED_NUM=9
+MIN_DECODED_DEN=10
 
 # assert_participant_splice <who> <min_segments> <min_placed> <min_spliced_ms> <min_accounted_ms>
 assert_participant_splice() {
@@ -757,8 +766,9 @@ assert_participant_splice() {
   accounted="$spliced"
   while IFS= read -r skip_line; do
     [[ -n "$skip_line" ]] || continue
-    read -r held declared <<<"$(sed -E \
-      's#.*holds ([0-9]+) ms of the ([0-9]+) ms it declares.*#\1 \2#' <<<"$skip_line")"
+    # The same expression that selected the line reads its numbers, so the two
+    # cannot come to disagree about which figure is which.
+    read -r held declared <<<"$(sed -E "s#.*${BENIGN_SKIP_REASON}.*#\\1 \\2#" <<<"$skip_line")"
     if ! [[ "$held" =~ ^[0-9]+$ && "$declared" =~ ^[0-9]+$ ]]; then
       fail "could not read the deficit from ${who}'s skip line: $skip_line"
     fi
@@ -767,9 +777,19 @@ assert_participant_splice() {
       grep -E "source audio" "$LOG_DIR/build.log" || true
       fail "${who} lost $(( declared - held )) ms of a $declared ms segment, more than the ${MAX_SHORT_TAIL_MS} ms a dropped final chunk explains: $skip_line"
     fi
+    # And the segment really is under the fraction the splice drops segments at.
+    # Without this the leg would accept a raised minSegmentDecodedFraction:
+    # every segment that lost a normal tail would start being skipped, each with
+    # a permitted message and a permitted deficit, and two thirds of somebody's
+    # upload would quietly stop reaching the transcript.
+    if (( held * MIN_DECODED_DEN > declared * MIN_DECODED_NUM )); then
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "${who} had a segment holding $held of $declared ms skipped, above the ${MIN_DECODED_NUM}/${MIN_DECODED_DEN} of its window the splice drops segments under: $skip_line"
+    fi
     explained=$(( explained + 1 ))
     accounted=$(( accounted + declared ))
-  done < <(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ not spliced: ${BENIGN_SKIP_REASON}" \
+  done < <(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ not spliced: ${BENIGN_SKIP_REASON}\$" \
     "$LOG_DIR/build.log" || true)
   if (( explained != skipped )); then
     log "--- build.log excerpt ---"
@@ -780,7 +800,7 @@ assert_participant_splice() {
     || fail "${who}'s splice covers $spliced ms and explains $(( accounted - spliced )) ms more, $accounted ms of the $min_accounted_ms ms this leg recorded them for"
   # And nothing else the splice declined is left unaccounted for.
   unexplained="$(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ (not spliced|partly used):" "$LOG_DIR/build.log" \
-    | grep -Ecv "(${BENIGN_SKIP_REASON}|${BENIGN_PARTIAL_REASON})" || true)"
+    | grep -Ecv "(${BENIGN_SKIP_REASON}\$|${BENIGN_PARTIAL_REASON}\$)" || true)"
   if (( unexplained != 0 )); then
     log "--- build.log excerpt ---"
     grep -E "source audio" "$LOG_DIR/build.log" || true
@@ -859,13 +879,19 @@ jq -e --arg alice "$ALICE" --arg bob "$BOB" \
   --argjson aSpliced "$ALICE_MIN_SPLICED_MS" --argjson aAccounted "$ALICE_MIN_ACCOUNTED_MS" \
   --argjson bSegments "$BOB_MIN_SEGMENTS" --argjson bPlaced "$BOB_MIN_PLACED" \
   --argjson bSpliced "$BOB_MIN_SPLICED_MS" --argjson bAccounted "$BOB_MIN_ACCOUNTED_MS" \
-  --argjson maxTail "$MAX_SHORT_TAIL_MS" '
+  --argjson maxTail "$MAX_SHORT_TAIL_MS" \
+  --argjson decodedNum "$MIN_DECODED_NUM" --argjson decodedDen "$MIN_DECODED_DEN" \
+  --arg skipReason "$BENIGN_SKIP_REASON" '
   .provenance.sourceAudio as $sa
   # Every segment the splice named a short-tail reason for, as {held, declared}.
+  # The same expression the build log is read with, whole and anchored: a
+  # rejection that merely opens with these words is a different rejection, and
+  # must not be counted as this one.
   | def shortTails:
       [ (.rejections // [])[]
-        | capture("holds (?<held>[0-9]+) ms of the (?<declared>[0-9]+) ms it declares")
-        | {held: (.held | tonumber), declared: (.declared | tonumber)} ];
+        | select(test("^segment [0-9]+ not spliced: " + $skipReason + "$"))
+        | match($skipReason).captures
+        | {held: (.[0].string | tonumber), declared: (.[1].string | tonumber)} ];
     def spliced($owner; $minSegments; $minPlaced; $minSplicedMS; $minAccountedMS):
       any($sa[];
         .owner == $owner
@@ -876,6 +902,7 @@ jq -e --arg alice "$ALICE" --arg bob "$BOB" \
         and .spliced_ms >= $minSplicedMS
         and (shortTails | length) == .skipped
         and all(shortTails[]; (.declared - .held) <= $maxTail)
+        and all(shortTails[]; (.held * $decodedDen) <= (.declared * $decodedNum))
         and (.spliced_ms + ([shortTails[].declared] | add // 0)) >= $minAccountedMS);
     ($sa | type == "array" and length >= 2)
     and spliced($alice; $aSegments; $aPlaced; $aSpliced; $aAccounted)

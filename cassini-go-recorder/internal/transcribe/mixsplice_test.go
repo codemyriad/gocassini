@@ -796,15 +796,21 @@ func TestTheBuildLogSaysWhyASegmentWasNotSpliced(t *testing.T) {
 	if !strings.Contains(log, "(1/2 segments, 1 skipped,") {
 		t.Fatalf("the build log does not carry the splice counts:\n%s", log)
 	}
-	// The patterns harness/bin/ci-e2e-browser-call-capture.sh parses this log
-	// with, read out of that file rather than copied into this one — a copy
-	// would go on passing while the leg it is supposed to protect broke. That
-	// leg is a required check on this branch and on main, so a reshaped line has
-	// to fail here rather than on somebody else's pull request.
-	for _, name := range []string{"SPLICE_LINE_REASON", "BENIGN_SKIP_REASON"} {
-		want := legPattern(t, name)
+	// The two greps harness/bin/ci-e2e-browser-call-capture.sh runs over this
+	// log, composed here the way that leg composes them — the participant it is
+	// asking about included, since a build that stopped naming the speaker would
+	// fail the leg while a participant-agnostic fragment still matched. The
+	// patterns themselves are read out of the leg rather than copied into this
+	// file: a copy would go on passing while the leg it protects broke. That leg
+	// is a required check on this branch and on main, so a reshaped line has to
+	// fail here rather than on somebody else's pull request.
+	for _, want := range []*regexp.Regexp{
+		legGrep(t, `^ *source audio: .*alice.* `+legRegex(t, "SPLICE_LINE_REASON")),
+		legGrep(t, `^ *source audio: .*alice.*: segment [0-9]+ not spliced: `+
+			legRegex(t, "BENIGN_SKIP_REASON")+`$`),
+	} {
 		if !want.MatchString(log) {
-			t.Fatalf("the build log no longer matches the CI leg's %s (%s):\n%s", name, want, log)
+			t.Fatalf("the build log no longer matches what the browser-capture CI leg greps for (%s):\n%s", want, log)
 		}
 	}
 	// The reason, naming the segment, on its own line beside the counts.
@@ -894,10 +900,10 @@ func TestTheBuildLogTellsAPartlyUsedSegmentFromASkippedOne(t *testing.T) {
 	// The leg's own pattern for a partial use, and its own pattern for a skip:
 	// the note has to match the first and miss the second, or a clamp would be
 	// counted as an explanation for a segment nothing left out.
-	if want := legPattern(t, "BENIGN_PARTIAL_REASON"); !want.MatchString(log) {
+	if want := legGrep(t, legRegex(t, "BENIGN_PARTIAL_REASON")+`$`); !want.MatchString(log) {
 		t.Fatalf("the build log does not match the CI leg's BENIGN_PARTIAL_REASON (%s):\n%s", want, log)
 	}
-	if want := legPattern(t, "BENIGN_SKIP_REASON"); want.MatchString(log) {
+	if want := legGrep(t, legRegex(t, "BENIGN_SKIP_REASON")+`$`); want.MatchString(log) {
 		t.Fatalf("a clamped segment matches the CI leg's skip pattern (%s):\n%s", want, log)
 	}
 	if strings.Contains(log, "not spliced:") {
@@ -905,15 +911,16 @@ func TestTheBuildLogTellsAPartlyUsedSegmentFromASkippedOne(t *testing.T) {
 	}
 }
 
-// legPattern reads one of the regular expressions
-// harness/bin/ci-e2e-browser-call-capture.sh matches the build log with.
+// legRegex reads one of the regular expressions
+// harness/bin/ci-e2e-browser-call-capture.sh matches the build log with, as
+// written in that file.
 //
 // Read rather than copied. A copy of the leg's pattern in this file would keep
 // passing while the leg broke, which is the opposite of what these tests are
 // for: the leg is a required status check, and the point of pinning the log
 // here is that a reshaped line costs a unit test rather than every open pull
 // request.
-func legPattern(t *testing.T, name string) *regexp.Regexp {
+func legRegex(t *testing.T, name string) string {
 	t.Helper()
 	leg := filepath.Join("..", "..", "..", "harness", "bin", "ci-e2e-browser-call-capture.sh")
 	raw, err := os.ReadFile(leg)
@@ -925,15 +932,30 @@ func legPattern(t *testing.T, name string) *regexp.Regexp {
 	if found == nil {
 		t.Fatalf("%s no longer defines %s; the log and the leg cannot be compared", leg, name)
 	}
-	return regexp.MustCompile(`(?i)` + string(found[1]))
+	return string(found[1])
 }
 
-// legShortTail reads the two milliseconds figures out of a skip line the way
-// the leg's sed does, so that "the deficit is bounded" is a claim about numbers
-// this log actually carries.
+// legGrep compiles one of those patterns the way `grep -Ei` reads it: case
+// insensitive, and with ^ and $ meaning the ends of a line rather than of the
+// whole log. These patterns stay inside the part of POSIX ERE that RE2 reads
+// identically — literals, bracket classes, +, escaped parentheses — which is
+// what makes reading them across the two engines meaningful.
+func legGrep(t *testing.T, pattern string) *regexp.Regexp {
+	t.Helper()
+	compiled, err := regexp.Compile(`(?im)` + pattern)
+	if err != nil {
+		t.Fatalf("the CI leg's pattern %q does not compile here: %v", pattern, err)
+	}
+	return compiled
+}
+
+// legShortTail reads the two milliseconds figures out of a skip line with the
+// leg's OWN expression — the same one its sed uses, capture groups and all — so
+// that "the deficit is bounded" is a claim about numbers the leg can really
+// read off this log, in the order it reads them.
 func legShortTail(t *testing.T, line string) (held, declared int) {
 	t.Helper()
-	found := regexp.MustCompile(`holds ([0-9]+) ms of the ([0-9]+) ms it declares`).FindStringSubmatch(line)
+	found := legGrep(t, legRegex(t, "BENIGN_SKIP_REASON")).FindStringSubmatch(line)
 	if found == nil {
 		t.Fatalf("the CI leg could not read a deficit from %q", line)
 	}
