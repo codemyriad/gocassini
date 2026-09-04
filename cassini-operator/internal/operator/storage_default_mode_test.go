@@ -27,7 +27,7 @@ func TestDefaultModePublishWritesTheBytesAndNoACLs(t *testing.T) {
 	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err != nil {
 		t.Fatalf("Deliver() error = %v", err)
 	}
-	if !nc.has("Cassini/Recordings/meetings/meeting-a.opus") {
+	if !nc.has(ncDefaultRecordingsRoot + "/meetings/meeting-a.opus") {
 		t.Fatal("the recording never reached Nextcloud")
 	}
 	if got := nc.catalogIDs(t); len(got) != 1 || got[0] != "meeting-a" {
@@ -65,7 +65,7 @@ func TestDefaultModePublishDoesNotReserveAnEmptyLeaf(t *testing.T) {
 		t.Fatalf("Deliver() error = %v", err)
 	}
 	for _, op := range ncOpsByMethod(nc, http.MethodPut) {
-		if op.path == "Cassini/Recordings/meetings/meeting-a.opus" && op.body == "" {
+		if op.path == ncDefaultRecordingsRoot+"/meetings/meeting-a.opus" && op.body == "" {
 			t.Fatal("the default model reserved an empty leaf before writing the audio")
 		}
 	}
@@ -83,7 +83,7 @@ func TestAccessControlledPublishStillWritesTheLeafACL(t *testing.T) {
 	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err != nil {
 		t.Fatalf("Deliver() error = %v", err)
 	}
-	if len(nc.aclBodiesFor("Cassini/Recordings/meetings/meeting-a.opus")) == 0 {
+	if len(nc.aclBodiesFor(ncACLRecordingsRoot+"/meetings/meeting-a.opus")) == 0 {
 		t.Fatal("no ACL was written onto the recording under access control")
 	}
 }
@@ -171,14 +171,17 @@ func TestOwnerReadPathNeedsBothTheModeAndTheEvidence(t *testing.T) {
 		}
 	})
 
-	t.Run("default mode with a substrate the probe rejected reads as the caller", func(t *testing.T) {
+	t.Run("default mode with the default root shadowed reads as the caller", func(t *testing.T) {
+		// The one state that still fails closed. Something IS mounted at
+		// CassiniNoACL, so the tree is not private, and serving it as the owner
+		// would hand it to whoever that folder is mapped to.
 		setStorageMode(t, false)
 		ncAccessSubstrate.reset()
 		t.Cleanup(ncAccessSubstrate.reset)
 		ncAccessSubstrate.markApplicable()
-		ncAccessSubstrate.unavailable(storageStepModeMismatch+":"+storageStepFolderMount, errTransitionNotReady)
+		ncAccessSubstrate.setProbe(ncStorageProbe{ServiceAccount: true, FolderProbed: true, DefaultRootShadowed: true})
 		if got := readIdentity(t); got != "alice" {
-			t.Fatalf("read as %q while the preflight was reporting a mode mismatch — that serves an access-controlled archive to everybody", got)
+			t.Fatalf("read as %q while a Team folder was mounted over %q — that tree is not private", got, ncDefaultRecordingsMount)
 		}
 	})
 
@@ -186,6 +189,22 @@ func TestOwnerReadPathNeedsBothTheModeAndTheEvidence(t *testing.T) {
 		setUsableStorageMode(t, false)
 		if got := readIdentity(t); got != ncRecordingsOwner {
 			t.Fatalf("read as %q, want %q — the default model has no other way to serve the archive", got, ncRecordingsOwner)
+		}
+	})
+
+	t.Run("default mode with no probe at all still reads as the owner", func(t *testing.T) {
+		// A container that restarted and has not been re-enabled. The first pass
+		// read per-caller here, which served every account an EMPTY archive until
+		// somebody disabled and re-enabled the app — because the guard had to ask
+		// about `Cassini`, a path the access-controlled model legitimately mounts.
+		// It now asks about `CassiniNoACL`, which nothing mounts, so a missing
+		// answer is not a hazard and a reboot is a non-event for reads.
+		setStorageMode(t, false)
+		ncAccessSubstrate.reset()
+		t.Cleanup(ncAccessSubstrate.reset)
+		ncAccessSubstrate.markApplicable()
+		if got := readIdentity(t); got != ncRecordingsOwner {
+			t.Fatalf("read as %q after a restart; a default-mode archive must not read empty until the next enabled edge", got)
 		}
 	})
 
@@ -300,30 +319,40 @@ func TestTalkStartIsRefusedWithoutCreatingAJob(t *testing.T) {
 //
 // The proxy is constructed on AppAPI presence alone, not on the resolved publish
 // sink, so under CASSINI_PUBLISH_SINK=local it is still installed and still
-// claims catalog.json and meetings/*. What keeps that safe is not the sink but
-// the substrate: serving as the owner also requires ncAccessSubstrate.usable(),
-// and a `local` sink never marks the substrate applicable, so it never reaches
-// `provisioned`.
+// claims catalog.json and meetings/*.
 //
-// D-668 asked for the construction to be scoped OR the deferral recorded. It is
-// recorded, and this is what stops "it should hold" from being the whole
-// argument — that sentence preceded the disclosure the D-616 review reproduced.
-func TestNCFilesProxyCannotServeAsOwnerUnderALocalSink(t *testing.T) {
+// What keeps that safe is now the PATH rather than the substrate record. The
+// first pass also required ncAccessSubstrate.usable(), because both models
+// addressed `Cassini/Recordings` and a `local`-sink deployment never probes —
+// so a recorded `default` over a live Team folder would have served an
+// access-controlled archive to every account. With separate roots the owner
+// identity is only ever paired with `CassiniNoACL/Recordings`, which no Team
+// folder mounts and which holds nothing but what the default model published.
+//
+// So the assertion changes shape: the guard is no longer "has a preflight
+// succeeded" but "did a probe positively find something mounted over the
+// default root". D-668's requirement — that the read identity is never chosen
+// from the recorded mode ALONE — is what both versions keep.
+func TestNCFilesProxyOwnerReadIsBoundedByTheDefaultRoot(t *testing.T) {
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
 
-	// The most permissive mode this operator can be in...
-	ncStorage.set(false, storageModeSourceEnv)
-	// ...on a deployment whose sink is local, so nothing ever marks the
-	// substrate applicable and the preflight never records success.
+	// Access control never reads as the owner, whatever else is true.
+	ncStorage.set(true, storageModeSourceEnv, true)
 	if ncStorageServesAsOwner() {
-		t.Fatal("served as the owner with an unproven substrate; the guard requires BOTH the mode and usable()")
+		t.Fatal("served as the owner under access control; Nextcloud has to be the one deciding")
 	}
 
-	// And it stays false however loudly the mode says default, right up until
-	// a preflight actually proves the storage.
-	ncAccessSubstrate.beginRun()
+	// Default mode on a deployment that never probes (a `local` sink) serves the
+	// private root as its owner, which is the whole model.
+	ncStorage.set(false, storageModeSourceEnv, true)
+	if !ncStorageServesAsOwner() {
+		t.Fatal("refused to serve the private default root as its owner; nothing else can read it")
+	}
+
+	// Until a probe says something is mounted over that root.
+	ncAccessSubstrate.setProbe(ncStorageProbe{FolderProbed: true, DefaultRootShadowed: true})
 	if ncStorageServesAsOwner() {
-		t.Fatal("a run that has begun but not succeeded is not a proven substrate")
+		t.Fatalf("served as the owner with a Team folder mounted at %q — that tree is not private", ncDefaultRecordingsMount)
 	}
 }

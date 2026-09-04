@@ -211,3 +211,186 @@ describe("StoragePanel on an install whose routes predate the tab", () => {
     expect(storagePanelSource).toContain("Re-register the app in Nextcloud");
   });
 });
+
+// --- The stale setup warning, and what clears it ---------------------------------
+//
+// QA item 1: after a setup completes, the shell still says Cassini is not
+// configured. App.svelte reads its setup health once, in onMount, and nothing
+// wrote it again — so the panel tells it to look again, in the same session.
+// Nothing reloads the page: a reload would fix this one reader by throwing away
+// everything else the page was holding.
+
+describe("StoragePanel setup signal", () => {
+  it("never reloads the page", () => {
+    for (const forbidden of ["location.reload", "reloadPage", "window.location.href ="]) {
+      expect(storagePanelSource).not.toContain(forbidden);
+    }
+  });
+
+  it("tells the shell after a setup that finished", () => {
+    const runSetup = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function runSetup("),
+      storagePanelSource.indexOf("function modeOptionFor("),
+    );
+    expect(runSetup).toContain("finishAndAnnounce(");
+    // …and AFTER the recheck, so the operator has re-probed before the shell
+    // goes and asks it what this instance is.
+    expect(runSetup.indexOf("recheckStorage()")).toBeLessThan(
+      runSetup.indexOf("finishAndAnnounce("),
+    );
+  });
+
+  // Half of the app installs may have succeeded, and this component cannot tell
+  // from here. One round trip beats the stale warning coming back.
+  it("tells the shell even when the app installs did not finish the job", () => {
+    const runSetup = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function runSetup("),
+      storagePanelSource.indexOf("function modeOptionFor("),
+    );
+    const earlyReturn = runSetup.slice(0, runSetup.indexOf("const browserSteps"));
+    expect(earlyReturn).toContain("notifySetupChanged();");
+  });
+
+  it("tells the shell after a completed mode switch", () => {
+    const confirmSwitch = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function confirmSwitch("),
+      storagePanelSource.indexOf("async function finishMigration("),
+    );
+    expect(confirmSwitch).toContain("operatorClient.putStorage(");
+    expect(confirmSwitch).toContain("finishAndAnnounce(");
+  });
+
+  // Every announcement carries the notify, so there is no path that reports
+  // success to the administrator and leaves the rest of the app stale.
+  it("cannot announce success without telling the shell", () => {
+    const announce = storagePanelSource.slice(
+      storagePanelSource.indexOf("function finishAndAnnounce("),
+      storagePanelSource.indexOf("// modeOptionFor"),
+    );
+    expect(announce).toContain("notifySetupChanged()");
+  });
+
+  // A failed action must leave the error on screen and must NOT claim the
+  // instance changed.
+  it("does not announce when an action fails", () => {
+    const catchBlock = storagePanelSource.slice(
+      storagePanelSource.indexOf("switchError = asMessage(error);"),
+      storagePanelSource.indexOf(
+        "} finally {",
+        storagePanelSource.indexOf("switchError = asMessage(error);"),
+      ),
+    );
+    expect(catchBlock).not.toContain("finishAndAnnounce");
+    expect(catchBlock).not.toContain("notifySetupChanged");
+  });
+
+  // The result stays on screen until the next action starts — and every action
+  // clears it first, so a success strip never sits above the error that
+  // replaced it.
+  it("clears the previous result when a new action starts", () => {
+    for (const starter of ["async function confirmSwitch(", "async function finishMigration("]) {
+      const body = storagePanelSource.slice(
+        storagePanelSource.indexOf(starter),
+        storagePanelSource.indexOf("{", storagePanelSource.indexOf(starter)) + 900,
+      );
+      expect(body).toContain("outcome = null;");
+    }
+  });
+});
+
+// The shell has to be able to act on it: one writer of the notice, called again
+// rather than only at mount, with the listener released on destroy.
+describe("App shell setup refresh", () => {
+  it("re-reads its setup health when the Setup tab says something changed", () => {
+    expect(appSource).toContain('import { onSetupChanged } from "./operator/setupSignal"');
+    expect(appSource).toContain("async function readInstanceState()");
+    expect(appSource).toContain("stopListeningForSetupChanges = onSetupChanged(");
+    expect(appSource).toContain("void readInstanceState();");
+  });
+
+  it("subscribes before the first read, so the ordering cannot come apart", () => {
+    const onMount = appSource.slice(
+      appSource.indexOf("onMount(async () => {"),
+      appSource.indexOf("onDestroy(() => {"),
+    );
+    expect(onMount.indexOf("onSetupChanged(")).toBeLessThan(
+      onMount.indexOf("await readInstanceState();"),
+    );
+  });
+
+  it("releases the listener on destroy", () => {
+    const onDestroy = appSource.slice(appSource.indexOf("onDestroy(() => {"));
+    expect(onDestroy).toContain("stopListeningForSetupChanges?.();");
+  });
+
+  // setupNotice must have exactly one writer, or a refresh becomes a second
+  // source of truth that can disagree with the first.
+  it("writes setupNotice from one place only", () => {
+    const writes = appSource.match(/setupNotice = /g) ?? [];
+    const inReader = appSource
+      .slice(
+        appSource.indexOf("async function readInstanceState()"),
+        appSource.indexOf("let stopListeningForSetupChanges"),
+      )
+      .match(/setupNotice = /g) ?? [];
+    expect(writes.length).toBe(inReader.length);
+  });
+});
+
+// --- Recovering from a switch that did not finish --------------------------------
+
+describe("StoragePanel recovery", () => {
+  it("offers one action to finish an unfinished migration", () => {
+    expect(storagePanelSource).toContain("{#if !status.migration_clean}");
+    expect(storagePanelSource).toContain("A storage switch did not finish.");
+    expect(storagePanelSource).toContain("on:click={finishMigration}");
+    expect(storagePanelSource).toContain("operatorClient.finishStorageMigration()");
+  });
+
+  // The banner has to say the archive is SAFE, because the honest description of
+  // this state is a tidy-up and the alarming reading is data loss.
+  it("says where the recordings are before offering to clear anything", () => {
+    const start = storagePanelSource.indexOf("{#if !status.migration_clean}");
+    const banner = storagePanelSource.slice(
+      start,
+      storagePanelSource.indexOf("on:click={finishMigration}", start),
+    );
+    expect(banner).toContain("Your recordings are all in");
+    expect(banner).toContain("activeRoot");
+  });
+
+  it("names an archive left in the mode that is not in force", () => {
+    expect(storagePanelSource).toContain("status.stranded_recordings > 0");
+    expect(storagePanelSource).toContain("status.stranded_root");
+    expect(storagePanelSource).toContain("Nothing is lost.");
+  });
+
+  // The two are mutually exclusive on purpose: while a migration is unfinished
+  // the other root's contents ARE the leftovers, and calling them stranded would
+  // invite a switch where the answer is a cleanup.
+  it("does not offer both a cleanup and a switch for the same files", () => {
+    expect(storagePanelSource).toContain(
+      "{:else if status.stranded_recordings > 0}",
+    );
+  });
+});
+
+// --- The preliminary check (QA item 2) -------------------------------------------
+
+describe("StoragePanel preview", () => {
+  // The QA report: five recordings, and the dialog said none would move. The
+  // operator now distinguishes "the tree is empty" from "we could not look", and
+  // the panel has to render the difference or the distinction buys nothing.
+  it("never renders an unreadable source as nothing to move", () => {
+    const dialog = storagePanelSource.slice(
+      storagePanelSource.indexOf("{:else if preview}"),
+      storagePanelSource.indexOf("{:else if previewError}"),
+    );
+    expect(dialog).toContain("{#if !preview.source_readable}");
+    expect(dialog).toContain("Cassini could not read");
+    // The unreadable branch comes FIRST, so nothing_to_move cannot win it.
+    expect(dialog.indexOf("!preview.source_readable")).toBeLessThan(
+      dialog.indexOf("preview.nothing_to_move"),
+    );
+  });
+});

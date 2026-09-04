@@ -7,7 +7,10 @@
 # lint gate covers it, and so the offline test can run it with curl stubbed on
 # PATH.
 #
-#   GET       Cassini/Recordings/catalog.json     (WebDAV, as the recordings owner)
+#   GET       <archive root>/catalog.json         (WebDAV, as the recordings owner)
+#             <archive root> is Cassini/Recordings under access control and
+#             CassiniNoACL/Recordings in the default mode, read from
+#             storage_settings.json (see resolve_archive_root).
 #   rewrite   every entry whose roomId is --from, to --to (+ the merged name)
 #   REFUSE    if any of them has a recorded room binding                (D-640)
 #   PUT       each moved meeting's re-tagged .opus  (only with --apply)
@@ -67,7 +70,20 @@ TO=""
 NAME=""
 
 OWNER="cassini"
-ROOT="Cassini/Recordings"
+# ROOT is resolved from the recorded storage mode, not hard-coded (D-616
+# followups). The two models keep their archives in different places on purpose,
+# so that neither can shadow the other:
+#
+#	default            CassiniNoACL/Recordings   the owner's own private tree
+#	access controlled  Cassini/Recordings        inside the Cassini Team folder
+#
+# A script pinned to one of them reads an empty catalog on an instance running
+# the other, and — with --apply — would WRITE that empty catalog back over the
+# archive's only index. resolve_archive_root below is what stops that.
+ROOT=""
+# An override for a deployment whose persistent volume is somewhere unusual.
+STORAGE_SETTINGS="${CASSINI_STORAGE_SETTINGS_PATH:-}"
+STORAGE_SETTINGS_REL="storage_settings.json"
 
 # The image default and the AppAPI-relative path, mirroring exAppDataPathDefault
 # in the operator and effective_data_path in deployment/exapp-start.sh. Reading
@@ -80,6 +96,60 @@ log() { echo "reattribute-catalog-room: $*"; }
 fail_before() { echo "error: $*" >&2; exit 4; }
 fail_after() { echo "error: $*" >&2; exit 1; }
 fail_usage() { echo "error: $*" >&2; exit 2; }
+
+# resolve_archive_root reads which storage model this install is in, and returns
+# the root that model keeps its archive under.
+#
+# The mode lives in storage_settings.json beside the jobs database, on the same
+# AppAPI persistent volume (cassini-operator/internal/operator/storage_settings.go).
+# It is read rather than guessed because guessing wrong is not a failed run: with
+# --apply, a script that read an empty catalog from the wrong root would write
+# that empty catalog back over the archive's only index.
+#
+# A file that exists but says nothing usable is FATAL rather than defaulted, for
+# the same reason: "I could not tell which mode this is" and "this is the default
+# mode" are different answers, and only one of them is safe to act on.
+resolve_archive_root() {
+  local settings="$STORAGE_SETTINGS" enabled=""
+
+  if [[ -z "$settings" ]]; then
+    settings="${APP_PERSISTENT_STORAGE:-}"
+    if [[ -n "$settings" ]]; then
+      settings="${settings%/}/$STORAGE_SETTINGS_REL"
+    else
+      # No persistent volume in the environment: fall back to the directory the
+      # jobs database resolved to, which is where the operator puts both.
+      settings="$(dirname -- "${JOBS_DB:-$JOBS_DB_IMAGE_DEFAULT}")/$STORAGE_SETTINGS_REL"
+    fi
+  fi
+
+  if [[ ! -f "$settings" ]]; then
+    # No recorded decision at all. That is the ordinary state of an install that
+    # has never had its enabled edge run, and the operator's own fallback there
+    # is the default model — so it is the honest answer, not a guess.
+    ROOT="CassiniNoACL/Recordings"
+    log "no storage settings at $settings; assuming the default storage mode ($ROOT)"
+    return 0
+  fi
+
+  enabled="$(jq -r 'if has("access_control_enabled") then (.access_control_enabled|tostring) else "" end' "$settings" 2>/dev/null || true)"
+  case "$enabled" in
+    true)  ROOT="Cassini/Recordings" ;;
+    false) ROOT="CassiniNoACL/Recordings" ;;
+    *)
+      fail_before "could not read access_control_enabled from $settings — refusing to guess which storage mode this instance is in, because writing to the wrong root would overwrite the archive's index"
+      ;;
+  esac
+
+  if [[ "$(jq -r 'if has("migration_clean") then (.migration_clean|tostring) else "true" end' "$settings" 2>/dev/null || echo true)" == "false" ]]; then
+    # The recorded mode still names a complete archive — that is the operator's
+    # invariant — so this is safe to run. It is worth saying out loud because the
+    # OTHER root also holds recordings, and an operator looking at both would
+    # otherwise think this script had missed some.
+    log "note: a storage mode switch did not finish tidying up. $ROOT is complete; the other root holds a leftover copy that Cassini does not read."
+  fi
+  log "storage mode from $settings: archive root is $ROOT"
+}
 fail_refused() { echo "error: $*" >&2; exit 5; }
 
 while [[ $# -gt 0 ]]; do
@@ -180,6 +250,8 @@ dav() {
 }
 
 CATALOG="$WORK/catalog.json"
+resolve_archive_root
+
 log "reading $ROOT/catalog.json"
 status="$(dav GET "$ROOT/catalog.json" "$CATALOG")" || fail_before "could not reach Nextcloud at $BASE"
 case "$status" in

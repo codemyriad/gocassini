@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 )
 
 // GET/PUT <base>/storage — the admin surface of the storage-mode opt-in
@@ -68,6 +69,22 @@ type storageStatusResponse struct {
 	// as "default", and the UI has to be able to tell them apart.
 	Mode       string `json:"mode"`
 	ModeSource string `json:"mode_source,omitempty"`
+	// MigrationClean is false when a mode switch did not finish tidying up. The
+	// archive is still complete at Mode's own root — that is the invariant — but
+	// the OTHER root holds leftovers, and there is a button for it.
+	MigrationClean bool `json:"migration_clean"`
+	// PendingCleanup names that other root. Empty when MigrationClean.
+	PendingCleanup string `json:"pending_cleanup,omitempty"`
+	// StrandedRoot and StrandedRecordings report an archive sitting in the mode
+	// that is NOT in force — the `Cassini` Team folder still holding recordings
+	// on an instance running the default model, or the other way round.
+	//
+	// It is not an error: publishing and reading both work, against the root the
+	// recorded mode names. It is the thing an administrator most needs told,
+	// because the symptom is "my recordings are gone" and the cause is a mode
+	// nobody switched. Switching modes copies them across.
+	StrandedRoot       string `json:"stranded_root,omitempty"`
+	StrandedRecordings int    `json:"stranded_recordings,omitempty"`
 	// OK/State/Step/Detail mirror recordings_access, so an administrator
 	// reading this page and one reading /status see the same verdict.
 	OK        bool                `json:"ok"`
@@ -112,7 +129,21 @@ const (
 	// into the Team folder — makes every already-published recording readable by
 	// every account, so the confirmation has to state facts and not only policy.
 	storageActionPreview = "preview"
+	// storageActionFinishMigration completes a switch that stopped part way: it
+	// clears the root the recorded mode does NOT name and marks the instance
+	// settled. It is the one recovery action, and it is the same action whichever
+	// half failed — see finishMigration.
+	storageActionFinishMigration = "finish_migration"
 )
+
+// ncStorageSwitchTimeout bounds a whole mode switch, as opposed to
+// ncProvisionTimeout, which bounds one HTTP call to Nextcloud.
+//
+// It is generous because the operation is a server-side copy of an entire
+// archive and the alternative to finishing is leaving an instance unsettled. It
+// exists at all so that a switch against a Nextcloud that has stopped answering
+// cannot hold the provisioning lock for the life of the process.
+const ncStorageSwitchTimeout = 60 * time.Minute
 
 // storageUpdate is the PUT body: the same field name the config file uses, so
 // there is one vocabulary for this decision end to end.
@@ -197,6 +228,14 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp := c.storageStatus(rt, nil)
 		resp.Preview = &preview
 		writeJSON(w, http.StatusOK, resp)
+	case storageActionFinishMigration:
+		result, err := c.finishStorageMigration(ctx, rt.logger)
+		if err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		c.preflightNCStorage(ctx, rt.logger)
+		writeJSON(w, http.StatusOK, c.storageStatus(rt, &result))
 	case storageActionInstallApps:
 		installs, err := c.attemptAppInstalls(ctx, rt.logger)
 		if err != nil {
@@ -211,7 +250,7 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp.Installs = installs
 		writeJSON(w, http.StatusOK, resp)
 	default:
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q, %q or %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview))
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q, %q, %q or %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration))
 	}
 }
 
@@ -231,6 +270,20 @@ func (c ExAppConfig) attemptAppInstalls(ctx context.Context, logger *log.Logger)
 	return c.installMissingApps(ctx, client, probe, logger), nil
 }
 
+// finishStorageMigration is the handler-side wrapper for the recovery. It takes
+// the same lock as the switch and the preflight, because clearing a root while
+// one of those is copying into it would be the one way to lose an archive that
+// the copy-then-flip ordering otherwise makes impossible.
+func (c ExAppConfig) finishStorageMigration(ctx context.Context, logger *log.Logger) (storageTransitionResult, error) {
+	if !c.appAPIActive() {
+		return storageTransitionResult{}, fmt.Errorf("storage can only be repaired in a Nextcloud (AppAPI) deployment")
+	}
+	provisionMu.Lock()
+	defer provisionMu.Unlock()
+	client := &http.Client{Timeout: ncProvisionTimeout}
+	return c.finishMigration(ctx, client, logger)
+}
+
 func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt *Runtime) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -248,15 +301,37 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 	}
 	want := *in.AccessControlEnabled
 
-	// Already there: answer the current state rather than moving an archive
-	// that is already where it belongs. A double-click on the active button, or
-	// a retry of a request whose response was lost, must not re-run a move.
-	if current, resolved := ncStorage.mode(); resolved && current == want {
-		writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
-		return
-	}
+	// Everything below happens inside switchStorageMode, under the provisioning
+	// lock, and that is load-bearing rather than tidy.
+	//
+	// "Already there" has two readings and the first pass only implemented one.
+	// A SETTLED instance answers its current state: a double-click, or a retry of
+	// a request whose response was lost, must not re-run a copy. An UNSETTLED one
+	// is the state QA got stuck in — a switch that stopped after the flip, so the
+	// recorded mode already equals the request while a stale copy sits at the
+	// other root — and short-circuiting there made the one action that would
+	// repair it unreachable from the UI.
+	//
+	// Deciding either of those HERE would decide it outside the lock, which is
+	// how two concurrent PUTs for the same target both get past it and the second
+	// one migrates a root onto itself.
+	//
+	// It also no longer forces a cleanup before a switch. That looked prudent and
+	// was a dead end: after a failure before the flip the "stale" root is the
+	// TARGET, so on an instance that already had recordings there, finishMigration
+	// correctly refuses to clear them — and every retry of the switch then failed
+	// on the cleanup instead of running. The migration merges into its
+	// destination and skips names already present, so there was nothing the
+	// cleanup was protecting it from.
+	//
+	// The context is deliberately not the request's. This is the one call that
+	// COPIES an entire archive over WebDAV and rewrites the recorded mode; a
+	// browser that navigates away, or a proxy that gives up, must not abort it
+	// half way. Same reasoning as the POST handler above, with more at stake.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), ncStorageSwitchTimeout)
+	defer cancel()
 
-	result, err := c.switchStorageMode(r.Context(), want, rt.logger)
+	result, err := c.switchStorageMode(ctx, want, rt.logger)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, errTransitionNotReady) {
@@ -268,6 +343,14 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 		writeJSONError(w, status, err.Error())
 		return
 	}
+	if result.Mode == "" {
+		// A no-op: the mode asked for is the one in force and the instance is
+		// settled. Nothing moved and nothing needs re-probing, so this stays as
+		// cheap as the double-click that usually causes it.
+		writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
+		return
+	}
+	c.preflightNCStorage(ctx, rt.logger)
 	writeJSON(w, http.StatusOK, c.storageStatus(rt, &result))
 }
 
@@ -277,17 +360,32 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionResult) storageStatusResponse {
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
 	mode, source := ncStorage.snapshot()
+	clean := ncStorage.migrationClean()
 	resp := storageStatusResponse{
-		Mode:       mode,
-		ModeSource: source,
-		OK:         access.OK,
-		State:      access.State,
-		Step:       access.Step,
-		Detail:     access.Detail,
-		CheckedAt:  access.CheckedAt,
-		Transition: transition,
+		Mode:           mode,
+		ModeSource:     source,
+		MigrationClean: clean,
+		OK:             access.OK,
+		State:          access.State,
+		Step:           access.Step,
+		Detail:         access.Detail,
+		CheckedAt:      access.CheckedAt,
+		Transition:     transition,
 	}
 	probe, probed := ncAccessSubstrate.lastProbe()
+	if current, resolved := ncStorage.mode(); resolved {
+		if !clean {
+			resp.PendingCleanup = recordingsRootFor(!current)
+		} else if probed {
+			// Only when the instance is settled. While a migration is unfinished
+			// the leftovers ARE the other root's contents, and calling them
+			// "stranded" would invite a switch where the answer is a cleanup.
+			if stranded := probe.strandedArchiveMeetings(current); stranded > 0 {
+				resp.StrandedRoot = recordingsRootFor(!current)
+				resp.StrandedRecordings = stranded
+			}
+		}
+	}
 	resp.Modes = []storageModeOption{
 		storageOption(false, mode, probe, probed),
 		storageOption(true, mode, probe, probed),
@@ -333,17 +431,17 @@ func storageModeSummary(accessControlled bool) string {
 			ncRecordingsMount)
 	}
 	return fmt.Sprintf(
-		"Recordings live in the %q account's own %s and everyone who can open Cassini can read all of them. Needs no extra Nextcloud apps.",
-		ncRecordingsOwner, ncRecordingsRoot)
+		"Recordings live in the %q account's own %s — a private directory nobody else has a mount of — and everyone who can open Cassini can read all of them. Needs no extra Nextcloud apps.",
+		ncRecordingsOwner, ncDefaultRecordingsRoot)
 }
 
 func storageModeConsequence(accessControlled bool) string {
 	if accessControlled {
 		return fmt.Sprintf(
-			"Every recording already published will be moved into the %q Team folder and left readable by every account — Cassini does not guess who was in a past meeting. Recordings published from now on are restricted to the people in the call. You can narrow an existing one afterwards from Files → Advanced permissions.",
+			"Every recording already published is copied into the %q Team folder and left readable by every account — Cassini does not guess who was in a past meeting. Recordings published from now on are restricted to the people in the call. You can narrow an existing one afterwards from Files → Advanced permissions.",
 			ncRecordingsMount)
 	}
 	return fmt.Sprintf(
-		"Every recording already published will be moved out of the %q Team folder into the %q account's own home, and all of their access rules will be dropped: after this, everyone who can open Cassini can read every recording, including the ones that were restricted to a call's participants.",
-		ncRecordingsMount, ncRecordingsOwner)
+		"Every recording already published is copied out of the %q Team folder into the %q account's own %s, and all of their access rules are dropped: after this, everyone who can open Cassini can read every recording, including the ones that were restricted to a call's participants. The Team folder itself is emptied but left in place, so switching back later is immediate.",
+		ncRecordingsMount, ncRecordingsOwner, ncDefaultRecordingsRoot)
 }

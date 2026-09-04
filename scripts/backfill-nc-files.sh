@@ -168,7 +168,8 @@ recordings that nothing links to yet.
 
 Do not simply re-run it: the guard will refuse, because Nextcloud Files now
 holds recordings. Fix the error reported above, then remove the recordings this
-run uploaded from Cassini/Recordings/ in the Files app before trying again.
+run uploaded from the archive root (Cassini/Recordings under access control) in the
+Files app before trying again.
 EOF
     ;;
   *)
@@ -181,7 +182,8 @@ The migration ended unexpectedly (exit $status). That is not one of the codes it
 reports for itself, so the container or the container CLI failed rather than the
 migration.
 
-Check Cassini/Recordings/ in the Files app before re-running: whether anything
+Check the archive root (Cassini/Recordings under access control) in the Files app
+before re-running: whether anything
 was written is unknown.
 EOF
     ;;

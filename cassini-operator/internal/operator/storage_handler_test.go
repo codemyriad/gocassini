@@ -48,8 +48,10 @@ func TestStorageReportsTheActiveModeAndWhatTheOtherOneNeeds(t *testing.T) {
 	setStorageMode(t, false)
 	ncAccessSubstrate.setMode(storageModeDefault, storageModeSourceConfigured)
 	ncAccessSubstrate.setProbe(ncStorageProbe{
-		AdminUser:      "admin",
-		ServiceAccount: true,
+		AdminUser:         "admin",
+		ServiceAccount:    true,
+		FolderProbed:      true,
+		DefaultRootProbed: true,
 		Prereqs: []ncPrerequisiteStatus{
 			{Name: ncAppGroupFolders, State: ncPrerequisiteMissing},
 			{Name: ncAppEveryoneGroup, State: ncPrerequisiteMissing},
@@ -222,5 +224,134 @@ func TestStorageIsRoutedUnderTheOperatorBasePath(t *testing.T) {
 	}
 	if body := decodeStorage(t, rec); len(body.Modes) != 2 {
 		t.Fatalf("modes = %+v, want both models", body.Modes)
+	}
+}
+
+// --- Recovering from a migration that did not finish -----------------------------
+
+// THE QA STATE, and the reason it was unreachable.
+//
+// A switch that stopped after the flip leaves the recorded mode already equal to
+// what the button asks for. The first pass short-circuited there — "already
+// there, nothing to do" — which made the one action that would repair the
+// instance impossible to reach from the UI. The short-circuit now applies only
+// to a SETTLED instance; an unsettled one runs the cleanup.
+func TestPutStorageRepairsAnUnfinishedMigrationInsteadOfNoOpping(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	settings := setStorageMode(t, true)
+	ncStorage.set(true, storageModeSourceConfigured, false)
+	if err := SaveStorageSettings(settings, true, storageModeSourceUser, false); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncACLRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	// The leftover the tidy-up never removed.
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/storage", strings.NewReader(`{"access_control_enabled":true}`))
+	cfg.storageHandler(rt).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT /storage for the mode already in force = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the leftover copy was left behind; the repair never ran")
+	}
+	if !mock.has(ncACLRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the ACTIVE archive was cleared")
+	}
+	if !ncStorage.migrationClean() {
+		t.Fatal("the instance is still marked unsettled after a successful repair")
+	}
+}
+
+// The explicit button. `POST /storage {"action":"finish_migration"}` is the same
+// repair, reachable without asking for a mode at all.
+func TestPostStorageFinishMigrationClearsTheStaleRoot(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	settings := setStorageMode(t, false)
+	ncStorage.set(false, storageModeSourceConfigured, false)
+	if err := SaveStorageSettings(settings, false, storageModeSourceUser, false); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	mock.addFile(ncACLRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage", strings.NewReader(`{"action":"finish_migration"}`))
+	cfg.storageHandler(rt).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST finish_migration = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if mock.has(ncACLRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the stale Team-folder copy was left behind")
+	}
+	body := decodeStorage(t, rec)
+	if !body.MigrationClean {
+		t.Fatalf("/storage still reports an unfinished migration: %+v", body)
+	}
+}
+
+// An unfinished migration is reported, with the root that holds the leftovers
+// named — that is what the Setup tab renders a button beside.
+func TestStorageReportsAnUnfinishedMigration(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+	ncStorage.set(false, storageModeSourceConfigured, false)
+	ncAccessSubstrate.setProbe(ncStorageProbe{ServiceAccount: true, FolderProbed: true, DefaultRootProbed: true})
+	ncAccessSubstrate.succeed()
+
+	body := getStorage(t, testExAppConfig("http://nextcloud.invalid"), rt)
+	if body.MigrationClean {
+		t.Fatal("an unfinished migration was reported as settled")
+	}
+	if body.PendingCleanup != ncACLRecordingsRoot {
+		t.Fatalf("pending_cleanup = %q, want the root the mode does not name (%q)", body.PendingCleanup, ncACLRecordingsRoot)
+	}
+}
+
+// A settled instance whose OTHER root still holds recordings is not an error —
+// publishing and reading both work — but it is the thing an administrator most
+// needs told, because the symptom is "my recordings are gone".
+func TestStorageReportsAStrandedArchiveWithoutCallingItAFailure(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+	ncAccessSubstrate.setProbe(ncStorageProbe{
+		ServiceAccount:     true,
+		FolderProbed:       true,
+		DefaultRootProbed:  true,
+		FolderPresent:      true,
+		FolderMounted:      true,
+		ACLArchiveMeetings: 4,
+	})
+	ncAccessSubstrate.succeed()
+
+	body := getStorage(t, testExAppConfig("http://nextcloud.invalid"), rt)
+	if !body.OK {
+		t.Fatalf("a stranded archive was reported as a health failure: %+v", body)
+	}
+	if body.StrandedRecordings != 4 || body.StrandedRoot != ncACLRecordingsRoot {
+		t.Fatalf("stranded = %d at %q, want 4 at %q", body.StrandedRecordings, body.StrandedRoot, ncACLRecordingsRoot)
 	}
 }

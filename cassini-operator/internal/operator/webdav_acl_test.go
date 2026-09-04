@@ -117,7 +117,7 @@ func TestNCFilesAccessApplierWritesOpusACLOnly(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 
-	base := "/remote.php/dav/files/" + ncRecordingsOwner + "/" + ncRecordingsRoot + "/meetings/"
+	base := "/remote.php/dav/files/" + ncRecordingsOwner + "/" + ncACLRecordingsRoot + "/meetings/"
 	wantAuth := base64.StdEncoding.EncodeToString([]byte(ncRecordingsOwner + ":sekret"))
 	var opusACL *davRequest
 	for i := range got {

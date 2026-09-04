@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 )
 
 // The AppAPI enabled edge, after the opt-in (D-616 first pass).
@@ -75,14 +74,26 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 	ncAccessSubstrate.setProbe(probe)
 	logger.Printf("nc storage: probe %s", summarizeProbe(probe))
 
-	accessControlled, source, recordAfterSanity := c.resolveStorageMode(logger)
-	ncStorage.set(accessControlled, source)
+	accessControlled, source, clean, recordAfterSanity := c.resolveStorageMode(logger)
+	ncStorage.set(accessControlled, source, clean)
 	ncAccessSubstrate.setMode(storageModeName(accessControlled), source)
 
 	if ok, step, detail := probe.sanity(accessControlled); !ok {
 		logger.Printf("nc storage: mode=%s is not usable (%s): %s", storageModeName(accessControlled), step, detail)
 		ncAccessSubstrate.unavailable(step, errors.New(detail))
 		return
+	}
+
+	// The upgrade latch. It sits between the sanity gate and the persist for the
+	// same reason the persist is deferred at all: a fallback that this instance
+	// should not be running must not be written down, because a recorded mode is
+	// never reconsidered and would then shadow CASSINI_STORAGE_MODE.
+	if source == storageModeSourceDefault {
+		if stranded, detail := probe.unclaimedAccessControlledArchive(); stranded {
+			logger.Printf("nc storage: %s", detail)
+			ncAccessSubstrate.unavailable(storageStepModeMismatch+":"+storageStepStrandedACLArchive, errors.New(detail))
+			return
+		}
 	}
 
 	// The fallback is written down HERE, after the gate agreed — not where it was
@@ -106,8 +117,18 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 		return
 	}
 
+	// An install from before the roots were split keeps its default-mode archive
+	// where the Team folder also wants to live. Carry it across, once, into the
+	// root the default model now reads — otherwise the split would make an
+	// administrator's recordings disappear with nothing on screen to explain it.
+	// Non-fatal and self-terminating: the source is the state, so a run that does
+	// not finish is finished by the next one.
+	if !accessControlled {
+		c.adoptLegacyDefaultArchive(ctx, client, probe, logger)
+	}
+
 	ncAccessSubstrate.succeed()
-	logger.Printf("nc storage: ready mode=%s source=%s root=%s owner=%s", storageModeName(accessControlled), source, ncRecordingsRoot, ncRecordingsOwner)
+	logger.Printf("nc storage: ready mode=%s source=%s root=%s owner=%s", storageModeName(accessControlled), source, recordingsRootFor(accessControlled), ncRecordingsOwner)
 }
 
 // resolveStorageMode returns the mode this process operates under, where it came
@@ -128,7 +149,7 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 //
 // The deploy option is what skips that: a deployment that KNOWS which model it
 // wants says so, and is believed.
-func (c ExAppConfig) resolveStorageMode(logger *log.Logger) (accessControlled bool, source string, recordAfterSanity bool) {
+func (c ExAppConfig) resolveStorageMode(logger *log.Logger) (accessControlled bool, source string, clean bool, recordAfterSanity bool) {
 	path := ncStorage.settingsPath()
 	if path != "" {
 		settings, err := LoadStorageSettings(path)
@@ -140,9 +161,13 @@ func (c ExAppConfig) resolveStorageMode(logger *log.Logger) (accessControlled bo
 			// recording where every account can read it. Keep the safe model,
 			// say why, and write nothing over a file we could not read.
 			logger.Printf("ERROR: nc storage: %v — keeping access control ON until the file is readable or removed", err)
-			return true, storageModeSourceConfigured, false
+			// Clean, deliberately. An unreadable file is not evidence that a
+			// migration is half done, and reporting one would offer a cleanup
+			// that DELETES from a root chosen on the strength of a mode this
+			// branch only assumed.
+			return true, storageModeSourceConfigured, true, false
 		case settings.Configured():
-			return settings.AccessControlled(), storageModeSourceConfigured, false
+			return settings.AccessControlled(), storageModeSourceConfigured, settings.Clean(), false
 		}
 	}
 
@@ -157,7 +182,7 @@ func (c ExAppConfig) resolveStorageMode(logger *log.Logger) (accessControlled bo
 	case ok:
 		c.persistInitialMode(path, declared, storageModeSourceEnv,
 			fmt.Sprintf("%s=%s declared the initial storage mode %q", envStorageMode, raw, storageModeName(declared)), logger)
-		return declared, storageModeSourceEnv, false
+		return declared, storageModeSourceEnv, true, false
 	case raw != "":
 		logger.Printf("ERROR: nc storage: %s=%q is not %s; ignoring it and starting in %q instead", envStorageMode, raw, storageModeEnvValues, storageModeDefault)
 	}
@@ -168,7 +193,7 @@ func (c ExAppConfig) resolveStorageMode(logger *log.Logger) (accessControlled bo
 	// recorded mode is never reconsidered and would then shadow the very deploy
 	// option an administrator would reach for to fix it.
 	logger.Printf("nc storage: no storage mode recorded and none declared by %s; starting in %q, which needs no third-party Nextcloud apps", envStorageMode, storageModeDefault)
-	return false, storageModeSourceDefault, true
+	return false, storageModeSourceDefault, true, true
 }
 
 // persistInitialMode writes the first decision an install makes and says where
@@ -180,7 +205,9 @@ func (c ExAppConfig) persistInitialMode(path string, accessControlled bool, sour
 		logger.Printf("nc storage: %s; no settings path configured, so it governs this process only", why)
 		return
 	}
-	if err := SaveStorageSettings(path, accessControlled, source); err != nil {
+	// A first decision is settled by construction: nothing has ever migrated on
+	// this install, so there is no source to have failed to clear.
+	if err := SaveStorageSettings(path, accessControlled, source, true); err != nil {
 		logger.Printf("ERROR: nc storage: %s, but it could not be written to %s: %v — it will be decided again on the next enable", why, path, err)
 		return
 	}
@@ -209,38 +236,22 @@ func (c ExAppConfig) arrangeRecordingsTree(ctx context.Context, client *http.Cli
 		c.provisionNCFilesAccessLocked(ctx, logger)
 		return nil
 	}
-	if err := c.mkcolRecordingsTree(ctx, client); err != nil {
-		logger.Printf("nc storage: create %s as %q: %v", ncRecordingsRoot, ncRecordingsOwner, err)
+	if err := c.mkcolRecordingsTree(ctx, client, ncDefaultRecordingsRoot); err != nil {
+		logger.Printf("nc storage: create %s as %q: %v", ncDefaultRecordingsRoot, ncRecordingsOwner, err)
 		ncAccessSubstrate.degraded("recordings_tree", err)
 		return err
 	}
 	return nil
 }
 
-// mkcolRecordingsTree materializes the canonical collections as the service
-// account. MKCOL of an existing collection is a 405, which davMkcol treats as
-// success, so this is safe on every run in either mode.
-func (c ExAppConfig) mkcolRecordingsTree(ctx context.Context, client *http.Client) error {
-	for _, dir := range recordingsTreeDirs(ncRecordingsRoot) {
+// mkcolRecordingsTree materializes a recordings root's collections as the
+// service account. MKCOL of an existing collection is a 405, which davMkcol
+// treats as success, so this is safe on every run against every root.
+func (c ExAppConfig) mkcolRecordingsTree(ctx context.Context, client *http.Client, root string) error {
+	for _, dir := range recordingsTreeDirs(root) {
 		if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
 			return fmt.Errorf("mkcol %s: %w", dir, err)
 		}
 	}
 	return nil
-}
-
-// recordingsTreeDirs lists a recordings root's collections, outermost first, so
-// MKCOL can walk them in creatable order. Derived from the root rather than
-// hard-coded, because the transition builds the same shape under a staging name
-// that is deliberately NOT the canonical mount point.
-func recordingsTreeDirs(root string) []string {
-	parts := strings.Split(strings.Trim(root, "/"), "/")
-	dirs := make([]string, 0, len(parts)+1)
-	for i := range parts {
-		if parts[i] == "" {
-			continue
-		}
-		dirs = append(dirs, strings.Join(parts[:i+1], "/"))
-	}
-	return append(dirs, strings.Trim(root, "/")+"/meetings")
 }

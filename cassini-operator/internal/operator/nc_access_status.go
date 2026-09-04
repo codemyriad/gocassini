@@ -261,36 +261,50 @@ func (s *ncAccessSubstrateStatus) usable() bool {
 }
 
 // ncStorageServesAsOwner reports whether the read proxy may fetch the archive
-// as the owning service account instead of as the caller.
+// as the owning service account instead of as the caller — which also decides
+// WHICH root it reads, because the two are one question (webdav_upload.go).
 //
-// This is the guard that keeps the default model's read path from failing open,
-// and it deliberately asks TWO different questions:
+// This is D-668's guard against the default model's read path failing open, and
+// the split roots changed what it has to check rather than whether it has to.
 //
-//	the recorded mode says default   an administrator's decision, or one
-//	                                 derived from the instance and written down
-//	the substrate is provisioned     the last probe AGREED — in particular that
-//	                                 no Team folder is mounted over the
-//	                                 canonical path, which is exactly what
-//	                                 sanity(default) checks
+// The first pass required the recorded mode AND `usable()`, because both models
+// addressed `Cassini/Recordings`: a recorded `default` on an instance whose
+// `Cassini` Team folder was still mapped would have served every authenticated
+// account every recording in that folder, past its per-recording ACLs, as the
+// ACL manager. That was reproduced end to end, and it is why the probe's
+// agreement was made load-bearing.
 //
-// The mode alone is not enough, and that is not theoretical. A recorded
-// `default` on an instance that still has a mapped `Cassini` Team folder is a
-// state the preflight explicitly names `mode_mismatch` — and in it, reading as
-// the owner hands every authenticated account every recording in that folder,
-// past its per-recording ACLs, as the ACL manager. Publishing and recording are
-// already gated on this same record; reading was not, and reading is the one
-// that discloses.
+// That state no longer exists. The default model reads
+// `CassiniNoACL/Recordings`, which the `Cassini` Team folder cannot shadow, so a
+// mapped Team folder is no longer evidence of anything about the private tree —
+// and after an opt-out it is the ORDINARY state, since the emptied folder is
+// left in place. What remains is one narrower question: has a Team folder been
+// mounted over the default root itself?
 //
-// The cost is that a container which has restarted but not been re-enabled
-// reports `unknown`, so a default-mode archive reads empty until the enabled
-// edge runs — the same window in which publishing is already refused (D-541,
-// D-669). An empty list is the recoverable failure; the other one is not.
+//	no probe yet       serve. A restarted container has no probe, and the claim
+//	                   being made is about a path nothing Cassini does could have
+//	                   mounted anything over. This is what stops a reboot serving
+//	                   an empty archive to everybody until somebody re-enables
+//	                   the app (D-669's window, for reads).
+//	probe, unanswered  serve. DefaultRootShadowed is only ever assigned when the
+//	                   folder list was actually read, so a `false` here can mean
+//	                   "we could not look" — which is why the probe carries
+//	                   DefaultRootProbed. READS are deliberately permissive about
+//	                   it; sanity(default) is NOT, so publishing into a tree
+//	                   nobody could confirm is private is refused. That
+//	                   asymmetry is the whole point: an unconfirmed WRITE puts
+//	                   recordings somewhere they may not belong, an unconfirmed
+//	                   READ serves a tree that in this mode is open by design.
+//	probe says yes     fail closed. Something IS mounted at CassiniNoACL, so the
+//	                   tree is not private and owner-identity reads would hand it
+//	                   to whoever that folder is mapped to.
 func ncStorageServesAsOwner() bool {
 	accessControlled, resolved := ncStorage.mode()
 	if !resolved || accessControlled {
 		return false
 	}
-	return ncAccessSubstrate.usable()
+	probe, probed := ncAccessSubstrate.lastProbe()
+	return !probed || !probe.DefaultRootShadowed
 }
 
 // recordingRefusal reports why a recording must not be started at all, or ""
@@ -356,6 +370,11 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		Mode:        s.mode,
 		ModeSource:  s.modeSource,
 		CheckedAt:   s.checkedAtUTC,
+	}
+	if s.mode != "" {
+		out.Root = recordingsRootFor(s.mode == storageModeAccessControlled)
+		clean := ncStorage.migrationClean()
+		out.MigrationClean = &clean
 	}
 	for _, p := range s.prereqs {
 		out.Prerequisites = append(out.Prerequisites, statusPrerequisite(p))

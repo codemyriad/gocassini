@@ -95,11 +95,35 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		return "", fmt.Errorf("the recordings storage is not ready (%s: %s); refusing to publish — see GET /status recordings_access and the Setup tab in the Cassini app, or set %s=local to keep recordings on this app's own volume",
 			snap.Step, snap.Detail, envPublishSinkName)
 	}
-	// Which storage model this archive is under (D-616). Read ONCE, here, so a
-	// mode that changes mid-delivery cannot leave one asset ruled and the next
-	// one not. The gate above guarantees it is resolved: the substrate cannot
-	// report `provisioned` before the preflight decided.
+	// A delivery and a storage-mode switch may not overlap.
+	//
+	// Reading the mode once was enough while a switch only MOVED files: the
+	// worst case was an asset written under the old mode a moment before the
+	// flip. It stopped being enough when the switch gained its final step. A
+	// delivery that lands in root(X) after the switch has copied and verified,
+	// but before it empties root(X), is deleted — and the job has already been
+	// marked succeeded and its staging copy removed, so the recording is simply
+	// gone. The window is as long as a WebDAV DELETE pass over the whole archive.
+	//
+	// provisionMu is the existing "nothing else is touching the archive" lock,
+	// held by the switch, the recovery and the enabled-edge preflight. Taking it
+	// here is what makes the switch's own claim — that no publish can observe a
+	// half-copied archive under a mode that no longer describes it — actually
+	// true. Nothing below reaches back into it, so there is no re-entrancy.
+	provisionMu.Lock()
+	defer provisionMu.Unlock()
+
+	// Which storage model this archive is under (D-616). Read ONCE, here, and now
+	// under the lock, so a mode that changes mid-delivery cannot leave one asset
+	// ruled and the next one not — nor one asset in each tree. The gate above
+	// guarantees it is resolved: the substrate cannot report `provisioned` before
+	// the preflight decided.
 	accessControlled := ncStorage.accessControlled()
+	// ...and therefore WHERE it goes. The two models have separate roots so that
+	// neither can shadow the other (nc_storage_paths.go); reading the mode once
+	// and deriving the root from it here is what keeps a delivery from putting
+	// one asset in each tree.
+	root := recordingsRootFor(accessControlled)
 	incoming, ok, err := loadSiteCatalog(d.AttemptSitePath)
 	if err != nil {
 		return "", err
@@ -150,7 +174,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 			}
 			uploads = append(uploads, upload{
 				local:  local,
-				remote: ncRecordingsRoot + "/" + filepath.ToSlash(asset),
+				remote: root + "/" + filepath.ToSlash(asset),
 				size:   info.Size(),
 				isDir:  info.IsDir(),
 			})
@@ -160,7 +184,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		return "", fmt.Errorf("attempt site %s names no deliverable assets", d.AttemptSitePath)
 	}
 
-	for _, dir := range recordingsTreeDirs(ncRecordingsRoot) {
+	for _, dir := range recordingsTreeDirs(root) {
 		if dir == "." || dir == "" {
 			continue
 		}
@@ -181,7 +205,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	// installed-ExApp e2e that would catch it, not the tests in this package:
 	// writeAttemptSite fabricates the site with the same convention the sink
 	// assumes, so a unit test cannot disagree with it.
-	opusRemote := ncRecordingsRoot + "/meetings/" + d.JobID + ".opus"
+	opusRemote := root + "/meetings/" + d.JobID + ".opus"
 	audienceNeeded := false
 
 	// Read the archive's index BEFORE touching anything, because it is the only
@@ -198,7 +222,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	//
 	// The catalog settles it. It is written last, so a meeting that appears in it
 	// got through the audience step; one that does not, did not.
-	existingCatalog, catalogMissing, err := s.readRemoteCatalog(ctx)
+	existingCatalog, catalogMissing, err := s.readRemoteCatalog(ctx, root)
 	if err != nil {
 		return "", err
 	}
@@ -231,10 +255,10 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		}
 	}
 
-	if err := s.upsertRemoteCatalog(ctx, existingCatalog, catalogMissing, incoming, catalogEntryOverlay{RoomName: d.RoomName}, accessControlled); err != nil {
+	if err := s.upsertRemoteCatalog(ctx, existingCatalog, catalogMissing, incoming, catalogEntryOverlay{RoomName: d.RoomName}, accessControlled, root); err != nil {
 		return "", err
 	}
-	return ncRecordingsRoot, nil
+	return root, nil
 }
 
 // catalogNamesMeeting reports whether the archive's index already lists jobID.
@@ -424,8 +448,8 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 // readRemoteCatalog fetches the archive's authoritative index. missing reports
 // that there is none yet — the only case in which the catalog leaf is about to
 // be CREATED, and therefore the only one in which it could be born without rules.
-func (s *nextcloudFilesPublishSink) readRemoteCatalog(ctx context.Context) (catalog siteCatalog, missing bool, err error) {
-	raw, status, err := s.cfg.davGetBytes(ctx, s.client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+func (s *nextcloudFilesPublishSink) readRemoteCatalog(ctx context.Context, root string) (catalog siteCatalog, missing bool, err error) {
+	raw, status, err := s.cfg.davGetBytes(ctx, s.client, ncRecordingsOwner, root+"/catalog.json")
 	switch {
 	case err != nil && status != http.StatusNotFound:
 		return siteCatalog{}, false, fmt.Errorf("read remote catalog: %w", err)
@@ -457,8 +481,8 @@ func (s *nextcloudFilesPublishSink) readRemoteCatalog(ctx context.Context) (cata
 // upsertRemoteCatalog merges the delivered meetings into the catalog snapshot
 // read before delivery, preserving the archive and applying the operator's
 // catalog-only fields before it writes the protected index.
-func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, existing siteCatalog, catalogMissing bool, incoming siteCatalog, overlay catalogEntryOverlay, accessControlled bool) error {
-	catalogRemote := ncRecordingsRoot + "/catalog.json"
+func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, existing siteCatalog, catalogMissing bool, incoming siteCatalog, overlay catalogEntryOverlay, accessControlled bool, root string) error {
+	catalogRemote := root + "/catalog.json"
 
 	merged, err := upsertSiteCatalog(existing, incoming, overlay)
 	if err != nil {

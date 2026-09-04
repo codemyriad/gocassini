@@ -7,10 +7,17 @@
   <description><![CDATA[Cassini records a Nextcloud Talk call without joining as a participant, then
 transcribes and publishes a readable archive in Nextcloud Files. Optionally, it
 can also summarize each meeting when you configure an OpenRouter (or compatible)
-API key. Recording control and job history live in the admin-only control panel;
-each private recording is readable only by the people who had access to the Talk
-room (its attendee list) when it was published, enforced by Nextcloud's own
-advanced file ACLs.
+API key. Recording control and job history live in the admin-only control panel.
+
+Who may read a published recording is an administrator's choice between two
+storage modes, made in the app's Setup tab. In the default mode the archive lives
+in a dedicated "cassini" service account's own folder and everyone who can open
+Cassini can read every recording; it needs no extra Nextcloud apps, and it is
+what a fresh install starts in. In the access-controlled mode the archive lives
+in a Cassini Team folder and each private recording is readable only by the
+people who had access to the Talk room (its attendee list) when it was published,
+enforced by Nextcloud's own advanced file ACLs; that mode additionally needs the
+Group folders and Everyone Group apps.
 
 Data processing: recording and speech-to-text transcription run entirely within
 your own infrastructure. No audio or transcript leaves your servers for those
@@ -83,17 +90,17 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>CASSINI_NC_ADMIN_USER</name>
         <display-name>Administrator account for setup (optional)</display-name>
-        <description>The Nextcloud account Cassini acts as when it checks how this instance is set up (which apps are enabled, whether the "cassini" service account exists, whether there is a Cassini Team folder) and when it moves recordings between storage modes. Leave empty to detect an administrator automatically; set it only if detection picks the wrong account. It is never used for storing or reading recordings — those use the dedicated "cassini" service account.</description>
+        <description>The Nextcloud account Cassini acts as when it checks how this instance is set up: which apps are enabled, whether the "cassini" service account exists, whether there is a Cassini Team folder. That check is read-only; the only write Cassini makes as this account is the attempt to install the two native apps when you ask for it from the Setup tab. Leave empty to detect an administrator automatically; set it only if detection picks the wrong account. It is never used for storing or reading recordings, or for moving them when the storage mode changes — all of that acts as the dedicated "cassini" service account.</description>
       </variable>
       <variable>
         <name>CASSINI_PUBLISH_SINK</name>
         <display-name>Where published recordings are stored</display-name>
-        <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. Under nextcloud-files, WHO can read a recording is a separate choice made in the app's Setup tab: the default mode needs only a "cassini" service account and lets everyone who can open Cassini read every recording, while access-controlled mode restricts each recording to the people who were in the meeting and additionally needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps. Cassini installs neither app and creates no account — it reports what is missing and the command that fixes it. See docs/exapp-nextcloud-recordings-permissions.md.</description>
+        <description>Selects the publish destination: "nextcloud-files" stores recordings in the "cassini" service account's Nextcloud Files (the default for an installed app), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. Under nextcloud-files, WHO can read a recording is a separate choice made in the app's Setup tab, and each storage mode keeps its archive in its own place: the default mode stores recordings in that account's own CassiniNoACL/Recordings, needs nothing but the account, and lets everyone who can open Cassini read every recording; access-controlled mode stores them in Cassini/Recordings inside a Cassini Team folder, restricts each recording to the people who were in the meeting, and additionally needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps. The two paths are separate so that neither can shadow the other, and switching modes copies the archive across rather than moving it. Cassini installs neither app and creates no account — it reports what is missing and the command that fixes it. See docs/exapp-nextcloud-recordings-permissions.md.</description>
       </variable>
       <variable>
         <name>CASSINI_STORAGE_MODE</name>
         <display-name>Initial recording storage mode (optional)</display-name>
-        <description>Which storage model a FRESH install starts in: "default" keeps recordings in the "cassini" service account's own folder, readable by everyone who can open Cassini and needing no extra Nextcloud apps; "access_controlled" keeps them in a Cassini Team folder where each recording is readable only by the people who were in the meeting, and additionally needs the Group folders and Everyone Group apps plus a Team folder an administrator sets up. Leave empty and Cassini works it out from the instance — which resolves to access control on an installation that already has that substrate, so an upgrade never widens an existing archive. This only seeds the choice: once made it is recorded, the app's Setup tab is where it is changed afterwards, and changing this variable does not move an archive that already exists.</description>
+        <description>Which storage model a FRESH install starts in: "default" keeps recordings in the "cassini" service account's own CassiniNoACL/Recordings, readable by everyone who can open Cassini and needing no extra Nextcloud apps; "access_controlled" keeps them in Cassini/Recordings inside a Cassini Team folder, where each recording is readable only by the people who were in the meeting, and additionally needs the Group folders and Everyone Group apps plus a Team folder an administrator sets up. Leave empty and a fresh install starts in "default" — nothing is inferred from the instance, because what Nextcloud happens to look like on the first enable is not evidence of what an administrator intends, and a wrong guess would be silent and permanent. This is therefore the only way to START an install access-controlled. An upgrade never widens an existing archive on its own: an install that has recorded no mode, whose Cassini Team folder is mounted and still holds recordings, refuses to publish and says how to resolve it rather than starting a fresh archive elsewhere. This only seeds the choice: once made it is recorded, the app's Setup tab is where it is changed afterwards, and changing this variable does not move an archive that already exists.</description>
       </variable>
       <variable>
         <name>CASSINI_ARTIFACT_RETENTION</name>
@@ -194,11 +201,14 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: storage mode (D-616, D-671). GET reports which storage model
-           this archive is under, what the other one would need, and the setup
-           plan for it; POST re-checks the instance or attempts the native app
-           installs; PUT switches modes, which MOVES every published recording.
-           ADMIN like the rest of the operator API — the blockers name accounts
-           and folder ids, and the PUT relocates the archive.
+           this archive is under, where it keeps recordings, what the other one
+           would need, and the setup plan for it; POST re-checks the instance,
+           previews a switch, attempts the native app installs, or finishes a
+           switch that stopped part way; PUT switches modes, which COPIES every
+           published recording into the other mode's root and then empties the
+           one it came from. ADMIN like the rest of the operator API — the
+           blockers name accounts and folder ids, and the PUT relocates the
+           archive.
 
            One route rather than three paths, because AppAPI matches url AND
            verb: either way an install that predates this manifest has to be

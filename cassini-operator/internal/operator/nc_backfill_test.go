@@ -727,7 +727,7 @@ func TestBackfillProceedsInTheAccessControlledMode(t *testing.T) {
 
 func mustSaveMode(t *testing.T, path string, accessControlled bool) {
 	t.Helper()
-	if err := SaveStorageSettings(path, accessControlled, storageModeSourceUser); err != nil {
+	if err := SaveStorageSettings(path, accessControlled, storageModeSourceUser, true); err != nil {
 		t.Fatalf("SaveStorageSettings() error = %v", err)
 	}
 }
