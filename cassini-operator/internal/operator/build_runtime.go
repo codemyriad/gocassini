@@ -60,6 +60,14 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		return
 	}
 
+	// Read what this build is about to consume BEFORE it runs, and stamp it
+	// only if it succeeds (D-698). An upload that lands while this build is
+	// working has already bumped the counter, and stamping the value as it
+	// stands at the END would swallow audio this build never opened: counted as
+	// consumed, with no rebuild ever owed for it. The digest is read here for
+	// the same reason — it describes the bytes this build is going to see.
+	consumedSourceAudio, sourceAudioDigest := rt.sourceAudioConsumption(task.JobID)
+
 	startedAt := nowUTCString()
 	claimed, err := rt.store.ClaimBuildRunning(context.Background(), task, startedAt)
 	if err != nil {
@@ -167,7 +175,70 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		return
 	}
+	// Only now, and only with the figures read at claim time. A build that
+	// failed, was interrupted or was deferred stamps nothing, so its uploads
+	// stay owed and the next dispatcher pass judges the job again.
+	if hasSourceAudioToRecord(consumedSourceAudio, sourceAudioDigest) {
+		// Retried like every other write in this mechanism. A busy database at
+		// the one moment a build finishes would otherwise leave the debt
+		// standing and cost a whole redundant re-transcription.
+		if err := retrySourceAudioWrite(context.Background(), func() error {
+			return rt.store.MarkSourceAudioBuilt(context.Background(), task.JobID, consumedSourceAudio, sourceAudioDigest)
+		}); err != nil {
+			rt.logger.Printf("source audio: could not record what id=%s consumed: %v", task.JobID, err)
+		}
+	}
 	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, canonicalMeetingPath, finishedAt)
+}
+
+// sourceAudioConsumption reads the upload counter and the capture digest a
+// build is about to consume. Both are best-effort: a build must not fail
+// because the bookkeeping for a late upload could not be read. A zero counter
+// means "nothing to stamp", which is also the answer for every installation
+// that never collected a capture.
+func (rt *Runtime) sourceAudioConsumption(jobID string) (int64, string) {
+	if rt.store == nil {
+		return 0, ""
+	}
+	// Nothing is consumed with ingestion off. The build below is not given
+	// --source-audio at all, so stamping the counter would record that a build
+	// had read audio it was never shown — and turning ingestion on afterwards
+	// would find no debt and never use it. Leaving the debt owed is what makes
+	// that switch recoverable.
+	if !sourceAudioIngestEnabled() {
+		return 0, ""
+	}
+	seq, err := rt.store.SourceAudioUploadSeq(context.Background(), jobID)
+	if err != nil {
+		rt.logger.Printf("source audio: could not read the upload counter for id=%s: %v", jobID, err)
+		return 0, ""
+	}
+	// The scan runs even at seq == 0. An upload that landed before the build and
+	// was never attributed -- one for a recording that was still live, say --
+	// leaves the counter at zero while the build reads and splices it anyway, so
+	// skipping the scan here would leave the digest empty and let the very same
+	// capture, re-uploaded afterwards, buy a full re-transcription that produces
+	// the identical transcript.
+	set, err := rt.sourceCaptureSetForJob(context.Background(), jobID)
+	if err != nil {
+		// The counter alone is still worth stamping, and it settles the debt:
+		// a build that could not read the capture root will not read it any
+		// better on a second pass, and leaving the debt owed would re-run this
+		// meeting on every scan. The empty digest records that this build
+		// cannot say what it consumed, so a genuinely new upload afterwards is
+		// still owed a rebuild and simply cannot be proved redundant.
+		rt.logger.Printf("source audio: could not read the captures for id=%s: %v", jobID, err)
+		return seq, ""
+	}
+	return seq, set.Digest
+}
+
+// hasSourceAudioToRecord reports whether a finished build has anything worth
+// stamping: uploads it owed, or a capture set it can name. Either alone is
+// enough, and neither means the write is skipped entirely -- which is every
+// installation that never collected a capture.
+func hasSourceAudioToRecord(consumed int64, digest string) bool {
+	return consumed > 0 || digest != ""
 }
 
 func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Duration {

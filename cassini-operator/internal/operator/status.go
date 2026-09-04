@@ -105,6 +105,14 @@ type statusSourceCapture struct {
 	MinFreeDiskBytes int64  `json:"min_free_disk_bytes"`
 	FreeDiskBytes    int64  `json:"free_disk_bytes"`
 	MaxAgeHours      int64  `json:"max_age_hours"`
+	// RebuildsPending is how many meetings are waiting to be transcribed again
+	// because a participant's audio arrived after their build (D-698), and
+	// RebuildsRun is how many such rebuilds this installation has scheduled.
+	// The pair is what tells "the late-upload path is working" from "captures
+	// are arriving and nothing is happening to them", which is otherwise only
+	// visible by reading the container log.
+	RebuildsPending int `json:"rebuilds_pending"`
+	RebuildsRun     int `json:"rebuilds_run"`
 	// Detail carries whatever stopped the figures from being measured, so a
 	// zero here is never mistaken for an empty capture root.
 	Detail string `json:"detail,omitempty"`
@@ -127,8 +135,22 @@ func (rt *Runtime) sourceCaptureStatus() statusSourceCapture {
 		MinFreeDiskBytes:  limits.minFreeDisk,
 		MaxAgeHours:       int64(limits.maxAge / time.Hour),
 	}
+	// Counted before the capture root is measured, and reported even when it
+	// is not configured: a debt lives in the job database, so it is knowable
+	// and worth showing whatever the volume is doing.
+	if rt.store != nil {
+		pending, run, err := rt.store.CountSourceAudioRebuilds(context.Background())
+		if err != nil {
+			status.Detail = err.Error()
+		} else {
+			status.RebuildsPending = pending
+			status.RebuildsRun = run
+		}
+	}
 	if strings.TrimSpace(rt.cfg.CaptureRoot) == "" {
-		status.Detail = "no capture root is configured"
+		if status.Detail == "" {
+			status.Detail = "no capture root is configured"
+		}
 		return status
 	}
 	usage, err := rt.measureCaptureUsage()
