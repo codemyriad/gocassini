@@ -371,10 +371,12 @@ exapp_register_app() {
 
   exapp_log "Registering $app_id on daemon '$daemon'"
   if [[ -n "$log_file" ]]; then
+    local occ_rc=0
     if ! occ "${args[@]}" >"$log_file" 2>&1; then
+      occ_rc=$?
       tail -200 "$log_file" >&2 || true
       exapp_die "app_api:app:register failed; see $log_file"
-      return 1
+      return "$occ_rc"
     fi
     if grep -q 'heartbeat check failed' "$log_file"; then
       tail -200 "$log_file" >&2 || true
@@ -382,7 +384,7 @@ exapp_register_app() {
       return 1
     fi
   else
-    occ "${args[@]}" || return 1
+    occ "${args[@]}" || return $?
   fi
 
   if (( enable_cycle )); then
