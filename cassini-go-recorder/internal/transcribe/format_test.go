@@ -632,3 +632,64 @@ func TestWriteManifestRecordsSourceAudioProvenance(t *testing.T) {
 		t.Errorf("bob report = %+v, want owner=bob placed=1", doc.Provenance.SourceAudio[1])
 	}
 }
+
+// The manifest has to say whether the published audio carries the splice, and
+// where. Somebody looking at a meeting should be able to tell which stretches of
+// what they are hearing came from whose upload without listening for it.
+func TestWriteManifestRecordsWhetherTheMixWasSpliced(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "manifest.json")
+	streams := []AudioStream{
+		{Index: 0, ParticipantID: "alice", SpeakerID: "spk_alice", SpeakerLabel: "Alice"},
+		{Index: 1, ParticipantID: "bob", SpeakerID: "spk_bob", SpeakerLabel: "Bob"},
+	}
+	reports := []SourceRenderReport{
+		{
+			SpeakerID: "spk_alice", Owner: "alice", Segments: 2, Placed: 2, SplicedMS: 24000,
+			MixSpliced: true, CrossfadeMS: mixSpliceCrossfadeMS, RenderHz: mixRenderHz,
+			Windows: []SpliceWindow{{FromMS: 1000, ToMS: 13000, Segment: 0}, {FromMS: 20000, ToMS: 32000, Segment: 1}},
+		},
+		{
+			SpeakerID: "spk_bob", Owner: "bob", Segments: 1, Placed: 1, SplicedMS: 8000,
+			MixSkipReason: "disabled by configuration (CASSINI_SOURCE_AUDIO_MIX=0)", RenderHz: mixRenderHz,
+		},
+	}
+	if err := WriteManifest(path, "src.mkv", 40000, 40000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil, nil, reports); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var doc struct {
+		Provenance struct {
+			SourceAudio []SourceRenderReport `json:"sourceAudio"`
+		} `json:"provenance"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	alice := doc.Provenance.SourceAudio[0]
+	if !alice.MixSpliced {
+		t.Fatalf("alice's report does not record that the mix was spliced: %+v", alice)
+	}
+	if alice.CrossfadeMS != mixSpliceCrossfadeMS || alice.RenderHz != mixRenderHz {
+		t.Fatalf("alice's render is recorded as %d Hz with a %d ms crossfade", alice.RenderHz, alice.CrossfadeMS)
+	}
+	if len(alice.Windows) != 2 || alice.Windows[1].FromMS != 20000 || alice.Windows[1].Segment != 1 {
+		t.Fatalf("alice's windows did not survive the manifest: %+v", alice.Windows)
+	}
+	bob := doc.Provenance.SourceAudio[1]
+	if bob.MixSpliced {
+		t.Fatal("bob's report claims a mix splice that did not happen")
+	}
+	if bob.MixSkipReason == "" {
+		t.Fatal("bob's report does not say why the mix was left alone")
+	}
+	// The keys are the ones a reader outside this package will look for.
+	for _, want := range []string{`"mix_spliced"`, `"windows"`, `"from_ms"`, `"crossfade_ms"`, `"render_hz"`, `"mix_skip_reason"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("the manifest has no %s key:\n%s", want, raw)
+		}
+	}
+}
