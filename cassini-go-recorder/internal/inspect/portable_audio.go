@@ -270,7 +270,6 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	}
 	if manifest.Provenance != nil {
 		printProcessingStep(out, "speech_to_text", manifest.Provenance.SpeechToText)
-		printProcessingStep(out, "readable_cleanup", manifest.Provenance.ReadableCleanup)
 		printProcessingStep(out, "meeting_summary", manifest.Provenance.MeetingSummary)
 	}
 	printSummaryMetadata(out, manifest.Summary)
@@ -880,7 +879,7 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 	if err := json.Unmarshal(rawJSON, &body); err != nil {
 		return portable.TranscriptBody{}, warnings, fmt.Errorf("parse transcript body JSON: %w", err)
 	}
-	if entry.Role != portable.RoleReadableCleanup && entry.Role != portable.RoleDisplay {
+	if entry.Role != portable.RoleDisplay {
 		if err := portable.ValidateTranscriptBody(body); err != nil {
 			return portable.TranscriptBody{}, warnings, fmt.Errorf("invalid published transcript body: %w", err)
 		}

@@ -33,11 +33,15 @@ const (
 	TranscriptBodyMIMEWords    = "application/vnd.cassini.transcript-words+json"
 	TranscriptBodyMIMEReadable = "application/vnd.cassini.transcript-readable+json"
 
-	RoleRawASR          = "raw-asr"
-	RoleReadableCleanup = "readable-cleanup"
-	RoleDisplay         = "display"
-	RoleHumanCorrected  = "human-corrected"
-	RoleTranslation     = "translation"
+	RoleRawASR = "raw-asr"
+	// RoleWithdrawnReadableCleanup is the role the deleted LLM cleanup step used
+	// to write. Nothing produces it any more, and no published file in the
+	// archive carries one, but the name survives so a reader can recognise such
+	// an entry and skip it instead of failing the whole file.
+	RoleWithdrawnReadableCleanup = "readable-cleanup"
+	RoleDisplay                  = "display"
+	RoleHumanCorrected           = "human-corrected"
+	RoleTranslation              = "translation"
 	// RoleScripted is authored text the recording is a performance of: a
 	// script, a song's lyrics. Not a transcription, so it never names a
 	// source transcript.
@@ -72,7 +76,6 @@ type Manifest struct {
 
 type Provenance struct {
 	SpeechToText      *ProcessingStep `json:"speechToText,omitempty"`
-	ReadableCleanup   *ProcessingStep `json:"readableCleanup,omitempty"`
 	DisplayTranscript *ProcessingStep `json:"displayTranscript,omitempty"`
 	MeetingSummary    *ProcessingStep `json:"meetingSummary,omitempty"`
 	// Attribution is meeting-level, not a per-transcript ProcessingStep: the
@@ -290,6 +293,14 @@ func ValidatePublishedManifest(manifest Manifest) error {
 		wordIDs[entry.ID] = struct{}{}
 	}
 	for _, entry := range manifest.ReadableTranscripts {
+		// A withdrawn readable-cleanup entry is skipped, not rejected. The
+		// format contract says a reader fails closed on a layout it cannot
+		// understand, but this one it understands perfectly well: it is a body
+		// this build no longer writes. Failing here would turn an older file
+		// into an error and take its perfectly good raw transcript with it.
+		if entry.Role == RoleWithdrawnReadableCleanup {
+			continue
+		}
 		if err := validatePublishedTranscriptEntry(entry, true); err != nil {
 			return err
 		}
@@ -320,7 +331,7 @@ func validatePublishedTranscriptEntry(entry TranscriptEntry, readable bool) erro
 		return fmt.Errorf("transcript %q has an empty format", entry.ID)
 	}
 	if readable {
-		if entry.Role != RoleReadableCleanup && entry.Role != RoleDisplay {
+		if entry.Role != RoleDisplay {
 			return fmt.Errorf("transcript %q has unsupported readable role %q", entry.ID, entry.Role)
 		}
 		if strings.TrimSpace(entry.SourceTranscriptID) == "" {

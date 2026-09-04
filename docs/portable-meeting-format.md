@@ -118,7 +118,8 @@ The main payload is an index. Its required top-level fields are:
 
 Transcript bodies are not stored inline. `transcripts` indexes raw,
 human-corrected, and translated bodies. `readableTranscripts` optionally
-indexes cleanup and display bodies.
+indexes display bodies (and, in files written before it was withdrawn, cleanup
+bodies).
 
 Example descriptor:
 
@@ -164,10 +165,17 @@ Words transcript bodies have this shape:
 Each `items[]` entry is exactly one timed word. Its `text` is non-empty and
 contains no whitespace; paragraph text belongs in a readable or display body.
 
-Readable-cleanup and display entries retain their native JSON documents:
-`transcript.readable.v1` with `segments`, and `transcript.display.v1` with
+Display entries retain their native JSON document: `transcript.display.v1` with
 `blocks`. The entry's `format`, role, and MIME identify which body it carries;
 all body kinds use the same chunk and integrity mechanism below.
+
+The `readable-cleanup` role is **withdrawn**. It was written by an LLM cleanup
+step that no longer exists, and no producer emits one. The role stays in the v1
+schema, marked deprecated, so a file written before the withdrawal is still a
+valid v1 document. A reader **skips** such an entry and reads the file's raw
+transcript as normal; it must not reject the file, because the audio and the
+word transcript are unaffected by a body nobody writes any more. The same
+applies to `provenance.readableCleanup`.
 
 The body tags repeat the descriptor metadata:
 
@@ -195,8 +203,8 @@ should be reported, but the manifest still wins.
 
 `raw-asr` and `scripted` entries come directly from the recording and do not
 set `sourceTranscriptId`. `human-corrected` and `translation` entries require
-it. Readable-cleanup and display entries also require it and name the words
-transcript they came from. When switching words transcripts, consumers should
+it. Display entries also require it and name the words transcript they came
+from. When switching words transcripts, consumers should
 use only a derived entry whose source id matches the newly selected entry.
 
 Processing provenance is keyed by transcript id:

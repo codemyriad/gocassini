@@ -44,6 +44,8 @@
         },
         "readableCleanup": {
           "type": "object",
+          "deprecated": true,
+          "description": "Withdrawn. The LLM readable-cleanup step no longer exists, so no producer writes this. Retained only so files written before the withdrawal stay valid against v1; readers should ignore it.",
           "additionalProperties": { "$ref": "#/$defs/processingStep" }
         },
         "displayTranscript": {
@@ -154,7 +156,10 @@
       "required": ["id", "role", "format", "sourceTranscriptId", "payloadRef"],
       "properties": {
         "id": { "$ref": "#/$defs/transcriptId" },
-        "role": { "enum": ["readable-cleanup", "display"] },
+        "role": {
+          "enum": ["readable-cleanup", "display"],
+          "description": "\"readable-cleanup\" is withdrawn: the step that produced it no longer exists and no producer emits one. It stays in the enum so files written before the withdrawal remain valid against v1. Readers skip such an entry rather than rejecting the file."
+        },
         "default": { "type": "boolean" },
         "format": { "type": "string", "minLength": 1 },
         "language": { "type": "string" },
