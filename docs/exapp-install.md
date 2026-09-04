@@ -702,9 +702,7 @@ implies for the Install/Update buttons.
 **Docker-in-LXC note:** if the GPU "node" is an LXC container running Docker
 (e.g. on Proxmox), the NVIDIA stack must work *inside* the LXC: the
 `/dev/nvidia*` devices have to be passed through and their cgroup device
-majors kept in sync across host reboots — see
-[`docs/proxmox-jellyfin-nvidia.md`](./proxmox-jellyfin-nvidia.md) for the
-device-major pitfalls. `nvidia-smi` and `docker run --gpus all … nvidia-smi`
+majors kept in sync across host reboots. `nvidia-smi` and `docker run --gpus all … nvidia-smi`
 must both succeed inside the LXC before you register the daemon.
 
 ## Persistent storage

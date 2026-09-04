@@ -134,8 +134,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   the **transcription (build) stage**; live capture itself remains CPU-bound.
   Requires the NVIDIA driver +
   Container Toolkit on the engine running the ExApp. See
-  [GPU transcription (CUDA)](./exapp-install.md#gpu-transcription-cuda) and, for
-  Docker-in-LXC hosts, [Proxmox NVIDIA passthrough](./proxmox-jellyfin-nvidia.md).
+  [GPU transcription (CUDA)](./exapp-install.md#gpu-transcription-cuda).
 
 ### Summarisation & the privacy caveat
 
@@ -197,7 +196,6 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 ### Proposals & operations notes
 
 - [Branch previews](./branch-previews.md) — per-branch viewer deployments.
-- [Proxmox Jellyfin NVIDIA passthrough](./proxmox-jellyfin-nvidia.md) — host GPU setup pitfalls.
 
 ---
 
