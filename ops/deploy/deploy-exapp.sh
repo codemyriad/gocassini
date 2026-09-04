@@ -44,6 +44,7 @@ APPLY=0
 ALLOW_UNRELEASED=0
 FORCE_UNREGISTER=0
 PRINT_DAEMON_CMD=0
+declare -a DEPLOY_ENVS=()
 REMOTE_TIMEOUT="${CASSINI_DEPLOY_TIMEOUT:-900}"
 
 # Filled only for an --apply run, after the target has atomically allocated
@@ -64,6 +65,8 @@ Usage: ops/deploy/deploy-exapp.sh --inventory FILE --tag X.Y.Z[-pre] [options]
   --src-ref REF        Git ref to take appinfo/info.xml from (default: v<TAG>)
   --apply              Actually deploy. Without it, this is a dry run.
   --allow-unreleased   Permit a sha-<shortsha> pin instead of a release tag
+  --env KEY=VALUE      Pass a declared, non-secret ExApp environment value.
+                       Repeatable. Use inventory secret resolvers for secrets.
   --force-unregister   Recovery path for a Nextcloud/container desync: use
                        `unregister --force` before re-registering. Data is
                        still preserved.
@@ -80,6 +83,11 @@ while [[ $# -gt 0 ]]; do
     --src-ref) SRC_REF="$2"; shift 2 ;;
     --apply) APPLY=1; shift ;;
     --allow-unreleased) ALLOW_UNRELEASED=1; shift ;;
+    --env)
+      [[ $# -ge 2 ]] || { echo "--env requires KEY=VALUE" >&2; exit 2; }
+      DEPLOY_ENVS+=("$2")
+      shift 2
+      ;;
     --force-unregister) FORCE_UNREGISTER=1; shift ;;
     --print-daemon-cmd) PRINT_DAEMON_CMD=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -345,6 +353,19 @@ git -C "$REPO_ROOT" show "$SRC_REF:appinfo/info.xml" > "$WORK/info.src.xml"
 exapp_render_manifest "$WORK/info.src.xml" "$WORK/gocassini-info.xml" "$TAG"
 exapp_assert_manifest_declares "$WORK/gocassini-info.xml" \
   CASSINI_TALK_RECORDING_SECRET CASSINI_TALK_SIGNALING_INTERNAL_SECRET
+for deploy_env in "${DEPLOY_ENVS[@]}"; do
+  if [[ ! "$deploy_env" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]; then
+    echo "invalid --env value (expected KEY=VALUE with a valid environment key)" >&2
+    exit 2
+  fi
+  case "${deploy_env#*=}" in
+    *@@SECRET:*@@*)
+      echo "invalid --env value: @@SECRET:NAME@@ is reserved for inventory secret resolvers" >&2
+      exit 2
+      ;;
+  esac
+  exapp_assert_manifest_declares "$WORK/gocassini-info.xml" "${deploy_env%%=*}"
+done
 
 MANIFEST_VERSION="$(exapp_manifest_get "$WORK/gocassini-info.xml" version)"
 echo "  <version>   $MANIFEST_VERSION"
@@ -497,6 +518,9 @@ declare -a register_args=(
   --replace
   --enable-cycle
 )
+for deploy_env in "${DEPLOY_ENVS[@]}"; do
+  register_args+=(--env "$deploy_env")
+done
 (( FORCE_UNREGISTER )) && register_args+=(--force-unregister)
 
 register_rc=0

@@ -67,6 +67,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 cat > "$WORK/info.xml" <<'XML'
 <info>
+  <name>TOP_LEVEL_ONLY</name>
   <version>9.9.9</version>
   <external-app>
     <docker-install>
@@ -77,6 +78,7 @@ cat > "$WORK/info.xml" <<'XML'
     <environment-variables>
       <variable><name>CASSINI_TALK_RECORDING_SECRET</name></variable>
       <variable><name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name></variable>
+      <!-- <variable><name>COMMENTED_ONLY</name></variable> -->
     </environment-variables>
   </external-app>
 </info>
@@ -100,6 +102,10 @@ expect_ok "accepts a manifest declaring both Talk secrets" \
 # AppAPI silently drops --env for undeclared keys, so this must be loud.
 expect_fail "rejects a manifest missing a required declaration" \
   exapp_assert_manifest_declares "$WORK/out.xml" CASSINI_TOTALLY_UNDECLARED
+expect_fail "does not mistake the app name for an environment declaration" \
+  exapp_assert_manifest_declares "$WORK/out.xml" TOP_LEVEL_ONLY
+expect_fail "does not accept an environment declaration inside an XML comment" \
+  exapp_assert_manifest_declares "$WORK/out.xml" COMMENTED_ONLY
 
 # --- the real manifest must stay deployable --------------------------------
 REAL_INFO="$SCRIPT_DIR/../../appinfo/info.xml"

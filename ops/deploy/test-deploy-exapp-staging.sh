@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# Offline regression tests for deploy-exapp.sh manifest staging.
+# Offline regression tests for deploy-exapp.sh.
 #
 # ssh/scp/docker/curl are stubs: no network, daemon or registry is used. The
 # full deploy driver still runs, which pins the production properties that a
-# helper-only test could miss: host/container paths are distinct per run,
-# unrelated remote stdout cannot corrupt their handoff, the rendered manifest
-# reaches the container, settled exits clean both files, and a timed-out
-# detached register retains them.
+# helper-only test could miss: declared non-secret environment overrides reach
+# registration intact, host/container paths are distinct per run, unrelated
+# remote stdout cannot corrupt their handoff, the rendered manifest reaches the
+# container, settled exits clean both files, and a timed-out detached register
+# retains them.
 
 set -uo pipefail
 
@@ -48,6 +49,15 @@ expect_contains() {
     ok "$desc"
   else
     fail "$desc (missing '$pattern' in $file)"
+  fi
+}
+
+expect_not_contains() {
+  local desc="$1" pattern="$2" file="$3"
+  if grep -Fq -- "$pattern" "$file"; then
+    fail "$desc (unexpected '$pattern' in $file)"
+  else
+    ok "$desc"
   fi
 }
 
@@ -134,7 +144,8 @@ if [[ "$body" == *'cleanup_rc=0'* ]]; then
 fi
 
 # All remaining calls are remote_occ. Decode only enough of its NUL-delimited
-# argv to choose a deterministic response; never log the --env arguments.
+# argv to choose a deterministic response. Record only the non-secret deploy
+# values under test; never log the two secret --env arguments.
 payload="${remote_command#*CASSINI_ARGV=\'}"
 payload="${payload%%\'*}"
 mapfile -t occ_argv < <(printf '%s' "$payload" | base64 -d | tr '\0' '\n')
@@ -152,9 +163,18 @@ case "$cmd" in
   app_api:app:register)
     info_xml=""
     for ((i = 0; i < ${#occ_argv[@]}; i++)); do
-      if [[ "${occ_argv[$i]}" == --info-xml ]]; then
-        info_xml="${occ_argv[$((i + 1))]:-}"
-      fi
+      case "${occ_argv[$i]}" in
+        --info-xml)
+          info_xml="${occ_argv[$((i + 1))]:-}"
+          ;;
+        --env)
+          env_value="${occ_argv[$((i + 1))]:-}"
+          case "$env_value" in
+            CASSINI_TALK_RECORDING_SECRET=*|CASSINI_TALK_SIGNALING_INTERNAL_SECRET=*) ;;
+            *) printf '%s\n' "$env_value" >> "$TEST_STATE/register-envs.log" ;;
+          esac
+          ;;
+      esac
     done
     printf '%s\n' "$info_xml" >> "$TEST_STATE/register-paths.log"
     case "${TEST_REGISTER_MODE:-success}" in
@@ -188,23 +208,60 @@ INVENTORY
 
 run_deploy() {
   local name="$1" mode="$2" scp_exit="${3:-}" stage_chatter="${4:-}" rc
+  local -a deploy_args=()
+  if (( $# > 4 )); then
+    deploy_args=("${@:5}")
+  fi
   local output="$TEST_ROOT/$name.out"
   TEST_STATE="$STATE" TEST_REGISTER_MODE="$mode" TEST_SCP_EXIT="$scp_exit" \
     TEST_STAGE_CHATTER="$stage_chatter" \
     PATH="$STUB_BIN:$PATH" \
     "$DEPLOY" --inventory "$TEST_ROOT/inventory.env" \
       --tag 0.2.0-beta.4 --src-ref v0.2.0-beta.4 --apply \
+      "${deploy_args[@]}" \
       >"$output" 2>&1
   rc=$?
   printf '%s\n' "$rc"
 }
 
+# Invalid input fails before registration, and AppAPI cannot silently discard
+# an option whose key is absent from the release manifest.
+rc="$(run_deploy malformed-env success "" "" --env NOT_AN_ASSIGNMENT_SENTINEL)"
+expect_eq "malformed deploy env is rejected" 2 "$rc"
+expect_contains "malformed deploy env explains KEY=VALUE syntax" \
+  'invalid --env value (expected KEY=VALUE with a valid environment key)' \
+  "$TEST_ROOT/malformed-env.out"
+expect_not_contains "malformed deploy env does not echo its raw value" \
+  NOT_AN_ASSIGNMENT_SENTINEL "$TEST_ROOT/malformed-env.out"
+
+rc="$(run_deploy undeclared-env success "" "" --env CASSINI_UNDECLARED=value)"
+expect_eq "undeclared deploy env is rejected" 1 "$rc"
+expect_contains "undeclared deploy env names the missing declaration" \
+  'does not declare <environment-variables> entry CASSINI_UNDECLARED' \
+  "$TEST_ROOT/undeclared-env.out"
+
+rc="$(run_deploy reserved-marker success "" "" \
+  --env 'LLM_MODEL=RESOLVER_SENTINEL-@@SECRET:RECORDING@@')"
+expect_eq "secret resolver marker in deploy env is rejected" 2 "$rc"
+expect_contains "reserved deploy env marker explains the inventory boundary" \
+  '@@SECRET:NAME@@ is reserved for inventory secret resolvers' \
+  "$TEST_ROOT/reserved-marker.out"
+expect_not_contains "reserved deploy env marker does not echo its raw value" \
+  RESOLVER_SENTINEL "$TEST_ROOT/reserved-marker.out"
+expect_no_file "invalid deploy envs never reach registration" \
+  "$STATE/register-paths.log"
+
 # Two complete runs prove there is no process-global staging name and exercise
 # normal success cleanup.
-rc="$(run_deploy success-one success)"
+rc="$(run_deploy success-one success "" "" \
+  --env CASSINI_PUBLISH_SINK=local \
+  --env 'LLM_BASE_URL=https://llm.invalid/v1?mode=preview')"
 expect_eq "first deploy succeeds" 0 "$rc"
 rc="$(run_deploy success-two success)"
 expect_eq "second deploy succeeds" 0 "$rc"
+expect_eq "repeatable deploy envs reach registration intact and in order" \
+  $'CASSINI_PUBLISH_SINK=local\nLLM_BASE_URL=https://llm.invalid/v1?mode=preview' \
+  "$(<"$STATE/register-envs.log")"
 
 first_allocation="$(sed -n '1p' "$STATE/allocations.log")"
 second_allocation="$(sed -n '2p' "$STATE/allocations.log")"

@@ -118,9 +118,44 @@ exapp_render_manifest() {
 # dropping CASSINI_TALK_RECORDING_SECRET looks fine until the first recording.
 exapp_assert_manifest_declares() {
   local file="$1"; shift
-  local var missing=0
+  local declared var missing=0
+
+  # Read only <name> nodes beneath <environment-variables>. A plain grep over
+  # the document also accepts the app's top-level <name>, or a declaration
+  # inside an XML comment, and AppAPI then silently drops the supplied value.
+  declared="$(awk '
+    BEGIN { RS = "\034" }
+    {
+      xml = $0
+      while ((comment_start = index(xml, "<!--")) > 0) {
+        prefix = substr(xml, 1, comment_start - 1)
+        tail = substr(xml, comment_start + 4)
+        comment_end = index(tail, "-->")
+        if (comment_end == 0) {
+          xml = prefix
+          break
+        }
+        xml = prefix substr(tail, comment_end + 3)
+      }
+
+      if (!match(xml, /<environment-variables([[:space:]][^>]*)?>/)) next
+      block = substr(xml, RSTART + RLENGTH)
+      block_end = index(block, "</environment-variables>")
+      if (block_end == 0) next
+      block = substr(block, 1, block_end - 1)
+
+      while (match(block, /<name>[[:space:]]*[^<]+<\/name>/)) {
+        name = substr(block, RSTART, RLENGTH)
+        sub(/^<name>[[:space:]]*/, "", name)
+        sub(/[[:space:]]*<\/name>$/, "", name)
+        print name
+        block = substr(block, RSTART + RLENGTH)
+      }
+    }
+  ' "$file")"
+
   for var in "$@"; do
-    grep -q "<name>${var}</name>" "$file" || {
+    grep -Fqx -- "$var" <<<"$declared" || {
       echo "error: $file does not declare <environment-variables> entry $var" >&2
       missing=1
     }
