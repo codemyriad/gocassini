@@ -418,6 +418,69 @@ func TestTheMixSpliceCanBeTurnedOffOnItsOwn(t *testing.T) {
 	}
 }
 
+// The off switch must still free the render.
+//
+// Substitute is what frees one on the spliced path: it hands the render to the
+// encoder and deletes the decoded tracks it stood in for, so the temporary disk
+// a build needs does not grow with the number of participants who uploaded. The
+// off switch skips Substitute, and nothing else reads the 48 kHz render once
+// the recogniser's 16 kHz copy of it exists — so left alone it is a
+// full-timeline WAV per uploader, 690 MB each for a two-hour meeting, sitting
+// under TMPDIR until the build ends.
+func TestTheMixSpliceOffSwitchLeavesNoRenderBehind(t *testing.T) {
+	requireFFMediaTools(t)
+	specs := twoSpeakerSpecs()
+	mkv, streams := spliceFixture(t, specs)
+
+	root := t.TempDir()
+	segment := syntheticSegmentDelayed(10_000, 10, 1000, 0, 0)
+	segment.AudioName = "segment-0.webm"
+	writeCaptureAt(t, root, "room1", "alice", segment, 10, 1100)
+
+	t.Setenv("CASSINI_SOURCE_AUDIO_MIX", "0")
+	bundle := t.TempDir()
+	spliced := append([]AudioStream(nil), streams...)
+	mix, err := PrepareMix(mkv, spliced)
+	if err != nil {
+		t.Fatalf("PrepareMix: %v", err)
+	}
+	defer mix.Close()
+	var log bytes.Buffer
+	reports := ApplySourceAudio(context.Background(), mix, spliced, root, "room1", bundle, &log)
+	if len(reports) != 1 || reports[0].Placed != 1 || reports[0].MixSpliced {
+		t.Fatalf("the fixture did not splice the transcript with the mix switch off: %+v\n%s", reports, log.String())
+	}
+
+	renders, err := filepath.Glob(filepath.Join(mix.dir, "render-*.wav"))
+	if err != nil {
+		t.Fatalf("glob renders: %v", err)
+	}
+	if len(renders) != 0 {
+		t.Fatalf("the off switch left %d render(s) behind: %v", len(renders), renders)
+	}
+	if _, err := os.Stat(filepath.Join(mix.dir, "segment.wav")); !os.IsNotExist(err) {
+		t.Fatalf("the decoded segment outlived the render it was overlaid onto: %v", err)
+	}
+
+	// Only the render. The decoded tracks are what the mix encodes in this
+	// configuration, so freeing them the way Substitute does would leave the
+	// encoder with nothing to read.
+	for i, track := range mix.tracks {
+		if _, err := os.Stat(track); err != nil {
+			t.Fatalf("decoded track %d is gone although the mix still has to encode it: %v", i, err)
+		}
+	}
+	if spliced[0].SourceAudioPath == "" {
+		t.Fatal("the transcription input was not rerouted; the off switch is only about the mix")
+	}
+	if _, err := os.Stat(spliced[0].SourceAudioPath); err != nil {
+		t.Fatalf("the transcription input the off switch keeps is gone: %v", err)
+	}
+	if err := mix.Encode(filepath.Join(bundle, "meeting.webm")); err != nil {
+		t.Fatalf("the mix no longer encodes after the render was freed: %v", err)
+	}
+}
+
 // A participant who rejoined has two tracks in the recording. The render sums
 // them, so the mix must take the render in place of BOTH — counting a sibling
 // again would play that participant twice, at double amplitude.

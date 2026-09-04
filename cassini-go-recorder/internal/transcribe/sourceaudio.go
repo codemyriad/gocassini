@@ -1683,6 +1683,20 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 			report.MixSpliced = true
 		} else {
 			report.MixSkipReason = mixSkipReason
+			// Nothing will read the 48 kHz render again: the encoder is not
+			// taking it, and the recogniser's copy of it has just been written.
+			// Substitute is what frees a render on the spliced path — it hands
+			// the file to the mix and deletes the tracks it stood in for — so
+			// with the mix splice off the render has to be freed here instead,
+			// or every speaker who uploaded leaves a full-timeline WAV behind
+			// and the build's temporary disk grows with the number of
+			// uploaders: 690 MB each for a two-hour meeting.
+			//
+			// Only the render. The decoded tracks it was built from stay,
+			// because in this configuration they are still what the mix
+			// encodes; deleting them the way Substitute does would leave Encode
+			// with no inputs at all.
+			_ = os.Remove(renderPath)
 		}
 		if len(idxs) > 1 {
 			fmt.Fprintf(stdout, "  source audio: %s has %d streams in this recording; one render covers them all\n",
