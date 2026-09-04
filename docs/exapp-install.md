@@ -463,6 +463,7 @@ looking — or somewhere everybody can read.
 
 | `step` | What it means | The way out |
 |---|---|---|
+| `mode_mismatch:default_root_unknown` | Nobody could say whether a Team folder is mounted at `CassiniNoACL`, usually because the apps list or the Team-folder list could not be read. Publishing is refused; **reading is not**, so the archive still lists. | Check that Nextcloud is answering, then disable and re-enable Cassini. |
 | `mode_mismatch:default_root_shadowed` | A Team folder is mounted at `CassiniNoACL`, which is where the default mode keeps recordings. The mount would win that path, so writes would land in a shared folder and owner-identity reads would serve it to whoever is mapped to it. | Unmap or rename that Team folder (`occ groupfolders:list`, then `occ groupfolders:group <id> <group> --delete`), or switch to access-controlled storage in the Setup tab. |
 | `mode_mismatch:access_controlled_archive` | Nothing had recorded a mode, so this install fell back to `default` — but the `Cassini` Team folder is mounted and still holds recordings, which the default mode does not read. This is what an **access-controlled install upgrading into this release** looks like. | Turn access control on in the Setup tab, or set `CASSINI_STORAGE_MODE=access_controlled` and re-enable the app. If the instance really is meant to be open, switch to the default mode from the Setup tab and Cassini copies those recordings across. |
 

@@ -131,6 +131,39 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
 
+	// The mode is re-read HERE, under the lock, and this is the only reading of
+	// it that decides anything.
+	//
+	// The handler has its own "already there" check, but it runs outside the
+	// lock, which makes it a hint rather than a guard: two PUTs asking for the
+	// same target both see the old mode, both pass it, the first one flips, and
+	// the second arrives with current == target. Since recordingsRootFor is a
+	// two-way switch, that makes source and destination the SAME root — and the
+	// copy then trivially "succeeds" (every name is already at the destination),
+	// the verification compares a listing with itself, and step 7 deletes the
+	// archive it was supposed to be protecting. Reported as success.
+	//
+	// An unresolved record is the same trap by a different route: it reads as
+	// `default`, so a PUT asking for `default` gets source == destination too.
+	// Nothing may switch a mode nobody has decided.
+	current, resolved := ncStorage.mode()
+	if !resolved {
+		return storageTransitionResult{}, fmt.Errorf("Cassini has not resolved a storage mode yet, so there is nothing to switch from — it decides on the AppAPI enabled edge, so disable and re-enable the app")
+	}
+	if current == enableAccessControl {
+		// Already there. An unsettled instance still has a tidy-up to finish,
+		// which is the request an administrator makes by pressing the button for
+		// the mode already in force — see finishMigration.
+		if ncStorage.migrationClean() {
+			// The zero result IS the answer: nothing moved, so there is no
+			// transition to report and the caller renders the current state
+			// unchanged. A no-op that described a move would put "0 recordings
+			// were copied" on screen every time somebody double-clicked.
+			return storageTransitionResult{}, nil
+		}
+		return c.finishMigration(ctx, &http.Client{Timeout: ncProvisionTimeout}, logger)
+	}
+
 	client := &http.Client{Timeout: ncProvisionTimeout}
 	probe, err := c.probeNCStorage(ctx, client, logger)
 	if err != nil {
@@ -139,13 +172,12 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 	if ready, step, detail := probe.sanityForTarget(enableAccessControl); !ready {
 		return storageTransitionResult{}, fmt.Errorf("%w (%s): %s", errTransitionNotReady, step, detail)
 	}
-	return c.migrateStorageLocked(ctx, client, enableAccessControl, logger)
+	return c.migrateStorageLocked(ctx, client, current, enableAccessControl, logger)
 }
 
 // migrateStorageLocked is the sequence itself, with provisionMu held and the
 // target's prerequisites already confirmed.
-func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Client, enableAccessControl bool, logger *log.Logger) (storageTransitionResult, error) {
-	current, _ := ncStorage.mode()
+func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Client, current, enableAccessControl bool, logger *log.Logger) (storageTransitionResult, error) {
 	source := recordingsRootFor(current)
 	destination := recordingsRootFor(enableAccessControl)
 
@@ -153,6 +185,14 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 		Mode:            storageModeName(current),
 		SourceRoot:      source,
 		DestinationRoot: destination,
+	}
+
+	// Belt and braces for the trap the caller's mode check exists to avoid. If
+	// these are ever the same root, step 7 would delete the archive step 5 had
+	// just "verified" against itself — so refuse here too rather than trusting
+	// one caller to have got it right.
+	if source == destination {
+		return result, fmt.Errorf("refusing to migrate %s onto itself: the storage mode is already %s", source, storageModeName(current))
 	}
 
 	// 1. Dirty BEFORE the first write, not after it. A process killed between the
@@ -249,15 +289,19 @@ func (c ExAppConfig) recordStorageMode(accessControlled bool, source string, cle
 // sanityForTarget asks whether a mode could be switched TO, which is a
 // different question from whether the mode currently in force is usable.
 //
-// Since the split it is the same question in both directions — nothing about the
-// current storage disqualifies the other model — but the two names are kept
-// apart because the ASYMMETRY was load-bearing in the first pass and reuniting
-// them would silently drop the distinction if it ever comes back.
+// For the default mode it is now the SAME question, and that is a correction
+// rather than a simplification. It used to be deliberately weaker —
+// defaultReady() alone — because the first pass's opt-out was the very operation
+// that cleared the mounted Team folder its sanity check refused. Nothing clears
+// anything now, so the weaker form had no job left; what it did instead was let
+// an opt-out copy an entire access-controlled archive into a root that a Team
+// folder was mounted over, which is exactly the disclosure sanity(default)
+// exists to prevent, performed deliberately and at scale.
 func (p ncStorageProbe) sanityForTarget(accessControlled bool) (ok bool, step, detail string) {
 	if accessControlled {
 		return p.accessControlReady()
 	}
-	return p.defaultReady()
+	return p.sanity(false)
 }
 
 // archiveCopyResult is what one copy pass did.
@@ -570,10 +614,19 @@ func (c ExAppConfig) adoptLegacyDefaultArchive(ctx context.Context, client *http
 // legacyDefaultArchiveRoot names a pre-split default archive that still holds
 // recordings, or "" when there is none to carry.
 func (c ExAppConfig) legacyDefaultArchiveRoot(ctx context.Context, client *http.Client, probe ncStorageProbe) (string, error) {
-	// The canonical pre-split root, but only when nothing is mounted over it. A
-	// mounted `Cassini` is the access-controlled model; a `Cassini` that is only a
-	// directory is the old default one.
-	if !probe.FolderMounted {
+	// The canonical pre-split root, but only when nothing is mounted over it AND
+	// somebody actually looked. A mounted `Cassini` is the access-controlled
+	// model; a `Cassini` that is only a directory is the old default one; and a
+	// `Cassini` nobody could ask about is neither.
+	//
+	// The distinction is the whole safety of this branch. FolderMounted is false
+	// in both of the last two cases, and treating an unanswered question as "no
+	// Team folder" would take a LIVE access-controlled archive, copy it into the
+	// tree the operator serves to every caller as its owner, and then empty the
+	// Team folder it came from. One transient OCS failure on the enabled edge is
+	// enough. The other two candidates below need no such check: nothing ever
+	// mounts a group folder at `Cassini (N)` or `Cassini-optout`.
+	if probe.FolderProbed && !probe.FolderMounted {
 		if names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, ncLegacyDefaultRecordingsRoot+"/meetings"); err != nil {
 			return "", fmt.Errorf("inspect %s: %w", ncLegacyDefaultRecordingsRoot, err)
 		} else if visible && len(names) > 0 {
@@ -890,7 +943,11 @@ type storageTransitionPreview struct {
 	NothingToMove bool `json:"nothing_to_move"`
 
 	// PendingCleanup is set when a previous migration did not finish, so the
-	// administrator is told the stale root is cleared before this one starts.
+	// administrator knows there is a leftover copy somewhere before they start
+	// another switch. The switch does NOT clear it first — it merges into its
+	// destination and skips names already present — because forcing a cleanup
+	// first turned a correctly-refused cleanup into a switch that could never
+	// run.
 	PendingCleanup string `json:"pending_cleanup,omitempty"`
 
 	// Warnings are things an administrator should read before confirming.
@@ -985,7 +1042,7 @@ func previewWarnings(p storageTransitionPreview, enableAccessControl bool) []str
 	}
 	if p.PendingCleanup != "" {
 		out = append(out, fmt.Sprintf(
-			"An earlier switch did not finish. %s still holds a copy of the archive, and it is cleared before this switch starts.", p.PendingCleanup))
+			"An earlier switch did not finish, so %s still holds a copy of the archive. This switch merges rather than duplicating, and \"Finish the switch\" clears the leftovers afterwards.", p.PendingCleanup))
 	}
 	if p.DestinationMeetings > 0 {
 		out = append(out, fmt.Sprintf(

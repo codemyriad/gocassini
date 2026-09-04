@@ -95,10 +95,29 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		return "", fmt.Errorf("the recordings storage is not ready (%s: %s); refusing to publish — see GET /status recordings_access and the Setup tab in the Cassini app, or set %s=local to keep recordings on this app's own volume",
 			snap.Step, snap.Detail, envPublishSinkName)
 	}
-	// Which storage model this archive is under (D-616). Read ONCE, here, so a
-	// mode that changes mid-delivery cannot leave one asset ruled and the next
-	// one not. The gate above guarantees it is resolved: the substrate cannot
-	// report `provisioned` before the preflight decided.
+	// A delivery and a storage-mode switch may not overlap.
+	//
+	// Reading the mode once was enough while a switch only MOVED files: the
+	// worst case was an asset written under the old mode a moment before the
+	// flip. It stopped being enough when the switch gained its final step. A
+	// delivery that lands in root(X) after the switch has copied and verified,
+	// but before it empties root(X), is deleted — and the job has already been
+	// marked succeeded and its staging copy removed, so the recording is simply
+	// gone. The window is as long as a WebDAV DELETE pass over the whole archive.
+	//
+	// provisionMu is the existing "nothing else is touching the archive" lock,
+	// held by the switch, the recovery and the enabled-edge preflight. Taking it
+	// here is what makes the switch's own claim — that no publish can observe a
+	// half-copied archive under a mode that no longer describes it — actually
+	// true. Nothing below reaches back into it, so there is no re-entrancy.
+	provisionMu.Lock()
+	defer provisionMu.Unlock()
+
+	// Which storage model this archive is under (D-616). Read ONCE, here, and now
+	// under the lock, so a mode that changes mid-delivery cannot leave one asset
+	// ruled and the next one not — nor one asset in each tree. The gate above
+	// guarantees it is resolved: the substrate cannot report `provisioned` before
+	// the preflight decided.
 	accessControlled := ncStorage.accessControlled()
 	// ...and therefore WHERE it goes. The two models have separate roots so that
 	// neither can shadow the other (nc_storage_paths.go); reading the mode once

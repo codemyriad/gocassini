@@ -281,15 +281,23 @@ func (s *ncAccessSubstrateStatus) usable() bool {
 // left in place. What remains is one narrower question: has a Team folder been
 // mounted over the default root itself?
 //
-//	no probe yet     serve as the owner. The claim being made is about a path
-//	                 nothing Cassini does could have mounted anything over, so
-//	                 an unasked question is not a hazard here the way it was
-//	                 when the path was shared. This is what stops a restarted
-//	                 container serving an empty archive to everybody until
-//	                 somebody re-enables the app (D-669's window, for reads).
-//	probe says yes   fail closed. Something IS mounted at CassiniNoACL, so the
-//	                 tree is not private and owner-identity reads would hand it
-//	                 to whoever that folder is mapped to.
+//	no probe yet       serve. A restarted container has no probe, and the claim
+//	                   being made is about a path nothing Cassini does could have
+//	                   mounted anything over. This is what stops a reboot serving
+//	                   an empty archive to everybody until somebody re-enables
+//	                   the app (D-669's window, for reads).
+//	probe, unanswered  serve. DefaultRootShadowed is only ever assigned when the
+//	                   folder list was actually read, so a `false` here can mean
+//	                   "we could not look" — which is why the probe carries
+//	                   DefaultRootProbed. READS are deliberately permissive about
+//	                   it; sanity(default) is NOT, so publishing into a tree
+//	                   nobody could confirm is private is refused. That
+//	                   asymmetry is the whole point: an unconfirmed WRITE puts
+//	                   recordings somewhere they may not belong, an unconfirmed
+//	                   READ serves a tree that in this mode is open by design.
+//	probe says yes     fail closed. Something IS mounted at CassiniNoACL, so the
+//	                   tree is not private and owner-identity reads would hand it
+//	                   to whoever that folder is mapped to.
 func ncStorageServesAsOwner() bool {
 	accessControlled, resolved := ncStorage.mode()
 	if !resolved || accessControlled {

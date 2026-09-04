@@ -100,6 +100,12 @@ type ncStorageProbe struct {
 	// mounts anything here, so an unanswered question is not evidence of a
 	// hazard — see ncStorageServesAsOwner.
 	DefaultRootShadowed bool
+	// DefaultRootProbed says the question above was ANSWERED. It is the same
+	// distinction FolderProbed draws, for the same reason: DefaultRootShadowed is
+	// only ever assigned when the folder list was actually read, so a `false`
+	// otherwise means "we could not look", and reading that as "nothing is
+	// mounted" is how an unanswered question becomes a clean bill of health.
+	DefaultRootProbed bool
 
 	// ACLRecordingsRoot is true when the access-controlled archive's meetings
 	// collection is reachable as the service account, and ACLArchiveMeetings is
@@ -171,6 +177,11 @@ const (
 	// folder was mounted — a state that is now perfectly ordinary, because an
 	// opt-out leaves that folder in place, emptied.
 	storageStepDefaultRootShadowed = "default_root_shadowed"
+	// storageStepDefaultRootUnknown means nobody could say whether anything is
+	// mounted over the default model's root. Disqualifying for a WRITE, because
+	// the model's safety argument is that the tree is private and this is the
+	// only thing that checks it.
+	storageStepDefaultRootUnknown = "default_root_unknown"
 	// storageStepModeMismatch means the recorded mode and the storage disagree.
 	// Nothing is missing; the two just are not the same thing, and writing
 	// under that disagreement is how recordings end up somewhere nobody is
@@ -238,8 +249,10 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 		probe.FolderProbed = false
 	case !prereqEnabled(prereqs, ncAppGroupFolders):
 		// The app is not enabled, so no Team folder is mounted anywhere. That is
-		// an answer, and it is the one that makes a deps-free instance usable.
+		// an answer to BOTH folder questions, and it is the one that makes a
+		// deps-free instance usable.
 		probe.FolderProbed = true
+		probe.DefaultRootProbed = true
 	default:
 		// One listing, two questions. The access-controlled model's `Cassini`
 		// folder, and whether anything at all has been mounted over the default
@@ -262,6 +275,7 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 			probe.FolderMounted = folder.anyGroupMapped()
 			probe.OwnerManages = folder.hasManager("user", ncRecordingsOwner)
 		}
+		probe.DefaultRootProbed = true
 		if shadow, ok := lowestIDMatch(folders, ncDefaultRecordingsMount); ok {
 			probe.DefaultRootShadowed = shadow.anyGroupMapped()
 		}
@@ -274,13 +288,19 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 		// The meetings collection rather than the root, because the interesting
 		// question about the other model's tree is not "does it exist" but "does
 		// it still hold recordings" — see ACLArchiveMeetings.
-		if names, visible, err := c.davPropfindNames(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/meetings"); err != nil {
+		//
+		// Counted with davPropfindChildren, not davPropfindNames: the latter keeps
+		// only `.opus` basenames, and an archive may carry a legacy
+		// directory-shaped export. Everything that MOVES an archive counts with
+		// Children, so a safety net counting with Names would decide "there is
+		// nothing here" about a tree the copy would then carry.
+		if names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/meetings"); err != nil {
 			logger.Printf("nc storage: inspect %s as %q: %v", ncACLRecordingsRoot, ncRecordingsOwner, err)
 		} else {
 			probe.ACLRecordingsRoot = visible
 			probe.ACLArchiveMeetings = len(names)
 		}
-		if names, visible, err := c.davPropfindNames(ctx, client, ncRecordingsOwner, ncDefaultRecordingsRoot+"/meetings"); err != nil {
+		if names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, ncDefaultRecordingsRoot+"/meetings"); err != nil {
 			logger.Printf("nc storage: inspect %s as %q: %v", ncDefaultRecordingsRoot, ncRecordingsOwner, err)
 		} else {
 			probe.DefaultRecordingsRoot = visible
@@ -351,10 +371,13 @@ func (p ncStorageProbe) strandedArchiveMeetings(accessControlled bool) int {
 	if accessControlled {
 		return p.DefaultArchiveMeetings
 	}
-	// Only a MOUNTED Team folder counts. An unmounted one is not reachable by
-	// anybody, including the switch that would carry its contents across, so
-	// reporting it would offer an action that cannot work.
-	if !p.FolderMounted {
+	// Only a MOUNTED Team folder counts, and only when the mount question was
+	// actually answered. An unmounted folder is not reachable by anybody,
+	// including the switch that would carry its contents across, so reporting it
+	// would offer an action that cannot work — but an UNANSWERED one is not an
+	// unmounted one, and staying quiet there hides the archive rather than
+	// avoiding a bad suggestion.
+	if p.FolderProbed && !p.FolderMounted {
 		return 0
 	}
 	return p.ACLArchiveMeetings
@@ -382,7 +405,17 @@ const storageStepStrandedACLArchive = "access_controlled_archive"
 // instance whose Team folder still holds recordings is an administrator's
 // decision plus a tidy-up (see migration_clean), not a misconfiguration.
 func (p ncStorageProbe) unclaimedAccessControlledArchive() (bool, string) {
-	if !p.FolderMounted || p.ACLArchiveMeetings == 0 {
+	if p.ACLArchiveMeetings == 0 {
+		return false, ""
+	}
+	// FolderMounted is false both when nothing is mounted and when the folder
+	// list could not be read, and only the first of those means "this archive is
+	// not in a Team folder". The count comes from a WebDAV PROPFIND, which
+	// answered — so on an unanswered folder question the recordings are known to
+	// exist at the access-controlled root and their storage is unknown, which is
+	// precisely when a fallback `default` must not be recorded and never
+	// reconsidered.
+	if p.FolderProbed && !p.FolderMounted {
 		return false, ""
 	}
 	return true, fmt.Sprintf(
@@ -435,6 +468,17 @@ func (p ncStorageProbe) sanity(accessControlled bool) (ok bool, step, detail str
 	}
 	if ready, step, detail := p.defaultReady(); !ready {
 		return false, step, detail
+	}
+	if !p.DefaultRootProbed {
+		// A write is about to be made into a tree whose privacy is the model's
+		// whole safety argument, and nobody could confirm it. This gates
+		// PUBLISHING (through the substrate verdict), not reading — see
+		// ncStorageServesAsOwner for why the read path is deliberately more
+		// permissive than this.
+		return false, storageStepModeMismatch + ":" + storageStepDefaultRootUnknown,
+			fmt.Sprintf(
+				"Cassini could not determine whether a Team folder is mounted at %q, which is where the default storage mode keeps its recordings, so it will not assume there is none — one mounted there would put every recording into a shared folder. Check that Nextcloud is answering and re-enable Cassini",
+				ncDefaultRecordingsMount)
 	}
 	if p.DefaultRootShadowed {
 		return false, storageStepModeMismatch + ":" + storageStepDefaultRootShadowed,

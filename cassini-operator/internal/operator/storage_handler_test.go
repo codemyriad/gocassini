@@ -48,8 +48,10 @@ func TestStorageReportsTheActiveModeAndWhatTheOtherOneNeeds(t *testing.T) {
 	setStorageMode(t, false)
 	ncAccessSubstrate.setMode(storageModeDefault, storageModeSourceConfigured)
 	ncAccessSubstrate.setProbe(ncStorageProbe{
-		AdminUser:      "admin",
-		ServiceAccount: true,
+		AdminUser:         "admin",
+		ServiceAccount:    true,
+		FolderProbed:      true,
+		DefaultRootProbed: true,
 		Prereqs: []ncPrerequisiteStatus{
 			{Name: ncAppGroupFolders, State: ncPrerequisiteMissing},
 			{Name: ncAppEveryoneGroup, State: ncPrerequisiteMissing},
@@ -315,7 +317,7 @@ func TestStorageReportsAnUnfinishedMigration(t *testing.T) {
 	resetSubstrateRecord(t)
 	setStorageMode(t, false)
 	ncStorage.set(false, storageModeSourceConfigured, false)
-	ncAccessSubstrate.setProbe(ncStorageProbe{ServiceAccount: true, FolderProbed: true})
+	ncAccessSubstrate.setProbe(ncStorageProbe{ServiceAccount: true, FolderProbed: true, DefaultRootProbed: true})
 	ncAccessSubstrate.succeed()
 
 	body := getStorage(t, testExAppConfig("http://nextcloud.invalid"), rt)
@@ -338,6 +340,7 @@ func TestStorageReportsAStrandedArchiveWithoutCallingItAFailure(t *testing.T) {
 	ncAccessSubstrate.setProbe(ncStorageProbe{
 		ServiceAccount:     true,
 		FolderProbed:       true,
+		DefaultRootProbed:  true,
 		FolderPresent:      true,
 		FolderMounted:      true,
 		ACLArchiveMeetings: 4,
