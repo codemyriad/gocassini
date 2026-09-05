@@ -108,17 +108,23 @@ type captureSegment struct {
 }
 
 type captureSidecar struct {
-	RecordingID     string           `json:"recordingId,omitempty"`
-	SessionID       string           `json:"sessionId,omitempty"`
-	InputDigest     string           `json:"inputDigest,omitempty"`
-	ReceiptID       string           `json:"receiptId,omitempty"`
-	Format          string           `json:"format"`
-	RoomToken       string           `json:"roomToken"`
-	ParticipantID   string           `json:"participantId"`
-	CallStartWallMS int64            `json:"callStartWallMs"`
-	CallEndWallMS   int64            `json:"callEndWallMs"`
-	UserAgent       string           `json:"userAgent"`
-	Segments        []captureSegment `json:"segments"`
+	ClockSamples []captureClockSample `json:"clockSamples,omitempty"`
+	// Server-owned: timestamps on disk have already had ClockCorrectionMS subtracted.
+	ClockStatus        string           `json:"clockStatus,omitempty"`
+	ClockCorrectionMS  int64            `json:"clockCorrectionMs,omitempty"`
+	ClockUncertaintyMS float64          `json:"clockUncertaintyMs,omitempty"`
+	ClockVariationMS   float64          `json:"clockVariationMs,omitempty"`
+	RecordingID        string           `json:"recordingId,omitempty"`
+	SessionID          string           `json:"sessionId,omitempty"`
+	InputDigest        string           `json:"inputDigest,omitempty"`
+	ReceiptID          string           `json:"receiptId,omitempty"`
+	Format             string           `json:"format"`
+	RoomToken          string           `json:"roomToken"`
+	ParticipantID      string           `json:"participantId"`
+	CallStartWallMS    int64            `json:"callStartWallMs"`
+	CallEndWallMS      int64            `json:"callEndWallMs"`
+	UserAgent          string           `json:"userAgent"`
+	Segments           []captureSegment `json:"segments"`
 	// OwnerUserID is stamped by the server from the authenticated caller. It is
 	// never read from the client's payload.
 	OwnerUserID string `json:"ownerUserId"`
@@ -135,6 +141,9 @@ func validateSidecar(sidecar *captureSidecar) error {
 	}
 	if !captureSafeName.MatchString(sidecar.RoomToken) {
 		return fmt.Errorf("invalid room token")
+	}
+	if len(sidecar.ClockSamples) > 128 {
+		return fmt.Errorf("too many clock samples")
 	}
 	if len(sidecar.Segments) == 0 {
 		return fmt.Errorf("no segments")
@@ -763,6 +772,8 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				sidecar = &parsed
 				// The legacy route has no server recording/session binding.
 				sidecar.RecordingID, sidecar.SessionID, sidecar.InputDigest = "", "", ""
+				sidecar.ClockSamples = nil
+				sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockUncertaintyMS, sidecar.ClockVariationMS = "", 0, 0, 0
 				// A re-upload replaces a capture that is still on disk, and
 				// until this point the quota was charged as if both would
 				// coexist. They never do: promotion sets the old one aside and

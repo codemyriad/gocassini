@@ -57,21 +57,15 @@ import (
 //	and the first arrives after the encoder spins up, so anchoring on it placed
 //	every speaker late by up to a second.
 //
-// # What that costs, stated plainly
+// # Clock correction and remaining error
 //
-// The offset is only as good as the agreement between the participant's clock
-// and the recorder's, plus the encoder's roughly-constant latency. With both
-// machines NTP-disciplined that is tens of milliseconds, comfortably inside a
-// word. With a badly-synchronised client it is seconds, and the transcript
-// would carry that speaker's words at the wrong time.
-//
-// PlausibleOffset below is a guard, not a fix: it rejects placements that fall
-// outside the recording, which catches a clock that is wrong by hours but not
-// one that is wrong by seconds. The real fix is a single cross-correlation
-// against any stretch where the recorded track has intact audio — one constant,
-// needing a few good seconds anywhere in the call rather than a good reference
-// throughout. That is not implemented yet, and until it is, ingestion should be
-// treated as trustworthy only where clients are known to be time-synchronised.
+// New immutable captures reach this reader with their wall timestamps already
+// normalized to the operator's clock. Intake preserves the raw four-timestamp
+// observations, applied offset and uncertainty, and marks unreliable clocks so
+// this reader retains the recorded audio. See docs/source-capture-transfer.md.
+// Operator and recorder must share synchronized server time. Legacy captures
+// without observations still depend on client clock agreement; encoder latency
+// and clock movement between observations remain residual placement errors.
 
 // SourceCaptureFormat is the sidecar schema this ingester accepts. It must
 // match SOURCE_CAPTURE_FORMAT in cassini-app/src/capture/protocol.ts and
@@ -122,6 +116,7 @@ type SourceSegment struct {
 
 // SourceSidecar is the manifest uploaded alongside the audio.
 type SourceSidecar struct {
+	ClockStatus     string          `json:"clockStatus,omitempty"`
 	RecordingID     string          `json:"recordingId,omitempty"`
 	Format          string          `json:"format"`
 	RoomToken       string          `json:"roomToken"`
@@ -598,6 +593,9 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 	if err := json.Unmarshal(raw, &sidecar); err != nil {
 		return SourceSidecar{}, fmt.Errorf("parse capture sidecar: %w", err)
 	}
+	if sidecar.ClockStatus == "unreliable" {
+		return SourceSidecar{}, fmt.Errorf("capture clock measurements are unreliable; retaining recorded audio")
+	}
 	if sidecar.Format != SourceCaptureFormat {
 		return SourceSidecar{}, fmt.Errorf("unsupported capture format %q", sidecar.Format)
 	}
@@ -672,6 +670,7 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 		}
 		sidecar, err := LoadSourceSidecar(dir)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "source audio: skip %s: %v\n", dir, err)
 			// A malformed upload must not fail the build: the recorded track is
 			// still there and the meeting still publishes.
 			continue

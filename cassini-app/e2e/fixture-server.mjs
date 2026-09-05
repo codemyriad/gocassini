@@ -345,7 +345,7 @@ export async function startFixtureServer() {
     }
     if (path === `${PROXY_PREFIX}/operator/capture/recording`) {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-      return res.end(JSON.stringify({ recordingId: state.recordingId }));
+      return res.end(JSON.stringify({ recordingId: state.recordingId, serverReceiveWallMs: Date.now() + (state.clockOffsetMs ?? 0), serverSendWallMs: Date.now() + (state.clockOffsetMs ?? 0) }));
     }
     if (path.startsWith(`${PROXY_PREFIX}/operator/capture/transfer/`)) {
       if (!state.captureEnabled) { res.writeHead(403); return res.end(); }

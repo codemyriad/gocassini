@@ -38,6 +38,7 @@
 // Talk".
 
 import { loadState } from "@nextcloud/initial-state";
+import { readRecordingClock, retainClockSample, type CaptureClockSample } from "./clock";
 import { transferCapture } from "./transfer";
 import { forgetLegacyConsent, retireLegacyCaptureWorkers } from "./register";
 
@@ -52,7 +53,7 @@ import {
 const INITIAL_STATE_APP = "cassini_capture";
 const INITIAL_STATE_KEY = "capture";
 let immutableTransferEnabled = true;
-let recordingIdentity: { room: string; id: string } | null = null;
+let recordingIdentity: { room: string; id: string; sample?: CaptureClockSample } | null = null;
 let identityPending = false;
 let identityEpoch = 0;
 let sealingWorker: Worker | null = null;
@@ -413,6 +414,7 @@ export function pickAudioSender(
 }
 
 export interface CaptureState {
+  clockSamples?: CaptureClockSample[];
   recordingId?: string;
   sessionId?: string;
   roomToken: string;
@@ -1486,9 +1488,18 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
     sealingWorker = null;
     return;
   }
+  // Observe the tail even after recording stops. A failed probe must not strand
+  // the audio; intake will decide whether the retained measurements suffice.
+  if (active.clockSamples) {
+    try {
+      const result = await readRecordingClock(deliveryConfig.proxyBase + "/operator/capture/recording?room=" + encodeURIComponent(active.roomToken));
+      if (result.sample) retainClockSample(active.clockSamples, result.sample);
+    } catch { /* Keep the capture uploadable when timing is unavailable. */ }
+  }
   const base: Omit<CaptureSidecar, "segments"> = {
     recordingId: active.recordingId,
     sessionId: active.sessionId,
+    clockSamples: active.clockSamples,
     format: SOURCE_CAPTURE_FORMAT,
     roomToken: active.roomToken,
     participantId:
@@ -1751,13 +1762,10 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
     if (!identityPending) {
       identityPending = true;
       const epoch = identityEpoch;
-      void fetch(deliveryConfig.proxyBase + "/operator/capture/recording?room=" + encodeURIComponent(roomToken),
-        { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(5_000) })
-        .then(async (response) => {
-          if (!response.ok) return;
-          const body = await response.json() as { recordingId?: unknown };
+      void readRecordingClock(deliveryConfig.proxyBase + "/operator/capture/recording?room=" + encodeURIComponent(roomToken))
+        .then((body) => {
           if (epoch !== identityEpoch || !talkRecordingActive || talkRecordingRoom !== roomToken || typeof body.recordingId !== "string") return;
-          recordingIdentity = { room: roomToken, id: body.recordingId };
+          recordingIdentity = { room: roomToken, id: body.recordingId, sample: body.sample };
           beginCapture(sender, connection);
         }).catch(() => {}).finally(() => { identityPending = false; });
     }
@@ -1783,6 +1791,7 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   const dirClaimed = new Promise<void>((resolve) => { releaseDirClaim = resolve; });
   const sessionId = immutableTransferEnabled ? crypto.randomUUID() : undefined;
   const session: CaptureState = {
+    clockSamples: immutableTransferEnabled && recordingIdentity?.sample ? [recordingIdentity.sample] : undefined,
     recordingId: immutableTransferEnabled ? recordingIdentity?.id : undefined,
     sessionId,
     releaseDirClaim,
@@ -1814,6 +1823,7 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
     base: {
       recordingId: session.recordingId,
       sessionId: session.sessionId,
+      clockSamples: session.clockSamples,
       format: SOURCE_CAPTURE_FORMAT,
       roomToken: session.roomToken,
       participantId:
@@ -1950,13 +1960,16 @@ async function refreshTalkRecordingStatus(roomToken: string): Promise<void> {
     // previous recording's ID.
     if (immutableTransferEnabled && state?.recordingId &&
         (status === TALK_RECORDING_VIDEO || status === TALK_RECORDING_AUDIO)) {
-      const response = await fetch(deliveryConfig.proxyBase + "/operator/capture/recording?room=" + encodeURIComponent(roomToken),
-        { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(5_000) });
-      if (response.ok) {
-        const body = await response.json() as { recordingId?: string };
+      const measuredSession = state;
+      const body = await readRecordingClock(deliveryConfig.proxyBase + "/operator/capture/recording?room=" + encodeURIComponent(roomToken));
+      if (body.recordingId) {
+        if (state === measuredSession && body.recordingId === state?.recordingId && body.sample && state.clockSamples) {
+          retainClockSample(state.clockSamples, body.sample);
+          state.worker.postMessage({ type: "clock-samples", samples: state.clockSamples });
+        }
         if (revision === recordingStatusRevision && roomToken === roomTokenFromPath(location.pathname) &&
             body.recordingId && state?.recordingId && body.recordingId !== state.recordingId) {
-          recordingIdentity = { room: roomToken, id: body.recordingId };
+          recordingIdentity = { room: roomToken, id: body.recordingId, sample: body.sample };
           identityEpoch++;
           void finishCapture(false);
         }

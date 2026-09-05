@@ -367,6 +367,9 @@ export async function onMessage(event: MessageEvent): Promise<void> {
       case "anchor":
         if (timingActive) anchors.push(message.anchor as CaptureAnchor);
         break;
+      case "clock-samples":
+        if (pendingBase) pendingBase.clockSamples = message.samples;
+        break;
       case "capture-start": {
         pendingDirName = message.dirName;
         pendingBase = message.base;

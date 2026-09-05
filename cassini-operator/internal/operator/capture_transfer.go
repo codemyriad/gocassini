@@ -28,7 +28,8 @@ type captureTransferManifest struct {
 	Pieces  map[string][]string `json:"pieces"`
 }
 
-func syncCaptureDir(path string) error {
+// Variable permits fault injection of fsync failures in transfer recovery tests.
+var syncCaptureDir = func(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -61,6 +62,7 @@ func (s *Store) captureRecordingRoom(ctx context.Context, id string) (string, er
 
 func (rt *Runtime) captureRecordingHandler(isMember roomMembershipChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		received := time.Now().UnixMilli()
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != "GET" {
 			http.Error(w, "method not allowed", 405)
@@ -111,12 +113,15 @@ func (rt *Runtime) captureRecordingHandler(isMember roomMembershipChecker) http.
 			http.Error(w, "recording unavailable", 503)
 			return
 		}
-		if len(ids) != 1 {
-			http.Error(w, "no unique active recording", 409)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"recordingId": ids[0]})
+		body := map[string]any{"serverReceiveWallMs": received, "serverSendWallMs": time.Now().UnixMilli()}
+		if len(ids) != 1 {
+			w.WriteHeader(http.StatusConflict)
+			body["error"] = "no unique active recording"
+		} else {
+			body["recordingId"] = ids[0]
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	}
 }
 
@@ -196,6 +201,14 @@ func (rt *Runtime) captureTransferHandler(isMember roomMembershipChecker, logger
 				http.Error(w, "storage unavailable", 503)
 				return
 			}
+			// Inventory is an acknowledgement too. A previous POST may have
+			// renamed its piece and then failed to sync the directory entries.
+			if err == nil {
+				if err := syncCaptureParents(dir); err != nil {
+					http.Error(w, "storage unavailable", 503)
+					return
+				}
+			}
 			pieces := []string{}
 			for _, entry := range entries {
 				if strings.HasSuffix(entry.Name(), ".part") {
@@ -258,6 +271,10 @@ func (rt *Runtime) captureTransferHandler(isMember roomMembershipChecker, logger
 		if stored, err := os.ReadFile(path); err == nil {
 			if !bytes.Equal(stored, data) {
 				http.Error(w, "stored piece conflicts", 409)
+				return
+			}
+			if err := syncCaptureParents(dir); err != nil {
+				http.Error(w, "storage unavailable", 503)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -329,6 +346,7 @@ func (rt *Runtime) commitCaptureTransfer(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	// Ignore all server-owned fields when identifying a retry.
+	sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockUncertaintyMS, sidecar.ClockVariationMS = "", 0, 0, 0
 	sidecar.OwnerUserID, sidecar.ReceivedAt, sidecar.ReceiptID, sidecar.InputDigest = owner, "", "", ""
 	canonical, err := json.Marshal(manifest)
 	if err != nil {
@@ -429,6 +447,7 @@ func (rt *Runtime) commitCaptureTransfer(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
+	correctCaptureClock(sidecar, logger)
 	sidecar.ReceiptID, sidecar.ReceivedAt, sidecar.InputDigest = ulid.Make().String(), time.Now().UTC().Format(time.RFC3339), digest
 	raw, err := json.Marshal(sidecar)
 	if err != nil {

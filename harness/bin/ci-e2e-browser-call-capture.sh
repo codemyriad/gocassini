@@ -114,6 +114,8 @@ collect_diagnostics() {
   docker image inspect "$IMAGE_REF" >"$LOG_DIR/source-image.json" 2>&1
   docker inspect "$EXAPP_CONTAINER" >"$LOG_DIR/installed-container.json" 2>&1
   docker logs "$EXAPP_CONTAINER" >"$LOG_DIR/installed-container.log" 2>&1
+  # Clock decisions belong in the job console as well as the downloadable logs.
+  grep -F 'capture clock:' "$LOG_DIR/installed-container.log" || true
   compose ps -a >"$LOG_DIR/compose-ps.txt" 2>&1
   compose logs --no-color >"$LOG_DIR/compose.log" 2>&1
   occ app:list >"$LOG_DIR/nextcloud-apps.txt" 2>&1
@@ -463,6 +465,9 @@ verify_owner_capture() {
       and ([.segments[].index] == [range(0; .segments | length)])
       and (.userAgent | test("Chrom(e|ium)"))
     ' "$current" >/dev/null || fail "invalid committed $owner session"
+    jq -c '{sessionId,clockStatus,clockCorrectionMs,clockUncertaintyMs,clockVariationMs}' "$current"
+    jq -e '.clockStatus == "corrected"' "$current" >/dev/null \
+      || fail "$owner session $capture_dir did not receive clock correction through AppAPI"
     count=0
     total=0
     while IFS= read -r name; do

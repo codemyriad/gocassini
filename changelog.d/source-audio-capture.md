@@ -8,3 +8,14 @@
 Source audio now uploads as verified, resumable pieces bound to a server recording.
 Reloads preserve separate sessions, storage cannot stall the outgoing audio worker,
 and committed uploads recover their rebuild notification after a crash.
+
+- Measure browser/operator clock skew during capture and retain bounded timing
+  observations in recovery manifests. Correct stable offsets once at immutable
+  intake; log skew and uncertainty, and retain recorded audio for unreliable
+  timing. Legacy unmeasured captures keep their existing behavior.
+- Retry directory fsync before acknowledging existing transfer pieces or listing
+  their inventory, preserving durable acknowledgements after a sync failure.
+- Ignore stale identity-clock observations from earlier sessions, check nearest
+  endpoint coverage, and admit measured remote-network delays with a 250 ms
+  uncertainty limit. Track fast-probe offset variation separately, round stored
+  uncertainty, and assert correction through the real AppAPI proxy in CI.

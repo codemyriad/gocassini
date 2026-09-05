@@ -1574,3 +1574,48 @@ func TestSpliceUsesEveryCaptureDirectory(t *testing.T) {
 		}
 	}
 }
+
+// The operator has already shifted every wall timestamp. Loading must not
+// apply the raw diagnostic offset a second time or alter the RTP drift fit.
+func TestSourceClockCorrectionPlacementAndFallback(t *testing.T) {
+	dir := t.TempDir()
+	segment := syntheticSegment(5000, 120, 1000, 80)
+	sidecar := map[string]any{
+		"format": SourceCaptureFormat, "ownerUserId": "alice", "roomToken": "room",
+		"clockStatus": "corrected", "clockCorrectionMs": 300000,
+		"callStartWallMs": segment.StartWallMS, "callEndWallMs": segment.StopWallMS,
+		"segments": []SourceSegment{segment},
+	}
+	write := func() {
+		raw, err := json.Marshal(sidecar)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	loaded, err := LoadSourceSidecar(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	placement, err := FitPlacement(loaded.Segments[0], testBase())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(placement.OffsetMS-5000) > 2 || math.Abs(placement.RatePPMDeviation()+80) > 5 {
+		t.Fatalf("corrected placement: %+v", placement)
+	}
+	sidecar["clockStatus"] = "unreliable"
+	write()
+	if _, err := LoadSourceSidecar(dir); err == nil || !strings.Contains(err.Error(), "clock") {
+		t.Fatalf("unreliable clock accepted: %v", err)
+	}
+	delete(sidecar, "clockStatus")
+	delete(sidecar, "clockCorrectionMs")
+	write()
+	if _, err := LoadSourceSidecar(dir); err != nil {
+		t.Fatalf("legacy sidecar refused: %v", err)
+	}
+}

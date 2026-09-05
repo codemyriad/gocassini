@@ -95,6 +95,7 @@ export interface CaptureSegment {
 }
 
 export interface CaptureSidecar {
+  clockSamples?: import("./clock").CaptureClockSample[];
   recordingId?: string;
   sessionId?: string;
   format: typeof SOURCE_CAPTURE_FORMAT;

@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"cassini-operator/internal/operator/appapi"
 )
@@ -84,6 +86,21 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 	if rec := piece([]byte("corruption")); rec.Code != 422 {
 		t.Fatalf("hash refusal: %d %s", rec.Code, rec.Body)
 	}
+	// The rename succeeded but fsync failed. Neither an inventory nor an
+	// identical POST may turn that into an acknowledgement while sync fails.
+	originalSync := syncCaptureDir
+	t.Cleanup(func() { syncCaptureDir = originalSync })
+	syncCaptureDir = func(string) error { return errors.New("injected fsync failure") }
+	if rec := piece(data); rec.Code != 503 {
+		t.Fatalf("sync failure: %d", rec.Code)
+	}
+	if rec := piece(data); rec.Code != 503 {
+		t.Fatalf("retry acknowledged unsynced piece: %d", rec.Code)
+	}
+	if rec := request("GET", endpoint, "alice", "", nil); rec.Code != 503 {
+		t.Fatalf("inventory acknowledged unsynced piece: %d", rec.Code)
+	}
+	syncCaptureDir = originalSync
 	for i := 0; i < 2; i++ {
 		if rec := piece(data); rec.Code != 204 {
 			t.Fatalf("piece/replay: %d %s", rec.Code, rec.Body)
@@ -95,6 +112,9 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 	if rec := request("GET", "/capture/transfer/other/job-transfer/session-a", "alice", "", nil); rec.Code != 403 {
 		t.Fatalf("room binding: %d", rec.Code)
 	}
+	sidecar.ClockSamples = []captureClockSample{clockSample(sidecar.CallStartWallMS-5000, 5000, 10, 0), clockSample(sidecar.CallEndWallMS-5000, 5000, 10, 0)}
+	// Caller-supplied server fields must not select placement or break retry.
+	sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockVariationMS = "corrected", 999999, 999999
 	manifest := captureTransferManifest{Sidecar: sidecar, Pieces: map[string][]string{"segment-0.webm": {hash}}}
 	commit := func() *httptest.ResponseRecorder {
 		raw, err := json.Marshal(manifest)
@@ -104,11 +124,23 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 		return request("POST", endpoint+"/commit", "alice", "application/json", bytes.NewReader(raw))
 	}
 	for i := 0; i < 2; i++ {
+		manifest.Sidecar.ClockVariationMS++ // server-only diagnostics cannot change request identity
 		if rec := commit(); rec.Code != 202 {
 			t.Fatalf("commit/replay: %d %s", rec.Code, rec.Body)
 		}
 	}
 	dir := transferDir(rt.cfg.CaptureRoot, "abc123", "alice", "job-transfer", "session-a")
+	rawStored, err := os.ReadFile(filepath.Join(dir, captureSidecarName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored captureSidecar
+	if err := json.Unmarshal(rawStored, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.ClockStatus != "corrected" || stored.ClockCorrectionMS != 5000 || stored.ClockVariationMS != 0 || stored.CallStartWallMS != sidecar.CallStartWallMS-5000 {
+		t.Fatalf("intake correction: %+v", stored)
+	}
 	got, err := os.ReadFile(filepath.Join(dir, "segment-0.webm"))
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("assembled bytes: %q %v", got, err)
@@ -199,5 +231,28 @@ func TestCaptureReceiptTransactionRollsBackForMissingJob(t *testing.T) {
 	known, err := rt.store.captureReceiptKnown(context.Background(), "receipt")
 	if err != nil || known {
 		t.Fatalf("failed transaction retained receipt: %v %v", known, err)
+	}
+}
+
+func TestCaptureRecordingClockAfterStop(t *testing.T) {
+	rt, cleanup := rebuildRuntime(t)
+	defer cleanup()
+	req := httptest.NewRequest("GET", "/capture/recording?room=abc123", nil)
+	req = req.WithContext(appapi.WithUserID(context.Background(), "alice"))
+	rec := httptest.NewRecorder()
+	before := time.Now().UnixMilli()
+	rt.captureRecordingHandler(nil).ServeHTTP(rec, req)
+	var body struct {
+		Receive int64 `json:"serverReceiveWallMs"`
+		Send    int64 `json:"serverSendWallMs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 409 || body.Receive < before || body.Send < body.Receive || body.Send > time.Now().UnixMilli() {
+		t.Fatalf("missing bounded stop sample: %d %+v", rec.Code, body)
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("clock response may be cached")
 	}
 }
