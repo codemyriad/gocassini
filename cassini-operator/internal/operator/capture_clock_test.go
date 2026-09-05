@@ -61,7 +61,7 @@ func TestCaptureClockRejectsUnreliableMeasurements(t *testing.T) {
 	}
 	for name, samples := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := captureClockEstimate(samples, at+4000, at+5000); err == nil {
+			if _, err := captureClockEstimate(samples, at+4000, at+5000); err == nil {
 				t.Fatal("accepted unreliable clock")
 			}
 		})
@@ -92,5 +92,131 @@ func TestCaptureClockExcludesUnreliableFromRebuild(t *testing.T) {
 	set, err := scanSourceCapturesForRecording(root, "room-a", captureRecordingWindow{StartMS: start, EndMS: start + 60000})
 	if err != nil || set.Count != 0 {
 		t.Fatalf("unreliable capture selected: %+v %v", set, err)
+	}
+}
+
+func TestCaptureClockSessionCoverage(t *testing.T) {
+	const start int64 = 1700000000000
+	const end = start + 60000
+	const ahead int64 = 4000
+	fresh := []captureClockSample{clockSample(start-ahead, ahead, 200, 80), clockSample(start+30000-ahead, ahead, 200, 80), clockSample(end-ahead, ahead, 200, 80)}
+	for _, oldAhead := range []int64{ahead, -10000} {
+		// A faster inherited probe must neither win selection nor veto this session.
+		samples := append([]captureClockSample{clockSample(start-600000-oldAhead, oldAhead, 10, 80)}, fresh...)
+		fit, err := captureClockEstimate(samples, start, end)
+		if err != nil || fit.OffsetMS != ahead {
+			t.Fatalf("old ahead=%d: fit=%+v error=%v", oldAhead, fit, err)
+		}
+	}
+	samples := append([]captureClockSample{clockSample(start-4000-ahead, ahead, 200, 80)}, fresh...)
+	if _, err := captureClockEstimate(samples, start, end); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureClockEstimate(fresh[:1], start, end+120000); err == nil {
+		t.Fatal("initial probe extrapolated across an unobserved tail")
+	}
+	if _, err := captureClockEstimate(fresh[2:], start-120000, end); err == nil {
+		t.Fatal("tail probe extrapolated across an unobserved start")
+	}
+}
+
+// Observations from the real AppAPI/HaRP seam run 33964161554. Only timing
+// fields are retained; all timestamps are translated to an arbitrary epoch.
+func TestCaptureClockMeasuredProxyWithRemoteLatency(t *testing.T) {
+	raw, err := os.ReadFile("testdata/capture-clock-proxy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sessions []struct {
+		Start, End int64
+		Samples    []captureClockSample
+	}
+	if err := json.Unmarshal(raw, &sessions); err != nil {
+		t.Fatal(err)
+	}
+	for i, session := range sessions {
+		baseline, err := captureClockEstimate(session.Samples, session.Start, session.End)
+		if err != nil {
+			t.Fatalf("session %d baseline: %v", i, err)
+		}
+		t.Logf("proxy session %d: offset=%d ms uncertainty=%.3f ms variation=%.1f ms", i+1, baseline.OffsetMS, baseline.UncertaintyMS, baseline.VariationMS)
+		for _, extraRTT := range []int64{130, 300, 400} {
+			for _, outbound := range []int64{0, extraRTT / 2, extraRTT} {
+				samples := append([]captureClockSample(nil), session.Samples...)
+				for j := range samples {
+					samples[j].ServerReceiveWallMS += outbound
+					samples[j].ServerSendWallMS += outbound
+					samples[j].ClientReceiveWallMS += extraRTT
+					samples[j].ElapsedMS += float64(extraRTT)
+				}
+				fit, err := captureClockEstimate(samples, session.Start, session.End)
+				if err != nil {
+					t.Fatalf("session %d RTT=%d outbound=%d: %v", i, extraRTT, outbound, err)
+				}
+				bias := float64(extraRTT)/2 - float64(outbound)
+				if math.Abs(float64(fit.OffsetMS-baseline.OffsetMS)-bias) > 1 {
+					t.Fatalf("unexpected asymmetric-path estimate: %+v baseline=%+v bias=%v", fit, baseline, bias)
+				}
+				if fit.UncertaintyMS < math.Abs(bias) || math.Abs(fit.UncertaintyMS-baseline.UncertaintyMS-float64(extraRTT)/2) > 0.0011 {
+					t.Fatalf("stable scatter concealed asymmetry uncertainty: %+v baseline=%+v", fit, baseline)
+				}
+				if fit.VariationMS != baseline.VariationMS {
+					t.Fatalf("round trip became variation: %+v baseline=%+v", fit, baseline)
+				}
+			}
+		}
+	}
+}
+
+func TestCaptureClockDistinguishesNetworkJitterAndClockMovement(t *testing.T) {
+	const start int64 = 1700000000000
+	const ahead int64 = 300000
+	first := clockSample(start-ahead, ahead, 300, 80)
+	steady := clockSample(start+30000-ahead, ahead, 310, 80)
+	// A queued response changes the midpoint within its own asymmetry bound.
+	queued := clockSample(start+60000-ahead, ahead, 300, 80)
+	queued.ClientReceiveWallMS += 800
+	queued.ElapsedMS += 800
+	fit, err := captureClockEstimate([]captureClockSample{first, steady, queued}, start, start+60000)
+	if err != nil || fit.OffsetMS != ahead || fit.VariationMS != 0 {
+		t.Fatalf("queued response: %+v %v", fit, err)
+	}
+	// Broad network bounds overlap, but comparable fast probes expose the step.
+	stepped := clockSample(start+30000-(ahead+200), ahead+200, 300, 80)
+	if _, err := captureClockEstimate([]captureClockSample{first, stepped}, start, start+60000); err == nil || !strings.Contains(err.Error(), "spread") {
+		t.Fatalf("fast-probe clock movement accepted: %v", err)
+	}
+	// A slow probe still rejects a change exceeding its delay bound.
+	queued.ServerReceiveWallMS -= 2000
+	queued.ServerSendWallMS -= 2000
+	if _, err := captureClockEstimate([]captureClockSample{first, queued}, start, start+60000); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("slow-probe clock step accepted: %v", err)
+	}
+	// Broad uncertainty does not authorize uncorrected placement minutes late.
+	s := validSidecar()
+	s.ClockSamples = []captureClockSample{clockSample(s.CallStartWallMS-ahead, ahead, 800, 80)}
+	before := s.CallStartWallMS
+	var logs bytes.Buffer
+	correctCaptureClock(&s, log.New(&logs, "", 0))
+	if s.ClockStatus != "unreliable" || s.CallStartWallMS != before || !strings.Contains(logs.String(), "action=retain_recorded_audio") || !strings.Contains(logs.String(), "reason=") {
+		t.Fatalf("unsafe fallback or missing operational reason: %+v %s", s, logs.String())
+	}
+}
+
+func TestCaptureClockRoundsStoredUncertainty(t *testing.T) {
+	s := validSidecar()
+	sample := clockSample(s.CallStartWallMS-5000, 5000, 100, 80)
+	sample.ElapsedMS = 180.79999999998836
+	s.ClockSamples = []captureClockSample{sample}
+	correctCaptureClock(&s, nil)
+	if s.ClockStatus != "corrected" || s.ClockUncertaintyMS != 52.4 {
+		t.Fatalf("unrounded uncertainty: %+v", s)
+	}
+	raw, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(`"clockUncertaintyMs":52.4`)) {
+		t.Fatalf("stored uncertainty: %s", raw)
 	}
 }

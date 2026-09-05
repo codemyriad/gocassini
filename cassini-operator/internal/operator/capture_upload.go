@@ -113,6 +113,7 @@ type captureSidecar struct {
 	ClockStatus        string           `json:"clockStatus,omitempty"`
 	ClockCorrectionMS  int64            `json:"clockCorrectionMs,omitempty"`
 	ClockUncertaintyMS float64          `json:"clockUncertaintyMs,omitempty"`
+	ClockVariationMS   float64          `json:"clockVariationMs,omitempty"`
 	RecordingID        string           `json:"recordingId,omitempty"`
 	SessionID          string           `json:"sessionId,omitempty"`
 	InputDigest        string           `json:"inputDigest,omitempty"`
@@ -772,7 +773,7 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				// The legacy route has no server recording/session binding.
 				sidecar.RecordingID, sidecar.SessionID, sidecar.InputDigest = "", "", ""
 				sidecar.ClockSamples = nil
-				sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockUncertaintyMS = "", 0, 0
+				sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockUncertaintyMS, sidecar.ClockVariationMS = "", 0, 0, 0
 				// A re-upload replaces a capture that is still on disk, and
 				// until this point the quota was charged as if both would
 				// coexist. They never do: promotion sets the old one aside and

@@ -346,7 +346,7 @@ func (rt *Runtime) commitCaptureTransfer(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	// Ignore all server-owned fields when identifying a retry.
-	sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockUncertaintyMS = "", 0, 0
+	sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockUncertaintyMS, sidecar.ClockVariationMS = "", 0, 0, 0
 	sidecar.OwnerUserID, sidecar.ReceivedAt, sidecar.ReceiptID, sidecar.InputDigest = owner, "", "", ""
 	canonical, err := json.Marshal(manifest)
 	if err != nil {

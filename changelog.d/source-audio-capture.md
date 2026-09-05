@@ -15,3 +15,7 @@ and committed uploads recover their rebuild notification after a crash.
   timing. Legacy unmeasured captures keep their existing behavior.
 - Retry directory fsync before acknowledging existing transfer pieces or listing
   their inventory, preserving durable acknowledgements after a sync failure.
+- Ignore stale identity-clock observations from earlier sessions, check nearest
+  endpoint coverage, and admit measured remote-network delays with a 250 ms
+  uncertainty limit. Track fast-probe offset variation separately, round stored
+  uncertainty, and assert correction through the real AppAPI proxy in CI.

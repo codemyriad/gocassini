@@ -114,7 +114,7 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 	}
 	sidecar.ClockSamples = []captureClockSample{clockSample(sidecar.CallStartWallMS-5000, 5000, 10, 0), clockSample(sidecar.CallEndWallMS-5000, 5000, 10, 0)}
 	// Caller-supplied server fields must not select placement or break retry.
-	sidecar.ClockStatus, sidecar.ClockCorrectionMS = "corrected", 999999
+	sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockVariationMS = "corrected", 999999, 999999
 	manifest := captureTransferManifest{Sidecar: sidecar, Pieces: map[string][]string{"segment-0.webm": {hash}}}
 	commit := func() *httptest.ResponseRecorder {
 		raw, err := json.Marshal(manifest)
@@ -124,6 +124,7 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 		return request("POST", endpoint+"/commit", "alice", "application/json", bytes.NewReader(raw))
 	}
 	for i := 0; i < 2; i++ {
+		manifest.Sidecar.ClockVariationMS++ // server-only diagnostics cannot change request identity
 		if rec := commit(); rec.Code != 202 {
 			t.Fatalf("commit/replay: %d %s", rec.Code, rec.Body)
 		}
@@ -137,7 +138,7 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 	if err := json.Unmarshal(rawStored, &stored); err != nil {
 		t.Fatal(err)
 	}
-	if stored.ClockStatus != "corrected" || stored.ClockCorrectionMS != 5000 || stored.CallStartWallMS != sidecar.CallStartWallMS-5000 {
+	if stored.ClockStatus != "corrected" || stored.ClockCorrectionMS != 5000 || stored.ClockVariationMS != 0 || stored.CallStartWallMS != sidecar.CallStartWallMS-5000 {
 		t.Fatalf("intake correction: %+v", stored)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "segment-0.webm"))
