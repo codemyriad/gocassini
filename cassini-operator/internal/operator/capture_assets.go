@@ -19,7 +19,8 @@ import (
 //
 //	/ui/capture-payload.js  finds the outgoing audio sender,
 //	                        records it, uploads afterwards
-//	/ui/capture-worker.js   encoded-transform (RTP timing anchors) + OPFS writes
+//	/ui/capture-worker.js   encoded-transform (RTP timing anchors)
+//	/ui/capture-storage-worker.js   OPFS writes, connected by MessageChannel
 //
 // They are built by cassini-app's scripts/build-capture.mjs into
 // <CASSINI_VIEWER_DIST>/capture/ and served from there, alongside the embedded

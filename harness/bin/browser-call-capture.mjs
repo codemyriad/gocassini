@@ -78,7 +78,7 @@ function attachEvidence(page, participant) {
   page.on("console", (message) => append("console", `[${message.type()}] ${message.text()}`));
   page.on("pageerror", (error) => append("page-errors", error.stack || error.message));
   page.on("request", (request) => {
-    if (request.method() === "POST" && request.url().includes("/operator/capture/transfer") && new URL(request.url()).searchParams.get("op") === "commit") {
+    if (request.method() === "POST" && request.url().includes("/operator/capture/transfer") && new URL(request.url()).pathname.endsWith("/commit")) {
       uploadRequests.push({ method: request.method(), url: request.url() });
     }
   });
@@ -89,7 +89,7 @@ function attachEvidence(page, participant) {
   page.on("response", (response) => {
     const request = response.request();
     const isCaptureUpload = request.method() === "POST"
-      && response.url().includes("/operator/capture/transfer") && new URL(response.url()).searchParams.get("op") === "commit";
+      && response.url().includes("/operator/capture/transfer") && new URL(response.url()).pathname.endsWith("/commit");
     append("network", JSON.stringify({
       method: request.method(),
       resourceType: request.resourceType(),
@@ -155,7 +155,7 @@ async function installObservation(context) {
       const request = args[0];
       const init = args[1];
       const method = String(init?.method || request?.method || "GET").toUpperCase();
-      if (method === "POST" && response.url.includes("/operator/capture/transfer") && new URL(response.url).searchParams.get("op") === "commit") {
+      if (method === "POST" && response.url.includes("/operator/capture/transfer") && new URL(response.url).pathname.endsWith("/commit")) {
         const entry = { status: response.status, url: response.url, body: null, error: null };
         observation.uploadResponses.push(entry);
         try {
@@ -680,19 +680,16 @@ try {
   // the recorder's own copy of them is full of holes.
   //
   // The page that goes away seals its buffer and does not upload — a request
-  // started during unload cannot finish. The page that comes back must ADOPT
-  // that buffer rather than file a second capture, so the directory name (which
-  // carries the call start the capture identifies itself by) has to survive the
-  // reload while the segment count grows. Everything downstream then reconciles
-  // across the seam for free: one owner directory, one upload, and the stored
-  // byte total covering the audio from before the reload as well as after it.
+  // started during unload cannot finish. The page that comes back must keep
+  // that buffer unchanged and start a separate immutable session. Both commits
+  // bind to the same server recording and must preserve the pre-reload bytes.
   assert(afterSwitchOPFS.length === 1,
     `Alice buffered ${afterSwitchOPFS.length} captures before reloading`);
   const capturesBefore = afterSwitchOPFS.map((capture) => capture.dirName);
   result.alice.mediaAfterReload = await reloadIntoCall(alicePage, "alice");
   // Talk's recording is still the one that was running before the reload, so
-  // the rejoined page records into the capture it inherited. Wait for its own
-  // segment rather than for any capture directory: the adopted one is already
+  // the rejoined page starts another session for it. Wait for its own
+  // segment rather than for any capture directory: the old one is already
   // there, so "a capture exists" was true the moment the page loaded.
   await alicePage.waitForFunction(async (before) => {
     const root = await navigator.storage.getDirectory();
@@ -734,7 +731,7 @@ try {
     `the resumed capture overwrote audio recorded before the reload: ${JSON.stringify(result.alice.reload)}`);
 
   const captureUpload = (response) => (
-    response.request().method() === "POST" && response.url().includes("/operator/capture/transfer") && new URL(response.url()).searchParams.get("op") === "commit"
+    response.request().method() === "POST" && response.url().includes("/operator/capture/transfer") && new URL(response.url()).pathname.endsWith("/commit")
   );
 
   // Bob's upload listener is armed before he leaves.

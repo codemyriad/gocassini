@@ -11,8 +11,10 @@ export async function transferCapture(base: string, sidecar: CaptureSidecar,
   readFile: (name: string) => Promise<Blob>, allowed: () => boolean,
   requestToken: string, fetchImpl: typeof fetch = fetch): Promise<void> {
   if (!sidecar.recordingId || !sidecar.sessionId) throw new Error("capture has no recording identity");
-  const query = new URLSearchParams({ room: sidecar.roomToken, recording: sidecar.recordingId, session: sidecar.sessionId });
-  const url = base.replace(/\/$/, "") + "/operator/capture/transfer?" + query;
+  // AppAPI rebuilds multipart requests and drops their URL query parameters.
+  // Identity and operation therefore belong in the path, not in the query.
+  const identity = [sidecar.roomToken, sidecar.recordingId, sidecar.sessionId].map(encodeURIComponent).join("/");
+  const url = base.replace(/\/$/, "") + "/operator/capture/transfer/" + identity;
   const request = async (target: string, init: RequestInit = {}): Promise<Response> => {
     if (!allowed()) throw new Error("capture permission revoked");
     const response = await fetchImpl(target, {
@@ -36,13 +38,13 @@ export async function transferCapture(base: string, sidecar: CaptureSidecar,
       if (!inventory.committed && !known.has(hash)) {
         const form = new FormData();
         form.append("piece", piece, hash + ".part");
-        await request(url + "&piece=" + hash, { method: "POST", body: form });
+        await request(url + "/" + hash, { method: "POST", body: form });
         known.add(hash);
       }
     }
     pieces[segment.audioName] = hashes;
   }
-  await request(url + "&op=commit", {
+  await request(url + "/commit", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sidecar, pieces }),
   });

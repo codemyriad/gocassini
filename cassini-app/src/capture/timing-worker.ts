@@ -14,12 +14,11 @@ declare const self: DedicatedWorkerGlobalScope & {
   } }) => void) | null;
 };
 
-export function installTimingWorker(storage: Worker): void {
+export function installTimingWorker(storage: MessagePort): void {
   let active = false;
   let frameIndex = 0;
   let lastSSRC = -1;
   storage.onmessage = (event: MessageEvent) => self.postMessage(event.data);
-  storage.onerror = () => self.postMessage({ type: "error", detail: "capture storage worker failed" });
   self.onmessage = (event: MessageEvent) => {
     if (event.data?.type === "timing-active") {
       active = event.data.active === true;
@@ -51,6 +50,8 @@ export function installTimingWorker(storage: Worker): void {
   };
 }
 
-if (typeof self !== "undefined" && typeof self.postMessage === "function" && typeof Worker !== "undefined") {
-  installTimingWorker(new Worker(new URL("capture-storage-worker.js", self.location.href)));
+if (typeof self !== "undefined" && typeof self.postMessage === "function") {
+  self.onmessage = (event: MessageEvent) => {
+    if (event.data?.type === "storage-port") installTimingWorker(event.ports[0]);
+  };
 }

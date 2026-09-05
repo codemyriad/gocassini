@@ -323,12 +323,12 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       </route>
 
       <route>
-        <url>^capture\/recording$</url>
+        <url>^operator\/capture\/recording$</url>
         <verb>GET</verb>
         <access_level>USER</access_level>
       </route>
       <route>
-        <url>^capture\/transfer$</url>
+        <url>^operator\/capture\/transfer\/[^\/]+\/[^\/]+\/[^\/]+(\/[^\/]+)?$</url>
         <verb>GET,POST</verb>
         <access_level>USER</access_level>
       </route>

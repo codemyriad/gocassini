@@ -6,6 +6,7 @@ import type { CaptureAnchor, CaptureSegment, CaptureSidecar } from "./protocol";
 import { SOURCE_CAPTURE_PENDING_NAMES, mergeMuteIntervals } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope;
+let storageChannel: MessagePort;
 
 // Timing arrives from a separate worker. No outgoing audio frame waits on
 // this worker's synchronous disk operations.
@@ -55,17 +56,11 @@ async function openSegment(dirName: string, meta: OpenSegment["meta"]): Promise<
   const handle = await fileHandle.createSyncAccessHandle();
   // Never over audio that is already there.
   //
-  // A resumed capture numbers itself past everything the directory holds, and
-  // the page claims the directory so that a second page cannot be numbering
-  // into it at the same time. Both of those can be wrong at once — a browser
-  // without Web Locks has no claim to take, and a bug in either calculation
-  // would land here — and what "wrong" costs at this line is a file full of the
-  // participant's audio replaced by an empty one. So the truncate is
-  // conditional, and a name that is already occupied fails the segment instead:
-  // one segment fewer, rather than one destroyed.
+  // Each session has a fresh directory, but retain a collision backstop:
+  // even a directory-allocation bug must not overwrite a previous recording.
   if (handle.getSize() > 0) {
     handle.close();
-    self.postMessage({
+    storageChannel.postMessage({
       type: "error",
       detail: `segment ${meta.index}: ${meta.audioName} already holds audio; refusing to overwrite it`,
     });
@@ -136,7 +131,7 @@ async function refreshPendingSidecar(force: boolean): Promise<void> {
   try {
     await writePendingSidecar();
   } catch (error) {
-    self.postMessage({ type: "pending-sidecar-failed", detail: String(error) });
+    storageChannel.postMessage({ type: "pending-sidecar-failed", detail: String(error) });
   }
 }
 
@@ -213,7 +208,7 @@ async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
     segment.offset += written;
   } catch (error) {
     segment.failed = true;
-    self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+    storageChannel.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
     return;
   }
   await refreshPendingSidecar(firstBytes);
@@ -236,7 +231,7 @@ async function closeSegment(
       segment.handle.flush();
     } catch (error) {
       segment.failed = true;
-      self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+      storageChannel.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
     }
   }
   try {
@@ -380,21 +375,21 @@ export async function onMessage(event: MessageEvent): Promise<void> {
       }
       case "segment-start":
         await openSegment(message.dirName, message.meta);
-        self.postMessage({ type: "segment-started", index: message.meta.index });
+        storageChannel.postMessage({ type: "segment-started", index: message.meta.index });
         break;
       case "chunk":
         await appendChunk(message.index, message.buffer);
         break;
       case "segment-stop":
         await closeSegment(message.index, message.stopWallMs, message.muteIntervals ?? []);
-        self.postMessage({ type: "segment-stopped", index: message.index });
+        storageChannel.postMessage({ type: "segment-stopped", index: message.index });
         break;
       case "finalize": {
         // The timing worker forwards completion or failure to the page while
         // continuing to forward Talk's outgoing audio.
         try {
           const sidecar = await finalize(message.dirName, message.base);
-          self.postMessage({ type: "finalized", dirName: message.dirName, sidecar });
+          storageChannel.postMessage({ type: "finalized", dirName: message.dirName, sidecar });
         } finally {
           // Reset whether or not the seal worked. A failed finalize ends the
           // interval just as much as a successful one, and anything left
@@ -408,7 +403,7 @@ export async function onMessage(event: MessageEvent): Promise<void> {
         break;
     }
   } catch (error) {
-    self.postMessage({ type: "error", detail: String(error) });
+    storageChannel.postMessage({ type: "error", detail: String(error) });
   }
 }
 
@@ -425,15 +420,11 @@ export async function onMessage(event: MessageEvent): Promise<void> {
 if (typeof self !== "undefined" && typeof self.postMessage === "function") {
   let queue: Promise<void> = Promise.resolve();
   self.onmessage = (event: MessageEvent) => {
-    queue = queue.then(() => onMessage(event));
+    if (event.data?.type !== "storage-port") return;
+    storageChannel = event.ports[0];
+    storageChannel.onmessage = (message: MessageEvent) => {
+      queue = queue.then(() => onMessage(message));
+    };
+    storageChannel.postMessage({ type: "ready" });
   };
-  // Report for duty, and only once everything above is wired. The page cannot
-  // wait for this before attaching its encoded transform — a transform
-  // attached after the call negotiates collects nothing — so it attaches first
-  // and uses this message to learn that the worker it already committed to is
-  // real. Silence here means the participant's outgoing Opus frames are being
-  // routed into a worker that will never read them, which the page has a short
-  // deadline to notice and undo. Posting this before the handlers were wired
-  // would answer for a worker that still drops the frames it is handed.
-  self.postMessage({ type: "ready" });
 }

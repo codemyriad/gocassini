@@ -150,6 +150,9 @@ beforeEach(async () => {
   vi.setSystemTime(1_000);
   vi.resetModules();
   worker = await import("./worker");
+  self.onmessage!({ data: { type: "storage-port" }, ports: [{
+    postMessage: (message: Record<string, unknown>) => posted.push(message),
+  }] } as unknown as MessageEvent);
 });
 
 afterEach(() => {

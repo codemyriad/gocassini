@@ -58,6 +58,7 @@ let identityEpoch = 0;
 let sealingWorker: Worker | null = null;
 const uploadRetries = new Map<string, { attempts: number; after: number }>();
 let scanningBuffers = false;
+let leftCall = false;
 
 function deferBufferedUpload(dirName: string): void {
   const attempts = (uploadRetries.get(dirName)?.attempts ?? 0) + 1;
@@ -731,6 +732,7 @@ const PASS_THROUGH_WORKER_SOURCE =
 // one is caught before one is either. Three seconds is well past the point
 // where a few kilobytes served from the same origin is merely slow.
 const WORKER_READY_TIMEOUT_MS = 3_000;
+const storageWorkers = new WeakMap<Worker, Worker>();
 
 // prepareTimingWorker starts the worker and watches it prove it is alive.
 //
@@ -747,6 +749,15 @@ function prepareTimingWorker(): void {
   let worker: Worker;
   try {
     worker = new Worker(workerURL());
+    // Start both workers from the page: AppAPI worker responses can forbid
+    // nested workers through their own CSP. A channel keeps disk work off
+    // both the page and the outgoing-frame worker.
+    const storage = new Worker(`${deliveryConfig.proxyBase}/ui/capture-storage-worker.js`);
+    const channel = new MessageChannel();
+    storage.postMessage({ type: "storage-port" }, [channel.port1]);
+    worker.postMessage({ type: "storage-port" }, [channel.port2]);
+    storage.onerror = () => abandonCapture(worker, "the storage worker failed to start");
+    storageWorkers.set(worker, storage);
   } catch {
     // A constructor that throws — a blocked URL, a policy that forbids the
     // worker — will throw again on the next call. Stop asking.
@@ -869,6 +880,8 @@ function releaseTimingWorker(worker: Worker | null): void {
     preparedWorker = null;
   }
   clearReadyDeadline(worker);
+  storageWorkers.get(worker)?.terminate();
+  storageWorkers.delete(worker);
   worker.terminate();
 }
 
@@ -1248,6 +1261,17 @@ function currentParticipantId(): string {
   );
 }
 
+async function revokeBufferedRecording(recordingId: string): Promise<void> {
+  const root = await navigator.storage.getDirectory();
+  for await (const [name, handle] of (root as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
+    if (handle.kind !== "directory" || !name.startsWith("capture-")) continue;
+    const capture = await readSealedCapture(root, name).catch(() => null);
+    if (capture?.sidecar.recordingId !== recordingId || !captureIsThisParticipants(capture)) continue;
+    await markCaptureRevoked(root, name);
+    await discardCapture(root, name);
+  }
+}
+
 // captureIsThisParticipants reports whether a buffer was recorded by whoever is
 // signed in now.
 //
@@ -1366,7 +1390,7 @@ function holdCaptureDir(dirName: string, until: Promise<void>): void {
 // directory; no file or manifest from the previous document is extended.
 export async function settleBufferedCaptures(): Promise<number> {
   const room = roomTokenFromPath(location.pathname);
-  if (scanningBuffers || serverAllowsCapture !== true || talkRecordingActive || (room !== null && !recordingStatusAnswered(room))) return 0;
+  if (scanningBuffers || serverAllowsCapture !== true || (talkRecordingActive && !leftCall) || (room !== null && !recordingStatusAnswered(room))) return 0;
   scanningBuffers = true;
   try {
     const root = await navigator.storage.getDirectory();
@@ -1376,9 +1400,9 @@ export async function settleBufferedCaptures(): Promise<number> {
     }
     let uploaded = 0;
     for (const name of names) {
-      if (name === state?.dirName || talkRecordingActive || Date.now() < (uploadRetries.get(name)?.after ?? 0)) continue;
+      if (name === state?.dirName || (talkRecordingActive && !leftCall) || Date.now() < (uploadRetries.get(name)?.after ?? 0)) continue;
       const sent = await claimCaptureDir(name, async () => {
-        if (name === state?.dirName || talkRecordingActive) return false;
+        if (name === state?.dirName || (talkRecordingActive && !leftCall)) return false;
         const sealed = await readSealedCapture(root, name);
         if (sealed === null || !captureIsThisParticipants(sealed)) return false;
         await uploadCapture(sealed.sidecar, name, false);
@@ -1410,6 +1434,7 @@ export async function settleBufferedCaptures(): Promise<number> {
 //                that file.
 async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-it" = "upload"): Promise<void> {
   if (callEnded) {
+    leftCall = true;
     recordingIdentity = null;
     identityEpoch++;
     talkRecordingActive = false;
@@ -1514,6 +1539,7 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
         // The worker reset after finalize and can be reused if recording
         // starts again.
         active.releaseDirClaim();
+        void settleBufferedCaptures().catch(() => {});
       });
   };
   active.worker.postMessage({ type: "finalize", dirName: active.dirName, base });
@@ -1642,6 +1668,7 @@ async function refreshCapturePermission(proxyBase: string): Promise<void> {
   if (state && !state.discarded) {
     const revoked = state;
     revoked.discarded = true;
+    if (revoked.recordingId) void revokeBufferedRecording(revoked.recordingId).catch(() => {});
     stopWithoutRestart(revoked);
     // Marked now rather than at teardown. Everything from here on is refused
     // whatever happens to this page next, including a delete that fails and a
@@ -1807,6 +1834,7 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
     return;
   }
   publisherSenders.add(sender);
+  leftCall = false;
   const roomToken = roomTokenFromPath(location.pathname);
   if (roomToken) {
     talkRoomToken = roomToken;

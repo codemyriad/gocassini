@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
@@ -8,10 +9,47 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestCaptureManifestRoutes(t *testing.T) {
+	data, err := os.ReadFile("../../../appinfo/info.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Routes []struct {
+			URL    string `xml:"url"`
+			Verb   string `xml:"verb"`
+			Access string `xml:"access_level"`
+		} `xml:"external-app>routes>route"`
+	}
+	if err := xml.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []struct{ path, method string }{
+		{"operator/capture/recording", "GET"},
+		{"operator/capture/transfer/room/recording/session", "GET"},
+		{"operator/capture/transfer/room/recording/session/commit", "POST"},
+		{"ui/capture-storage-worker.js", "GET"},
+	} {
+		found := false
+		for _, route := range manifest.Routes {
+			pattern := strings.ReplaceAll(route.URL, `\/`, `/`)
+			if regexp.MustCompile(pattern).MatchString(target.path) && route.Access == "USER" {
+				for _, method := range strings.Split(route.Verb, ",") {
+					found = found || method == target.method
+				}
+			}
+		}
+		if !found {
+			t.Errorf("AppAPI does not admit authenticated %s %s", target.method, target.path)
+		}
+	}
+}
 
 func captureDistWith(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -30,7 +68,7 @@ func captureDistWith(t *testing.T, files map[string]string) string {
 }
 
 func TestCaptureAssetFileFor(t *testing.T) {
-	for _, name := range []string{capturePayloadFile, captureWorkerFile} {
+	for _, name := range []string{capturePayloadFile, captureWorkerFile, captureStorageWorkerFile} {
 		file, ok := captureAssetFileFor(uiAssetURLPrefix + "/" + name)
 		if !ok || file != name {
 			t.Fatalf("captureAssetFileFor(%q) = %q, %v", name, file, ok)

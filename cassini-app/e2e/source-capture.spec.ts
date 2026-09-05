@@ -157,7 +157,7 @@ test("a reload keeps both immutable sessions until recording stops", async ({ pa
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await setOfficialRecording(page, 2);
   await page.waitForTimeout(2600);
-  // A microphone change first, so the reload has to resume a capture whose
+  // A microphone change first, so the reload has to preserve a capture whose
   // newest segment may not be in the recovery sidecar yet — the sidecar is a
   // checkpoint, and a resumed capture that numbered from it alone opened, and
   // truncated, the file that segment had already been writing.
@@ -174,10 +174,9 @@ test("a reload keeps both immutable sessions until recording stops", async ({ pa
 
   await page.reload();
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
-  // The pre-reload buffer must still be there while the new page records: an
-  // upload started on the way out would have deleted it, and an upload started
-  // on the way in would have filed the reload as a separate capture.
-  expect(server.uploads, "the buffered capture was uploaded instead of resumed").toHaveLength(0);
+  // Hold both immutable sessions until recording stops or this participant
+  // leaves; neither page teardown nor joining should start a bulk transfer.
+  expect(server.uploads, "the buffered capture was uploaded during rejoin").toHaveLength(0);
   await page.waitForTimeout(3000);
 
   const during = await captureDirs(page);
@@ -198,9 +197,25 @@ test("a reload keeps both immutable sessions until recording stops", async ({ pa
   await expect.poll(() => captureDirs(page)).toEqual([]);
 });
 
-// The other half of R2's promise: a buffer whose recording is over is not held
-// for a resumption that will never come. This is the existing retry path, and
-// it has to still be the one a reload without a rejoin ends on.
+// Leaving ends this participant's capture even if the rest of the room
+// remains in an active recording.
+test("leaving after a reload uploads both sessions while the room still records", async ({ page }) => {
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(2600);
+  await page.reload();
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await page.waitForTimeout(2600);
+  expect(await captureDirs(page)).toHaveLength(2);
+  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(2);
+  await expect.poll(() => captureDirs(page)).toEqual([]);
+  expect(server.state.recordingStatus).toBe(2);
+});
+
+// A recording that ended while the participant was away still drains on the
+// next Talk page load.
 test("a buffered capture whose recording is over uploads at the next page load", async ({ page }) => {
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
@@ -647,6 +662,23 @@ test("a missed recording restart cannot reuse the previous server identity", asy
   await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(2);
   expect(new Set(server.uploads.map((upload) => upload.sidecar.recordingId)))
     .toEqual(new Set(["fixture-recording", "second-recording"]));
+});
+
+test("administrator revocation also discards the pre-reload session", async ({ page }) => {
+  await joinWithBrokenWorker(page);
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(2600);
+  await page.reload();
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await page.waitForTimeout(2600);
+  expect(await captureDirs(page)).toHaveLength(2);
+  server.state.captureEnabled = false;
+  await page.waitForTimeout(2000);
+  server.state.captureEnabled = true;
+  await page.waitForTimeout(1000);
+  await setOfficialRecording(page, 0);
+  await expect.poll(() => captureDirs(page), { timeout: 10_000 }).toEqual([]);
+  expect(server.uploads).toHaveLength(0);
 });
 
 test("a stalled storage worker cannot stall outgoing meeting audio", async ({ page }) => {

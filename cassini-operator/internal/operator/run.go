@@ -806,7 +806,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// reaches calls already in progress, not only the next one.
 	api.HandleFunc("/capture/enabled", rt.captureEnabledHandler)
 	api.Handle("/capture/recording", rt.captureRecordingHandler(exappCfg.talkRoomMembershipChecker()))
-	api.Handle("/capture/transfer", rt.captureTransferHandler(exappCfg.talkRoomMembershipChecker(), logger))
+	api.Handle("/capture/transfer/", rt.captureTransferHandler(exappCfg.talkRoomMembershipChecker(), logger))
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are

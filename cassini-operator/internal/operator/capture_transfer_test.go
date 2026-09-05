@@ -53,7 +53,7 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 	sidecar.RecordingID, sidecar.SessionID = "job-transfer", "session-a"
 	window := captureRecordingWindow{StartMS: sidecar.CallStartWallMS, EndMS: sidecar.CallEndWallMS}
 	seedFinishedRecording(t, rt, sidecar.RecordingID, sidecar.RoomToken, window)
-	endpoint := "/capture/transfer?room=abc123&recording=job-transfer&session=session-a"
+	endpoint := "/capture/transfer/abc123/job-transfer/session-a"
 	handler := rt.captureTransferHandler(nil, rt.logger)
 	request := func(method, url, owner, contentType string, body io.Reader) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, url, body)
@@ -79,7 +79,7 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 		if err := writer.Close(); err != nil {
 			t.Fatal(err)
 		}
-		return request("POST", endpoint+"&piece="+hash, "alice", writer.FormDataContentType(), &body)
+		return request("POST", endpoint+"/"+hash, "alice", writer.FormDataContentType(), &body)
 	}
 	if rec := piece([]byte("corruption")); rec.Code != 422 {
 		t.Fatalf("hash refusal: %d %s", rec.Code, rec.Body)
@@ -92,7 +92,7 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 	if rec := request("GET", endpoint, "bob", "", nil); bytes.Contains(rec.Body.Bytes(), []byte(hash)) {
 		t.Fatal("another account can see Alice's inventory")
 	}
-	if rec := request("GET", "/capture/transfer?room=other&recording=job-transfer&session=session-a", "alice", "", nil); rec.Code != 403 {
+	if rec := request("GET", "/capture/transfer/other/job-transfer/session-a", "alice", "", nil); rec.Code != 403 {
 		t.Fatalf("room binding: %d", rec.Code)
 	}
 	manifest := captureTransferManifest{Sidecar: sidecar, Pieces: map[string][]string{"segment-0.webm": {hash}}}
@@ -101,7 +101,7 @@ func TestCaptureTransferResumeCommitAndOwnership(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return request("POST", endpoint+"&op=commit", "alice", "application/json", bytes.NewReader(raw))
+		return request("POST", endpoint+"/commit", "alice", "application/json", bytes.NewReader(raw))
 	}
 	for i := 0; i < 2; i++ {
 		if rec := commit(); rec.Code != 202 {

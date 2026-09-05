@@ -145,8 +145,14 @@ func (rt *Runtime) captureTransferHandler(isMember roomMembershipChecker, logger
 			http.Error(w, "capture unavailable", 403)
 			return
 		}
-		query := r.URL.Query()
-		room, recording, session := query.Get("room"), query.Get("recording"), query.Get("session")
+		// AppAPI drops query parameters when rebuilding multipart POST bodies.
+		// Keep routing identity in the path so authentication precedes body reads.
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/capture/transfer/"), "/")
+		if (r.Method == "GET" && len(parts) != 3) || (r.Method == "POST" && len(parts) != 4) {
+			http.Error(w, "invalid transfer path", 400)
+			return
+		}
+		room, recording, session := parts[0], parts[1], parts[2]
 		for _, value := range []string{room, recording, session} {
 			if !captureSafeName.MatchString(value) || value == "." || value == ".." {
 				http.Error(w, "invalid identity", 400)
@@ -201,7 +207,7 @@ func (rt *Runtime) captureTransferHandler(isMember roomMembershipChecker, logger
 			_ = json.NewEncoder(w).Encode(map[string]any{"pieces": pieces, "committed": committedErr == nil})
 			return
 		}
-		if query.Get("op") == "commit" {
+		if parts[3] == "commit" {
 			r.Body = http.MaxBytesReader(w, r.Body, 32<<20)
 			var manifest captureTransferManifest
 			if err := json.NewDecoder(r.Body).Decode(&manifest); err != nil {
@@ -213,7 +219,7 @@ func (rt *Runtime) captureTransferHandler(isMember roomMembershipChecker, logger
 			rt.commitCaptureTransfer(w, r, manifest, dir, room, owner, recording, session, logger)
 			return
 		}
-		hash := query.Get("piece")
+		hash := parts[3]
 		if !validCaptureHash(hash) {
 			http.Error(w, "invalid piece hash", 400)
 			return

@@ -319,13 +319,18 @@ export async function startFixtureServer() {
     }
     if (path === `${PROXY_PREFIX}/ui/capture-storage-worker.js` && state.storageWorker === "stalled") {
       res.writeHead(200, { "content-type": "text/javascript" });
-      return res.end('self.postMessage({type:"ready"}); while (true) {}');
+      return res.end('self.onmessage = e => { e.ports[0].postMessage({type:"ready"}); while (true) {} };');
     }
     if (path.startsWith(`${PROXY_PREFIX}/ui/`)) {
       const name = path.slice(`${PROXY_PREFIX}/ui/`.length);
       try {
         const body = await readFile(join(captureDist, name));
-        res.writeHead(200, { "content-type": "text/javascript" });
+        res.writeHead(200, {
+          "content-type": "text/javascript",
+          // Worker responses may have a stricter CSP than the Talk page.
+          // Start the two workers from the page, not from one another.
+          "content-security-policy": "worker-src 'none'",
+        });
         return res.end(body);
       } catch {
         res.writeHead(404);
@@ -342,9 +347,11 @@ export async function startFixtureServer() {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
       return res.end(JSON.stringify({ recordingId: state.recordingId }));
     }
-    if (path === `${PROXY_PREFIX}/operator/capture/transfer`) {
+    if (path.startsWith(`${PROXY_PREFIX}/operator/capture/transfer/`)) {
       if (!state.captureEnabled) { res.writeHead(403); return res.end(); }
-      const key = url.searchParams.get("session");
+      // Deliberately ignore the query: AppAPI does not preserve it on POST.
+      const [room, recording, session, operation] = path.slice(`${PROXY_PREFIX}/operator/capture/transfer/`.length).split("/");
+      const key = [room, recording, session].join("/");
       const transfer = transfers.get(key) ?? { pieces: new Map(), manifest: null };
       transfers.set(key, transfer);
       if (req.method === "GET") {
@@ -354,7 +361,7 @@ export async function startFixtureServer() {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       const body = Buffer.concat(chunks);
-      if (url.searchParams.get("op") === "commit") {
+      if (operation === "commit") {
         const manifest = JSON.parse(body.toString());
         if (!transfer.manifest) {
           const segments = manifest.sidecar.segments.map((segment) => ({
@@ -366,7 +373,7 @@ export async function startFixtureServer() {
         }
       } else {
         const parsed = parseMultipart(body, req.headers["content-type"] ?? "");
-        transfer.pieces.set(url.searchParams.get("piece"), parsed.segments[0].payload);
+        transfer.pieces.set(operation, parsed.segments[0].payload);
       }
       res.writeHead(204); return res.end();
     }

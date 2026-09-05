@@ -23,15 +23,15 @@ describe("immutable transfer", () => {
     });
     await transferCapture("/proxy", sidecar, async () => file, () => true, "token", fetchImpl as never);
     expect(sent).toHaveLength(2);
-    expect(sent[0]).toContain("piece=" + await hashCapturePiece(new Blob(["tail"])));
-    expect(sent[1]).toContain("op=commit");
+    expect(sent[0]).toContain("/" + await hashCapturePiece(new Blob(["tail"])));
+    expect(sent[1]).toContain("/commit");
   });
   it("verifies the manifest without retransmitting a committed session", async () => {
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) =>
       !init.method ? Response.json({ committed: true }) : new Response(null, { status: 204 }));
     await transferCapture("/proxy", sidecar, async () => new Blob(["audio"]), () => true, "token", fetchImpl as never);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(fetchImpl.mock.calls[1][0]).toContain("op=commit");
+    expect(fetchImpl.mock.calls[1][0]).toContain("/commit");
   });
   it("stops before sending another piece when permission is revoked", async () => {
     let allowed = true;

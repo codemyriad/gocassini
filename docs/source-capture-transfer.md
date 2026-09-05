@@ -31,16 +31,17 @@ used by the new protocol. An older server that does not advertise
 
 ## Bounded, immutable transfer
 
-`/operator/capture/transfer` takes `room`, `recording`, and `session` query
-parameters. The authenticated account defines ownership; supplied participant
+`/operator/capture/transfer/{room}/{recording}/{session}` identifies a session.
+Identity is in the path because AppAPI drops query parameters when rebuilding
+multipart POSTs. The authenticated account defines ownership; supplied participant
 IDs cannot choose a storage directory. The server verifies that the recording
 belongs to the room and checks the caller's current room membership.
 
 1. GET returns acknowledged piece hashes and whether the session is committed.
-2. POST with `piece=SHA256` accepts a single multipart file, at most 4 MiB.
+2. POST to `.../{SHA256}` accepts a single multipart file, at most 4 MiB.
    The server verifies the hash and writes, syncs and renames the piece before
    acknowledgement. Identical retries are idempotent.
-3. POST with `op=commit` accepts a JSON sidecar and a map from each segment
+3. POST to `.../commit` accepts a JSON sidecar and a map from each segment
    filename to its ordered piece hashes. These are transport byte ranges of one
    media file, not independently playable MediaRecorder chunks.
 4. The server validates the complete manifest, reserves assembly capacity,
@@ -82,8 +83,10 @@ microphones safe to mix twice.
 ## Separate timing and storage workers
 
 `capture-worker.js` forwards outgoing encoded frames and samples timing anchors.
-It delegates all OPFS work to `capture-storage-worker.js`. Slow synchronous
-writes and flushes cannot block forwarding. The storage worker serializes
+It delegates all OPFS work to `capture-storage-worker.js` through a
+MessageChannel. Both workers are launched
+from the Talk page, avoiding nested-worker restrictions in proxy response CSP.
+Slow synchronous writes and flushes cannot block forwarding. The storage worker serializes
 messages and retains the existing alternating recovery checkpoints.
 
 The encoded transform still needs its existing startup/recovery protections.
