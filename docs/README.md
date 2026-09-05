@@ -41,12 +41,11 @@ in these docs should be read in light of them.
   server**. Display names arrive on signaling join/participants events, ride
   through the MKV/remux stream titles, and are read back at transcription time.
   No audio-inferred diarization is used.
-- **Summarisation is WIP and the only third-party step.** LLM transcript cleanup
-  and meeting summaries are optional and run **only** when `OPENROUTER_API_KEY`
-  is set. When enabled, the **full transcript text is sent to that third party**
-  (OpenRouter or a compatible endpoint) — see the
-  [privacy caveat](#summarisation--the-privacy-caveat). No key means the step
-  is silently skipped and the raw local transcript is still published.
+- **Summarisation is optional.** The [bundled Ling pilot](./local-summaries.md)
+  runs locally with `CASSINI_SUMMARY_BACKEND=local`. Existing remote summaries
+  require `OPENROUTER_API_KEY` and send transcript text to the configured provider;
+  see the [privacy caveat](#summarisation--the-privacy-caveat). No key and no local
+  opt-in means the summary is skipped and the transcript is still published.
 - **Self-contained outputs.** A portable single-file `.opus` carries audio +
   transcript (integrity-hashed), and a separate
   **static-site export** (`catalog.json` + `meetings/`; the viewer SPA shell —
@@ -138,12 +137,14 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 
 ### Summarisation & the privacy caveat
 
-Summaries are **off by default**. To enable them,
+Summaries are **off by default**. For the bundled local pilot, set
+`CASSINI_SUMMARY_BACKEND=local`; see [local summaries](./local-summaries.md).
+To enable remote summaries instead,
 set `OPENROUTER_API_KEY` (optionally `LLM_BASE_URL`, default
 `https://openrouter.ai/api/v1`, and `LLM_MODEL`/`SUMMARY_MODEL`, default
 `openai/gpt-4o-mini`).
 
-> **Privacy warning.** When this is enabled, the **full local transcript text
+> **Privacy warning.** When remote mode is enabled, the **full local transcript text
 > is sent to the configured third party** (OpenRouter or a compatible endpoint)
 > for summarisation. Only enable this if sending meeting transcripts
 > off-host is acceptable for your deployment. Transcription itself never leaves
@@ -205,9 +206,8 @@ Flagged so readers do not mistake intent for current behavior:
 
 - **Summarisation is WIP.** It works, but `summary.md` is **not yet embedded**
   in the portable `.opus` and is **not** in `manifest.json`. It _is_ included in
-  the static-site bundle as an optional sidecar. A local/privacy-focused
-  summariser (avoiding the third-party OpenRouter step) is a separate future
-  effort.
+  the static-site bundle as an optional sidecar. The bundled local Ling pilot
+  produces the same artifact; it does not change the portable file contract.
 - **The portable `.opus` viewer** renders transcript + metadata; it does not yet
   render an embedded summary from `.opus` (published artifact directories do).
 - **Group folders ACL inheritance is version-sensitive.** Per-recording access

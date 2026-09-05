@@ -48,6 +48,22 @@ COPY deployment/ffmpeg /tmp/cassini-ffmpeg-build
 RUN FFMPEG_BUILD_JOBS="${FFMPEG_BUILD_JOBS}" \
     /tmp/cassini-ffmpeg-build/build.sh "${FFMPEG_VERSION}" /out/ffmpeg
 
+FROM debian:bookworm-slim AS llm-builder
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential ca-certificates curl cmake ninja-build libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+COPY deployment/llm /tmp/cassini-llm
+RUN bash /tmp/cassini-llm/build.sh cpu /out/llm
+
+FROM debian:bookworm-slim AS summary-model-fetcher
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl python3 \
+ && rm -rf /var/lib/apt/lists/*
+COPY deployment/models/fetch-summary-model.py /tmp/fetch-summary-model.py
+COPY cassini-go-recorder/internal/transcribe/ling-model.json /tmp/ling-model.json
+COPY deployment/models/LICENSE.Ling /out/LICENSE.Ling
+RUN python3 /tmp/fetch-summary-model.py /tmp/ling-model.json /out
+
 FROM debian:bookworm-slim AS model-fetcher
 ARG CASSINI_BUNDLED_MODELS
 ARG SILERO_VAD_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
@@ -149,7 +165,7 @@ LABEL io.gocassini.ffmpeg.requested-version=${FFMPEG_VERSION}
 ENV CASSINI_BUNDLED_MODELS="${CASSINI_BUNDLED_MODELS}"
 ENV CASSINI_STT_MODEL=${CASSINI_BUNDLED_MODEL_ID}
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates curl libopus0 tini \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl libopus0 libgomp1 tini \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/lib/cassini-operator
@@ -176,6 +192,9 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_STT_DEVICE=cpu \
     CASSINI_BUNDLED_MODEL_ROOT=/opt/cassini/cache
 ENV PATH=/opt/cassini/ffmpeg/bin:${PATH}
+ENV CASSINI_LLM_SERVER=/opt/cassini/llm/llama-server \
+    CASSINI_LLM_CUDA_CAPABLE=0 \
+    CASSINI_BUNDLED_SUMMARY_MODEL=ling-3.0-tiny-q4-k-m
 
 # AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api
 # DockerActions::buildDeployEnvs) — never CASSINI_*. Bake the base path the
@@ -195,6 +214,8 @@ COPY --from=frpc-fetcher /out/frpc /usr/local/bin/frpc
 #   /opt/cassini/cache/models/<id>/...
 #   /opt/cassini/cache/vad/silero_vad.onnx
 COPY --from=model-fetcher /out /opt/cassini/cache
+COPY --from=summary-model-fetcher /out /opt/cassini/cache
+COPY --from=llm-builder /out/llm /opt/cassini/llm
 COPY cassini-publisher/bin/export-static-meetings.sh /opt/cassini/cassini-publisher/bin/export-static-meetings.sh
 COPY cassini-viewer/package.json /opt/cassini/cassini-viewer/package.json
 COPY cassini-viewer/scripts/export-static-meetings.mjs /opt/cassini/cassini-viewer/scripts/export-static-meetings.mjs

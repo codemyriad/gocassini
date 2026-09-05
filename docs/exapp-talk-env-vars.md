@@ -21,9 +21,13 @@ AppAPI only forwards env vars declared in `info.xml`, so declaring it there is a
 | `CASSINI_TALK_RECORDING_SECRET` | Yes for Talk record button | Admin deploy option declared in `appinfo/info.xml` | HMAC shared secret for Talk's recording-backend protocol; must match `spreed.recording_servers.secret`. |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | Yes for HPB-internal/default Talk recording | Admin deploy option declared in `appinfo/info.xml` | Internal client secret for standalone Nextcloud Talk signaling / HPB; must match signaling config `[clients] internalsecret`. |
 | `CASSINI_TALK_BACKEND_URL` | Optional, sometimes required | Admin deploy option declared in `appinfo/info.xml` | Override base URL the operator uses for status callbacks and OCS calls back to Nextcloud. Use when Talk advertises a URL unreachable from the ExApp container. |
-| `OPENROUTER_API_KEY` | Optional | Admin deploy option | Enables transcript cleanup / summaries through OpenRouter or compatible endpoint. Privacy: when set, the full local transcript is sent to that third party; transcription itself is always local. |
+| `OPENROUTER_API_KEY` | Optional | Admin deploy option | Enables remote summaries through OpenRouter or a compatible endpoint, except in local-only/off mode. Remote summaries send transcript text to that endpoint; transcription remains local. |
 | `LLM_BASE_URL` | Optional | Admin deploy option | OpenAI-compatible base URL. |
-| `LLM_MODEL` | Optional | Admin deploy option | Model identifier for cleanup/summaries. |
+| `LLM_MODEL` | Optional | Admin deploy option | Remote summary model identifier. |
+| `CASSINI_SUMMARY_BACKEND` | Optional | Admin deploy option | `remote` (default), `local` (bundled Ling pilot), `auto`, or `off`. Local mode ignores remote keys/URLs. |
+| `CASSINI_LLM_DEVICE` | Optional | Admin deploy option | `auto`, `cpu`, or `cuda` for the local summary runtime. |
+| `CASSINI_LLM_CONTEXT_SIZE` | Optional | Admin deploy option | Local token context, default 16384. See [limits](./local-summaries.md). |
+| `CASSINI_LLM_TIMEOUT_SEC` | Optional | Admin deploy option | Local load/inference deadline in seconds, default 900. |
 | `CASSINI_OPERATOR_API_TOKEN` | Optional | Admin deploy option | Bearer token for direct non-AppAPI operator API calls; proxied AppAPI requests are authenticated by AppAPI. |
 
 ## AppAPI-injected runtime vars

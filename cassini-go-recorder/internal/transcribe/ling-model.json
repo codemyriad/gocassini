@@ -1,0 +1,9 @@
+{
+  "id": "ling-3.0-tiny-q4-k-m",
+  "file": "Ling-3.0-tiny-Q4_K_M.gguf",
+  "url": "https://huggingface.co/bloomer010/Ling-3.0-tiny-GGUF/resolve/56a85ebe2d6d9d2ad6ad00a5014b13667153e236/Ling-3.0-tiny-Q4_K_M.gguf",
+  "sha256": "a21f717779203d86b53996239c4903941858b938c50e85b03e6a981132b5621a",
+  "size": 4823895104,
+  "license": "MIT",
+  "source": "https://huggingface.co/inclusionAI/Ling-3.0-tiny"
+}

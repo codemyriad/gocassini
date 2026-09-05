@@ -652,7 +652,7 @@ jobs:
 
           # Pin the nvidia base by digest (catches silent upstream re-pushes).
           # Retry: Docker Hub anonymous manifest reads occasionally rate-limit.
-          NV_REF="nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04"
+          NV_REF="nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04"
           NV_DIGEST=""
           for attempt in 1 2 3; do
             if NV_DIGEST="$(docker buildx imagetools inspect "$NV_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')" \
@@ -680,6 +680,7 @@ jobs:
             "$NV_DIGEST" \
             "$(sha256sum "$DF" | cut -d' ' -f1)" \
             "$(sha256sum "$FETCH" | cut -d' ' -f1)" \
+            "$(sha256sum deployment/llm/build.sh deployment/models/fetch-summary-model.py deployment/models/LICENSE.Ling cassini-go-recorder/internal/transcribe/ling-model.json)" \
             | sha256sum | cut -c1-16)"
           BASE_REF="${{ env.REGISTRY }}/${{ github.repository_owner }}/gocassini-cuda-base:${BASE_HASH}"
           echo "base_ref=${BASE_REF}" >> "$GITHUB_OUTPUT"

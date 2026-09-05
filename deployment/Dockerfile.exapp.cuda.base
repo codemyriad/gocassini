@@ -24,6 +24,24 @@ ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-0.6b-v3"
 ARG SHERPA_CUDA_VERSION=v1.13.7
 ARG SHERPA_CUDA_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-cuda-12.x-cudnn-9.x-onnxruntime1.27.1-linux-x64-gpu.tar.bz2
 
+# Ling uses a newer CUDA toolchain for Blackwell support, matched by the
+# runtime stage below. Its libraries live separately from sherpa-onnx.
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS llm-builder
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential ca-certificates curl cmake ninja-build libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+COPY deployment/llm /tmp/cassini-llm
+RUN bash /tmp/cassini-llm/build.sh cuda /out/llm
+
+FROM debian:bookworm-slim AS summary-model-fetcher
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl python3 \
+ && rm -rf /var/lib/apt/lists/*
+COPY deployment/models/fetch-summary-model.py /tmp/fetch-summary-model.py
+COPY cassini-go-recorder/internal/transcribe/ling-model.json /tmp/ling-model.json
+COPY deployment/models/LICENSE.Ling /out/LICENSE.Ling
+RUN python3 /tmp/fetch-summary-model.py /tmp/ling-model.json /out
+
 # ---- Stage: model-fetcher (downloads + extracts the bundled models) ----
 FROM debian:bookworm-slim AS model-fetcher
 ARG CASSINI_BUNDLED_MODELS
@@ -62,12 +80,12 @@ RUN set -eux; \
  ls -la /out/lib/
 
 # ---- Base substrate: nvidia/cuda runtime + node + model + CUDA libs ----
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 LABEL io.gocassini.image-role=base-cuda
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates curl libopus0 tini gnupg \
+      bash ca-certificates curl libopus0 libgomp1 tini gnupg \
  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
@@ -75,4 +93,9 @@ RUN apt-get update \
 # The fat layers every per-commit app build reuses: the 4 CUDA .so (complete
 # set, supersedes the CPU libs the app no longer ships) and the model + VAD.
 COPY --from=sherpa-cuda-fetcher /out/lib /opt/cassini/lib
+COPY --from=summary-model-fetcher /out /opt/cassini/cache
+COPY --from=llm-builder /out/llm /opt/cassini/llm
+ENV CASSINI_LLM_SERVER=/opt/cassini/llm/llama-server \
+    CASSINI_LLM_CUDA_CAPABLE=1 \
+    CASSINI_BUNDLED_SUMMARY_MODEL=ling-3.0-tiny-q4-k-m
 COPY --from=model-fetcher /out /opt/cassini/cache

@@ -3,6 +3,7 @@ package transcribe
 import (
 	_ "embed"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -11,6 +12,9 @@ var summaryV0Template string
 
 //go:embed templates/summary-prompt.v0.md
 var summaryV0Prompt string
+
+//go:embed templates/summary-local-rules.v0.md
+var summaryLocalRules string
 
 // summaryTemplatePlaceholder is the literal token in summary-prompt.v0.md
 // where the V0 structure template is spliced in at runtime. If the prompt
@@ -30,9 +34,15 @@ func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segmen
 	if len(segments) == 0 {
 		return "", fmt.Errorf("no transcript segments to summarize")
 	}
+	if cfg.Backend != "" && cfg.Backend != "remote" && cfg.Backend != "local" {
+		return "", fmt.Errorf("unknown summary backend %q", cfg.Backend)
+	}
 
 	systemPrompt := summarySystemPrompt(summaryV0Template)
 	userPrompt := formatTranscriptForSummary(streams, segments)
+	if cfg.Backend == "local" {
+		return localMeetingSummary(cfg, systemPrompt+summaryLocalRules, userPrompt, os.Stderr)
+	}
 
 	body, err := chatCompletion(cfg, systemPrompt, userPrompt)
 	if err != nil {

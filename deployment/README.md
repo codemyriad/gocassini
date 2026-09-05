@@ -159,6 +159,7 @@ FFMPEG_VERSION="$(./ffmpeg/resolve-latest.sh)" docker compose up --build
 The bundle also passes these optional operator capability envs through when you set them in `.env` (see `.env.example`):
 
 - `OPENROUTER_API_KEY`
+- `CASSINI_SUMMARY_BACKEND=local` enables the [bundled local summary pilot](../docs/local-summaries.md)
 - `OPENROUTER_BASE_URL`
 - `LLM_BASE_URL`
 - `LLM_MODEL`
