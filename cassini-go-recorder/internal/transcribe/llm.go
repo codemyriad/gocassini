@@ -12,10 +12,15 @@ import (
 
 // LLMConfig holds settings for the meeting-summary API.
 type LLMConfig struct {
-	APIKey     string
-	BaseURL    string // e.g. "https://openrouter.ai/api/v1"
-	Model      string // e.g. "openai/gpt-4o-mini"
-	TimeoutSec int
+	Backend     string // ""/remote, local, or off
+	ServerPath  string // bundled llama-server executable; local only
+	CacheDir    string
+	Device      string // cpu or cuda; local only
+	ContextSize int
+	APIKey      string
+	BaseURL     string // e.g. "https://openrouter.ai/api/v1"
+	Model       string // e.g. "openai/gpt-4o-mini"
+	TimeoutSec  int
 }
 
 // DefaultLLMConfig returns an LLMConfig from standard environment variables,
@@ -29,6 +34,12 @@ func DefaultLLMConfig() LLMConfig {
 
 // IsConfigured returns true if the config has enough to make API calls.
 func (c LLMConfig) IsConfigured() bool {
+	if c.Backend == "off" {
+		return false
+	}
+	if c.Backend != "" && c.Backend != "remote" {
+		return true
+	}
 	return c.APIKey != "" && c.BaseURL != ""
 }
 
@@ -42,7 +53,7 @@ type Segment struct {
 }
 
 func chatCompletion(cfg LLMConfig, system, user string) (string, error) {
-	reqBody, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model": cfg.Model,
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
@@ -50,7 +61,11 @@ func chatCompletion(cfg LLMConfig, system, user string) (string, error) {
 		},
 		"temperature": 0,
 		"max_tokens":  4096,
-	})
+	}
+	if cfg.Backend == "local" {
+		payload["chat_template_kwargs"] = map[string]bool{"enable_thinking": false}
+	}
+	reqBody, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
@@ -60,6 +75,13 @@ func chatCompletion(cfg LLMConfig, system, user string) (string, error) {
 		timeout = 240 * time.Second
 	}
 	client := &http.Client{Timeout: timeout}
+	if cfg.Backend == "local" {
+		client.Transport = &http.Transport{Proxy: nil}
+		client.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("local summary server redirected the request")
+		}
+	}
+	defer client.CloseIdleConnections()
 
 	url := strings.TrimRight(cfg.BaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(reqBody))
@@ -77,14 +99,18 @@ func chatCompletion(cfg LLMConfig, system, user string) (string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return "", fmt.Errorf("read API response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("API returned %d: %s", resp.StatusCode, truncate(string(body), 400))
 	}
 
 	var result struct {
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
@@ -94,6 +120,9 @@ func chatCompletion(cfg LLMConfig, system, user string) (string, error) {
 	}
 	if len(result.Choices) == 0 {
 		return "", fmt.Errorf("no choices in API response")
+	}
+	if reason := result.Choices[0].FinishReason; reason != "stop" && (cfg.Backend == "local" || reason != "") {
+		return "", fmt.Errorf("summary did not complete (finish_reason=%q)", reason)
 	}
 	return result.Choices[0].Message.Content, nil
 }

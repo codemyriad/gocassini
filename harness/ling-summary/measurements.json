@@ -1,0 +1,603 @@
+{
+  "date": "2026-09-05",
+  "host": "roy-a-life-well-lived",
+  "model_sha256": "a21f717779203d86b53996239c4903941858b938c50e85b03e6a981132b5621a",
+  "source_revision": "6a1a922d269908a29cbd4b49c27e6a8e7fd10fae",
+  "exploratory_runtime": "b10795 for roy-gpu-*; b10819 source for roy-cpu-* and roy-pinned-gpu-*",
+  "measurements": [
+    {
+      "run": "roy-cpu-grounded",
+      "case": "corrections",
+      "elapsed_seconds": 12.833886075299233,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 333,
+        "prompt_tokens": 728,
+        "total_tokens": 1061,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 728,
+        "prompt_ms": 4817.796,
+        "prompt_per_token_ms": 6.617851648351649,
+        "prompt_per_second": 151.10643954206446,
+        "predicted_n": 333,
+        "predicted_ms": 7987.662,
+        "predicted_per_token_ms": 24.059222891566264,
+        "predicted_per_second": 41.56410223667451
+      },
+      "error": null
+    },
+    {
+      "run": "roy-cpu-grounded",
+      "case": "italian",
+      "elapsed_seconds": 13.24619352677837,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 359,
+        "prompt_tokens": 755,
+        "total_tokens": 1114,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 755,
+        "prompt_ms": 4309.761,
+        "prompt_per_token_ms": 5.708292715231789,
+        "prompt_per_second": 175.18372828562883,
+        "predicted_n": 359,
+        "predicted_ms": 8921.474,
+        "predicted_per_token_ms": 24.92031843575419,
+        "predicted_per_second": 40.12789814777244
+      },
+      "error": null
+    },
+    {
+      "run": "roy-cpu-grounded",
+      "case": "no_commitments",
+      "elapsed_seconds": 6.053321229759604,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 118,
+        "prompt_tokens": 652,
+        "total_tokens": 770,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 652,
+        "prompt_ms": 3397.138,
+        "prompt_per_token_ms": 5.210334355828221,
+        "prompt_per_second": 191.92626263637217,
+        "predicted_n": 118,
+        "predicted_ms": 2641.419,
+        "predicted_per_token_ms": 22.57623076923077,
+        "predicted_per_second": 44.29437359237592
+      },
+      "error": null
+    },
+    {
+      "run": "roy-cpu-grounded",
+      "case": "spoken_instruction",
+      "elapsed_seconds": 7.836451055947691,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 196,
+        "prompt_tokens": 678,
+        "total_tokens": 874,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 678,
+        "prompt_ms": 3547.758,
+        "prompt_per_token_ms": 5.232681415929203,
+        "prompt_per_second": 191.10660873712357,
+        "predicted_n": 196,
+        "predicted_ms": 4277.142,
+        "predicted_per_token_ms": 21.93406153846154,
+        "predicted_per_second": 45.591191501240786
+      },
+      "error": null
+    },
+    {
+      "run": "roy-cpu-long",
+      "case": "near_limit",
+      "elapsed_seconds": 89.27986583067104,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 379,
+        "prompt_tokens": 9737,
+        "total_tokens": 10116,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 9737,
+        "prompt_ms": 74073.359,
+        "prompt_per_token_ms": 7.607410804149121,
+        "prompt_per_second": 131.45076895999816,
+        "predicted_n": 379,
+        "predicted_ms": 15160.318,
+        "predicted_per_token_ms": 40.106661375661375,
+        "predicted_per_second": 24.933513927610228
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-cassini",
+      "case": "corrections",
+      "elapsed_seconds": 1.8758369688875973,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 327,
+        "prompt_tokens": 501,
+        "total_tokens": 828,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 501,
+        "prompt_ms": 138.727,
+        "prompt_per_token_ms": 0.2769001996007984,
+        "prompt_per_second": 3611.4094588652533,
+        "predicted_n": 327,
+        "predicted_ms": 1720.722,
+        "predicted_per_token_ms": 5.278288343558282,
+        "predicted_per_second": 189.45535653057266
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-cassini",
+      "case": "italian",
+      "elapsed_seconds": 1.9829919999465346,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 339,
+        "prompt_tokens": 528,
+        "total_tokens": 867,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 528,
+        "prompt_ms": 156.173,
+        "prompt_per_token_ms": 0.295782196969697,
+        "prompt_per_second": 3380.8660908095508,
+        "predicted_n": 339,
+        "predicted_ms": 1781.72,
+        "predicted_per_token_ms": 5.271360946745562,
+        "predicted_per_second": 189.70433064679074
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-cassini",
+      "case": "no_commitments",
+      "elapsed_seconds": 0.8194126877933741,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 126,
+        "prompt_tokens": 425,
+        "total_tokens": 551,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 425,
+        "prompt_ms": 106.657,
+        "prompt_per_token_ms": 0.2509576470588235,
+        "prompt_per_second": 3984.736116710577,
+        "predicted_n": 126,
+        "predicted_ms": 658.817,
+        "predicted_per_token_ms": 5.270536,
+        "predicted_per_second": 189.73402325683765
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-cassini",
+      "case": "spoken_instruction",
+      "elapsed_seconds": 1.2769023119471967,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 220,
+        "prompt_tokens": 451,
+        "total_tokens": 671,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 451,
+        "prompt_ms": 116.316,
+        "prompt_per_token_ms": 0.2579068736141907,
+        "prompt_per_second": 3877.368547749235,
+        "predicted_n": 220,
+        "predicted_ms": 1150.462,
+        "predicted_per_token_ms": 5.253251141552512,
+        "predicted_per_second": 190.35830822747732
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-grounded",
+      "case": "corrections",
+      "elapsed_seconds": 1.9398121577687562,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 326,
+        "prompt_tokens": 728,
+        "total_tokens": 1054,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 728,
+        "prompt_ms": 197.065,
+        "prompt_per_token_ms": 0.2706936813186813,
+        "prompt_per_second": 3694.212569456778,
+        "predicted_n": 326,
+        "predicted_ms": 1726.372,
+        "predicted_per_token_ms": 5.311913846153846,
+        "predicted_per_second": 188.2560653207999
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-grounded",
+      "case": "italian",
+      "elapsed_seconds": 1.9395380741916597,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 331,
+        "prompt_tokens": 755,
+        "total_tokens": 1086,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 755,
+        "prompt_ms": 179.732,
+        "prompt_per_token_ms": 0.23805562913907286,
+        "prompt_per_second": 4200.698818240491,
+        "predicted_n": 331,
+        "predicted_ms": 1748.418,
+        "predicted_per_token_ms": 5.298236363636363,
+        "predicted_per_second": 188.7420513858814
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-grounded",
+      "case": "no_commitments",
+      "elapsed_seconds": 0.8063065139576793,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 122,
+        "prompt_tokens": 652,
+        "total_tokens": 774,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 652,
+        "prompt_ms": 157.645,
+        "prompt_per_token_ms": 0.24178680981595094,
+        "prompt_per_second": 4135.874908814108,
+        "predicted_n": 122,
+        "predicted_ms": 638.355,
+        "predicted_per_token_ms": 5.2756611570247935,
+        "predicted_per_second": 189.54970196834051
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-grounded",
+      "case": "spoken_instruction",
+      "elapsed_seconds": 1.4062634618021548,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 233,
+        "prompt_tokens": 678,
+        "total_tokens": 911,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 678,
+        "prompt_ms": 166.605,
+        "prompt_per_token_ms": 0.2457300884955752,
+        "prompt_per_second": 4069.5057171153326,
+        "predicted_n": 233,
+        "predicted_ms": 1229.279,
+        "predicted_per_token_ms": 5.298616379310345,
+        "predicted_per_second": 188.7285148448806
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-publisher",
+      "case": "corrections",
+      "elapsed_seconds": 2.018463196232915,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 355,
+        "prompt_tokens": 501,
+        "total_tokens": 856,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 501,
+        "prompt_ms": 126.53,
+        "prompt_per_token_ms": 0.2525548902195609,
+        "prompt_per_second": 3959.5352880739742,
+        "predicted_n": 355,
+        "predicted_ms": 1875.938,
+        "predicted_per_token_ms": 5.29925988700565,
+        "predicted_per_second": 188.70559688006745
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-publisher",
+      "case": "italian",
+      "elapsed_seconds": 1.981822778005153,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 346,
+        "prompt_tokens": 528,
+        "total_tokens": 874,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 528,
+        "prompt_ms": 142.338,
+        "prompt_per_token_ms": 0.26957954545454543,
+        "prompt_per_second": 3709.4802512329807,
+        "predicted_n": 346,
+        "predicted_ms": 1815.417,
+        "predicted_per_token_ms": 5.262078260869565,
+        "predicted_per_second": 190.03898277916315
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-publisher",
+      "case": "no_commitments",
+      "elapsed_seconds": 0.8341946648433805,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 129,
+        "prompt_tokens": 425,
+        "total_tokens": 554,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 425,
+        "prompt_ms": 106.142,
+        "prompt_per_token_ms": 0.24974588235294118,
+        "prompt_per_second": 4004.070019407963,
+        "predicted_n": 129,
+        "predicted_ms": 676.921,
+        "predicted_per_token_ms": 5.2884453125,
+        "predicted_per_second": 189.0914892579784
+      },
+      "error": null
+    },
+    {
+      "run": "roy-gpu-publisher",
+      "case": "spoken_instruction",
+      "elapsed_seconds": 1.357395180966705,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 235,
+        "prompt_tokens": 451,
+        "total_tokens": 686,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 451,
+        "prompt_ms": 114.424,
+        "prompt_per_token_ms": 0.25371175166297116,
+        "prompt_per_second": 3941.4808082220516,
+        "predicted_n": 235,
+        "predicted_ms": 1233.233,
+        "predicted_per_token_ms": 5.2702264957264955,
+        "predicted_per_second": 189.74516575537632
+      },
+      "error": null
+    },
+    {
+      "run": "roy-pinned-gpu-grounded",
+      "case": "corrections",
+      "elapsed_seconds": 2.228955719154328,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 326,
+        "prompt_tokens": 728,
+        "total_tokens": 1054,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 728,
+        "prompt_ms": 452.029,
+        "prompt_per_token_ms": 0.6209189560439561,
+        "prompt_per_second": 1610.51613945123,
+        "predicted_n": 326,
+        "predicted_ms": 1757.855,
+        "predicted_per_token_ms": 5.408784615384615,
+        "predicted_per_second": 184.8844187944967
+      },
+      "error": null
+    },
+    {
+      "run": "roy-pinned-gpu-grounded",
+      "case": "italian",
+      "elapsed_seconds": 1.9674306591041386,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 331,
+        "prompt_tokens": 755,
+        "total_tokens": 1086,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 755,
+        "prompt_ms": 196.245,
+        "prompt_per_token_ms": 0.2599271523178808,
+        "prompt_per_second": 3847.2317766057736,
+        "predicted_n": 331,
+        "predicted_ms": 1758.542,
+        "predicted_per_token_ms": 5.328915151515151,
+        "predicted_per_second": 187.6554554852827
+      },
+      "error": null
+    },
+    {
+      "run": "roy-pinned-gpu-grounded",
+      "case": "no_commitments",
+      "elapsed_seconds": 0.8122468017973006,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 122,
+        "prompt_tokens": 652,
+        "total_tokens": 774,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 652,
+        "prompt_ms": 157.977,
+        "prompt_per_token_ms": 0.24229601226993866,
+        "prompt_per_second": 4127.183070953366,
+        "predicted_n": 122,
+        "predicted_ms": 643.701,
+        "predicted_per_token_ms": 5.319842975206612,
+        "predicted_per_second": 187.97547308455324
+      },
+      "error": null
+    },
+    {
+      "run": "roy-pinned-gpu-grounded",
+      "case": "spoken_instruction",
+      "elapsed_seconds": 1.413557549007237,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 233,
+        "prompt_tokens": 678,
+        "total_tokens": 911,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 678,
+        "prompt_ms": 169.988,
+        "prompt_per_token_ms": 0.2507197640117994,
+        "prompt_per_second": 3988.5168364825754,
+        "predicted_n": 233,
+        "predicted_ms": 1232.749,
+        "predicted_per_token_ms": 5.313573275862069,
+        "predicted_per_second": 188.19727292417193
+      },
+      "error": null
+    },
+    {
+      "run": "roy-pinned-gpu-long",
+      "case": "near_limit",
+      "elapsed_seconds": 3.936286218930036,
+      "headings_match": true,
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 395,
+        "prompt_tokens": 9737,
+        "total_tokens": 10132,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 9737,
+        "prompt_ms": 1711.027,
+        "prompt_per_token_ms": 0.17572424771490192,
+        "prompt_per_second": 5690.734278301862,
+        "predicted_n": 395,
+        "predicted_ms": 2160.041,
+        "predicted_per_token_ms": 5.482337563451777,
+        "predicted_per_second": 182.40394511030115
+      },
+      "error": null
+    }
+  ]
+}

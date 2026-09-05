@@ -6,8 +6,9 @@ what (if anything) leaves your infrastructure, and what happens on deletion.
 
 Cassini records Nextcloud Talk meetings, transcribes them, optionally summarizes
 them, and publishes a readable archive. Recording and transcription happen
-entirely within your own infrastructure. Exactly one step sends data to a third
-party. It is optional, off by default, and enabled only when you set an API key.
+entirely within your own infrastructure. Bundled Ling summaries are an opt-in
+local pilot (`CASSINI_SUMMARY_BACKEND=local`). Remote summaries are optional and
+enabled by a configured API key unless local-only mode or summary disabling wins.
 
 ## Summary
 
@@ -16,12 +17,14 @@ party. It is optional, off by default, and enabled only when you set an API key.
 | Recording the call             | Local (the Cassini container)                             | No                               |
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
 | Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
-| Transcript cleanup + summary   | Third-party LLM — **only if `OPENROUTER_API_KEY` is set** | **Yes, when enabled**            |
+| Local meeting summary          | Bundled Ling, when local mode is selected                 | No                               |
+| Remote meeting summary         | Configured endpoint, with `OPENROUTER_API_KEY`             | Yes, when remote mode is enabled |
 | Publishing the archive         | Nextcloud Files, on your servers                          | No                               |
 
 **Without an LLM key: nothing leaves your infrastructure.** The raw local
-transcript is still produced and published; only the transcript cleanup/summary is
-skipped.
+transcript is still produced and published. Without a key, summaries are skipped
+unless local mode is enabled. Image builds and unbundled CLI model installation
+download public model/runtime assets; those downloads contain no meeting data.
 
 ## What Cassini stores
 
@@ -84,9 +87,10 @@ Nextcloud Files deletes that copy.
 
 ## What leaves your infrastructure, and when
 
-The only step that transmits data off your infrastructure is optional LLM
-transcript cleanup and summarization. It runs **only when `OPENROUTER_API_KEY` is
-set**, and it is unset by default.
+The only processing step that can transmit a transcript off your infrastructure
+is optional remote summarization. It requires `OPENROUTER_API_KEY`, which is unset
+by default. `CASSINI_SUMMARY_BACKEND=local` ignores remote keys and URLs and never
+falls back to a remote provider. Local failures leave the transcript publishable.
 
 When it is enabled, after a meeting is transcribed locally, the full local
 transcript text is sent to the configured endpoint — OpenRouter
@@ -105,6 +109,9 @@ Controls:
 - **`LLM_BASE_URL`** — point summaries at a self-hosted or alternative
   OpenAI-compatible endpoint instead of OpenRouter.
 - **`CASSINI_SUMMARY_DISABLED`** — skip the summary while leaving the key set.
+- **`CASSINI_SUMMARY_BACKEND=local`** — enable the bundled local pilot; no remote
+  summary calls. The authenticated loopback runtime runs only for the summary,
+  then exits and releases model memory. See [local summaries](./local-summaries.md).
 
 See [Summarisation & the privacy caveat](./README.md#summarisation--the-privacy-caveat)
 and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.

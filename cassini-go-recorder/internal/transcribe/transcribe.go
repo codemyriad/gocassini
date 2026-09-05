@@ -646,10 +646,11 @@ func DefaultBuildConfig() BuildConfig {
 	if model := os.Getenv("SUMMARY_MODEL"); model != "" {
 		summaryLLM.Model = model
 	}
+	summaryLLM = resolveSummaryBackend(summaryLLM)
 	if envBool("CASSINI_SUMMARY_DISABLED") {
-		// IsConfigured() requires both APIKey and BaseURL, so blanking the key
-		// is sufficient to turn the step off.
+		// Disable both the legacy API path and the keyless local backend.
 		summaryLLM.APIKey = ""
+		summaryLLM.Backend = "off"
 	}
 
 	// Leave an unset model empty: BuildMeetingArtifact derives it from the
@@ -708,6 +709,10 @@ func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Se
 	}
 
 	fmt.Fprintln(stdout, "  generating meeting summary...")
+	if cfg.SummaryLLM.Backend == "local" {
+		cfg.SummaryLLM.CacheDir = cfg.CacheDir
+		fmt.Fprintf(stdout, "  summary policy: backend=local model=%s device=%s context=%d\n", cfg.SummaryLLM.Model, cfg.SummaryLLM.Device, cfg.SummaryLLM.ContextSize)
+	}
 	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
 	if err != nil {
 		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)

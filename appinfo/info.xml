@@ -5,18 +5,19 @@
   <name>Cassini</name>
   <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
   <description><![CDATA[Cassini records a Nextcloud Talk call without joining as a participant, then
-transcribes and publishes a readable archive in Nextcloud Files. Optionally, it
-can also summarize each meeting when you configure an OpenRouter (or compatible)
-API key. Recording control and job history live in the admin-only control panel;
+transcribes and publishes a readable archive in Nextcloud Files. Optional bundled
+Ling summaries run locally without an API key when local summary mode is enabled.
+A configured OpenRouter (or compatible) API key enables remote summaries.
+Recording control and job history live in the admin-only control panel;
 each private recording is readable only by the people who had access to the Talk
 room (its attendee list) when it was published, enforced by Nextcloud's own
 advanced file ACLs.
 
 Data processing: recording and speech-to-text transcription run entirely within
 your own infrastructure. No audio or transcript leaves your servers for those
-steps. Optional LLM transcript cleanup and summaries are the only step that sends
-data to a third party, and they run only when an OpenRouter (or compatible) API
-key is configured. Without a key, nothing leaves your infrastructure. See the
+steps. Bundled meeting summaries also run locally. Remote summaries send the
+transcript to the configured provider only when an OpenRouter (or compatible) API
+key is configured and local-only mode is not selected. Without a key, nothing leaves your infrastructure. See the
 full data-processing note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md]]></description>
   <version>0.2.0-beta.6</version>
   <licence>agpl</licence>
@@ -98,17 +99,37 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>OPENROUTER_API_KEY</name>
         <display-name>LLM API key (optional)</display-name>
-        <description>API key for transcript cleanup and meeting summaries, sent to OpenRouter or any OpenAI-compatible endpoint (see LLM_BASE_URL). Leave empty to publish raw transcripts without summaries.</description>
+        <description>Optional remote meeting-summary API key (see LLM_BASE_URL). Leave empty to skip remote summaries. CASSINI_SUMMARY_BACKEND=local enables bundled Ling instead, ignores this key, and keeps summaries local.</description>
       </variable>
       <variable>
         <name>LLM_BASE_URL</name>
         <display-name>LLM base URL (optional)</display-name>
-        <description>OpenAI-compatible API base URL used for transcript cleanup and meeting summaries. Defaults to https://openrouter.ai/api/v1 when OPENROUTER_API_KEY is set.</description>
+        <description>OpenAI-compatible API base URL for remote meeting summaries. Defaults to https://openrouter.ai/api/v1 when OPENROUTER_API_KEY is set. Ignored in local summary mode.</description>
       </variable>
       <variable>
         <name>LLM_MODEL</name>
         <display-name>LLM model (optional)</display-name>
-        <description>Model identifier for transcript cleanup and meeting summaries (default: openai/gpt-4o-mini).</description>
+        <description>Remote meeting-summary model identifier (default: openai/gpt-4o-mini). Local summaries use the bundled Ling-3.0-tiny model.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_SUMMARY_BACKEND</name>
+        <display-name>Meeting summaries</display-name>
+        <description>remote (default): require a configured remote API. local: use bundled Ling locally and ignore remote credentials. auto: use a configured remote API key, otherwise bundled local Ling. off: skip summaries. Local Ling is an opt-in pilot. Summary failures never prevent transcript publication.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_LLM_DEVICE</name>
+        <display-name>Local summary device</display-name>
+        <description>auto (default), cpu, or cuda. Auto uses NVIDIA acceleration in the CUDA image when a GPU is present. The model loads after transcription and unloads when the summary finishes.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_LLM_CONTEXT_SIZE</name>
+        <display-name>Local summary context</display-name>
+        <description>Token context for local summaries, default 16384, range 8192 to 131072. Larger values use more memory. 4160 tokens are reserved for output and template overhead; transcripts beyond the remaining budget are published without a summary.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_LLM_TIMEOUT_SEC</name>
+        <display-name>Local summary timeout</display-name>
+        <description>Positive timeout in seconds for local model loading and inference, default 900. Model installation and waiting for another summary are separate. On timeout the model process stops and the transcript remains publishable.</description>
       </variable>
       <variable>
         <name>CASSINI_ROOM_ID_PEPPER</name>
