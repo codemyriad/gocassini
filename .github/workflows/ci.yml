@@ -7,7 +7,7 @@ on:
       - master
     # Pure docs/planning changes touch no code, tests, or image — skip the
     # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
-    # outside this list the whole suite still runs, so a real code change is
+    # outside this list the workflow still runs, so a real code change is
     # never silently skipped (avoids the allow-list false-green trap the PR #36
     # incident demonstrated; scripts/classify-image-relevance.sh now applies the
     # same deny-list to the required faithful gate in publish-exapp-image.yml).
@@ -43,9 +43,32 @@ jobs:
   contracts:
     name: Fast manifest + harness contracts
     runs-on: ubuntu-latest
+    outputs:
+      recorder-integration: ${{ steps.changes.outputs.relevant }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify standalone recorder integration relevance
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          relevant=true
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            # Include deletions and both sides of renames. Two-dot deliberately
+            # over-reports base-branch changes; uncertainty runs the suite.
+            if changed="$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+              relevant="$(printf '%s\n' "$changed" | ./scripts/classify-recorder-integration-relevance.sh)"
+            else
+              echo "::warning::Cannot compute diff; running recorder integration"
+            fi
+          fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+          echo "Standalone recorder integration relevant: $relevant" >> "$GITHUB_STEP_SUMMARY"
       - name: Install contract tools
         run: |
           sudo apt-get update
@@ -57,6 +80,8 @@ jobs:
         # deny-list predicate, the load-bearing empty-path guard, and a drift
         # assertion that this deny-list still matches ci.yml's paths-ignore (D-505).
         run: ./scripts/test-classify-image-relevance.sh
+      - name: Test standalone recorder integration classifier
+        run: ./scripts/test-classify-recorder-integration-relevance.sh
       - name: Test newest-stable FFmpeg resolver
         run: ./deployment/ffmpeg/test-resolve-latest.sh
       - name: Run offline harness regressions
@@ -178,7 +203,9 @@ jobs:
     name: "Integration (${{ matrix.script }}${{ matrix.nextcloud_image && format(', {0}', matrix.nextcloud_image) || '' }})"
     runs-on: ubuntu-latest
     needs:
+      - contracts
       - unit
+    if: needs.contracts.outputs.recorder-integration == 'true'
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -189,7 +216,7 @@ jobs:
           - ci-e2e-rejoin.sh
           # ci-e2e-mute.sh is NOT in this matrix: it is a heavier 3-publisher
           # WebRTC scenario with its own readiness gate, so it runs as its own
-          # job below (on every PR, like this one).
+          # job below (with the same relevance condition).
         # Empty string selects the pinned default Nextcloud image in
         # harness/compose.yml. If the pinned leg goes red we broke it; if
         # only a compatibility leg goes red, upstream moved.
@@ -238,11 +265,12 @@ jobs:
     name: "Integration (ci-e2e-mute.sh)"
     runs-on: ubuntu-latest
     needs:
+      - contracts
       - unit
-    # Runs on EVERY PR (and push-to-main). The mute scenario is exactly the kind
-    # of regression we kept missing by gating heavy e2e behind `full-ci`, so it
-    # must gate every PR, not just labeled ones. (Deflaked: see the larger ICE
-    # budget + stagger in ci-e2e-mute.sh and the D-444 readiness gate.)
+    if: needs.contracts.outputs.recorder-integration == 'true'
+    # Runs on every relevant PR and every push-to-main, without a label gate.
+    # Only known unrelated changes skip these standalone recorder scenarios;
+    # packaged operator/UI coverage stays in publish-exapp-image.yml.
     timeout-minutes: 45
     steps:
       - name: Checkout
