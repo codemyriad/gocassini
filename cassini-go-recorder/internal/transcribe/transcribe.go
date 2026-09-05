@@ -33,6 +33,16 @@ type BuildConfig struct {
 	// DropCrosstalk removes flagged words instead of only marking them. Off by
 	// default: the transcript stays canonical and the evidence travels with it.
 	DropCrosstalk bool
+	// SourceAudioRoom is the Talk room token this recording belongs to. Source
+	// captures are selected by room AND overlapping call window; without it the
+	// selection falls back to the window alone, which is weaker.
+	SourceAudioRoom      string
+	SourceAudioRecording string
+	// SourceAudioDir is the root of participant-uploaded source captures
+	// (the operator's capture root). When set, a speaker whose upload can be
+	// placed on the meeting timeline is transcribed from that audio instead of
+	// from the track the SFU delivered. Empty disables ingestion entirely.
+	SourceAudioDir string
 }
 
 var (
@@ -88,14 +98,68 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	}
 	fmt.Fprintf(stdout, "  found %d audio stream(s), duration %d ms\n", len(streams), srcDurationMS)
 
-	// --- 2. Mix down to meeting.webm ---
+	// --- 2. Mix down to meeting.webm, splicing in participant captures ---
+	//
+	// One render, two consumers. Each participant's recorded track is decoded
+	// onto the meeting timeline first; a participant who uploaded their own
+	// microphone recording gets that laid over their track wherever it has
+	// audio; and the result is both what the encoder mixes and — resampled to
+	// 16 kHz — what the recogniser hears. So every word in the transcript can
+	// be heard in the published audio, at the same instant, because the two
+	// come from the same samples rather than from two placements that agree
+	// approximately.
+	//
+	// The published audio used to stay the recorded mix, on the argument that
+	// playback should be the meeting as the room heard it. That argument lost:
+	// a transcript quoting words that are inaudible in the recording is worse
+	// than a mix that is a little cleaner than the call was.
 	webmPath := filepath.Join(outputDir, "meeting.webm")
 	fmt.Fprintln(stdout, "  mixing audio to meeting.webm...")
-	if err := MixDownToWebM(mkvPath, streams, webmPath); err != nil {
+	mix, err := PrepareMix(mkvPath, streams)
+	if err != nil {
 		return fmt.Errorf("mix audio: %w", err)
 	}
+	defer mix.Close()
 
-	// Compute SHA-256 of the decoded PCM for integrity tracking.
+	var sourceAudio []SourceRenderReport
+	if cfg.SourceAudioDir != "" {
+		// ApplySourceAudio creates its own work directory, and only once it has
+		// a capture to render. Ingestion is on by default, so the ordinary case
+		// is a build with no upload for this room, and that build has to leave
+		// the bundle byte for byte what a build without ingestion would leave —
+		// not an empty _work/sourceaudio to explain to whoever finds it.
+		sourceAudio = ApplySourceAudio(ctx, mix, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, stdout, cfg.SourceAudioRecording)
+	}
+	if err := mix.Encode(webmPath); err != nil {
+		if !mix.Substituted() {
+			return fmt.Errorf("mix audio: %w", err)
+		}
+		// The encoder refused the spliced inputs. Fall back to the build this
+		// meeting would have had without ingestion at all rather than lose it
+		// to an improvement in its playback — and fall back on BOTH sides. A
+		// recorded mix under a spliced transcript is the very thing this build
+		// order exists to prevent, and it would also leave a rejoined
+		// participant's other streams dropped from transcription while their
+		// audio is back in the mix.
+		fmt.Fprintf(stdout, "  source audio: the spliced mix would not encode (%v); publishing the recorded mix and transcribing the recorded tracks\n", err)
+		revertSourceAudio(streams, sourceAudio, outputDir, "the spliced mix would not encode: "+err.Error())
+		if revertErr := mix.RevertSubstitutions(); revertErr != nil {
+			return fmt.Errorf("mix audio: %w (after %v)", revertErr, err)
+		}
+		if err := mix.Encode(webmPath); err != nil {
+			return fmt.Errorf("mix audio: %w", err)
+		}
+	}
+	// The decoded tracks and renders are large — a two-hour meeting is hundreds
+	// of megabytes per speaker — and nothing after this point reads them. Free
+	// them before the model download and the transcription pass rather than at
+	// the end of the build.
+	mix.Close()
+
+	// Compute SHA-256 of the decoded PCM for integrity tracking. After the
+	// splice, not before it: this hash travels in every transcript as
+	// media.sha256, and it has to describe the meeting.webm that was actually
+	// published rather than an intermediate nobody kept.
 	sha256hex, _, err := PCMsha256FromWebM(webmPath)
 	if err != nil {
 		return fmt.Errorf("compute audio hash: %w", err)
@@ -169,9 +233,17 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// that defeats the VAD even when the mixed timeline clearly contains
 	// speech. Fall back to transcribing the already-mixed meeting.webm under
 	// a synthetic "merged" speaker so the bundle still ships usable content.
-	streams, segments, err = ensureMergedFallback(ctx, webmPath, streams, segments, pass, stdout)
+	var mergedReplaced bool
+	streams, segments, mergedReplaced, err = ensureMergedFallback(ctx, webmPath, streams, segments, pass, stdout)
 	if err != nil {
 		return err
+	}
+	if mergedReplaced {
+		// The transcript is no longer the per-participant pass, so no speaker's
+		// splice is answerable for any word in it. Say so before the manifest
+		// is written, or provenance.sourceAudio names an upload as the source
+		// of words that came from the mix.
+		noteMergedFallbackTranscript(sourceAudio, streams, stdout)
 	}
 
 	// --- Cross-track speaker attribution ---
@@ -244,6 +316,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		Additional:       additionalTranscripts,
 		Attribution:      attrProv,
 		WordTimings:      wordEnds.provenance(),
+		SourceAudio:      sourceAudio,
 	}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
@@ -268,9 +341,13 @@ type AdditionalTranscript struct {
 // Talk-recorder per-participant tracks can be sparse (DTX, comfort-noise
 // frames between speaking turns) in ways that defeat the VAD even though
 // the same audio sums to a clearly-transcribable mix; rather than ship an
-// empty or nearly empty transcript in that case, fall back to the mix. Returns the
-// (possibly extended) streams + segments. Does nothing when the
-// per-participant pass meets the minimum word threshold.
+// empty or nearly empty transcript in that case, fall back to the mix. Returns
+// the (possibly extended) streams + segments, and whether the mixed pass
+// REPLACED the participant transcript — which no other return value says, and
+// which the caller has to know: after a replacement no word carries a
+// participant id, so nothing per-speaker may be asserted about where the words
+// came from. Does nothing when the per-participant pass meets the minimum word
+// threshold.
 // minWordsBeforeMergedFallback is the per-participant word threshold below
 // which we re-run transcription over the merged mix. The strict ==0 gate
 // was observed to skip fallback when a single stray word survived through
@@ -322,9 +399,9 @@ func (p passConfig) newRecognizer() (SpeechRecognizer, error) {
 	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee)
 }
 
-func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, pass passConfig, stdout io.Writer) ([]AudioStream, []Segment, error) {
+func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, pass passConfig, stdout io.Writer) ([]AudioStream, []Segment, bool, error) {
 	if !shouldFireMergedFallback(segments) {
-		return streams, segments, nil
+		return streams, segments, false, nil
 	}
 	fmt.Fprintf(stdout, "  per-participant transcription thin (%d words); transcribing mixed track as fallback...\n", CountWords(segments))
 
@@ -338,19 +415,19 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 
 	rec, err := pass.newRecognizer()
 	if err != nil {
-		return streams, segments, fmt.Errorf("create recognizer for merged fallback: %w", err)
+		return streams, segments, false, fmt.Errorf("create recognizer for merged fallback: %w", err)
 	}
 	defer rec.Close()
 
 	select {
 	case <-ctx.Done():
-		return streams, segments, ctx.Err()
+		return streams, segments, false, ctx.Err()
 	default:
 	}
 
 	samples, err := ExtractMixedFloats(webmPath)
 	if err != nil {
-		return streams, segments, fmt.Errorf("extract mixed audio: %w", err)
+		return streams, segments, false, fmt.Errorf("extract mixed audio: %w", err)
 	}
 	// useVAD=false: the merged mix is dense by construction (the rotator
 	// keeps the mix continuously audible). Silero with default threshold
@@ -361,11 +438,11 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	// no single low-confidence int8 span can zero the whole transcript.
 	words, err := rec.Transcribe(samples, pass.ModelPaths.SampleRate, false /*useVAD*/)
 	if err != nil {
-		return streams, segments, fmt.Errorf("transcribe merged fallback: %w", err)
+		return streams, segments, false, fmt.Errorf("transcribe merged fallback: %w", err)
 	}
 	fmt.Fprintf(stdout, "    merged: %d words\n", len(words))
 	if len(words) == 0 {
-		return streams, segments, nil
+		return streams, segments, false, nil
 	}
 
 	mergedSegs := AssembleSegments(mergedStream.SpeakerID, words, 0, 0)
@@ -373,7 +450,7 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	if !useMerged {
 		fmt.Fprintf(stdout, "    merged fallback did not clear attribution-preserving margin (need at least %d words vs %d attributed); keeping participant pass\n",
 			minimumMergedFallbackWords(CountWords(segments)), CountWords(segments))
-		return streams, chosenSegments, nil
+		return streams, chosenSegments, false, nil
 	}
 
 	// The mixed pass covers the same meeting timeline as the participant pass.
@@ -382,7 +459,7 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	// a mixed hypothesis that clears the attribution-preserving margin reaches
 	// the transcript.
 	extendedStreams := append(append([]AudioStream(nil), streams...), mergedStream)
-	return extendedStreams, chosenSegments, nil
+	return extendedStreams, chosenSegments, true, nil
 }
 
 // chooseMergedFallback keeps the two transcription hypotheses mutually
@@ -410,11 +487,39 @@ func minimumMergedFallbackWords(participantWords int) int {
 // transcribePass runs one full transcription pass over every speaker stream
 // using the given recognizer config. Returns merged + sorted segments.
 func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, pass passConfig, stdout io.Writer) ([]Segment, error) {
+	// Streams a participant's source capture already covers are dropped here
+	// rather than inside each transcription path, so sequential and parallel
+	// cannot disagree about what was transcribed.
+	streams = transcribableStreams(streams)
 	conc := resolveStreamConcurrency(len(streams), pass.NumThreads, pass.Device)
 	if conc <= 1 {
 		return transcribeStreamsSequential(ctx, mkvPath, streams, pass, stdout)
 	}
 	return transcribeStreamsParallel(ctx, mkvPath, streams, pass, conc, stdout)
+}
+
+// transcribableStreams filters out the streams a transcription pass must not
+// decode: those suppressed by source-audio ingestion, and the synthetic
+// merged-fallback speaker.
+//
+// The merged speaker carries Index -1 because it stands for the whole mix
+// rather than for a track. ensureMergedFallback appends it to the streams it
+// returns when it replaces the transcript, so an additional model configured on
+// the same build was handed it, asked ffmpeg for "-map 0:-1", and took the
+// whole build down with "Invalid argument" after the primary transcript had
+// already been written.
+//
+// Returns everything when nothing is suppressed and no fallback fired, which is
+// every ordinary build.
+func transcribableStreams(streams []AudioStream) []AudioStream {
+	keep := streams[:0:0]
+	for _, stream := range streams {
+		if stream.SuppressTranscription || stream.Index < 0 {
+			continue
+		}
+		keep = append(keep, stream)
+	}
+	return keep
 }
 
 // transcribeStreamsSequential transcribes each speaker stream one at a time with
@@ -789,6 +894,15 @@ func (c *speakerEnvelopeCache) envelopes(mkvPath string, streams []AudioStream, 
 	return envs, nil
 }
 
+// distinctSpeakers counts the participants these streams belong to.
+func distinctSpeakers(streams []AudioStream) int {
+	seen := make(map[string]struct{}, len(streams))
+	for _, s := range streams {
+		seen[s.SpeakerID] = struct{}{}
+	}
+	return len(seen)
+}
+
 // segmentsBelongToAnyStream reports whether at least one segment is attributed
 // to one of the given participant streams.
 func segmentsBelongToAnyStream(segments []Segment, streams []AudioStream) bool {
@@ -839,16 +953,16 @@ func applyAttributionCached(mkvPath string, streams []AudioStream, segments []Se
 // recording without CASSINI_ATTRIBUTION_DROP yields a different transcript
 // with byte-identical provenance. A nil report skips the bookkeeping.
 func applyAttributionReported(mkvPath string, streams []AudioStream, segments []Segment, sampleRate int, cfg BuildConfig, cache *speakerEnvelopeCache, stdout io.Writer, report *AttributionProvenance) []Segment {
-	realStreams := make([]AudioStream, 0, len(streams))
-	for _, s := range streams {
-		// The merged-fallback speaker is a synthetic mix of everyone, so it has
-		// no track of its own to compare against and must not become a rival.
-		if s.Index < 0 {
-			continue
-		}
-		realStreams = append(realStreams, s)
-	}
-	if len(realStreams) < 2 {
+	// Only the streams attribution can measure as independent evidence: no
+	// synthetic merged speaker, and no stream whose audio is already inside a
+	// sibling's spliced render. See measurableStreams.
+	realStreams := measurableStreams(streams)
+	// Participants, not streams. Remux emits a fresh stream on every rotation
+	// or rejoin, so one person alone in a recording can own several of them,
+	// and counting streams let that meeting past a guard written about
+	// participants: every track decoded, every envelope built, and then
+	// AttributionGapDB declining every word because there was never a rival.
+	if distinctSpeakers(realStreams) < 2 {
 		// Attribution compares tracks against each other; with one participant
 		// there is nothing for a word to be misattributed away from.
 		if report != nil {

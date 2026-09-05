@@ -2,14 +2,15 @@
 # release-version.sh — inspect and advance the Cassini release version.
 #
 # The version lives in appinfo/info.xml <version>, pinned in lockstep to the
-# AppAPI Docker <image-tag>. This CLI is the single entry point for moving
-# along the Nextcloud release ladder:
+# AppAPI Docker <image-tag> and the native capture companion's version. This
+# CLI is the single entry point for moving along the Nextcloud release ladder:
 #
 #   X.Y.Z-alpha.1 -> X.Y.Z-beta.1 -> X.Y.Z-rc.1 -> X.Y.Z-rc.2 -> X.Y.Z
 #
-# It only edits appinfo/info.xml. Committing, tagging and pushing are left to
-# the operator (or scripts/prepare-release.sh), so you can inspect the diff
-# before a release becomes real.
+# It edits appinfo/info.xml and, when present, cassini_capture/appinfo/info.xml.
+# Committing, tagging and pushing are left to the operator (or
+# scripts/prepare-release.sh), so you can inspect the diff before a release
+# becomes real.
 #
 # Usage:
 #   ./scripts/release-version.sh current
@@ -37,12 +38,18 @@ EOF
 report() {
   local from="$1" to="$2" branch
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '<branch>')"
-  echo "appinfo/info.xml: version ${from} -> ${to} (image-tag kept in lockstep)"
+  echo "Cassini manifests: version ${from} -> ${to} (image tag and companion kept in lockstep)"
   echo
   echo "Next steps (or run scripts/prepare-release.sh to do this for you):"
   echo "  git commit -am \"release: ${to}\""
   echo "  git tag v${to}"
   echo "  git push origin ${branch} v${to}"
+}
+
+write_versions() {
+  local current="$1" next="$2" root
+  root="$(git rev-parse --show-toplevel)"
+  rv_write_release_versions "$root" "$current" "$next"
 }
 
 main() {
@@ -57,14 +64,14 @@ main() {
       local level="${2:?usage: $0 bump patch|minor|major}"
       current="$(rv_read_version "$info_xml")"
       next="$(rv_bump "$level" "$current")"
-      rv_write_version "$info_xml" "$next"
+      write_versions "$current" "$next"
       report "$current" "$next"
       ;;
     promote)
       local target="${2:?usage: $0 promote beta|rc.1|rc.2|stable}"
       current="$(rv_read_version "$info_xml")"
       next="$(rv_promote "$target" "$current")"
-      rv_write_version "$info_xml" "$next"
+      write_versions "$current" "$next"
       report "$current" "$next"
       ;;
     set)
@@ -75,7 +82,7 @@ main() {
         echo "appinfo/info.xml is already at $explicit — nothing to do."
         return 0
       fi
-      rv_write_version "$info_xml" "$explicit"
+      write_versions "$current" "$explicit"
       report "$current" "$explicit"
       ;;
     -h|--help|help|"")

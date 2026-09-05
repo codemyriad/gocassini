@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cassini-operator/internal/operator/appapi"
@@ -176,7 +177,7 @@ type ExAppConfig struct {
 	// the nextcloud-files sink nothing is ever written to PublishedDir, so
 	// mounting a file server over it would only ever serve staleness.
 	PublishSink string
-	onEnabled   func(bool)
+	onEnabled   func(enabled bool, edge uint64)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -259,6 +260,52 @@ func parseBoolEnv(name string) (bool, error) {
 	return b, nil
 }
 
+// parseBoolEnvDefault reads a boolean env var whose default is not necessarily
+// false — the shape a switch takes when an installation turns it OFF rather
+// than on.
+//
+// Unset or blank yields def. Blank is deliberately the same as unset, not a
+// third case: every deployment surface that reaches this process — an AppAPI
+// deploy option left empty, a compose file's VAR: "", a `docker run -e VAR`
+// passing through an unset parent — spells "not configured" as an empty string,
+// and parseBoolEnv has always read it that way. Treating it as a typo would
+// silently disable the feature on installations that configured nothing, which
+// is exactly what the default exists to prevent.
+//
+// Anything else strconv.ParseBool understands yields that value, so "0"/"false"
+// is always an opt-out whatever the default is. Anything it cannot read is a
+// typo, and yields false rather than def: a switch nobody can read should land
+// on the setting that collects nothing and publishes nothing, which is the same
+// fail-closed reading parseBoolEnv's callers get from its error. A typo is
+// otherwise entirely silent, so it is logged — once per distinct value, because
+// these switches are read per request and per build and one repeated typo would
+// bury the log.
+func parseBoolEnvDefault(name string, def bool) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		logInvalidBoolEnvOnce(name, raw)
+		return false
+	}
+	return b
+}
+
+// invalidBoolEnvLogged remembers the name=value pairs already reported. Keyed
+// on the value and not just the name, so a corrected — or newly broken —
+// setting is reported again, which is what makes the message useful to
+// somebody editing the deployment env and re-reading the log.
+var invalidBoolEnvLogged sync.Map
+
+func logInvalidBoolEnvOnce(name, raw string) {
+	if _, seen := invalidBoolEnvLogged.LoadOrStore(name+"="+raw, struct{}{}); seen {
+		return
+	}
+	log.Printf("invalid %s=%q: not a boolean; treating it as off", name, raw)
+}
+
 // applyToBindAddr returns the bind address the operator should listen on,
 // honoring APP_HOST/APP_PORT when set and otherwise preserving the existing
 // flag/env default.
@@ -275,7 +322,10 @@ func (c ExAppConfig) applyToBindAddr(existing string) string {
 //
 // stateDir is where the lifecycle state JSON file lives (typically the parent
 // directory of the operator DB).
-func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger *log.Logger) {
+//
+// Returns the handlers so shutdown can wait for callbacks still in flight; see
+// LifecycleHandlers.Background.
+func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger *log.Logger) *LifecycleHandlers {
 	lifecycle := &LifecycleHandlers{
 		Store:                NewFileLifecycleStore(filepath.Join(stateDir, "app-state.json")),
 		Logger:               logger,
@@ -312,6 +362,8 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	if localArchive != "" || ncProxy != nil {
 		root.Handle(publishedURLPrefix+"/", publishedHandler(localArchive, publishedURLPrefix, logger, ncProxy))
 	}
+
+	return lifecycle
 }
 
 // initProgressReporter returns a callback that PUTs `progress=100` to AppAPI's
@@ -492,6 +544,12 @@ func (c ExAppConfig) uiAssetHandler(logger *log.Logger) http.Handler {
 		case viewerCSSPath:
 			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
 		default:
+			// Source-capture bundles (capture_assets.go) share the /ui/ prefix:
+			// they are browser assets fetched through the same proxy.
+			if file, ok := captureAssetFileFor(r.URL.Path); ok {
+				c.serveCaptureAsset(w, r, file, logger)
+				return
+			}
 			http.NotFound(w, r)
 		}
 	})

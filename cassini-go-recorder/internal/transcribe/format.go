@@ -189,10 +189,21 @@ type artifactTranscriptRef struct {
 }
 
 type provenanceInfo struct {
-	SpeechToText   *provStep              `json:"speechToText,omitempty"`
-	Attribution    *AttributionProvenance `json:"attribution,omitempty"`
-	WordTimings    *WordTimingProvenance  `json:"wordTimings,omitempty"`
-	MeetingSummary *provStep              `json:"meetingSummary,omitempty"`
+	SpeechToText *provStep              `json:"speechToText,omitempty"`
+	Attribution  *AttributionProvenance `json:"attribution,omitempty"`
+	WordTimings  *WordTimingProvenance  `json:"wordTimings,omitempty"`
+	// SourceAudio lists the speakers whose audio had their own browser capture
+	// spliced over what the SFU delivered. A reader deserves to know which part
+	// of the meeting came from a different recording of it, and the fit quality
+	// that placed it.
+	//
+	// Each entry describes AUDIO. Whether the words in the transcript came from
+	// that audio is a separate question, and each entry answers it separately
+	// in transcript_source: the merged-mix fallback can replace the whole
+	// transcript after the splice, and then no word carries any of these
+	// speakers' ids at all.
+	SourceAudio    []SourceRenderReport `json:"sourceAudio,omitempty"`
+	MeetingSummary *provStep            `json:"meetingSummary,omitempty"`
 }
 
 // WordTimingProvenance says how this build decided where a word ends.
@@ -310,6 +321,10 @@ type ManifestInput struct {
 	Additional  []AdditionalTranscript
 	Attribution *AttributionProvenance
 	WordTimings *WordTimingProvenance
+	// SourceAudio is one report per speaker whose transcription input had that
+	// participant's own browser capture spliced over the recorded track. Empty
+	// for every build with no uploads, which omits the key entirely.
+	SourceAudio []SourceRenderReport
 }
 
 func WriteManifest(path string, in ManifestInput) error {
@@ -360,6 +375,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		// false record: absence is the honest answer, and it is the one shape
 		// every existing consumer already handles.
 		WordTimings: in.WordTimings,
+		SourceAudio: in.SourceAudio,
 	}
 	if in.HasSummary {
 		prov.MeetingSummary = &provStep{

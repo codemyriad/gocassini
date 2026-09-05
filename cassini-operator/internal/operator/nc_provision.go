@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
 	"time"
 )
 
@@ -193,7 +194,8 @@ func randomPassword() (string, error) {
 }
 
 // enabledCallback is the AppAPI lifecycle hook, or nil outside an AppAPI
-// deployment. Provisioning is all it does.
+// deployment. It synchronizes the browser-delivery gate for the companion app
+// on both lifecycle edges, then provisions Files access on the enabled edge.
 //
 // It exists as a named function rather than a closure at the call site because
 // of how it was nearly lost. The assignment used to sit inside
@@ -205,11 +207,45 @@ func randomPassword() (string, error) {
 // a total outage caused by removing something unrelated. Naming the hook and
 // guarding it on the one condition that actually governs it makes that class of
 // accident visible, and testable.
-func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) func(bool) {
+func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) func(bool, uint64) {
 	if !c.appAPIActive() {
 		return nil
 	}
-	return func(enabled bool) {
+	// Per-callback, not package-level: the applied edge belongs to one running
+	// operator, and a shared global would also leak between tests.
+	var (
+		syncMu      sync.Mutex
+		syncApplied uint64
+	)
+	return func(enabled bool, edge uint64) {
+		captureEnabled := enabled && sourceCaptureEnabled()
+		// Detached from the runtime context and bounded on its own.
+		//
+		// On the disable edge this runs while AppAPI's request is held open and
+		// the container is about to be stopped. Inheriting cancellation from
+		// the runtime would make the write fail exactly when it matters most —
+		// leaving Nextcloud believing capture is still enabled, and the
+		// companion still injecting the payload into Talk pages. The timeout is
+		// what keeps a slow or unreachable Nextcloud from holding up an app
+		// disable.
+		syncMu.Lock()
+		if edge <= syncApplied {
+			// A later edge has already been written. Delivering this one now
+			// would put a stale value back; drop it instead.
+			syncMu.Unlock()
+			if logger != nil {
+				logger.Printf("source capture: skipping superseded companion state write (edge=%d, enabled=%v)", edge, captureEnabled)
+			}
+		} else {
+			syncApplied = edge
+			syncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), captureConfigSyncTimeout)
+			err := c.syncSourceCaptureInitialState(syncCtx, captureEnabled, logger)
+			cancel()
+			syncMu.Unlock()
+			if err != nil && logger != nil {
+				logger.Printf("ERROR: source capture: could not synchronize companion initial state: %v", err)
+			}
+		}
 		if !enabled {
 			return
 		}

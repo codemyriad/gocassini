@@ -31,6 +31,7 @@
 
 import { mount } from "svelte";
 import App from "./App.svelte";
+import { forgetLegacyConsent, retireLegacyCaptureWorkers } from "./capture/register";
 // The shell's stylesheet composes the viewing layer's app.css and adds a
 // @source for the shell's own components (nav + operator surface) — D-420 V3.
 import "./app.css";
@@ -240,9 +241,31 @@ function mountEmbeddedShell(): void {
   mount(App, { target: appRoot, props: { ncMode } });
 }
 
+// retireAbandonedCaptureState cleans up after earlier builds of source capture:
+// the service worker the abandoned delivery prototype registered, which
+// survives a 404 at its script URL, and the per-browser opt-in this build no
+// longer has. Both are retired on every Cassini page load; the companion
+// payload repeats both on Talk pages for users who do not revisit Cassini
+// first. Source capture itself lives entirely in that payload — this page
+// neither controls it nor stores anything for it.
+export function retireAbandonedCaptureState(): void {
+  forgetLegacyConsent();
+  const container = (globalThis as { navigator?: { serviceWorker?: ServiceWorkerContainer } })
+    .navigator?.serviceWorker;
+  void retireLegacyCaptureWorkers(container).catch(() => {
+    // Cleanup failure cannot stop the shell mounting. The server-side capture
+    // gate and the payload's periodic check remain fail-closed.
+  });
+}
+
 function bootstrap(): void {
   captureViewerBase(document, window);
   captureOperatorBase(window);
+  try {
+    retireAbandonedCaptureState();
+  } catch {
+    // The shell must mount whether or not the cleanup can run.
+  }
   // Wait for the window load event unless already complete: OCA.Theming is
   // populated by a Nextcloud dynamic import that resolves after
   // DOMContentLoaded; the load event is the earliest reliable read point.

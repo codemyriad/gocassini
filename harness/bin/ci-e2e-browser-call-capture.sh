@@ -1,0 +1,1126 @@
+#!/usr/bin/env bash
+# Missing source-capture vertical: exact installed ExApp + native companion +
+# real Chromium participant + real Talk/HPB call -> browser multipart -> bytes
+# under the ExApp capture root.
+#
+# The stub-browser leg already owns capture mechanics under simulated loss, and
+# ci-e2e-installed-exapp-capture.sh already owns injection, proxy/refusal, and
+# synthetic multipart coverage. This leg deliberately repeats none of those
+# matrices. It proves only the seam between them, including the regression that
+# matters most: Talk replaces Alice's microphone track and the browser upload
+# arrives with multiple source-audio segments.
+#
+# Capture follows Talk's official recording, so both participants are subjects
+# and both are asserted: Alice and Bob must each connect to the SFU, each buffer
+# their own OPFS capture, each upload it, and each land under their OWN
+# authenticated owner directory with every stored byte accounted for by the
+# response their own browser saw. The differential control is the administrator,
+# who never joined and must own nothing.
+#
+# Evidence lands in $LOG_DIR (summary.json, browser API response bodies and
+# diagnostics, container/compose logs). Teardown runs on every exit.
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# shellcheck disable=SC1091 # SCRIPT_DIR is resolved dynamically above.
+source "$SCRIPT_DIR/lib-exapp-manifest.sh"
+
+: "${IMAGE_REF:?IMAGE_REF must name the exact pre-built CPU image under test}"
+PROJECT_NAME="${PROJECT_NAME:-cassini-browser-capture-$$}"
+LOG_DIR="${LOG_DIR:-/tmp/cassini-browser-call-capture-$(date -u +%Y%m%dT%H%M%S)-$$}"
+NEXTCLOUD_HOST_PORT="${NEXTCLOUD_HOST_PORT:-28080}"
+NEXTCLOUD_URL="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}"
+PROXY_URL="$NEXTCLOUD_URL/index.php/apps/app_api/proxy/gocassini"
+MANIFEST_PATH="$REPO_ROOT/appinfo/info.xml"
+CANONICAL_LOCAL_IMAGE="cassini-exapp:e2e-v3-cpu-gpu"
+PRODUCTION_IMAGE="$(exapp_image_ref "$MANIFEST_PATH")"
+APP_VERSION="$(exapp_app_version "$MANIFEST_PATH")"
+EXAPP_CONTAINER="nc_app_gocassini"
+COMPANION_ID="cassini_capture"
+IMAGE_PAYLOAD_PATH="/opt/cassini/cassini-app/dist/capture/capture-payload.js"
+CAPTURE_FORMAT="org.cassini.source-capture/1"
+ALICE="alice"
+ALICE_PASSWORD='Tn8mY3qVrJ2x!E2e'
+BOB="bob"
+BOB_PASSWORD='Rk7pW2sLq9Zx!E2e'
+BROWSER_PROCESS_TIMEOUT="${BROWSER_PROCESS_TIMEOUT:-340}"
+
+RESULT="failed"
+CLEANUP_RESULT="not-run"
+STACK_STARTED=0
+SOURCE_IMAGE_ID=""
+INSTALLED_IMAGE_ID=""
+CAPTURE_ROOT=""
+CAPTURE_ROOT_BEFORE_CALL="unknown"
+ROOM_TOKEN=""
+ALICE_CALL_START_MS=""
+ALICE_SEGMENT_COUNT=0
+ALICE_BYTES=0
+BOB_CALL_START_MS=""
+BOB_SEGMENT_COUNT=0
+BOB_BYTES=0
+CAPTURE_ROOT_EMPTY_BEFORE_CALL=false
+ADMIN_NO_CAPTURE=false
+# Set by verify_owner_capture, which cannot return them: `fail` has to exit the
+# script, and a command substitution would swallow that exit in a subshell.
+OWNER_CALL_START_MS=""
+OWNER_SEGMENT_COUNT=0
+OWNER_BYTES=0
+CHECKS_PASSED=()
+
+STACK_TOPOLOGY=(
+  --public-mode local-http
+  --services full
+  --cassini installed-exapp
+  --recording-backend installed-exapp
+)
+
+mkdir -p "$LOG_DIR"
+log() { printf '[browser-capture-e2e] %s\n' "$*" | tee -a "$LOG_DIR/orchestrator.log"; }
+fail() { log "FAIL: $*"; exit 1; }
+pass() { CHECKS_PASSED+=("$1"); log "ok: $1"; }
+trap 'log "FAIL: unhandled error at line $LINENO: $BASH_COMMAND"' ERR
+
+compose() { docker compose -p "$PROJECT_NAME" -f "$REPO_ROOT/harness/compose.yml" "$@"; }
+occ() { compose exec -T -u www-data nextcloud php occ "$@"; }
+
+http_code() {
+  local auth="$1" method="$2" url="$3" out="$4"
+  shift 4
+  local -a args=(-sS -o "$out" -w '%{http_code}' -X "$method")
+  [[ -z "$auth" ]] || args+=(-u "$auth")
+  curl "${args[@]}" "$@" "$url"
+}
+
+ocs() {
+  local auth="$1" method="$2" url="$3" out="$4"
+  shift 4
+  http_code "$auth" "$method" "$url" "$out" \
+    -H 'OCS-APIRequest: true' -H 'Accept: application/json' "$@"
+}
+
+exapp_logs() {
+  local snapshot
+  snapshot="$LOG_DIR/exapp-log.$(date +%s%N).txt"
+  docker logs "$EXAPP_CONTAINER" >"$snapshot" 2>&1 || true
+  printf '%s\n' "$snapshot"
+}
+
+collect_diagnostics() {
+  set +e
+  docker ps -a --no-trunc >"$LOG_DIR/docker-ps.txt" 2>&1
+  docker image inspect "$IMAGE_REF" >"$LOG_DIR/source-image.json" 2>&1
+  docker inspect "$EXAPP_CONTAINER" >"$LOG_DIR/installed-container.json" 2>&1
+  docker logs "$EXAPP_CONTAINER" >"$LOG_DIR/installed-container.log" 2>&1
+  # Clock decisions belong in the job console as well as the downloadable logs.
+  grep -F 'capture clock:' "$LOG_DIR/installed-container.log" || true
+  compose ps -a >"$LOG_DIR/compose-ps.txt" 2>&1
+  compose logs --no-color >"$LOG_DIR/compose.log" 2>&1
+  occ app:list >"$LOG_DIR/nextcloud-apps.txt" 2>&1
+  occ app_api:app:config:list gocassini >"$LOG_DIR/exapp-config.txt" 2>&1
+  curl -sS --max-time 10 -u admin:admin "$PROXY_URL/operator/status" \
+    >"$LOG_DIR/operator-status.json" 2>"$LOG_DIR/operator-status.err"
+  set -e
+}
+
+verify_cleanup() {
+  local leaked=0
+  if docker ps -a --format '{{.Names}}' \
+    | grep -Eq "^(${EXAPP_CONTAINER}|cassini-exapp|appapi-harp|${PROJECT_NAME}[-_])"; then
+    docker ps -a --format '{{.Names}} {{.Status}}' \
+      | grep -E "^(${EXAPP_CONTAINER}|cassini-exapp|appapi-harp|${PROJECT_NAME}[-_])" \
+      >"$LOG_DIR/leaked-containers.txt" || true
+    leaked=1
+  fi
+  if docker network inspect "${PROJECT_NAME}_default" >/dev/null 2>&1; then
+    docker network inspect "${PROJECT_NAME}_default" >"$LOG_DIR/leaked-network.json" 2>&1 || true
+    leaked=1
+  fi
+  if docker volume ls --format '{{.Name}}' \
+    | grep -Eq "^(cassini-exapp-state|cassini-exapp-site|${EXAPP_CONTAINER}_data|${PROJECT_NAME}_(db_data|nextcloud_data|appapi_harp_certs))$"; then
+    docker volume ls --format '{{.Name}}' \
+      | grep -E "^(cassini-exapp-state|cassini-exapp-site|${EXAPP_CONTAINER}_data|${PROJECT_NAME}_(db_data|nextcloud_data|appapi_harp_certs))$" \
+      >"$LOG_DIR/leaked-volumes.txt" || true
+    leaked=1
+  fi
+  (( leaked == 0 ))
+}
+
+assert_fresh_stack_targets() {
+  local resources="$LOG_DIR/preflight-existing-resources.txt"
+  {
+    docker ps -a --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --format 'container:{{.Names}}'
+    docker volume ls --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --format 'volume:{{.Name}}'
+    docker network ls --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --format 'network:{{.Name}}'
+    docker ps -a --format '{{.Names}}' \
+      | grep -E '^(appapi-harp|cassini-exapp|nc_app_gocassini)$' \
+      | sed 's/^/global-container:/' || true
+    docker volume ls --format '{{.Name}}' \
+      | grep -E '^(cassini-exapp-state|cassini-exapp-site|nc_app_gocassini_data)$' \
+      | sed 's/^/global-volume:/' || true
+  } | sort -u >"$resources"
+  [[ ! -s "$resources" ]] \
+    || fail "refusing --reset because harness target names already exist: $(tr '\n' ' ' <"$resources")"
+
+  local listeners="$LOG_DIR/preflight-host-listeners.txt" port
+  {
+    ss -H -ltn
+    ss -H -lun
+  } >"$listeners"
+  for port in "$NEXTCLOUD_HOST_PORT" 13479 14222 17088 28082 28088 28188; do
+    if awk -v wanted="$port" '
+      { local_address = $4; sub(/^.*:/, "", local_address) }
+      local_address == wanted { found = 1 }
+      END { exit !found }
+    ' "$listeners"; then
+      fail "full-stack host port $port is already in use; refusing to disturb its owner"
+    fi
+  done
+}
+
+# readable_json echoes a path holding parseable JSON, substituting a `null`
+# document when the real one is missing or truncated, so a failed run still
+# writes a summary instead of losing every other field with it.
+readable_json() {
+  local candidate="$1" fallback="$2"
+  if jq -e . "$candidate" >/dev/null 2>&1; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+  printf 'null\n' >"$fallback"
+  printf '%s\n' "$fallback"
+}
+
+write_summary() {
+  local rc="$1" browser_result stored_alice stored_bob
+  browser_result="$(readable_json "$LOG_DIR/browser/result.json" "$LOG_DIR/browser-result.empty.json")"
+  stored_alice="$(readable_json "$LOG_DIR/stored-sidecar-$ALICE.json" "$LOG_DIR/stored-sidecar-$ALICE.empty.json")"
+  stored_bob="$(readable_json "$LOG_DIR/stored-sidecar-$BOB.json" "$LOG_DIR/stored-sidecar-$BOB.empty.json")"
+  jq -n \
+    --arg result "$RESULT" \
+    --argjson exit_code "$rc" \
+    --arg image_ref "$IMAGE_REF" \
+    --arg source_image_id "$SOURCE_IMAGE_ID" \
+    --arg installed_image_id "$INSTALLED_IMAGE_ID" \
+    --arg app_version "$APP_VERSION" \
+    --arg cleanup "$CLEANUP_RESULT" \
+    --arg capture_root "$CAPTURE_ROOT" \
+    --arg capture_root_before_call "$CAPTURE_ROOT_BEFORE_CALL" \
+    --arg room_token "$ROOM_TOKEN" \
+    --arg alice_call_start_ms "$ALICE_CALL_START_MS" \
+    --argjson alice_segment_count "$ALICE_SEGMENT_COUNT" \
+    --argjson alice_bytes "$ALICE_BYTES" \
+    --arg bob_call_start_ms "$BOB_CALL_START_MS" \
+    --argjson bob_segment_count "$BOB_SEGMENT_COUNT" \
+    --argjson bob_bytes "$BOB_BYTES" \
+    --argjson capture_root_empty "$CAPTURE_ROOT_EMPTY_BEFORE_CALL" \
+    --argjson admin_no_capture "$ADMIN_NO_CAPTURE" \
+    --argjson checks "$(printf '%s\n' "${CHECKS_PASSED[@]:-}" | sed '/^$/d' | jq -R . | jq -s .)" \
+    --slurpfile browser "$browser_result" \
+    --slurpfile alice_sidecar "$stored_alice" \
+    --slurpfile bob_sidecar "$stored_bob" \
+    '{result:$result,exit_code:$exit_code,image_ref:$image_ref,source_image_id:$source_image_id,
+      installed_image_id:$installed_image_id,app_version:$app_version,cleanup:$cleanup,
+      capture_root:$capture_root,room_token:$room_token,
+      stored:{alice:{call_start_ms:$alice_call_start_ms,segment_count:$alice_segment_count,
+          bytes:$alice_bytes,sidecar:$alice_sidecar[0]},
+        bob:{call_start_ms:$bob_call_start_ms,segment_count:$bob_segment_count,
+          bytes:$bob_bytes,sidecar:$bob_sidecar[0]}},
+      controls:{capture_root_empty_before_call:$capture_root_empty,
+        capture_root_state_before_call:$capture_root_before_call,uninvolved_user:"admin",
+        uninvolved_user_stored_nothing:$admin_no_capture},
+      browser:$browser[0],checks_passed:$checks}' \
+    >"$LOG_DIR/summary.json" || true
+}
+
+finish() {
+  local rc=$?
+  trap - EXIT INT TERM
+  collect_diagnostics
+  if (( STACK_STARTED == 1 )); then
+    log "tearing down through cassini dev stack"
+    PROJECT_NAME="$PROJECT_NAME" "$REPO_ROOT/bin/cassini" dev stack down --volumes \
+      "${STACK_TOPOLOGY[@]}" >"$LOG_DIR/stack-down.log" 2>&1 || rc=1
+  fi
+  if verify_cleanup; then CLEANUP_RESULT="passed"; else CLEANUP_RESULT="failed"; rc=1; fi
+  if (( rc == 0 )) && [[ "$RESULT" == "running" ]]; then
+    RESULT="passed"
+  elif (( rc != 0 )); then
+    RESULT="failed"
+  fi
+  write_summary "$rc"
+  log "result=$RESULT cleanup=$CLEANUP_RESULT evidence=$LOG_DIR/summary.json"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+for tool in docker curl jq node sha256sum base64 timeout go ss; do
+  command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+done
+[[ -f "$MANIFEST_PATH" ]] || fail "manifest not found: $MANIFEST_PATH"
+[[ -f "$SCRIPT_DIR/browser-call-capture.mjs" ]] || fail "Playwright driver is missing"
+[[ "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail "unsafe Compose project name: $PROJECT_NAME"
+if [[ ! "$NEXTCLOUD_HOST_PORT" =~ ^[0-9]+$ ]] \
+  || (( NEXTCLOUD_HOST_PORT <= 0 || NEXTCLOUD_HOST_PORT > 65535 )); then
+  fail "NEXTCLOUD_HOST_PORT must be an integer from 1 through 65535"
+fi
+node -e 'import("@playwright/test")' >"$LOG_DIR/playwright-import.log" 2>&1 \
+  || fail "@playwright/test is unavailable; run npm ci at the repository root"
+assert_fresh_stack_targets
+
+# Keep every Go process this leg invokes inside the machine's resource budget.
+export GOMEMLIMIT="${GOMEMLIMIT:-2GiB}"
+export GOFLAGS="-p=1"
+export CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE="${CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE:-1}"
+# Pinned rather than left to the default — which is also on — so the assertion
+# below that it reached the container says what this leg needs.
+export CASSINI_SOURCE_CAPTURE=1
+export CASSINI_SOURCE_AUDIO_INGEST=1
+
+SOURCE_IMAGE_ID="$(docker image inspect "$IMAGE_REF" --format '{{.Id}}')" \
+  || fail "image does not exist locally: $IMAGE_REF"
+docker tag "$IMAGE_REF" "$CANONICAL_LOCAL_IMAGE"
+log "exact image prepared: $IMAGE_REF -> $SOURCE_IMAGE_ID"
+
+docker run --rm --entrypoint /bin/cat "$IMAGE_REF" "$IMAGE_PAYLOAD_PATH" >"$LOG_DIR/capture-payload.js" \
+  || fail "image does not carry $IMAGE_PAYLOAD_PATH"
+[[ -s "$LOG_DIR/capture-payload.js" ]] || fail "capture payload extracted from the image is empty"
+"$REPO_ROOT/scripts/build-capture-companion.sh" \
+  --payload "$LOG_DIR/capture-payload.js" \
+  --staging "$LOG_DIR/companion" \
+  --output "$LOG_DIR/${COMPANION_ID}.tar.gz" \
+  >"$LOG_DIR/build-companion.log" 2>&1 \
+  || { sed -n '1,200p' "$LOG_DIR/build-companion.log" >&2; fail "companion package build failed"; }
+
+STACK_STARTED=1
+if ! PROJECT_NAME="$PROJECT_NAME" NEXTCLOUD_HOST_PORT="$NEXTCLOUD_HOST_PORT" \
+  "$REPO_ROOT/bin/cassini" dev stack up "${STACK_TOPOLOGY[@]}" \
+    --exapp-image-mode reuse-local --reset \
+    > >(tee "$LOG_DIR/stack-up.log") 2> >(tee "$LOG_DIR/stack-up.err" >&2); then
+  fail "cassini dev stack up failed"
+fi
+
+docker inspect "$EXAPP_CONTAINER" >/dev/null 2>&1 || fail "AppAPI/HaRP did not install $EXAPP_CONTAINER"
+INSTALLED_IMAGE_ID="$(docker inspect "$EXAPP_CONTAINER" --format '{{.Image}}')"
+[[ "$INSTALLED_IMAGE_ID" == "$SOURCE_IMAGE_ID" ]] \
+  || fail "installed image $INSTALLED_IMAGE_ID differs from tested image $SOURCE_IMAGE_ID"
+[[ "$(docker image inspect "$PRODUCTION_IMAGE" --format '{{.Id}}')" == "$SOURCE_IMAGE_ID" ]] \
+  || fail "manifest production tag does not identify exact IMAGE_REF"
+docker inspect "$EXAPP_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' >"$LOG_DIR/exapp-env.txt"
+grep -qx 'CASSINI_SOURCE_CAPTURE=1' "$LOG_DIR/exapp-env.txt" \
+  || fail "CASSINI_SOURCE_CAPTURE=1 did not reach the installed ExApp"
+grep -qx 'CASSINI_SOURCE_AUDIO_INGEST=1' "$LOG_DIR/exapp-env.txt" \
+  || fail "CASSINI_SOURCE_AUDIO_INGEST=1 did not reach the installed ExApp"
+pass "AppAPI/HaRP installed the exact image"
+
+# Fresh harness users otherwise receive Nextcloud's first-run overlay on top of
+# Talk. It is unrelated to the media path and can intercept the real join
+# controls, so remove it before either browser logs in.
+occ app:disable firstrunwizard >"$LOG_DIR/firstrunwizard-disable.log" 2>&1 \
+  || fail "disabling the unrelated first-run wizard failed"
+
+CAPTURE_ROOT="$(sed -n 's/.*capture_root -> \(.*\)$/\1/p' "$(exapp_logs)" | tail -n1)"
+[[ -n "$CAPTURE_ROOT" ]] || fail "operator log does not announce capture_root"
+
+log "installing the image's payload through the native companion"
+compose cp "$LOG_DIR/companion/$COMPANION_ID" nextcloud:/var/www/html/custom_apps/
+compose exec -T -u root nextcloud chown -R www-data:www-data "/var/www/html/custom_apps/$COMPANION_ID"
+occ app:enable "$COMPANION_ID" >"$LOG_DIR/companion-enable.log" 2>&1 \
+  || { sed -n '1,160p' "$LOG_DIR/companion-enable.log" >&2; fail "enabling $COMPANION_ID failed"; }
+
+export OC_PASS="$BOB_PASSWORD"
+compose exec -T -e OC_PASS -u www-data nextcloud php occ user:add \
+  --password-from-env --display-name=Bob "$BOB" >"$LOG_DIR/user-add-bob.log" 2>&1
+unset OC_PASS
+
+code="$(ocs "$ALICE:$ALICE_PASSWORD" POST \
+  "$NEXTCLOUD_URL/ocs/v2.php/apps/spreed/api/v4/room" "$LOG_DIR/room-create.json" \
+  --data-urlencode roomType=2 --data-urlencode "roomName=Browser capture $(date -u +%H%M%S)")"
+[[ "$code" == "200" || "$code" == "201" ]] || fail "creating Alice-owned Talk room -> HTTP $code: $(<"$LOG_DIR/room-create.json")"
+ROOM_TOKEN="$(jq -r '.ocs.data.token // empty' "$LOG_DIR/room-create.json")"
+[[ -n "$ROOM_TOKEN" ]] || fail "Talk room creation returned no token"
+
+code="$(ocs "$ALICE:$ALICE_PASSWORD" POST \
+  "$NEXTCLOUD_URL/ocs/v2.php/apps/spreed/api/v4/room/$ROOM_TOKEN/participants" \
+  "$LOG_DIR/room-add-bob.json" --data-urlencode "newParticipant=$BOB" --data-urlencode source=users)"
+[[ "$code" == "200" ]] || fail "adding Bob to $ROOM_TOKEN -> HTTP $code: $(<"$LOG_DIR/room-add-bob.json")"
+code="$(ocs "$ALICE:$ALICE_PASSWORD" GET \
+  "$NEXTCLOUD_URL/ocs/v2.php/apps/spreed/api/v4/room/$ROOM_TOKEN/participants" \
+  "$LOG_DIR/participants-before-browser.json")"
+[[ "$code" == "200" ]] || fail "reading Talk participants -> HTTP $code"
+pass "Alice owns a real Talk room containing Bob"
+
+docker exec "$EXAPP_CONTAINER" test ! -e "$CAPTURE_ROOT/$ROOM_TOKEN" \
+  || fail "negative control invalid: the new room already has a capture directory"
+if docker exec "$EXAPP_CONTAINER" test -d "$CAPTURE_ROOT"; then
+  CAPTURE_ROOT_BEFORE_CALL="present-without-room"
+else
+  CAPTURE_ROOT_BEFORE_CALL="absent-lazy"
+fi
+CAPTURE_ROOT_EMPTY_BEFORE_CALL=true
+pass "negative control: capture root has no room directory before the call ($CAPTURE_ROOT_BEFORE_CALL)"
+
+RESULT="running"
+mkdir -p "$LOG_DIR/browser"
+if ! NEXTCLOUD_URL="$NEXTCLOUD_URL" ROOM_TOKEN="$ROOM_TOKEN" \
+  ALICE_PASSWORD="$ALICE_PASSWORD" BOB_PASSWORD="$BOB_PASSWORD" \
+  BROWSER_LOG_DIR="$LOG_DIR/browser" \
+  timeout --signal=TERM --kill-after=15s "${BROWSER_PROCESS_TIMEOUT}s" \
+  node "$SCRIPT_DIR/browser-call-capture.mjs" \
+    > >(tee "$LOG_DIR/browser/stdout.log") \
+    2> >(tee "$LOG_DIR/browser/stderr.log" >&2); then
+  fail "real-browser Talk call failed (see $LOG_DIR/browser/result.json)"
+fi
+
+# The contract the browser leg's result.json must satisfy. Kept between these
+# markers because test-browser-capture-contract.sh extracts it verbatim and
+# evaluates it offline against synthesized documents — an edit that weakens it
+# has to fail there rather than pass unnoticed on a machine with no stack.
+# BEGIN browser-result contract
+# shellcheck disable=SC2016 # jq variables, deliberately not shell expansion.
+BROWSER_RESULT_CONTRACT='
+  .result == "passed"
+  and .recording.callRecording == 2
+  and (.alice.preRecordingOPFS | length) == 0
+  and (.bob.preRecordingOPFS | length) == 0
+  and (.alice.joinedBeforeRecordingOPFS | length) == 0
+  and (.bob.joinedBeforeRecordingOPFS | length) == 0
+  and (.alice.afterLeaveOPFS | length) == 0
+  and (.bob.afterLeaveOPFS | length) == 0
+  and (.alice.captureStorageKeys | length) == 0
+  and (.bob.captureStorageKeys | length) == 0
+  and .alice.mediaBeforeRecording.audioBytesSent > 2000
+  and .bob.mediaBeforeRecording.audioBytesSent > 2000
+  and .alice.mediaBeforeRecording.mediaDialogClicked == true
+  and .bob.mediaBeforeRecording.mediaDialogClicked == true
+  and any(.alice.mediaBeforeRecording.connections[]; .connectionState == "connected"
+    and (.iceConnectionState == "connected" or .iceConnectionState == "completed")
+    and .liveAudioSenders > 0 and .audioBytesSent > 2000)
+  and any(.bob.mediaBeforeRecording.connections[]; .connectionState == "connected"
+    and (.iceConnectionState == "connected" or .iceConnectionState == "completed")
+    and .liveAudioSenders > 0 and .audioBytesSent > 2000)
+  and .alice.mediaAfterSwitch.audioBytesSent >= (.alice.mediaImmediatelyAfterSwitch.audioBytesSent + 2000)
+  and .alice.microphoneSwitch.mode == "distinct-device"
+  and .alice.microphoneSwitch.before.deviceId != .alice.microphoneSwitch.after.deviceId
+  and .alice.microphoneSwitch.before.trackId != .alice.microphoneSwitch.after.trackId
+  and ([.alice.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 3
+  and (.alice.reload.capturesBefore | length) == 1
+  and (.alice.reload.capturesAfter | length) == 2
+  and (.alice.reload.capturesBefore[0] as $before | .alice.reload.capturesAfter | index($before)) != null
+  and .alice.reload.segmentsAfter > .alice.reload.segmentsBefore
+  and .alice.reload.preservedPreReloadBytes == true
+  and .alice.mediaAfterReload.rejoined == true
+  and .alice.mediaAfterReload.audioBytesSent > 2000
+  and ([.bob.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 1
+  and .alice.upload.status == 202
+  and .bob.upload.status == 202
+  and .alice.observedUploadRequestCount == 2
+  and .bob.observedUploadRequestCount == 1
+'
+# END browser-result contract
+jq -e "$BROWSER_RESULT_CONTRACT" "$LOG_DIR/browser/result.json" >/dev/null \
+  || fail "browser result lacks connected media, a capture and accepted upload from each participant, or microphone rotation"
+pass "both real browser participants sent SFU audio, captured themselves, and uploaded"
+pass "neither browser stored anything of its own for capture"
+pass "Talk's microphone selection replaced Alice's live sender and cut multiple browser segments"
+pass "Alice reloaded mid-recording, rejoined, and the rejoined page retained both immutable sessions"
+
+# verify_owner_capture asserts one participant's capture landed whole under
+# their own owner directory and is reconciled byte-for-byte against the upload
+# response their own browser saw. Results come back in OWNER_* rather than on
+# stdout: `fail` must exit the script, and a command substitution would trap
+# that exit inside a subshell and carry on.
+verify_owner_capture() {
+  local who="$1" owner="$2" min_segments="$3"
+  local owner_root="$CAPTURE_ROOT/$ROOM_TOKEN/$owner"
+  local sidecar="$LOG_DIR/stored-sidecar-$owner.json"
+  local response_dir="$LOG_DIR/commits-$owner"
+  mkdir -p "$response_dir"
+  local -a commits
+  mapfile -t commits < <(jq -c --arg who "$who" '.[$who].uploads[].body | fromjson' "$LOG_DIR/browser/result.json")
+  (( ${#commits[@]} > 0 )) || fail "$owner has no observed commits"
+  OWNER_SEGMENT_COUNT=0
+  OWNER_BYTES=0
+  OWNER_CALL_START_MS=""
+  local commit capture_dir final_dir current name bytes count total start
+  for commit in "${commits[@]}"; do
+    capture_dir="$(jq -r '.captureDir' <<<"$commit")"
+    [[ "$capture_dir" =~ ^session-[a-f0-9]{64}$ ]] || fail "unsafe committed session directory"
+    final_dir="$owner_root/$capture_dir"
+    current="$response_dir/$capture_dir.json"
+    docker exec "$EXAPP_CONTAINER" cat "$final_dir/capture.json" >"$current" \
+      || fail "committed $owner session has no manifest"
+    jq -e --arg owner "$owner" --arg room "$ROOM_TOKEN" --arg format "$CAPTURE_FORMAT" --argjson receipt "$commit" '
+      .format == $format and .roomToken == $room and .ownerUserId == $owner
+      and .participantId == $owner and .recordingId == $receipt.recordingId
+      and .sessionId == $receipt.sessionId and .receiptId != null
+      and (.segments | length) == $receipt.segments
+      and ([.segments[].index] == [range(0; .segments | length)])
+      and (.userAgent | test("Chrom(e|ium)"))
+    ' "$current" >/dev/null || fail "invalid committed $owner session"
+    jq -c '{sessionId,clockStatus,clockCorrectionMs,clockUncertaintyMs,clockVariationMs}' "$current"
+    jq -e '.clockStatus == "corrected"' "$current" >/dev/null \
+      || fail "$owner session $capture_dir did not receive clock correction through AppAPI"
+    count=0
+    total=0
+    while IFS= read -r name; do
+      [[ "$name" =~ ^segment-[0-9]+\.webm$ ]] || fail "unsafe segment name"
+      bytes="$(docker exec "$EXAPP_CONTAINER" stat -c %s "$final_dir/$name")" || fail "missing committed segment"
+      [[ "$bytes" =~ ^[0-9]+$ ]] || fail "non-numeric segment size"
+      (( bytes > 1000 )) || fail "empty committed segment"
+      total=$((total + bytes))
+      count=$((count + 1))
+    done < <(jq -r '.segments[].audioName' "$current")
+    jq -e --argjson bytes "$total" --argjson count "$count" '.status == "accepted" and .bytes == $bytes and .segments == $count' <<<"$commit" >/dev/null \
+      || fail "$owner response does not account for stored bytes"
+    OWNER_SEGMENT_COUNT=$((OWNER_SEGMENT_COUNT + count))
+    OWNER_BYTES=$((OWNER_BYTES + total))
+    start="$(jq -r '.callStartWallMs' "$current")"
+    if [[ -z "$OWNER_CALL_START_MS" ]] || (( start < OWNER_CALL_START_MS )); then OWNER_CALL_START_MS="$start"; fi
+  done
+  (( OWNER_SEGMENT_COUNT >= min_segments && OWNER_BYTES > 10000 )) || fail "incomplete $owner session set"
+  jq -s '{sessions: ., segments: [.[].segments[]]}' "$response_dir"/*.json >"$sidecar"
+  jq -e '[.sessions[].recordingId] | unique | length == 1' "$sidecar" >/dev/null || fail "$owner sessions name different recordings"
+}
+
+verify_owner_capture alice "$ALICE" 3
+ALICE_CALL_START_MS="$OWNER_CALL_START_MS"
+ALICE_SEGMENT_COUNT="$OWNER_SEGMENT_COUNT"
+ALICE_BYTES="$OWNER_BYTES"
+
+verify_owner_capture bob "$BOB" 1
+BOB_CALL_START_MS="$OWNER_CALL_START_MS"
+BOB_SEGMENT_COUNT="$OWNER_SEGMENT_COUNT"
+BOB_BYTES="$OWNER_BYTES"
+
+[[ "$ALICE_CALL_START_MS" != "$BOB_CALL_START_MS" || "$ALICE_BYTES" != "$BOB_BYTES" ]] \
+  || fail "Alice and Bob stored identical captures; one browser's audio was filed twice"
+
+# The administrator never joined the call. An owner directory for them would
+# mean the upload was attributed to the proxying identity rather than to the
+# authenticated browser user.
+docker exec "$EXAPP_CONTAINER" test ! -e "$CAPTURE_ROOT/$ROOM_TOKEN/admin" \
+  || fail "capture was attributed to the room administrator instead of the browser user"
+ADMIN_NO_CAPTURE=true
+staging_left="$(docker exec "$EXAPP_CONTAINER" sh -c 'find "$1" -maxdepth 1 -type d -name "upload-*" -print' sh "$CAPTURE_ROOT" || true)"
+[[ -z "$staging_left" ]] || fail "browser upload left staging directories behind: $staging_left"
+
+pass "both browser-produced WebM captures landed byte-plausibly on the ExApp"
+pass "disk paths and server-stamped sidecars attribute each capture to its own authenticated user"
+log "real-browser Talk source-capture seam passed: alice $ALICE_SEGMENT_COUNT segments/$ALICE_BYTES bytes, bob $BOB_SEGMENT_COUNT segments/$BOB_BYTES bytes"
+
+# ============================================================================
+# Assert Talk recording lifecycle: operator job completion and source audio splice
+# ============================================================================
+log "waiting for operator job for room $ROOM_TOKEN to reach stage=done state=succeeded"
+
+JOB_DEADLINE=$(( SECONDS + 300 ))
+JOB_ID=""
+JOB_STAGE=""
+JOB_STATE=""
+JOB_POLL_FILE="$LOG_DIR/jobs-poll.json"
+JOB_DETAIL_FILE="$LOG_DIR/job-detail.json"
+
+while (( SECONDS < JOB_DEADLINE )); do
+  if curl -sS -u admin:admin "$PROXY_URL/operator/jobs" >"$JOB_POLL_FILE" 2>"$LOG_DIR/jobs-poll.err"; then
+    JOB_INFO="$(jq -r --arg room "$ROOM_TOKEN" '
+      [.[] | select((.request_json | test($room)) or ((.request_json | fromjson? | .roomToken // "") == $room))]
+      | sort_by(.created_at) | last // empty
+      | if . then "\(.id) \(.stage) \(.state)" else "" end
+    ' "$JOB_POLL_FILE" 2>/dev/null || true)"
+
+    if [[ -z "$JOB_INFO" ]]; then
+      JOB_INFO="$(jq -r '
+        if length == 1 then "\(.[0].id) \(.[0].stage) \(.[0].state)" else "" end
+      ' "$JOB_POLL_FILE" 2>/dev/null || true)"
+    fi
+
+    if [[ -n "$JOB_INFO" ]]; then
+      read -r j_id j_stage j_state <<<"$JOB_INFO"
+      JOB_ID="$j_id"
+      JOB_STAGE="$j_stage"
+      JOB_STATE="$j_state"
+      if [[ "$j_stage" == "done" && "$j_state" == "succeeded" ]]; then
+        break
+      fi
+      if [[ "$j_state" == "failed" || "$j_state" == "interrupted" ]]; then
+        fail "operator job $JOB_ID failed in stage=$j_stage: $(<"$JOB_POLL_FILE")"
+      fi
+    fi
+  fi
+  sleep 3
+done
+
+[[ -n "$JOB_ID" ]] || fail "timed out waiting for operator to register a job for room $ROOM_TOKEN"
+[[ "$JOB_STAGE" == "done" && "$JOB_STATE" == "succeeded" ]] \
+  || fail "operator job $JOB_ID did not reach stage=done state=succeeded within timeout (stage=$JOB_STAGE, state=$JOB_STATE)"
+pass "operator job $JOB_ID reached stage=done state=succeeded"
+
+# Fetch full job detail
+curl -sS -u admin:admin "$PROXY_URL/operator/jobs/$JOB_ID" >"$JOB_DETAIL_FILE" 2>"$LOG_DIR/job-detail.err" \
+  || fail "failed to fetch job detail for $JOB_ID"
+
+# A build is queued the moment Talk says the recording stopped, and the browsers
+# start uploading on that same signal — so the first attempt can legitimately be
+# built before somebody's capture has landed. That is the race the late-upload
+# rebuild exists for: the operator notices the newer upload sequence and runs
+# another attempt. Asserting on whichever attempt finished first is asserting on
+# a coin toss; the checks below belong to the attempt that saw every upload.
+#
+# source_audio_rebuild.pending is the operator's own answer to "is anybody's
+# audio still owed a build". Waiting for it to clear — through the rebuild's
+# quiet period and the attempt it queues — is what makes the rest of this leg
+# deterministic.
+log "waiting for the operator to settle any pending source-audio rebuild for job $JOB_ID"
+REBUILD_DEADLINE=$(( SECONDS + 420 ))
+while (( SECONDS < REBUILD_DEADLINE )); do
+  curl -sS -u admin:admin "$PROXY_URL/operator/jobs/$JOB_ID" >"$JOB_DETAIL_FILE" 2>"$LOG_DIR/job-detail.err" \
+    || fail "failed to fetch job detail for $JOB_ID"
+  if jq -e '
+    (.job.source_audio_rebuild.pending // false) == false
+    and .job.stage == "done" and .job.state == "succeeded"
+  ' "$JOB_DETAIL_FILE" >/dev/null 2>&1; then
+    break
+  fi
+  if jq -e '.job.state == "failed" or .job.state == "interrupted"' "$JOB_DETAIL_FILE" >/dev/null 2>&1; then
+    fail "operator job $JOB_ID failed while settling its source-audio rebuild: $(jq -c '.job' "$JOB_DETAIL_FILE")"
+  fi
+  sleep 5
+done
+jq -e '(.job.source_audio_rebuild.pending // false) == false' "$JOB_DETAIL_FILE" >/dev/null 2>&1 || {
+  log "--- job source_audio_rebuild ---"
+  jq -c '.job.source_audio_rebuild // {}' "$JOB_DETAIL_FILE" || true
+  fail "job $JOB_ID still owes a source-audio rebuild; the build below would be asserting on an attempt that never saw every upload"
+}
+REBUILD_SUMMARY="$(jq -r '.job.source_audio_rebuild // {} | "uploads=\(.upload_seq // 0) built=\(.built_seq // 0) rebuilds=\(.rebuild_count // 0)"' "$JOB_DETAIL_FILE")"
+pass "every uploaded capture reached a completed build ($REBUILD_SUMMARY)"
+
+CURRENT_ATTEMPT="$(jq -r '.job.current_attempt_number // 1' "$JOB_DETAIL_FILE")"
+BUILD_LOG_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+  .attempts[] | select(.attempt_number == $att) | .build_log_path // empty
+' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+
+if [[ -z "$BUILD_LOG_PATH" ]]; then
+  BUILD_LOG_PATH="$(jq -r '.attempts[0].build_log_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+fi
+
+if [[ -n "$BUILD_LOG_PATH" ]] && docker exec "$EXAPP_CONTAINER" test -f "$BUILD_LOG_PATH"; then
+  docker exec "$EXAPP_CONTAINER" cat "$BUILD_LOG_PATH" >"$LOG_DIR/build.log"
+else
+  CANDIDATE_LOG="/nc_app_gocassini_data/operator/jobs/runs/${JOB_ID}--attempt-$(printf '%03d' "$CURRENT_ATTEMPT").logs/build.log"
+  if docker exec "$EXAPP_CONTAINER" test -f "$CANDIDATE_LOG"; then
+    docker exec "$EXAPP_CONTAINER" cat "$CANDIDATE_LOG" >"$LOG_DIR/build.log"
+  else
+    fail "build.log could not be located inside container for job $JOB_ID attempt $CURRENT_ATTEMPT"
+  fi
+fi
+
+[[ -s "$LOG_DIR/build.log" ]] || fail "build.log is empty for job $JOB_ID"
+
+# --- the splice, per participant --------------------------------------------
+#
+# What this asserts, and what it deliberately does not.
+#
+# It used to demand "0 skipped", and that was a coin flip on a live recording.
+# Alice records three stretches here: one sealed by the microphone switch, one
+# sealed by the page reload, one sealed when she leaves the call. The last two
+# end at an abrupt boundary, and the capture used to stamp the segment's window
+# from the clock either side of the recording rather than from the recording —
+# the end taken after MediaRecorder's onstop and every outstanding chunk
+# hand-off had settled, the start taken before the recorder was constructed. So
+# the file arrived holding less audio than it declared. The splice leaves out a
+# segment holding under 90% of its declared window (minSegmentDecodedFraction in
+# internal/transcribe/sourceaudio.go), which is the right thing to do with a
+# file that disagrees with its own manifest, and the recorded track stood there
+# instead.
+#
+# Measured across seven runs of this leg BEFORE that was fixed, Alice's last
+# segment held 86.7% to 96.2% of what it declared — two of the seven under the
+# threshold. Her reload-sealed segment held 93.0% to 94.4%, her switch-sealed
+# one 100%, and Bob's single segment 97.6% to 98.8%: his thirty-odd seconds
+# absorbed the same half-second of missing tail that cost Alice's eleven-second
+# segment a tenth of its window. A required check cannot be a coin flip, and the
+# pipeline was not misbehaving on the runs that lost.
+#
+# The window is now stamped where the recorder was started and asked to stop
+# (startSegment and stopSegment in cassini-app/src/capture/payload.ts), so the
+# stopping is no longer declared as audio and a healthy departure tail is
+# expected to splice. The tolerated skip stays, because a reload can still lose
+# a real chunk; what changed is ALICE_MIN_PLACED, which is where "the departure
+# tail splices" is actually asserted.
+#
+# So the demand is no longer "nothing was skipped". It is "the splice did its
+# job, and whatever it left out is what the pipeline says it leaves out":
+#
+#   * the line exists at all — a splice that did not happen is still a failure;
+#   * placed + skipped accounts for every segment that arrived, so a counter
+#     that drifts from the segments is caught;
+#   * at least MIN_PLACED segments landed;
+#   * at least MIN_SPLICED_MS of the recorded track was replaced;
+#   * the splice ACCOUNTS FOR at least MIN_ACCOUNTED_MS: what it replaced, plus
+#     the declared length of every segment it named a reason for. This is the
+#     floor that does the work, because it does not care how the capture was cut
+#     into segments — only that between splicing and explaining, the whole
+#     recorded stretch is answered for;
+#   * every skipped segment has its reason on the build log; every one of those
+#     reasons is the short-tail one; AND the segment held between MIN_HELD and
+#     MAX_HELD of the window it declared, which is the band that reason can
+#     honestly describe. A skip for any other reason — a placement that would
+#     not fit, a decode that failed, a window that landed nowhere — fails the
+#     run, and so does a skip with no reason at all, and so does a segment
+#     missing far more of its audio than a stopping recorder explains.
+#
+# The last clause is the one that keeps this honest. "The audio does not match
+# the sidecar" is printed for a segment holding 89% of its window and for one
+# holding 10% of it, so accepting the reason alone would accept a regression
+# that truncated an upload to nothing; and accepting it at any percentage would
+# accept the pipeline changing its mind about which segments to drop. The band
+# is written out where those two constants are defined.
+#
+# What this deliberately does NOT assert is how many of Alice's three segments
+# landed. Two of them end at an abrupt boundary and either can lose its tail;
+# both losing it at once is unlikely but legitimate, and a required check that
+# fails on a legitimate outcome is the flake this replaces. MIN_ACCOUNTED_MS
+# holds the line instead, because a skipped segment's declared length still
+# counts towards it.
+#
+# What it cannot prove — worth writing down rather than implying: every number
+# here is the build's own account of itself. An overlay that computed a window
+# and copied no samples would report exactly these counts, and both browsers
+# play the same fake microphone, so "the window is audible" cannot tell an
+# upload from the recorded track. The assertion that would catch it is the
+# spliced-versus-control differential below, and it is off by default because it
+# costs a second build. What this block catches is a splice that stops placing,
+# stops covering, or starts declining segments for reasons the pipeline does not
+# document.
+
+# The one skipped-segment reason this leg tolerates — the WHOLE reason, matched
+# to the end of the line wherever it is used, because a prefix would let a future
+# "...does not match the sidecar; and the decode failed too" through as benign.
+# The two millisecond figures are capture groups, so the deficit is read with
+# this same expression rather than with a second one that could drift from it.
+BENIGN_SKIP_REASON='holds ([0-9]+) ms of the ([0-9]+) ms it declares \([0-9]+%\); the audio does not match the sidecar; the recorded track stands there'
+# Not a skip at all: a segment used only across the window it declared. It is
+# tolerated but never counts as the explanation for a skip.
+BENIGN_PARTIAL_REASON='partly used: holds [0-9]+ ms under a [0-9]+ ms window; only the first [0-9]+ ms of it was used'
+# The participant-agnostic half of the splice line, kept in one place because a
+# unit test reads it from this file and matches a real build log against it.
+SPLICE_LINE_REASON='transcribing from participant capture spliced over [0-9]+ ms of their recorded track \([0-9]+/[0-9]+ segments, [0-9]+ skipped,'
+# The band a legitimately short segment falls in, as integer fractions of the
+# window it declared. Between them they say: the splice dropped this segment for
+# the reason it gives, and the segment lost a sealing boundary rather than its
+# contents.
+#
+# The upper bound is minSegmentDecodedFraction itself. Without it the leg would
+# accept that constant being RAISED: every segment that lost a normal tail would
+# start being skipped, each with a permitted message, and two thirds of
+# somebody's upload would quietly stop reaching the transcript. (Lowering it is
+# invisible from here — the leg sees the segments the splice refused, never the
+# ones it accepted — and is held by a unit test in internal/transcribe instead.)
+#
+# The lower bound is what makes the reason mean something. "The audio does not
+# match the sidecar" is printed for a segment holding 89% of its window and for
+# one holding 10% of it, so without a floor an upload truncated to nothing would
+# arrive wearing a permitted sentence.
+#
+# Seven tenths, and proportional rather than a fixed number of milliseconds.
+#
+# It was sized for the stop latency, which is gone: the capture used to stamp
+# the segment's end after MediaRecorder's onstop and every outstanding chunk
+# hand-off had settled, so the stopping itself was declared as audio — measured
+# here 0.4-1.7 s, 4-13% of these segments, growing with how loaded the runner
+# was. It is now stamped where the recorder was asked to stop (stopSegment in
+# cassini-app/src/capture/payload.ts).
+#
+# That is an argument for tightening this and it is refused, because what is
+# left is a WORSE loss, not a smaller one. A segment that still comes up short
+# lost something real: a reload can drop the not-yet-written tail of the current
+# MediaRecorder chunk, up to about two seconds, and two seconds of Alice's
+# shortest eight-and-a-half-second stretch is under a quarter of it. A floor at
+# eight tenths would fail this required leg on that legitimate outcome. Seven
+# tenths still refuses anything that lost a third of its audio, and the
+# assertion that the fix works is ALICE_MIN_PLACED below, where it belongs.
+MIN_HELD_NUM=7
+MIN_HELD_DEN=10
+MAX_HELD_NUM=9
+MAX_HELD_DEN=10
+
+# assert_participant_splice <who> <min_segments> <min_placed> <min_spliced_ms> <min_accounted_ms>
+assert_participant_splice() {
+  local who="$1" min_segments="$2" min_placed="$3" min_spliced_ms="$4" min_accounted_ms="$5"
+  local line spliced placed segments skipped explained unexplained n
+  local skip_line held declared accounted
+
+  # No match is the interesting case here, not an error: `|| true` so that the
+  # diagnosis below runs instead of set -e taking the leg down with an ERR trap.
+  line="$(grep -Ei "^ *source audio: .*${who}.* ${SPLICE_LINE_REASON}" \
+    "$LOG_DIR/build.log" | tail -1 || true)"
+  if [[ -z "$line" ]]; then
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "build log records no participant-capture splice for ${who}"
+  fi
+
+  read -r spliced placed segments skipped <<<"$(sed -E \
+    's#.*spliced over ([0-9]+) ms of their recorded track \(([0-9]+)/([0-9]+) segments, ([0-9]+) skipped,.*#\1 \2 \3 \4#' \
+    <<<"$line")"
+  for n in "$spliced" "$placed" "$segments" "$skipped"; do
+    [[ "$n" =~ ^[0-9]+$ ]] || fail "could not read ${who}'s splice counts from: $line"
+  done
+
+  (( segments >= min_segments )) \
+    || fail "the build saw $segments segment(s) of ${who}'s capture, want at least $min_segments: $line"
+  (( placed + skipped == segments )) \
+    || fail "${who}: $placed placed plus $skipped skipped is not the $segments segment(s) that arrived: $line"
+  (( placed >= min_placed )) \
+    || fail "only $placed of ${who}'s $segments segment(s) were spliced, want at least $min_placed: $line"
+  (( spliced >= min_spliced_ms )) \
+    || fail "${who}'s splice covers $spliced ms of their recorded track, want at least $min_spliced_ms ms: $line"
+
+  # Every skip explained, by the one reason this leg accepts, and by a deficit
+  # that reason can actually account for. The declared length of each explained
+  # segment joins the spliced milliseconds: a segment the splice named a reason
+  # for is answered for, one it lost silently is not.
+  explained=0
+  accounted="$spliced"
+  while IFS= read -r skip_line; do
+    [[ -n "$skip_line" ]] || continue
+    # The same expression that selected the line reads its numbers, so the two
+    # cannot come to disagree about which figure is which.
+    read -r held declared <<<"$(sed -E "s#.*${BENIGN_SKIP_REASON}.*#\\1 \\2#" <<<"$skip_line")"
+    if ! [[ "$held" =~ ^[0-9]+$ && "$declared" =~ ^[0-9]+$ ]]; then
+      fail "could not read the deficit from ${who}'s skip line: $skip_line"
+    fi
+    if (( held * MIN_HELD_DEN < declared * MIN_HELD_NUM )); then
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "${who} lost $(( declared - held )) ms of a $declared ms segment, further under it than a stopping recorder explains: $skip_line"
+    fi
+    if (( held * MAX_HELD_DEN > declared * MAX_HELD_NUM )); then
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "${who} had a segment holding $held of $declared ms skipped, above the ${MAX_HELD_NUM}/${MAX_HELD_DEN} of its window the splice drops segments under: $skip_line"
+    fi
+    explained=$(( explained + 1 ))
+    accounted=$(( accounted + declared ))
+  done < <(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ not spliced: ${BENIGN_SKIP_REASON}\$" \
+    "$LOG_DIR/build.log" || true)
+  if (( explained != skipped )); then
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "${who} had $skipped skipped segment(s) and $explained of them are the documented short-tail case"
+  fi
+  (( accounted >= min_accounted_ms )) \
+    || fail "${who}'s splice covers $spliced ms and explains $(( accounted - spliced )) ms more, $accounted ms of the $min_accounted_ms ms this leg recorded them for"
+  # And nothing else the splice declined is left unaccounted for.
+  unexplained="$(grep -Ei "^ *source audio: .*${who}.*: segment [0-9]+ (not spliced|partly used):" "$LOG_DIR/build.log" \
+    | grep -Ecv "(${BENIGN_SKIP_REASON}\$|${BENIGN_PARTIAL_REASON}\$)" || true)"
+  if (( unexplained != 0 )); then
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "${who}'s splice declined $unexplained segment(s) for a reason this leg does not accept"
+  fi
+
+  # A whole speaker refused is a different event, and its own failure. The
+  # per-segment lines above deliberately do not use these words — they say "the
+  # recorded track stands there" — and a unit test pins the two apart, so this
+  # needs no anchor that a later suffix on the refusal line could slip past.
+  if grep -Eiq "^ *source audio: .*${who}.*keeping the recorded audio" "$LOG_DIR/build.log"; then
+    log "--- build.log excerpt ---"
+    grep -E "source audio" "$LOG_DIR/build.log" || true
+    fail "${who}'s upload went unused; the build kept their recorded audio"
+  fi
+
+  pass "${who}: $placed of $segments segment(s) spliced over $spliced ms of their recorded track ($skipped skipped, $accounted ms accounted for)"
+}
+
+# Alice is driven through three recorded stretches of at least 8.5 s each — one
+# before the microphone switch, one before the page reload, one after it — so
+# her capture arrives as three segments declaring 28.4-30.5 s between them.
+# Runs of this leg splice 27.5-28.5 s of her track with all three placed and
+# 17.5 s with the last one short, and account for 27.3-30.5 s either way, so
+# 24 s of accounted audio leaves better than three seconds of slack under the
+# lowest run measured.
+#
+# TWO placed segments, not one. One was the floor while the stop latency was
+# being declared as audio and either abruptly-sealed segment could lose its
+# splice to it; across the seven runs measured then, never more than one of the
+# three was skipped. Now that the window is stamped from the recording, all
+# three are expected to land, and two leaves room for one genuinely lost chunk
+# without letting a regression that stops splicing departures through. The
+# spliced floor follows it: with two of her three stretches placed the runs
+# measured cover 17.5 s, so 15 s keeps two and a half seconds of slack.
+ALICE_MIN_SEGMENTS=3
+ALICE_MIN_PLACED=2
+ALICE_MIN_SPLICED_MS=15000
+ALICE_MIN_ACCOUNTED_MS=24000
+# Bob records one segment spanning the whole call: he joins before the recording
+# starts and leaves after Alice's reload, so he is talking through all three of
+# her stretches. Runs of this leg splice 30.0-32.0 s of his track. His segment
+# cannot be partly placed — if it were skipped the render would fail and there
+# would be no line at all — so his floors are here to catch a splice that lands
+# and covers almost nothing.
+BOB_MIN_SEGMENTS=1
+BOB_MIN_PLACED=1
+BOB_MIN_SPLICED_MS=20000
+BOB_MIN_ACCOUNTED_MS=20000
+
+assert_participant_splice "$ALICE" \
+  "$ALICE_MIN_SEGMENTS" "$ALICE_MIN_PLACED" "$ALICE_MIN_SPLICED_MS" "$ALICE_MIN_ACCOUNTED_MS"
+assert_participant_splice "$BOB" \
+  "$BOB_MIN_SEGMENTS" "$BOB_MIN_PLACED" "$BOB_MIN_SPLICED_MS" "$BOB_MIN_ACCOUNTED_MS"
+
+# Assert published meeting manifest records provenance.sourceAudio
+CANONICAL_MEETING="$(jq -r '.job.artifact_meeting_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+ATTEMPT_MEETING="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+  .attempts[] | select(.attempt_number == $att) | .artifact_meeting_path // empty
+' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+
+ARTIFACT_MEETING_PATH=""
+for cand in "$CANONICAL_MEETING" "$ATTEMPT_MEETING" \
+  "/nc_app_gocassini_data/operator/jobs/current/${JOB_ID}.meeting" \
+  "/nc_app_gocassini_data/operator/jobs/runs/${JOB_ID}--attempt-$(printf '%03d' "$CURRENT_ATTEMPT").meeting"; do
+  if [[ -n "$cand" ]] && docker exec "$EXAPP_CONTAINER" test -f "$cand/manifest.json"; then
+    ARTIFACT_MEETING_PATH="$cand"
+    break
+  fi
+done
+
+[[ -n "$ARTIFACT_MEETING_PATH" ]] || fail "meeting manifest.json not found inside container for job $JOB_ID"
+docker exec "$EXAPP_CONTAINER" cat "$ARTIFACT_MEETING_PATH/manifest.json" >"$LOG_DIR/meeting-manifest.json"
+
+# The same demand as the build log above, against the artifact a consumer reads,
+# and from the same constants rather than a second set that could drift from
+# them. The build prints the manifest's own rejection strings verbatim, so the
+# accounted-milliseconds floor can be recomputed here from `rejections` — which
+# is the point: if the log and the manifest ever stopped saying the same thing,
+# one of these two would fail.
+jq -e --arg alice "$ALICE" --arg bob "$BOB" \
+  --argjson aSegments "$ALICE_MIN_SEGMENTS" --argjson aPlaced "$ALICE_MIN_PLACED" \
+  --argjson aSpliced "$ALICE_MIN_SPLICED_MS" --argjson aAccounted "$ALICE_MIN_ACCOUNTED_MS" \
+  --argjson bSegments "$BOB_MIN_SEGMENTS" --argjson bPlaced "$BOB_MIN_PLACED" \
+  --argjson bSpliced "$BOB_MIN_SPLICED_MS" --argjson bAccounted "$BOB_MIN_ACCOUNTED_MS" \
+  --argjson minHeldNum "$MIN_HELD_NUM" --argjson minHeldDen "$MIN_HELD_DEN" \
+  --argjson maxHeldNum "$MAX_HELD_NUM" --argjson maxHeldDen "$MAX_HELD_DEN" \
+  --arg skipReason "$BENIGN_SKIP_REASON" '
+  .provenance.sourceAudio as $sa
+  # Every segment the splice named a short-tail reason for, as {held, declared}.
+  # The same expression the build log is read with, whole and anchored: a
+  # rejection that merely opens with these words is a different rejection, and
+  # must not be counted as this one.
+  | def shortTails:
+      [ (.rejections // [])[]
+        | select(test("^segment [0-9]+ not spliced: " + $skipReason + "$"))
+        | match($skipReason).captures
+        | {held: (.[0].string | tonumber), declared: (.[1].string | tonumber)} ];
+    def spliced($owner; $minSegments; $minPlaced; $minSplicedMS; $minAccountedMS):
+      any($sa[];
+        .owner == $owner
+        and (.speaker_id | test($owner; "i"))
+        and .segments >= $minSegments
+        and .placed >= $minPlaced
+        and (.placed + .skipped) == .segments
+        and .spliced_ms >= $minSplicedMS
+        and (shortTails | length) == .skipped
+        and all(shortTails[]; (.held * $minHeldDen) >= (.declared * $minHeldNum))
+        and all(shortTails[]; (.held * $maxHeldDen) <= (.declared * $maxHeldNum))
+        and (.spliced_ms + ([shortTails[].declared] | add // 0)) >= $minAccountedMS);
+    ($sa | type == "array" and length >= 2)
+    and spliced($alice; $aSegments; $aPlaced; $aSpliced; $aAccounted)
+    and spliced($bob; $bSegments; $bPlaced; $bSpliced; $bAccounted)
+' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
+  log "--- meeting manifest.json provenance ---"
+  jq '.provenance // {}' "$LOG_DIR/meeting-manifest.json" || true
+  fail "meeting manifest provenance.sourceAudio does not record successful splice for both Alice and Bob"
+}
+
+pass "meeting manifest provenance.sourceAudio records successful splice for both Alice and Bob"
+
+
+# --- the published audio carries the same splice -----------------------------
+#
+# Both browsers play Chromium's fake microphone, so what the SFU recorded and
+# what each participant uploaded are the same signal. That rules out a spectral
+# proof here — "the upload is audible" cannot be told from "the recorded track
+# is audible" when the two are the same tone. What this leg can prove, and does,
+# is the chain: the build says it spliced the published mix and over which
+# windows; the published .opus is the audio that mix produced; and those windows
+# are not silence in it. The content differential, which is the only assertion
+# that distinguishes spliced audio from recorded audio, needs a second build and
+# is gated on E2E_MIX_CONTROL=1 below.
+
+jq -e --arg alice "$ALICE" --arg bob "$BOB" '
+  .provenance.sourceAudio as $sa
+  | .digestDurationMs as $dur
+  | def spliced($owner):
+      any($sa[];
+        .owner == $owner
+        and .mix_spliced == true
+        and .render_hz == 48000
+        and .crossfade_ms == 15
+        and (.windows | type == "array" and length >= 1)
+        and all(.windows[]; .from_ms >= 0 and .to_ms > .from_ms and .to_ms <= ($dur + 1000)));
+    spliced($alice) and spliced($bob)
+' "$LOG_DIR/meeting-manifest.json" >/dev/null || {
+  log "--- meeting manifest.json provenance ---"
+  jq '.provenance.sourceAudio // []' "$LOG_DIR/meeting-manifest.json" || true
+  fail "meeting manifest does not record a spliced published mix with windows inside the recording for both Alice and Bob"
+}
+pass "meeting manifest records that the published mix carries each participant's splice"
+
+for who in "$ALICE" "$BOB"; do
+  grep -Eiq "source audio: .*${who}.*the published mix carries the same splice \([1-9][0-9]* window\(s\), 15 ms crossfade\)" \
+    "$LOG_DIR/build.log" || {
+      log "--- build.log excerpt ---"
+      grep -E "source audio" "$LOG_DIR/build.log" || true
+      fail "build log does not say the published mix carries ${who}'s splice"
+    }
+done
+if grep -Eiq "the published mix keeps the recorded track" "$LOG_DIR/build.log"; then
+  log "--- build.log excerpt ---"
+  grep -E "source audio" "$LOG_DIR/build.log" || true
+  fail "build log says the published mix kept the recorded track"
+fi
+pass "build log says the published mix carries the splice for Alice and Bob"
+
+# The sealed .opus is a stream copy of meeting.webm's Opus packets, so the two
+# decode to the same samples. Equal over everything they share is the proof that
+# what was published is what the splice produced.
+#
+# Over what they SHARE, because the two containers do not agree about the last
+# fraction of a millisecond and are not meant to: Ogg carries a sample-exact
+# final granule, Matroska a block duration, and ffmpeg has been seen to
+# normalise the Ogg granule on this very stream copy (see
+# maxPortableMeetingIdentityPasses in internal/cassini/portable_meeting.go).
+# A run where the .opus decoded five samples short of the .webm — 0.1 ms of
+# codec tail, and byte-identical everywhere else — failed this leg while the
+# published audio was perfect. So the LENGTHS are allowed one Opus frame of
+# slack in either direction, and the SAMPLES are compared, which is the claim
+# that matters.
+ATTEMPT_OPUS="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+  .attempts[] | select(.attempt_number == $att) | .artifact_opus_path // empty
+' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+CANONICAL_OPUS="$(jq -r '.job.artifact_opus_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+
+PUBLISHED_OPUS=""
+for cand in "$CANONICAL_OPUS" "$ATTEMPT_OPUS" \
+  "/nc_app_gocassini_data/operator/jobs/current/${JOB_ID}.opus"; do
+  if [[ -n "$cand" ]] && docker exec "$EXAPP_CONTAINER" test -f "$cand"; then
+    PUBLISHED_OPUS="$cand"
+    break
+  fi
+done
+[[ -n "$PUBLISHED_OPUS" ]] || fail "published .opus not found inside container for job $JOB_ID"
+
+decode_pcm() {
+  # $1 = path inside the container, $2 = host output file
+  docker exec "$EXAPP_CONTAINER" ffmpeg -v error -i "$1" \
+    -vn -sn -dn -ac 1 -ar 48000 -f s16le - >"$2" 2>"$LOG_DIR/decode.err" \
+    || fail "could not decode $1 inside the container"
+  [[ -s "$2" ]] || fail "decoding $1 produced no audio"
+}
+
+decode_pcm "$ARTIFACT_MEETING_PATH/meeting.webm" "$LOG_DIR/mix.pcm"
+decode_pcm "$PUBLISHED_OPUS" "$LOG_DIR/published.pcm"
+
+MIX_BYTES="$(wc -c <"$LOG_DIR/mix.pcm")"
+PUBLISHED_BYTES="$(wc -c <"$LOG_DIR/published.pcm")"
+# One 20 ms Opus frame of mono 48 kHz s16: 960 samples, 1920 bytes.
+LENGTH_SLACK_BYTES=1920
+LENGTH_DELTA=$((PUBLISHED_BYTES - MIX_BYTES))
+if [[ "$LENGTH_DELTA" -lt 0 ]]; then
+  LENGTH_DELTA=$((-LENGTH_DELTA))
+fi
+if [[ "$LENGTH_DELTA" -gt "$LENGTH_SLACK_BYTES" ]]; then
+  fail "the published .opus holds $PUBLISHED_BYTES bytes of audio against the mix's $MIX_BYTES, further apart than one Opus frame"
+fi
+SHARED_BYTES="$MIX_BYTES"
+if [[ "$PUBLISHED_BYTES" -lt "$SHARED_BYTES" ]]; then
+  SHARED_BYTES="$PUBLISHED_BYTES"
+fi
+MIX_SUM="$(head -c "$SHARED_BYTES" "$LOG_DIR/mix.pcm" | sha256sum | cut -d' ' -f1)"
+PUBLISHED_SUM="$(head -c "$SHARED_BYTES" "$LOG_DIR/published.pcm" | sha256sum | cut -d' ' -f1)"
+[[ "$MIX_SUM" == "$PUBLISHED_SUM" ]] \
+  || fail "the published .opus does not carry the spliced mix's audio"
+pass "the published .opus carries exactly the audio the spliced mix produced ($SHARED_BYTES bytes compared, $LENGTH_DELTA of container tail apart)"
+
+# Every window the splice claims must hold audible audio in the published file.
+# A render that went wrong — a misplaced overlay, a floor that never got its
+# recorded samples — shows up here as silence where a participant was speaking.
+WINDOW_COUNT=0
+while read -r from_ms to_ms; do
+  [[ -n "$from_ms" ]] || continue
+  from_s="$(awk -v v="$from_ms" 'BEGIN { printf "%.3f", v / 1000 }')"
+  to_s="$(awk -v v="$to_ms" 'BEGIN { printf "%.3f", v / 1000 }')"
+  MEAN_DB="$(docker exec "$EXAPP_CONTAINER" ffmpeg -hide_banner -nostats \
+    -i "$PUBLISHED_OPUS" -af "atrim=start=${from_s}:end=${to_s},volumedetect" \
+    -f null - 2>&1 | sed -n 's/.*mean_volume: \(-\?[0-9.]*\) dB.*/\1/p' | tail -1)"
+  [[ -n "$MEAN_DB" ]] || fail "could not measure the published audio over ${from_s}s..${to_s}s"
+  awk -v db="$MEAN_DB" 'BEGIN { exit (db > -60) ? 0 : 1 }' \
+    || fail "the published audio is silent (${MEAN_DB} dB) over the spliced window ${from_s}s..${to_s}s"
+  WINDOW_COUNT=$((WINDOW_COUNT + 1))
+done < <(jq -r '.provenance.sourceAudio[]?.windows[]? | "\(.from_ms) \(.to_ms)"' "$LOG_DIR/meeting-manifest.json")
+[[ "$WINDOW_COUNT" -ge 2 ]] || fail "only $WINDOW_COUNT spliced windows were measured, want at least one each for Alice and Bob"
+pass "every spliced window holds audible audio in the published .opus ($WINDOW_COUNT windows)"
+
+# The content differential. This is the one assertion that tells spliced audio
+# from recorded audio in a leg where both sides are the same fake microphone,
+# and it costs a second build — a whole transcription pass — so it is opt-in.
+#
+# Before the first spliced window the two mixes are the same samples entering
+# the same encoder, so their PCM is identical; inside a window it is not, because
+# the uploaded audio took a different route (browser Opus, decoded and rate
+# corrected) from the one the SFU delivered.
+if [[ "${E2E_MIX_CONTROL:-0}" == "1" ]]; then
+  RUN_PATH="$(jq -r --argjson att "$CURRENT_ATTEMPT" '
+    .attempts[] | select(.attempt_number == $att) | .artifact_run_path // empty
+  ' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+  [[ -z "$RUN_PATH" ]] && RUN_PATH="$(jq -r '.job.artifact_run_path // empty' "$JOB_DETAIL_FILE" 2>/dev/null || true)"
+  [[ -n "$RUN_PATH" ]] || fail "no run path recorded for job $JOB_ID; cannot build the control mix"
+
+  docker exec "$EXAPP_CONTAINER" rm -rf /tmp/cassini-control.meeting
+  # No --source-audio, so this build never looks for an upload: the same
+  # recording.mkv through the same mix, without the splice.
+  docker exec "$EXAPP_CONTAINER" sh -c \
+    '"${CASSINI_BIN:-cassini}" build "$1" --out /tmp/cassini-control.meeting' sh "$RUN_PATH" \
+    >"$LOG_DIR/control-build.log" 2>&1 \
+    || { tail -40 "$LOG_DIR/control-build.log"; fail "the control build (no --source-audio) failed"; }
+  decode_pcm "/tmp/cassini-control.meeting/meeting.webm" "$LOG_DIR/control.pcm"
+
+  FIRST_WINDOW_MS="$(jq -r '[.provenance.sourceAudio[]?.windows[]?.from_ms] | min' "$LOG_DIR/meeting-manifest.json")"
+  PREFIX_BYTES="$(awk -v ms="$FIRST_WINDOW_MS" 'BEGIN {
+    s = (ms - 100) / 1000; if (s < 0) s = 0; printf "%d", int(s * 48000) * 2
+  }')"
+  if [[ "$PREFIX_BYTES" -gt 0 ]]; then
+    CONTROL_PREFIX="$(head -c "$PREFIX_BYTES" "$LOG_DIR/control.pcm" | sha256sum | cut -d' ' -f1)"
+    PUBLISHED_PREFIX="$(head -c "$PREFIX_BYTES" "$LOG_DIR/mix.pcm" | sha256sum | cut -d' ' -f1)"
+    [[ "$CONTROL_PREFIX" == "$PUBLISHED_PREFIX" ]] \
+      || fail "the spliced mix differs from the control mix before the first spliced window; the splice ran outside its windows"
+  fi
+
+  DIFFERED=0
+  while read -r from_ms to_ms; do
+    [[ -n "$from_ms" ]] || continue
+    from_b="$(awk -v ms="$from_ms" 'BEGIN { printf "%d", int((ms + 50) / 1000 * 48000) * 2 }')"
+    to_b="$(awk -v ms="$to_ms" 'BEGIN { printf "%d", int((ms - 50) / 1000 * 48000) * 2 }')"
+    [[ "$to_b" -gt "$from_b" ]] || continue
+    len=$((to_b - from_b))
+    a="$(tail -c "+$((from_b + 1))" "$LOG_DIR/mix.pcm" | head -c "$len" | sha256sum | cut -d' ' -f1)"
+    b="$(tail -c "+$((from_b + 1))" "$LOG_DIR/control.pcm" | head -c "$len" | sha256sum | cut -d' ' -f1)"
+    if [[ "$a" != "$b" ]]; then
+      DIFFERED=$((DIFFERED + 1))
+    fi
+  done < <(jq -r '.provenance.sourceAudio[]?.windows[]? | "\(.from_ms) \(.to_ms)"' "$LOG_DIR/meeting-manifest.json")
+  [[ "$DIFFERED" -ge 1 ]] \
+    || fail "the spliced mix is identical to the control mix inside every spliced window; nothing was actually spliced into the published audio"
+  pass "the published mix differs from an unspliced control build inside the spliced windows and matches it before them"
+else
+  log "skipping the spliced-versus-control mix differential (set E2E_MIX_CONTROL=1; it costs a second build)"
+fi

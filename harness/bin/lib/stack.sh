@@ -832,8 +832,14 @@ harness_register_exapp() {
   if [[ -n "${CASSINI_TALK_BACKEND_URL:-}" ]]; then
     register_args+=(--env "CASSINI_TALK_BACKEND_URL=$CASSINI_TALK_BACKEND_URL")
   fi
+  # The source-capture switches are declared in appinfo/info.xml and on by
+  # default; a caller that exports them (e.g. =0, or =1 to pin the value a leg
+  # asserts on) gets them delivered to the container the way a production
+  # `app_api:app:register --env` would. A caller that exports neither leaves
+  # them unset in the container, which is the default: both on.
   local optional_env
-  for optional_env in OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL CASSINI_OPERATOR_API_TOKEN; do
+  for optional_env in OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL CASSINI_OPERATOR_API_TOKEN \
+    CASSINI_SOURCE_CAPTURE CASSINI_SOURCE_AUDIO_INGEST; do
     if [[ -n "${!optional_env:-}" ]]; then
       register_args+=(--env "$optional_env=${!optional_env}")
     fi

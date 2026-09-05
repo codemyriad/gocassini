@@ -33,9 +33,20 @@ type AudioStream struct {
 	TimelineDurationMS int64
 	// TimeBase is this track's wall-clock anchor, written by the remux: when
 	// its first packet arrived and where that instant sits on the meeting
-	// timeline. Zero-valued with Known=false for recordings made before the
-	// remux emitted it.
+	// timeline. It is what participant-captured source audio is placed against
+	// (sourceaudio.go). Zero-valued with Known=false for recordings made before
+	// the remux emitted it.
 	TimeBase SourceTimeBase
+	// SourceAudioPath, when set, is a WAV of this speaker's RECORDED audio with
+	// their browser-captured segments spliced over the windows those segments
+	// cover, already on the meeting timeline. It replaces the MKV track as the
+	// transcription input; see ExtractSpeakerFloats and SpliceSourceTrack.
+	SourceAudioPath string
+	// SuppressTranscription drops this stream from the transcription pass. Set
+	// when the same participant's spliced track already covers it: that track
+	// spans the whole timeline and already contains this stream's recorded
+	// audio, so transcribing both would emit every word twice.
+	SuppressTranscription bool
 }
 
 // setPCMCapacityDurationHints replaces only the decoded-PCM allocation hint
@@ -63,6 +74,11 @@ type ffprobeOutput struct {
 			FirstPacketWallMS string `json:"FIRST_PACKET_WALL_MS"`
 			FirstTimelineNS   string `json:"FIRST_TIMELINE_NS"`
 			ClockRate         string `json:"CLOCK_RATE"`
+			// The stream's placement on the output timeline, used to recover
+			// a usable anchor from recordings whose FIRST_TIMELINE_NS is the
+			// raw receive clock (builds before the writer was corrected).
+			OffsetSeconds      string `json:"OFFSET_SECONDS"`
+			SourceStartSeconds string `json:"SOURCE_START_SECONDS"`
 		} `json:"tags"`
 	} `json:"streams"`
 	Format struct {
@@ -74,7 +90,7 @@ type ffprobeOutput struct {
 func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration",
+		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate,offset_seconds,source_start_seconds:format=duration",
 		"-of", "json",
 		mkv,
 	)
@@ -112,7 +128,7 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 		}
 		streams = append(streams, AudioStream{
 			Index:              s.Index,
-			TimeBase:           sourceTimeBaseFromTags(s.Tags.FirstPacketWallMS, s.Tags.FirstTimelineNS, s.Tags.ClockRate),
+			TimeBase:           sourceTimeBaseFromTags(s.Tags.FirstPacketWallMS, s.Tags.FirstTimelineNS, s.Tags.ClockRate, s.Tags.OffsetSeconds, s.Tags.SourceStartSeconds),
 			ParticipantID:      participantID,
 			SpeakerID:          speakerIDFromLabel(speakerIdentity),
 			SpeakerLabel:       label,
@@ -174,12 +190,28 @@ func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
 // each audio stream. All three tags must be present and parseable: a partial
 // base cannot map anything, and silently treating a missing one as zero would
 // place a later caller's audio at a confidently wrong time.
-func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate string) SourceTimeBase {
+// maxPlausibleTimelineNS bounds a FIRST_TIMELINE_NS that is really a position
+// on the meeting timeline: about 11 days. Recordings built before the writer
+// was corrected carry the raw monotonic receive clock there instead, a value
+// on the order of the machine's uptime or of Unix time in nanoseconds; those
+// recordings still carry the stream's placement (OFFSET_SECONDS plus
+// SOURCE_START_SECONDS), which is the same instant on the timeline.
+const maxPlausibleTimelineNS = int64(1_000_000_000_000_000)
+
+func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate, offsetSeconds, sourceStartSeconds string) SourceTimeBase {
 	wallMS, err1 := strconv.ParseInt(strings.TrimSpace(firstPacketWallMS), 10, 64)
 	timelineNS, err2 := strconv.ParseInt(strings.TrimSpace(firstTimelineNS), 10, 64)
 	rate, err3 := strconv.ParseUint(strings.TrimSpace(clockRate), 10, 32)
 	if err1 != nil || err2 != nil || err3 != nil || rate == 0 || wallMS <= 0 {
 		return SourceTimeBase{}
+	}
+	if timelineNS > maxPlausibleTimelineNS {
+		offset, errO := strconv.ParseFloat(strings.TrimSpace(offsetSeconds), 64)
+		sourceStart, errS := strconv.ParseFloat(strings.TrimSpace(sourceStartSeconds), 64)
+		if errO != nil || errS != nil {
+			return SourceTimeBase{}
+		}
+		timelineNS = int64(math.Round((offset + sourceStart) * 1e9))
 	}
 	return SourceTimeBase{
 		FirstPacketWallMS: wallMS,
@@ -190,6 +222,26 @@ func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate string
 }
 
 func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
+	// A spliced source-audio track has already been placed on the meeting
+	// timeline (sourceaudio.go), so it is decoded as a plain file — none of the
+	// sparse-gap machinery below applies to it.
+	if stream.SourceAudioPath != "" {
+		samples, err := ExtractMixedFloats(stream.SourceAudioPath)
+		if err != nil {
+			return nil, fmt.Errorf("extract source audio for %s: %w", stream.SpeakerLabel, err)
+		}
+		return samples, nil
+	}
+	return ExtractStreamFloatsAt(mkv, stream, 16000)
+}
+
+// ExtractStreamFloatsAt decodes one MKV audio stream onto the meeting timeline
+// at the requested sample rate, materialising the gaps where the participant
+// was absent or silent. It is what ExtractSpeakerFloats does for the recorded
+// path, and what the source-audio splice needs as its floor: the recorded audio
+// the upload is laid over. It deliberately ignores SourceAudioPath — a caller
+// asking for a recorded track is asking for the recorded track.
+func ExtractStreamFloatsAt(mkv string, stream AudioStream, sampleRate int) ([]float32, error) {
 	durationMS := stream.TimelineDurationMS
 	if durationMS <= 0 {
 		// Preserve the memory bound for direct callers that construct AudioStream
@@ -202,18 +254,18 @@ func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
 		"-y",
 		"-i", mkv,
 	}
-	args = append(args, sparseTimelineDecodeArgs(stream, 16000)...)
+	args = append(args, sparseTimelineDecodeArgs(stream, sampleRate)...)
 	args = append(args,
 		"-vn",
 		"-sn",
 		"-dn",
 		"-ac", "1",
-		"-ar", "16000",
+		"-ar", strconv.Itoa(sampleRate),
 		"-f", "s16le",
 		"pipe:1",
 	)
 	cmd := exec.Command("ffmpeg", args...)
-	samples, err := runPCM16LECommand(cmd, expectedPCMSamples(durationMS, 16000))
+	samples, err := runPCM16LECommand(cmd, expectedPCMSamples(durationMS, sampleRate))
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg extract speaker %d: %w", stream.Index, err)
 	}
@@ -251,6 +303,14 @@ const pcmReadChunkBytes = 64 * 1024
 // stdout is consumed in fixed chunks and repeated decoder diagnostics cannot
 // grow stderr without limit on malformed media.
 func runPCM16LECommand(cmd *exec.Cmd, expectedSamples int) ([]float32, error) {
+	return runPCM16LECommandBounded(cmd, expectedSamples, 0)
+}
+
+// runPCM16LECommandBounded is runPCM16LECommand with a hard ceiling on how much
+// audio the child may produce. maxSamples <= 0 means unbounded, which is right
+// for inputs the recorder itself wrote and wrong for anything a participant
+// uploaded.
+func runPCM16LECommandBounded(cmd *exec.Cmd, expectedSamples, maxSamples int) ([]float32, error) {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open PCM pipe: %w", err)
@@ -262,7 +322,7 @@ func runPCM16LECommand(cmd *exec.Cmd, expectedSamples int) ([]float32, error) {
 		return nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
-	samples, readErr := readPCM16LEFloats(stdout, expectedSamples)
+	samples, readErr := readPCM16LEFloatsBounded(stdout, expectedSamples, maxSamples)
 	if readErr != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
@@ -299,8 +359,18 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 // reads. expectedSamples is a capacity hint only; callers still get every
 // decoded sample if container metadata under-reports the duration.
 func readPCM16LEFloats(r io.Reader, expectedSamples int) ([]float32, error) {
+	return readPCM16LEFloatsBounded(r, expectedSamples, 0)
+}
+
+// readPCM16LEFloatsBounded stops and errors once maxSamples is exceeded, so a
+// small compressed file that expands without limit cannot exhaust memory before
+// any wall-clock deadline notices. maxSamples <= 0 disables the ceiling.
+func readPCM16LEFloatsBounded(r io.Reader, expectedSamples, maxSamples int) ([]float32, error) {
 	if expectedSamples < 0 {
 		expectedSamples = 0
+	}
+	if maxSamples > 0 && expectedSamples > maxSamples {
+		expectedSamples = maxSamples
 	}
 	samples := make([]float32, 0, expectedSamples)
 	raw := make([]byte, pcmReadChunkBytes)
@@ -313,6 +383,11 @@ func readPCM16LEFloats(r io.Reader, expectedSamples int) ([]float32, error) {
 			oldLen := len(samples)
 			sampleCount := n / 2
 			newLen := oldLen + sampleCount
+			if maxSamples > 0 && newLen > maxSamples {
+				return nil, fmt.Errorf(
+					"decoded audio exceeds the %d samples this input declared; refusing to buffer more",
+					maxSamples)
+			}
 			if newLen <= cap(samples) {
 				samples = samples[:newLen]
 			} else {
@@ -360,75 +435,6 @@ func expectedPCMSamples(durationMS int64, sampleRate int) int {
 		return 0
 	}
 	return int(samples)
-}
-
-// MixDownToWebM mixes all audio streams from the MKV into a single-channel
-// 48 kHz Opus WebM file.
-func MixDownToWebM(mkv string, streams []AudioStream, outPath string) error {
-	if len(streams) == 0 {
-		return fmt.Errorf("no streams to mix")
-	}
-
-	workDir, err := os.MkdirTemp("", "cassini-mix-*")
-	if err != nil {
-		return fmt.Errorf("create mix work dir: %w", err)
-	}
-	defer os.RemoveAll(workDir)
-
-	trackPaths := make([]string, len(streams))
-	for i, stream := range streams {
-		trackPath := filepath.Join(workDir, fmt.Sprintf("track-%02d.wav", i+1))
-		// Decode each participant track to a gap-preserving WAV first. Mixing
-		// directly from sparse MKV tracks risks flattening timestamp gaps, which
-		// turns turn-taking speech into artificial overlap in the final artifact.
-		// We also re-apply the stream's global start offset so late joins stay on
-		// the shared meeting timeline instead of snapping back to t=0.
-		if err := decodeTrackWithSparseGaps(mkv, stream, 48000, trackPath); err != nil {
-			return fmt.Errorf("decode track %d for mix: %w", stream.Index, err)
-		}
-		trackPaths[i] = trackPath
-	}
-
-	if len(trackPaths) == 1 {
-		return runFFmpegQuiet(
-			"-y",
-			"-v", "error",
-			"-i", trackPaths[0],
-			"-map", "0:a:0",
-			"-ac", "1",
-			"-ar", "48000",
-			"-c:a", "libopus",
-			"-b:a", "64k",
-			"-vbr", "on",
-			"-compression_level", "10",
-			"-application", "voip",
-			outPath,
-		)
-	}
-
-	args := []string{"-y", "-v", "error"}
-	var filterInputs strings.Builder
-	for _, trackPath := range trackPaths {
-		args = append(args, "-i", trackPath)
-	}
-	for i := range trackPaths {
-		filterInputs.WriteString(fmt.Sprintf("[%d:a]", i))
-	}
-	filter := fmt.Sprintf("%samix=inputs=%d:duration=longest:normalize=0,alimiter=limit=0.95[out]", filterInputs.String(), len(trackPaths))
-
-	args = append(args,
-		"-filter_complex", filter,
-		"-map", "[out]",
-		"-ac", "1",
-		"-ar", "48000",
-		"-c:a", "libopus",
-		"-b:a", "64k",
-		"-vbr", "on",
-		"-compression_level", "10",
-		"-application", "voip",
-		outPath,
-	)
-	return runFFmpegQuiet(args...)
 }
 
 // PCMsha256FromWebM decodes the WebM audio to 48 kHz mono s16le PCM and

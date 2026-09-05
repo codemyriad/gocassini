@@ -8,18 +8,23 @@
     "dev": "vite",
     "build": "vite build",
     "build:embedded": "vite build --config vite.embedded.config.ts && node ./scripts/assert-embedded-single-bundle.mjs",
-    "build:all": "npm run build && npm run build:embedded",
+    "build:all": "npm run build && npm run build:embedded && npm run build:capture",
     "preview": "vite preview",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests --exclude 'e2e/**'",
+    "build:capture": "node ./scripts/build-capture.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@nextcloud/initial-state": "^3.0.0",
     "cassini-viewer": "*"
   },
   "devDependencies": {
     "@lucide/svelte": "^1.11.0",
+    "@playwright/test": "^1.62.1",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@tailwindcss/vite": "^4.2.4",
     "daisyui": "^5.5.19",
+    "esbuild": "^0.25.0",
     "svelte": "^5.53.7",
     "tailwindcss": "^4.2.4",
     "typescript": "^5.9.3",

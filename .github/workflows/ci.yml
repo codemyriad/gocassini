@@ -5,6 +5,12 @@ on:
     branches:
       - main
       - master
+      # A long-running integration branch (D-698) accumulates merges from
+      # stacked pull requests. Each of those was green against the branch as
+      # it stood, which does not make the merged result green: without this,
+      # a semantic conflict between two of them stays invisible until a third
+      # pull request happens to trip over it.
+      - feat/source-audio-capture
     # Pure docs/planning changes touch no code, tests, or image — skip the
     # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
     # outside this list the whole suite still runs, so a real code change is
@@ -72,6 +78,7 @@ jobs:
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-negative-manifest.sh
           ./harness/bin/test-harness-prerequisites.sh
+          ./harness/bin/test-browser-capture-contract.sh
       - name: Parse every harness shell script
         run: |
           set -euo pipefail
@@ -100,6 +107,7 @@ jobs:
           harness/bin/verify-post-boundary-stream.sh
           harness/bin/test-negative-manifest.sh
           harness/bin/test-harness-prerequisites.sh
+          harness/bin/test-browser-capture-contract.sh
       - name: Compile D-453 Python helpers
         run: |
           python3 -m py_compile harness/bin/installed-validation.py
@@ -134,6 +142,71 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test -w ${{ matrix.package }}
+
+  # Browser coverage for source capture (docs/source-audio-capture.md). Its own
+  # job rather than a `ui` matrix entry because it needs a real Chromium, which
+  # the unit matrix has no reason to install.
+  #
+  # What it covers: the companion-delivered payload running before Talk's
+  # bundle, finding the outgoing audio sender on a real
+  # RTCPeerConnection, the encoded transform reading outgoing RTP timestamps,
+  # OPFS buffering, mute observation, and the post-call upload — under a stub
+  # call that drops a share of the encoded frames on the receiving side, which
+  # is the lossy-uplink condition the feature exists for.
+  #
+  # What it does NOT cover, so a green run is not mistaken for more: real
+  # Nextcloud, real Talk, real Janus, AppAPI's proxy and its header forwarding,
+  # and the operator's Go upload handler (covered by its own tests). The
+  # harness has no browser at all — its Talk publishers are pion Go clients —
+  # so this is the only place any of the browser chain runs.
+  capture-e2e:
+    name: Browser e2e (source capture)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          coverage: none
+      - name: Install workspace
+        run: npm ci
+      # Chromium only: the chain needs fake-device getUserMedia, WebRTC encoded
+      # transforms and OPFS sync access handles together, and Chromium is the
+      # one engine where all three are drivable headlessly. --with-deps because
+      # the runner image does not carry Chromium's shared libraries.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      # The fixture serves the BUILT companion payload and worker, so the build
+      # is part of what is under test: a bundling change fails
+      # here rather than in production.
+      - name: Build capture bundles
+        run: npm run build:capture -w cassini-app
+      - name: Run browser tests
+        run: npm run test:e2e -w cassini-app
+
+      - name: Verify and package the native capture companion
+        run: |
+          php -l cassini_capture/lib/AppInfo/Application.php
+          php -l cassini_capture/lib/Listener/LoadTalkCaptureScriptListener.php
+          php cassini_capture/tests/listener.php
+          ./scripts/build-capture-companion.sh --skip-js-build
+          tar -tzf build/artifacts/capture-companion/cassini_capture.tar.gz \
+            | grep -qx 'cassini_capture/js/capture-payload.js'
+
+      - name: Upload capture companion package
+        uses: actions/upload-artifact@v4
+        with:
+          name: cassini-capture-companion
+          path: build/artifacts/capture-companion/cassini_capture.tar.gz
+          retention-days: 14
 
   unit:
     name: Unit tests (${{ matrix.module }})

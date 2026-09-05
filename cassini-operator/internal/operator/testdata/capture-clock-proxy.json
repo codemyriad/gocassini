@@ -1,0 +1,272 @@
+[
+  {
+    "start": 1700000000000,
+    "end": 1700000017550,
+    "samples": [
+      {
+        "clientSendWallMs": 1699999999686,
+        "clientReceiveWallMs": 1699999999999,
+        "serverReceiveWallMs": 1699999999894,
+        "serverSendWallMs": 1699999999991,
+        "elapsedMs": 313.3
+      },
+      {
+        "clientSendWallMs": 1700000001144,
+        "clientReceiveWallMs": 1700000001296,
+        "serverReceiveWallMs": 1700000001203,
+        "serverSendWallMs": 1700000001287,
+        "elapsedMs": 151.5
+      },
+      {
+        "clientSendWallMs": 1700000003143,
+        "clientReceiveWallMs": 1700000003289,
+        "serverReceiveWallMs": 1700000003201,
+        "serverSendWallMs": 1700000003280,
+        "elapsedMs": 146.8
+      },
+      {
+        "clientSendWallMs": 1700000005142,
+        "clientReceiveWallMs": 1700000005278,
+        "serverReceiveWallMs": 1700000005194,
+        "serverSendWallMs": 1700000005271,
+        "elapsedMs": 136.7
+      },
+      {
+        "clientSendWallMs": 1700000007137,
+        "clientReceiveWallMs": 1700000007277,
+        "serverReceiveWallMs": 1700000007201,
+        "serverSendWallMs": 1700000007271,
+        "elapsedMs": 140.2
+      },
+      {
+        "clientSendWallMs": 1700000009165,
+        "clientReceiveWallMs": 1700000009346,
+        "serverReceiveWallMs": 1700000009237,
+        "serverSendWallMs": 1700000009325,
+        "elapsedMs": 181.6
+      },
+      {
+        "clientSendWallMs": 1700000011139,
+        "clientReceiveWallMs": 1700000011274,
+        "serverReceiveWallMs": 1700000011197,
+        "serverSendWallMs": 1700000011268,
+        "elapsedMs": 134.8
+      },
+      {
+        "clientSendWallMs": 1700000013134,
+        "clientReceiveWallMs": 1700000013286,
+        "serverReceiveWallMs": 1700000013196,
+        "serverSendWallMs": 1700000013278,
+        "elapsedMs": 152.4
+      },
+      {
+        "clientSendWallMs": 1700000015190,
+        "clientReceiveWallMs": 1700000015345,
+        "serverReceiveWallMs": 1700000015263,
+        "serverSendWallMs": 1700000015339,
+        "elapsedMs": 154.8
+      },
+      {
+        "clientSendWallMs": 1700000017128,
+        "clientReceiveWallMs": 1700000017261,
+        "serverReceiveWallMs": 1700000017189,
+        "serverSendWallMs": 1700000017255,
+        "elapsedMs": 133.2
+      }
+    ]
+  },
+  {
+    "start": 1700000000000,
+    "end": 1700000013076,
+    "samples": [
+      {
+        "clientSendWallMs": 1699999999722,
+        "clientReceiveWallMs": 1699999999999,
+        "serverReceiveWallMs": 1699999999881,
+        "serverSendWallMs": 1699999999988,
+        "elapsedMs": 277.1
+      },
+      {
+        "clientSendWallMs": 1700000001850,
+        "clientReceiveWallMs": 1700000002059,
+        "serverReceiveWallMs": 1700000001946,
+        "serverSendWallMs": 1700000002051,
+        "elapsedMs": 209.4
+      },
+      {
+        "clientSendWallMs": 1700000003844,
+        "clientReceiveWallMs": 1700000004014,
+        "serverReceiveWallMs": 1700000003906,
+        "serverSendWallMs": 1700000004005,
+        "elapsedMs": 170.1
+      },
+      {
+        "clientSendWallMs": 1700000005840,
+        "clientReceiveWallMs": 1700000005988,
+        "serverReceiveWallMs": 1700000005898,
+        "serverSendWallMs": 1700000005982,
+        "elapsedMs": 148.1
+      },
+      {
+        "clientSendWallMs": 1700000007843,
+        "clientReceiveWallMs": 1700000007996,
+        "serverReceiveWallMs": 1700000007907,
+        "serverSendWallMs": 1700000007990,
+        "elapsedMs": 152.5
+      },
+      {
+        "clientSendWallMs": 1700000009856,
+        "clientReceiveWallMs": 1700000009991,
+        "serverReceiveWallMs": 1700000009918,
+        "serverSendWallMs": 1700000009984,
+        "elapsedMs": 135.7
+      },
+      {
+        "clientSendWallMs": 1700000011836,
+        "clientReceiveWallMs": 1700000012041,
+        "serverReceiveWallMs": 1700000011900,
+        "serverSendWallMs": 1700000011990,
+        "elapsedMs": 204.9
+      },
+      {
+        "clientSendWallMs": 1700000012851,
+        "clientReceiveWallMs": 1700000013076,
+        "serverReceiveWallMs": 1700000012957,
+        "serverSendWallMs": 1700000013068,
+        "elapsedMs": 224.9
+      }
+    ]
+  },
+  {
+    "start": 1700000000000,
+    "end": 1700000034523,
+    "samples": [
+      {
+        "clientSendWallMs": 1699999999686,
+        "clientReceiveWallMs": 1699999999999,
+        "serverReceiveWallMs": 1699999999873,
+        "serverSendWallMs": 1699999999985,
+        "elapsedMs": 313.1
+      },
+      {
+        "clientSendWallMs": 1700000001420,
+        "clientReceiveWallMs": 1700000001559,
+        "serverReceiveWallMs": 1700000001471,
+        "serverSendWallMs": 1700000001552,
+        "elapsedMs": 138.8
+      },
+      {
+        "clientSendWallMs": 1700000003424,
+        "clientReceiveWallMs": 1700000003566,
+        "serverReceiveWallMs": 1700000003485,
+        "serverSendWallMs": 1700000003559,
+        "elapsedMs": 141.6
+      },
+      {
+        "clientSendWallMs": 1700000005419,
+        "clientReceiveWallMs": 1700000005556,
+        "serverReceiveWallMs": 1700000005479,
+        "serverSendWallMs": 1700000005550,
+        "elapsedMs": 136.6
+      },
+      {
+        "clientSendWallMs": 1700000007414,
+        "clientReceiveWallMs": 1700000007554,
+        "serverReceiveWallMs": 1700000007468,
+        "serverSendWallMs": 1700000007548,
+        "elapsedMs": 140.5
+      },
+      {
+        "clientSendWallMs": 1700000009474,
+        "clientReceiveWallMs": 1700000009647,
+        "serverReceiveWallMs": 1700000009531,
+        "serverSendWallMs": 1700000009640,
+        "elapsedMs": 173.2
+      },
+      {
+        "clientSendWallMs": 1700000011420,
+        "clientReceiveWallMs": 1700000011568,
+        "serverReceiveWallMs": 1700000011476,
+        "serverSendWallMs": 1700000011562,
+        "elapsedMs": 148.3
+      },
+      {
+        "clientSendWallMs": 1700000013419,
+        "clientReceiveWallMs": 1700000013570,
+        "serverReceiveWallMs": 1700000013480,
+        "serverSendWallMs": 1700000013563,
+        "elapsedMs": 151.4
+      },
+      {
+        "clientSendWallMs": 1700000015421,
+        "clientReceiveWallMs": 1700000015556,
+        "serverReceiveWallMs": 1700000015479,
+        "serverSendWallMs": 1700000015550,
+        "elapsedMs": 134.6
+      },
+      {
+        "clientSendWallMs": 1700000017415,
+        "clientReceiveWallMs": 1700000017555,
+        "serverReceiveWallMs": 1700000017468,
+        "serverSendWallMs": 1700000017547,
+        "elapsedMs": 139.7
+      },
+      {
+        "clientSendWallMs": 1700000019506,
+        "clientReceiveWallMs": 1700000019648,
+        "serverReceiveWallMs": 1700000019564,
+        "serverSendWallMs": 1700000019642,
+        "elapsedMs": 141.5
+      },
+      {
+        "clientSendWallMs": 1700000021432,
+        "clientReceiveWallMs": 1700000021627,
+        "serverReceiveWallMs": 1700000021519,
+        "serverSendWallMs": 1700000021615,
+        "elapsedMs": 195.3
+      },
+      {
+        "clientSendWallMs": 1700000023523,
+        "clientReceiveWallMs": 1700000023694,
+        "serverReceiveWallMs": 1700000023582,
+        "serverSendWallMs": 1700000023687,
+        "elapsedMs": 171
+      },
+      {
+        "clientSendWallMs": 1700000025423,
+        "clientReceiveWallMs": 1700000025582,
+        "serverReceiveWallMs": 1700000025491,
+        "serverSendWallMs": 1700000025575,
+        "elapsedMs": 159.1
+      },
+      {
+        "clientSendWallMs": 1700000027431,
+        "clientReceiveWallMs": 1700000027617,
+        "serverReceiveWallMs": 1700000027516,
+        "serverSendWallMs": 1700000027609,
+        "elapsedMs": 186.3
+      },
+      {
+        "clientSendWallMs": 1700000029421,
+        "clientReceiveWallMs": 1700000029595,
+        "serverReceiveWallMs": 1700000029487,
+        "serverSendWallMs": 1700000029589,
+        "elapsedMs": 174
+      },
+      {
+        "clientSendWallMs": 1700000031422,
+        "clientReceiveWallMs": 1700000031606,
+        "serverReceiveWallMs": 1700000031494,
+        "serverSendWallMs": 1700000031595,
+        "elapsedMs": 184.3
+      },
+      {
+        "clientSendWallMs": 1700000033398,
+        "clientReceiveWallMs": 1700000034523,
+        "serverReceiveWallMs": 1700000033507,
+        "serverSendWallMs": 1700000033679,
+        "elapsedMs": 1125.1
+      }
+    ]
+  }
+]

@@ -123,6 +123,13 @@ rv_write_version "$FIXTURE" "0.3.0-alpha.1"
 eq "rv_write_version updates <version>"   "0.3.0-alpha.1" "$(rv_read_version "$FIXTURE")"
 eq "rv_write_version updates <image-tag>" "0.3.0-alpha.1" "$(rv_read_image_tag "$FIXTURE")"
 
+PLAIN="$TMP/plain-info.xml"
+cat >"$PLAIN" <<'EOF'
+<info><version>0.2.0</version></info>
+EOF
+rv_write_plain_version "$PLAIN" "0.3.0-alpha.1"
+eq "rv_write_plain_version updates companion version" "0.3.0-alpha.1" "$(rv_read_version "$PLAIN")"
+
 # A manifest whose two fields disagree must be fixed by hand, not bumped over.
 DISAGREE="$TMP/disagree.xml"
 cat >"$DISAGREE" <<'EOF'
@@ -256,7 +263,7 @@ PR="$(mktemp -d)"
 git -C "$PR" init -q
 git -C "$PR" config user.email t@t
 git -C "$PR" config user.name t
-mkdir -p "$PR/scripts" "$PR/appinfo" "$PR/changelog.d"
+mkdir -p "$PR/scripts" "$PR/appinfo" "$PR/cassini_capture/appinfo" "$PR/changelog.d"
 cp "$SCRIPT_DIR"/{lib-release-version.sh,release-version.sh,fold-changelog.sh,extract-release-notes.sh,prepare-release.sh} "$PR/scripts/"
 cat >"$PR/appinfo/info.xml" <<'EOF'
 <?xml version="1.0"?>
@@ -264,6 +271,10 @@ cat >"$PR/appinfo/info.xml" <<'EOF'
   <version>0.2.0</version>
   <external-app><docker-install><image-tag>0.2.0</image-tag></docker-install></external-app>
 </info>
+EOF
+cat >"$PR/cassini_capture/appinfo/info.xml" <<'EOF'
+<?xml version="1.0"?>
+<info><version>0.2.0</version></info>
 EOF
 cat >"$PR/CHANGELOG.md" <<'EOF'
 # Changelog
@@ -297,6 +308,7 @@ git -C "$PR" checkout -q -- appinfo/info.xml
 # Happy path: bump minor 0.2.0 -> 0.3.0-alpha.1.
 if prep --bump minor >/dev/null 2>&1; then ok "prepare-release --bump minor succeeds"; else bad "prepare-release --bump minor should succeed"; fi
 eq "info.xml bumped to next alpha" "0.3.0-alpha.1" "$(rv_read_version "$PR/appinfo/info.xml")"
+eq "companion bumped to the same alpha" "0.3.0-alpha.1" "$(rv_read_version "$PR/cassini_capture/appinfo/info.xml")"
 if grep -qF "## [0.3.0-alpha.1]" "$PR/CHANGELOG.md"; then ok "CHANGELOG got the new section"; else bad "CHANGELOG should get the new section"; fi
 if [[ ! -f "$PR/changelog.d/50.feature.md" ]]; then ok "fragment consumed"; else bad "fragment should be consumed"; fi
 eq "commit message" "release: 0.3.0-alpha.1" "$(git -C "$PR" log -1 --pretty=%s)"

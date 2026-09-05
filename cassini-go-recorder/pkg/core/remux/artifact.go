@@ -85,10 +85,13 @@ type StreamPlan struct {
 }
 
 type segmentArtifact struct {
-	Stream           session.PacketStream
-	Kind             string
-	TempPath         string
-	FirstNS          uint64
+	Stream   session.PacketStream
+	Kind     string
+	TempPath string
+	FirstNS  uint64
+	// FirstTimelineNS is where the first packet sits on the OUTPUT timeline,
+	// in nanoseconds from the earliest stream. It is not the receive clock:
+	// FirstRecvNS keeps that.
 	FirstTimelineNS  int64
 	TimelineAdjustNS int64
 	TimelineProfile  timelineProfile
@@ -447,6 +450,21 @@ func firstPacketWallMS(sess session.Session, recvMonoNS uint64) int64 {
 	return started.UnixMilli() + deltaNS/1e6
 }
 
+// timelinePositionNS is where a planned stream's first packet sits on the
+// output timeline, in nanoseconds: its -itsoffset plus its own source start,
+// which is exactly the placement mergeSegments hands ffmpeg. first_timeline_ns
+// in the MKV must be THIS, because source-audio ingestion pairs it with
+// first_packet_wall_ms to learn the wall instant of timeline zero
+// (internal/transcribe/sourceaudio.go, recordingWallWindow). Writing the raw
+// receive clock there made that subtraction come out negative on every real
+// recording, so no upload was ever found. Deriving it from the placement
+// rather than from the plan's base keeps it true for the single-stream case
+// too, where planInputs forces the offset to 0 and the first packet stays at
+// its source start.
+func timelinePositionNS(item PlannedInput) int64 {
+	return int64(math.Round((item.OffsetSeconds + item.SourceStart) * 1e9))
+}
+
 func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned []PlannedInput) []StreamPlan {
 	segmentsByID := map[string]segmentArtifact{}
 	for _, seg := range segments {
@@ -482,7 +500,7 @@ func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned 
 			PT:                     seg.Stream.PT,
 			RTPPackets:             seg.Packets,
 			FirstRecvNS:            seg.FirstNS,
-			FirstTimelineNS:        seg.FirstTimelineNS,
+			FirstTimelineNS:        timelinePositionNS(item),
 			TimelineAdjustNS:       seg.TimelineAdjustNS,
 			FirstRTPTimestamp:      seg.TimelineProfile.FirstRTPTimestamp,
 			FirstRTPSet:            seg.TimelineProfile.FirstRTPSet,

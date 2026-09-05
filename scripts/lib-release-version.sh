@@ -3,9 +3,10 @@
 # Shared helpers for the Cassini release version ladder.
 #
 # The release version lives in appinfo/info.xml as <version>, and the AppAPI
-# Docker <image-tag> must stay equal to it (CI's validate-manifest job rejects
-# a manifest where they disagree, and a release tag vX.Y.Z whose X.Y.Z doesn't
-# match). Every mutation here rewrites the two in lockstep.
+# Docker <image-tag> plus the optional native capture companion version must
+# stay equal to it (CI's validate-manifest job rejects a manifest where the
+# first two disagree, and a release tag vX.Y.Z whose X.Y.Z doesn't match).
+# Every release mutation here rewrites all present copies in lockstep.
 #
 # Version grammar is stricter than the App Store info.xsd `semver` type on
 # purpose: the ladder only recognizes stable X.Y.Z and alpha/beta/rc
@@ -191,6 +192,42 @@ rv_write_version() {
       return 1
     fi
   done
+}
+
+# rv_write_plain_version <info.xml> <new-version>
+# Rewrite the single <version> in a native-app manifest (no Docker image tag).
+rv_write_plain_version() {
+  local info_xml="$1" new="$2" current count
+  rv_validate "$new" || return 1
+  current="$(rv_read_version "$info_xml")" || return 1
+  sed -i "s|<version>${current}</version>|<version>${new}</version>|" "$info_xml"
+  count="$(grep -cF "<version>${new}</version>" "$info_xml")"
+  if [[ "$count" -ne 1 ]]; then
+    echo "error: expected exactly one <version>${new}</version> in $info_xml, found $count" >&2
+    return 1
+  fi
+}
+
+# rv_write_release_versions <repo-root> <current> <new>
+# Keep the ExApp and its capture-delivery companion on one compatibility
+# version. Releasing either side alone would leave admins guessing which pair
+# can safely be installed.
+rv_write_release_versions() {
+  local root="$1" current="$2" new="$3"
+  local primary="$root/appinfo/info.xml"
+  local companion="$root/cassini_capture/appinfo/info.xml"
+  if [[ -f "$companion" ]]; then
+    local companion_current
+    companion_current="$(rv_read_version "$companion")" || return 1
+    if [[ "$companion_current" != "$current" ]]; then
+      echo "error: cassini_capture is $companion_current while gocassini is $current; reconcile before releasing" >&2
+      return 1
+    fi
+  fi
+  rv_write_version "$primary" "$new" || return 1
+  if [[ -f "$companion" ]]; then
+    rv_write_plain_version "$companion" "$new" || return 1
+  fi
 }
 
 # rv_info_xml

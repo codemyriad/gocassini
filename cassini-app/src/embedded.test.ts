@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { captureOperatorBase, neutralizeNestedContentChrome, operatorBaseFrom } from "./embedded";
+import {
+  captureOperatorBase,
+  neutralizeNestedContentChrome,
+  operatorBaseFrom,
+  retireAbandonedCaptureState,
+} from "./embedded";
 
 describe("operatorBaseFrom", () => {
   it("appends /operator to the captured proxy base", () => {
@@ -68,5 +73,34 @@ describe("neutralizeNestedContentChrome", () => {
     expect(inner.style.height).toBe("auto");
     expect(inner.style.borderRadius).toBe("0");
     expect(outer.style.position).toBeUndefined();
+  });
+});
+
+describe("retireAbandonedCaptureState", () => {
+  // The Cassini page is the other place a leftover opt-in can be reached, and
+  // for many people the likelier one: somebody who stopped joining calls still
+  // opens the archive. That key is a recorded answer to a question this build
+  // no longer asks, and no such answer is kept, so every page load deletes it.
+  it("forgets an older build's opt-in without touching delivery bookkeeping", () => {
+    const entries = new Map<string, string>([
+      ["cassini.sourceCapture.consent", "granted"],
+      ["cassini.sourceCapture.uploadAttempts", '{"capture-room-1":1}'],
+      ["cassini.viewer.lastRoom", "kept"],
+    ]);
+    const globals = globalThis as { localStorage?: unknown };
+    const original = globals.localStorage;
+    globals.localStorage = {
+      getItem: (key: string) => entries.get(key) ?? null,
+      removeItem: (key: string) => void entries.delete(key),
+    };
+    try {
+      retireAbandonedCaptureState();
+    } finally {
+      globals.localStorage = original;
+    }
+
+    expect(entries.has("cassini.sourceCapture.consent")).toBe(false);
+    expect(entries.get("cassini.sourceCapture.uploadAttempts")).toBe('{"capture-room-1":1}');
+    expect(entries.get("cassini.viewer.lastRoom")).toBe("kept");
   });
 });

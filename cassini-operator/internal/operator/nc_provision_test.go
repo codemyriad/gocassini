@@ -750,6 +750,10 @@ func TestEnabledCallbackProvisionsWheneverAppAPIIsActive(t *testing.T) {
 	var mu sync.Mutex
 	var called bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == appAPIAppConfigPath {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		mu.Lock()
 		called = true
 		mu.Unlock()
@@ -767,14 +771,14 @@ func TestEnabledCallbackProvisionsWheneverAppAPIIsActive(t *testing.T) {
 	}
 
 	// Disabled edges must not provision.
-	hook(false)
+	hook(false, 1)
 	mu.Lock()
 	if called {
 		t.Error("provisioning ran on an enabled=false edge")
 	}
 	mu.Unlock()
 
-	hook(true)
+	hook(true, 2)
 	mu.Lock()
 	defer mu.Unlock()
 	if !called {

@@ -152,13 +152,16 @@ main() {
   fi
 
   # --- Mutate: version, changelog, release notes --------------------------
-  rv_write_version "$info_xml" "$target" || die "failed to update info.xml"
+  rv_write_release_versions "$root" "$current" "$target" || die "failed to update release manifests"
 
   local notes_dir="$root/build/release" notes_file
   notes_file="$notes_dir/gocassini-$target-notes.md"
   mkdir -p "$notes_dir"
 
   local staged=("$info_xml")
+  if [[ -f "$root/cassini_capture/appinfo/info.xml" ]]; then
+    staged+=("$root/cassini_capture/appinfo/info.xml")
+  fi
   if [[ "$frag_count" -gt 0 ]]; then
     "$SCRIPT_DIR/fold-changelog.sh" --version "$target" --date "$date" --write \
       || die "changelog fold failed"
