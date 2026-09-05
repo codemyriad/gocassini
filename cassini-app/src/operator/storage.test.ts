@@ -165,7 +165,7 @@ describe("OperatorClient storage", () => {
             catalog_moved: true,
             source_root: "CassiniNoACL/Recordings",
             destination_root: "Cassini/Recordings",
-            meetings_already_there: 1,
+            meetings_replaced: 1,
             source_cleared: true,
           },
         }),
@@ -178,7 +178,7 @@ describe("OperatorClient storage", () => {
       meetings_moved: 3,
       catalog_moved: true,
       source_root: "CassiniNoACL/Recordings",
-      meetings_already_there: 1,
+      meetings_replaced: 1,
       source_cleared: true,
       leftover_source: "",
     });

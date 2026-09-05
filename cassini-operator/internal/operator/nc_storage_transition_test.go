@@ -556,11 +556,12 @@ func TestSwitchLeavesTheArchiveIntactWhenTheCopyFails(t *testing.T) {
 	}
 }
 
-// Re-running a switch after a partial copy finishes it rather than failing on
-// the names that are already there. `Overwrite` is never set, so a COPY onto an
-// existing name is a 412 — treating that as an error would make the second
-// attempt strictly worse than the first.
-func TestSwitchResumesAPartialCopy(t *testing.T) {
+// Re-running a switch after a partial copy REWRITES what the failed attempt
+// left, rather than skipping it. There is no incremental migration: an attempt
+// that did not finish cannot promise the bytes it left behind are whole, and a
+// skip would carry a truncated recording into the archive and then verify it as
+// present.
+func TestSwitchRewritesWhatAPartialCopyLeftBehind(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	setStorageMode(t, false)
@@ -570,19 +571,67 @@ func TestSwitchResumesAPartialCopy(t *testing.T) {
 	mock.mounted = true
 	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
 	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m2.opus", "audio-2")
-	// m1 already arrived on the attempt that died.
-	mock.addFile(ncACLRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	// m1 arrived on the attempt that died — truncated, as far as anybody knows.
+	mock.addFile(ncACLRecordingsRoot+"/meetings/m1.opus", "half-a")
 
 	cfg := testExAppConfig(mock.server(t).URL)
 	result, err := cfg.switchStorageMode(context.Background(), true, log.New(io.Discard, "", 0))
 	if err != nil {
 		t.Fatalf("switchStorageMode(true) error = %v", err)
 	}
-	if result.MeetingsMoved != 1 || result.MeetingsAlreadyThere != 1 {
-		t.Fatalf("copied %d and skipped %d, want 1 and 1", result.MeetingsMoved, result.MeetingsAlreadyThere)
+	if result.MeetingsMoved != 2 || result.MeetingsReplaced != 1 {
+		t.Fatalf("copied %d and replaced %d, want 2 and 1 — every source recording is written fresh", result.MeetingsMoved, result.MeetingsReplaced)
 	}
 	if !mock.has(ncACLRecordingsRoot + "/meetings/m2.opus") {
 		t.Fatal("the recording that had not arrived was not copied on the re-run")
+	}
+	mock.mu.Lock()
+	got := mock.files[ncACLRecordingsRoot+"/meetings/m1.opus"]
+	deleted := strings.Join(mock.deleted, "\n")
+	mock.mu.Unlock()
+	if got != "audio-1" {
+		t.Fatalf("m1 at the destination = %q, want the source's bytes — the leftover was kept", got)
+	}
+	// The rewrite is a DELETE then a COPY, not an Overwrite: T, which destroys
+	// the destination's id and with it its ACL rows (measured, D-660 part 2).
+	if !strings.Contains(deleted, ncACLRecordingsRoot+"/meetings/m1.opus") {
+		t.Fatalf("the leftover was not removed before being rewritten; deletes:\n%s", deleted)
+	}
+}
+
+// The one thing a rewrite must NOT become: clearing the destination wholesale.
+//
+// Names at the destination that the source does not have are never ours. They
+// are a stranded archive — recordings left in the mode that is not in force,
+// which /storage reports and the Setup tab describes as something switching
+// "copies across". Deleting them would contradict that sentence and lose
+// recordings.
+func TestSwitchLeavesAStrandedArchiveAtTheDestinationAlone(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	// Four recordings that have been sitting in the Team folder since before
+	// this instance was in default mode.
+	for _, name := range []string{"s1", "s2", "s3", "s4"} {
+		mock.addFile(ncACLRecordingsRoot+"/meetings/"+name+".opus", "stranded-"+name)
+	}
+
+	cfg := testExAppConfig(mock.server(t).URL)
+	if _, err := cfg.switchStorageMode(context.Background(), true, log.New(io.Discard, "", 0)); err != nil {
+		t.Fatalf("switchStorageMode(true) error = %v", err)
+	}
+	for _, name := range []string{"s1", "s2", "s3", "s4"} {
+		if !mock.has(ncACLRecordingsRoot + "/meetings/" + name + ".opus") {
+			t.Errorf("the stranded recording %s.opus was deleted by the switch", name)
+		}
+	}
+	if !mock.has(ncACLRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("the migrated recording never arrived")
 	}
 }
 
@@ -1287,9 +1336,9 @@ func TestAdoptionStillRunsOnAnAnsweredUnmountedFolder(t *testing.T) {
 // precondition of every switch and returned 500 when it declined, so the switch
 // could never run again.
 //
-// The cleanup is gone from that path. The migration merges into its destination
-// and skips names already present, which is all the cleanup was protecting it
-// from.
+// The cleanup is gone from that path. The migration rewrites every name it is
+// copying and leaves anything else at the destination alone, which is all the
+// cleanup was protecting it from.
 func TestSwitchRunsAfterAFailedCleanupWouldHaveRefused(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()

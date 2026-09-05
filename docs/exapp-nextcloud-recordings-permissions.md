@@ -687,9 +687,17 @@ folder (a 500 with `groupfolders` installed, a *false* 207 without it — measur
 **`Overwrite` is never `T`.** For a file it destroys the destination's id and with
 it every ACL row keyed to that id; for a *directory* the server deletes the whole
 destination tree first. The cost is that a COPY onto a name that already exists
-answers 412, which is why step 3 lists the destination first and skips what is
-already there — that is also what makes a re-run finish an interrupted copy
-instead of failing on it.
+answers 412, which is why step 3 lists the destination first and removes the name
+before writing it.
+
+**Nothing is skipped, and nothing extra is cleared.** Every recording at the
+source is copied on every attempt, replacing any leftover of the same name: an
+attempt that did not finish cannot promise the bytes it left behind are whole,
+and keeping them would carry a truncated recording into the archive and then
+verify it as present. What the switch does *not* do is clear the destination
+wholesale first. Names there that the source does not have are never leftovers of
+this switch — they are a stranded archive (below), which switching is supposed to
+bring in, not delete.
 
 **Migrated recordings are public.** Opting in leaves every copied recording
 readable by every account, deliberately: the room's attendee list today is not
@@ -835,7 +843,7 @@ once, in default mode only:
       └─ none of the above                              ─▶ nothing to do
                      │
                      ▼
-        copy into CassiniNoACL/Recordings (skipping names already there),
+        copy into CassiniNoACL/Recordings (rewriting names it also has),
         verify, then empty the source
 ```
 
@@ -880,9 +888,10 @@ archive, which is not a better failure. So the preflight refuses:
 ```
 
 Turning access control on from the Setup tab is a switch like any other: it copies
-the (empty or nearly empty) private tree into the Team folder, finds the archive
-already there and leaves it alone, flips the mode, and records it — after which
-the latch can never fire again, because a recorded mode is never reconsidered.
+the (empty or nearly empty) private tree into the Team folder, leaves the archive
+already there alone — the switch only rewrites names it is itself copying — flips
+the mode, and records it, after which the latch can never fire again, because a
+recorded mode is never reconsidered.
 
 The latch applies **only** to the fallback. A `default` that was *recorded* or
 *declared* on an instance whose Team folder still holds recordings is an

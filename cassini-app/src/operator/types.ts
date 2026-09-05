@@ -182,10 +182,11 @@ export interface StorageTransition {
   catalog_moved: boolean;
   source_root: string;
   destination_root: string;
-  // meetings_already_there is how many of the source's recordings were already
-  // at the destination and so were not copied again. Non-zero on a re-run after
-  // a partial failure, which is the case worth naming out loud.
-  meetings_already_there: number;
+  // meetings_replaced is how many copies overwrote a leftover from an attempt
+  // that did not finish. Every source recording is copied either way — nothing
+  // is skipped — so this is what says "this was a retry", not a count of work
+  // avoided.
+  meetings_replaced: number;
   // source_cleared is false when the archive arrived but the tidy-up did not
   // finish. The switch worked; there is a leftover copy and a button for it.
   source_cleared: boolean;

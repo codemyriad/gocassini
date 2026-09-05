@@ -91,10 +91,11 @@ type storageTransitionResult struct {
 	CatalogMoved    bool   `json:"catalog_moved"`
 	SourceRoot      string `json:"source_root,omitempty"`
 	DestinationRoot string `json:"destination_root,omitempty"`
-	// MeetingsAlreadyThere is how many of the source's recordings were already at
-	// the destination and were therefore not copied again. Non-zero on a re-run
-	// after a partial failure, which is the case worth naming out loud.
-	MeetingsAlreadyThere int `json:"meetings_already_there,omitempty"`
+	// MeetingsReplaced is how many of the copies overwrote a leftover from an
+	// attempt that did not finish. Every source recording is copied either way —
+	// nothing is skipped — so this is diagnostics rather than a count of work
+	// avoided, and it is the number that says "this was a retry".
+	MeetingsReplaced int `json:"meetings_replaced,omitempty"`
 	// SourceCleared says the source's contents were removed. False means the
 	// archive arrived but the tidy-up did not finish, `migration_clean` is false,
 	// and the Setup tab has a button for it.
@@ -204,7 +205,7 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 
 	copied, err := c.copyArchive(ctx, client, source, destination, enableAccessControl, logger)
 	result.MeetingsMoved = copied.Copied
-	result.MeetingsAlreadyThere = copied.AlreadyPresent
+	result.MeetingsReplaced = copied.Replaced
 	result.CatalogMoved = copied.CatalogMerged
 	if err != nil {
 		return result, fmt.Errorf("%w — nothing was removed and Cassini is still in %s mode, so the recordings are all still in %s; fix the cause and switch again",
@@ -306,9 +307,11 @@ func (p ncStorageProbe) sanityForTarget(accessControlled bool) (ok bool, step, d
 
 // archiveCopyResult is what one copy pass did.
 type archiveCopyResult struct {
-	Copied         int
-	AlreadyPresent int
-	CatalogMerged  bool
+	Copied int
+	// Replaced counts the copies that overwrote a leftover from an unfinished
+	// attempt. Copied already includes them.
+	Replaced      int
+	CatalogMerged bool
 }
 
 // copyArchive carries every meeting and the catalog from one root to another,
@@ -334,8 +337,8 @@ func (c ExAppConfig) copyArchive(ctx context.Context, client *http.Client, sourc
 	}
 
 	// 3. The meetings.
-	copied, already, err := c.copyMeetings(ctx, client, source+"/meetings", destination+"/meetings", intoTeamFolder, logger)
-	result.Copied, result.AlreadyPresent = copied, already
+	copied, replaced, err := c.copyMeetings(ctx, client, source+"/meetings", destination+"/meetings", intoTeamFolder, logger)
+	result.Copied, result.Replaced = copied, replaced
 	if err != nil {
 		return result, err
 	}
@@ -361,12 +364,35 @@ func (c ExAppConfig) copyArchive(ctx context.Context, client *http.Client, sourc
 	return result, nil
 }
 
-// copyMeetings copies every child of srcDir that is not already at dstDir.
+// copyMeetings copies every child of srcDir to dstDir. Every one, every time.
 //
-// Skipping what is already there is what makes a re-run finish an interrupted
-// copy rather than fail on it: `Overwrite` is never set, so a COPY onto an
-// existing name answers 412, and treating that as an error would make the second
-// attempt strictly worse than the first.
+// It does NOT skip a name that is already at the destination — it removes that
+// copy and writes a fresh one. There is no incremental migration here, and that
+// is deliberate:
+//
+//	a destination file with a matching name is, by construction, something a
+//	PREVIOUS attempt at this same switch put there. Keeping it means trusting a
+//	run that did not finish, and the one thing an unfinished run cannot promise
+//	is that the bytes it left behind are whole. A skip would carry a truncated
+//	recording into the archive and then verify it as present.
+//
+// The DELETE-then-COPY is what "no skipping" costs, because `Overwrite` is never
+// set: a COPY onto an existing name answers 412, and Overwrite: T is forbidden
+// outright — for a file it destroys the destination's id and therefore its ACL
+// rows, for a directory it deletes the whole destination tree (measured, D-660
+// part 2). Removing the leaf first is the same intent, stated rather than
+// delegated to a header whose default is data loss. Nothing reads the
+// destination while this runs: the mode has not flipped, so the gap between the
+// DELETE and the COPY is not observable.
+//
+// What it deliberately does NOT do is clear the destination WHOLESALE before
+// copying. The difference is only ever one set of files — names at the
+// destination that the source does not have — and those are never ours. They are
+// a stranded archive: recordings left in the mode that is not in force, which
+// /storage reports and the Setup tab offers to bring across. Clearing the
+// directory would delete them, while telling the administrator that switching
+// "copies them across". So: every source recording is rewritten, everything else
+// is left alone and merged.
 //
 // intoTeamFolder decides the ACL work, and only one direction has any:
 //
@@ -380,7 +406,7 @@ func (c ExAppConfig) copyArchive(ctx context.Context, client *http.Client, sourc
 //	                        `nc:acl-list` is not settable outside a Team folder
 //	                        (500 with groupfolders installed, a false 207
 //	                        without it — measured, D-616 spike x1).
-func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcDir, dstDir string, intoTeamFolder bool, logger *log.Logger) (copied, alreadyPresent int, err error) {
+func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcDir, dstDir string, intoTeamFolder bool, logger *log.Logger) (copied, replaced int, err error) {
 	names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, srcDir)
 	if err != nil {
 		return 0, 0, fmt.Errorf("list %s: %w", srcDir, err)
@@ -405,15 +431,19 @@ func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcD
 		src := srcDir + "/" + name
 		dst := dstDir + "/" + name
 		if present[name] {
-			alreadyPresent++
-			continue
+			// A leftover from an attempt that did not finish. Remove it rather
+			// than trusting its bytes — see the note above.
+			if err := c.davDelete(ctx, client, ncRecordingsOwner, dst); err != nil {
+				return copied, replaced, fmt.Errorf("remove the unfinished copy at %s before rewriting it: %w", dst, err)
+			}
+			replaced++
 		}
 		if err := c.davCopy(ctx, client, ncRecordingsOwner, src, dst); err != nil {
-			return copied, alreadyPresent, fmt.Errorf("copy %s to %s: %w", src, dst, err)
+			return copied, replaced, fmt.Errorf("copy %s to %s: %w", src, dst, err)
 		}
 		if intoTeamFolder {
 			if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, dst, publicRecordingACLRules()); err != nil {
-				return copied, alreadyPresent, fmt.Errorf("make %s readable after copying it: %w", dst, err)
+				return copied, replaced, fmt.Errorf("make %s readable after copying it: %w", dst, err)
 			}
 		}
 		copied++
@@ -421,7 +451,7 @@ func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcD
 			logger.Printf("nc storage: copied %s -> %s", src, dst)
 		}
 	}
-	return copied, alreadyPresent, nil
+	return copied, replaced, nil
 }
 
 // verifyArchiveCopied refuses to let the caller flip the mode until every
@@ -607,8 +637,8 @@ func (c ExAppConfig) adoptLegacyDefaultArchive(ctx context.Context, client *http
 			copied.Copied, source, ncDefaultRecordingsRoot, source, err)
 		return
 	}
-	logger.Printf("nc storage: carried %d recording(s) from %s into %s and emptied it (%d were already there)",
-		copied.Copied, source, ncDefaultRecordingsRoot, copied.AlreadyPresent)
+	logger.Printf("nc storage: carried %d recording(s) from %s into %s and emptied it (%d rewrote a leftover)",
+		copied.Copied, source, ncDefaultRecordingsRoot, copied.Replaced)
 }
 
 // legacyDefaultArchiveRoot names a pre-split default archive that still holds
@@ -801,9 +831,9 @@ func (c ExAppConfig) findStrandedRecordingsRoot(ctx context.Context, client *htt
 // `Overwrite: F` is sent explicitly rather than left to the server default,
 // because the default is TRUE: an omitted header on an existing destination
 // silently destroys it, which for a directory means the whole tree (measured,
-// D-660 part 2). Callers treat the resulting 412 as "already there" only when
-// they have separately established that, which copyMeetings does by listing the
-// destination first.
+// D-660 part 2). A 412 therefore means the destination name is occupied, which
+// copyMeetings makes impossible by removing that name first — so a 412 reaching
+// a caller is a real failure, not a resume.
 //
 // `Depth: infinity` is what makes a legacy directory-shaped asset copy whole.
 // It is the only legal value for a collection COPY in RFC 4918 and is ignored
@@ -945,9 +975,9 @@ type storageTransitionPreview struct {
 	// PendingCleanup is set when a previous migration did not finish, so the
 	// administrator knows there is a leftover copy somewhere before they start
 	// another switch. The switch does NOT clear it first — it merges into its
-	// destination and skips names already present — because forcing a cleanup
-	// first turned a correctly-refused cleanup into a switch that could never
-	// run.
+	// destination, rewriting names it also has and leaving anything else there
+	// alone — because forcing a cleanup first turned a correctly-refused cleanup
+	// into a switch that could never run.
 	PendingCleanup string `json:"pending_cleanup,omitempty"`
 
 	// Warnings are things an administrator should read before confirming.
@@ -1046,7 +1076,7 @@ func previewWarnings(p storageTransitionPreview, enableAccessControl bool) []str
 	}
 	if p.DestinationMeetings > 0 {
 		out = append(out, fmt.Sprintf(
-			"%s already holds %d recording(s). They stay where they are, and any recording that is already there is not copied again.",
+			"%s already holds %d recording(s). Every recording being copied is written fresh, replacing any leftover of the same name; anything else already there is left alone and stays alongside them.",
 			p.DestinationRoot, p.DestinationMeetings))
 	}
 	if enableAccessControl && p.Meetings > 0 {

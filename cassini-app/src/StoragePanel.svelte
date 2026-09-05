@@ -779,8 +779,8 @@
               {transition.meetings_moved}
               {transition.meetings_moved === 1 ? "recording was" : "recordings were"} copied
               {#if transition.destination_root}into {transition.destination_root}{/if}.
-              {#if transition.meetings_already_there > 0}
-                {transition.meetings_already_there} were already there.
+              {#if transition.meetings_replaced > 0}
+                {transition.meetings_replaced} replaced a leftover from an earlier attempt.
               {/if}
             </p>
             {#if transition.leftover_source}

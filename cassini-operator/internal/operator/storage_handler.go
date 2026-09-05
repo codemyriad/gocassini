@@ -321,7 +321,7 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 	// TARGET, so on an instance that already had recordings there, finishMigration
 	// correctly refuses to clear them — and every retry of the switch then failed
 	// on the cleanup instead of running. The migration merges into its
-	// destination and skips names already present, so there was nothing the
+	// destination, rewriting every name it also has, so there was nothing the
 	// cleanup was protecting it from.
 	//
 	// The context is deliberately not the request's. This is the one call that

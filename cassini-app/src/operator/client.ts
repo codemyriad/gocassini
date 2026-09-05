@@ -465,7 +465,7 @@ function normalizeStorageTransition(value: unknown): StorageTransition | null {
     catalog_moved: row.catalog_moved === true,
     source_root: asString(row.source_root),
     destination_root: asString(row.destination_root),
-    meetings_already_there: asCount(row.meetings_already_there),
+    meetings_replaced: asCount(row.meetings_replaced),
     source_cleared: row.source_cleared === true,
     leftover_source: asString(row.leftover_source),
   };

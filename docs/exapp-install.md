@@ -390,8 +390,8 @@ mode's tree is not private, and the preflight refuses with
 **Upgrading a default-mode install.** Installs that predate the split kept their
 default-mode archive at `Cassini/Recordings` — the path the Team folder also
 wants — or under a `Cassini (N)` the server had renamed it to. The first enable
-after the update carries it into `CassiniNoACL/Recordings`, copying what is not
-already there and emptying the old tree once the copy is proven complete. It
+after the update carries it into `CassiniNoACL/Recordings`, copying every
+recording and emptying the old tree once the copy is proven complete. It
 runs only in default mode, only inside the service account's own home, and
 never from a *mounted* Team folder — that is not a stranded archive, it is the
 access-controlled model. If it does not finish, nothing is recorded and nothing
