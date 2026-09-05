@@ -19,7 +19,8 @@ import (
 //
 //	/ui/capture-payload.js  finds the outgoing audio sender,
 //	                        records it, uploads afterwards
-//	/ui/capture-worker.js   encoded-transform (RTP timing anchors) + OPFS writes
+//	/ui/capture-worker.js   encoded-transform (RTP timing anchors)
+//	/ui/capture-storage-worker.js   OPFS writes, connected by MessageChannel
 //
 // They are built by cassini-app's scripts/build-capture.mjs into
 // <CASSINI_VIEWER_DIST>/capture/ and served from there, alongside the embedded
@@ -29,14 +30,16 @@ const (
 
 	envSourceCaptureEnabled = "CASSINI_SOURCE_CAPTURE"
 
-	capturePayloadFile = "capture-payload.js"
-	captureWorkerFile  = "capture-worker.js"
+	capturePayloadFile       = "capture-payload.js"
+	captureWorkerFile        = "capture-worker.js"
+	captureStorageWorkerFile = "capture-storage-worker.js"
 )
 
 // captureAssetFiles maps the served /ui/ path suffix to its file in the dist.
 var captureAssetFiles = map[string]string{
-	capturePayloadFile: capturePayloadFile,
-	captureWorkerFile:  captureWorkerFile,
+	capturePayloadFile:       capturePayloadFile,
+	captureWorkerFile:        captureWorkerFile,
+	captureStorageWorkerFile: captureStorageWorkerFile,
 }
 
 // sourceCaptureEnabled reports whether this installation collects

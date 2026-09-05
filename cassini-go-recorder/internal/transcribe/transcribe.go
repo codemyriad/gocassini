@@ -36,7 +36,8 @@ type BuildConfig struct {
 	// SourceAudioRoom is the Talk room token this recording belongs to. Source
 	// captures are selected by room AND overlapping call window; without it the
 	// selection falls back to the window alone, which is weaker.
-	SourceAudioRoom string
+	SourceAudioRoom      string
+	SourceAudioRecording string
 	// SourceAudioDir is the root of participant-uploaded source captures
 	// (the operator's capture root). When set, a speaker whose upload can be
 	// placed on the meeting timeline is transcribed from that audio instead of
@@ -127,7 +128,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		// is a build with no upload for this room, and that build has to leave
 		// the bundle byte for byte what a build without ingestion would leave —
 		// not an empty _work/sourceaudio to explain to whoever finds it.
-		sourceAudio = ApplySourceAudio(ctx, mix, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, stdout)
+		sourceAudio = ApplySourceAudio(ctx, mix, streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, outputDir, stdout, cfg.SourceAudioRecording)
 	}
 	if err := mix.Encode(webmPath); err != nil {
 		if !mix.Substituted() {
