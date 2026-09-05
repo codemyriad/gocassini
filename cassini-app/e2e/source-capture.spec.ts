@@ -33,6 +33,7 @@ test.beforeEach(() => {
   server.state.captureWorker = "ok";
   server.state.storageWorker = "ok";
   server.state.recordingId = "fixture-recording";
+  server.state.clockOffsetMs = 0;
 });
 
 async function setOfficialRecording(
@@ -82,6 +83,7 @@ test("joining a call does not record locally before Talk recording starts", asyn
 });
 
 test("starting states do not capture; confirmed active starts and confirmed off uploads", async ({ page }) => {
+  server.state.clockOffsetMs = -300_000;
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
 
@@ -94,6 +96,14 @@ test("starting states do not capture; confirmed active starts and confirmed off 
   await setOfficialRecording(page, 0);
   await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
 
+  const samples = server.uploads[0].sidecar.clockSamples;
+  expect(samples.length).toBeGreaterThanOrEqual(2);
+  for (const sample of samples) {
+    const ahead = ((sample.clientSendWallMs - sample.serverReceiveWallMs) +
+      (sample.clientReceiveWallMs - sample.serverSendWallMs)) / 2;
+    expect(Math.abs(ahead - 300_000)).toBeLessThan(100);
+    expect(sample.elapsedMs).toBeGreaterThanOrEqual(0);
+  }
   // Talk's peer remains alive: the upload was driven by recording-off, not by
   // leaving the room or closing the page.
   expect(
@@ -192,6 +202,7 @@ test("a reload keeps both immutable sessions until recording stops", async ({ pa
   expect(server.uploads.reduce((n, upload) => n + upload.segments.length, 0)).toBeGreaterThanOrEqual(3);
   for (const upload of server.uploads) {
     expect(upload.segments.length).toBe(upload.sidecar.segments.length);
+    expect(upload.sidecar.clockSamples.length).toBeGreaterThan(0);
     for (const segment of upload.segments) expect(segment.bytes).toBeGreaterThan(1000);
   }
   await expect.poll(() => captureDirs(page)).toEqual([]);

@@ -94,11 +94,57 @@ This change does not replace RTP timing with `getStats()`: browser statistics
 would need measured support and drift accuracy across mute, device changes and
 long calls before making that substitution.
 
+## Clock measurement and placement correction
+
+The recording-identity GET returns millisecond `serverReceiveWallMs` and
+`serverSendWallMs` timestamps after checking the authenticated account's room
+membership. An authorized request with no unique live recording still returns
+these timestamps with HTTP 409, so stopping a recording permits a final clock
+probe without authorizing another capture. Responses are never cached.
+
+The browser records its send/receive wall times and monotonic elapsed time at
+startup, during the existing recording-status polls, and before final upload.
+`clockSamples` is retained in OPFS recovery checkpoints and the immutable
+manifest: the first observation plus a rolling tail, bounded to 128 samples.
+Older servers and legacy buffers remain readable without measurements.
+
+Intake estimates client-ahead skew using the four-timestamp offset calculation
+in [RFC 5905 section 8](https://www.rfc-editor.org/rfc/rfc5905#section-8):
+`((clientSend - serverReceive) + (clientReceive - serverSend)) / 2`.
+Half the round trip after subtracting server processing, plus 2 ms for timestamp
+quantization, bounds each observation's path-asymmetry uncertainty. The lowest
+uncertainty observation supplies the constant correction. A usable observation
+must have at most 100 ms uncertainty; usable observations must reach within
+90 seconds of both ends of the capture. Offset disagreements outside the two
+observations' bounds plus 50 ms, wall-clock steps during a probe, and observed
+variation increasing uncertainty past 150 ms make the capture unreliable.
+These are conservative admission limits, not a claim of sample-accurate alignment.
+
+The operator subtracts that correction from every call, segment, anchor and mute
+wall timestamp **once**, after hashing the original immutable request. Audio
+bytes and RTP timestamps stay intact. It stores the raw observations alongside
+server-owned `clockStatus`, `clockCorrectionMs` (positive means client ahead),
+and `clockUncertaintyMs` (including observed variation among usable samples).
+Adding the correction back recovers the original wall timestamps. Request
+replays compare the original digest and cannot apply the correction twice.
+
+Operator logs use `capture clock:` with owner, recording, session, status,
+`client_ahead_ms`, uncertainty and sample count for corrected captures; unreliable
+captures log the refusal reason. Unreliable audio is retained and acknowledged,
+but excluded from both rebuild input selection and recorder ingestion; the
+recorder logs why it retained the recorded track. Unmeasured legacy sessions
+keep their existing placement behavior. No upload-time skew is substituted for
+missing capture-time observations.
+
 ## Boundaries
 
-Recording identity solves association, not audio alignment. Placement still
-uses client wall time for offset; unsynchronized clocks remain a known
-limitation pending measured offset refinement. The original recorded track
+Recording identity solves association. Measured stable client clock skew is
+corrected into operator wall time before placement. Operator and recorder must
+share a synchronized server clock (the ordinary same-host deployment does).
+Separate server hosts with unsynchronized clocks, clock steps between probes,
+and encoder/capture latency still require further alignment work. High-latency
+or poorly observed sessions conservatively retain the recorded track; old
+unmeasured captures still rely on synchronized client clocks. The original recorded track
 remains the fallback, and playback and transcription consume the same rendered
 splice. Guest/mobile capture, participant erasure controls, and browser-storage
 eviction are not solved by the transfer protocol.

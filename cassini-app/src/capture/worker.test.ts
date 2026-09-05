@@ -163,6 +163,9 @@ afterEach(() => {
 describe("recovery sidecar", () => {
   it("describes the chunks already written, so a reload can upload the prefix", async () => {
     await startCapture();
+    const samples = [{ clientSendWallMs: 1000, clientReceiveWallMs: 1010,
+      serverReceiveWallMs: 505, serverSendWallMs: 505, elapsedMs: 10 }];
+    await send({ type: "clock-samples", samples });
     vi.setSystemTime(3_000);
     await send({ type: "chunk", index: 0, buffer: new Uint8Array([1, 2, 3]).buffer });
     vi.setSystemTime(20_000);
@@ -170,6 +173,7 @@ describe("recovery sidecar", () => {
 
     const sidecar = pendingSidecar();
     expect(sidecar.roomToken).toBe("room1");
+    expect(sidecar.clockSamples).toEqual(samples);
     expect(sidecar.segments).toHaveLength(1);
     expect(sidecar.segments[0].audioName).toBe("segment-0.webm");
     expect(opfs.files.get("segment-0.webm")?.bytes.byteLength).toBe(6);

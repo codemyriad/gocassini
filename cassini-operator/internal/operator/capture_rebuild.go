@@ -198,7 +198,7 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 			if err := json.Unmarshal(raw, &sidecar); err != nil {
 				continue
 			}
-			if sidecar.Format != captureSourceFormat {
+			if sidecar.Format != captureSourceFormat || sidecar.ClockStatus == "unreliable" {
 				continue
 			}
 			if strings.TrimSpace(sidecar.OwnerUserID) == "" || sidecar.RoomToken != token {
