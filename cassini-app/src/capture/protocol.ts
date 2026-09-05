@@ -95,6 +95,8 @@ export interface CaptureSegment {
 }
 
 export interface CaptureSidecar {
+  recordingId?: string;
+  sessionId?: string;
   format: typeof SOURCE_CAPTURE_FORMAT;
   roomToken: string;
   // participantId is the client's claim about who it is. The operator ignores

@@ -122,6 +122,7 @@ type SourceSegment struct {
 
 // SourceSidecar is the manifest uploaded alongside the audio.
 type SourceSidecar struct {
+	RecordingID     string          `json:"recordingId,omitempty"`
 	Format          string          `json:"format"`
 	RoomToken       string          `json:"roomToken"`
 	CallStartWallMS int64           `json:"callStartWallMs"`
@@ -643,7 +644,7 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 // discovered as a capture in its own right; see the loop below.
 const supersededSuffix = ".superseded"
 
-func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64) (map[string][]string, map[string]string, error) {
+func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64, recordingIDs ...string) (map[string][]string, map[string]string, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, nil, nil
 	}
@@ -679,6 +680,12 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 			continue
 		}
 		fit := captureWindowFit(sidecar.CallStartWallMS, sidecar.CallEndWallMS, windowStartMS, windowEndMS)
+		if sidecar.RecordingID != "" {
+			if len(recordingIDs) == 0 || sidecar.RecordingID != recordingIDs[0] {
+				continue
+			}
+			fit = captureWindowIntersects
+		}
 		if fit == captureWindowApart {
 			continue
 		}
@@ -1786,11 +1793,11 @@ const envMixSpliceEnabled = "CASSINI_SOURCE_AUDIO_MIX"
 // having actually been in THIS call is what a matching track proves, and that
 // is the check that belongs here — and with a splice it is load-bearing twice
 // over, because a participant with no recorded track has no floor to splice on.
-func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStream, captureRoot, roomToken, bundleDir string, stdout io.Writer) []SourceRenderReport {
+func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStream, captureRoot, roomToken, bundleDir string, stdout io.Writer, recordingIDs ...string) []SourceRenderReport {
 	timelineSamples := mix.TimelineSamples
 	timelineMS := int64(timelineSamples) * 1000 / int64(mixRenderHz)
 	windowStartMS, windowEndMS := recordingWallWindow(streams, timelineMS)
-	captures, refused, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS)
+	captures, refused, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS, recordingIDs...)
 	if err != nil {
 		fmt.Fprintf(stdout, "  source audio: cannot scan %s: %v\n", captureRoot, err)
 		return nil

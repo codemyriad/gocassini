@@ -146,7 +146,7 @@ func TestCaptureEnabledHandlerReportsTheAdministratorSwitch(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if body := strings.TrimSpace(rec.Body.String()); body != `{"enabled":true}` {
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"enabled":true,"uploadProtocol":2}` {
 		t.Fatalf("body = %s", body)
 	}
 	// A cached "yes" is exactly the answer that would outlive the switch being
@@ -158,7 +158,7 @@ func TestCaptureEnabledHandlerReportsTheAdministratorSwitch(t *testing.T) {
 	t.Setenv(envSourceCaptureEnabled, "0")
 	rec = httptest.NewRecorder()
 	rt.captureEnabledHandler(rec, httptest.NewRequest(http.MethodGet, "/capture/enabled", nil))
-	if body := strings.TrimSpace(rec.Body.String()); body != `{"enabled":false}` {
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"enabled":false,"uploadProtocol":2}` {
 		t.Fatalf("body = %s", body)
 	}
 }

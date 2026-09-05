@@ -1,5 +1,12 @@
 # Source-Side Audio Capture
 
+The current transport and reload behavior is documented in
+[Source capture transfer and recovery](source-capture-transfer.md). D-733
+replaces whole-capture uploads and directory adoption with immutable sessions,
+bounded pieces and server recording identities. Historical transport/adoption
+descriptions below describe the v1 compatibility path; the timing and rendering
+discussion still applies.
+
 Date: 2026-08-31
 
 Status: **prototype, on by default on this branch.** Capture, intake and

@@ -29,14 +29,16 @@ const (
 
 	envSourceCaptureEnabled = "CASSINI_SOURCE_CAPTURE"
 
-	capturePayloadFile = "capture-payload.js"
-	captureWorkerFile  = "capture-worker.js"
+	capturePayloadFile       = "capture-payload.js"
+	captureWorkerFile        = "capture-worker.js"
+	captureStorageWorkerFile = "capture-storage-worker.js"
 )
 
 // captureAssetFiles maps the served /ui/ path suffix to its file in the dist.
 var captureAssetFiles = map[string]string{
-	capturePayloadFile: capturePayloadFile,
-	captureWorkerFile:  captureWorkerFile,
+	capturePayloadFile:       capturePayloadFile,
+	captureWorkerFile:        captureWorkerFile,
+	captureStorageWorkerFile: captureStorageWorkerFile,
 }
 
 // sourceCaptureEnabled reports whether this installation collects

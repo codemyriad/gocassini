@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cassini-operator/internal/operator/appapi"
+	"github.com/oklog/ulid/v2"
 )
 
 // Source-capture upload intake.
@@ -107,6 +108,10 @@ type captureSegment struct {
 }
 
 type captureSidecar struct {
+	RecordingID     string           `json:"recordingId,omitempty"`
+	SessionID       string           `json:"sessionId,omitempty"`
+	InputDigest     string           `json:"inputDigest,omitempty"`
+	ReceiptID       string           `json:"receiptId,omitempty"`
 	Format          string           `json:"format"`
 	RoomToken       string           `json:"roomToken"`
 	ParticipantID   string           `json:"participantId"`
@@ -589,7 +594,7 @@ func (rt *Runtime) captureEnabledHandler(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]bool{"enabled": sourceCaptureEnabled()})
+	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": sourceCaptureEnabled(), "uploadProtocol": 2})
 }
 
 // refuseCaptureUpload answers one refusal and leaves a server-side trace of it.
@@ -756,6 +761,8 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 					return
 				}
 				sidecar = &parsed
+				// The legacy route has no server recording/session binding.
+				sidecar.RecordingID, sidecar.SessionID, sidecar.InputDigest = "", "", ""
 				// A re-upload replaces a capture that is still on disk, and
 				// until this point the quota was charged as if both would
 				// coexist. They never do: promotion sets the old one aside and
@@ -859,6 +866,9 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 		}
 		sidecar.OwnerUserID = owner
 		sidecar.ReceivedAt = time.Now().UTC().Format(time.RFC3339)
+		// Persist notification intent with the files. Recovery can retry the
+		// database transaction even if this request never reaches it.
+		sidecar.ReceiptID = ulid.Make().String()
 
 		// Complete the directory in staging, THEN swap it in. Writing the
 		// sidecar after promotion left a window where a crash or a disk error

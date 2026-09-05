@@ -21,13 +21,14 @@ var buildArtifactFn = func(ctx context.Context, mkvPath, outputDir string, cfg t
 }
 
 type buildOptions struct {
-	inputPath       string
-	outDir          string
-	device          string
-	keepWork        bool
-	sourceAudioDir  string
-	sourceAudioRoom string
-	rebuild         bool
+	inputPath            string
+	outDir               string
+	device               string
+	keepWork             bool
+	sourceAudioDir       string
+	sourceAudioRoom      string
+	sourceAudioRecording string
+	rebuild              bool
 }
 
 func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -40,6 +41,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.BoolVar(&opts.keepWork, "keep-work", false, "keep transcriber work files inside the meeting bundle")
 	fs.StringVar(&opts.sourceAudioDir, "source-audio", "", "root of participant-uploaded source captures; speakers whose upload can be placed are transcribed from it instead of from the recorded track")
 	fs.StringVar(&opts.sourceAudioRoom, "source-audio-room", "", "Talk room token this recording belongs to; source captures are selected by room AND overlapping call window, so omitting it falls back to the window alone")
+	fs.StringVar(&opts.sourceAudioRecording, "source-audio-recording", "", "server recording identity for immutable source captures")
 	fs.BoolVar(&opts.rebuild, "rebuild-image", false, "ignored (kept for compatibility)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
@@ -268,6 +270,7 @@ func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle Meetin
 	// resolution (CASSINI_STT_DEVICE or GPU detection) in place.
 	cfg.SourceAudioDir = strings.TrimSpace(opts.sourceAudioDir)
 	cfg.SourceAudioRoom = strings.TrimSpace(opts.sourceAudioRoom)
+	cfg.SourceAudioRecording = strings.TrimSpace(opts.sourceAudioRecording)
 	if d := strings.ToLower(strings.TrimSpace(opts.device)); d == "cpu" || d == "cuda" {
 		cfg.Device = opts.device
 	}

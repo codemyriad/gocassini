@@ -31,6 +31,8 @@ test.beforeEach(() => {
   server.state.companionEnabled = true;
   server.state.recordingStatus = 0;
   server.state.captureWorker = "ok";
+  server.state.storageWorker = "ok";
+  server.state.recordingId = "fixture-recording";
 });
 
 async function setOfficialRecording(
@@ -150,7 +152,7 @@ async function captureDirs(
 // capture: same directory, same call start, segment numbering continuing. One
 // capture, uploaded once when the recording stops, holding both sides of the
 // reload.
-test("a reload mid-recording is adopted into one capture holding both sides", async ({ page }) => {
+test("a reload keeps both immutable sessions until recording stops", async ({ page }) => {
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await setOfficialRecording(page, 2);
@@ -179,43 +181,21 @@ test("a reload mid-recording is adopted into one capture holding both sides", as
   await page.waitForTimeout(3000);
 
   const during = await captureDirs(page);
-  expect(
-    during.map((dir) => dir.name),
-    "the reload started a second capture instead of resuming the first",
-  ).toEqual([dirName]);
-  expect(
-    Object.keys(during[0].segments).length,
-    "the rejoined page did not add a segment of its own",
-  ).toBeGreaterThan(Object.keys(before[0].segments).length);
-  // Nothing recorded before the reload was reopened and overwritten.
+  expect(during).toHaveLength(2);
+  const previous = during.find((dir) => dir.name === dirName)!;
   for (const [name, size] of Object.entries(before[0].segments)) {
-    expect(
-      during[0].segments[name],
-      `${name} shrank across the reload: the resumed capture reused its index`,
-    ).toBeGreaterThanOrEqual(size);
+    expect(previous.segments[name]).toBeGreaterThanOrEqual(size);
   }
-
   await setOfficialRecording(page, 0);
-  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
-
-  const upload = server.uploads[0];
-  const sidecar = upload.sidecar!;
-  expect(sidecar, "the upload carried no parseable sidecar").toBeTruthy();
-  // The capture still identifies itself by the call it started in, before the
-  // reload — which is what makes the server file it as one capture.
-  expect(dirName).toContain(String(sidecar.callStartWallMs));
-  // Both sides of the reload, contiguously numbered, every one of them real
-  // audio the server received.
-  expect(sidecar.segments.length).toBeGreaterThanOrEqual(3);
-  expect(sidecar.segments.map((segment: { index: number }) => segment.index)).toEqual(
-    sidecar.segments.map((_: unknown, index: number) => index),
-  );
-  expect(upload.segments.length).toBe(sidecar.segments.length);
-  for (const segment of upload.segments) {
-    expect(segment.bytes, `segment ${segment.name} arrived empty`).toBeGreaterThan(1000);
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(2);
+  expect(new Set(server.uploads.map((upload) => upload.sidecar.sessionId)).size).toBe(2);
+  expect(new Set(server.uploads.map((upload) => upload.sidecar.recordingId))).toEqual(new Set(["fixture-recording"]));
+  expect(server.uploads.reduce((n, upload) => n + upload.segments.length, 0)).toBeGreaterThanOrEqual(3);
+  for (const upload of server.uploads) {
+    expect(upload.segments.length).toBe(upload.sidecar.segments.length);
+    for (const segment of upload.segments) expect(segment.bytes).toBeGreaterThan(1000);
   }
-  // Nothing is left behind once the merged capture is accepted.
-  expect(await captureDirs(page)).toEqual([]);
+  await expect.poll(() => captureDirs(page)).toEqual([]);
 });
 
 // The other half of R2's promise: a buffer whose recording is over is not held
@@ -330,7 +310,7 @@ test("a buffered capture from another account is neither resumed nor uploaded", 
   await page.waitForTimeout(2600);
   await setOfficialRecording(page, 0);
 
-  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(2);
   expect(
     server.uploads[0].sidecar!.participantId,
     "the upload was not alice's own capture",
@@ -655,6 +635,28 @@ async function joinWithBrokenWorker(page: import("@playwright/test").Page) {
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
 }
+
+test("a missed recording restart cannot reuse the previous server identity", async ({ page }) => {
+  await joinWithBrokenWorker(page);
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(2600);
+  server.state.recordingId = "second-recording";
+  await expect.poll(async () => (await captureDirs(page)).length, { timeout: 10_000 }).toBe(2);
+  await page.waitForTimeout(2600);
+  await setOfficialRecording(page, 0);
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(2);
+  expect(new Set(server.uploads.map((upload) => upload.sidecar.recordingId)))
+    .toEqual(new Set(["fixture-recording", "second-recording"]));
+});
+
+test("a stalled storage worker cannot stall outgoing meeting audio", async ({ page }) => {
+  server.state.storageWorker = "stalled";
+  await joinWithBrokenWorker(page);
+  await setOfficialRecording(page, 2);
+  await expectStillAudible(page);
+  await expectStillAudible(page);
+  expect(server.uploads).toHaveLength(0);
+});
 
 test("a timing worker that 404s costs the capture, not the participant's audio", async ({ page }) => {
   // An ExApp restarted, upgraded, or rolled back mid-call answers 404 for a

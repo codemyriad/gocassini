@@ -1,119 +1,16 @@
 /// <reference lib="webworker" />
-// The capture worker: RTP timing anchors and durable storage.
-//
-// It has two jobs, both of which have to happen off the page's main thread.
-//
-// 1. Timing. A WebRTC encoded transform can only run in a worker, by spec. We
-//    attach one to the outgoing audio sender, so every encoded Opus frame
-//    passes through here on its way to the network. We read its RTP timestamp
-//    and hand the frame straight back, unmodified.
-//
-//    These timestamps are the participant's own 48 kHz sample clock. They are
-//    NOT what the recorder logs for the same audio — Janus rewrites the
-//    timestamps it relays to each subscriber — so they cannot be matched to it
-//    directly. What they give, paired with the wall-clock time recorded
-//    alongside, is the RATE: how fast this machine's sound card runs against
-//    its wall clock. That is the dominant drift in the system, and it is
-//    immune to loss, because these describe frames the client ENCODED rather
-//    than packets that arrived. See docs/source-audio-capture.md.
-//
-// 2. Storage. OPFS's createSyncAccessHandle is worker-only, and it is the right
-//    place for this: quota is a share of free disk rather than localStorage's
-//    few megabytes (an hour of Opus is ~14 MB before base64 even enters it),
-//    and the file survives a tab close, a crash, and a reboot — which is what
-//    makes "upload after the call" safe rather than a way to lose meetings.
+// Durable capture storage. Timing anchors arrive from timing-worker.ts;
+// synchronous OPFS operations never run on the outgoing audio worker.
 
 import type { CaptureAnchor, CaptureSegment, CaptureSidecar } from "./protocol";
 import { SOURCE_CAPTURE_PENDING_NAMES, mergeMuteIntervals } from "./protocol";
 
-declare const self: DedicatedWorkerGlobalScope & {
-  onrtctransform: ((event: RTCTransformEvent) => void) | null;
-};
+declare const self: DedicatedWorkerGlobalScope;
 
-// ANCHOR_EVERY_FRAMES samples one anchor per second of speech (Opus frames are
-// 20 ms). An hour of talking is ~3600 anchors, a few hundred kB of JSON, and
-// far more than placement needs — the redundancy is what makes the sidecar
-// robust to the segments where the participant said nothing.
-const ANCHOR_EVERY_FRAMES = 50;
-
-interface RTCTransformEvent {
-  transformer: {
-    readable: ReadableStream<RTCEncodedAudioFrame>;
-    writable: WritableStream<RTCEncodedAudioFrame>;
-    options?: { sessionId?: string };
-  };
-}
-
-interface RTCEncodedAudioFrame {
-  timestamp?: number;
-  getMetadata(): { synchronizationSource?: number; rtpTimestamp?: number };
-}
-
-// anchors accumulates for the whole call, not per segment.
-//
-// The transform is attached to the SENDER, which outlives the individual tracks
-// a segment is cut on (replaceTrack during a device change restarts the
-// recorder but not the encoder pipeline). Keeping one stream of wall-clocked
-// anchors and slicing it by segment at finalize time is both simpler and more
-// accurate than trying to notify the transform about page-side segment
-// boundaries it cannot observe.
+// Timing arrives from a separate worker. No outgoing audio frame waits on
+// this worker's synchronous disk operations.
 let anchors: CaptureAnchor[] = [];
-let frameIndex = 0;
-let lastSSRC = -1;
-// The transform is installed before Talk negotiates so it cannot be attached
-// late, but it remains a pure pass-through until Talk confirms that its own
-// recording is active. Thus no timing evidence, audio file, or OPFS directory
-// is collected merely because somebody joined a call.
 let timingActive = false;
-
-function recordAnchor(frame: RTCEncodedAudioFrame): void {
-  if (!timingActive) {
-    return;
-  }
-  const metadata = frame.getMetadata();
-  const ssrc = metadata.synchronizationSource ?? -1;
-  // Always anchor on an SSRC change: that is a re-negotiation, and it is also
-  // where the recorder rotates to a new stream segment in its own artifact, so
-  // it is exactly the seam both sides need a fresh reference point for.
-  if (frameIndex % ANCHOR_EVERY_FRAMES === 0 || ssrc !== lastSSRC) {
-    anchors.push({
-      frameIndex,
-      rtpTimestamp: metadata.rtpTimestamp ?? frame.timestamp ?? 0,
-      ssrc,
-      wallMs: Date.now(),
-    });
-    lastSSRC = ssrc;
-  }
-  frameIndex += 1;
-}
-
-// installTransformHandler wires the encoded-transform entry point. Split out
-// from the assignment so the module can be imported by a unit test in Node,
-// where there is no worker global to assign onto.
-export function onTransform(event: RTCTransformEvent): void {
-  const { readable, writable } = event.transformer;
-  readable
-    .pipeThrough(
-      new TransformStream<RTCEncodedAudioFrame, RTCEncodedAudioFrame>({
-        transform(frame, controller) {
-          // Observe, never modify. This sits in the live send path of a call in
-          // progress: anything thrown here degrades the participant's audio for
-          // everyone, so the measurement is wrapped and the frame is forwarded
-          // whatever happens.
-          try {
-            recordAnchor(frame);
-          } catch {
-            // A frame we failed to measure is a missing anchor, nothing more.
-          }
-          controller.enqueue(frame);
-        },
-      }),
-    )
-    .pipeTo(writable)
-    .catch(() => {
-      // The pipe rejects when the sender goes away at the end of the call.
-    });
-}
 
 // --- OPFS storage -----------------------------------------------------------
 
@@ -142,14 +39,6 @@ let captureDir: FileSystemDirectoryHandle | null = null;
 const segments = new Map<number, OpenSegment>();
 let pendingDirName: string | null = null;
 let pendingBase: Omit<CaptureSidecar, "segments" | "callEndWallMs"> | null = null;
-// adoptedSegments are segments a PREVIOUS page recorded into this same
-// directory, handed over when a reload resumes a capture rather than starting a
-// second one. Their files are already on disk and their anchors were measured
-// against that page's encoder, so they are carried verbatim: this worker never
-// opens, writes, re-slices or deletes them. It only has to keep describing them
-// in every sidecar it writes, or the reload's first half would be present on
-// disk and absent from the manifest, which is the same as losing it.
-let adoptedSegments: CaptureSegment[] = [];
 
 async function ensureDir(name: string): Promise<FileSystemDirectoryHandle> {
   if (captureDir) {
@@ -216,7 +105,7 @@ function recoverableSegments(now: number): CaptureSegment[] {
         muteIntervals: mergeMuteIntervals(segment.muteIntervals),
       };
     });
-  return [...adoptedSegments, ...live].sort((a, b) => a.index - b.index);
+  return live.sort((a, b) => a.index - b.index);
 }
 
 // PENDING_SIDECAR_MIN_INTERVAL_MS bounds how often the recovery sidecar is
@@ -380,7 +269,7 @@ export function anchorsWithin(
 }
 
 async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">): Promise<CaptureSidecar> {
-  if (segments.size === 0 && adoptedSegments.length === 0) {
+  if (segments.size === 0) {
     // Nothing was ever opened — a capture denied or revoked before it started.
     // Creating the directory just to throw would leave an empty one behind on
     // the participant's disk, which is exactly what a denied capture must not
@@ -388,9 +277,7 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
     throw new Error("nothing was recorded");
   }
   const dir = await ensureDir(dirName);
-  // Adopted first, and untouched: they were sealed by the page that recorded
-  // them and their files are already complete.
-  const built: CaptureSegment[] = [...adoptedSegments];
+  const built: CaptureSegment[] = [];
   for (const segment of [...segments.values()].sort((a, b) => a.meta.index - b.meta.index)) {
     if (segment.failed || segment.offset === 0) {
       // Never describe a segment whose bytes are not all there, and never
@@ -464,11 +351,8 @@ function resetRecordingInterval(): void {
     }
   }
   segments.clear();
-  adoptedSegments = [];
   captureDir = null;
   anchors = [];
-  frameIndex = 0;
-  lastSSRC = -1;
   pendingDirName = null;
   pendingBase = null;
   lastPendingWriteMs = 0;
@@ -483,26 +367,15 @@ export async function onMessage(event: MessageEvent): Promise<void> {
         timingActive = message.active === true;
         if (timingActive) {
           anchors = [];
-          frameIndex = 0;
-          lastSSRC = -1;
         }
+        break;
+      case "anchor":
+        if (timingActive) anchors.push(message.anchor as CaptureAnchor);
         break;
       case "capture-start": {
         pendingDirName = message.dirName;
         pendingBase = message.base;
         lastPendingWriteMs = 0;
-        adoptedSegments = Array.isArray(message.adopted) ? (message.adopted as CaptureSegment[]) : [];
-        if (adoptedSegments.length > 0) {
-          // The stale manifest goes FIRST. A page that sealed before it died
-          // left a capture.json describing only the segments it knew about; a
-          // third page load would prefer that file and file this reload's
-          // second half as if the first had never happened. Removing it makes
-          // the recovery sidecar written immediately below the only manifest in
-          // the directory until this interval seals its own.
-          const dir = await ensureDir(pendingDirName as string);
-          await dir.removeEntry("capture.json").catch(() => {});
-          await refreshPendingSidecar(true);
-        }
         break;
       }
       case "segment-start":
@@ -517,11 +390,8 @@ export async function onMessage(event: MessageEvent): Promise<void> {
         self.postMessage({ type: "segment-stopped", index: message.index });
         break;
       case "finalize": {
-        // A failure here reaches the page as "error": there will be no
-        // "finalized" for this interval. It does not stop the worker. The
-        // worker is also the sender's encoded transform, and a page that
-        // terminated it mid-call would take the participant's outgoing audio
-        // with it.
+        // The timing worker forwards completion or failure to the page while
+        // continuing to forward Talk's outgoing audio.
         try {
           const sidecar = await finalize(message.dirName, message.base);
           self.postMessage({ type: "finalized", dirName: message.dirName, sidecar });
@@ -553,7 +423,6 @@ export async function onMessage(event: MessageEvent): Promise<void> {
 // sequential anyway — and makes the message order the page sent the order the
 // worker applies.
 if (typeof self !== "undefined" && typeof self.postMessage === "function") {
-  self.onrtctransform = onTransform;
   let queue: Promise<void> = Promise.resolve();
   self.onmessage = (event: MessageEvent) => {
     queue = queue.then(() => onMessage(event));

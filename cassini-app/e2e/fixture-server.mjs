@@ -243,7 +243,7 @@ function parseMultipart(body, contentType) {
         // operator decides it. The field name cannot be relied on: the AppAPI
         // proxy rebuilds the body through PHP, which collapses a repeated
         // field name to its last file and rewrites some characters.
-        result.segments.push({ name: fileMatch[1], bytes: payload.length });
+        result.segments.push({ name: fileMatch[1], bytes: payload.length, payload });
       }
     }
     index = next;
@@ -253,6 +253,7 @@ function parseMultipart(body, contentType) {
 
 export async function startFixtureServer() {
   const uploads = [];
+  const transfers = new Map();
   // captureWorker decides what the proxy serves for the timing worker:
   // "ok" the real built bundle, "missing" a 404, "throws" a script that dies
   // on load, "silent" one that loads and never signals anything.
@@ -261,6 +262,9 @@ export async function startFixtureServer() {
     companionEnabled: true,
     recordingStatus: 0,
     captureWorker: "ok",
+    uploadProtocol: 2,
+    recordingId: "fixture-recording",
+    storageWorker: "ok",
   };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
@@ -313,6 +317,10 @@ export async function startFixtureServer() {
       });
       return res.end(LEGACY_CAPTURE_WORKER);
     }
+    if (path === `${PROXY_PREFIX}/ui/capture-storage-worker.js` && state.storageWorker === "stalled") {
+      res.writeHead(200, { "content-type": "text/javascript" });
+      return res.end('self.postMessage({type:"ready"}); while (true) {}');
+    }
     if (path.startsWith(`${PROXY_PREFIX}/ui/`)) {
       const name = path.slice(`${PROXY_PREFIX}/ui/`.length);
       try {
@@ -328,7 +336,39 @@ export async function startFixtureServer() {
       // The administrator switch, as a running capture sees it. A test can flip
       // it mid-call to prove the boundary reaches clients already recording.
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-      return res.end(JSON.stringify({ enabled: state.captureEnabled }));
+      return res.end(JSON.stringify({ enabled: state.captureEnabled, uploadProtocol: state.uploadProtocol }));
+    }
+    if (path === `${PROXY_PREFIX}/operator/capture/recording`) {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      return res.end(JSON.stringify({ recordingId: state.recordingId }));
+    }
+    if (path === `${PROXY_PREFIX}/operator/capture/transfer`) {
+      if (!state.captureEnabled) { res.writeHead(403); return res.end(); }
+      const key = url.searchParams.get("session");
+      const transfer = transfers.get(key) ?? { pieces: new Map(), manifest: null };
+      transfers.set(key, transfer);
+      if (req.method === "GET") {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ pieces: [...transfer.pieces.keys()], committed: transfer.manifest !== null }));
+      }
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = Buffer.concat(chunks);
+      if (url.searchParams.get("op") === "commit") {
+        const manifest = JSON.parse(body.toString());
+        if (!transfer.manifest) {
+          const segments = manifest.sidecar.segments.map((segment) => ({
+            name: segment.audioName,
+            bytes: manifest.pieces[segment.audioName].reduce((n, hash) => n + transfer.pieces.get(hash).length, 0),
+          }));
+          uploads.push({ sidecar: manifest.sidecar, segments });
+          transfer.manifest = manifest;
+        }
+      } else {
+        const parsed = parseMultipart(body, req.headers["content-type"] ?? "");
+        transfer.pieces.set(url.searchParams.get("piece"), parsed.segments[0].payload);
+      }
+      res.writeHead(204); return res.end();
     }
     if (path === "/ocs/v2.php/apps/spreed/api/v4/room/testroom") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });

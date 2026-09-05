@@ -382,6 +382,7 @@ fi
 # evaluates it offline against synthesized documents — an edit that weakens it
 # has to fail there rather than pass unnoticed on a machine with no stack.
 # BEGIN browser-result contract
+# shellcheck disable=SC2016 # jq variables, deliberately not shell expansion.
 BROWSER_RESULT_CONTRACT='
   .result == "passed"
   and .recording.callRecording == 2
@@ -409,8 +410,8 @@ BROWSER_RESULT_CONTRACT='
   and .alice.microphoneSwitch.before.trackId != .alice.microphoneSwitch.after.trackId
   and ([.alice.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 3
   and (.alice.reload.capturesBefore | length) == 1
-  and (.alice.reload.capturesAfter | length) == 1
-  and .alice.reload.capturesAfter[0] == .alice.reload.capturesBefore[0]
+  and (.alice.reload.capturesAfter | length) == 2
+  and (.alice.reload.capturesBefore[0] as $before | .alice.reload.capturesAfter | index($before)) != null
   and .alice.reload.segmentsAfter > .alice.reload.segmentsBefore
   and .alice.reload.preservedPreReloadBytes == true
   and .alice.mediaAfterReload.rejoined == true
@@ -418,7 +419,7 @@ BROWSER_RESULT_CONTRACT='
   and ([.bob.duringRecordingOPFS[].files[] | select(.name | test("^segment-[0-9]+\\.webm$"))] | length) >= 1
   and .alice.upload.status == 202
   and .bob.upload.status == 202
-  and .alice.observedUploadRequestCount == 1
+  and .alice.observedUploadRequestCount == 2
   and .bob.observedUploadRequestCount == 1
 '
 # END browser-result contract
@@ -427,7 +428,7 @@ jq -e "$BROWSER_RESULT_CONTRACT" "$LOG_DIR/browser/result.json" >/dev/null \
 pass "both real browser participants sent SFU audio, captured themselves, and uploaded"
 pass "neither browser stored anything of its own for capture"
 pass "Talk's microphone selection replaced Alice's live sender and cut multiple browser segments"
-pass "Alice reloaded mid-recording, rejoined, and the rejoined page resumed the same capture"
+pass "Alice reloaded mid-recording, rejoined, and the rejoined page retained both immutable sessions"
 
 # verify_owner_capture asserts one participant's capture landed whole under
 # their own owner directory and is reconciled byte-for-byte against the upload
@@ -438,64 +439,50 @@ verify_owner_capture() {
   local who="$1" owner="$2" min_segments="$3"
   local owner_root="$CAPTURE_ROOT/$ROOM_TOKEN/$owner"
   local sidecar="$LOG_DIR/stored-sidecar-$owner.json"
-  docker exec "$EXAPP_CONTAINER" test -d "$owner_root" \
-    || fail "accepted browser upload left no $owner owner directory under the capture root"
-  OWNER_CALL_START_MS="$(docker exec "$EXAPP_CONTAINER" ls -1 "$owner_root")"
-  [[ "$OWNER_CALL_START_MS" =~ ^[0-9]+$ ]] \
-    || fail "expected exactly one numeric $owner call directory, got: $OWNER_CALL_START_MS"
-  local final_dir="$owner_root/$OWNER_CALL_START_MS"
-  docker exec "$EXAPP_CONTAINER" cat "$final_dir/capture.json" >"$sidecar" \
-    || fail "stored $owner capture has no capture.json"
-
-  jq -e --arg owner "$owner" --arg room "$ROOM_TOKEN" --arg format "$CAPTURE_FORMAT" \
-    --arg start "$OWNER_CALL_START_MS" --argjson min "$min_segments" '
-    (.segments | length) as $count
-    | .format == $format
-      and .roomToken == $room
-      and .participantId == $owner
-      and .ownerUserId == $owner
-      and (.callStartWallMs | tostring) == $start
-      and (.receivedAt | type == "string" and length > 0)
-      and (.userAgent | test("Chrom(e|ium)"))
-      and $count >= $min
-      and ([.segments[].index] == [range(0; $count)])
-      and all(.segments[]; .audioName == ("segment-" + (.index | tostring) + ".webm")
-        and (.mimeType | startswith("audio/webm")))
-  ' "$sidecar" >/dev/null \
-    || fail "stored sidecar is not $owner's contiguous browser capture of this call"
-
-  local -a segment_names
-  mapfile -t segment_names < <(jq -r '.segments[].audioName' "$sidecar")
-  OWNER_SEGMENT_COUNT="${#segment_names[@]}"
-  (( OWNER_SEGMENT_COUNT >= min_segments )) \
-    || fail "stored $owner capture has fewer than $min_segments segment(s)"
+  local response_dir="$LOG_DIR/commits-$owner"
+  mkdir -p "$response_dir"
+  local -a commits
+  mapfile -t commits < <(jq -c --arg who "$who" '.[$who].uploads[].body | fromjson' "$LOG_DIR/browser/result.json")
+  (( ${#commits[@]} > 0 )) || fail "$owner has no observed commits"
+  OWNER_SEGMENT_COUNT=0
   OWNER_BYTES=0
-  local name bytes
-  printf 'name\tbytes\n' >"$LOG_DIR/stored-segments-$owner.tsv"
-  for name in "${segment_names[@]}"; do
-    [[ "$name" =~ ^segment-[0-9]+\.webm$ ]] || fail "unsafe or unexpected segment name: $name"
-    bytes="$(docker exec "$EXAPP_CONTAINER" stat -c %s "$final_dir/$name")" \
-      || fail "sidecar-declared segment is absent: $owner/$name"
-    [[ "$bytes" =~ ^[0-9]+$ ]] || fail "$owner/$name has a non-numeric byte size: $bytes"
-    (( bytes > 1000 )) || fail "$owner/$name is implausibly small ($bytes bytes)"
-    OWNER_BYTES=$((OWNER_BYTES + bytes))
-    printf '%s\t%s\n' "$name" "$bytes" >>"$LOG_DIR/stored-segments-$owner.tsv"
+  OWNER_CALL_START_MS=""
+  local commit capture_dir final_dir current name bytes count total start
+  for commit in "${commits[@]}"; do
+    capture_dir="$(jq -r '.captureDir' <<<"$commit")"
+    [[ "$capture_dir" =~ ^session-[a-f0-9]{64}$ ]] || fail "unsafe committed session directory"
+    final_dir="$owner_root/$capture_dir"
+    current="$response_dir/$capture_dir.json"
+    docker exec "$EXAPP_CONTAINER" cat "$final_dir/capture.json" >"$current" \
+      || fail "committed $owner session has no manifest"
+    jq -e --arg owner "$owner" --arg room "$ROOM_TOKEN" --arg format "$CAPTURE_FORMAT" --argjson receipt "$commit" '
+      .format == $format and .roomToken == $room and .ownerUserId == $owner
+      and .participantId == $owner and .recordingId == $receipt.recordingId
+      and .sessionId == $receipt.sessionId and .receiptId != null
+      and (.segments | length) == $receipt.segments
+      and ([.segments[].index] == [range(0; .segments | length)])
+      and (.userAgent | test("Chrom(e|ium)"))
+    ' "$current" >/dev/null || fail "invalid committed $owner session"
+    count=0
+    total=0
+    while IFS= read -r name; do
+      [[ "$name" =~ ^segment-[0-9]+\.webm$ ]] || fail "unsafe segment name"
+      bytes="$(docker exec "$EXAPP_CONTAINER" stat -c %s "$final_dir/$name")" || fail "missing committed segment"
+      [[ "$bytes" =~ ^[0-9]+$ ]] || fail "non-numeric segment size"
+      (( bytes > 1000 )) || fail "empty committed segment"
+      total=$((total + bytes))
+      count=$((count + 1))
+    done < <(jq -r '.segments[].audioName' "$current")
+    jq -e --argjson bytes "$total" --argjson count "$count" '.status == "accepted" and .bytes == $bytes and .segments == $count' <<<"$commit" >/dev/null \
+      || fail "$owner response does not account for stored bytes"
+    OWNER_SEGMENT_COUNT=$((OWNER_SEGMENT_COUNT + count))
+    OWNER_BYTES=$((OWNER_BYTES + total))
+    start="$(jq -r '.callStartWallMs' "$current")"
+    if [[ -z "$OWNER_CALL_START_MS" ]] || (( start < OWNER_CALL_START_MS )); then OWNER_CALL_START_MS="$start"; fi
   done
-  (( OWNER_BYTES > 10000 )) \
-    || fail "$owner's browser capture is implausibly small in total ($OWNER_BYTES bytes)"
-
-  jq -e --arg who "$who" --arg room "$ROOM_TOKEN" \
-    --argjson segments "$OWNER_SEGMENT_COUNT" --argjson bytes "$OWNER_BYTES" '
-    (.[$who].upload.body | fromjson) as $upload
-    | $upload.status == "accepted"
-      and $upload.room == $room
-      and $upload.segments == $segments
-      and $upload.bytes == $bytes
-  ' "$LOG_DIR/browser/result.json" >/dev/null \
-    || fail "$owner's browser-observed upload response does not account for every stored byte"
-
-  grep -qF "capture upload: room=$ROOM_TOKEN owner=$owner segments=$OWNER_SEGMENT_COUNT bytes=$OWNER_BYTES" \
-    "$(exapp_logs)" || fail "operator log does not account for $owner's browser upload"
+  (( OWNER_SEGMENT_COUNT >= min_segments && OWNER_BYTES > 10000 )) || fail "incomplete $owner session set"
+  jq -s '{sessions: ., segments: [.[].segments[]]}' "$response_dir"/*.json >"$sidecar"
+  jq -e '[.sessions[].recordingId] | unique | length == 1' "$sidecar" >/dev/null || fail "$owner sessions name different recordings"
 }
 
 verify_owner_capture alice "$ALICE" 3

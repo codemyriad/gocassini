@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -65,11 +66,7 @@ func (rt *Runtime) sourceAudioRebuildQuietPeriod() time.Duration {
 type sourceCaptureSet struct {
 	Count  int
 	Owners []string
-	// Digest covers owner, call start, segment name and segment SIZE. Metadata
-	// alone is not enough: a checkpointed sidecar describes a segment that was
-	// still growing, so two uploads can agree on every declared field and carry
-	// different amounts of the same segment. The size is what separates them,
-	// and it is the same thing captureWouldLoseStoredAudio compares.
+	// Digest covers the audio bytes and placement metadata, not delivery time.
 	Digest string
 }
 
@@ -144,7 +141,7 @@ func sortedKeys(byOwner map[string][]scannedCapture) []string {
 // meeting being transcribed. A directory that cannot be LISTED is an error,
 // because "I could not look" and "there is nothing there" lead to opposite
 // decisions here — the first must not settle a debt.
-func scanSourceCapturesForRecording(root, roomToken string, window captureRecordingWindow) (sourceCaptureSet, error) {
+func scanSourceCapturesForRecording(root, roomToken string, window captureRecordingWindow, recordingIDs ...string) (sourceCaptureSet, error) {
 	set := sourceCaptureSet{}
 	root = strings.TrimSpace(root)
 	token := strings.TrimSpace(roomToken)
@@ -208,6 +205,12 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 				continue
 			}
 			fit := captureWindowFit(sidecar.CallStartWallMS, sidecar.CallEndWallMS, window.StartMS, window.EndMS)
+			if sidecar.RecordingID != "" {
+				if len(recordingIDs) == 0 || sidecar.RecordingID != recordingIDs[0] {
+					continue
+				}
+				fit = captureWindowIntersects
+			}
 			if fit == captureWindowApart {
 				continue
 			}
@@ -234,12 +237,12 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 				set.Owners = append(set.Owners, capture.owner)
 			}
 			for _, segment := range capture.segments {
-				size := int64(-1)
-				if info, err := os.Stat(filepath.Join(capture.dir, segment.AudioName)); err == nil {
-					size = info.Size()
+				digest, err := captureSegmentDigest(capture.dir, segment)
+				if err != nil {
+					return set, err
 				}
-				lines = append(lines, fmt.Sprintf("%s\t%d\t%s\t%d",
-					capture.owner, capture.startMS, segment.AudioName, size))
+				lines = append(lines, fmt.Sprintf("%s\t%d\t%d\t%s",
+					capture.owner, capture.startMS, capture.endMS, digest))
 			}
 		}
 	}
@@ -250,6 +253,29 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 		set.Digest = hex.EncodeToString(sum[:])
 	}
 	return set, nil
+}
+
+func captureSegmentDigest(dir string, segment captureSegment) (string, error) {
+	if !captureSafeName.MatchString(segment.AudioName) || filepath.Base(segment.AudioName) != segment.AudioName {
+		return "", fmt.Errorf("invalid segment name")
+	}
+	h := sha256.New()
+	if err := json.NewEncoder(h).Encode(segment); err != nil {
+		return "", err
+	}
+	f, err := os.Open(filepath.Join(dir, segment.AudioName))
+	if errors.Is(err, os.ErrNotExist) {
+		// A missing segment is an explicit different input, as in the decoder.
+		_, _ = io.WriteString(h, "missing")
+	} else if err != nil {
+		return "", err
+	} else {
+		defer f.Close()
+		if _, err := io.Copy(h, f); err != nil {
+			return "", err
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // sourceCaptureSetForJob is the same scan, keyed by a job rather than a window.
@@ -264,7 +290,7 @@ func (rt *Runtime) sourceCaptureSetForJob(ctx context.Context, jobID string) (so
 	if err != nil {
 		return sourceCaptureSet{}, err
 	}
-	return scanSourceCapturesForRecording(rt.cfg.CaptureRoot, binding.RoomToken, window)
+	return scanSourceCapturesForRecording(rt.cfg.CaptureRoot, binding.RoomToken, window, jobID)
 }
 
 // noteCaptureArrival attributes one accepted upload to its recording and
@@ -293,12 +319,33 @@ func (rt *Runtime) noteCaptureArrival(sidecar *captureSidecar, owner string, log
 	// 202 must not cancel the write that makes its upload useful.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(rt.ctx), 30*time.Second)
 	defer cancel()
+	if sidecar.ReceiptID != "" {
+		known, err := rt.store.captureReceiptKnown(ctx, sidecar.ReceiptID)
+		if err != nil {
+			logger.Printf("capture receipt lookup: %v", err)
+			return
+		}
+		if known {
+			return
+		}
+	}
 
 	var (
 		match    captureJobMatch
 		resolved error
 	)
 	err := retrySourceAudioWrite(ctx, func() error {
+		if sidecar.RecordingID != "" {
+			room, err := rt.store.captureRecordingRoom(ctx, sidecar.RecordingID)
+			if err != nil {
+				return err
+			}
+			if room != sidecar.RoomToken {
+				return fmt.Errorf("capture recording room mismatch")
+			}
+			match.JobID = sidecar.RecordingID
+			return nil
+		}
 		match, resolved = rt.store.ResolveJobForCapture(ctx, sidecar.RoomToken, sidecar.CallStartWallMS, sidecar.CallEndWallMS)
 		if errors.Is(resolved, sql.ErrNoRows) || errors.Is(resolved, ErrCaptureJobAmbiguous) {
 			// Both are answers, not failures: retrying cannot change either.
@@ -328,6 +375,9 @@ func (rt *Runtime) noteCaptureArrival(sidecar *captureSidecar, owner string, log
 
 	at := nowUTCString()
 	if err := retrySourceAudioWrite(ctx, func() error {
+		if sidecar.ReceiptID != "" {
+			return rt.store.noteCaptureReceipt(ctx, match.JobID, sidecar.ReceiptID, at)
+		}
 		return rt.store.NoteSourceAudioUpload(ctx, match.JobID, at)
 	}); err != nil {
 		logger.Printf("capture rebuild: could not record the arrival for job=%s after %d attempts: %v; this capture will only reach a transcript if the job is rerun by hand",
@@ -398,6 +448,7 @@ func (rt *Runtime) dispatchSourceAudioRebuilds() {
 		// so turning ingestion on later still picks it up.
 		return
 	}
+	rt.reconcileCaptureReceipts()
 	candidates, err := rt.store.ListJobsAwaitingSourceAudioRebuild(rt.ctx, 0)
 	if err != nil {
 		if rt.ctx.Err() == nil {
@@ -456,7 +507,7 @@ func (rt *Runtime) considerSourceAudioRebuild(candidate sourceAudioRebuildCandid
 		rt.settleSourceAudioDebt(candidate)
 		return
 	}
-	set, err := scanSourceCapturesForRecording(rt.cfg.CaptureRoot, candidate.RoomToken, candidate.Window)
+	set, err := scanSourceCapturesForRecording(rt.cfg.CaptureRoot, candidate.RoomToken, candidate.Window, candidate.JobID)
 	if err != nil {
 		// "I could not look" is not "there is nothing there". Leave the debt
 		// standing and try again on the next pass.

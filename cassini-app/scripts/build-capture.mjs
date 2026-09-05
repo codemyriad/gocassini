@@ -23,7 +23,8 @@ const root = join(here, "..");
 
 const ENTRIES = [
   { in: "src/capture/payload.ts", out: "capture-payload" },
-  { in: "src/capture/worker.ts", out: "capture-worker" },
+  { in: "src/capture/timing-worker.ts", out: "capture-worker" },
+  { in: "src/capture/worker.ts", out: "capture-storage-worker" },
 ];
 
 for (const entry of ENTRIES) {
