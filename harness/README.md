@@ -778,11 +778,13 @@ CASSINI_EXPECT_GPU_UNAVAILABLE=1 IMAGE_REF="$IMAGE_REF" \
 That script accepts exactly one prebuilt image, tags it for `reuse-local`, lets
 AppAPI/HaRP create `nc_app_gocassini`, verifies the installed image ID and
 manifest-gated Talk configuration, performs one recording, and treats D-493
-teardown/leak checks as part of the pass. The CPU-host mode shown above proves
-raw capture plus immediate permanent-image blocking and rejects any CPU ASR
-launch. Omit `CASSINI_EXPECT_GPU_UNAVAILABLE` on a CUDA-ready host to require
-the completed viewer artifact, positive segments, and decoded words. Neither
-mode retries a failed recording.
+teardown/leak checks as part of the pass. Both device modes require the
+completed viewer artifact, positive segments, and decoded words; they differ in
+which device must have produced them. `CASSINI_EXPECT_GPU_UNAVAILABLE=1` (shown
+above) asserts the operator reported `device: cpu` and still transcribed —
+the CPU vertical from D-702 — so a runner that quietly has a GPU cannot pass as
+that mode. Omit it on a CUDA-ready host to require the GPU device instead.
+Neither mode retries a failed recording.
 
 #### D-403 manifest allow-list sensitivity control (negative run)
 

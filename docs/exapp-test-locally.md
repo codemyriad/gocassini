@@ -134,10 +134,11 @@ image, omit that flag to require both transcripts in the viewer catalog.
 
 ### Archive preservation checks
 
-The validation helper captures catalog IDs before recording. CUDA-positive mode
+The validation helper captures catalog IDs before recording. Either device mode
 fails if the second publish removes the first new job or any pre-existing ID;
-capture-only mode requires all prior IDs to remain and neither blocked job to
-appear. For manual inspection of the AppAPI persistent volume:
+the blocked-build mode (`--expect-build-blocked`, for a host that genuinely
+cannot run the configured device) requires all prior IDs to remain and neither
+blocked job to appear. For manual inspection of the AppAPI persistent volume:
 
 ```bash
 docker exec nc_app_gocassini sh -lc 'find "$APP_PERSISTENT_STORAGE/operator/jobs/current" -maxdepth 1 -name "*.meeting" | sort'
@@ -150,10 +151,10 @@ print([m.get("id") for m in d.get("meetings", [])])
 PY'
 ```
 
-Expected result in CUDA-positive mode: at least the two new job IDs remain in
-`catalog.json`. In capture-only mode they remain absent until the matching CUDA
-image is installed and an admin retries the blocked jobs; any catalog IDs that
-existed before the run remain in both modes.
+Expected result: at least the two new job IDs remain in `catalog.json`, on the
+CPU as well as on CUDA. In the blocked-build mode they remain absent until the
+blocking condition is resolved and an admin retries the jobs; any catalog IDs
+that existed before the run remain in every mode.
 
 ## Related direct-container Talk test
 

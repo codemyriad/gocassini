@@ -15,12 +15,10 @@ import (
 // checks over the same number, so "the meeting the user downloads is the
 // meeting this attempt sealed" is verified rather than assumed.
 //
-// This deliberately hashes the container bytes, not the decoded audio. The
-// portable format already carries Integrity.PCMSHA256 — a hash of decoded PCM
-// that survives a remux and is what the meeting id is derived from — and that
-// answers a different question: "is this the same recording?". The claim being
-// made here is narrower and about bytes: "is this the same file?". It also
-// costs a read instead of an ffmpeg decode.
+// This deliberately hashes the complete container bytes. The portable
+// manifest separately binds the compressed Opus audio essence, which survives
+// metadata-only rewrites. The claim here is narrower: "is this the same sealed
+// file?".
 func fileSHA256(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {

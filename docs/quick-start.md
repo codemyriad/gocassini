@@ -1,18 +1,19 @@
 # Quick start
 
 This is the fastest way to exercise Cassini **the way it really runs**: as a
-Nextcloud Talk ExApp installed through AppAPI. The locally built plain image is
-capture-only; completing transcription and opening a new result requires a
-CUDA-capable deploy daemon and the matching `-cuda` image.
+Nextcloud Talk ExApp installed through AppAPI. The locally built plain image
+completes the whole vertical on the CPU — capture, transcribe, publish — and a
+CUDA-capable deploy daemon with the matching `-cuda` image does the same
+transcription an order of magnitude faster.
 
 Goal:
 
 - start a local Nextcloud + AppAPI/HaRP + Talk stack
 - build and install Cassini as an ExApp (the production topology)
 - record a Talk meeting through Talk's record button
-- verify Talk audio is retained and the plain image immediately blocks the
-  GPU-only build with actionable recovery instructions
-- on a CUDA deployment, watch build -> seal -> publish and open the meeting
+- watch build -> seal -> publish and open the meeting — on a GPU-less host the
+  plain image transcribes on the CPU, more slowly, and reports which device it
+  used
 
 ## Before you begin
 
@@ -95,11 +96,12 @@ git lfs pull \
 ```
 
 This creates/reuses a private one-to-one conversation and triggers one Talk
-recording through the installed ExApp. In capture-only mode, a pass requires a
-ready Talk run bundle, non-empty audio with packets, immediate `build/blocked`,
-no retry timestamp, an actionable CUDA-runtime error, no ASR subprocess launch,
-and no prematurely published meeting. There is no recording retry. On a
-CUDA-ready installed image, omit `--expect-build-blocked`; the validator instead
+recording through the installed ExApp. A pass requires a ready Talk run bundle,
+non-empty audio with packets, and a published meeting whose transcript has
+positive segments and decoded words — on the plain image that transcript is
+produced on the CPU. There is no recording retry. `--expect-build-blocked`
+remains for the case a build genuinely cannot run (an explicit CUDA override on
+a host with no usable GPU); the validator then
 requires a succeeded job, Files-backed `.opus`, positive segments, and decoded
 words.
 
@@ -190,8 +192,8 @@ cd deployment && docker compose up --build
 ```
 
 Then paste `CALL_URL` into the control panel to submit a recording. The bundled
-standalone operator image is also capture-only, so its build becomes blocked
-until the preserved recording is retried in a CUDA-capable operator image. For
+standalone operator image transcribes on the CPU like the plain ExApp image; a
+GPU only changes how fast the build stage runs. For
 viewer-only work, `cassini-viewer`'s own dev server (`npm run dev`) is lighter
 still.
 

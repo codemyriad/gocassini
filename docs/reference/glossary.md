@@ -58,7 +58,7 @@ Transient build scratch: an intermediate bundle directory the build stage stages
 The durable output of the publish stage: a static site ready for the viewer.
 
 ### Portable `.opus`
-The one canonical, user-facing Cassini meeting format and the only durable, published contract. A single file containing playable Opus audio plus the embedded `org.cassini.portable-meeting/3` manifest. V1 and v2 remain readable for compatibility.
+The one canonical, user-facing Cassini meeting format and the only durable, published contract. A single file containing playable Opus audio plus the embedded `org.cassini.portable-meeting/1` manifest, published at <https://cassini-format.codemyriad.io/>.
 
 ### `cassini.json`
 The top-level manifest of an internal `.run`/`.meeting`/`.site` bundle directory. An implementation detail of the build/publish plumbing, not a user-facing or published format. The `.meeting` bundle's `cassini.json` (and its sibling `manifest.json`) are transient scratch scheduled for retirement.
@@ -106,7 +106,7 @@ If you find yourself asking questions like:
 
 - what is RTP?
 - what is the difference between container and codec?
-- why does Cassini hash decoded PCM audio?
+- how does Cassini verify the embedded Opus audio?
 
 then go to the full media glossary:
 

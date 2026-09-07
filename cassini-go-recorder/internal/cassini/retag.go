@@ -34,15 +34,14 @@ import (
 // Three properties this command holds onto:
 //
 //   - THE AUDIO IS NOT RE-ENCODED. `-c:a copy`, and the output is checked using
-//     the manifest's declared policy: canonical compressed Opus for v3, decoded
-//     PCM for legacy v1/v2. Under D-612 a published recording cannot be deleted,
-//     so a corrupt overwrite is permanent; the only place to catch it is before
-//     it is sent.
+//     the manifest's canonical compressed Opus policy. Under D-612 a published
+//     recording cannot be deleted, so a corrupt overwrite is permanent; the
+//     only place to catch it is before it is sent.
 //   - NOTHING ELSE IN THE MANIFEST CHANGES. The payload is edited as a generic
-//     JSON document rather than round-tripped through portable.Manifest, so a v2
-//     file's per-transcript descriptors, a provenance map, chapters,
-//     attachments and any key a future producer added all survive byte-exact in
-//     meaning. Only the named fields move.
+//     JSON document rather than round-tripped through portable.Manifest, so
+//     per-transcript descriptors, provenance, chapters, attachments and
+//     extension keys all survive byte-exact in meaning. Only the named fields
+//     move.
 //   - IT DERIVES NOTHING. --room-id takes an already-derived id. A flag that
 //     accepted a Talk token would be a flag that has to be HANDED one, and the
 //     entire point of a derived id is that the token does not travel. The
@@ -52,8 +51,6 @@ func runRetag(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		outPath         string
 		roomID          string
 		clearRoomID     bool
-		roomName        string
-		clearRoomName   bool
 		jobID           string
 		attemptNumber   int
 		clearAttempt    bool
@@ -66,8 +63,6 @@ func runRetag(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.StringVar(&outPath, "out", "", "output portable .opus file (required, must differ from the input)")
 	fs.StringVar(&roomID, "room-id", "", "set the derived room id (rm_<16 hex>)")
 	fs.BoolVar(&clearRoomID, "clear-room-id", false, "remove the room id")
-	fs.StringVar(&roomName, "room-name", "", "set the legacy record-time room name")
-	fs.BoolVar(&clearRoomName, "clear-room-name", false, "remove a legacy record-time room name")
 	fs.StringVar(&jobID, "job-id", "", "set the id of the operator job that produced this file")
 	fs.BoolVar(&clearJobID, "clear-job-id", false, "remove the job id")
 	fs.IntVar(&attemptNumber, "attempt-number", 0, "set the 1-based attempt of that job")
@@ -91,10 +86,6 @@ its room the next time it is published, because the exporter reads the manifest.
 --room-id takes an ALREADY-DERIVED id, never a Talk conversation token. The id
 is a one-way derivation precisely so the token does not travel with the
 recording; derive it where the token already is, and pass the result here.
-
---room-name writes the legacy record-time name that producers no longer emit.
-It is here to correct or clear one on an old file, not to start adding them: the
-room's current name belongs in the catalog entry.
 
 Every field is left exactly as it was unless a flag names it. Setting and
 clearing the same field is refused rather than resolved.
@@ -123,8 +114,6 @@ clearing the same field is refused rather than resolved.
 	edits, code := retagEditsFromFlags(retagFlagValues{
 		roomID:        roomID,
 		clearRoomID:   clearRoomID,
-		roomName:      roomName,
-		clearRoomName: clearRoomName,
 		jobID:         jobID,
 		clearJobID:    clearJobID,
 		attemptNumber: attemptNumber,
@@ -182,8 +171,6 @@ clearing the same field is refused rather than resolved.
 type retagFlagValues struct {
 	roomID        string
 	clearRoomID   bool
-	roomName      string
-	clearRoomName bool
 	jobID         string
 	clearJobID    bool
 	attemptNumber int
@@ -214,7 +201,6 @@ func retagEditsFromFlags(values retagFlagValues, fs *flag.FlagSet, stderr io.Wri
 		clearSet  bool
 	}{
 		{"room-id", "clear-room-id", "roomId", values.clearRoomID},
-		{"room-name", "clear-room-name", "roomName", values.clearRoomName},
 		{"job-id", "clear-job-id", "jobId", values.clearJobID},
 		{"attempt-number", "clear-attempt-number", "attemptNumber", values.clearAttempt},
 	} {
@@ -250,13 +236,6 @@ func retagEditsFromFlags(values retagFlagValues, fs *flag.FlagSet, stderr io.Wri
 				return nil, 2
 			}
 			edits = append(edits, retagEdit{Field: "roomId", Value: trimmed})
-		case "roomName":
-			trimmed := strings.TrimSpace(values.roomName)
-			if trimmed == "" {
-				fmt.Fprintln(stderr, "retag configuration error: --room-name is empty; use --clear-room-name to remove it")
-				return nil, 2
-			}
-			edits = append(edits, retagEdit{Field: "roomName", Value: trimmed})
 		case "jobId":
 			trimmed := strings.TrimSpace(values.jobID)
 			if trimmed == "" {
@@ -305,6 +284,9 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 	if err != nil {
 		return RetagSummary{}, err
 	}
+	if _, err := portable.DecodePublishedManifest(rawJSON); err != nil {
+		return RetagSummary{}, err
+	}
 	document, err := decodePortableMeetingDocument(rawJSON)
 	if err != nil {
 		return RetagSummary{}, err
@@ -345,9 +327,9 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 	// The manifest is re-parsed into the struct AFTER the edit rather than
 	// carried alongside it, so the integrity numbers verified below are the
 	// ones the output file actually claims — not the ones the input claimed.
-	var manifest portable.Manifest
-	if err := json.Unmarshal(updatedJSON, &manifest); err != nil {
-		return RetagSummary{}, fmt.Errorf("re-read portable meeting manifest: %w", err)
+	manifest, err := portable.DecodePublishedManifest(updatedJSON)
+	if err != nil {
+		return RetagSummary{}, err
 	}
 
 	updatedTags, err := retagOpusTags(tags, updatedJSON, manifest)
@@ -382,7 +364,6 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 		return RetagSummary{}, fmt.Errorf("verify retagged file: %w", err)
 	}
 	if written.Meeting.RoomID != manifest.Meeting.RoomID ||
-		written.Meeting.RoomName != manifest.Meeting.RoomName ||
 		written.Meeting.JobID != manifest.Meeting.JobID ||
 		written.Meeting.AttemptNumber != manifest.Meeting.AttemptNumber {
 		return RetagSummary{}, fmt.Errorf("verify retagged file: the written manifest does not carry the requested fields")
@@ -400,11 +381,9 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 // retagOpusTags rebuilds the tag set: every tag the file already had, with the
 // payload chunk set replaced and the mirrored fields brought back into line.
 //
-// Starting from the file's own tags rather than from BuildOpusTags is what
-// makes this safe on a file this build did not write. A v2 file carries a
-// CASSINI_TX_<ID>_PAYLOAD_* chunk set per transcript, and a future producer may
-// carry tags nothing here has heard of; ffmpeg runs with -map_metadata -1, so
-// anything not in this map is deleted from the output.
+// Starting from the file's own tags rather than from BuildPublishedOpusTags
+// preserves the transcript chunk sets and any extension tags. ffmpeg runs with
+// -map_metadata -1, so anything not in this map is deleted from the output.
 func retagOpusTags(existing map[string]string, payloadJSON []byte, manifest portable.Manifest) (map[string]string, error) {
 	chunkSize := portable.DefaultPayloadChunkSize
 	encoded, err := portable.EncodePayloadBytes(payloadJSON, chunkSize)
@@ -458,7 +437,6 @@ func retagOpusTags(existing map[string]string, payloadJSON []byte, manifest port
 	}
 	for tag, value := range map[string]string{
 		"CASSINI_ROOM_ID":        manifest.Meeting.RoomID,
-		"CASSINI_ROOM_NAME":      manifest.Meeting.RoomName,
 		"CASSINI_JOB_ID":         manifest.Meeting.JobID,
 		"CASSINI_ATTEMPT_NUMBER": attempt,
 	} {

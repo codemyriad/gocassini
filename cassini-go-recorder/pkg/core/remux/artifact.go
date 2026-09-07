@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"gocassini/pkg/core/depacket"
 	"gocassini/pkg/core/session"
@@ -42,21 +43,41 @@ type SkippedStream struct {
 }
 
 type StreamPlan struct {
-	StreamID               string  `json:"stream_id"`
-	LTID                   string  `json:"ltid"`
-	Kind                   string  `json:"kind"`
-	Codec                  string  `json:"codec"`
-	ParticipantID          string  `json:"participant_id,omitempty"`
-	ParticipantName        string  `json:"participant_name,omitempty"`
-	MID                    string  `json:"mid,omitempty"`
-	RID                    string  `json:"rid,omitempty"`
-	ClockRate              uint32  `json:"clock_rate,omitempty"`
-	PT                     uint8   `json:"pt,omitempty"`
-	RTPPackets             int     `json:"rtp_packets"`
-	FirstRecvNS            uint64  `json:"first_recv_ns"`
-	FirstTimelineNS        int64   `json:"first_timeline_ns"`
-	TimelineAdjustNS       int64   `json:"timeline_adjust_ns"`
-	TimelineSamples        int     `json:"timeline_samples"`
+	StreamID         string `json:"stream_id"`
+	LTID             string `json:"ltid"`
+	Kind             string `json:"kind"`
+	Codec            string `json:"codec"`
+	ParticipantID    string `json:"participant_id,omitempty"`
+	ParticipantName  string `json:"participant_name,omitempty"`
+	MID              string `json:"mid,omitempty"`
+	RID              string `json:"rid,omitempty"`
+	ClockRate        uint32 `json:"clock_rate,omitempty"`
+	PT               uint8  `json:"pt,omitempty"`
+	RTPPackets       int    `json:"rtp_packets"`
+	FirstRecvNS      uint64 `json:"first_recv_ns"`
+	FirstTimelineNS  int64  `json:"first_timeline_ns"`
+	TimelineAdjustNS int64  `json:"timeline_adjust_ns"`
+	TimelineSamples  int    `json:"timeline_samples"`
+	// FirstRTPTimestamp is the RTP timestamp of this segment's first counted
+	// packet, and FirstRTPSet says whether one was observed (zero is a legal
+	// timestamp, hence the flag).
+	//
+	// It is NOT the sender's timestamp. Janus rewrites the timestamps it
+	// relays to each subscriber — janus_rtp_header_update computes
+	// last_ts = (timestamp - base_ts) + base_ts_prev, re-anchoring on every
+	// SSRC change or pause — so this value lives in a per-subscriber space
+	// whose offset from the sender's clock is unknown and changes at those
+	// seams. It is recorded for diagnostics, and must not be used to place a
+	// sender-side timestamp on the meeting timeline. FirstPacketWallMS is the
+	// anchor that can do that.
+	FirstRTPTimestamp int64 `json:"first_rtp_timestamp"`
+	FirstRTPSet       bool  `json:"first_rtp_set"`
+	// FirstPacketWallMS is the wall-clock time (Unix ms, UTC) at which this
+	// segment's first counted packet was received, derived from the session's
+	// wall/monotonic anchor. With FirstTimelineNS it maps recorder-host wall
+	// time onto the meeting timeline exactly — both sides come from the same
+	// monotonic clock — which is what source-audio ingestion places against.
+	FirstPacketWallMS      int64   `json:"first_packet_wall_ms"`
 	TimelineRawDurationNS  int64   `json:"timeline_raw_duration_ns"`
 	TimelineCorrDurationNS int64   `json:"timeline_corrected_duration_ns"`
 	SourceStartSeconds     float64 `json:"source_start_seconds"`
@@ -413,6 +434,19 @@ func planSegments(segments []segmentArtifact) []PlannedInput {
 	return planned
 }
 
+// firstPacketWallMS converts a packet's monotonic receive time into wall-clock
+// Unix milliseconds using the session's own anchor. Returns 0 when the session
+// carries no usable anchor, which callers must treat as "unknown" rather than
+// as the epoch.
+func firstPacketWallMS(sess session.Session, recvMonoNS uint64) int64 {
+	started, err := time.Parse(time.RFC3339Nano, sess.StartedWallUTC)
+	if err != nil || sess.StartedMonoNS == 0 || recvMonoNS == 0 {
+		return 0
+	}
+	deltaNS := int64(recvMonoNS) - int64(sess.StartedMonoNS)
+	return started.UnixMilli() + deltaNS/1e6
+}
+
 func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned []PlannedInput) []StreamPlan {
 	segmentsByID := map[string]segmentArtifact{}
 	for _, seg := range segments {
@@ -450,6 +484,9 @@ func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned 
 			FirstRecvNS:            seg.FirstNS,
 			FirstTimelineNS:        seg.FirstTimelineNS,
 			TimelineAdjustNS:       seg.TimelineAdjustNS,
+			FirstRTPTimestamp:      seg.TimelineProfile.FirstRTPTimestamp,
+			FirstRTPSet:            seg.TimelineProfile.FirstRTPSet,
+			FirstPacketWallMS:      firstPacketWallMS(sess, seg.TimelineProfile.FirstRecvNS),
 			TimelineSamples:        seg.TimelineProfile.Samples,
 			TimelineRawDurationNS:  seg.TimelineProfile.RawDurationNS,
 			TimelineCorrDurationNS: seg.TimelineProfile.CorrectedDurationNS,

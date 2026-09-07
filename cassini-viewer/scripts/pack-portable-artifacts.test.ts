@@ -7,9 +7,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   canonicalPortableMeetingName,
-  discoverArtifactDirectories,
   isReadyMeetingBundle,
-  main,
+  listArtifactDirectories,
   packArtifactDirectory,
 } from "./pack-portable-artifacts.mjs";
 
@@ -87,14 +86,6 @@ function writeReadyBundleFixture(bundleDir: string, opts: { realAudio?: boolean;
   );
 }
 
-// The pre-#219 shape this script used to consume when it produced portable
-// files itself. The Go packer refuses it; discovery must too.
-function writeLegacyArtifactFixture(artifactDir: string) {
-  mkdirSync(artifactDir, { recursive: true });
-  writeFileSync(join(artifactDir, "meeting.opus"), "legacy-audio");
-  writeFileSync(join(artifactDir, "transcript.words.v1.json"), "{}");
-}
-
 function toolAvailable(command: string, args: string[]): boolean {
   try {
     return spawnSync(command, args, { stdio: "ignore" }).status === 0;
@@ -111,7 +102,7 @@ if (!hasRealCliToolchain) {
 }
 
 describe("packArtifactDirectory", () => {
-  it("delegates portable v3 production to the canonical Go packer", async () => {
+  it("delegates published portable production to the canonical Go packer", async () => {
     const calls: unknown[][] = [];
     const result = await packArtifactDirectory(
       "/tmp/example.meeting",
@@ -144,20 +135,15 @@ describe("canonicalPortableMeetingName", () => {
   });
 });
 
-describe("discoverArtifactDirectories", () => {
-  it("selects ready bundles and reports the legacy artifact shape separately", () => {
+describe("listArtifactDirectories", () => {
+  it("selects ready bundles and ignores unrelated directories", () => {
     const root = mkdtempSync(join(tmpdir(), "cassini-pack-discover-"));
     try {
       const readyDir = join(root, "a-ready.meeting");
       writeReadyBundleFixture(readyDir);
-      const legacyDir = join(root, "b-legacy");
-      writeLegacyArtifactFixture(legacyDir);
-      // Unrelated directory: neither shape, silently ignored.
-      mkdirSync(join(root, "c-unrelated"));
+      mkdirSync(join(root, "b-unrelated"));
 
-      const { bundleDirs, legacyDirs } = discoverArtifactDirectories(root);
-      expect(bundleDirs).toEqual([readyDir]);
-      expect(legacyDirs).toEqual([legacyDir]);
+      expect(listArtifactDirectories(root)).toEqual([readyDir]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -170,7 +156,7 @@ describe("discoverArtifactDirectories", () => {
       writeReadyBundleFixture(failedDir, { state: "failed" });
 
       expect(isReadyMeetingBundle(failedDir)).toBe(false);
-      expect(discoverArtifactDirectories(root).bundleDirs).toEqual([]);
+      expect(listArtifactDirectories(root)).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -184,7 +170,7 @@ describe("discoverArtifactDirectories", () => {
       rmSync(join(partialDir, "manifest.json"));
 
       expect(isReadyMeetingBundle(partialDir)).toBe(false);
-      expect(discoverArtifactDirectories(root).bundleDirs).toEqual([]);
+      expect(listArtifactDirectories(root)).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -207,28 +193,12 @@ describe("discoverArtifactDirectories", () => {
   });
 });
 
-describe("main", () => {
-  it("fails with an actionable error when the source holds only legacy artifacts", async () => {
-    const root = mkdtempSync(join(tmpdir(), "cassini-pack-legacyonly-"));
-    try {
-      writeLegacyArtifactFixture(join(root, "source", "old-artifact"));
-
-      await expect(
-        main(["--source-dir", join(root, "source"), "--output-dir", join(root, "out")]),
-      ).rejects.toThrow(/No ready \.meeting bundles found .* legacy artifact directory skipped/);
-      expect(existsSync(join(root, "out"))).toBe(false);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("pack:portable-artifacts against the real cassini CLI", () => {
   // Proves the delegated command actually accepts what discovery selects:
   // builds the Go packer, discovers a real ready bundle, and lets the script
   // run `cassini pack` on it for real (no mocked runner).
   it.skipIf(!hasRealCliToolchain)(
-    "packs a discovered ready bundle end-to-end and skips a legacy artifact",
+    "packs a discovered ready bundle end-to-end",
     { timeout: 240_000 },
     () => {
       const root = mkdtempSync(join(tmpdir(), "cassini-pack-cli-"));
@@ -242,7 +212,6 @@ describe("pack:portable-artifacts against the real cassini CLI", () => {
 
         const sourceDir = join(root, "source");
         writeReadyBundleFixture(join(sourceDir, "demo.meeting"), { realAudio: true });
-        writeLegacyArtifactFixture(join(sourceDir, "old-artifact"));
         const outputDir = join(root, "out");
 
         const scriptPath = fileURLToPath(new URL("./pack-portable-artifacts.mjs", import.meta.url));
@@ -259,8 +228,6 @@ describe("pack:portable-artifacts against the real cassini CLI", () => {
         expect(packed.length).toBeGreaterThan(0);
         // The packer commits a real Ogg Opus file, not a renamed input.
         expect(packed.subarray(0, 4).toString("ascii")).toBe("OggS");
-        // The legacy neighbor is skipped, not packed.
-        expect(existsSync(join(outputDir, "old-artifact.opus"))).toBe(false);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

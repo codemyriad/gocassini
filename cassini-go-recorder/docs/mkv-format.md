@@ -88,6 +88,32 @@ Built by [`streamMetadataEntries`](../pkg/core/remux/metadata.go#L177-L206). Eac
 | `participant_id`, `participant_name` | When known |
 | `mid`, `rid` | WebRTC track identifiers |
 | `clock_rate` | RTP clock rate (e.g. 48000 for Opus, 90000 for video) |
+| `first_packet_wall_ms` | Wall-clock instant (Unix ms, UTC) this segment's first counted packet arrived. Emitted only when a packet was observed and the session carries a usable wall/monotonic anchor |
+| `first_timeline_ns` | Where that same instant sits on the meeting timeline. Emitted with `first_packet_wall_ms` and meaningless without it |
+| `first_rtp_timestamp` | RTP timestamp of the first counted packet. **Diagnostics only** — see below |
+
+### The wall-clock anchor
+
+`first_packet_wall_ms` and `first_timeline_ns` are two readings of the same
+instant, one in recorder-host wall time and one in meeting time. Both derive
+from the same monotonic clock, so converting between the two axes is exact on
+the recorder's side, with no estimation. That is what lets a stage outside the
+recorder — one holding an instant in wall time and needing a position on the
+timeline — place it without reopening the session artifact.
+
+They are emitted as a pair or not at all. A recording made before this tag
+existed, or a session with no usable anchor, carries neither; readers must
+treat that as *unknown* rather than as the epoch, or they will place audio in
+1970. `internal/transcribe.SourceTimeBase` is the reader, and it refuses a
+partial anchor for the same reason.
+
+`first_rtp_timestamp` is **not** the sender's timestamp and must not be used to
+place a sender-side time on the timeline. Janus rewrites the timestamps it
+relays to each subscriber, re-anchoring on every SSRC change or pause, so the
+value lives in a per-subscriber space whose offset from the sender's clock is
+unknown and moves at those seams. It is recorded for triage. Note also that 0
+is a legal RTP timestamp, which is why the tag is absent rather than zero when
+no packet was seen.
 
 These let `gocassini-inspect`, `verify-av-drift.sh`, and human triage answer "which participant, which segment, which clock, which adjustment" directly from the MKV.
 

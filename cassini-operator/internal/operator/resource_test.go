@@ -101,20 +101,33 @@ func TestApplyToEnv(t *testing.T) {
 	probeOnlineCPUs = func() int { return 8 }
 	l := resourceLimits{cpuReserve: 2, gpuMinFreeMB: 4096}
 
-	// CPU resolution is never a fallback for operator-managed recognition.
+	// CPU: no VRAM probe, device pinned so the child cannot re-detect, and the
+	// thread budget (cores minus reserve) rather than the CUDA single thread.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out, err := l.applyToEnv([]string{"X=1"}, false)
+	out, err := l.applyToEnv([]string{"X=1", "CASSINI_STT_DEVICE=cuda"}, deviceCPU, modelParakeetV3Int8)
+	if err != nil {
+		t.Fatalf("CPU applyToEnv() error = %v", err)
+	}
+	if !contains(out, "CASSINI_STT_DEVICE=cpu") ||
+		!contains(out, "CASSINI_STT_NUM_THREADS=6") ||
+		!contains(out, "CASSINI_STT_STREAM_CONCURRENCY=1") ||
+		!contains(out, "X=1") {
+		t.Errorf("CPU policy not applied (device=cpu, 6 threads, one recognizer): %v", out)
+	}
+	if countKey(out, "CASSINI_STT_DEVICE=") != 1 {
+		t.Errorf("stale device override survived: %v", out)
+	}
+	// The governor sized this build for a model; the child must load exactly
+	// that one rather than re-deriving it from the tier.
+	if !contains(out, "CASSINI_STT_MODEL="+modelParakeetV3Int8) {
+		t.Errorf("admitted model was not pinned into the child environment: %v", out)
+	}
+
 	var unavailable *resourceUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.resource != "CUDA device" {
-		t.Fatalf("CPU resolution error = %v, want CUDA resourceUnavailableError", err)
-	}
-	if out != nil {
-		t.Errorf("CPU resolution env = %v, want no launch environment", out)
-	}
 
 	// CUDA intended, GPU full -> defer rather than silently using host CPU/RAM.
 	probeGPUFreeMB = func() (int, bool) { return 1000, true }
-	out, err = l.applyToEnv(nil, true)
+	out, err = l.applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32)
 	unavailable = nil
 	if !errors.As(err, &unavailable) || unavailable.resource != "GPU memory" {
 		t.Fatalf("low VRAM error = %v, want GPU resourceUnavailableError", err)
@@ -129,7 +142,7 @@ func TestApplyToEnv(t *testing.T) {
 	out, err = l.applyToEnv([]string{
 		"CASSINI_STT_NUM_THREADS=12",
 		"CASSINI_STT_STREAM_CONCURRENCY=4",
-	}, true)
+	}, deviceCUDA, modelParakeetV3Fp32)
 	if err != nil {
 		t.Fatalf("CUDA applyToEnv() error = %v", err)
 	}
@@ -142,18 +155,18 @@ func TestApplyToEnv(t *testing.T) {
 		t.Errorf("stale CUDA stream concurrency override survived: %v", out)
 	}
 	probeGPUFreeMB = func() (int, bool) { return 5500, true }
-	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, true); err != nil {
+	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32); err != nil {
 		t.Errorf("VRAM exactly at floor must be eligible: %v", err)
 	}
 	probeGPUFreeMB = func() (int, bool) { return 5499, true }
-	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, true); err == nil {
+	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32); err == nil {
 		t.Error("VRAM one MiB below floor must be deferred")
 	}
 
 	// Unknown VRAM fails closed: launching without a usable capacity reading
 	// cannot uphold the host-safety guarantee.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out, err = l.applyToEnv(nil, true)
+	out, err = l.applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32)
 	unavailable = nil
 	if !errors.As(err, &unavailable) || unavailable.resource != "GPU memory" {
 		t.Fatalf("unknown VRAM error = %v, want GPU memory resourceUnavailableError", err)
@@ -223,7 +236,7 @@ func TestWaitForMemory(t *testing.T) {
 	// Immediately above the floor -> returns nil fast.
 	probeAvailableMem = func() int { return 8000 }
 	l := resourceLimits{minFreeMemMB: 1536, memWaitMax: time.Second, memPoll: 10 * time.Millisecond}
-	if err := l.waitForMemory(context.Background(), noop); err != nil {
+	if err := l.waitForMemory(context.Background(), 1536, noop); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -232,7 +245,7 @@ func TestWaitForMemory(t *testing.T) {
 	probeAvailableMem = func() int { return 100 }
 	l = resourceLimits{minFreeMemMB: 1536, memWaitMax: 20 * time.Millisecond, memPoll: 5 * time.Millisecond}
 	start := time.Now()
-	err := l.waitForMemory(context.Background(), noop)
+	err := l.waitForMemory(context.Background(), 1536, noop)
 	var unavailable *resourceUnavailableError
 	if !errors.As(err, &unavailable) || unavailable.resource != "host memory" {
 		t.Fatalf("low RAM error = %v, want host memory resourceUnavailableError", err)
@@ -246,7 +259,7 @@ func TestWaitForMemory(t *testing.T) {
 	l = resourceLimits{minFreeMemMB: 1536, memWaitMax: time.Minute, memPoll: 5 * time.Millisecond}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
 	defer cancel()
-	if err := l.waitForMemory(ctx, noop); err == nil {
+	if err := l.waitForMemory(ctx, 1536, noop); err == nil {
 		t.Errorf("expected context error when RAM never frees")
 	}
 }
@@ -677,4 +690,242 @@ func countKey(ss []string, prefix string) int {
 		}
 	}
 	return n
+}
+
+func TestResolveBuildDevice(t *testing.T) {
+	// A CPU-only host must transcribe, not block: the recording is already made
+	// and CPU inference is a supported (slower) outcome (D-702).
+	cases := []struct {
+		name        string
+		cudaCapable string
+		override    string
+		wantDevice  string
+		wantErr     string
+		wantPerm    bool
+	}{
+		{name: "auto on a portable image falls back to cpu", cudaCapable: "0", wantDevice: deviceCPU},
+		{name: "auto without the marker falls back to cpu", cudaCapable: "", wantDevice: deviceCPU},
+		{name: "explicit cpu is honoured", cudaCapable: "1", override: "cpu", wantDevice: deviceCPU},
+		{name: "explicit cuda on a portable image is permanent", cudaCapable: "0", override: "cuda", wantErr: "CUDA runtime", wantPerm: true},
+		{name: "nonsense override is permanent", cudaCapable: "1", override: "tpu", wantErr: "device policy", wantPerm: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv(envSTTCUDACapable, c.cudaCapable)
+			rt := &Runtime{settings: STTSettings{DeviceOverride: c.override}}
+			device, err := rt.resolveBuildDevice()
+			if c.wantErr != "" {
+				var unavailable *resourceUnavailableError
+				if !errors.As(err, &unavailable) || unavailable.resource != c.wantErr {
+					t.Fatalf("resolveBuildDevice() error = %v, want %s resourceUnavailableError", err, c.wantErr)
+				}
+				if unavailable.permanent != c.wantPerm {
+					t.Errorf("permanent = %v, want %v", unavailable.permanent, c.wantPerm)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveBuildDevice() error = %v", err)
+			}
+			if device != c.wantDevice {
+				t.Errorf("device = %q, want %q", device, c.wantDevice)
+			}
+		})
+	}
+}
+
+func TestResolveBuildDeviceExplicitCUDANeedsAVisibleDevice(t *testing.T) {
+	// Only meaningful on a host without NVIDIA device nodes; on a GPU box the
+	// override is satisfiable and there is nothing to assert.
+	if detectGPU() {
+		t.Skip("host has an NVIDIA device; the unsatisfiable-override path cannot be exercised")
+	}
+	t.Setenv(envSTTCUDACapable, "1")
+	rt := &Runtime{settings: STTSettings{DeviceOverride: "cuda"}}
+	_, err := rt.resolveBuildDevice()
+	var unavailable *resourceUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.resource != "CUDA device" {
+		t.Fatalf("resolveBuildDevice() error = %v, want CUDA device resourceUnavailableError", err)
+	}
+	// Transient, not permanent: a GPU can come back, and the administrator
+	// asked for one explicitly — this must never silently become a CPU run.
+	if unavailable.permanent {
+		t.Error("a missing GPU is transient; blocking permanently strands a recoverable host")
+	}
+}
+
+func TestMinFreeMemForBuild(t *testing.T) {
+	l := resourceLimits{minFreeMemMB: 6144, cpuMemHeadroomMB: 1024}
+	cases := []struct {
+		device, model string
+		want          int
+	}{
+		{deviceCUDA, modelParakeetV3Fp32, 6144},
+		{deviceCPU, modelParakeet110M, 512 + 1024},
+		{deviceCPU, modelParakeetV3Int8, 1792 + 1024},
+		{deviceCPU, modelParakeetV3Fp32, 3584 + 1024},
+		// An unrecognised model is charged the largest known footprint: the
+		// governor exists to keep a build from OOMing Nextcloud and Talk.
+		{deviceCPU, "some-future-model", 3584 + 1024},
+	}
+	for _, c := range cases {
+		if got := l.minFreeMemForBuild(c.device, c.model); got != c.want {
+			t.Errorf("minFreeMemForBuild(%s, %s) = %d, want %d", c.device, c.model, got, c.want)
+		}
+	}
+}
+
+func TestExecuteBuildCLIRunsOnCPUWithoutCUDARuntime(t *testing.T) {
+	// The regression this whole change exists for: a portable image on a host
+	// with no GPU must actually launch the recorder instead of blocking the
+	// build (D-702). The inverse of
+	// TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime, which keeps an
+	// explicit CUDA override loud.
+	origMem, origCPU := probeAvailableMem, probeOnlineCPUs
+	defer func() { probeAvailableMem, probeOnlineCPUs = origMem, origCPU }()
+	probeAvailableMem = func() int { return 64000 }
+	probeOnlineCPUs = func() int { return 4 }
+
+	t.Setenv(envSTTCUDACapable, "0")
+	tmp := t.TempDir()
+	marker := filepath.Join(tmp, "cassini-started")
+	t.Setenv("CASSINI_TEST_MARKER", marker)
+	cassiniBin := filepath.Join(tmp, "cassini-marker")
+	if err := os.WriteFile(cassiniBin, []byte("#!/bin/sh\n: > \"$CASSINI_TEST_MARKER\"\n"), 0o755); err != nil {
+		t.Fatalf("write marker binary: %v", err)
+	}
+
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	const jobID = "cpu-must-launch"
+	insertJob(t, store.db, jobID, nowUTCString())
+	runPath := seedReadyRunBundle(t, filepath.Join(tmp, "jobs"), jobID)
+	if err := store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+
+	rt := &Runtime{
+		store:    store,
+		cfg:      Config{CassiniBin: cassiniBin, WorkRoot: filepath.Join(tmp, "jobs")},
+		logger:   log.New(io.Discard, "", 0),
+		settings: STTSettings{Quality: sttQualityBalanced},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = rt.executeBuildCLI(ctx, buildTask{
+		JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath,
+	})
+	var unavailable *resourceUnavailableError
+	if errors.As(err, &unavailable) {
+		t.Fatalf("executeBuildCLI() refused a CPU build: %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Fatalf("recorder was never launched on CPU (marker stat error = %v)", statErr)
+	}
+}
+
+func TestCPUFloorsRankByTierCost(t *testing.T) {
+	// The floors encode measured peaks (device.go). If an edit ever makes a
+	// heavier model look cheaper, the governor would admit a build it cannot
+	// hold — so assert the ordering rather than only the individual numbers.
+	l := resourceLimitsFromEnv()
+	fast := l.minFreeMemForBuild(deviceCPU, modelParakeet110M)
+	balanced := l.minFreeMemForBuild(deviceCPU, modelParakeetV3Int8)
+	best := l.minFreeMemForBuild(deviceCPU, modelParakeetV3Fp32)
+	if !(fast < balanced && balanced < best) {
+		t.Fatalf("CPU floors are not ordered by tier cost: fast=%d balanced=%d best=%d", fast, balanced, best)
+	}
+	if fast <= 0 {
+		t.Fatalf("fast tier floor = %d, want a positive floor", fast)
+	}
+}
+
+func TestModelNeedsDownload(t *testing.T) {
+	// Each image carries the models for the device it serves. A tier outside
+	// that set arrives by one download into the persistent cache (D-704).
+	bundledRoot := t.TempDir()
+	cacheRoot := t.TempDir()
+	rt := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: cacheRoot}}
+
+	seed := func(root, model string, complete bool) {
+		t.Helper()
+		dir := filepath.Join(root, "models", model)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "encoder.onnx"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if complete {
+			if err := os.WriteFile(filepath.Join(dir, modelCompletionMarker), []byte("t\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
+		t.Error("a model in neither root must read as a download")
+	}
+
+	seed(bundledRoot, modelParakeetV3Fp32, false)
+	if rt.modelNeedsDownload(modelParakeetV3Fp32) {
+		t.Error("a model baked into the image must not be downloaded")
+	}
+
+	// An interrupted download leaves files without the marker. That directory
+	// must still read as a download, or the operator would promise a build the
+	// recorder cannot start.
+	seed(cacheRoot, modelParakeetV3Int8, false)
+	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
+		t.Error("an unfinished cache directory must still read as a download")
+	}
+
+	seed(cacheRoot, modelParakeetV3Int8, true)
+	if rt.modelNeedsDownload(modelParakeetV3Int8) {
+		t.Error("a completed download must not be fetched again")
+	}
+}
+
+func TestAdmitModelForDeviceHonoursTheAirGapSwitch(t *testing.T) {
+	// An administrator who forbids downloads must get a blocked build with a
+	// message, not a build that reaches for the network and fails there.
+	bundledRoot := t.TempDir()
+	rt := &Runtime{cfg: Config{
+		BundledModelRoot:      bundledRoot,
+		ModelCacheRoot:        t.TempDir(),
+		DisallowModelDownload: true,
+	}}
+
+	_, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU)
+	var unavailable *resourceUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.resource != "model bundle" {
+		t.Fatalf("admission error = %v, want a model bundle refusal", err)
+	}
+	if !unavailable.permanent {
+		t.Error("no download can arrive while the switch is set; want a permanent block")
+	}
+	if !strings.Contains(unavailable.detail, "CASSINI_DISALLOW_MODEL_DOWNLOAD") {
+		t.Errorf("detail %q does not name the setting that blocks the build", unavailable.detail)
+	}
+
+	// The tier the image bakes still runs on the same air-gapped host.
+	dir := filepath.Join(bundledRoot, "models", modelParakeetV3Int8)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "encoder.int8.onnx"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU); err != nil {
+		t.Fatalf("a bundled tier was blocked on an air-gapped host: %v", err)
+	}
+
+	// Without the switch the same missing model is a download, not a block.
+	open := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: t.TempDir()}}
+	if _, err := open.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU); err != nil {
+		t.Fatalf("admission blocked a downloadable tier: %v", err)
+	}
 }

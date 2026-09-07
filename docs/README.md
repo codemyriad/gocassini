@@ -25,14 +25,15 @@ in these docs should be read in light of them.
   sherpa-onnx / ONNX Runtime with NVIDIA **Parakeet** models and **Silero VAD**.
   There is **no third-party or remote transcription** — no audio and no
   transcript leaves the host for the transcription step.
-- **Operator-managed transcription is GPU-only.** The default ExApp image is a
-  portable capture image: it can retain a Talk recording without a GPU, but its
-  build immediately enters `build/blocked` with instructions to install the
-  matching `-cuda` image. The **GPU/CUDA** image runs fp32
-  `parakeet-tdt-0.6b-v3` with `CASSINI_STT_DEVICE=cuda`. Low-level Cassini CLI
-  tooling still carries an int8 CPU runtime for explicit local diagnostics;
-  the production operator never selects it as an ASR fallback. On an eligible
-  CUDA image, transient RAM/VRAM pressure is retried with exponential backoff;
+- **Transcription runs on the GPU when there is one, and on the CPU when there
+  is not.** The operator resolves the device before each build: CUDA when the
+  image carries the CUDA runtime and an NVIDIA device is visible, CPU
+  otherwise. A CPU build is correct but much slower, so the resolved device is
+  reported in Cassini Admin, in `/operator/status` and in the build log before
+  any audio is decoded — it is never a silent substitution. An administrator can
+  pin the device (`cpu` or `cuda`); pinning `cuda` on a host that cannot provide
+  it blocks the build with an actionable message rather than quietly running on
+  the CPU. Transient RAM/VRAM pressure is retried with exponential backoff;
   repeated pressure eventually becomes `build/blocked` instead of retrying
   forever.
 - **Speaker labels come from signaling, not diarization.** Each participant is a
@@ -44,10 +45,10 @@ in these docs should be read in light of them.
   and meeting summaries are optional and run **only** when `OPENROUTER_API_KEY`
   is set. When enabled, the **full transcript text is sent to that third party**
   (OpenRouter or a compatible endpoint) — see the
-  [privacy caveat](#summarisation--the-privacy-caveat). No key means both steps
-  are silently skipped and the raw local transcript is still published.
+  [privacy caveat](#summarisation--the-privacy-caveat). No key means the step
+  is silently skipped and the raw local transcript is still published.
 - **Self-contained outputs.** A portable single-file `.opus` carries audio +
-  transcript + readable transcript (integrity-hashed), and a separate
+  transcript (integrity-hashed), and a separate
   **static-site export** (`catalog.json` + `meetings/`; the viewer SPA shell —
   `index.html` + `assets/` — is served from the image by default and embedded
   into the export only on `--rebuild-viewer`)
@@ -117,12 +118,14 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 
 ### CPU vs GPU image choice
 
-- **Portable/capture-only**: tag `X.Y.Z`. It can capture and durably retain a
-  Talk recording on a host without a GPU, but operator-managed speech
-  recognition is GPU-only: the build immediately becomes `build/blocked` with
-  an actionable request for the matching `X.Y.Z-cuda` image instead of falling
-  back to CPU. After installing that image, use **Rerun** in Cassini Admin to
-  reuse the preserved recording.
+- **Portable**: tag `X.Y.Z`. Captures, transcribes and publishes on a host with
+  no GPU. It bakes the model of its default tier (0.6B int8, "Balanced"). Fast
+  and Best download once into the model cache on the persistent volume when an
+  administrator selects them, so the image stays small and every tier still
+  runs. Best on a CPU is slower than the meeting it transcribes, which is why
+  Balanced is the default. Moving to the `-cuda` image later is a device change,
+  not a data migration: use **Rerun** in Cassini Admin to re-transcribe an
+  existing recording on the GPU.
 - **GPU/CUDA**: tag `X.Y.Z-cuda`. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
   `CASSINI_STT_DEVICE=cuda` baked in. Set the deploy daemon's **Compute device**
   to CUDA and AppAPI pulls the `-cuda` image automatically — the device is a
@@ -131,23 +134,22 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   the **transcription (build) stage**; live capture itself remains CPU-bound.
   Requires the NVIDIA driver +
   Container Toolkit on the engine running the ExApp. See
-  [GPU transcription (CUDA)](./exapp-install.md#gpu-transcription-cuda) and, for
-  Docker-in-LXC hosts, [Proxmox NVIDIA passthrough](./proxmox-jellyfin-nvidia.md).
+  [GPU transcription (CUDA)](./exapp-install.md#gpu-transcription-cuda).
 
 ### Summarisation & the privacy caveat
 
-Summaries and readable-transcript cleanup are **off by default**. To enable them,
+Summaries are **off by default**. To enable them,
 set `OPENROUTER_API_KEY` (optionally `LLM_BASE_URL`, default
 `https://openrouter.ai/api/v1`, and `LLM_MODEL`/`SUMMARY_MODEL`, default
 `openai/gpt-4o-mini`).
 
-> **Privacy warning.** When these are enabled, the **full local transcript text
+> **Privacy warning.** When this is enabled, the **full local transcript text
 > is sent to the configured third party** (OpenRouter or a compatible endpoint)
-> for cleanup and summarisation. Only enable this if sending meeting transcripts
+> for summarisation. Only enable this if sending meeting transcripts
 > off-host is acceptable for your deployment. Transcription itself never leaves
 > the host; only this optional post-processing step does. Set
-> `CASSINI_SUMMARY_DISABLED` to keep readable cleanup while turning summaries
-> off. With no key, the raw local transcript is still published.
+> `CASSINI_SUMMARY_DISABLED` to turn summaries off while leaving the key set.
+> With no key, the raw local transcript is still published.
 
 ### Local development stack
 
@@ -193,9 +195,7 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 
 ### Proposals & operations notes
 
-- [Multi-transcription portable format — proposal](./proposals/multi-transcription-format.md) and [build plan](./proposals/multi-transcription-format-plan.md).
 - [Branch previews](./branch-previews.md) — per-branch viewer deployments.
-- [Proxmox Jellyfin NVIDIA passthrough](./proxmox-jellyfin-nvidia.md) — host GPU setup pitfalls.
 
 ---
 

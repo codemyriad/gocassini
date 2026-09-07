@@ -215,20 +215,23 @@
 }
 
 /* All NC modes: explicit borders using NC's border token (border-width resets to 0 in shadow DOM) */
-:host([data-nc-theme]) .cassini-root .meeting-list button:not([aria-current="page"]) {
-  border: 1px solid var(--color-border-dark);
-}
 :host([data-nc-theme]) .cassini-root .card.border-base-300 {
   border: 1px solid var(--color-border-dark);
 }
 
-/* All NC modes: solid primary fill on selected card (overrides bg-primary/25 tint) */
-:host([data-nc-theme]) .cassini-root .meeting-list button[aria-current="page"] {
+/* All NC modes: solid primary fill on the open meeting and the selected room.
+ * D-654 replaced the list's cards with flat rows, so these are scoped to the
+ * two things that actually carry a selected state — NOT to every button in the
+ * list, which now also holds a search field, a rooms button and chip clears. */
+:host([data-nc-theme]) .cassini-root .meeting-row[aria-current="page"],
+:host([data-nc-theme]) .cassini-root .room-button[aria-pressed="true"] {
   background-color: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-primary-content);
+  box-shadow: none;
 }
-:host([data-nc-theme]) .cassini-root .meeting-list button[aria-current="page"] * {
+:host([data-nc-theme]) .cassini-root .meeting-row[aria-current="page"] *,
+:host([data-nc-theme]) .cassini-root .room-button[aria-pressed="true"] * {
   color: var(--color-primary-content);
 }
 
@@ -237,10 +240,16 @@
   --color-base-100: var(--color-main-background);
   --color-base-200: var(--color-main-background);
 }
-:host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-list {
+/* HC flattens base-100/base-200 to one colour, so the rail and the sheet need
+ * their own edges back — they are what separates the three panes. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .rooms-rail {
   border-right: 1px solid var(--color-border-dark);
 }
-:host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-list button:not([aria-current="page"]):hover {
+:host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-sheet {
+  border-left: 1px solid var(--color-border-dark);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-row:not([aria-current="page"]):hover,
+:host([data-nc-theme*="highcontrast"]) .cassini-root .room-button:not([aria-pressed="true"]):hover {
   background-color: var(--color-background-dark);
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root details.collapse {

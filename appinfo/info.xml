@@ -126,6 +126,11 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <description>Which registered speech-to-text engine transcription uses. Leave empty for the default (sherpa-onnx). An unknown value fails the build loudly before any audio is decoded, so a typo cannot silently select a different engine.</description>
       </variable>
       <variable>
+        <name>CASSINI_DISALLOW_MODEL_DOWNLOAD</name>
+        <display-name>Never download speech models (optional)</display-name>
+        <description>Set to 1 on a host with no outbound network access. Each image bundles the model of the quality tier it runs by default, and any other tier is downloaded once into the model cache on the persistent volume. With this set, the operator blocks a build whose tier needs a download and says which tier to select instead, rather than starting a build that cannot reach the network.</description>
+      </variable>
+      <variable>
         <name>CASSINI_ATTRIBUTION_DISABLED</name>
         <display-name>Disable speaker-attribution measurement (optional)</display-name>
         <description>Set to 1 to skip the cross-track speaker-attribution stage entirely. By default every word is annotated with acoustic evidence of who was speaking; no words are changed or removed either way.</description>

@@ -10,7 +10,7 @@ import (
 
 // defaultSealJobTimeout bounds one `cassini pack` run so a hung ffmpeg cannot
 // hold the seal worker forever. It matches the publish ceiling: packing is a
-// remux plus two PCM decodes over one meeting, which is generous at any
+// remux plus integrity scans over one meeting, which is generous at any
 // plausible recording length, and the deadline derives from the worker's
 // context so shutdown still cancels immediately.
 const defaultSealJobTimeout = 30 * time.Minute

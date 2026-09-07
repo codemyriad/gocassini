@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,9 +17,75 @@ import {
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
-  portableDefaultSegmentCount,
   parseArgs,
+  validatePublishedPortableManifest,
 } from "./export-static-meetings.mjs";
+
+function writePublishedPortableProbeFixture(
+  sourceDir: string,
+  meetingId: string,
+  meeting: Record<string, unknown>,
+) {
+  const encode = (value: unknown) => {
+    const raw = Buffer.from(JSON.stringify(value), "utf8");
+    const gzip = gzipSync(raw);
+    return {
+      chunk: gzip.toString("base64url"),
+      sha256: createHash("sha256").update(raw).digest("hex"),
+      rawBytes: raw.byteLength,
+      gzipBytes: gzip.byteLength,
+    };
+  };
+  const body = encode({ format: "cassini.words.v1", wordCount: 0, items: [] });
+  const manifest = encode({
+    kind: "cassini-portable-meeting",
+    version: 1,
+    profile: "ogg-opus",
+    meeting,
+    integrity: {
+      matchPolicy: "exact-opus-audio-v1",
+      opusAudioSha256: "a".repeat(64),
+    },
+    transcripts: [{
+      id: "raw-asr",
+      role: "raw-asr",
+      default: true,
+      format: "cassini.words.v1",
+      payloadRef: {
+        prefix: "CASSINI_TX_RAW_ASR_PAYLOAD_",
+        chunkCount: 1,
+        sha256: body.sha256,
+        rawBytes: body.rawBytes,
+        gzipBytes: body.gzipBytes,
+        mime: "application/vnd.cassini.transcript-words+json",
+        encoding: "base64url+gzip+utf8json",
+      },
+    }],
+  });
+  writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
+  writeFileSync(
+    join(sourceDir, `${meetingId}.opus.ffprobe.json`),
+    JSON.stringify({
+      format: { tags: {
+        CASSINI_FORMAT: "org.cassini.portable-meeting/1",
+        CASSINI_PROFILE: "ogg-opus",
+        CASSINI_PAYLOAD_MIME: "application/vnd.cassini.portable-meeting+json",
+        CASSINI_PAYLOAD_ENCODING: "base64url+gzip+utf8json",
+        CASSINI_PAYLOAD_SCHEMA:
+          "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+        CASSINI_PAYLOAD_CHUNK_COUNT: "1",
+        CASSINI_PAYLOAD_SHA256: manifest.sha256,
+        CASSINI_PAYLOAD_RAW_BYTES: String(manifest.rawBytes),
+        CASSINI_PAYLOAD_GZIP_BYTES: String(manifest.gzipBytes),
+        CASSINI_PAYLOAD_000: manifest.chunk,
+        CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
+        CASSINI_AUDIO_OPUS_SHA256: "a".repeat(64),
+        CASSINI_TX_RAW_ASR_PAYLOAD_000: body.chunk,
+      } },
+      streams: [],
+    }),
+  );
+}
 
 describe("describeMeeting", () => {
   it("parses colon-separated legacy meeting ids", () => {
@@ -183,28 +250,20 @@ describe("describeMeeting", () => {
 });
 
 describe("portableRoomFields", () => {
-  it("carries both halves of the room when the file has them", () => {
+  it("carries the published room id", () => {
     expect(
-      portableRoomFields({ meeting: { roomId: " a7bc3k9x ", roomName: "  Weekly Sync  " } }),
-    ).toEqual({ roomId: "a7bc3k9x", roomName: "Weekly Sync" });
+      portableRoomFields({ meeting: { roomId: " rm_9f2a1c3d4e5b6a70 " } }),
+    ).toEqual({ roomId: "rm_9f2a1c3d4e5b6a70" });
   });
 
   it("omits the keys entirely rather than writing empty strings", () => {
     // An entry with roomId: "" would read as "this meeting has a room whose id
     // is the empty string", and every consumer would have to check presence AND
     // emptiness. A meeting with no room is a normal state, not a broken one.
-    expect(portableRoomFields({ meeting: { roomId: "   ", roomName: "" } })).toEqual({});
+    expect(portableRoomFields({ meeting: { roomId: "   " } })).toEqual({});
     expect(portableRoomFields({ meeting: {} })).toEqual({});
     expect(portableRoomFields({})).toEqual({});
     expect(portableRoomFields(null)).toEqual({});
-  });
-
-  it("carries a room name with no id", () => {
-    // What a legacy recording with no job row looks like: its published .opus
-    // never carried a Talk token, so only the name is recoverable from it.
-    expect(portableRoomFields({ meeting: { roomName: "Old Standup" } })).toEqual({
-      roomName: "Old Standup",
-    });
   });
 
   it("carries the job and attempt that produced the artifact", () => {
@@ -229,14 +288,6 @@ describe("portableRoomFields", () => {
     }
   });
 
-  it("reads a room name a pre-D-640 file still carries", () => {
-    // Producers stopped writing roomName — a display name is editable and a
-    // sealed recording is not — but files packed before that change still have
-    // one, and for them it is still the best answer available.
-    expect(
-      portableRoomFields({ meeting: { roomId: "rm_9f2a1c3d4e5b6a70", roomName: "Weekly Sync" } }),
-    ).toEqual({ roomId: "rm_9f2a1c3d4e5b6a70", roomName: "Weekly Sync" });
-  });
 });
 
 describe("preferredPortableTitle", () => {
@@ -304,7 +355,7 @@ describe("describeMeeting", () => {
     );
   });
 
-  it("groups portable fallback transcript items into multi-word readable blocks", () => {
+  it("groups published word items into multi-word readable blocks", () => {
     const portable = {
       meeting: { durationMs: 10_000 },
       speakers: [{ id: "spk_1", label: "Chris" }],
@@ -338,6 +389,16 @@ describe("describeMeeting", () => {
     });
   });
 
+  it("rejects a transcript body item containing more than one word", () => {
+    expect(() => buildTranscriptWordsFromPortable({
+      meeting: { durationMs: 1000 },
+      speakers: [{ id: "spk_1", label: "Chris" }],
+      transcript: {
+        items: [{ speaker: "spk_1", startMs: 0, endMs: 500, text: "two words" }],
+      },
+    })).toThrow("portable transcript item 0 must contain exactly one word");
+  });
+
   it("keeps a hard break across large pauses or speaker changes", () => {
     const portable = {
       meeting: { durationMs: 20_000 },
@@ -348,9 +409,12 @@ describe("describeMeeting", () => {
       transcript: {
         items: [
           { id: "seg_1", speaker: "spk_1", startMs: 0, endMs: 500, text: "Okay," },
-          { id: "seg_2", speaker: "spk_1", startMs: 500, endMs: 1000, text: "that works." },
-          { id: "seg_3", speaker: "spk_1", startMs: 6000, endMs: 6500, text: "Long pause." },
-          { id: "seg_4", speaker: "spk_2", startMs: 7000, endMs: 7600, text: "Other speaker." },
+          { id: "seg_2", speaker: "spk_1", startMs: 500, endMs: 750, text: "that" },
+          { id: "seg_3", speaker: "spk_1", startMs: 750, endMs: 1000, text: "works." },
+          { id: "seg_4", speaker: "spk_1", startMs: 6000, endMs: 6250, text: "Long" },
+          { id: "seg_5", speaker: "spk_1", startMs: 6250, endMs: 6500, text: "pause." },
+          { id: "seg_6", speaker: "spk_2", startMs: 7000, endMs: 7300, text: "Other" },
+          { id: "seg_7", speaker: "spk_2", startMs: 7300, endMs: 7600, text: "speaker." },
         ],
       },
     };
@@ -370,232 +434,6 @@ describe("describeMeeting", () => {
     expect(readable.segments[0]?.text).toBe("Okay, that works.");
     expect(readable.segments[1]?.text).toBe("Long pause.");
     expect(readable.segments[2]?.text).toBe("Other speaker.");
-  });
-
-  it("accepts historical readable transcripts mislabeled as transcript.words.v1", () => {
-    const portable = {
-      meeting: { durationMs: 4_000 },
-      speakers: [{ id: "spk_1", label: "Alice" }],
-      transcript: {
-        items: [
-          { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 1400, text: "um" },
-          { id: "seg_2", speaker: "spk_1", startMs: 1400, endMs: 1900, text: "hello" },
-          { id: "seg_3", speaker: "spk_1", startMs: 1900, endMs: 2400, text: "there" },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.words.v1",
-        speakers: [{ id: "spk_1", label: "Alice" }],
-        segments: [
-          {
-            id: "rseg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 2400,
-            text: "Hello there.",
-            sourceSegmentIds: ["seg_1", "seg_2", "seg_3"],
-          },
-        ],
-      },
-    };
-    const transcript = {
-      version: "transcript.words.v1",
-      media: { src: "meeting.opus", durationMs: 4_000, sha256: "" },
-      speakers: portable.speakers,
-      segments: portable.transcript.items.map((item) => ({
-        ...item,
-        words: [{ id: `${item.id}:w_0`, text: item.text, startMs: item.startMs, endMs: item.endMs }],
-      })),
-    };
-
-    const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-
-    expect(readable.segments[0]?.text).toBe("Hello there.");
-    expect(display.blocks[0]?.text).toBe("Hello there.");
-  });
-
-  it("leaves multi-word portable transcript items passage-timed instead of faking word timing", () => {
-    const portable = {
-      meeting: { durationMs: 10_000 },
-      speakers: [{ id: "spk_1", label: "Chris" }],
-      transcript: {
-        items: [
-          {
-            id: "seg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-          },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.readable.v1",
-        speakers: [{ id: "spk_1", label: "Chris" }],
-        segments: [
-          {
-            id: "rseg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-            sourceSegmentIds: ["seg_1"],
-          },
-        ],
-      },
-    };
-
-    const transcript = buildTranscriptWordsFromPortable(portable);
-    const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const timedWords = display.blocks[0]?.tokens.filter((token) => token.kind === "word" && token.startMs !== undefined);
-
-    expect(transcript.segments[0]?.words).toEqual([]);
-    expect(timedWords).toEqual([]);
-    expect(display.blocks[0]?.timedWordCount).toBe(0);
-    expect(display.blocks[0]?.wordCount).toBe(9);
-    expect(display.blocks[0]?.timingCoverage).toBe(0);
-  });
-
-  it("recovers word timings from readable transcript words embedded in portable manifests", () => {
-    const portable = {
-      meeting: { durationMs: 10_000 },
-      speakers: [{ id: "spk_1", label: "Chris" }],
-      transcript: {
-        items: [
-          {
-            id: "seg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-          },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.readable.v1",
-        speakers: [{ id: "spk_1", label: "Chris" }],
-        segments: [
-          {
-            id: "rseg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 5000,
-            text: "And I think they'll be very happy with it.",
-            words: [
-              { text: "And", startMs: 1000, endMs: 1200 },
-              { text: "I", startMs: 1200, endMs: 1400 },
-              { text: "think", startMs: 1400, endMs: 1800 },
-              { text: "they'll", startMs: 1800, endMs: 2200 },
-              { text: "be", startMs: 2200, endMs: 2400 },
-              { text: "very", startMs: 2400, endMs: 2800 },
-              { text: "happy", startMs: 2800, endMs: 3300 },
-              { text: "with", startMs: 3300, endMs: 3600 },
-              { text: "it.", startMs: 3600, endMs: 4000 },
-            ],
-          },
-        ],
-      },
-    };
-
-    const transcript = buildTranscriptWordsFromPortable(portable);
-    const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const wordTokens = display.blocks[0]?.tokens.filter((token) => token.kind === "word") ?? [];
-
-    expect(transcript.segments[0]?.words).toEqual([]);
-    expect(display.blocks[0]?.timedWordCount).toBe(9);
-    expect(wordTokens[0]).toMatchObject({ text: "And", startMs: 1000, endMs: 1200 });
-    expect(wordTokens[5]).toMatchObject({ text: "very", startMs: 2400, endMs: 2800 });
-  });
-
-  it("keeps an interrupted readable block whole instead of splitting it (D-690)", () => {
-    const portable = {
-      meeting: { durationMs: 110_000 },
-      speakers: [
-        { id: "spk_chima", label: "chima" },
-        { id: "spk_silvio", label: "Silvio" },
-      ],
-      transcript: {
-        items: [
-          {
-            id: "seg_chima",
-            speaker: "spk_chima",
-            startMs: 54_981,
-            endMs: 83_541,
-            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
-          },
-          {
-            id: "seg_silvio",
-            speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-          },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.readable.v1",
-        speakers: [
-          { id: "spk_chima", label: "chima" },
-          { id: "spk_silvio", label: "Silvio" },
-        ],
-        segments: [
-          {
-            id: "readable_000002",
-            speaker: "spk_chima",
-            startMs: 54_981,
-            endMs: 83_541,
-            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
-            words: [
-              "Actually,","I","was","wondering","if","I","should","have","pinged","you","in","the","afternoon,","and","I","didn't","because","I","was","busy","doing","something","else.","It's","a","pity,","Chris,","you're","ruining","everything.",
-            ].map((text, index, words) => ({
-              text,
-              startMs: 54_981 + Math.floor(((83_541 - 54_981) * index) / words.length),
-              endMs: 54_981 + Math.floor(((83_541 - 54_981) * (index + 1)) / words.length),
-            })),
-          },
-          {
-            id: "readable_000003",
-            speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-            words: [
-              { text: "Telling", startMs: 64_837, endMs: 65_470 },
-              { text: "Mattia", startMs: 65_470, endMs: 66_102 },
-              { text: "off", startMs: 66_102, endMs: 66_735 },
-              { text: "about", startMs: 66_735, endMs: 67_368 },
-              { text: "homework.", startMs: 67_368, endMs: 68_001 },
-            ],
-          },
-        ],
-      },
-    };
-
-    const transcript = buildTranscriptWordsFromPortable(portable);
-    const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
-
-    // The readable splitter was deleted in D-690: it rewrote LLM-cleaned prose
-    // by word count, and when it did fire it emitted blocks out of time order.
-    // It also never fired on a real producer artifact — not for want of readable
-    // words, which every packed meeting carries per readable segment, but
-    // because every packed meeting ALSO carries a baked display transcript, and
-    // the viewer only rebuilds one (and so only reaches the splitter) when that
-    // is missing. Interruptions are now surfaced by src/core/overlap.ts, which
-    // annotates the turn rather than cutting it up.
-    expect(chimaBlocks).toHaveLength(1);
-    expect(chimaBlocks[0]?.text).toContain("Actually, I was wondering");
-    expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
-    expect(display.blocks.map((block) => block.id)).not.toContain(
-      expect.stringContaining("__split_"),
-    );
-    expect(display.blocks.map((block) => block.startMs)).toEqual(
-      [...display.blocks.map((block) => block.startMs)].sort((left, right) => left - right),
-    );
   });
 
   it("keeps an interrupted block whole even with exact transcript words (D-690)", () => {
@@ -646,13 +484,19 @@ describe("describeMeeting", () => {
             endMs,
             text,
           })),
-          {
-            id: "seg_silvio",
+          ...[
+            ["Telling", 64_837, 65_470],
+            ["Mattia", 65_470, 66_102],
+            ["off", 66_102, 66_735],
+            ["about", 66_735, 67_368],
+            ["homework.", 67_368, 68_001],
+          ].map(([text, startMs, endMs], index) => ({
+            id: `seg_silvio_${index}`,
             speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-          },
+            startMs,
+            endMs,
+            text,
+          })),
         ],
       },
       readableTranscript: {
@@ -683,7 +527,7 @@ describe("describeMeeting", () => {
             startMs: 64_837,
             endMs: 78_757,
             text: "Telling Mattia off about homework.",
-            sourceSegmentIds: ["seg_silvio"],
+            sourceSegmentIds: [0, 1, 2, 3, 4].map((index) => `seg_silvio_${index}`),
           },
         ],
       },
@@ -694,8 +538,8 @@ describe("describeMeeting", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
 
-    // See the note on the previous test: the splitter was deleted in D-690, so
-    // exact transcript words no longer cut the block in two either.
+    // Exact transcript words do not cut the readable block in two; the viewer
+    // annotates the interruption without rewriting the cleaned prose.
     expect(chimaBlocks).toHaveLength(1);
     expect(chimaBlocks[0]?.text).toContain("doing something else.");
     expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
@@ -1400,24 +1244,12 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
 
       const sourceDir = join(root, "source");
       mkdirSync(sourceDir, { recursive: true });
-      const writePortablePack = (meetingId: string, meeting: Record<string, unknown>) => {
-        const payload = gzipSync(Buffer.from(JSON.stringify({ meeting }), "utf8")).toString("base64url");
-        writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
-        writeFileSync(
-          join(sourceDir, `${meetingId}.opus.ffprobe.json`),
-          JSON.stringify({
-            format: { tags: { CASSINI_PAYLOAD_CHUNK_COUNT: "1", CASSINI_PAYLOAD_000: payload } },
-            streams: [],
-          }),
-        );
-      };
-
-      writePortablePack("daily-meeting-2026-04-08", {
+      writePublishedPortableProbeFixture(sourceDir, "daily-meeting-2026-04-08", {
         id: "daily-meeting-2026-04-08",
         title: "Cassini Meeting",
         createdAtUtc: "2026-04-08T07:31:02Z",
       });
-      writePortablePack("daily-meeting-2026-04-09", {
+      writePublishedPortableProbeFixture(sourceDir, "daily-meeting-2026-04-09", {
         id: "daily-meeting-2026-04-09",
         title: "Cassini Meeting",
       });
@@ -1478,26 +1310,13 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
 
       const sourceDir = join(root, "source");
       mkdirSync(sourceDir, { recursive: true });
-      const writePortablePack = (meetingId: string, meeting: Record<string, unknown>) => {
-        const payload = gzipSync(Buffer.from(JSON.stringify({ meeting }), "utf8")).toString("base64url");
-        writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
-        writeFileSync(
-          join(sourceDir, `${meetingId}.opus.ffprobe.json`),
-          JSON.stringify({
-            format: { tags: { CASSINI_PAYLOAD_CHUNK_COUNT: "1", CASSINI_PAYLOAD_000: payload } },
-            streams: [],
-          }),
-        );
-      };
-
-      writePortablePack("01JZ8K3M4N5P6Q7R8S9T0VWXYZ", {
+      writePublishedPortableProbeFixture(sourceDir, "01JZ8K3M4N5P6Q7R8S9T0VWXYZ", {
         id: "01JZ8K3M4N5P6Q7R8S9T0VWXYZ",
         title: "Weekly Sync",
         createdAtUtc: "2026-08-11T10:32:00Z",
-        roomId: "a7bc3k9x",
-        roomName: "Weekly Sync",
+        roomId: "rm_9f2a1c3d4e5b6a70",
       });
-      writePortablePack("01JZ8K3M4N5P6Q7R8S9T0VWXZZ", {
+      writePublishedPortableProbeFixture(sourceDir, "01JZ8K3M4N5P6Q7R8S9T0VWXZZ", {
         id: "01JZ8K3M4N5P6Q7R8S9T0VWXZZ",
         title: "Cassini Meeting",
         createdAtUtc: "2026-08-12T10:32:00Z",
@@ -1516,8 +1335,7 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
       const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
       const byId = new Map(catalog.meetings.map((meeting: { id: string }) => [meeting.id, meeting]));
       expect(byId.get("01JZ8K3M4N5P6Q7R8S9T0VWXYZ")).toMatchObject({
-        roomId: "a7bc3k9x",
-        roomName: "Weekly Sync",
+        roomId: "rm_9f2a1c3d4e5b6a70",
       });
       // A meeting with no room ships no room keys at all, rather than two empty
       // strings a consumer would have to distinguish from a real value.
@@ -1534,50 +1352,99 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
   });
 });
 
-describe("portableDefaultSegmentCount (v2 .opus segmentCount fallback)", () => {
-  // A v2 portable main manifest carries per-transcript metadata in transcripts[]
-  // (wordCount); the actual items live in separate CASSINI_TX_* chunk sets the
-  // exporter does not decode. So buildTranscriptWordsFromPortable sees no inline
-  // items and yields 0 segments — the catalog must fall back to wordCount, or it
-  // would publish segmentCount: 0 for every fresh v2 .opus.
-  const v2Manifest = {
+describe("validatePublishedPortableManifest", () => {
+  const manifest = {
     kind: "cassini-portable-meeting",
-    version: 2,
-    speakers: [{ id: "spk_0", label: "Alice" }],
-    transcripts: [
-      { id: "raw-asr", role: "speech-to-text", default: true, wordCount: 42 },
-      { id: "cleaned", role: "cleaned", default: false, wordCount: 40 },
-    ],
+    version: 1,
+    profile: "ogg-opus",
+    integrity: {
+      matchPolicy: "exact-opus-audio-v1",
+      opusAudioSha256: "a".repeat(64),
+    },
+    transcripts: [{
+      id: "raw-asr",
+      role: "raw-asr",
+      default: true,
+      format: "transcript.words.v1",
+      payloadRef: {
+        prefix: "CASSINI_TX_RAW_ASR_PAYLOAD_",
+        chunkCount: 1,
+        sha256: "b".repeat(64),
+        rawBytes: 2,
+        gzipBytes: 22,
+        mime: "application/vnd.cassini.transcript-words+json",
+        encoding: "base64url+gzip+utf8json",
+      },
+    }],
   };
 
-  it("buildTranscriptWordsFromPortable yields 0 segments for a v2 main manifest (the bug condition)", () => {
-    expect(buildTranscriptWordsFromPortable(v2Manifest).segments).toHaveLength(0);
+  it("accepts the published indexed manifest", () => {
+    expect(() => validatePublishedPortableManifest(manifest)).not.toThrow();
   });
 
-  it("uses the default transcript's wordCount as the segment count", () => {
-    expect(portableDefaultSegmentCount(v2Manifest)).toBe(42);
+  it("accepts scripted words and an authoritative non-derived payload prefix", () => {
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [{
+        ...manifest.transcripts[0],
+        id: "script",
+        role: "scripted",
+        payloadRef: {
+          ...manifest.transcripts[0].payloadRef,
+          prefix: "CASSINI_TX_AUTHORED_PAYLOAD_",
+        },
+      }],
+    })).not.toThrow();
   });
 
-  it("the catalog fallback (segments.length || portableDefaultSegmentCount) avoids segmentCount: 0", () => {
-    const transcript = buildTranscriptWordsFromPortable(v2Manifest);
-    const segmentCount = transcript.segments?.length || portableDefaultSegmentCount(v2Manifest);
-    expect(segmentCount).toBe(42);
+  it("rejects an unsupported wire version", () => {
+    expect(() => validatePublishedPortableManifest({ ...manifest, version: 0 })).toThrow(
+      /unsupported portable manifest version/i,
+    );
   });
 
-  it("falls back to the first transcript when none is marked default", () => {
-    expect(
-      portableDefaultSegmentCount({
-        transcripts: [
-          { id: "a", wordCount: 7 },
-          { id: "b", wordCount: 9 },
-        ],
-      }),
-    ).toBe(7);
+  it("rejects malformed or unsupported transcript descriptors", () => {
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [{ ...manifest.transcripts[0], role: "unknown" }],
+    })).toThrow(/unsupported portable transcript role/i);
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [{
+        ...manifest.transcripts[0],
+        payloadRef: { ...manifest.transcripts[0].payloadRef, encoding: "unknown" },
+      }],
+    })).toThrow(/unsupported transcript encoding/i);
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [{ ...manifest.transcripts[0], id: "raw_asr" }],
+    })).toThrow(/invalid portable transcript id/i);
   });
 
-  it("returns 0 when there are no transcripts or no numeric wordCount", () => {
-    expect(portableDefaultSegmentCount({})).toBe(0);
-    expect(portableDefaultSegmentCount({ transcripts: [] })).toBe(0);
-    expect(portableDefaultSegmentCount({ transcripts: [{ id: "a" }] })).toBe(0);
+  it("enforces source relationships for every words role", () => {
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [{ ...manifest.transcripts[0], sourceTranscriptId: "raw-asr" }],
+    })).toThrow(/must not set sourceTranscriptId/i);
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [{ ...manifest.transcripts[0], id: "fixed", role: "human-corrected" }],
+    })).toThrow(/unknown sourceTranscriptId/i);
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [
+        manifest.transcripts[0],
+        {
+          ...manifest.transcripts[0],
+          id: "fixed",
+          role: "human-corrected",
+          sourceTranscriptId: "raw-asr",
+          payloadRef: {
+            ...manifest.transcripts[0].payloadRef,
+            prefix: "CASSINI_TX_FIXED_PAYLOAD_",
+          },
+        },
+      ],
+    })).not.toThrow();
   });
 });

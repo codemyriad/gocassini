@@ -22,10 +22,7 @@ const summaryAttachmentName = "summary.md"
 // `cassini meetings` CLI, and anything wrapping it later) go through here
 // rather than re-deriving the OpusTag layout.
 type ExtractedMeeting struct {
-	// Manifest is the decoded CASSINI_PAYLOAD_* manifest. Its Version field
-	// tells v1 (transcript inline) from v2/v3 (transcript bodies in their own
-	// chunk sets) — trust it only on a decoded manifest, never on one built
-	// locally, since the normalizers select a wire version explicitly.
+	// Manifest is the decoded CASSINI_PAYLOAD_* manifest.
 	Manifest portable.Manifest
 
 	// FormatTag is CASSINI_FORMAT exactly as the file carries it.
@@ -47,9 +44,8 @@ type ExtractedMeeting struct {
 //
 // It reuses the same decode path as inspect: probePortableAudio +
 // decodePortableMeeting verify the payload's sha256 and byte counts. It
-// deliberately does NOT verify audio integrity. Legacy v1/v2 verification
-// decodes the whole recording to PCM, while v3 streams the compressed Opus
-// packets; callers that need either gate use `cassini inspect` explicitly.
+// deliberately does NOT verify audio integrity; callers that need that gate
+// use `cassini inspect` explicitly.
 func ExtractMeeting(path string) (ExtractedMeeting, error) {
 	meta, err := probePortableAudio(path)
 	if err != nil {
@@ -67,7 +63,7 @@ func ExtractMeeting(path string) (ExtractedMeeting, error) {
 	if formatTag == "" {
 		return ExtractedMeeting{}, fmt.Errorf("%s carries no CASSINI_FORMAT metadata (not a portable meeting)", path)
 	}
-	if !strings.EqualFold(formatTag, portable.Format) && !strings.EqualFold(formatTag, portable.FormatV2) && !strings.EqualFold(formatTag, portable.FormatV3) {
+	if !isPublishedPortableFormat(formatTag) {
 		return ExtractedMeeting{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
 	}
 
@@ -82,23 +78,11 @@ func ExtractMeeting(path string) (ExtractedMeeting, error) {
 		SummaryMarkdown: summaryMarkdownFromAttachments(manifest.Attachments),
 	}
 
-	// v1 files carry the words inline in the main manifest.
-	if manifest.Version == 1 {
-		extracted.Transcript = extractedFromTranscriptBody(
-			"transcript",
-			manifest.Transcript.Format,
-			firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language),
-			manifest.Transcript.WordCount,
-			manifest.Transcript.Items,
-		)
-		return extracted, nil
-	}
-
-	entry, ok := defaultWordsTranscriptEntry(tags, manifest)
+	entry, _, ok := defaultWordsTranscriptEntry(tags, manifest)
 	if !ok {
 		return ExtractedMeeting{}, fmt.Errorf("portable meeting %s declares no default words transcript", path)
 	}
-	body, err := decodeTranscriptBody(tags, entry.ID)
+	body, _, err := decodeTranscriptBody(tags, entry)
 	if err != nil {
 		return ExtractedMeeting{}, fmt.Errorf("decode transcript %q body: %w", entry.ID, err)
 	}

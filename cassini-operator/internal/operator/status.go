@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,7 +18,8 @@ import (
 // actually installed, proxied, configured, and ready for Talk" without shell
 // access. Through the AppAPI proxy it is ADMIN-ACL'd by the
 // ^operator\/status\/?$ route in appinfo/info.xml. It reports version/image
-// tag, the effective forced-CUDA settings and whether CUDA is actually usable,
+// tag, the effective device/model the next build will use and whether that
+// device is actually usable,
 // Talk backend config presence (booleans only — never secret values), and
 // DB/storage health. No check loads a model or transcribes audio. CUDA
 // readiness may invoke `nvidia-smi`, so it is singleflighted and cached for a
@@ -162,7 +164,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	settings := rt.currentSettings()
-	effective := settings.effective()
+	effective := rt.effectiveFor(settings)
 	usable, detail := rt.effectiveComputeStatus(settings, effective.Device)
 	resp := statusResponse{
 		Version:     strings.TrimSpace(os.Getenv(envAppVersion)),
@@ -269,19 +271,34 @@ func (s *Store) Ping(ctx context.Context) error {
 }
 
 // effectiveComputeStatus validates the raw persisted override before probing
-// the concrete execution device. Current APIs only permit auto/CUDA, but this
-// also makes a legacy or out-of-band CPU setting visibly unhealthy instead of
-// claiming the forced-CUDA build path is ready.
+// the concrete execution device. The CUDA runtime marker gates the GPU path
+// only: reporting the whole app unhealthy because the image carries no CUDA is
+// what left CPU-only installs unable to transcribe at all (D-702), when CPU
+// inference is a supported outcome that needs no GPU probe.
 func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (bool, string) {
 	override := strings.ToLower(strings.TrimSpace(settings.DeviceOverride))
 	if override == "auto" {
 		override = ""
 	}
 	if !validDeviceOverride(override) {
-		return false, fmt.Sprintf("stored device_override %q is incompatible with the GPU-only operator; select auto or cuda", settings.DeviceOverride)
+		return false, fmt.Sprintf("stored device_override %q is not a device this operator can run on; select auto, cpu or cuda", settings.DeviceOverride)
 	}
-	if capable, detail := imageCUDACapability(); !capable {
-		return false, detail
+	if isCUDA(device) {
+		if capable, detail := imageCUDACapability(); !capable {
+			return false, detail
+		}
+	}
+	// Readiness must not be more optimistic than admission: run the same model
+	// predicate the governor will run. A CUDA image that has fallen back to the
+	// CPU carries only the fp32 model, so a tier that needs another one blocks
+	// permanently — reporting that host as ready would leave an administrator
+	// waiting for builds that can never start.
+	if _, err := rt.admitModelForDevice(settings, device); err != nil {
+		var unavailable *resourceUnavailableError
+		if errors.As(err, &unavailable) {
+			return false, unavailable.detail
+		}
+		return false, err.Error()
 	}
 	if rt.computeReadiness != nil {
 		return rt.computeReadiness.check(device)
@@ -304,11 +321,11 @@ func imageCUDACapability() (bool, string) {
 	case "1", "true", "yes":
 		return true, ""
 	case "0", "false", "no":
-		return false, "the installed portable image does not bundle the CUDA inference runtime; install the matching -cuda image on the GPU deploy daemon because operator speech recognition is GPU-only"
+		return false, "the installed portable image does not bundle the CUDA inference runtime; install the matching -cuda image on a GPU deploy daemon to transcribe on the GPU"
 	case "":
-		return false, fmt.Sprintf("%s is not declared; refusing CUDA inference because operator speech recognition is GPU-only", envSTTCUDACapable)
+		return false, fmt.Sprintf("%s is not declared; refusing CUDA inference from an image that may not carry the CUDA execution provider", envSTTCUDACapable)
 	default:
-		return false, fmt.Sprintf("invalid %s=%q; refusing CUDA inference because operator speech recognition is GPU-only", envSTTCUDACapable, os.Getenv(envSTTCUDACapable))
+		return false, fmt.Sprintf("invalid %s=%q; refusing CUDA inference from an image that may not carry the CUDA execution provider", envSTTCUDACapable, os.Getenv(envSTTCUDACapable))
 	}
 }
 
@@ -332,21 +349,25 @@ func probeCUDADevice() (bool, string) {
 	_, driverErr := os.Stat("/proc/driver/nvidia/version")
 	deviceNodes, _ := filepath.Glob("/dev/nvidia*")
 	if driverErr != nil && len(deviceNodes) == 0 {
-		return false, "CASSINI_STT_DEVICE=cuda but no NVIDIA driver (/proc/driver/nvidia/version) or device nodes (/dev/nvidia*) are visible — run the container with GPU access (docker --gpus all, or an AppAPI deploy daemon with the nvidia runtime); operator speech recognition is GPU-only"
+		return false, "CASSINI_STT_DEVICE=cuda but no NVIDIA driver (/proc/driver/nvidia/version) or device nodes (/dev/nvidia*) are visible — run the container with GPU access (docker --gpus all, or an AppAPI deploy daemon with the nvidia runtime), or clear device_override=cuda to transcribe on the CPU"
 	}
 	smi, err := exec.LookPath("nvidia-smi")
 	if err != nil {
-		return true, "cuda: NVIDIA driver visible (nvidia-smi not present to verify further)"
+		// Readiness must not promise what admission will refuse: the resource
+		// governor reads free VRAM through nvidia-smi and declines to launch a
+		// CUDA build without a trustworthy reading, so an image that cannot run
+		// nvidia-smi is not ready for CUDA however visible the driver is.
+		return false, "CASSINI_STT_DEVICE=cuda but nvidia-smi is not installed in this image, so free VRAM cannot be measured and no CUDA build will be admitted; install the matching -cuda image, or clear device_override=cuda to transcribe on the CPU"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, smi, "-L").Output()
 	if err != nil {
-		return false, fmt.Sprintf("CASSINI_STT_DEVICE=cuda but `nvidia-smi -L` failed: %v — the GPU is not usable from this container; fix GPU access because operator speech recognition is GPU-only", err)
+		return false, fmt.Sprintf("CASSINI_STT_DEVICE=cuda but `nvidia-smi -L` failed: %v — the GPU is not usable from this container; fix GPU access, or clear device_override=cuda to transcribe on the CPU", err)
 	}
 	gpus := strings.TrimSpace(string(out))
 	if gpus == "" {
-		return false, "CASSINI_STT_DEVICE=cuda but `nvidia-smi -L` lists no GPUs — the GPU is not usable from this container; fix GPU access because operator speech recognition is GPU-only"
+		return false, "CASSINI_STT_DEVICE=cuda but `nvidia-smi -L` lists no GPUs — the GPU is not usable from this container; fix GPU access, or clear device_override=cuda to transcribe on the CPU"
 	}
 	if line, _, found := strings.Cut(gpus, "\n"); found {
 		gpus = line + " (+more)"
@@ -354,19 +375,27 @@ func probeCUDADevice() (bool, string) {
 	return true, "cuda: " + gpus
 }
 
-// logComputeDeviceStatus logs the effective STT device once at startup, loudly
-// when CUDA is unusable: a CUDA image without GPU access must fail
-// visibly instead of silently transcribing on CPU (D-363).
+// logComputeDeviceStatus logs the effective STT device once at startup. A CUDA
+// image that cannot see a GPU still says so loudly even though builds now
+// proceed on the CPU: the fallback is legitimate but an order of magnitude
+// slower, and an operator who deployed the -cuda image on a GPU daemon wants to
+// know their GPU went missing (D-363, D-702).
 func (rt *Runtime) logComputeDeviceStatus() {
 	settings := rt.currentSettings()
-	effective := settings.effective()
+	effective := rt.effectiveFor(settings)
 	device := effective.Device
 	usable, detail := rt.effectiveComputeStatus(settings, device)
-	if usable {
-		rt.logger.Printf("stt_device -> %s quality=%s model=%s (%s)", device, effective.Quality, effective.Model, detail)
+	if !usable {
+		rt.logger.Printf("ERROR: stt_device %s is not usable: %s", device, detail)
 		return
 	}
-	rt.logger.Printf("ERROR: stt_device %s is not usable: %s", device, detail)
+	rt.logger.Printf("stt_device -> %s quality=%s model=%s (%s)", device, effective.Quality, effective.Model, detail)
+	if !isCUDA(device) {
+		if capable, _ := imageCUDACapability(); capable {
+			rt.logger.Printf("WARNING: this image carries the CUDA inference runtime but no NVIDIA device is visible; " +
+				"builds will run on the CPU until GPU access is restored")
+		}
+	}
 }
 
 // storagePathCheck verifies a data root exists (creating it if needed) and is

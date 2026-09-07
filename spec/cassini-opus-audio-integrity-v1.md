@@ -1,6 +1,6 @@
 # Cassini compressed Opus audio integrity v1
 
-Portable meeting manifest v3 identifies its recording with
+Portable meeting manifest v1 identifies its recording with
 `integrity.matchPolicy = "exact-opus-audio-v1"` and a lowercase hexadecimal
 SHA-256 in `integrity.opusAudioSha256`.
 
@@ -50,5 +50,5 @@ invalid continuation, multiplexed or chained streams, truncated packets,
 missing EOS, and invalid final granules.
 
 Metadata-only remuxes must preserve the digest. Re-encoding audio normally
-changes it even when the result sounds equivalent; fresh v3 meeting IDs derive
-from this digest for the same reason.
+changes it even when the result sounds equivalent; content-derived meeting IDs
+derive from this digest for the same reason.

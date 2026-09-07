@@ -28,13 +28,9 @@ import (
 //   - portable.Manifest, for anything that wants to READ a named field.
 //   - the raw JSON document, for anything that wants to WRITE one.
 //
-// The second exists because the file is not necessarily the shape this binary
-// would write today. A v2 file carries per-transcript descriptor arrays and a
-// provenance map that portable.Manifest flattens; a file written by a future
-// producer may carry keys this build has never heard of. Re-marshalling a
-// decoded struct would silently drop every one of them. Editing the JSON
-// document in place drops nothing, and is the same technique the operator uses
-// on a bundle manifest for the same reason (setMeetingBundleFields).
+// The second preserves extension fields while editing. Re-marshalling a
+// decoded struct would silently drop keys the struct does not model; editing
+// the JSON document in place keeps them intact.
 
 // portableMeetingTags reads every OpusTag off a portable meeting file.
 //
@@ -101,6 +97,30 @@ func portableTagValue(tags map[string]string, name string) string {
 // Returns the raw bytes rather than a parsed value, because its two callers
 // want different things from them and only one of them wants a struct.
 func decodePortableMeetingPayload(tags map[string]string) ([]byte, error) {
+	formatTag := portableTagValue(tags, "CASSINI_FORMAT")
+	if formatTag == "" {
+		return nil, fmt.Errorf("not a portable meeting file: missing CASSINI_FORMAT")
+	}
+	if formatTag != portable.Format {
+		return nil, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
+	}
+	for _, required := range []struct {
+		name string
+		want string
+	}{
+		{name: "CASSINI_PROFILE", want: portable.Profile},
+		{name: "CASSINI_PAYLOAD_MIME", want: portable.PayloadMIME},
+		{name: "CASSINI_PAYLOAD_ENCODING", want: portable.PayloadEncoding},
+		{name: "CASSINI_PAYLOAD_SCHEMA", want: portable.PayloadSchema},
+		{name: "CASSINI_AUDIO_MATCH_POLICY", want: portable.AudioMatchPolicy},
+	} {
+		if got := portableTagValue(tags, required.name); got != required.want {
+			return nil, fmt.Errorf("unsupported %s=%q", required.name, got)
+		}
+	}
+	if digest := portableTagValue(tags, "CASSINI_AUDIO_OPUS_SHA256"); !validPortableSHA256(digest) {
+		return nil, fmt.Errorf("missing or invalid CASSINI_AUDIO_OPUS_SHA256")
+	}
 	rawCount := portableTagValue(tags, "CASSINI_PAYLOAD_CHUNK_COUNT")
 	chunkCount, err := strconv.Atoi(rawCount)
 	if err != nil || chunkCount <= 0 {
@@ -131,16 +151,37 @@ func decodePortableMeetingPayload(tags map[string]string) ([]byte, error) {
 		return nil, fmt.Errorf("decompress gzip portable meeting payload: %w", err)
 	}
 
-	// The digest is checked when the file claims one. A payload that survived
-	// base64 and gzip but does not match its own digest is a corrupted file,
-	// and reading fields out of it would be reading fields out of noise.
-	if declared := strings.ToLower(portableTagValue(tags, "CASSINI_PAYLOAD_SHA256")); declared != "" {
-		sum := sha256.Sum256(rawJSON)
-		if actual := hex.EncodeToString(sum[:]); actual != declared {
-			return nil, fmt.Errorf("portable meeting payload sha256 mismatch: file says %s, contents are %s", declared, actual)
-		}
+	if declared, err := positivePortableTagInt(tags, "CASSINI_PAYLOAD_GZIP_BYTES"); err != nil || declared != len(compressed) {
+		return nil, fmt.Errorf("portable meeting payload gzip byte count mismatch")
+	}
+	if declared, err := positivePortableTagInt(tags, "CASSINI_PAYLOAD_RAW_BYTES"); err != nil || declared != len(rawJSON) {
+		return nil, fmt.Errorf("portable meeting payload raw byte count mismatch")
+	}
+	declared := portableTagValue(tags, "CASSINI_PAYLOAD_SHA256")
+	if !validPortableSHA256(declared) {
+		return nil, fmt.Errorf("missing or invalid CASSINI_PAYLOAD_SHA256")
+	}
+	sum := sha256.Sum256(rawJSON)
+	if actual := hex.EncodeToString(sum[:]); actual != declared {
+		return nil, fmt.Errorf("portable meeting payload sha256 mismatch: file says %s, contents are %s", declared, actual)
 	}
 	return rawJSON, nil
+}
+
+func positivePortableTagInt(tags map[string]string, name string) (int, error) {
+	value, err := strconv.Atoi(portableTagValue(tags, name))
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("missing or invalid %s", name)
+	}
+	return value, nil
+}
+
+func validPortableSHA256(value string) bool {
+	if len(value) != 64 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 // readPortableMeetingManifest is the read-a-field path: tags, payload, struct.
@@ -153,9 +194,15 @@ func readPortableMeetingManifest(path string) (portable.Manifest, map[string]str
 	if err != nil {
 		return portable.Manifest{}, nil, err
 	}
-	var manifest portable.Manifest
-	if err := json.Unmarshal(rawJSON, &manifest); err != nil {
-		return portable.Manifest{}, nil, fmt.Errorf("parse portable meeting manifest: %w", err)
+	manifest, err := portable.DecodePublishedManifest(rawJSON)
+	if err != nil {
+		return portable.Manifest{}, nil, err
+	}
+	if tagged := portableTagValue(tags, "CASSINI_AUDIO_OPUS_SHA256"); tagged != manifest.Integrity.OpusSHA256 {
+		return portable.Manifest{}, nil, fmt.Errorf(
+			"portable Opus audio digest disagrees between tags and manifest: tag=%s manifest=%s",
+			tagged, manifest.Integrity.OpusSHA256,
+		)
 	}
 	return manifest, tags, nil
 }

@@ -52,26 +52,25 @@ bug: it will drift, and the two halves will not be tested equally.
 
 **Two traps:**
 
-- The fallback is **silent**. If `X.Y.Z-cuda` is unpullable, AppAPI installs the
-  portable image on a GPU daemon and reports success. Cassini now fails closed:
-  recording remains available, but `/operator/status` reports CUDA unavailable
-  and each transcription immediately enters `build/blocked` with instructions
-  to install the matching `-cuda` image instead of falling back to CPU. Every
-  publish must still verify the `-cuda` tag is pullable *including its child
-  manifests*; CI does this, and so does
-  `ops/deploy/deploy-exapp.sh`. As of 2026-07-31 every published `-cuda`
+- The image fallback is **silent**. If `X.Y.Z-cuda` is unpullable, AppAPI
+  installs the portable image on a GPU daemon and reports success — you get a
+  working install that transcribes on the CPU while the GPU sits idle. Cassini
+  makes that visible rather than fatal: `/operator/status` and Cassini Admin
+  report `device: cpu`, and the operator logs a warning when a CUDA-capable
+  image cannot see an NVIDIA device. Every publish must still verify the
+  `-cuda` tag is pullable *including its child manifests*; CI does this, and so
+  does `deploy-exapp.sh` (in the systems repository). As of 2026-07-31 every published `-cuda`
   release tag is dangling.
 - `<image-tag>` in the manifest is always the **base** tag. Writing
   `0.2.0-cuda` there yields a request for `0.2.0-cuda-cuda`.
 
-> **GPU-only upgrade warning.** Updating a pre-GPU-only installation on a CPU
-> daemon, or updating while only the plain image is pullable, stops operator
-> transcription immediately. Capture and raw-audio retention continue, but new
-> and recovered build jobs become `build/blocked`; an update does not migrate
-> the app to a CUDA daemon. Make the matching `<image-tag>-cuda` image pullable,
-> install/redeploy on a CUDA deploy daemon, then use **Rerun** in Cassini Admin
-> for every preserved blocked recording. Release notes for this transition must
-> call out that plain-image transcription no longer runs.
+> **Upgrading from a GPU-only release.** Releases between the GPU-only change
+> and D-702 blocked every build on a CPU daemon. Updating to this release
+> restores CPU transcription: new recordings build on whichever device the host
+> has, and recordings left in `build/blocked` are recovered with **Rerun** in
+> Cassini Admin — no image or daemon change required. An installation that
+> *wants* GPU-only behaviour pins `device_override=cuda` in Settings, which
+> keeps blocking a GPU-less host instead of falling back.
 
 ### 4. The persistent volume survives updates and container recreates
 
@@ -83,7 +82,7 @@ the *on-disk layout or schema* under that volume must migrate it forward
 in-place on startup. There is no "reinstall clean" path that is not data loss.
 
 `--rm-data` deletes the archive. Nothing in this repo passes it, and
-`ops/deploy/test-exapp-register.sh` asserts that no code path can.
+`scripts/test-exapp-register.sh` asserts that no code path can.
 
 ### 5. Deploy env is creation-time only — so a new *required* env var is a breaking change
 
@@ -116,7 +115,7 @@ already exists on every install and is the reason this rule is known.
 There is a second trap in the same area: AppAPI only passes variables **declared
 in `appinfo/info.xml`** under `<environment-variables>`. Values for undeclared
 keys are **silently dropped** — the install succeeds and the feature is dead.
-`exapp_assert_manifest_declares` in `ops/deploy/lib/exapp-register.sh` fails the
+`exapp_assert_manifest_declares` in `scripts/lib-exapp-register.sh` fails the
 deploy instead.
 
 ### 6. Moving an app between daemons is not an update — the volume does not follow
@@ -138,7 +137,7 @@ between engines out of band, before re-registering.
 | | Our managed production | Customers |
 |---|---|---|
 | Mechanism | direct `app_api:app:register` of a pinned image | App Store install of the published `<version>` |
-| Driven by | `ops/deploy/deploy-exapp.sh` + a committed inventory | the Nextcloud UI |
+| Driven by | `deploy-exapp.sh` (systems repo) + a committed inventory | the Nextcloud UI |
 | Chooses the image | the operator, via `--tag` | `<image-tag>` in the released manifest |
 
 Both read the same `appinfo/info.xml`, where `<version>` and `<image-tag>` are
@@ -158,7 +157,7 @@ automated flow will sit there. Recovery is
 by a re-register.
 
 Any UI or script driving these commands needs a bounded wait plus that recovery
-path. `ops/deploy/deploy-exapp.sh` runs them detached on the target host and
+path. `deploy-exapp.sh` in the systems repo runs them detached on the target host and
 polls, so a dropped ssh cannot cause the desync.
 
 ### 9. `PUT /enabled` is what creates the navigation entries
