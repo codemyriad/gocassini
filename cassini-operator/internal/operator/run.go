@@ -221,10 +221,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// server. Everything else is the server with flags, as it has always been —
 	// the binary's job is to be the operator, and a subcommand is the exception.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		if args[0] == backfillNCFilesCommand {
+		switch args[0] {
+		case backfillNCFilesCommand:
 			return runBackfillNCFiles(ctx, args[1:], stdout, stderr)
+		case backfillSearchCommand:
+			return runBackfillSearch(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: %s)\n", args[0], backfillNCFilesCommand)
+		fmt.Fprintf(stderr, "unknown command %q (known commands: %s, %s)\n",
+			args[0], backfillNCFilesCommand, backfillSearchCommand)
 		return 2
 	}
 
@@ -472,6 +476,7 @@ Usage:
 
 Commands:
   `+backfillNCFilesCommand+`   one-shot migration of a legacy in-container archive
+  `+backfillSearchCommand+`      index meetings published before the search index existed
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
 
