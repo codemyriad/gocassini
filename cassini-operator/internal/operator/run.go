@@ -91,9 +91,12 @@ type Runtime struct {
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
-	cancel       context.CancelFunc
-	workerWG     sync.WaitGroup
-	store        *Store
+	cancel   context.CancelFunc
+	workerWG sync.WaitGroup
+	store    *Store
+	// searchStore is the disposable full-text index (D-623). Nil when it could
+	// not be opened: search degrades, the pipeline does not.
+	searchStore  *searchStore
 	cfg          Config
 	logger       *log.Logger
 	stdout       io.Writer
@@ -649,6 +652,17 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordHealthTimeout:       recordHealthProbeTimeout,
 		settingsPath:              settingsPath(cfg),
 	}
+	// The search index is disposable and nothing depends on it, so a failure to
+	// open it must not take the operator down — it degrades search, and the
+	// pipeline keeps publishing. Logged rather than swallowed, because a
+	// permanently unopenable index would otherwise look like an archive that
+	// simply never matches anything.
+	if searchIndex, err := openSearchStore(searchStorePath(cfg.DBPath), logger); err != nil {
+		logger.Printf("search index unavailable (%v); meetings will publish but not be indexed", err)
+	} else {
+		rt.searchStore = searchIndex
+	}
+
 	// Detect hardware on first start (or track it under an auto default) and
 	// load the persisted STT policy. A failure here must not take the operator
 	// down: fall back to an in-memory auto default so jobs still run (D-435).
@@ -708,6 +722,12 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 func (rt *Runtime) Shutdown() {
 	rt.cancel()
 	rt.workerWG.Wait()
+	// After the workers, so nothing is still writing rows when the handle goes.
+	if rt.searchStore != nil {
+		if err := rt.searchStore.Close(); err != nil {
+			rt.logger.Printf("search index close failed: %v", err)
+		}
+	}
 }
 
 func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.Handler {
