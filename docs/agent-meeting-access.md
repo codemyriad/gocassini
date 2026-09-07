@@ -11,6 +11,7 @@ Give an agent the three things it needs to reason about your meetings:
 | Command | What it answers |
 |---------|-----------------|
 | `cassini meetings rooms` | Which conversations does this account have recordings from? |
+| `cassini meetings search "<words>"` | Where was this said, across the meetings I may read? |
 | `cassini meetings list` | Which meetings may this account read — optionally only a room's, or a date range's? |
 | `cassini meetings fetch <id>` | Give me that meeting's single portable file. |
 | `cassini meetings context <id>` | Give me that meeting as text I can read. |
@@ -42,6 +43,21 @@ may see what.
 An app older than the list route answers `404` there, and the CLI falls back to
 `published/catalog.json` and filters client-side. That fallback is why a CLI on
 your laptop keeps working against a server it was not upgraded alongside.
+
+`search` answers with references — meeting, speaker, and where in the recording
+— and never with transcript text. That is deliberate rather than an omission:
+reading what was actually said goes through `meetings context`, which fetches
+the recording **as you**, so Nextcloud checks the permission on the words
+themselves. A bug in search can at worst reveal that something exists.
+
+Every search also reports how many of your readable meetings it actually
+covered. A meeting the app could not index is reported as outside coverage
+rather than as one with no matches, so "nothing found" never quietly means
+"never looked".
+
+Searching for a name also searches the spellings transcription produces for it,
+because speech recognition reliably mangles project names — a result marked
+`matched=alias` contains one of those, not the word you typed.
 
 Three consequences worth internalising before you build on this:
 
