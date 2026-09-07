@@ -756,7 +756,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, rt.searchStore)
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
 
@@ -1656,9 +1656,27 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Printf("%s %s", r.Method, r.URL.RequestURI())
+		logger.Printf("%s %s", r.Method, loggableRequestURI(r))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loggableRequestURI is the request line as it may safely be written to the
+// operator's stderr — which is the container log, and which the artifact
+// retention policy does not govern at all.
+//
+// A meeting list's filter values are innocuous there. A search query is not:
+// `?q=severance package for Bob` would sit in that log indefinitely, and in CI
+// output, for anyone with container access. The path still identifies the
+// route, which is all a request log needs.
+func loggableRequestURI(r *http.Request) string {
+	if r.URL == nil {
+		return ""
+	}
+	if r.URL.RawQuery != "" && strings.HasSuffix(r.URL.Path, "/"+searchURLPath) {
+		return r.URL.Path + "?<redacted>"
+	}
+	return r.URL.RequestURI()
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter, allow string) {

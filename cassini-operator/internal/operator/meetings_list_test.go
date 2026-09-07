@@ -78,7 +78,7 @@ func getMeetingsList(t *testing.T, cfg ExAppConfig, query, caller string) *httpt
 		target += "?" + query
 	}
 	rec := httptest.NewRecorder()
-	proxy := cfg.ncFilesProxy(nil)
+	proxy := cfg.ncFilesProxy(nil, nil)
 	if proxy == nil {
 		t.Fatal("expected a proxy for an AppAPI config")
 	}
@@ -316,7 +316,7 @@ func TestMeetingsListNotServedUnderLocalSink(t *testing.T) {
 
 	cfg := testExAppConfig(srv.URL)
 	cfg.PublishSink = publishSinkLocal
-	proxy := cfg.ncFilesProxy(nil)
+	proxy := cfg.ncFilesProxy(nil, nil)
 	rec := httptest.NewRecorder()
 	if proxy(rec, callerReq(http.MethodGet, "/published/"+meetingsListPath, "alice"), meetingsListPath) {
 		t.Fatal("the local sink must not serve the meetings list from Nextcloud")
@@ -346,7 +346,7 @@ func TestMeetingsListNotServedUnderLocalSinkWithoutCaller(t *testing.T) {
 	cfg := testExAppConfig(srv.URL)
 	cfg.PublishSink = publishSinkLocal
 	rec := httptest.NewRecorder()
-	if cfg.ncFilesProxy(nil)(rec, callerReq(http.MethodGet, "/published/"+meetingsListPath, ""), meetingsListPath) {
+	if cfg.ncFilesProxy(nil, nil)(rec, callerReq(http.MethodGet, "/published/"+meetingsListPath, ""), meetingsListPath) {
 		t.Fatal("local sink must decline the list route for an unidentified caller too")
 	}
 }

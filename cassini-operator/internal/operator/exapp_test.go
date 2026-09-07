@@ -378,7 +378,7 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 		`#app{display:block}`)
 
 	root := http.NewServeMux()
-	ExAppConfig{ViewerDist: viewerDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+	ExAppConfig{ViewerDist: viewerDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0), nil)
 
 	// assertEmbeddedAsset checks an embedded JS/CSS route serves the on-disk
 	// bundle (right content type, references #app, never an iframe bootstrap).
@@ -425,7 +425,7 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 // handler's "assets not bundled" behavior.
 func TestUIEmbeddedAssetUnavailableWithoutDist(t *testing.T) {
 	root := http.NewServeMux()
-	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0), nil)
 
 	for _, path := range []string{
 		"/ui/viewer.js", "/ui/viewer.css",
@@ -441,7 +441,7 @@ func TestUIEmbeddedAssetUnavailableWithoutDist(t *testing.T) {
 
 func TestUIAssetHandlerUnknownPathAndMethod(t *testing.T) {
 	root := http.NewServeMux()
-	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0), nil)
 
 	r := httptest.NewRequest(http.MethodGet, "/ui/other.js", nil)
 	w := httptest.NewRecorder()
@@ -778,7 +778,7 @@ func newHTTPHandlerWithStateDir(logger *log.Logger, rt *Runtime, exappCfg ExAppC
 	api.HandleFunc("/events", rt.eventsHandler)
 
 	root := http.NewServeMux()
-	exappCfg.installRoutes(root, stateDir, logger)
+	exappCfg.installRoutes(root, stateDir, logger, nil)
 	mountBasePathOnto(root, rt.cfg.BasePath, api)
 
 	outer := http.NewServeMux()

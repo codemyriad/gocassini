@@ -241,7 +241,7 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
 // absent (dev/standalone serve straight from local disk as before).
-func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
+func (c ExAppConfig) ncFilesProxy(logger *log.Logger, index *searchStore) ncFilesProxyFunc {
 	if !c.appAPIActive() {
 		return nil
 	}
@@ -257,7 +257,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 		// file server, which has no such file and 404s. Checked ahead of the
 		// caller guard so a deployment that does not serve this route at all
 		// answers the same way for every caller.
-		if relPath == meetingsListPath && c.PublishSink != publishSinkNextcloudFiles {
+		if (relPath == meetingsListPath || relPath == searchURLPath) && c.PublishSink != publishSinkNextcloudFiles {
 			return false
 		}
 		// Per-user access control (D-534, unconditional since D-554): serve each
@@ -273,7 +273,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			switch relPath {
 			case "catalog.json":
 				writeCatalogJSON(w, []byte(emptyCatalogJSON))
-			case meetingsListPath:
+			case meetingsListPath, searchURLPath:
 				// The list endpoint must NOT reuse either arm above. An empty
 				// catalog would claim the caller may read nothing, and the 404
 				// would be phrased by the CLI as "no recording you can read"
@@ -296,6 +296,12 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			// Same visible set as catalog.json, narrowed by the query and with
 			// substrate failures reported loudly. See serveMeetingsList.
 			c.serveMeetingsList(r.Context(), w, r, client, caller, logger)
+			return true
+		}
+		if relPath == searchURLPath {
+			// Same visible set again, this time bound into the FTS statement.
+			// See serveSearch.
+			c.serveSearch(r.Context(), w, r, client, caller, index, logger)
 			return true
 		}
 		// meetings/<id>.opus: fetch AS the caller so Nextcloud enforces the
