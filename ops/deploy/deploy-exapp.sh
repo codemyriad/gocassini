@@ -358,6 +358,14 @@ for deploy_env in "${DEPLOY_ENVS[@]}"; do
     echo "invalid --env value (expected KEY=VALUE with a valid environment key)" >&2
     exit 2
   fi
+  # AppAPI keeps the last value for duplicate keys. These must always come
+  # from the inventory resolvers so they stay in sync with Talk.
+  case "${deploy_env%%=*}" in
+    CASSINI_TALK_RECORDING_SECRET|CASSINI_TALK_SIGNALING_INTERNAL_SECRET)
+      echo "invalid --env key: ${deploy_env%%=*} is managed by inventory secret resolvers" >&2
+      exit 2
+      ;;
+  esac
   case "${deploy_env#*=}" in
     *@@SECRET:*@@*)
       echo "invalid --env value: @@SECRET:NAME@@ is reserved for inventory secret resolvers" >&2

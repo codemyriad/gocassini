@@ -248,6 +248,27 @@ expect_contains "reserved deploy env marker explains the inventory boundary" \
   "$TEST_ROOT/reserved-marker.out"
 expect_not_contains "reserved deploy env marker does not echo its raw value" \
   RESOLVER_SENTINEL "$TEST_ROOT/reserved-marker.out"
+
+# Inventory-managed keys cannot be overridden, including with an empty value.
+# AppAPI would otherwise let these later arguments replace the resolved secrets.
+for secret_key in CASSINI_TALK_RECORDING_SECRET CASSINI_TALK_SIGNALING_INTERNAL_SECRET; do
+  for secret_case in empty nonempty; do
+    secret_value=""
+    [[ "$secret_case" == empty ]] || secret_value=SECRET_OVERRIDE_SENTINEL
+    test_name="reserved-$secret_key-$secret_case"
+    rc="$(run_deploy "$test_name" success "" "" \
+      --env CASSINI_PUBLISH_SINK=local --env "$secret_key=$secret_value")"
+    expect_eq "$secret_key $secret_case override is rejected" 2 "$rc"
+    expect_contains "$secret_key $secret_case override explains the inventory boundary" \
+      "invalid --env key: $secret_key is managed by inventory secret resolvers" \
+      "$TEST_ROOT/$test_name.out"
+    expect_not_contains "$secret_key $secret_case override does not echo its value" \
+      SECRET_OVERRIDE_SENTINEL "$TEST_ROOT/$test_name.out"
+  done
+done
+
+expect_no_file "invalid deploy envs never allocate remote staging files" \
+  "$STATE/allocations.log"
 expect_no_file "invalid deploy envs never reach registration" \
   "$STATE/register-paths.log"
 
