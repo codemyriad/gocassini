@@ -54,15 +54,13 @@ type portableMeetingSource struct {
 }
 
 // portableNamedTranscript pairs a loaded transcript file with the multi-track metadata
-// the producer needs (id, role, default, provenance).
+// the producer needs (id, default, provenance).
 type portableNamedTranscript struct {
-	ID                 string
-	Role               string
-	Default            bool
-	Language           string
-	SourceTranscriptID string
-	Provenance         *portable.ProcessingStep
-	Transcript         portableTranscriptArtifact
+	ID         string
+	Default    bool
+	Language   string
+	Provenance *portable.ProcessingStep
+	Transcript portableTranscriptArtifact
 }
 
 type portableMeetingArtifact struct {
@@ -90,13 +88,11 @@ type portableMeetingArtifact struct {
 // ignores the singular `files.transcript`. When it is empty, the packer emits
 // one synthesized raw-asr entry.
 type portableMeetingTranscriptInputFile struct {
-	ID                 string                   `json:"id"`
-	Path               string                   `json:"path"`
-	Role               string                   `json:"role"`
-	Default            bool                     `json:"default,omitempty"`
-	Language           string                   `json:"language,omitempty"`
-	SourceTranscriptID string                   `json:"sourceTranscriptId,omitempty"`
-	Provenance         *portable.ProcessingStep `json:"provenance,omitempty"`
+	ID         string                   `json:"id"`
+	Path       string                   `json:"path"`
+	Default    bool                     `json:"default,omitempty"`
+	Language   string                   `json:"language,omitempty"`
+	Provenance *portable.ProcessingStep `json:"provenance,omitempty"`
 }
 
 type portableTranscriptArtifact struct {
@@ -397,13 +393,11 @@ func loadPortableAdditionalTranscripts(rootDir string, entries []portableMeeting
 			return nil, fmt.Errorf("parse transcript file %s: %w", path, err)
 		}
 		loaded = append(loaded, portableNamedTranscript{
-			ID:                 entry.ID,
-			Role:               entry.Role,
-			Default:            entry.Default,
-			Language:           entry.Language,
-			SourceTranscriptID: entry.SourceTranscriptID,
-			Provenance:         entry.Provenance,
-			Transcript:         transcript,
+			ID:         entry.ID,
+			Default:    entry.Default,
+			Language:   entry.Language,
+			Provenance: entry.Provenance,
+			Transcript: transcript,
 		})
 	}
 	return loaded, nil

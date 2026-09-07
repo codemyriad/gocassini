@@ -33,19 +33,9 @@ const (
 	TranscriptBodyMIMEWords    = "application/vnd.cassini.transcript-words+json"
 	TranscriptBodyMIMEReadable = "application/vnd.cassini.transcript-readable+json"
 
-	RoleRawASR = "raw-asr"
-	// RoleWithdrawnReadableCleanup is the role the deleted LLM cleanup step used
-	// to write. Nothing produces it any more, and no published file in the
-	// archive carries one, but the name survives so a reader can recognise such
-	// an entry and skip it instead of failing the whole file.
-	RoleWithdrawnReadableCleanup = "readable-cleanup"
-	RoleDisplay                  = "display"
-	RoleHumanCorrected           = "human-corrected"
-	RoleTranslation              = "translation"
-	// RoleScripted is authored text the recording is a performance of: a
-	// script, a song's lyrics. Not a transcription, so it never names a
-	// source transcript.
-	RoleScripted = "scripted"
+	// This is an opaque id kept stable for existing single-transcript bundles.
+	DefaultWordsTranscriptID = "raw-asr"
+	RoleDisplay              = "display"
 )
 
 type Manifest struct {
@@ -58,18 +48,14 @@ type Manifest struct {
 	Speakers  []Speaker `json:"speakers"`
 	// Transcript bodies live in independent OpusTag chunk sets referenced by
 	// these descriptors. Keeping the index separate lets one meeting carry
-	// multiple raw, cleaned, corrected, or translated transcripts.
+	// multiple word transcripts alongside their display documents.
 	Transcripts         []TranscriptEntry `json:"transcripts,omitempty"`
 	ReadableTranscripts []TranscriptEntry `json:"readableTranscripts,omitempty"`
 	Provenance          *Provenance       `json:"provenance,omitempty"`
-	Chapters            []Chapter         `json:"chapters,omitempty"`
 	// Summary holds metadata about the meeting summary artifact (model,
 	// templateVersion, format). Schema is intentionally open: map[string]any
 	// lets future producers add keys without breaking decoders. The actual
 	// summary.md content lives in Attachments, not here.
-	//
-	// Distinct from Meeting.Summary — see the doc comment on that field for
-	// the split. Background: planning/initiatives/mvp/slices/V4-summary-generation/followup-plan.md.
 	Summary     map[string]any   `json:"summary,omitempty"`
 	Attachments []map[string]any `json:"attachments,omitempty"`
 }
@@ -170,7 +156,6 @@ type Meeting struct {
 	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
 	ProcessedAtUTC  string `json:"processedAtUtc,omitempty"`
 	DurationMS      int64  `json:"durationMs"`
-	Language        string `json:"language,omitempty"`
 	// RoomID identifies the conversation the meeting was recorded in: a
 	// deterministic one-way derivation of the room's identity (D-622), never
 	// the Talk token itself. Optional — a meeting packed from a file, a dev
@@ -194,14 +179,6 @@ type Meeting struct {
 	// unambiguously "unknown" rather than a legal value.
 	JobID         string `json:"jobId,omitempty"`
 	AttemptNumber int    `json:"attemptNumber,omitempty"`
-	// Summary is reserved for surfacing summary content as a *meeting attribute*
-	// (e.g. a TL;DR readable without unpacking the gzipped payload). Currently
-	// left empty — picking a meaning (TL;DR? full markdown? first heading?)
-	// commits the schema, and no consumer has asked yet. Distinct from
-	// Manifest.Summary which is metadata about the summary artifact.
-	//
-	// Background: planning/initiatives/mvp/slices/V4-summary-generation/followup-plan.md.
-	Summary string `json:"summary,omitempty"`
 }
 
 type Audio struct {
@@ -241,12 +218,6 @@ type TranscriptItem struct {
 	// one packed before these fields existed.
 	AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
 	LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
-}
-
-type Chapter struct {
-	Title   string `json:"title"`
-	StartMS int64  `json:"startMs"`
-	EndMS   int64  `json:"endMs"`
 }
 
 type EncodedPayload struct {
@@ -309,12 +280,9 @@ func ValidatePublishedManifest(manifest Manifest) error {
 		wordIDs[entry.ID] = struct{}{}
 	}
 	for _, entry := range manifest.ReadableTranscripts {
-		// A withdrawn readable-cleanup entry is skipped, not rejected. The
-		// format contract says a reader fails closed on a layout it cannot
-		// understand, but this one it understands perfectly well: it is a body
-		// this build no longer writes. Failing here would turn an older file
-		// into an error and take its perfectly good raw transcript with it.
-		if entry.Role == RoleWithdrawnReadableCleanup {
+		// Unknown readable roles, including withdrawn cleanup bodies, do not
+		// affect the words or audio in this file.
+		if entry.Role != RoleDisplay {
 			continue
 		}
 		if err := validatePublishedTranscriptEntry(entry, true); err != nil {
@@ -327,14 +295,6 @@ func ValidatePublishedManifest(manifest Manifest) error {
 			return fmt.Errorf("transcript %q has unknown sourceTranscriptId %q", entry.ID, entry.SourceTranscriptID)
 		}
 		seen[entry.ID] = struct{}{}
-	}
-	for _, entry := range manifest.Transcripts {
-		if entry.SourceTranscriptID == "" {
-			continue
-		}
-		if _, exists := wordIDs[entry.SourceTranscriptID]; !exists {
-			return fmt.Errorf("transcript %q has unknown sourceTranscriptId %q", entry.ID, entry.SourceTranscriptID)
-		}
 	}
 	return nil
 }
@@ -352,19 +312,6 @@ func validatePublishedTranscriptEntry(entry TranscriptEntry, readable bool) erro
 		}
 		if strings.TrimSpace(entry.SourceTranscriptID) == "" {
 			return fmt.Errorf("transcript %q requires sourceTranscriptId", entry.ID)
-		}
-	} else {
-		switch entry.Role {
-		case RoleRawASR, RoleScripted:
-			if entry.SourceTranscriptID != "" {
-				return fmt.Errorf("transcript %q (role %q) must not set sourceTranscriptId", entry.ID, entry.Role)
-			}
-		case RoleHumanCorrected, RoleTranslation:
-			if strings.TrimSpace(entry.SourceTranscriptID) == "" {
-				return fmt.Errorf("transcript %q (role %q) requires sourceTranscriptId", entry.ID, entry.Role)
-			}
-		default:
-			return fmt.Errorf("transcript %q has unsupported role %q", entry.ID, entry.Role)
 		}
 	}
 	if !payloadPrefixRE.MatchString(entry.PayloadRef.Prefix) || entry.PayloadRef.ChunkCount < 1 {

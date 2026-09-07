@@ -94,12 +94,12 @@ func TestBuildPortableMeetingTagsFromSourceMultiTranscript(t *testing.T) {
 	source := portableMeetingSource{
 		AdditionalTranscripts: []portableNamedTranscript{
 			{
-				ID: "parakeet", Role: portable.RoleRawASR, Default: false, Language: "en",
+				ID: "parakeet", Default: false, Language: "en",
 				Transcript: makeArt("parakeet-hello"),
 				Provenance: &portable.ProcessingStep{Engine: "sherpa-onnx", Model: "parakeet-model"},
 			},
 			{
-				ID: "canary", Role: portable.RoleRawASR, Default: true, Language: "en",
+				ID: "canary", Default: true, Language: "en",
 				Transcript: makeArt("canary-hello"),
 				Provenance: &portable.ProcessingStep{Engine: "sherpa-onnx", Model: "canary-model"},
 			},
@@ -143,7 +143,6 @@ func TestAssembleTranscriptInputsCarriesPublishedReadableAndDisplayBodies(t *tes
 			CreatedAtUTC:   "2026-05-12T10:00:00Z",
 			ProcessedAtUTC: "2026-05-12T10:05:00Z",
 			DurationMS:     1000,
-			Language:       "en",
 		},
 		Audio: portable.Audio{
 			Container: "ogg", Codec: "opus", SampleRate: 48000, Channels: 1, SampleCount: 48000, DurationMS: 1000,
@@ -175,8 +174,8 @@ func TestAssembleTranscriptInputsCarriesPublishedReadableAndDisplayBodies(t *tes
 	if err != nil {
 		t.Fatalf("assembleTranscriptInputs: %v", err)
 	}
-	if defaultID != portable.RoleRawASR {
-		t.Fatalf("default transcript = %q, want %q", defaultID, portable.RoleRawASR)
+	if defaultID != portable.DefaultWordsTranscriptID {
+		t.Fatalf("default transcript = %q, want %q", defaultID, portable.DefaultWordsTranscriptID)
 	}
 	if len(inputs) != 2 {
 		t.Fatalf("inputs = %d, want 2", len(inputs))
@@ -206,8 +205,8 @@ func TestAssembleTranscriptInputsCarriesPublishedReadableAndDisplayBodies(t *tes
 func TestPickDefaultWordsTranscriptID(t *testing.T) {
 	inputs := []portable.TranscriptInput{
 		{ID: "qwen", Role: portable.RoleDisplay},
-		{ID: "parakeet", Role: portable.RoleRawASR},
-		{ID: "canary", Role: portable.RoleRawASR, Default: true},
+		{ID: "parakeet"},
+		{ID: "canary", Default: true},
 	}
 	if got := pickDefaultWordsTranscriptID(inputs); got != "canary" {
 		t.Errorf("expected canary default, got %q", got)
@@ -216,7 +215,7 @@ func TestPickDefaultWordsTranscriptID(t *testing.T) {
 	// No explicit default → first raw-ASR
 	inputs2 := []portable.TranscriptInput{
 		{ID: "qwen", Role: portable.RoleDisplay},
-		{ID: "parakeet", Role: portable.RoleRawASR},
+		{ID: "parakeet"},
 	}
 	if got := pickDefaultWordsTranscriptID(inputs2); got != "parakeet" {
 		t.Errorf("expected parakeet default, got %q", got)

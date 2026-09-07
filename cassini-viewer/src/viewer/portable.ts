@@ -17,7 +17,7 @@ export interface PortablePayloadRef {
 
 export interface PortableTranscriptEntry {
   id: string;
-  role: string;
+  role?: string;
   default?: boolean;
   format: string;
   language?: string;
@@ -76,7 +76,6 @@ export interface PortableMeetingManifest {
 
 export interface PortableTranscriptDescriptor {
   id: string;
-  role: string;
   // Short, always-unique button label. Derived from the transcript id, which the
   // producer chose for human consumption — guaranteed distinguishable even when
   // two transcripts share an engine (e.g. both sherpa-onnx for parakeet+canary).
@@ -158,10 +157,7 @@ function validatePortableIndexManifest(manifest: PortableMeetingManifest): void 
   const wordIds = new Set<string>();
   const allIds = new Set<string>();
   for (const entry of manifest.transcripts) {
-    validatePortableTranscriptEntry(
-      entry,
-      new Set(["raw-asr", "human-corrected", "translation", "scripted"]),
-    );
+    validatePortableTranscriptEntry(entry);
     if (allIds.has(entry.id)) {
       throw new Error(`portable manifest has duplicate transcript id ${entry.id}`);
     }
@@ -169,24 +165,15 @@ function validatePortableIndexManifest(manifest: PortableMeetingManifest): void 
     wordIds.add(entry.id);
   }
   for (const entry of readable) {
-    validatePortableTranscriptEntry(entry, new Set(["readable-cleanup", "display"]));
+    if (entry?.role !== "display") continue;
+    validatePortableTranscriptEntry(entry);
     if (allIds.has(entry.id)) {
       throw new Error(`portable manifest has duplicate transcript id ${entry.id}`);
     }
     allIds.add(entry.id);
   }
-  for (const entry of manifest.transcripts) {
-    if (entry.role === "raw-asr" || entry.role === "scripted") {
-      if (entry.sourceTranscriptId !== undefined) {
-        throw new Error(`portable transcript ${entry.id} must not set sourceTranscriptId`);
-      }
-      continue;
-    }
-    if (!entry.sourceTranscriptId || !wordIds.has(entry.sourceTranscriptId)) {
-      throw new Error(`portable transcript ${entry.id} has an unknown sourceTranscriptId`);
-    }
-  }
   for (const entry of readable) {
+    if (entry?.role !== "display") continue;
     if (!entry.sourceTranscriptId || !wordIds.has(entry.sourceTranscriptId)) {
       throw new Error(`portable transcript ${entry.id} has an unknown sourceTranscriptId`);
     }
@@ -195,14 +182,10 @@ function validatePortableIndexManifest(manifest: PortableMeetingManifest): void 
 
 function validatePortableTranscriptEntry(
   entry: PortableTranscriptEntry,
-  roles: ReadonlySet<string>,
 ): void {
   const id = String(entry?.id ?? "");
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
     throw new Error(`portable manifest has an invalid transcript id ${JSON.stringify(id)}`);
-  }
-  if (!roles.has(entry?.role)) {
-    throw new Error(`portable transcript ${id} has unsupported role ${String(entry?.role)}`);
   }
   if (typeof entry?.format !== "string" || entry.format.trim() === "") {
     throw new Error(`portable transcript ${id} has an invalid format`);
@@ -294,15 +277,10 @@ async function resolvePortableDefaultBodies(
   const readableTranscripts = Array.isArray(indexManifest.readableTranscripts)
     ? indexManifest.readableTranscripts
     : [];
-  const defaultReadable = pickDerivedTranscript(
-    readableTranscripts,
-    "readable-cleanup",
-    defaultTranscript.id,
-  );
-  if (defaultReadable) {
-    const readableBody = await loadPortableTranscriptBody(tags, defaultReadable.payloadRef);
-    indexManifest.readableTranscript = readableBody as PortableMeetingManifest["readableTranscript"];
-  }
+  // Cleanup entries are withdrawn. Derived readable paragraphs are built
+  // locally from the selected words; an older inline hint must not override them.
+  delete indexManifest.readableTranscript;
+  delete indexManifest.displayTranscript;
   const defaultDisplay = pickDerivedTranscript(
     readableTranscripts,
     "display",
@@ -319,7 +297,7 @@ async function resolvePortableDefaultBodies(
 function pickDefaultTranscript(
   transcripts: PortableTranscriptEntry[],
 ): PortableTranscriptEntry {
-  const flagged = transcripts.find((entry) => entry.default);
+  const flagged = transcripts.find((entry) => entry.default === true);
   return flagged ?? transcripts[0]!;
 }
 
@@ -328,26 +306,9 @@ function pickDerivedTranscript(
   role: string,
   sourceTranscriptId: string,
 ): PortableTranscriptEntry | null {
-  const candidates = entries.filter((entry) => entry.role === role);
-  return candidates.find((entry) => entry.sourceTranscriptId === sourceTranscriptId) ?? null;
-}
-
-/**
- * Returns the readableTranscripts[] entry whose sourceTranscriptId matches the
- * given raw transcript id. Returns null when no matching readable transcript
- * exists; a body derived from a different ASR result must never be substituted.
- */
-export function pickReadableForTranscript(
-  manifest: PortableMeetingManifest,
-  transcriptId: string,
-): PortableTranscriptEntry | null {
-  const readables = Array.isArray(manifest.readableTranscripts)
-    ? manifest.readableTranscripts
-    : [];
-  if (readables.length === 0) {
-    return null;
-  }
-  return pickDerivedTranscript(readables, "readable-cleanup", transcriptId);
+  const candidates = entries.filter((entry) => entry.role === role
+    && entry.sourceTranscriptId === sourceTranscriptId);
+  return candidates.find((entry) => entry.default === true) ?? candidates[0] ?? null;
 }
 
 /** Returns the display body paired to one words transcript, when published. */
@@ -384,7 +345,6 @@ export function describeTranscript(
   ].filter(Boolean);
   return {
     id: entry.id,
-    role: entry.role,
     label: humanizeTranscriptId(entry.id),
     description: descriptionParts.join(" · "),
     language: entry.language,
