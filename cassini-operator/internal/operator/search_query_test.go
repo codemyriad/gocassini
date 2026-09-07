@@ -98,7 +98,7 @@ func TestSearchFindsMistranscribedNames(t *testing.T) {
 	seedSearchable(t, store, "MINE.opus", seg("s1", "S1", 1000, 4000, "the casino recorder joins the call"))
 
 	got, err := store.Search(context.Background(), searchRequest{
-		Text: "cassini", Visible: []string{"MINE.opus"}, UseAliases: true,
+		Text: "cassini", Visible: []string{"MINE.opus"}, UseAliases: true, AliasIndex: buildSearchAliasIndex(searchAliasGroups),
 	})
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -117,7 +117,7 @@ func TestSearchLabelsALiteralMatchAsExact(t *testing.T) {
 	seedSearchable(t, store, "MINE.opus", seg("s1", "S1", 1000, 4000, "the cassini recorder joins"))
 
 	got, err := store.Search(context.Background(), searchRequest{
-		Text: "cassini", Visible: []string{"MINE.opus"}, UseAliases: true,
+		Text: "cassini", Visible: []string{"MINE.opus"}, UseAliases: true, AliasIndex: buildSearchAliasIndex(searchAliasGroups),
 	})
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -278,7 +278,7 @@ func TestSearchReportsTheExpandedGroups(t *testing.T) {
 	seedSearchable(t, store, "MINE.opus", seg("s1", "S1", 1000, 4000, "casino"))
 
 	got, err := store.Search(context.Background(), searchRequest{
-		Text: "cassini", Visible: []string{"MINE.opus"}, UseAliases: true,
+		Text: "cassini", Visible: []string{"MINE.opus"}, UseAliases: true, AliasIndex: buildSearchAliasIndex(searchAliasGroups),
 	})
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -293,7 +293,7 @@ func TestSearchReportsTheExpandedGroups(t *testing.T) {
 
 // Multi-word alias keys are consumed as one group, longest span first.
 func TestGroupQueryWordsPrefersTheLongestAliasSpan(t *testing.T) {
-	groups := groupQueryWords([]string{"next", "cloud", "talk", "recording"}, true)
+	groups := groupQueryWords([]string{"next", "cloud", "talk", "recording"}, true, buildSearchAliasIndex(searchAliasGroups))
 	if len(groups) != 2 {
 		t.Fatalf("groups = %+v, want the alias span plus one word", groups)
 	}
@@ -303,8 +303,76 @@ func TestGroupQueryWordsPrefersTheLongestAliasSpan(t *testing.T) {
 }
 
 func TestGroupQueryWordsLeavesUnknownWordsAlone(t *testing.T) {
-	groups := groupQueryWords([]string{"quarterly", "revenue"}, true)
+	groups := groupQueryWords([]string{"quarterly", "revenue"}, true, buildSearchAliasIndex(searchAliasGroups))
 	if len(groups) != 2 || len(groups[0]) != 1 || len(groups[1]) != 1 {
 		t.Fatalf("groups = %+v, want one group per word", groups)
+	}
+}
+
+// An operator's own alias groups are merged with the shipped ones, because the
+// variants that matter are specific to a deployment's vocabulary and its model.
+func TestSearchUsesOperatorConfiguredAliases(t *testing.T) {
+	store := newTestSearchStore(t)
+	seedSearchable(t, store, "MINE.opus", seg("s1", "S1", 1000, 4000, "the ice book release"))
+
+	configured := [][]string{{"eisbuk", "ice book"}}
+	got, err := store.Search(context.Background(), searchRequest{
+		Text: "eisbuk", Visible: []string{"MINE.opus"}, UseAliases: true,
+		AliasIndex: mergeSearchAliasGroups(nil, configured),
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got.Hits) != 1 || got.Hits[0].Matched != searchMatchedAlias {
+		t.Fatalf("hits = %+v, want one alias match from the configured group", got.Hits)
+	}
+}
+
+// Adding one name must not silently drop every shipped group.
+func TestOperatorAliasesMergeRatherThanReplace(t *testing.T) {
+	index := mergeSearchAliasGroups(searchAliasGroups, [][]string{{"widget", "wodget"}})
+
+	if group, ok := index["casino"]; !ok || len(group) < 2 {
+		t.Errorf("a shipped group was lost when an operator added one: %v", group)
+	}
+	if group, ok := index["wodget"]; !ok || len(group) != 2 {
+		t.Errorf("the configured group is missing: %v", group)
+	}
+}
+
+// An operator who lists spellings for a name we also ship has seen what their
+// own transcriber produces, so theirs replaces ours rather than blending.
+func TestOperatorAliasesOverrideAShippedGroup(t *testing.T) {
+	index := mergeSearchAliasGroups(
+		[][]string{{"cassini", "casino", "casini"}},
+		[][]string{{"cassini", "kassini"}})
+
+	group, ok := index["cassini"]
+	if !ok {
+		t.Fatal("the configured group did not take effect")
+	}
+	if len(group) != 2 || group[1] != "kassini" {
+		t.Errorf("group = %v, want only the operator's spellings", group)
+	}
+	// The shipped variants no longer resolve, so a stale spelling cannot linger
+	// in a group the operator has replaced.
+	if _, stale := index["casino"]; stale {
+		t.Error("a shipped variant survived an operator override")
+	}
+}
+
+// With no table at all, expansion is simply off rather than erroring.
+func TestSearchWithNoAliasTableStillWorks(t *testing.T) {
+	store := newTestSearchStore(t)
+	seedSearchable(t, store, "MINE.opus", seg("s1", "S1", 1000, 4000, "the acquisition"))
+
+	got, err := store.Search(context.Background(), searchRequest{
+		Text: "acquisition", Visible: []string{"MINE.opus"}, UseAliases: true, AliasIndex: nil,
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got.Hits) != 1 || got.Hits[0].Matched != searchMatchedExact {
+		t.Fatalf("hits = %+v, want a plain exact match", got.Hits)
 	}
 }

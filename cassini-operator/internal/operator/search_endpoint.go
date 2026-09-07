@@ -97,8 +97,9 @@ type searchResponseCoverage struct {
 // serveSearch answers one query for one caller.
 func (c ExAppConfig) serveSearch(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
-	client *http.Client, caller string, index *searchStore, logger *log.Logger,
+	client *http.Client, caller string, search searchDeps, logger *log.Logger,
 ) {
+	index := search.index
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
 		writeJSONError(w, http.StatusBadRequest, "give something to search for in the q parameter")
@@ -163,6 +164,7 @@ func (c ExAppConfig) serveSearch(
 		SpeakerID:  strings.TrimSpace(r.URL.Query().Get("speaker")),
 		Limit:      limit,
 		UseAliases: r.URL.Query().Get("aliases") != "off",
+		AliasIndex: search.aliasIndex(),
 	})
 	if err != nil {
 		// A query with no searchable words is the caller's to fix; anything else
@@ -285,4 +287,27 @@ SELECT COUNT(*) FROM meeting_index m
 		return 0, err
 	}
 	return count, nil
+}
+
+// searchDeps is what the search route needs beyond the caller's identity: the
+// index, and the alias table as it is configured RIGHT NOW.
+//
+// The aliases arrive as a function rather than a value because they are
+// operator settings: an edit through /settings must take effect on the next
+// search, not the next restart. The index is a handle because it has a
+// lifetime; the aliases are a snapshot because they do not.
+type searchDeps struct {
+	index   *searchStore
+	aliases func() [][]string
+}
+
+// aliasIndex merges the shipped groups with whatever the operator has
+// configured. Built here rather than cached because the settings can change
+// between requests and the table is small.
+func (d searchDeps) aliasIndex() map[string][]string {
+	var configured [][]string
+	if d.aliases != nil {
+		configured = d.aliases()
+	}
+	return mergeSearchAliasGroups(searchAliasGroups, configured)
 }

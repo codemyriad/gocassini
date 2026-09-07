@@ -43,9 +43,35 @@ var searchAliasGroups = [][]string{
 	{"exapp", "ex app"},
 }
 
-// searchAliasIndex maps every variant to the whole group it belongs to, so a
-// caller who types the mistranscription finds the meeting too.
-var searchAliasIndex = buildSearchAliasIndex(searchAliasGroups)
+// mergeSearchAliasGroups combines the shipped groups with an operator's own.
+//
+// Configured groups WIN on collision, by canonical name: an operator who lists
+// spellings for a name we also ship has seen what their own transcriber
+// produces, which beats a general list. Merging rather than replacing means
+// adding one name does not silently drop every built-in.
+func mergeSearchAliasGroups(builtin, configured [][]string) map[string][]string {
+	index := buildSearchAliasIndex(builtin)
+	for _, group := range configured {
+		if len(group) < 2 {
+			// Expands to nothing; see normalizeSearchAliases.
+			continue
+		}
+		// Remove whatever the built-ins said about every spelling in this group,
+		// so a configured group replaces rather than blends with one it overlaps.
+		for _, variant := range group {
+			key := strings.ToLower(strings.TrimSpace(variant))
+			if existing, ok := index[key]; ok {
+				for _, stale := range existing {
+					delete(index, strings.ToLower(strings.TrimSpace(stale)))
+				}
+			}
+		}
+		for _, variant := range group {
+			index[strings.ToLower(strings.TrimSpace(variant))] = group
+		}
+	}
+	return index
+}
 
 func buildSearchAliasIndex(groups [][]string) map[string][]string {
 	index := map[string][]string{}
@@ -68,14 +94,14 @@ const searchAliasMaxSpan = 3
 //
 // A word with no alias becomes a group of one, so the caller downstream has a
 // single shape to work with rather than two cases.
-func groupQueryWords(words []string, useAliases bool) [][]string {
+func groupQueryWords(words []string, useAliases bool, index map[string][]string) [][]string {
 	groups := make([][]string, 0, len(words))
 	for i := 0; i < len(words); {
 		matched := false
-		if useAliases {
+		if useAliases && len(index) > 0 {
 			for span := min(searchAliasMaxSpan, len(words)-i); span >= 1 && !matched; span-- {
 				key := strings.ToLower(strings.Join(words[i:i+span], " "))
-				if group, ok := searchAliasIndex[key]; ok {
+				if group, ok := index[key]; ok {
 					groups = append(groups, group)
 					i += span
 					matched = true

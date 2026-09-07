@@ -275,7 +275,7 @@ func (c ExAppConfig) applyToBindAddr(existing string) string {
 //
 // stateDir is where the lifecycle state JSON file lives (typically the parent
 // directory of the operator DB).
-func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger *log.Logger, index *searchStore) {
+func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger *log.Logger, search searchDeps) {
 	lifecycle := &LifecycleHandlers{
 		Store:                NewFileLifecycleStore(filepath.Join(stateDir, "app-state.json")),
 		Logger:               logger,
@@ -299,7 +299,7 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	// else 404s, rather than falling through to a directory that can only hold
 	// pre-sink leftovers. Under the local sink the on-disk site is the source,
 	// as it has always been.
-	ncProxy := c.ncFilesProxy(logger, index)
+	ncProxy := c.ncFilesProxy(logger, search)
 	localArchive := c.PublishedDir
 	if c.PublishSink == publishSinkNextcloudFiles {
 		localArchive = ""

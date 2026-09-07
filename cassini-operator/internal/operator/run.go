@@ -724,6 +724,20 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 // the publish worker and the requeue dispatcher — the four that write under
 // WorkRoot. D-583 removed the detached `cassini pack` goroutine this used to
 // wait on separately; sealing is now one of those registered workers.
+// searchDeps hands the search route the index and a live view of the operator's
+// configured aliases. Reading them under the same lock every other settings
+// consumer uses, so an edit is picked up without a restart.
+func (rt *Runtime) searchDeps() searchDeps {
+	return searchDeps{
+		index: rt.searchStore,
+		aliases: func() [][]string {
+			rt.settingsMu.RLock()
+			defer rt.settingsMu.RUnlock()
+			return rt.settings.SearchAliases
+		},
+	}
+}
+
 func (rt *Runtime) Shutdown() {
 	rt.cancel()
 	rt.workerWG.Wait()
@@ -756,7 +770,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, rt.searchStore)
+	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, rt.searchDeps())
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
 

@@ -50,7 +50,7 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil, nil)
+	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
 	if proxy == nil {
 		t.Fatal("proxy nil with full ExApp config")
 	}
@@ -92,7 +92,7 @@ func TestNCFilesProxyMakesFilesMissAuthoritative(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil, nil)
+	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
 	rec := httptest.NewRecorder()
 	req := callerReq(http.MethodGet, "/published/meetings/nope.opus", "alice")
 	if !proxy(rec, req, "meetings/nope.opus") {
@@ -108,7 +108,7 @@ func TestNCFilesProxyReturnsBadGatewayWhenFilesUnavailable(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	proxy := testExAppConfig(url).ncFilesProxy(nil, nil)
+	proxy := testExAppConfig(url).ncFilesProxy(nil, searchDeps{})
 	rec := httptest.NewRecorder()
 	// A recording rather than the catalog: an unreachable Files must surface as
 	// an outage, where the catalog deliberately fails closed to an empty list.
@@ -124,12 +124,12 @@ func TestNCFilesProxyReturnsBadGatewayWhenFilesUnavailable(t *testing.T) {
 func TestNCFilesHooksNilWithoutExAppEnv(t *testing.T) {
 	// Missing NextcloudURL (and secret/id) -> dev/standalone: no NC delivery.
 	cfg := ExAppConfig{}
-	if cfg.ncFilesProxy(nil, nil) != nil {
+	if cfg.ncFilesProxy(nil, searchDeps{}) != nil {
 		t.Error("proxy should be nil without ExApp env")
 	}
 	// Secret present but NextcloudURL absent is still inactive.
 	cfg = ExAppConfig{AppSecret: "s", AppID: "gocassini"}
-	if cfg.ncFilesProxy(nil, nil) != nil {
+	if cfg.ncFilesProxy(nil, searchDeps{}) != nil {
 		t.Error("proxy should be nil without NextcloudURL")
 	}
 }

@@ -62,7 +62,7 @@ func doSearch(t *testing.T, cfg ExAppConfig, index *searchStore, query, caller s
 		target += "?" + query
 	}
 	rec := httptest.NewRecorder()
-	proxy := cfg.ncFilesProxy(nil, index)
+	proxy := cfg.ncFilesProxy(nil, searchDeps{index: index})
 	if proxy == nil {
 		t.Fatal("expected a proxy for an AppAPI config")
 	}
@@ -277,7 +277,7 @@ func TestSearchEndpointNotServedUnderLocalSink(t *testing.T) {
 	cfg := testExAppConfig(srv.URL)
 	cfg.PublishSink = publishSinkLocal
 	rec := httptest.NewRecorder()
-	if cfg.ncFilesProxy(nil, index)(rec, callerReq(http.MethodGet, "/published/"+searchURLPath, "alice"), searchURLPath) {
+	if cfg.ncFilesProxy(nil, searchDeps{index: index})(rec, callerReq(http.MethodGet, "/published/"+searchURLPath, "alice"), searchURLPath) {
 		t.Fatal("the local sink must not serve search")
 	}
 }

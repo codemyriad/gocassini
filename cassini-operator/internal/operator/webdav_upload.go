@@ -241,7 +241,7 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
 // absent (dev/standalone serve straight from local disk as before).
-func (c ExAppConfig) ncFilesProxy(logger *log.Logger, index *searchStore) ncFilesProxyFunc {
+func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFilesProxyFunc {
 	if !c.appAPIActive() {
 		return nil
 	}
@@ -301,7 +301,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, index *searchStore) ncFile
 		if relPath == searchURLPath {
 			// Same visible set again, this time bound into the FTS statement.
 			// See serveSearch.
-			c.serveSearch(r.Context(), w, r, client, caller, index, logger)
+			c.serveSearch(r.Context(), w, r, client, caller, search, logger)
 			return true
 		}
 		// meetings/<id>.opus: fetch AS the caller so Nextcloud enforces the

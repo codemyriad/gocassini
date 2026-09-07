@@ -54,6 +54,11 @@ type searchRequest struct {
 	// UseAliases expands each query word into the mistranscriptions the speech
 	// recogniser produces for it. On by default at the caller.
 	UseAliases bool
+	// AliasIndex is the expansion table, resolved per request from the shipped
+	// groups merged with the operator's own. Passed in rather than read from a
+	// package variable so an operator's edit takes effect on the next search
+	// rather than the next restart.
+	AliasIndex map[string][]string
 }
 
 // searchHit is a reference, never content. There is no text field, so a bug in
@@ -115,7 +120,7 @@ func (s *searchStore) Search(ctx context.Context, req searchRequest) (searchResu
 		return searchResults{}, fmt.Errorf("encode visible set: %w", err)
 	}
 
-	groups := groupQueryWords(words, req.UseAliases)
+	groups := groupQueryWords(words, req.UseAliases, req.AliasIndex)
 	results := searchResults{Groups: groups}
 
 	// Strict first: every group must appear. A turn containing all of what was
