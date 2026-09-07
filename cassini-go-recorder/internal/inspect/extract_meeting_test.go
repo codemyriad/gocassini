@@ -28,8 +28,8 @@ func TestExtractMeetingPublishedV1RecoversChunkedTranscriptAndSummary(t *testing
 	if len(meeting.Manifest.Transcripts) != 1 {
 		t.Fatalf("manifest transcript descriptors = %d, want 1", len(meeting.Manifest.Transcripts))
 	}
-	if meeting.Transcript.TranscriptID != portable.RoleRawASR || meeting.Transcript.Role != portable.RoleRawASR {
-		t.Errorf("default transcript = %q/%q", meeting.Transcript.TranscriptID, meeting.Transcript.Role)
+	if meeting.Transcript.TranscriptID != portable.DefaultWordsTranscriptID {
+		t.Errorf("default transcript = %q", meeting.Transcript.TranscriptID)
 	}
 	texts := make([]string, 0, len(meeting.Transcript.Words))
 	for _, word := range meeting.Transcript.Words {

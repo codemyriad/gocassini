@@ -14,10 +14,9 @@ import (
 // this format cannot absorb: adding a field to portable.Meeting and forgetting
 // the schema.
 //
-// The schema declares the meeting object with "additionalProperties": false,
-// so a key a producer emits and a schema does not declare makes every file that
-// producer writes invalid — against a document nothing in CI validates, so it
-// would be found by a consumer rather than by us.
+// The public schema accepts extension keys, but the reference writer must
+// still document the meeting fields it produces. This catches writer/schema
+// drift without closing the format to another producer's extensions.
 //
 // It reads the real schema file and a really-packed file, rather than comparing
 // the struct against a list: a list would be a third thing to keep in step.
@@ -72,11 +71,6 @@ func TestPackedMeetingKeysAreDeclaredBySchema(t *testing.T) {
 	meeting := nested(doc, "$defs", "meeting")
 	if meeting == nil {
 		t.Fatalf("%s has no meeting object", schemaPath)
-	}
-	// The check only means anything while this is false; if it is ever
-	// relaxed, this test should be reconsidered rather than silently pass.
-	if additional, ok := meeting["additionalProperties"].(bool); !ok || additional {
-		t.Fatalf("%s: meeting.additionalProperties is not false; this test assumes it is", schemaPath)
 	}
 	declared, _ := meeting["properties"].(map[string]any)
 	var undeclared []string

@@ -108,7 +108,7 @@ func TestTranscriptIDToTagPrefix(t *testing.T) {
 
 func TestEncodeTranscriptBodyRoundTrip(t *testing.T) {
 	body := sampleBody("spk_0", "hello", "world")
-	payload, ref, err := EncodeTranscriptBody(body, "parakeet", RoleRawASR, 0)
+	payload, ref, err := EncodeTranscriptBody(body, "parakeet", "", 0)
 	if err != nil {
 		t.Fatalf("EncodeTranscriptBody: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestEncodeTranscriptBodyRejectsSegmentText(t *testing.T) {
 			Speaker: "spk_0", StartMS: 0, EndMS: 300, Text: "two words",
 		}},
 	}
-	if _, _, err := EncodeTranscriptBody(body, "raw-asr", RoleRawASR, 0); err == nil ||
+	if _, _, err := EncodeTranscriptBody(body, "raw-asr", "", 0); err == nil ||
 		!strings.Contains(err.Error(), "must contain exactly one word") {
 		t.Fatalf("EncodeTranscriptBody error = %v, want one-word contract rejection", err)
 	}
@@ -186,7 +186,6 @@ func TestEncodePublishedManifestEmitsExpectedShape(t *testing.T) {
 	transcripts := []TranscriptInput{
 		{
 			ID:      "parakeet",
-			Role:    RoleRawASR,
 			Default: false,
 			Body:    sampleBody("spk_0", "hello", "from", "parakeet"),
 			Provenance: &ProcessingStep{
@@ -197,7 +196,6 @@ func TestEncodePublishedManifestEmitsExpectedShape(t *testing.T) {
 		},
 		{
 			ID:      "canary",
-			Role:    RoleRawASR,
 			Default: true,
 			Body:    sampleBody("spk_0", "hello", "from", "canary", "model"),
 			Provenance: &ProcessingStep{
@@ -251,7 +249,7 @@ func TestEncodePublishedManifestEmitsExpectedShape(t *testing.T) {
 func TestEncodePublishedManifestUsesCompressedOpusIntegrity(t *testing.T) {
 	manifest := basePublishedManifest()
 	transcripts := []TranscriptInput{{
-		ID: "parakeet", Role: RoleRawASR, Default: true,
+		ID: "parakeet", Default: true,
 		Body: sampleBody("spk_0", "compressed", "identity"),
 	}}
 	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
@@ -285,7 +283,7 @@ func TestEncodePublishedManifestRequiresCompressedDigest(t *testing.T) {
 	manifest := basePublishedManifest()
 	manifest.Integrity.OpusSHA256 = ""
 	_, err := EncodePublishedManifest(manifest, []TranscriptInput{{
-		ID: "parakeet", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "x"),
+		ID: "parakeet", Default: true, Body: sampleBody("spk_0", "x"),
 	}}, 0)
 	if err == nil || !strings.Contains(err.Error(), "opusAudioSha256") {
 		t.Fatalf("error = %v, want missing opusAudioSha256", err)
@@ -309,30 +307,30 @@ func TestEncodePublishedManifestRejectsBadInputs(t *testing.T) {
 		{
 			name: "reserved id",
 			transcripts: []TranscriptInput{
-				{ID: "payload", Role: RoleRawASR, Body: body},
+				{ID: "payload", Body: body},
 			},
 			expectMsg: "reserved",
 		},
 		{
 			name: "bad id pattern",
 			transcripts: []TranscriptInput{
-				{ID: "Parakeet", Role: RoleRawASR, Body: body},
+				{ID: "Parakeet", Body: body},
 			},
 			expectMsg: "does not match",
 		},
 		{
 			name: "duplicate id",
 			transcripts: []TranscriptInput{
-				{ID: "parakeet", Role: RoleRawASR, Body: body, Default: true},
-				{ID: "parakeet", Role: RoleRawASR, Body: body},
+				{ID: "parakeet", Body: body, Default: true},
+				{ID: "parakeet", Body: body},
 			},
 			expectMsg: "duplicate",
 		},
 		{
 			name: "two default words transcripts",
 			transcripts: []TranscriptInput{
-				{ID: "parakeet", Role: RoleRawASR, Body: body, Default: true},
-				{ID: "canary", Role: RoleRawASR, Body: body, Default: true},
+				{ID: "parakeet", Body: body, Default: true},
+				{ID: "canary", Body: body, Default: true},
 			},
 			expectMsg: "more than one default words transcript",
 		},
@@ -346,7 +344,7 @@ func TestEncodePublishedManifestRejectsBadInputs(t *testing.T) {
 		{
 			name: "unknown source id",
 			transcripts: []TranscriptInput{
-				{ID: "parakeet", Role: RoleRawASR, Body: body, Default: true},
+				{ID: "parakeet", Body: body, Default: true},
 				{ID: "qwen", Role: RoleDisplay, Body: body, SourceTranscriptID: "nonexistent"},
 			},
 			expectMsg: "not in this file",
@@ -377,11 +375,11 @@ func TestBuildPublishedOpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing
 	manifest.Meeting.RecordedAtLocal = "2026-05-12T12:00:00"
 	transcripts := []TranscriptInput{
 		{
-			ID: "parakeet", Role: RoleRawASR, Default: false,
+			ID: "parakeet", Default: false,
 			Body: sampleBody("spk_0", "alpha", "bravo"),
 		},
 		{
-			ID: "canary", Role: RoleRawASR, Default: true,
+			ID: "canary", Default: true,
 			Body: sampleBody("spk_0", "alpha", "bravo", "charlie"),
 		},
 		{
@@ -449,7 +447,7 @@ func TestBuildPublishedOpusTagsAndWireCarryTheRoomID(t *testing.T) {
 	manifest := basePublishedManifest()
 	manifest.Meeting.RoomID = "a7bc3k9x"
 	transcripts := []TranscriptInput{
-		{ID: "canary", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "alpha")},
+		{ID: "canary", Default: true, Body: sampleBody("spk_0", "alpha")},
 	}
 	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
 	if err != nil {
@@ -490,7 +488,7 @@ func TestBuildPublishedOpusTagsAndWireCarryTheProvenance(t *testing.T) {
 	manifest.Meeting.JobID = "01K3Q7W8ZC9F0MJXQ2NB8V4RTD"
 	manifest.Meeting.AttemptNumber = 2
 	transcripts := []TranscriptInput{
-		{ID: "canary", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "alpha")},
+		{ID: "canary", Default: true, Body: sampleBody("spk_0", "alpha")},
 	}
 	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
 	if err != nil {
@@ -547,7 +545,7 @@ func TestMultiTranscriptWireCarriesAttributionProvenance(t *testing.T) {
 		},
 	}
 	transcripts := []TranscriptInput{{
-		ID: "parakeet", Role: RoleRawASR, Default: true,
+		ID: "parakeet", Default: true,
 		Body: sampleBody("spk_0", "what", "survived"),
 	}}
 	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)

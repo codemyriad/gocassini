@@ -20,7 +20,6 @@ import {
   listAvailableTranscripts,
   loadPortableTranscriptBody,
   pickDisplayForTranscript,
-  pickReadableForTranscript,
   type ExtractedPortableManifest,
   type PortableMeetingManifest,
   type PortableTranscriptDescriptor,
@@ -137,16 +136,15 @@ export class PortableMeetingStore {
     manifest: PortableMeetingManifest,
     currentTranscriptId: string,
   ): void {
-    // The initial extract already eager-resolved the default raw + readable
-    // bodies into manifest.transcript / manifest.readableTranscript. Seed the
-    // body cache with those so a round-trip back to default skips re-decoding.
+    // The initial extract already resolved the default words and display
+    // bodies. Seed the cache so a round-trip back to default skips re-decoding.
     const bucket = this.bucketFor(audioUrl);
     if (manifest.transcript && !bucket.has(currentTranscriptId)) {
       bucket.set(currentTranscriptId, manifest.transcript);
     }
-    const readableEntry = pickReadableForTranscript(manifest, currentTranscriptId);
-    if (readableEntry && manifest.readableTranscript && !bucket.has(readableEntry.id)) {
-      bucket.set(readableEntry.id, manifest.readableTranscript);
+    const displayEntry = pickDisplayForTranscript(manifest, currentTranscriptId);
+    if (displayEntry && manifest.displayTranscript && !bucket.has(displayEntry.id)) {
+      bucket.set(displayEntry.id, manifest.displayTranscript);
     }
   }
 
@@ -238,7 +236,7 @@ export async function loadPortableMeetingSummary(
 
 /**
  * Switches the active transcript on an already-loaded portable meeting. Resolves
- * the alternate body (and its paired readable) from the cached OpusTags, then
+ * the alternate body (and its paired display) from the cached OpusTags, then
  * re-runs the build pipeline. Caches parsed bodies per (audioUrl, transcriptId).
  * Throws if the transcript id is not present in the manifest.
  */
@@ -266,16 +264,6 @@ export async function switchPortableTranscript(
     tags,
     entry,
   )) as PortableMeetingManifest["transcript"];
-  const readableEntry = pickReadableForTranscript(manifest, transcriptId);
-  let readableBody: PortableMeetingManifest["readableTranscript"] | undefined;
-  if (readableEntry) {
-    readableBody = (await store.loadBody(
-      resolvedAudioPath,
-      readableEntry.id,
-      tags,
-      readableEntry,
-    )) as PortableMeetingManifest["readableTranscript"];
-  }
   const displayEntry = pickDisplayForTranscript(manifest, transcriptId);
   let displayBody: PortableMeetingManifest["displayTranscript"] | undefined;
   if (displayEntry) {
@@ -289,7 +277,7 @@ export async function switchPortableTranscript(
   const swappedManifest: PortableMeetingManifest = {
     ...manifest,
     transcript: transcriptBody,
-    readableTranscript: readableBody,
+    readableTranscript: undefined,
     displayTranscript: displayBody,
   };
   const availableTranscripts = listAvailableTranscripts(manifest);
@@ -403,7 +391,7 @@ async function loadArtifactFromPaths(paths: {
 }
 
 const SYNTHETIC_SINGLE_TRANSCRIPT: PortableTranscriptDescriptor[] = [
-  { id: "default", role: "asr", label: "Transcript", description: "", isDefault: true },
+  { id: "default", label: "Transcript", description: "", isDefault: true },
 ];
 
 export function classifyArtifactTimingPrecision(
@@ -586,10 +574,7 @@ function buildPortableMetadataRaw(
   currentTranscriptId: string,
 ): Record<string, unknown> {
   const provenance = asMaybeObject(portable.provenance);
-  const readableId = pickReadableForTranscript(portable, currentTranscriptId)?.id;
-  const displayId = portable.readableTranscripts?.find(
-    (entry) => entry.role === "display" && entry.sourceTranscriptId === currentTranscriptId,
-  )?.id;
+  const displayId = pickDisplayForTranscript(portable, currentTranscriptId)?.id;
   return {
     meeting: portable.meeting ?? {},
     audio: portable.audio ?? {},
@@ -608,7 +593,7 @@ function buildPortableMetadataRaw(
       ? {
           ...provenance,
           speechToText: processingStepForId(provenance.speechToText, currentTranscriptId),
-          readableCleanup: processingStepForId(provenance.readableCleanup, readableId),
+          readableCleanup: undefined,
           displayTranscript: processingStepForId(provenance.displayTranscript, displayId),
         }
       : {},

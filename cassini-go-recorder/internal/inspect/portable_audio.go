@@ -198,7 +198,7 @@ func readPortableTranscriptBodies(tags map[string]string, manifest portable.Mani
 		// A withdrawn readable-cleanup body is skipped, not decoded. Its shape
 		// is not a words transcript, so validating it would report a perfectly
 		// good legacy file as carrying an unreadable body.
-		if entry.Role == portable.RoleWithdrawnReadableCleanup {
+		if entry.Role != portable.RoleDisplay {
 			continue
 		}
 		_, warnings, err := decodeTranscriptBody(tags, entry)
@@ -239,13 +239,11 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	// that was actually decoded, not the descriptor's claim. Alternative raw
 	// transcripts are additional passes over the same speech and are not summed.
 	wordCount := bodies.WordCounts[bodies.DefaultID]
-	language := manifest.Meeting.Language
-	if language == "" {
-		for _, entry := range manifest.Transcripts {
-			if entry.ID == bodies.DefaultID {
-				language = entry.Language
-				break
-			}
+	language := ""
+	for _, entry := range manifest.Transcripts {
+		if entry.ID == bodies.DefaultID {
+			language = entry.Language
+			break
 		}
 	}
 	if integrity.SampleRate == 0 {
@@ -318,21 +316,19 @@ func printPortableTranscriptEntry(out io.Writer, label string, entry portable.Tr
 	if entry.ID != "" && entry.ID == defaultID {
 		defaultMarker = "yes"
 	}
-	source := entry.SourceTranscriptID
-	if source == "" {
-		source = "-"
-	}
-	fmt.Fprintf(out, "%s id=%s role=%s default=%s format=%s language=%s word_count=%d source=%s sha256=%s\n",
+	fmt.Fprintf(out, "%s id=%s default=%s format=%s language=%s word_count=%d sha256=%s",
 		label,
 		blankDash(entry.ID),
-		blankDash(entry.Role),
 		defaultMarker,
 		blankDash(entry.Format),
 		blankDash(entry.Language),
 		entry.WordCount,
-		source,
 		blankDash(entry.PayloadRef.SHA256),
 	)
+	if entry.Role == portable.RoleDisplay {
+		fmt.Fprintf(out, " role=%s source=%s", entry.Role, blankDash(entry.SourceTranscriptID))
+	}
+	fmt.Fprintln(out)
 }
 
 func printSummaryMetadata(out io.Writer, summary map[string]any) {
@@ -700,7 +696,6 @@ type TranscriptWord struct {
 // transcript.words.v1.json-shaped document for downstream text checks.
 type ExtractedTranscript struct {
 	TranscriptID string
-	Role         string
 	Format       string
 	Language     string
 	WordCount    int

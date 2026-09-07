@@ -182,7 +182,6 @@ type artifactFiles struct {
 type artifactTranscriptRef struct {
 	ID         string    `json:"id"`
 	Path       string    `json:"path"`
-	Role       string    `json:"role"`
 	Default    bool      `json:"default,omitempty"`
 	Language   string    `json:"language,omitempty"`
 	Provenance *provStep `json:"provenance,omitempty"`
@@ -326,7 +325,7 @@ func WriteManifest(path string, in ManifestInput) error {
 	if len(in.Additional) > 0 {
 		primaryID := sanitizeTranscriptID(string(in.STTModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
-			ID: primaryID, Path: "transcript.words.v1.json", Role: "raw-asr", Default: true,
+			ID: primaryID, Path: "transcript.words.v1.json", Default: true,
 			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, Hints: in.Hints},
 		})
 		for _, extra := range in.Additional {
@@ -337,7 +336,7 @@ func WriteManifest(path string, in ManifestInput) error {
 				extraBackend = in.STTBackend
 			}
 			files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
-				ID: extra.ID, Path: extra.Path, Role: "raw-asr",
+				ID: extra.ID, Path: extra.Path,
 				Provenance: &provStep{Backend: extraBackend, Model: string(extra.ModelID), Device: in.STTDevice},
 			})
 		}
