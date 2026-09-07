@@ -35,10 +35,12 @@ import (
 // catalog — which is also what makes this independent of where the catalog
 // lives, so D-631 moving it later would change nothing here.
 //
-// It is also why a row is a SEGMENT rather than a synthetic time bucket. The
-// published .opus carries the readable transcript as its own payload beside the
-// raw one, so the producer's segmentation is data in the archive: a rebuild
-// reads it back rather than guessing where the cuts were. See search_rows.go.
+// It is also why meeting_index records ROW_SOURCE. A meeting indexed at publish
+// time gets the producer's own segments, because the attempt bundle carries
+// them; a meeting rebuilt from the published archive gets coarser word-derived
+// rows, because the .opus carries words and nothing else. Both are legitimate;
+// pretending they are the same would let an answer imply a precision it does
+// not have. See search_rows.go for why re-deriving segments is not a fix.
 //
 // And it is why access control is absent from this file entirely. The index
 // knows which meeting a row belongs to and nothing about who may read it; the

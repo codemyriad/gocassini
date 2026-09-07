@@ -53,7 +53,7 @@ func TestSearchStoreIndexesAndResolvesReferences(t *testing.T) {
 	ctx := context.Background()
 
 	// The artifact's own readable segments, as they come out of a .opus.
-	rows := searchRowsFromSegments([]searchReadableSegment{
+	rows := searchRowsFromSegments([]searchTranscriptSegment{
 		{ID: "seg_0007", SpeakerID: "S1", StartMS: 1_000, EndMS: 4_200,
 			Text: "we discussed the acquisition at some length"},
 		{ID: "seg_0008", SpeakerID: "S2", StartMS: 62_000, EndMS: 64_500,
@@ -86,8 +86,9 @@ func TestSearchStoreIndexesAndResolvesReferences(t *testing.T) {
 	}
 }
 
-// A meeting with no readable transcript is still searchable, from words, and
-// the index records that its rows are the coarser kind.
+// A meeting indexed without segmentation — a rebuild from the published
+// archive, which carries words only — is still searchable, and the index
+// records that its rows are the coarser kind.
 func TestSearchStoreIndexesAWordDerivedFallback(t *testing.T) {
 	store := newTestSearchStore(t)
 	ctx := context.Background()

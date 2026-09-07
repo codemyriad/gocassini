@@ -8,34 +8,51 @@ import (
 
 // What one indexable row is (D-623).
 //
-// A row is a TRANSCRIPT SEGMENT: one speaker's utterance, with the producer's
-// own id and bounds. Not a re-derivation, and not a synthetic time bucket —
-// the published `.opus` carries the readable transcript as its own payload
-// alongside the raw one, so segments are data in the artifact:
+// A row is a TRANSCRIPT SEGMENT: one speaker's utterance, with its own id,
+// speaker and bounds, passed through rather than re-cut. That is the unit a
+// reader sees, so it is the unit a hit should name.
 //
-//	published .opus
-//	  ├─ transcripts[]         -> transcript.words.v1  (one item per word)
-//	  └─ readableTranscripts[] -> segments[] {id, speaker, startMs, endMs, text}
+// WHERE SEGMENTS COME FROM, and where they do not:
 //
-// That is the same payload the viewer loads to render a meeting opened from a
-// portable file, which is what makes a hit name the unit a reader will actually
-// see. It is also what makes a rebuild a rebuild: the index reads the archive
-// and gets the producer's segments back, rather than guessing where they were.
+//	transcript.words.v1.json in the attempt bundle   segments[]  YES
+//	the published .opus                              words only  NO
 //
-// The fallback below exists only because a readable transcript is conditional
-// (writeReadableArtifacts decides), so some meetings carry none. Those are
-// indexed from words instead, and say so, rather than being left unsearchable.
+// The bundle is what INGEST reads, so a meeting indexed at publish time gets
+// segment rows. The published artifact carries the raw word transcript and
+// nothing else — D-695 decoded all 128 published meetings in the archive and
+// found every transcript role to be raw-asr, then deleted the readable-cleanup
+// producer outright. The `display` role survives in the format, but its only
+// producer is cassini-viewer's static-site export, which runs at publish, after
+// the .opus has been sealed; nothing in the recorder or operator pipeline puts
+// a display transcript into the artifact.
+//
+// So a REBUILD from the archive cannot recover segments. It gets words, and
+// derives the coarser rows below. That asymmetry is real and is recorded per
+// meeting in meeting_index.row_source rather than papered over: an answer can
+// then say which kind of reference it is pointing at, instead of implying a
+// word-derived window is an utterance.
+//
+// Do not "fix" this by re-deriving segments from words on rebuild. Three
+// gap-and-cap rules already exist in this tree and disagree (pipeline
+// 1500ms/60 words, meetings context 2200ms/96, the viewer one pseudo-segment
+// per word), and the flattening drops empty-text words that the original
+// boundaries counted — so a re-derivation is a fourth opinion, not a recovery.
+// The honest fix, if segment-accurate rebuilds are ever wanted, is for the
+// producer to carry segment boundaries in the portable manifest so they become
+// data in the artifact.
+
 const (
 	// searchRowSourceSegments means rows came from the artifact's own segments.
 	searchRowSourceSegments = "segments"
-	// searchRowSourceWords means the meeting had no readable transcript and its
-	// rows were derived from word timings. Coarser, and recorded as such so a
-	// result can be honest about what it is pointing at.
+	// searchRowSourceWords means the rows were derived from word timings because
+	// no segmentation was available — a rebuild from the published archive, or a
+	// bundle that carries none. Coarser, and recorded as such so a result can be
+	// honest about what it is pointing at.
 	searchRowSourceWords = "words"
 )
 
-// searchReadableSegment is one segment of the artifact's readable transcript.
-type searchReadableSegment struct {
+// searchTranscriptSegment is one segment of the bundle's word transcript.
+type searchTranscriptSegment struct {
 	ID        string
 	SpeakerID string
 	StartMS   int64
@@ -68,12 +85,12 @@ type searchRow struct {
 	Text      string
 }
 
-// searchRowsFromSegments maps the artifact's readable segments to rows.
+// searchRowsFromSegments maps the bundle's transcript segments to rows.
 //
 // A straight mapping, deliberately: the producer owns the segmentation and this
 // code has no business re-cutting it. Segments with no text are dropped — they
 // cannot be matched and would only ever be a reference to nothing.
-func searchRowsFromSegments(segments []searchReadableSegment) []searchRow {
+func searchRowsFromSegments(segments []searchTranscriptSegment) []searchRow {
 	rows := make([]searchRow, 0, len(segments))
 	for index, segment := range segments {
 		text := strings.TrimSpace(segment.Text)
@@ -107,7 +124,8 @@ func searchRowsFromSegments(segments []searchReadableSegment) []searchRow {
 	return rows
 }
 
-// The fallback derivation, for a meeting with no readable transcript.
+// The fallback derivation, for rows built where no segmentation is available —
+// principally a rebuild from the published archive.
 //
 // Words are grouped into OVERLAPPING wall-clock windows rather than cut into
 // utterances, because cutting would mean choosing a gap-and-cap rule and three

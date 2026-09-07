@@ -9,7 +9,7 @@ import (
 // is the property that makes a hit name the unit the viewer renders, and it is
 // why the index does not need to know any segmentation rule.
 func TestSearchRowsFromSegmentsPassTheProducersUnitsThrough(t *testing.T) {
-	rows := searchRowsFromSegments([]searchReadableSegment{
+	rows := searchRowsFromSegments([]searchTranscriptSegment{
 		{ID: "seg_0002", SpeakerID: "S2", StartMS: 9_000, EndMS: 12_500, Text: "second"},
 		{ID: "seg_0001", SpeakerID: "S1", StartMS: 1_000, EndMS: 4_000, Text: "first"},
 	})
@@ -33,7 +33,7 @@ func TestSearchRowsFromSegmentsPassTheProducersUnitsThrough(t *testing.T) {
 // and rebuild it" cannot be checked against anything. Segments come from the
 // .opus, so this is what makes a rebuild a rebuild rather than a re-derivation.
 func TestSearchRowsFromSegmentsAreReproducible(t *testing.T) {
-	segments := []searchReadableSegment{
+	segments := []searchTranscriptSegment{
 		{ID: "c", SpeakerID: "S1", StartMS: 5_000, EndMS: 6_000, Text: "three"},
 		{ID: "a", SpeakerID: "S2", StartMS: 1_000, EndMS: 2_000, Text: "one"},
 		{ID: "b", SpeakerID: "S1", StartMS: 1_000, EndMS: 2_000, Text: "two"},
@@ -59,7 +59,7 @@ func TestSearchRowsFromSegmentsAreReproducible(t *testing.T) {
 }
 
 func TestSearchRowsFromSegmentsSkipUnusableEntries(t *testing.T) {
-	rows := searchRowsFromSegments([]searchReadableSegment{
+	rows := searchRowsFromSegments([]searchTranscriptSegment{
 		{ID: "seg_0001", SpeakerID: "S1", StartMS: 1_000, EndMS: 2_000, Text: "   "},
 		{ID: "seg_0002", SpeakerID: "S1", StartMS: 3_000, EndMS: 4_000, Text: "real"},
 	})
@@ -71,7 +71,7 @@ func TestSearchRowsFromSegmentsSkipUnusableEntries(t *testing.T) {
 // An artifact whose segments carry no ids still indexes. Position is stable for
 // an immutable artifact, so the synthetic id survives a rebuild.
 func TestSearchRowsFromSegmentsNameUnidentifiedSegmentsStably(t *testing.T) {
-	segments := []searchReadableSegment{
+	segments := []searchTranscriptSegment{
 		{SpeakerID: "S1", StartMS: 1_000, EndMS: 2_000, Text: "one"},
 		{SpeakerID: "S1", StartMS: 3_000, EndMS: 4_000, Text: "two"},
 	}
@@ -90,7 +90,7 @@ func TestSearchRowsFromSegmentsNameUnidentifiedSegmentsStably(t *testing.T) {
 // Nonsense bounds are clamped rather than dropped: a reference to an instant is
 // still a true reference, and losing the segment would lose searchable speech.
 func TestSearchRowsFromSegmentsClampImpossibleBounds(t *testing.T) {
-	rows := searchRowsFromSegments([]searchReadableSegment{
+	rows := searchRowsFromSegments([]searchTranscriptSegment{
 		{ID: "a", SpeakerID: "S1", StartMS: -50, EndMS: -10, Text: "before zero"},
 		{ID: "b", SpeakerID: "S1", StartMS: 5_000, EndMS: 1_000, Text: "ends before it starts"},
 	})
@@ -104,7 +104,7 @@ func TestSearchRowsFromSegmentsClampImpossibleBounds(t *testing.T) {
 	}
 }
 
-// --- the word-derived fallback, for meetings carrying no readable transcript
+// --- the word-derived fallback, for rows built where no segmentation exists
 
 // Overlapping windows so a phrase cannot fall through a boundary. Only relevant
 // to the fallback: a segment row holds a whole utterance already.
