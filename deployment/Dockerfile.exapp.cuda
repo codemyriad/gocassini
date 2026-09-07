@@ -64,10 +64,10 @@ RUN set -eux; \
 # cassini-app bundles cassini-viewer via the workspace). pnpm migration: D-499.
 FROM node:22-bookworm AS web-builder
 WORKDIR /src
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./cassini-viewer/
 COPY cassini-app/package.json cassini-app/package-lock.json ./cassini-app/
-RUN npm install
+RUN npm ci
 COPY cassini-viewer/ ./cassini-viewer/
 COPY cassini-app/ ./cassini-app/
 ENV VITE_BASE=./

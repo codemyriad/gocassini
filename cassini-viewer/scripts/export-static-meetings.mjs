@@ -1,5 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { dirname, join, resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,7 +81,7 @@ export function main(argv = process.argv.slice(2)) {
 
   if (rebuildViewer) {
     const builtIndexHtml = readFileSync(distIndexPath, "utf8");
-    writeFileSync(join(outputDir, "index.html"), rewriteIndexHtmlForCatalog(builtIndexHtml), "utf8");
+    writeFileSync(join(outputDir, "index.html"), builtIndexHtml, "utf8");
     cpSync(join(distDir, "assets"), join(outputDir, "assets"), { recursive: true });
   }
 
@@ -153,28 +154,6 @@ export function parseArgs(argv) {
   return { outputDir, sourceDir, recordingsBaseUrl, rebuildViewer };
 }
 
-export function rewriteIndexHtmlForCatalog(indexHtml) {
-  // Vite is configured with base: "./" so asset paths are already relative.
-  // This function is kept for compatibility but performs no transformation.
-  return indexHtml;
-}
-
-// In v2 portable meetings the transcript items live in separate
-// CASSINI_TX_<id>_PAYLOAD_* chunk sets, not the main manifest, so
-// extractPortableManifest() (which decodes only the main manifest) returns no
-// inline transcript.items — buildTranscriptWordsFromPortable() then yields zero
-// segments and the catalog would ship segmentCount: 0 for every fresh v2 .opus.
-// The per-item count is mirrored as `wordCount` on each transcript entry
-// (wordCount === len(items) === segmentCount for cassini.words.v1 bodies, see
-// portable_meeting_v2.go), so fall back to the default transcript's wordCount
-// without having to decode the chunk-set body here.
-export function portableDefaultSegmentCount(portable) {
-  const entries = Array.isArray(portable?.transcripts) ? portable.transcripts : [];
-  if (entries.length === 0) return 0;
-  const def = entries.find((entry) => entry?.default) ?? entries[0];
-  return typeof def?.wordCount === "number" ? def.wordCount : 0;
-}
-
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
@@ -199,11 +178,7 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       title: sttVariantLabel ? `${meetingTitle} (${sttVariantLabel})` : meetingTitle,
       dateLabel,
       speakerCount: transcript.speakers?.length ?? 0,
-      // For a v2 .opus the inline items are absent (see portableDefaultSegmentCount);
-      // fall back to the default transcript's wordCount so the catalog does not
-      // ship segmentCount: 0 (which the viewer's hydration gate would treat as
-      // "already populated" and never correct).
-      segmentCount: transcript.segments?.length || portableDefaultSegmentCount(portable),
+      segmentCount: transcript.segments?.length ?? 0,
       digestDurationMs: transcript.media?.durationMs ?? 0,
       // The room the recording came from, when the file carries one (D-622).
       // Spread last and conditionally, so a meeting with no room ships no room
@@ -251,6 +226,13 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
 }
 
 export function extractPortableManifest(path) {
+  return readPortableMeeting(path).manifest;
+}
+
+// readPortableMeeting returns both the published index and the default bodies
+// it references. The resolved body fields exist only in memory; the main wire
+// manifest remains an index.
+export function readPortableMeeting(path) {
   const output = execFileSync("ffprobe", [
     "-v",
     "error",
@@ -264,12 +246,35 @@ export function extractPortableManifest(path) {
   const report = JSON.parse(output);
   const tags = {};
   for (const [key, value] of Object.entries(report.format?.tags || {})) {
-    tags[key] = String(value ?? "");
+    tags[key.toUpperCase()] = String(value ?? "");
   }
   for (const stream of report.streams || []) {
     for (const [key, value] of Object.entries(stream.tags || {})) {
-      tags[key] = String(value ?? "");
+      tags[key.toUpperCase()] = String(value ?? "");
     }
+  }
+
+  const format = safeToString(tags.CASSINI_FORMAT).trim();
+  if (!format) {
+    throw new Error(`Missing CASSINI_FORMAT in ${path}`);
+  }
+  if (format !== "org.cassini.portable-meeting/1") {
+    throw new Error(`Unsupported CASSINI_FORMAT=${format} in ${path}`);
+  }
+  for (const [name, expected] of Object.entries({
+    CASSINI_PROFILE: "ogg-opus",
+    CASSINI_PAYLOAD_MIME: "application/vnd.cassini.portable-meeting+json",
+    CASSINI_PAYLOAD_ENCODING: "base64url+gzip+utf8json",
+    CASSINI_PAYLOAD_SCHEMA:
+      "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+    CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
+  })) {
+    if (safeToString(tags[name]).trim() !== expected) {
+      throw new Error(`Unsupported ${name}=${safeToString(tags[name])} in ${path}`);
+    }
+  }
+  if (!/^[0-9a-f]{64}$/.test(safeToString(tags.CASSINI_AUDIO_OPUS_SHA256).trim())) {
+    throw new Error(`Missing or invalid CASSINI_AUDIO_OPUS_SHA256 in ${path}`);
   }
 
   const chunkCount = safeToInt(tags.CASSINI_PAYLOAD_CHUNK_COUNT, 0);
@@ -277,18 +282,217 @@ export function extractPortableManifest(path) {
     throw new Error(`Missing or invalid CASSINI_PAYLOAD_CHUNK_COUNT in ${path}`);
   }
 
+  const manifestJSON = decodePortableChunkSet({
+    tags,
+    prefix: "CASSINI_PAYLOAD_",
+    chunkCount,
+    expectedSHA256: tags.CASSINI_PAYLOAD_SHA256,
+    expectedRawBytes: tags.CASSINI_PAYLOAD_RAW_BYTES,
+    expectedGzipBytes: tags.CASSINI_PAYLOAD_GZIP_BYTES,
+    label: `portable manifest in ${path}`,
+  });
+  const indexManifest = JSON.parse(manifestJSON.toString("utf8"));
+  validatePublishedPortableManifest(indexManifest, path);
+  if (safeToString(tags.CASSINI_AUDIO_OPUS_SHA256).trim() !== String(indexManifest.integrity.opusAudioSha256)) {
+    throw new Error(`Portable Opus audio digest disagrees between tags and manifest in ${path}`);
+  }
+
+  const manifest = structuredClone(indexManifest);
+  const defaultRaw = pickPortableEntry(indexManifest.transcripts, "", "");
+  manifest.transcript = decodePortableTranscriptBody(tags, defaultRaw, path);
+
+  const readables = Array.isArray(indexManifest.readableTranscripts)
+    ? indexManifest.readableTranscripts
+    : [];
+  const readable = pickPortableEntry(readables, "readable-cleanup", defaultRaw.id);
+  if (readable) {
+    manifest.readableTranscript = decodePortableTranscriptBody(tags, readable, path);
+  }
+  const display = pickPortableEntry(readables, "display", defaultRaw.id);
+  if (display) {
+    manifest.displayTranscript = decodePortableTranscriptBody(tags, display, path);
+  }
+  return { manifest, indexManifest, tags };
+}
+
+export function validatePublishedPortableManifest(manifest, path = "portable meeting") {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new Error(`Invalid portable manifest in ${path}: expected an object`);
+  }
+  if (manifest.kind !== "cassini-portable-meeting") {
+    throw new Error(`Unsupported portable manifest kind ${String(manifest.kind)} in ${path}`);
+  }
+  if (manifest.version !== 1) {
+    throw new Error(`Unsupported portable manifest version ${String(manifest.version)} in ${path}`);
+  }
+  if (manifest.profile !== "ogg-opus") {
+    throw new Error(`Unsupported portable profile ${String(manifest.profile)} in ${path}`);
+  }
+  if (manifest?.integrity?.matchPolicy !== "exact-opus-audio-v1") {
+    throw new Error(`Unsupported portable audio integrity policy in ${path}`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(manifest?.integrity?.opusAudioSha256 ?? ""))) {
+    throw new Error(`Invalid portable Opus digest in ${path}`);
+  }
+  if (!Array.isArray(manifest.transcripts) || manifest.transcripts.length === 0) {
+    throw new Error(`Invalid portable manifest in ${path}: transcripts must contain at least one entry`);
+  }
+  const readable = Array.isArray(manifest.readableTranscripts)
+    ? manifest.readableTranscripts
+    : [];
+  const wordIDs = new Set();
+  const allIDs = new Set();
+  for (const entry of manifest.transcripts) {
+    validatePortableTranscriptEntry(
+      entry,
+      path,
+      new Set(["raw-asr", "human-corrected", "translation", "scripted"]),
+    );
+    if (allIDs.has(entry.id)) {
+      throw new Error(`Duplicate portable transcript id ${String(entry.id)} in ${path}`);
+    }
+    allIDs.add(entry.id);
+    wordIDs.add(entry.id);
+  }
+  for (const entry of readable) {
+    validatePortableTranscriptEntry(entry, path, new Set(["readable-cleanup", "display"]));
+    if (allIDs.has(entry.id)) {
+      throw new Error(`Duplicate portable transcript id ${String(entry.id)} in ${path}`);
+    }
+    allIDs.add(entry.id);
+  }
+  for (const entry of manifest.transcripts) {
+    if (entry.role === "raw-asr" || entry.role === "scripted") {
+      if (entry.sourceTranscriptId !== undefined) {
+        throw new Error(`Portable transcript ${entry.id} must not set sourceTranscriptId in ${path}`);
+      }
+      continue;
+    }
+    if (!entry.sourceTranscriptId || !wordIDs.has(entry.sourceTranscriptId)) {
+      throw new Error(
+        `Portable transcript ${String(entry.id)} has unknown sourceTranscriptId in ${path}`,
+      );
+    }
+  }
+  for (const entry of readable) {
+    if (!entry.sourceTranscriptId || !wordIDs.has(entry.sourceTranscriptId)) {
+      throw new Error(
+        `Portable transcript ${String(entry.id)} has unknown sourceTranscriptId in ${path}`,
+      );
+    }
+  }
+}
+
+function validatePortableTranscriptEntry(entry, path, roles) {
+  const id = String(entry?.id ?? "");
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
+    throw new Error(`Invalid portable transcript id ${JSON.stringify(id)} in ${path}`);
+  }
+  if (!roles.has(entry?.role)) {
+    throw new Error(`Unsupported portable transcript role ${String(entry?.role)} in ${path}`);
+  }
+  if (typeof entry?.format !== "string" || entry.format.trim() === "") {
+    throw new Error(`Invalid portable transcript format for ${id} in ${path}`);
+  }
+  const ref = entry?.payloadRef;
+  if (
+    !ref ||
+    !/^CASSINI_TX_[A-Z0-9_]+_PAYLOAD_$/.test(ref.prefix) ||
+    !Number.isInteger(ref.chunkCount) ||
+    ref.chunkCount < 1
+  ) {
+    throw new Error(`Invalid transcript payloadRef for ${id} in ${path}`);
+  }
+  if (ref.encoding !== "base64url+gzip+utf8json") {
+    throw new Error(`Unsupported transcript encoding for ${id} in ${path}`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(ref.sha256 ?? ""))) {
+    throw new Error(`Invalid transcript digest for ${id} in ${path}`);
+  }
+  if (
+    !Number.isInteger(ref.rawBytes) ||
+    ref.rawBytes < 0 ||
+    !Number.isInteger(ref.gzipBytes) ||
+    ref.gzipBytes < 0 ||
+    typeof ref.mime !== "string" ||
+    ref.mime.trim() === ""
+  ) {
+    throw new Error(`Invalid transcript payload metadata for ${id} in ${path}`);
+  }
+}
+
+function pickPortableEntry(entries, role, sourceTranscriptId) {
+  const candidates = Array.isArray(entries)
+    ? entries.filter((entry) => !role || entry?.role === role)
+    : [];
+  if (candidates.length === 0) {
+    return null;
+  }
+  if (sourceTranscriptId) {
+    const paired = candidates.find((entry) => entry?.sourceTranscriptId === sourceTranscriptId);
+    return paired ?? null;
+  }
+  return candidates.find((entry) => entry?.default) ?? candidates[0];
+}
+
+function decodePortableTranscriptBody(tags, entry, path) {
+  const ref = entry?.payloadRef;
+  const prefix = safeToString(ref?.prefix);
+  const chunkCount = safeToInt(ref?.chunkCount, 0);
+  if (!/^CASSINI_TX_[A-Z0-9_]+_PAYLOAD_$/.test(prefix) || chunkCount <= 0) {
+    throw new Error(`Invalid transcript payloadRef for ${String(entry?.id)} in ${path}`);
+  }
+  if (ref?.encoding !== "base64url+gzip+utf8json") {
+    throw new Error(`Unsupported transcript encoding for ${String(entry?.id)} in ${path}`);
+  }
+  const raw = decodePortableChunkSet({
+    tags,
+    prefix,
+    chunkCount,
+    expectedSHA256: ref.sha256,
+    expectedRawBytes: ref.rawBytes,
+    expectedGzipBytes: ref.gzipBytes,
+    label: `transcript ${String(entry?.id)} in ${path}`,
+  });
+  return JSON.parse(raw.toString("utf8"));
+}
+
+function decodePortableChunkSet({
+  tags,
+  prefix,
+  chunkCount,
+  expectedSHA256,
+  expectedRawBytes,
+  expectedGzipBytes,
+  label,
+}) {
   let encoded = "";
   for (let index = 0; index < chunkCount; index += 1) {
-    const key = `CASSINI_PAYLOAD_${String(index).padStart(3, "0")}`;
+    const key = `${prefix}${String(index).padStart(3, "0")}`;
     if (typeof tags[key] !== "string" || tags[key].trim() === "") {
-      throw new Error(`Missing payload chunk ${key} in ${path}`);
+      throw new Error(`Missing payload chunk ${key} for ${label}`);
     }
     encoded += tags[key];
   }
-
-  const rawPayload = Buffer.from(encoded, "base64url");
-  const manifestJSON = gunzipSync(rawPayload);
-  return JSON.parse(manifestJSON.toString("utf8"));
+  const compressed = Buffer.from(encoded, "base64url");
+  const gzipBytes = safeToInt(expectedGzipBytes, 0);
+  if (gzipBytes <= 0 || compressed.byteLength !== gzipBytes) {
+    throw new Error(`${label} gzip byte count mismatch`);
+  }
+  const raw = gunzipSync(compressed);
+  const rawBytes = safeToInt(expectedRawBytes, 0);
+  if (rawBytes <= 0 || raw.byteLength !== rawBytes) {
+    throw new Error(`${label} raw byte count mismatch`);
+  }
+  const expected = safeToString(expectedSHA256).trim();
+  if (!/^[0-9a-f]{64}$/.test(expected)) {
+    throw new Error(`${label} has a missing or invalid sha256`);
+  }
+  const actual = createHash("sha256").update(raw).digest("hex");
+  if (actual !== expected) {
+    throw new Error(`${label} sha256 mismatch`);
+  }
+  return raw;
 }
 
 export function buildTranscriptWordsFromPortable(portable) {
@@ -299,11 +503,11 @@ export function buildTranscriptWordsFromPortable(portable) {
     const startMs = safeToInt(item?.startMs, 0);
     const endMs = safeToInt(item?.endMs, startMs);
     const text = typeof item?.text === "string" ? item.text : "";
-    // Portable meetings may contain either true word-level transcript items or
-    // older segment-level text spans. Only the single-word case is safe to turn
-    // back into a timed transcript word. Multi-word spans would fabricate
-    // uniform word timings that were never produced by ASR.
-    const words = isSinglePortableWord(text) ? splitTextIntoWords(text, startMs, endMs) : [];
+    const wordText = text.trim();
+    if (!wordText || /\s/u.test(text)) {
+      throw new Error(`portable transcript item ${index} must contain exactly one word`);
+    }
+    const words = [{ id: "w_0", text: wordText, startMs, endMs }];
     const speaker = typeof item?.speaker === "string" && item.speaker.trim() !== "" ? item.speaker : undefined;
 
     return {
@@ -324,15 +528,11 @@ export function buildTranscriptWordsFromPortable(portable) {
     media: {
       src: "meeting.opus",
       durationMs: safeToInt(portable.meeting?.durationMs, 0),
-      sha256: safeToString(portable.audio?.sha256),
+      sha256: safeToString(portable.integrity?.opusAudioSha256),
     },
     speakers,
     segments,
   };
-}
-
-function isSinglePortableWord(text) {
-  return typeof text === "string" && text.trim().split(/\s+/).filter(Boolean).length <= 1;
 }
 
 function extractPortableReadableWords(segment, segmentId) {
@@ -389,12 +589,9 @@ export function buildReadableTranscriptFromPortable(portable, transcript) {
   const speakers = normalizeSpeakers(portable.speakers || transcript.speakers || []);
   const validSpeakerIds = new Set(speakers.map((speaker) => speaker.id));
 
-  // Some already-published portable meetings stored cleaned transcript payloads
-  // under the readableTranscript field but stamped them with the raw transcript
-  // version. We still want to recover that cleaned text during export.
   if (
     provided &&
-    (provided.version === "transcript.readable.v1" || provided.version === "transcript.words.v1") &&
+    provided.version === "transcript.readable.v1" &&
     Array.isArray(provided.segments)
   ) {
     return {
@@ -917,27 +1114,6 @@ function tokenHasTiming(token) {
   return Boolean(token) && Number.isInteger(token.startMs) && Number.isInteger(token.endMs);
 }
 
-export function splitTextIntoWords(text, startMs, endMs) {
-  const parts = typeof text === "string" ? text.trim().split(/\s+/).filter(Boolean) : [];
-  if (parts.length === 0) {
-    return [];
-  }
-
-  const span = Math.max(0, endMs - startMs);
-  return parts.map((part, index) => {
-    const from = parts.length <= 1 ? startMs : startMs + Math.floor((span * index) / parts.length);
-    const to = parts.length <= 1
-      ? endMs
-      : startMs + Math.floor((span * (index + 1)) / parts.length);
-    return {
-      id: `w_${index}`,
-      text: part,
-      startMs: Math.min(Math.max(from, startMs), endMs),
-      endMs: Math.max(Math.min(to, endMs), startMs),
-    };
-  });
-}
-
 export function ensureDisplayTranscript(targetMeetingDir) {
   const displayPath = join(targetMeetingDir, "transcript.display.v1.json");
   const transcriptPath = join(targetMeetingDir, "transcript.words.v1.json");
@@ -1033,18 +1209,12 @@ export function isPortableMeeting(fileName) {
 // Absent rather than empty: an entry with `roomId: ""` would read as "this
 // meeting has a room whose id is the empty string", and every consumer — the
 // viewer's grouping, the CLI's --room filter — would have to check presence
-// AND emptiness. Meetings recorded before D-622, and Talk recordings whose room
-// lookup failed, genuinely have no room, and saying so is the correct answer.
+// AND emptiness. Hand-packed meetings and Talk recordings whose room lookup
+// failed genuinely have no room, and saying so is the correct answer.
 //
-// roomName is still read here, and is no longer WRITTEN by any producer
-// (D-640): a display name is editable and a sealed recording is not, so the
-// current name is stamped onto the entry by the operator at publish time and
-// carried across a republish by upsertSiteCatalog. Files packed before that
-// change still carry one, and it is still the best answer available for them.
 export function portableRoomFields(portable) {
   const fields = {};
   const roomId = typeof portable?.meeting?.roomId === "string" ? portable.meeting.roomId.trim() : "";
-  const roomName = typeof portable?.meeting?.roomName === "string" ? portable.meeting.roomName.trim() : "";
   const jobId = typeof portable?.meeting?.jobId === "string" ? portable.meeting.jobId.trim() : "";
   // Strict on the type, like every other optional field here and in
   // catalog.ts: a wrong-typed value means "not recorded", never "coerce it".
@@ -1053,9 +1223,6 @@ export function portableRoomFields(portable) {
   const attemptNumber = portable?.meeting?.attemptNumber;
   if (roomId !== "") {
     fields.roomId = roomId;
-  }
-  if (roomName !== "") {
-    fields.roomName = roomName;
   }
   // Which job and attempt produced the artifact (D-640). jobId normally equals
   // the entry's own id — the operator publishes meetings/<jobID>.opus — and is

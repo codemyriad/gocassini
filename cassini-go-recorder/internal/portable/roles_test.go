@@ -1,6 +1,9 @@
 package portable
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The role table says which transcripts are derived from another and which are
 // not: raw-asr came from the audio, scripted is what the audio performs, and
@@ -26,7 +29,9 @@ func TestTranscriptRoleSourceRules(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := EncodeDraft2Manifest(NormalizeDraft1Manifest(base), []TranscriptInput{tc.input}, 4096)
+			manifest := NormalizePublishedManifest(base)
+			manifest.Integrity.OpusSHA256 = strings.Repeat("a", 64)
+			_, err := EncodePublishedManifest(manifest, []TranscriptInput{tc.input}, 4096)
 			if tc.wantErr && err == nil {
 				t.Errorf("expected an error, got nil")
 			}
@@ -40,9 +45,10 @@ func TestTranscriptRoleSourceRules(t *testing.T) {
 // A scripted transcript is words, so it fills the words slot and takes the
 // words media type.
 func TestScriptedTranscriptIsAWordsTranscript(t *testing.T) {
-	encoded, err := EncodeDraft2Manifest(NormalizeDraft1Manifest(Manifest{
-		Meeting:  Meeting{ID: "m", Title: "t", CreatedAtUTC: "2026-09-02T00:00:00Z"},
-		Speakers: []Speaker{{ID: "spk1", Label: "Silvio"}},
+	encoded, err := EncodePublishedManifest(NormalizePublishedManifest(Manifest{
+		Meeting:   Meeting{ID: "m", Title: "t", CreatedAtUTC: "2026-09-02T00:00:00Z"},
+		Integrity: Integrity{OpusSHA256: strings.Repeat("a", 64)},
+		Speakers:  []Speaker{{ID: "spk1", Label: "Silvio"}},
 	}), []TranscriptInput{{
 		ID: "script", Role: RoleScripted, Default: true,
 		Body: TranscriptBody{Format: "cassini.words.v1", WordCount: 1,

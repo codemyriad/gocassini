@@ -2,7 +2,10 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describeMeeting, rewriteIndexHtmlForCatalog } from "./export-static-meetings.mjs";
+import {
+  describeMeeting,
+  readPortableMeeting,
+} from "./export-static-meetings.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const viewerDir = resolve(scriptDir, "..");
@@ -27,6 +30,7 @@ export function main(argv = process.argv.slice(2)) {
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry) => {
       const meetingId = entry.name.slice(0, -extname(entry.name).length) || "meeting";
+      readPortableMeeting(join(sourceDir, entry.name));
       const summary = describeMeeting(meetingId);
       return {
         id: meetingId,
@@ -46,7 +50,7 @@ export function main(argv = process.argv.slice(2)) {
   cpSync(join(distDir, "assets"), assetsDir, { recursive: true });
 
   const builtIndexHtml = readFileSync(distIndexPath, "utf8");
-  writeFileSync(join(outputDir, "index.html"), rewriteIndexHtmlForCatalog(builtIndexHtml), "utf8");
+  writeFileSync(join(outputDir, "index.html"), builtIndexHtml, "utf8");
   writeFileSync(
     join(outputDir, "catalog.json"),
     `${JSON.stringify({ version: "cassini.viewer.catalog.v1", meetings }, null, 2)}\n`,

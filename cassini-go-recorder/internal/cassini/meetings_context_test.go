@@ -17,9 +17,11 @@ import (
 // assembly and rendering can be tested without ffprobe or a packed file.
 func extractedMeetingFixture(words []inspectpkg.TranscriptWord, summary string) inspectpkg.ExtractedMeeting {
 	meeting := inspectpkg.ExtractedMeeting{
-		FormatTag: portable.FormatDraft2,
+		FormatTag: portable.Format,
 		Manifest: portable.Manifest{
-			Version: 2,
+			Kind:    "cassini-portable-meeting",
+			Version: portable.WireVersion,
+			Profile: portable.Profile,
 			Meeting: portable.Meeting{
 				ID:           "mtg_contenthash",
 				Title:        "Daily Standup",
@@ -94,7 +96,6 @@ func TestBuildMeetingContextCarriesTheRoomFromTheCatalogEntry(t *testing.T) {
 func TestBuildMeetingContextPrefersTheCatalogRoomOverTheFilesOwn(t *testing.T) {
 	meeting := extractedMeetingFixture(standupWords(), "")
 	meeting.Manifest.Meeting.RoomID = "rm_1111111111111111"
-	meeting.Manifest.Meeting.RoomName = "Frozen Legacy Name"
 
 	bundle := buildMeetingContext("M1", meeting, meetingsCatalogEntry{
 		RoomID: "rm_2222222222222222", RoomName: "Merged Room",
@@ -103,11 +104,10 @@ func TestBuildMeetingContextPrefersTheCatalogRoomOverTheFilesOwn(t *testing.T) {
 		t.Errorf("room = %q/%q, want the catalog's", bundle.Meeting.RoomID, bundle.Meeting.RoomName)
 	}
 
-	// ...and the file is the fallback, which is what a pre-D-640 archive with
-	// no catalog room looks like.
+	// The file remains the id fallback, while the mutable name is catalog-only.
 	fallback := buildMeetingContext("M1", meeting, meetingsCatalogEntry{})
-	if fallback.Meeting.RoomID != "rm_1111111111111111" || fallback.Meeting.RoomName != "Frozen Legacy Name" {
-		t.Errorf("fallback room = %q/%q, want the file's", fallback.Meeting.RoomID, fallback.Meeting.RoomName)
+	if fallback.Meeting.RoomID != "rm_1111111111111111" || fallback.Meeting.RoomName != "" {
+		t.Errorf("fallback room = %q/%q, want file id and no name", fallback.Meeting.RoomID, fallback.Meeting.RoomName)
 	}
 }
 

@@ -21,8 +21,8 @@ ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3
 # fp32 model it does carry serves the "best" tier and the operator blocks the
 # other two with an actionable message rather than failing mid-build.
 ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-0.6b-v3"
-ARG SHERPA_CUDA_VERSION=v1.13.1
-ARG SHERPA_CUDA_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.1/sherpa-onnx-v1.13.1-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2
+ARG SHERPA_CUDA_VERSION=v1.13.7
+ARG SHERPA_CUDA_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-cuda-12.x-cudnn-9.x-onnxruntime1.27.1-linux-x64-gpu.tar.bz2
 
 # ---- Stage: model-fetcher (downloads + extracts the bundled models) ----
 FROM debian:bookworm-slim AS model-fetcher

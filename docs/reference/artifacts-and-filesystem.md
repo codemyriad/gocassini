@@ -58,7 +58,6 @@ Typical contents:
 - `meeting.webm`
 - `transcript.words.v1.json`
 - `manifest.json`
-- optional `transcript.readable.v1.json`
 - optional `captions.vtt`
 - optional `summary.md`
 

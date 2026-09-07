@@ -18,7 +18,7 @@ import (
 func TestInspectRepeatedBodyChunkShowsNoManifestField(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()
-	path := createPortableDraft2OpusFixtureWith(t, filepath.Join(tmp, "repeated.opus"), portableDraft2FixtureOptions{
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "repeated.opus"), portableFixtureOptions{
 		words:                      []string{"one", "two", "three"},
 		repeatFirstTranscriptChunk: true,
 	})
@@ -32,7 +32,7 @@ func TestInspectRepeatedBodyChunkShowsNoManifestField(t *testing.T) {
 		t.Errorf("expected cassini=invalid-cassini-metadata, got %q", got)
 	}
 	// "The consumer MUST NOT show any manifest field."
-	for _, leaked := range []string{"Lantern Festival", "meeting-v2", "transcript id=", "payload encoding="} {
+	for _, leaked := range []string{"Weekly Sync", "mtg_", "transcript id=", "payload encoding="} {
 		if strings.Contains(got, leaked) {
 			t.Errorf("a manifest field survived an invalid file: %q in %q", leaked, got)
 		}
@@ -42,7 +42,7 @@ func TestInspectRepeatedBodyChunkShowsNoManifestField(t *testing.T) {
 func TestInspectMissingBodyChunkKeepsTheFileState(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()
-	path := createPortableDraft2OpusFixtureWith(t, filepath.Join(tmp, "holed.opus"), portableDraft2FixtureOptions{
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "holed.opus"), portableFixtureOptions{
 		words:                   []string{"one", "two", "three"},
 		dropLastTranscriptChunk: true,
 	})
@@ -55,7 +55,7 @@ func TestInspectMissingBodyChunkKeepsTheFileState(t *testing.T) {
 		t.Errorf("an unreadable body is that transcript's problem, not the file's; got %q", got)
 	}
 	// The meeting is still good, and the reader still says what it lost.
-	if !strings.Contains(got, "Lantern Festival") {
+	if !strings.Contains(got, "Weekly Sync") {
 		t.Errorf("expected the meeting to survive one unreadable body, got %q", got)
 	}
 	if !strings.Contains(got, "warning=transcript raw-asr body could not be read") {
@@ -76,9 +76,10 @@ func TestDecodeTranscriptBodyTrustsPayloadRefOverTags(t *testing.T) {
 		},
 	}
 	input := portable.TranscriptInput{ID: "raw-asr", Role: portable.RoleRawASR, Default: true, Body: body}
-	encoded, err := portable.EncodeDraft2Manifest(portable.NormalizeDraft1Manifest(portable.Manifest{
-		Meeting:  portable.Meeting{ID: "m", Title: "t", CreatedAtUTC: "2026-09-02T00:00:00Z"},
-		Speakers: []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
+	encoded, err := portable.EncodePublishedManifest(portable.NormalizePublishedManifest(portable.Manifest{
+		Integrity: portable.Integrity{OpusSHA256: strings.Repeat("a", 64)},
+		Meeting:   portable.Meeting{ID: "m", Title: "t", CreatedAtUTC: "2026-09-02T00:00:00Z"},
+		Speakers:  []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
 	}), []portable.TranscriptInput{input}, 4096)
 	if err != nil {
 		t.Fatalf("encode manifest: %v", err)
@@ -149,7 +150,7 @@ func TestDecodeTranscriptBodyTrustsPayloadRefOverTags(t *testing.T) {
 func TestBodyWordCountDisagreementUsesItemsLength(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()
-	path := createPortableDraft2OpusFixture(t, filepath.Join(tmp, "counted.opus"), []string{"one", "two", "three"})
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "counted.opus"), portableFixtureOptions{words: []string{"one", "two", "three"}})
 	var out bytes.Buffer
 	if err := InspectPath(&out, path); err != nil {
 		t.Fatalf("inspect: %v", err)

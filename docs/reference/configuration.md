@@ -29,10 +29,9 @@ Optional capability pass-through:
 | `OPENROUTER_API_KEY` | readable/summary capability configuration |
 | `OPENROUTER_BASE_URL` | readable/summary capability configuration |
 | `LLM_BASE_URL` | readable/summary capability configuration |
-| `LLM_MODEL` | readable cleanup model |
+| `LLM_MODEL` | summary model, unless `SUMMARY_MODEL` overrides it |
 | `SUMMARY_MODEL` | summary generation model |
 | `CASSINI_SUMMARY_DISABLED` | disable summary generation |
-| `CASSINI_READABLE_STRICT_BATCHES` | readable cleanup behavior |
 | `CASSINI_STT_BACKEND` | speech-to-text engine id (default `sherpa-onnx`; unknown ids fail the build loudly) |
 | `CASSINI_ATTRIBUTION_DISABLED` | skip the cross-track speaker-attribution measurement |
 | `CASSINI_ATTRIBUTION_DROP` | delete words the attribution evidence contradicts instead of annotating them |
@@ -146,7 +145,7 @@ Before pulling demo data, set `DEMO_DATA_URL` in a local shell or gitignored `.e
 
 - Change ports in `deployment/.env` when you have local conflicts.
 - Use bind mounts when you want to inspect state from the host filesystem.
-- Leave capability env vars unset unless you are specifically working on readable cleanup or summary generation.
+- Leave capability env vars unset unless you are specifically working on summary generation.
 
 ## See also
 
