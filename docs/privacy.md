@@ -18,13 +18,13 @@ until you configure an LLM endpoint, and both send text, never audio.
 | Recording the call             | Local (the Cassini container)                             | No                               |
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
 | Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
-| Meeting summary                | LLM endpoint — **only if one is configured**              | **Yes, when enabled**            |
-| Insight (a question asked of several meetings) | LLM endpoint — **only if one is configured**, and only when somebody asks | **Yes, when asked for**          |
+| Meeting summary                | LLM endpoint — **only if one is configured**              | **Only if the endpoint is external** |
+| Insight (a workflow run over selected meetings) | LLM endpoint — **only if one is configured**, and only when somebody asks | **Only if the endpoint is external** |
 | Publishing the archive         | Nextcloud Files, on your servers                          | No                               |
 
 **Without an LLM endpoint: nothing leaves your infrastructure.** The local
 transcript is still produced and published; the summary is skipped, and the app
-offers no way to ask a question of a meeting. A self-hosted endpoint keeps both
+offers no way to run an insight. A self-hosted endpoint keeps both
 on your own network too.
 
 ## What Cassini stores
@@ -40,7 +40,7 @@ artifacts:
 - **Captions** — a `captions.vtt` subtitle track.
 - **Summaries** — an optional `summary.md`, produced only when the LLM step is
   enabled.
-- **Insight runs** — one row per question asked of a set of meetings: who asked,
+- **Insight runs** — one row per insight requested over a set of meetings: who asked,
   which meetings, which workflow, **the question text itself** where one was
   typed, the status, the failure message where one failed, and where the answer
   was written. The answer itself is an ordinary file in the asker's Nextcloud
@@ -50,9 +50,9 @@ artifacts:
   recording each artifact's kind, state, and integrity hashes.
 - **Logs** — per-attempt operator logs (`record.log`, `build.log`, `seal.log`,
   `publish.log`).
-- **Operator database** — job and attempt history: which meetings were recorded,
-  when, their status, and the paths/hashes of their artifacts. This is metadata,
-  not the content itself.
+- **Operator database** — job and attempt history plus insight-run records,
+  including any typed question. It does not store recording audio, transcripts,
+  summaries, or insight answer bodies.
 
 ## Where it is stored
 
@@ -134,10 +134,10 @@ plainly rather than leaving to be discovered:
   to everyone but the `cassini` service account — and it is not shared with
   anyone by Cassini.
 
-That third party processes whatever it receives under its own terms; review them
-before configuring an endpoint. Call audio and the recording itself are **never**
-sent off your infrastructure for either step: only text, and only the text of
-meetings the request is entitled to.
+If the endpoint is external, its operator processes what it receives under its
+own terms; review them before configuring it. Call audio and the recording itself
+are **never** sent off your infrastructure for either step: only text, and only
+the text of meetings the request is entitled to.
 
 Controls:
 
@@ -182,10 +182,10 @@ and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
 
 ### Checking it, without being an administrator
 
-"Nothing leaves your infrastructure unless an endpoint is configured" is a claim
+"No transcript is sent to an LLM unless an endpoint is configured" is a claim
 the people whose meetings are being recorded should be able to check, and until
 now only an administrator could: the AI settings are ADMIN-only, as they must be,
-because they carry the endpoint and its key.
+because they carry the endpoint and any optional key.
 
 So `GET <cassini>/setup`, which any logged-in Nextcloud user may read, answers it
 directly:
@@ -197,9 +197,9 @@ directly:
 - `features.summaries` — a recorded meeting will be summarised, so its transcript
   is sent to the configured endpoint. `false` means no transcript is sent for a
   summary, whoever recorded the meeting.
-- `features.insights` — a question asked of a set of meetings will reach a
-  configured endpoint, so that is possible on this deployment. `false` means no
-  endpoint is configured, or none is switched on for a step to use.
+- `features.insights` — an insight workflow run over selected meetings will reach
+  a configured endpoint, so that is possible on this deployment. `false` means
+  no endpoint is configured, or none is switched on for a step to use.
 
 Both are one bit. Neither reports the endpoint, the model, or the key, and no
 other AI setting is readable without being an administrator. The Cassini app uses

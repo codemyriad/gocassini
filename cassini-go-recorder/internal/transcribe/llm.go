@@ -12,7 +12,7 @@ import (
 )
 
 // LLMConfig holds settings for an OpenAI-compatible chat completions endpoint,
-// used for meeting summaries.
+// used for meeting summaries and generated insights.
 type LLMConfig struct {
 	APIKey     string
 	BaseURL    string // e.g. "https://openrouter.ai/api/v1"

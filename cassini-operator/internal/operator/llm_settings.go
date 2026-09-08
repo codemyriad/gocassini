@@ -21,8 +21,8 @@ import (
 )
 
 // LLMSettings is the operator-owned, persisted LLM policy: the endpoints an
-// administrator has registered and which one the meeting summary runs on. It lives beside
-// settings.json on the AppAPI volume and is the single source of the
+// administrator has registered and which ones summaries and insights run on.
+// It lives beside settings.json on the AppAPI volume and is the single source of the
 // recorder's LLM environment: ChildEnv strips every inherited LLM variable and
 // re-emits exactly what the policy says, so changing endpoints never needs an
 // ExApp redeploy (D-696).
@@ -376,7 +376,15 @@ func (s LLMSettings) insightEndpoint() (LLMProvider, string, bool) {
 	if p, ok := s.provider(s.Insight); ok {
 		return p, s.Insight.Model, true
 	}
-	if p, ok := s.provider(s.Summary); ok {
+	// The summary step's endpoint, whether or not that step is switched ON.
+	//
+	// Enabled is deliberately not consulted here, and it is the case the
+	// remote branch found independently: switching summarising off means
+	// "publish meetings without a summary", never "stop answering a question
+	// somebody asked by hand". With the step off nothing emits SUMMARY_* for
+	// the recorder's own layering to inherit, so an insight would have fallen
+	// past a perfectly good endpoint an administrator had already chosen.
+	if p, ok := s.providerByID(s.Summary.Provider); ok {
 		return p, s.Summary.Model, true
 	}
 	if len(s.Providers) > 0 {
@@ -387,6 +395,22 @@ func (s LLMSettings) insightEndpoint() (LLMProvider, string, bool) {
 		return s.Providers[0], s.Insight.Model, true
 	}
 	return LLMProvider{}, "", false
+}
+
+// providerByID finds a registered provider by id, saying nothing about whether
+// any step is switched on. insightEndpoint needs exactly that: a step being off
+// tells you the step will not run, not that the endpoint it names is unusable.
+func (s LLMSettings) providerByID(id string) (LLMProvider, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return LLMProvider{}, false
+	}
+	for _, p := range s.Providers {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return LLMProvider{}, false
 }
 
 // provider returns the provider a step resolves to, or false when the step is
@@ -405,16 +429,17 @@ func (s LLMSettings) provider(step LLMStep) (LLMProvider, bool) {
 
 // ChildEnv reconciles base (a copy of os.Environ()) so the persisted LLM
 // policy wins over whatever the container was deployed with. Every inherited
-// LLM variable is stripped — including the shared LLM_BASE_URL the summary
-// would otherwise inherit — and the step gets its own fully resolved
+// LLM variable is stripped — including the shared LLM_BASE_URL both steps
+// would otherwise inherit — and each step gets its own fully resolved
 // endpoint, or nothing at all when it is off. The recorder's kill-switches are
 // never emitted: "off" is simply the absence of an endpoint.
 //
 // The insight step is emitted from insightEndpoint rather than from its own
 // row, so what the recorder receives is the endpoint this policy says an
-// insight reaches — including the summary step's, and the bare provider that
-// answers when neither step is on. Leaving it to the recorder's own INSIGHT_*
-// over SUMMARY_* layering would cover the first of those and not the second.
+// insight reaches. Leaving it to the recorder's own INSIGHT_*-over-SUMMARY_*
+// layering covers only the first of the three cases insightEndpoint handles:
+// summarising switched OFF emits no SUMMARY_* to inherit, and a bare provider
+// with no step at all was never emitted by anything.
 func (s LLMSettings) ChildEnv(base []string) []string {
 	drop := inheritedLLMEnv()
 	out := make([]string, 0, len(base)+8)
