@@ -216,6 +216,10 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 	if err != nil {
 		return 0, err
 	}
+	digest, err := fileSHA256(localPath)
+	if err != nil {
+		return 0, err
+	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
@@ -227,6 +231,7 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("OC-Checksum", "SHA256:"+digest)
 	req.ContentLength = info.Size()
 	resp, err := client.Do(req)
 	if err != nil {

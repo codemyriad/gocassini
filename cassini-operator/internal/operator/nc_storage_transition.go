@@ -3,6 +3,8 @@ package operator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -11,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -405,6 +408,15 @@ func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcD
 		src := srcDir + "/" + name
 		dst := dstDir + "/" + name
 		if present[name] {
+			identical, err := c.reconcileExistingMeeting(ctx, client, src, dst)
+			if err != nil {
+				return copied, alreadyPresent, err
+			}
+			if !identical && intoTeamFolder {
+				if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, dst, publicRecordingACLRules()); err != nil {
+					return copied, alreadyPresent, fmt.Errorf("make reconciled %s readable: %w", dst, err)
+				}
+			}
 			alreadyPresent++
 			continue
 		}
@@ -422,6 +434,85 @@ func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcD
 		}
 	}
 	return copied, alreadyPresent, nil
+}
+
+// reconcileExistingMeeting makes a destination collision match the authoritative
+// source without replacing the destination fileid (and its Team-folder ACLs).
+// A prior interrupted migration is the only writer of the destination while the
+// recorded mode still names source, so source wins on a mismatch. Checksums from
+// old clients are optional: if either side lacks one, stream and hash source,
+// then replace destination unless its stored SHA-256 proves it already matches.
+func (c ExAppConfig) reconcileExistingMeeting(ctx context.Context, client *http.Client, source, destination string) (identical bool, err error) {
+	src, err := c.davPropfindLeafState(ctx, client, ncRecordingsOwner, source)
+	if err != nil {
+		return false, fmt.Errorf("inspect source collision %s: %w", source, err)
+	}
+	dst, err := c.davPropfindLeafState(ctx, client, ncRecordingsOwner, destination)
+	if err != nil {
+		return false, fmt.Errorf("inspect destination collision %s: %w", destination, err)
+	}
+	if !src.Exists || !dst.Exists {
+		return false, fmt.Errorf("collision disappeared while reconciling %s", source)
+	}
+	if src.Checksum != "" && dst.Checksum != "" && strings.EqualFold(src.Checksum, dst.Checksum) {
+		return true, nil
+	}
+
+	tmp, err := os.CreateTemp("", "cassini-migration-*")
+	if err != nil {
+		return false, fmt.Errorf("stage collision %s: %w", source, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	defer tmp.Close()
+
+	get, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(ncRecordingsOwner, source), nil)
+	if err != nil {
+		return false, err
+	}
+	c.setAppAPIDAVHeadersForUser(get, ncRecordingsOwner)
+	resp, err := client.Do(get)
+	if err != nil {
+		return false, fmt.Errorf("read source collision %s: %w", source, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		drainClose(resp.Body)
+		return false, fmt.Errorf("GET %s -> %d", source, resp.StatusCode)
+	}
+	hash := sha256.New()
+	_, copyErr := io.Copy(io.MultiWriter(tmp, hash), resp.Body)
+	drainClose(resp.Body)
+	if copyErr != nil {
+		return false, fmt.Errorf("read source collision %s: %w", source, copyErr)
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if dst.Checksum != "" && strings.EqualFold(dst.Checksum, digest) {
+		return true, nil
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return false, err
+	}
+	info, err := tmp.Stat()
+	if err != nil {
+		return false, err
+	}
+	put, err := http.NewRequestWithContext(ctx, http.MethodPut, c.davFileURL(ncRecordingsOwner, destination), tmp)
+	if err != nil {
+		return false, err
+	}
+	c.setAppAPIDAVHeadersForUser(put, ncRecordingsOwner)
+	put.Header.Set("Content-Type", ncRecordingsContentType)
+	put.Header.Set("OC-Checksum", "SHA256:"+digest)
+	put.ContentLength = info.Size()
+	putResp, err := client.Do(put)
+	if err != nil {
+		return false, fmt.Errorf("replace destination collision %s: %w", destination, err)
+	}
+	defer drainClose(putResp.Body)
+	if putResp.StatusCode < 200 || putResp.StatusCode >= 300 {
+		return false, fmt.Errorf("PUT %s -> %d", destination, putResp.StatusCode)
+	}
+	return false, nil
 }
 
 // verifyArchiveCopied refuses to let the caller flip the mode until every
