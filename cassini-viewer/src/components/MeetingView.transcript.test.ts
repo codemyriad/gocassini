@@ -186,6 +186,15 @@ describe("the transcript pane's markup", () => {
   // badges have to be GONE, not merely unused.
   const template = readFileSync(new URL("./MeetingView.svelte", import.meta.url), "utf8");
 
+  it("uses the shared word controls for both speech and inline interjections by default", () => {
+    // TranscriptWords.test.ts renders this actual component through Svelte;
+    // keep the public meeting view connected to it without an opt-in flag.
+    expect(template).toContain("{#snippet blockProse(block: DisplaySegment)}<TranscriptWords");
+    expect(template).toContain("{@render blockProse(member.block)}");
+    expect(template).toContain("{@render blockProse(chipBlock)}");
+    expect(template).not.toContain("highlightWords");
+  });
+
   it("carries none of the badges, borders or indentation the durations lived on", () => {
     expect(template).not.toContain("formatOverlapDuration");
     expect(template).not.toContain("describeOverlap");

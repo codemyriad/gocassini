@@ -32,7 +32,7 @@ func encodePublishedFixture(t *testing.T, manifest Manifest) EncodedMultiTranscr
 		provenance = manifest.Provenance.SpeechToText
 	}
 	encoded, err := EncodePublishedManifest(manifest, []TranscriptInput{{
-		ID: RoleRawASR, Role: RoleRawASR, Default: true,
+		ID: DefaultWordsTranscriptID, Default: true,
 		Body: TranscriptBody{
 			Format: "cassini.words.v1", WordCount: 1,
 			Items: []TranscriptItem{{Speaker: "spk_1", StartMS: 0, EndMS: 100, Text: "hello"}},
@@ -47,7 +47,7 @@ func encodePublishedFixture(t *testing.T, manifest Manifest) EncodedMultiTranscr
 
 func publishedFixtureTags(t *testing.T, manifest Manifest) map[string]string {
 	t.Helper()
-	return BuildPublishedOpusTags(manifest, encodePublishedFixture(t, manifest), RoleRawASR)
+	return BuildPublishedOpusTags(manifest, encodePublishedFixture(t, manifest), DefaultWordsTranscriptID)
 }
 
 func TestBuildPublishedOpusTagsIncludesProcessingProvenance(t *testing.T) {
@@ -139,7 +139,6 @@ func TestValidatePublishedManifestRejectsUnsupportedShapes(t *testing.T) {
 		{name: "transcript index", edit: func(m *Manifest) { m.Transcripts = nil }, want: "transcripts must contain"},
 		{name: "integrity policy", edit: func(m *Manifest) { m.Integrity.MatchPolicy = "other" }, want: "unsupported audio integrity"},
 		{name: "integrity digest", edit: func(m *Manifest) { m.Integrity.OpusSHA256 = "bad" }, want: "opusAudioSha256"},
-		{name: "transcript role", edit: func(m *Manifest) { m.Transcripts[0].Role = "other" }, want: "unsupported role"},
 		{name: "transcript encoding", edit: func(m *Manifest) { m.Transcripts[0].PayloadRef.Encoding = "other" }, want: "unsupported payload encoding"},
 	}
 	for _, tc := range tests {
@@ -174,7 +173,7 @@ func TestValidatePublishedManifestSkipsWithdrawnReadableCleanupEntries(t *testin
 		t.Fatal("fixture produced no raw transcript entry")
 	}
 	wire.ReadableTranscripts = []TranscriptEntry{{
-		ID: "readable", Role: RoleWithdrawnReadableCleanup, Format: "transcript.readable.v1",
+		ID: "readable", Role: "readable-cleanup", Format: "transcript.readable.v1",
 		SourceTranscriptID: wire.Transcripts[0].ID,
 		PayloadRef:         wire.Transcripts[0].PayloadRef,
 	}}
@@ -185,15 +184,15 @@ func TestValidatePublishedManifestSkipsWithdrawnReadableCleanupEntries(t *testin
 }
 
 // The role is withdrawn for producers, not merely renamed: nothing may write a
-// new one. Keeping the constant is only about recognising old files.
+// new one. Older entries remain readable as ignored metadata.
 func TestPackTranscriptsRefusesToWriteAWithdrawnReadableCleanupEntry(t *testing.T) {
 	body := TranscriptBody{
 		Format: "cassini.words.v1", WordCount: 1,
 		Items: []TranscriptItem{{Speaker: "spk_0", StartMS: 0, EndMS: 10, Text: "hi"}},
 	}
 	_, err := EncodePublishedManifest(publishedManifestFixture(Meeting{Title: "x"}), []TranscriptInput{
-		{ID: "parakeet", Role: RoleRawASR, Default: true, Body: body},
-		{ID: "old", Role: RoleWithdrawnReadableCleanup, SourceTranscriptID: "parakeet", Body: body},
+		{ID: "parakeet", Default: true, Body: body},
+		{ID: "old", Role: "readable-cleanup", SourceTranscriptID: "parakeet", Body: body},
 	}, DefaultPayloadChunkSize)
 	if err == nil {
 		t.Fatal("packing a readable-cleanup entry must fail: nothing produces them any more")

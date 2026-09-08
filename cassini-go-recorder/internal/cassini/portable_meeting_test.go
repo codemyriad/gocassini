@@ -7,7 +7,65 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gocassini/internal/portable"
 )
+
+func TestPackLegacyBuildArtifactIgnoresWordOrigins(t *testing.T) {
+	root := t.TempDir()
+	writePortableMinimalFixture(t, root)
+	writePortableJSONFixture(t, filepath.Join(root, "manifest.json"), map[string]any{
+		"generatedAt": "2026-03-11T00:00:00Z",
+		"source":      map[string]any{"basename": "src.mkv", "durationMs": 1234},
+		"files": map[string]any{
+			"audio": "meeting.webm", "transcript": "transcript.words.v1.json",
+			"transcripts": []map[string]any{{
+				"id": "parakeet", "path": "transcript.words.v1.json", "default": true,
+				"role": "raw-asr", "sourceTranscriptId": "old-unknown-source",
+			}},
+		},
+	})
+	source, err := loadPortableMeetingSource(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.DisplayTranscript = map[string]any{
+		"version": "transcript.display.v1", "blocks": []any{map[string]any{"id": "d1", "text": "hello world"}},
+	}
+	manifest, err := buildPortableMeetingManifest(source, portableAudioIntegrity{
+		SampleRate: 48000, Channels: 1, SampleCount: 59232, DurationMS: 1234,
+		OpusSHA256: strings.Repeat("a", 64),
+	}, filepath.Join(root, "meeting.opus"), portablePackOptions{Title: "Meeting"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, _, err := assembleTranscriptInputs(manifest, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := portable.EncodePublishedManifest(manifest, inputs, portable.DefaultPayloadChunkSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Transcripts         []map[string]any `json:"transcripts"`
+		ReadableTranscripts []map[string]any `json:"readableTranscripts"`
+	}
+	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.Transcripts) != 1 || wire.Transcripts[0]["id"] != "parakeet" {
+		t.Fatalf("word descriptors = %+v", wire.Transcripts)
+	}
+	for _, field := range []string{"role", "sourceTranscriptId"} {
+		if _, present := wire.Transcripts[0][field]; present {
+			t.Fatalf("producer retained word %s", field)
+		}
+	}
+	if len(wire.ReadableTranscripts) != 1 || wire.ReadableTranscripts[0]["role"] != "display" || wire.ReadableTranscripts[0]["sourceTranscriptId"] != "parakeet" {
+		t.Fatalf("display descriptors = %+v", wire.ReadableTranscripts)
+	}
+}
 
 func TestFlattenPortableTranscriptItemsRequiresWordTimings(t *testing.T) {
 	_, err := flattenPortableTranscriptItems(portableTranscriptArtifact{

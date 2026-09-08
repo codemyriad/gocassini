@@ -2,21 +2,53 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // SetJobTalkBinding persists the Talk room binding for a job started through
 // the Talk recording backend (D-352). The binding is written once at start
 // time and never cleared: it documents which room the recording belongs to
 // for startup cleanup and rerun re-delivery.
+//
+// It also keeps the promoted room columns in step with the blob, so the two
+// cannot disagree: the JSON stays authoritative and the columns are derived
+// from it on every write, by the same rule the 0008 migration used to backfill
+// the rows written before those columns existed (D-646).
+//
+// A blank value means "nothing to say", never "set to empty" — the same rule
+// setMeetingBundleFields documents. The name is resolved asynchronously and
+// lands on a second write (talk_room_name.go), so the first write carries no
+// name and must not blank one, and a later re-persist whose lookup failed must
+// not blank the one that succeeded.
 func (s *Store) SetJobTalkBinding(ctx context.Context, id, bindingJSON string) error {
+	roomToken, roomName := talkBindingRoomColumns(bindingJSON)
 	if _, err := s.db.ExecContext(ctx, `
 UPDATE jobs
-SET talk_binding = ?, updated_at = ?
-WHERE id = ?`, bindingJSON, nowUTCString(), id); err != nil {
+SET talk_binding = ?,
+    room_token = COALESCE(NULLIF(?, ''), room_token),
+    room_name = COALESCE(NULLIF(?, ''), room_name),
+    updated_at = ?
+WHERE id = ?`, bindingJSON, roomToken, roomName, nowUTCString(), id); err != nil {
 		return fmt.Errorf("update talk binding: %w", err)
 	}
 	return nil
+}
+
+// talkBindingRoomColumns reads the room out of a persisted binding for the
+// promoted columns.
+//
+// Deliberately more tolerant than decodeTalkBinding, which rejects a binding
+// with no backend URL or token: a binding this cannot read must still be
+// stored, it just contributes no columns. Losing a column is a degraded
+// listing; refusing the write would lose the crash-safe delivery record.
+func talkBindingRoomColumns(bindingJSON string) (roomToken, roomName string) {
+	var binding talkJobBinding
+	if err := json.Unmarshal([]byte(bindingJSON), &binding); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(binding.RoomToken), strings.TrimSpace(binding.RoomName)
 }
 
 // MarkTalkStopped records that spreed acknowledged the stopped callback for
