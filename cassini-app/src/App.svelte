@@ -253,7 +253,7 @@
            there too. -->
       <div class="cassini-shell-banner" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice notice={setupNotice} />
+          <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
         </div>
       </div>
     {/if}
@@ -267,7 +267,7 @@
         data-theme={themeMode}
       >
         <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice notice={setupNotice} />
+          <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
         </div>
       </div>
     {:else}
@@ -319,7 +319,7 @@
        in the standalone build), both of which are height:100%. -->
   <div class="cassini-setup-surface" data-theme={themeMode}>
     <div class="cassini-root" data-theme={themeMode}>
-      <SetupNotice notice={setupNotice} />
+      <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
     </div>
   </div>
 {:else if setupNotice}
@@ -329,7 +329,7 @@
   <div class="cassini-shell">
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
-        <SetupNotice notice={setupNotice} />
+        <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
       </div>
     </div>
     <div class="cassini-shell-surface">

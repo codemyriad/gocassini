@@ -1,10 +1,30 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { HardDrive, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
+  import { HardDrive, KeyRound, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
+  import MigrationPolicy from "./MigrationPolicy.svelte";
+  import PasswordReveal from "./PasswordReveal.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
-  import { NcSetupError, isSetupAvailable, nextcloudUrl, runSetupPlan } from "./operator/ncSetup";
+  import {
+    NcSetupError,
+    isSetupAvailable,
+    nextcloudUrl,
+    resetServiceAccountPassword,
+  } from "./operator/ncSetup";
+  import { runModeSetup } from "./operator/runModeSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
-  import type { StorageModeOption, StorageStatus, StorageTransitionPreview } from "./operator/types";
+  import {
+    DEFAULT_MIGRATION_POLICY,
+    carryChoiceNeeded,
+    describeArchive,
+    migrationFacts,
+    policyToSend,
+  } from "./operator/storageWizard";
+  import type {
+    StorageMigrationPolicy,
+    StorageModeOption,
+    StorageStatus,
+    StorageTransitionPreview,
+  } from "./operator/types";
 
   // The storage-mode switch, and since D-671 the setup that gets you to one.
   //
@@ -57,6 +77,16 @@
   // `switching` because it has no confirmation prompt: there is nothing to
   // decide, only leftovers to clear.
   let repairing = false;
+  // policy is what a switch does with the recordings that are already there. It
+  // is only ever SENT when the operator said there was a choice to make — see
+  // policyToSend, and the operator's own refusal to pick one for a conflict
+  // nobody was shown (D-708).
+  let policy: StorageMigrationPolicy = { ...DEFAULT_MIGRATION_POLICY };
+  // credential is the service account's password, when this session just minted
+  // one. It is component state and nothing else: it exists nowhere on disk, at
+  // either end, and there is no second chance at it.
+  let credential: { user: string; password: string } | null = null;
+  let resetting = false;
 
   onMount(() => {
     void loadStorage();
@@ -107,6 +137,7 @@
       return;
     }
     pending = option;
+    policy = { ...DEFAULT_MIGRATION_POLICY };
     if (pendingKind === "switch") {
       void loadPreview(option);
     }
@@ -129,7 +160,10 @@
     previewing = true;
     const asked = option.mode;
     try {
-      const next = await operatorClient.previewStorageSwitch(option.mode === "access_controlled");
+      const next = await operatorClient.previewStorageSwitch(
+        option.mode === "access_controlled",
+        policy,
+      );
       // The prompt may have been cancelled or re-pointed while this was in
       // flight; a diff for a mode nobody is looking at must not appear.
       if (pending?.mode === asked) {
@@ -141,6 +175,39 @@
       }
     } finally {
       previewing = false;
+    }
+  }
+
+  // Re-previewing on every policy change is one PROPFIND pair against Nextcloud,
+  // and it is what keeps the numbers under the controls true. A confirmation
+  // whose counts describe a policy the administrator has since changed is worse
+  // than one with no counts.
+  function onPolicyChanged(): void {
+    if (pending && pendingKind === "switch" && carryChoiceNeeded(preview)) {
+      void loadPreview(pending);
+    }
+  }
+
+  // resetServiceAccount mints a new password for the account and shows it once.
+  //
+  // It is a control of its own rather than a setup step: a plan is emitted only
+  // for a mode that is NOT ready, so a healthy instance has no step to hang one
+  // on — which is exactly when somebody who has lost the password needs it.
+  async function resetServiceAccount(): Promise<void> {
+    if (!operatorClient || !status || resetting) {
+      return;
+    }
+    resetting = true;
+    switchError = "";
+    outcome = null;
+    credential = null;
+    try {
+      const user = status.service_account.user;
+      credential = { user, password: await resetServiceAccountPassword(user) };
+    } catch (error) {
+      switchError = asMessage(error);
+    } finally {
+      resetting = false;
     }
   }
 
@@ -170,66 +237,32 @@
     if (!operatorClient) {
       return;
     }
-    let plan = option;
-
-    // The apps come FIRST, and the plan is then recomputed. Both halves of that
-    // matter, and getting either wrong breaks the ordinary case — a Nextcloud
-    // with neither app installed.
-    //
-    // Order: everything after the apps is inside them. Creating the Team folder
-    // POSTs to /index.php/apps/groupfolders/…, which simply 404s while
-    // `groupfolders` is not installed, so running the browser steps first
-    // aborts the whole run at the folder.
-    //
-    // Recompute: the operator's probe cannot SEE a Team folder until
-    // `groupfolders` is enabled (nc_storage_probe.go gates that read on it), so
-    // a plan built beforehand says "create the folder" whether or not one
-    // exists. Acting on it would make a second `Cassini` folder.
-    if (plan.setup.some((step) => !step.browser)) {
-      setupProgress = "Installing Nextcloud apps…";
-      // The operator's attempt: it succeeds on releases that predate
-      // Nextcloud's password-confirmation hardening, and where an administrator
-      // set a bypass range. Its per-app outcome comes back on the status.
-      status = await operatorClient.installStorageApps();
-      const refreshed = modeOptionFor(status, plan.mode);
-      if (refreshed && refreshed.setup.some((step) => !step.browser)) {
-        // Still missing. Everything left in the plan lives inside those apps,
-        // so stopping here is the honest outcome — the per-app detail on screen
-        // says what to do, and Nextcloud's Apps page is one click away.
-        //
-        // The shell is told anyway. One of the two apps may well have gone in,
-        // and this component cannot tell from here; asking the operator again is
-        // one round trip, where getting it wrong leaves the same stale warning
-        // this whole mechanism exists to remove.
-        notifySetupChanged();
-        return;
-      }
-      if (refreshed) {
-        plan = refreshed;
-      }
+    // The sequence — apps first, then recompute the plan, then the browser
+    // steps — lives in runModeSetup.ts, because the setup wizard performs the
+    // same one and the ORDER inside it is load-bearing in a way that is easy to
+    // get wrong twice. It is tested there, as behaviour rather than as source.
+    const result = await runModeSetup(operatorClient, option, (message) => {
+      setupProgress = message;
+    });
+    status = result.status;
+    if (result.createdAccount && result.password) {
+      credential = { user: result.createdAccount, password: result.password };
     }
-
-    const browserSteps = plan.setup.filter((step) => step.browser);
-    if (browserSteps.length > 0) {
-      await runSetupPlan(browserSteps, {
-        onProgress: ({ step, index, total }) => {
-          setupProgress = `${index + 1}/${total} — ${step.title}`;
-        },
-      });
+    if (!result.finished) {
+      // An app install the operator could not perform is still outstanding.
+      // Everything left in the plan lives inside those apps, so stopping is the
+      // honest outcome — the per-app detail on screen says what to do.
+      //
+      // The shell is told anyway: one of the two apps may well have gone in, and
+      // this component cannot tell from here.
+      notifySetupChanged();
+      return;
     }
-    setupProgress = "Checking…";
-    status = await operatorClient.recheckStorage();
     finishAndAnnounce({
       tone: "success",
       message: `Setup finished for ${option.label.toLowerCase()} storage.`,
       detail: "Every tab now shows the instance as it is; there is nothing to refresh.",
     });
-  }
-
-  // modeOptionFor re-reads one mode from a refreshed status, so a plan can be
-  // recomputed rather than reused after something changed underneath it.
-  function modeOptionFor(from: StorageStatus | null, mode: string): StorageModeOption | null {
-    return from?.modes.find((option) => option.mode === mode) ?? null;
   }
 
   async function confirmSwitch() {
@@ -249,19 +282,17 @@
       if (kind === "setup") {
         await runSetup(target);
       } else {
-        status = await operatorClient.putStorage(target.mode === "access_controlled");
-        const moved = status.transition?.meetings_moved ?? 0;
+        status = await operatorClient.putStorage(
+          target.mode === "access_controlled",
+          // Sent only when the operator said there was a choice. It refuses a
+          // policy-free switch that finds one under its own lock, and a request
+          // carrying an answer is taken to have been answered by a person.
+          policyToSend(preview, policy),
+        );
         finishAndAnnounce({
-          tone: status.transition?.source_cleared === false ? "warning" : "success",
+          tone: status.transition?.leftover_source ? "warning" : "success",
           message: `Storage is now ${target.label.toLowerCase()}.`,
-          detail:
-            (moved === 1 ? "1 recording was copied" : `${moved} recordings were copied`) +
-            (status.transition?.destination_root
-              ? ` into ${status.transition.destination_root}.`
-              : ".") +
-            (status.transition?.source_cleared === false
-              ? ` ${status.transition.leftover_source} still holds a copy — use "Finish the switch" below to clear it.`
-              : ""),
+          detail: describeTransition(status),
         });
       }
       pending = null;
@@ -315,6 +346,48 @@
     }
   }
 
+  // describeTransition says what the switch DID, per policy.
+  //
+  // The first pass had one sentence — "N recordings were copied" — because there
+  // was one behaviour. Under `switch_only` that sentence is flatly false, and
+  // under `skip` it is incomplete in the direction that matters: some recordings
+  // stayed in the source on purpose, and an administrator who is not told will
+  // read the leftover as a failure.
+  function describeTransition(from: StorageStatus | null): string {
+    const transition = from?.transition;
+    if (!transition) {
+      return "The storage mode changed.";
+    }
+    const parts: string[] = [];
+    if (transition.meetings_deleted_at_destination > 0) {
+      parts.push(
+        `${count(transition.meetings_deleted_at_destination, "recording")} in ${transition.destination_root} was replaced by the switch.`,
+      );
+    }
+    if (transition.meetings_moved > 0) {
+      parts.push(
+        `${count(transition.meetings_moved, "recording")} moved into ${transition.destination_root}.`,
+      );
+    } else {
+      parts.push(`Nothing was copied; the recordings stayed in ${transition.source_root}.`);
+    }
+    if (transition.meetings_kept_in_source > 0) {
+      parts.push(
+        `${count(transition.meetings_kept_in_source, "recording")} also kept a copy in ${transition.source_root}, as you asked.`,
+      );
+    }
+    if (transition.leftover_source) {
+      parts.push(
+        `${transition.leftover_source} still holds a copy the tidy-up did not finish — use "Finish the switch" above to clear it.`,
+      );
+    }
+    return parts.join(" ");
+  }
+
+  function count(n: number, noun: string): string {
+    return n === 1 ? `1 ${noun} was` : `${n} ${noun}s were`;
+  }
+
   function asMessage(error: unknown): string {
     if (error instanceof NcSetupError) {
       // Nextcloud's own refusals, in the administrator's terms rather than the
@@ -356,12 +429,20 @@
     return reason === "enabled" ? "text-success" : "text-warning";
   }
 
+  // modeSourceLabel says where the recorded mode came from, and it is the one
+  // place an administrator can see that nobody chose it.
+  //
+  // The first pass rendered every source as "Chosen", because both resolvers
+  // flattened the provenance to `configured` on the way out — so a fallback an
+  // older build wrote down read identically to a decision somebody took. That is
+  // the sentence D-708 had to stop the UI from asserting.
   function modeSourceLabel(source: string): string {
-    if (source === "configured") return "Chosen";
-    // Written by a build that inferred the mode from the instance. Nothing
-    // produces it any more, but installs from that build still carry it.
-    if (source === "derived") return "Detected from this Nextcloud";
-    if (source === "default") return "Default, nothing chose otherwise";
+    if (source === "user") return "Chosen here";
+    if (source === "env") return "Declared by a deploy option (development/CI)";
+    if (source === "migrating") return "Left by an interrupted switch — not chosen";
+    if (source === "default") return "A fallback an older version recorded — not chosen";
+    if (source === "derived") return "Detected from this Nextcloud by an older version — not chosen";
+    if (source === "configured") return "Recorded, but Cassini cannot say by whom";
     return source || "—";
   }
 
@@ -372,6 +453,8 @@
   $: activeRoot =
     status?.mode === "access_controlled" ? "Cassini/Recordings" : "CassiniNoACL/Recordings";
   $: unresolved = status !== null && status.mode === "";
+  $: askCarry = carryChoiceNeeded(preview);
+  $: facts = migrationFacts(preview);
   // Whether this page can act as the administrator at all. False on the
   // standalone build, which has neither Nextcloud's scripts nor its session.
   $: setupAvailable = isSetupAvailable();
@@ -420,15 +503,29 @@
   {:else}
     <div class="grid gap-4 p-4">
       {#if unresolved}
-        <!-- Not "default": nothing has looked at this Nextcloud yet, and an
-             unchecked instance is not evidence that either mode would work. -->
+        <!-- Not "default": nothing has been chosen, and an unchecked instance is
+             not evidence that either mode would work. The remedy is the choice,
+             not a re-enable — telling an administrator to disable and re-enable
+             the app here would send them back through the edge that produced
+             this state. -->
         <div class="alert alert-warning items-start gap-3 text-sm" role="status">
           <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
           <span>
-            Cassini has not checked this Nextcloud since it started. Setup runs when the app is
-            enabled, so disable and re-enable it to see which storage mode is in force.
+            No storage mode has been chosen for this Nextcloud, so nothing is published or
+            recorded. Pick one below.
           </span>
         </div>
+      {/if}
+
+      {#if credential}
+        <!-- Shown above everything else, and it does not go away on its own:
+             there is no second chance at this string. -->
+        <PasswordReveal
+          user={credential.user}
+          password={credential.password}
+          resetOcc={status.service_account.reset_occ}
+          on:acknowledge={() => (credential = null)}
+        />
       {/if}
 
       {#if outcome}
@@ -521,6 +618,14 @@
             </div>
 
             <p class="text-xs text-base-content/70">{option.summary}</p>
+
+            <!-- What is actually in this mode's folder. It is reported for BOTH
+                 modes, always, because "my recordings are gone" is the symptom
+                 of a mode nobody switched — and an unread folder says so rather
+                 than reading as an empty one. -->
+            <p class="text-xs break-words text-base-content/60">
+              <code class="break-all">{option.root}</code> — {describeArchive(option.archive)}
+            </p>
 
             {#if option.blocker}
               <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-2">
@@ -678,6 +783,12 @@
                     Working out what would move…
                   </p>
                 {:else if preview}
+                  {#if askCarry}
+                    <!-- Only when the answer would differ. A question with one
+                         possible answer is not a question, and asking anyway is
+                         how a confirmation stops being read. -->
+                    <MigrationPolicy {preview} bind:policy disabled={switching} on:change={onPolicyChanged} />
+                  {/if}
                   <div class="grid gap-1 rounded-box bg-base-100/60 p-2 text-xs">
                     {#if !preview.source_readable}
                       <!-- The QA failure, and the one shape this must never
@@ -686,21 +797,17 @@
                         Cassini could not read <code class="break-all">{preview.source_root}</code>,
                         so it cannot say how many recordings would move.
                       </p>
-                    {:else if preview.nothing_to_move}
-                      <p class="break-words text-base-content/80">
-                        There are no published recordings to move. Only the mode changes.
-                      </p>
                     {:else}
-                      <p class="break-words text-base-content/80">
-                        <span class="font-semibold"
-                          >{preview.meetings}
-                          {preview.meetings === 1 ? "recording" : "recordings"}</span
-                        >
-                        would be copied from <code class="break-all">{preview.source_root}</code> to
-                        <code class="break-all">{preview.destination_root}</code>{preview.catalog_present
-                          ? ", along with the meeting index"
-                          : ""}.
-                      </p>
+                      <!-- The operator's own plan, per outcome. Arithmetic here
+                           would be a second implementation of the rules, which
+                           is exactly how a dialog comes to promise something the
+                           operation does not do. -->
+                      {#each facts as fact (fact)}
+                        <p class="flex items-start gap-1.5 break-words text-base-content/80">
+                          <span class="mt-0.5 shrink-0 text-base-content/40" aria-hidden="true">•</span>
+                          <span>{fact}</span>
+                        </p>
+                      {/each}
                     {/if}
                     {#each preview.warnings as warning (warning)}
                       <p class="flex items-start gap-1.5 break-words text-warning">
@@ -775,21 +882,52 @@
             <p class="font-semibold">
               Storage is now {status.mode === "access_controlled" ? "access controlled" : "default"}.
             </p>
-            <p class="text-xs">
-              {transition.meetings_moved}
-              {transition.meetings_moved === 1 ? "recording was" : "recordings were"} copied
-              {#if transition.destination_root}into {transition.destination_root}{/if}.
-              {#if transition.meetings_already_there > 0}
-                {transition.meetings_already_there} were already there.
-              {/if}
-            </p>
-            {#if transition.leftover_source}
-              <p class="text-xs break-words">
-                {transition.leftover_source} still holds a copy. Use "Finish the switch" above to
-                clear it once you have checked the recordings arrived.
-              </p>
-            {/if}
+            <p class="text-xs break-words">{describeTransition(status)}</p>
           </div>
+        </div>
+      {/if}
+
+      <!-- The service account's password.
+           A control of its own rather than a setup step: a plan is emitted only
+           for a mode that is NOT ready, so a healthy instance has no step to
+           hang one on — which is exactly when somebody who has lost it needs
+           this. Cassini never sees the value; it is minted in this browser and
+           set through Nextcloud's own API on your session. -->
+      {#if status.service_account.exists}
+        <div class="grid gap-2 rounded-box border border-base-300 bg-base-200 p-3">
+          <div class="flex items-start gap-2">
+            <KeyRound size={16} class="mt-0.5 shrink-0 text-base-content/60" aria-hidden="true" />
+            <div class="grid gap-1">
+              <p class="text-sm font-semibold">
+                The <code>{status.service_account.user}</code> account's password
+              </p>
+              <p class="text-xs break-words text-base-content/70">
+                Every recording is written and read as this account. Cassini does not need its
+                password — it signs in a different way — and does not keep a copy, so it cannot
+                show you the current one. If you need to log in as
+                <code>{status.service_account.user}</code>, set a new one here and save it.
+              </p>
+            </div>
+          </div>
+          <button
+            class="btn btn-sm btn-outline w-fit"
+            type="button"
+            disabled={resetting || switching || !setupAvailable}
+            on:click={resetServiceAccount}
+          >
+            {#if resetting}
+              <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              Setting a new password…
+            {:else}
+              Set a new password
+            {/if}
+          </button>
+          {#if !setupAvailable}
+            <p class="text-xs break-words text-base-content/60">
+              This page cannot change it — open Cassini from Nextcloud's own menu, or run
+              <code>{status.service_account.reset_occ}</code> on the server.
+            </p>
+          {/if}
         </div>
       {/if}
 

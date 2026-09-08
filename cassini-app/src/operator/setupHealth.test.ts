@@ -61,7 +61,7 @@ describe("fetchSetupHealth", () => {
         "/index.php/apps/app_api/proxy/gocassini/operator/",
         fetchWithJSON(200, { ok: false, state: "unavailable" }, (u) => (called = u)),
       ),
-    ).toEqual({ ok: false, state: "unavailable" });
+    ).toEqual({ ok: false, state: "unavailable", awaitingChoice: false });
     expect(called).toBe("/index.php/apps/app_api/proxy/gocassini/operator/setup");
   });
 
@@ -88,7 +88,18 @@ describe("fetchSetupHealth", () => {
 
 describe("readSetupHealth", () => {
   it("accepts the ok+state pair and nothing else", () => {
-    expect(readSetupHealth({ ok: true, state: "provisioned" })).toEqual({ ok: true, state: "provisioned" });
+    expect(readSetupHealth({ ok: true, state: "provisioned" })).toEqual({
+      ok: true,
+      state: "provisioned",
+      // Absent reads as false, which is the right degrade for an operator that
+      // predates the field: it had already chosen a mode on its own.
+      awaitingChoice: false,
+    });
+    expect(readSetupHealth({ ok: false, state: "unavailable", awaiting_choice: true })).toEqual({
+      ok: false,
+      state: "unavailable",
+      awaitingChoice: true,
+    });
     expect(readSetupHealth({ state: "provisioned" })).toBeNull();
     expect(readSetupHealth(null)).toBeNull();
     expect(readSetupHealth([{ ok: true, state: "x" }])).toBeNull();
@@ -118,6 +129,7 @@ describe("readRecordingsAccess", () => {
       step: "app_missing:group_everyone",
       detail: "app_missing:group_everyone: the app is not enabled",
       mode: "access_controlled",
+      modeConfirmed: false,
       prerequisites: [
         { name: "groupfolders", state: "enabled" },
         { name: "group_everyone", state: "missing" },
@@ -138,6 +150,7 @@ describe("readRecordingsAccess", () => {
       step: "",
       detail: "",
       mode: "",
+      modeConfirmed: false,
       prerequisites: [],
     });
   });
@@ -577,5 +590,97 @@ describe("buildSetupNotice offers the Setup tab", () => {
     });
 
     expect(JSON.stringify(notice)).not.toContain(offer);
+  });
+});
+
+// A decision nobody has taken is not a broken install (D-708). It reaches both
+// audiences differently from every other reason recordings cannot be served,
+// and it is the one state whose remedy is a button rather than a fix.
+describe("buildSetupNotice when nobody has chosen a storage model", () => {
+  const health = { ok: false, state: "unavailable", awaitingChoice: true };
+
+  it("tells a non-administrator that somebody has to decide, not that something broke", () => {
+    const notice = buildSetupNotice({ health, access: null, isAdmin: false, appUrl: APP_URL });
+    expect(notice?.title).toContain("where recordings are kept");
+    expect(notice?.summary).toContain("choose");
+    expect(notice?.summary).toContain("nothing for you to fix");
+    // Still no detail, no step, no account name: the user-readable half carries
+    // a bit and nothing else.
+    expect(notice?.steps).toEqual([]);
+    expect(notice?.detail).toBe("");
+    expect(notice?.shareUrl).toBe(APP_URL);
+  });
+
+  it("gives an administrator the button, and no instructions to hunt for", () => {
+    const notice = buildSetupNotice({
+      health,
+      access: {
+        ok: false,
+        state: "unavailable",
+        step: "storage_mode_undecided",
+        detail: "nobody has chosen where Cassini keeps recordings",
+        mode: "",
+        modeConfirmed: false,
+        prerequisites: [],
+      },
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+    expect(notice?.steps).toHaveLength(1);
+    expect(notice?.steps[0].action).toBe("setup");
+    expect(notice?.steps[0].commands).toEqual([]);
+    expect(notice?.summary).toContain("will not choose for you");
+  });
+
+  // The decision has to come BEFORE every "something is missing" branch: an
+  // instance with no chosen mode very often also lacks a prerequisite for one of
+  // the two models, and sending an administrator to install an app before they
+  // have said which model they want sends them after something the deps-free
+  // model does not need at all.
+  it("asks for the decision before naming a missing app", () => {
+    const notice = buildSetupNotice({
+      health,
+      access: {
+        ok: false,
+        state: "unavailable",
+        step: "storage_mode_undecided",
+        detail: "",
+        mode: "",
+        modeConfirmed: false,
+        prerequisites: [
+          { name: "groupfolders", state: "missing" },
+          { name: "group_everyone", state: "missing" },
+        ],
+      },
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+    expect(notice?.summary).not.toContain("two Nextcloud apps");
+    expect(notice?.steps.some((step) => step.commands.some((c) => c.includes("occ app:install")))).toBe(
+      false,
+    );
+  });
+
+  // A mode a previous build recorded on its own is a question, not a decision —
+  // and the copy has to say the recordings are unaffected, because "Cassini
+  // refuses to publish" reads as data loss otherwise.
+  it("treats a mode nobody confirmed as a question", () => {
+    const notice = buildSetupNotice({
+      health,
+      access: {
+        ok: false,
+        state: "unavailable",
+        step: "storage_mode_unconfirmed",
+        detail: "an earlier version recorded it without asking",
+        mode: "default",
+        modeConfirmed: false,
+        prerequisites: [],
+      },
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+    expect(notice?.summary).toContain("nobody chose it");
+    expect(notice?.summary).toContain("still readable");
+    expect(notice?.steps[0].action).toBe("setup");
   });
 });
