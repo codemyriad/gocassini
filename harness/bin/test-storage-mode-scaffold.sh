@@ -136,6 +136,8 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MANIFEST="$ROOT/appinfo/info.xml"
 STACK_LIB="$SCRIPT_DIR/lib/stack.sh"
 SANDBOX_WIRE="$ROOT/sandbox/wire-cassini.sh"
+INSTALL_E2E="$SCRIPT_DIR/ci-e2e-install-exapp.sh"
+PUBLISH_WORKFLOW="$ROOT/.github/workflows/publish-exapp-image.yml"
 
 # Declared exactly once. AppAPI injects deploy options at container creation and
 # silently drops undeclared keys, so a duplicate or a typo here is a variable
@@ -166,6 +168,19 @@ grep -qF -- 'if [[ -n "$exapp_storage_mode" ]]; then' "$STACK_LIB" \
 # shellcheck disable=SC2016 # the literal `${...}` IS the pattern being matched.
 grep -qF 'CASSINI_STORAGE_MODE=${CASSINI_STORAGE_MODE:-access_controlled}' "$SANDBOX_WIRE" \
   || fail "sandbox/wire-cassini.sh does not declare access_controlled; the dogfood archive must not depend on a fallback"
+
+# The manual-install acceptance test must pin the same model in both places:
+# stack bootstrap constructs the topology and the manually started container
+# records it. It runs the default leg independently so the access-controlled
+# probes cannot pass while the private-root model quietly regresses.
+grep -qF 'STORAGE_MODE="${CASSINI_E2E_STORAGE_MODE:-access_controlled}"' "$INSTALL_E2E" \
+  || fail "ci-e2e-install-exapp.sh does not make its storage-model leg explicit"
+grep -qF -- '--storage-mode "$HARNESS_STORAGE_MODE"' "$INSTALL_E2E" \
+  || fail "ci-e2e-install-exapp.sh does not pass its model to stack bootstrap"
+grep -qF -- '-e "CASSINI_STORAGE_MODE=$STORAGE_MODE"' "$INSTALL_E2E" \
+  || fail "ci-e2e-install-exapp.sh does not pass its model to the manually started ExApp"
+grep -qF 'CASSINI_E2E_STORAGE_MODE: default' "$PUBLISH_WORKFLOW" \
+  || fail "publish-exapp-image.yml does not run the manual-install default-mode leg"
 
 # The deploy option is documented as development and CI only (D-708). It cannot
 # be removed from the manifest — AppAPI silently drops undeclared keys, so the
