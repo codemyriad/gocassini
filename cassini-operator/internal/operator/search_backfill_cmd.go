@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -147,7 +146,7 @@ Flags:
 	rt := &Runtime{cfg: cfg, logger: logger, store: store, searchStore: index}
 	// The archive reader is the fallback for meetings this operator has no local
 	// copy of — which, after a volume rebuild, can be most of them.
-	archive := exapp.archiveOpusReader(cfg.CassiniBin, os.TempDir(), nil)
+	archive := exapp.archiveOpusReader(cfg.CassiniBin, cfg.WorkRoot)
 	report, err := rt.backfillSearchIndex(runCtx, targets, archive)
 	if err != nil {
 		fmt.Fprintf(stderr, "backfill failed: %v\n", err)

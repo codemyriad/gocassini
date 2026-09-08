@@ -145,9 +145,25 @@ type searchStore struct {
 	path string
 }
 
-// searchStorePath is where the index lives for a given job-database path.
+// searchStorePath is where the index lives for a given job-database path, or
+// "" when that cannot be answered.
+//
+// The empty case is not paranoia. filepath.Dir("") is ".", so a blank or
+// relative job-database path would put the index in whatever directory the
+// process happened to start in — which is how a 40 KB index came to be
+// committed into this package: a test constructs a Runtime with a zero Config,
+// and the index landed beside the source. In production a relative --db would
+// put it somewhere other than the state volume, where nothing would ever find
+// or prune it.
+//
+// Returning "" makes openSearchStore refuse, which NewRuntime already degrades
+// gracefully: no index, search unavailable, pipeline unaffected.
 func searchStorePath(dbPath string) string {
-	return filepath.Join(filepath.Dir(dbPath), searchStoreFilename)
+	trimmed := strings.TrimSpace(dbPath)
+	if trimmed == "" || !filepath.IsAbs(trimmed) {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(trimmed), searchStoreFilename)
 }
 
 // openSearchStore opens the index, rebuilding it from scratch when the file on

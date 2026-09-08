@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"path"
@@ -167,9 +168,18 @@ func (c ExAppConfig) serveSearch(
 		AliasIndex: search.aliasIndex(),
 	})
 	if err != nil {
-		// A query with no searchable words is the caller's to fix; anything else
-		// here is ours, and neither is an empty result.
-		writeJSONError(w, http.StatusBadRequest, err.Error())
+		// Exactly one of these is the caller's fault. Everything else — a closed
+		// handle, a locked database, a table missing after a partial rebuild —
+		// is an outage, and answering 400 for it would tell an agent to rewrite
+		// a query that was never the problem, so it would never retry.
+		if errors.Is(err, errSearchNoWords) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if logger != nil {
+			logger.Printf("search: query failed caller=%s: %v", caller, err)
+		}
+		writeJSONError(w, http.StatusBadGateway, "the search index could not be queried; this is not an empty result")
 		return
 	}
 

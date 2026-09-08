@@ -75,3 +75,9 @@ bin/cassini-bin
 # Vite temp artefacts
 */.vite/*
 .gstack/
+
+# The search index is generated. A stray one was committed once, when a zero
+# Config resolved its path to the source directory (see searchStorePath).
+search.sqlite3
+search.sqlite3-wal
+search.sqlite3-shm

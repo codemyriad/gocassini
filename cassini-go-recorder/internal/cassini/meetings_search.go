@@ -141,7 +141,7 @@ permissions.
 	for _, hit := range results.Hits {
 		fmt.Fprintf(stdout, "moment=%s at=%s speaker=%s matched=%s room=%s date=%s title=%s\n",
 			blankMeetingsDash(hit.MeetingID),
-			formatMeetingsTimestamp(hit.StartMS),
+			formatMeetingsSpan(hit.StartMS, hit.EndMS),
 			blankMeetingsDash(hit.SpeakerID),
 			blankMeetingsDash(hit.Matched),
 			blankMeetingsDash(firstNonBlank(hit.RoomName, hit.RoomID)),
@@ -274,6 +274,21 @@ func formatMeetingsTimestamp(ms int64) string {
 		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
 	}
 	return fmt.Sprintf("%d:%02d", minutes, seconds)
+}
+
+// formatMeetingsSpan renders where in a recording to listen.
+//
+// A span rather than an instant, because that is what the answer actually
+// supports: the words matched somewhere inside this stretch of speech and the
+// index cannot say where. Printing only the start would read as "they said it
+// at 0:01" when the match may be most of a window later — false precision
+// dressed as a citation.
+func formatMeetingsSpan(startMS, endMS int64) string {
+	start := formatMeetingsTimestamp(startMS)
+	if endMS <= startMS {
+		return start
+	}
+	return start + "-" + formatMeetingsTimestamp(endMS)
 }
 
 func firstNonBlank(values ...string) string {

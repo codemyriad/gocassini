@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -64,6 +65,10 @@ type searchRequest struct {
 // searchHit is a reference, never content. There is no text field, so a bug in
 // a handler cannot turn this into a disclosure of what was said.
 type searchHit struct {
+	// rowID is the index row this hit came from. Internal: it is how the
+	// exact-vs-alias label is resolved on precisely these rows rather than by a
+	// second ranked query that might not contain them.
+	rowID     int64  `json:"-"`
 	OpusName  string `json:"-"`
 	SegmentID string `json:"segmentId"`
 	StartMS   int64  `json:"startMs"`
@@ -92,6 +97,12 @@ type searchResults struct {
 	Groups [][]string
 }
 
+// errSearchNoWords is the ONE failure here that is the caller's to fix. It is a
+// sentinel so the handler can answer 400 for it and 502 for everything else: a
+// closed handle, a locked database or a half-rebuilt index are outages, and
+// telling an agent to rewrite its query means it never retries.
+var errSearchNoWords = errors.New("the query has no searchable words")
+
 const searchDefaultLimit = 20
 const searchMaxLimit = 100
 
@@ -104,7 +115,7 @@ const searchMaxLimit = 100
 func (s *searchStore) Search(ctx context.Context, req searchRequest) (searchResults, error) {
 	words := splitSearchWords(req.Text)
 	if len(words) == 0 {
-		return searchResults{}, fmt.Errorf("the query has no searchable words")
+		return searchResults{}, errSearchNoWords
 	}
 	limit := req.Limit
 	if limit <= 0 {
@@ -123,20 +134,30 @@ func (s *searchStore) Search(ctx context.Context, req searchRequest) (searchResu
 	groups := groupQueryWords(words, req.UseAliases, req.AliasIndex)
 	results := searchResults{Groups: groups}
 
+	// Over-fetch, because word-derived rows OVERLAP: a word is written into the
+	// bucket its timestamp falls in and the previous one, so a single spoken
+	// word matches two rows. Collapsing afterwards would otherwise eat into the
+	// caller's limit and return half as many distinct moments as asked for.
+	fetch := limit*2 + 10
+
 	// Strict first: every group must appear. A turn containing all of what was
 	// asked is a better answer than one containing any of it.
-	hits, err := s.match(ctx, buildMatchExpression(groups, true), visible, req.SpeakerID, limit)
+	hits, err := s.match(ctx, buildMatchExpression(groups, true), visible, req.SpeakerID, fetch)
 	if err != nil {
 		return searchResults{}, err
 	}
 	if len(hits) == 0 && len(groups) > 1 {
 		// Widen rather than return nothing, and say so. A question rarely has
 		// one segment containing all of it.
-		hits, err = s.match(ctx, buildMatchExpression(groups, false), visible, req.SpeakerID, limit)
+		hits, err = s.match(ctx, buildMatchExpression(groups, false), visible, req.SpeakerID, fetch)
 		if err != nil {
 			return searchResults{}, err
 		}
 		results.Widened = len(hits) > 0
+	}
+	hits = collapseOverlappingHits(hits)
+	if len(hits) > limit {
+		hits = hits[:limit]
 	}
 	if len(hits) == 0 {
 		results.Hits = []searchHit{}
@@ -144,23 +165,31 @@ func (s *searchStore) Search(ctx context.Context, req searchRequest) (searchResu
 	}
 
 	// Which of these would have matched without alias expansion?
-	exact := map[string]bool{}
-	if req.UseAliases {
+	//
+	// Asked of PRECISELY the rows being returned, not by running the literal
+	// query again with its own ranking and limit. That earlier shape could put
+	// a genuine word match outside its own top N on a busy corpus and label it
+	// `alias` — and a wrong label is worse than none, because the label exists
+	// to say that finding "casino" is not the same as finding "cassini".
+	exact := map[int64]bool{}
+	if req.UseAliases && len(hits) > 0 {
 		literal := make([][]string, 0, len(words))
 		for _, word := range words {
 			literal = append(literal, []string{word})
 		}
-		plain, err := s.match(ctx, buildMatchExpression(literal, !results.Widened), visible, req.SpeakerID, searchMaxLimit)
+		rowIDs := make([]int64, 0, len(hits))
+		for _, hit := range hits {
+			rowIDs = append(rowIDs, hit.rowID)
+		}
+		matched, err := s.matchWithinRows(ctx, buildMatchExpression(literal, false), rowIDs)
 		if err != nil {
 			return searchResults{}, err
 		}
-		for _, hit := range plain {
-			exact[hit.OpusName+"\x00"+hit.SegmentID] = true
-		}
+		exact = matched
 	}
 	for i := range hits {
 		hits[i].Matched = searchMatchedAlias
-		if !req.UseAliases || exact[hits[i].OpusName+"\x00"+hits[i].SegmentID] {
+		if !req.UseAliases || exact[hits[i].rowID] {
 			hits[i].Matched = searchMatchedExact
 		}
 	}
@@ -175,7 +204,7 @@ func (s *searchStore) match(ctx context.Context, expression string, visible []by
 		return nil, nil
 	}
 	query := `
-SELECT r.opus_name, r.segment_id, r.start_ms, r.end_ms, r.speaker_id
+SELECT r.rowid_, r.opus_name, r.segment_id, r.start_ms, r.end_ms, r.speaker_id
   FROM segment_fts f
   JOIN segment_ref r    ON r.rowid_ = f.rowid
   JOIN json_each(?1) v  ON v.value = r.opus_name
@@ -201,7 +230,7 @@ SELECT r.opus_name, r.segment_id, r.start_ms, r.end_ms, r.speaker_id
 	var hits []searchHit
 	for rows.Next() {
 		var hit searchHit
-		if err := rows.Scan(&hit.OpusName, &hit.SegmentID, &hit.StartMS, &hit.EndMS, &hit.SpeakerID); err != nil {
+		if err := rows.Scan(&hit.rowID, &hit.OpusName, &hit.SegmentID, &hit.StartMS, &hit.EndMS, &hit.SpeakerID); err != nil {
 			return nil, fmt.Errorf("scan search hit: %w", err)
 		}
 		hits = append(hits, hit)
@@ -293,4 +322,79 @@ func nonNilStrings(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// collapseOverlappingHits merges hits that describe the same speech.
+//
+// Word-derived rows overlap by construction — a word lands in the bucket its
+// timestamp falls in AND the previous one — so one spoken word matches two
+// rows. Returned as-is that is two "moments" for something said once, and the
+// wider row cites the start of ALL the speech it holds, which can be a stride
+// earlier than the word actually matched. A contentless index cannot say which
+// word matched, so the narrowest overlapping row is the tightest honest
+// reference available.
+//
+// Grouped by meeting AND speaker, so two people talking at once stay two hits.
+// Rank order is preserved: a collapsed hit keeps the position of the best-ranked
+// row it came from.
+//
+// What survives is a RANGE, not a point. The words matched somewhere inside it
+// and the index cannot say where, so a consumer must present it as a span; the
+// CLI does. Reporting its start as "the time" would be false precision, and on
+// a word-derived row it can be most of a window early.
+func collapseOverlappingHits(hits []searchHit) []searchHit {
+	kept := make([]searchHit, 0, len(hits))
+	for _, hit := range hits {
+		merged := false
+		for i := range kept {
+			if kept[i].OpusName != hit.OpusName || kept[i].SpeakerID != hit.SpeakerID {
+				continue
+			}
+			if hit.StartMS > kept[i].EndMS || kept[i].StartMS > hit.EndMS {
+				continue
+			}
+			// Same speech. Keep whichever localises it more tightly.
+			if hit.EndMS-hit.StartMS < kept[i].EndMS-kept[i].StartMS {
+				kept[i] = hit
+			}
+			merged = true
+			break
+		}
+		if !merged {
+			kept = append(kept, hit)
+		}
+	}
+	return kept
+}
+
+// matchWithinRows reports which of the given rows match an expression.
+//
+// The rowids are bound as JSON for the same reason the visible set is: there is
+// no parameter ceiling, and the join does the filtering inside the statement.
+func (s *searchStore) matchWithinRows(ctx context.Context, expression string, rowIDs []int64) (map[int64]bool, error) {
+	out := map[int64]bool{}
+	if strings.TrimSpace(expression) == "" || len(rowIDs) == 0 {
+		return out, nil
+	}
+	encoded, err := json.Marshal(rowIDs)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT f.rowid
+  FROM segment_fts f
+  JOIN json_each(?1) v ON v.value = f.rowid
+ WHERE segment_fts MATCH ?2`, string(encoded), expression)
+	if err != nil {
+		return nil, fmt.Errorf("resolve exact matches: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan exact match: %w", err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
