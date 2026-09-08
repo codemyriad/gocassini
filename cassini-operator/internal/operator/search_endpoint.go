@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"path"
@@ -114,6 +115,18 @@ func (c ExAppConfig) serveSearch(
 		}
 		limit = parsed
 	}
+	// Before the expensive part, which is the point: a refused request must not
+	// have already cost a PROPFIND and a catalog GET against Nextcloud.
+	if allowed, wait := search.limiter.allow(caller); !allowed {
+		seconds := int(wait.Seconds())
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeJSONError(w, http.StatusTooManyRequests,
+			"too many searches; each one asks Nextcloud what you may read, so they are rate limited — retry shortly")
+		return
+	}
 	if index == nil {
 		// Not an empty result: the index is unavailable, and an agent must be
 		// able to tell "ask again later" from "there is nothing".
@@ -167,9 +180,18 @@ func (c ExAppConfig) serveSearch(
 		AliasIndex: search.aliasIndex(),
 	})
 	if err != nil {
-		// A query with no searchable words is the caller's to fix; anything else
-		// here is ours, and neither is an empty result.
-		writeJSONError(w, http.StatusBadRequest, err.Error())
+		// Exactly one of these is the caller's fault. Everything else — a closed
+		// handle, a locked database, a table missing after a partial rebuild —
+		// is an outage, and answering 400 for it would tell an agent to rewrite
+		// a query that was never the problem, so it would never retry.
+		if errors.Is(err, errSearchNoWords) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if logger != nil {
+			logger.Printf("search: query failed caller=%s: %v", caller, err)
+		}
+		writeJSONError(w, http.StatusBadGateway, "the search index could not be queried; this is not an empty result")
 		return
 	}
 
@@ -299,6 +321,9 @@ SELECT COUNT(*) FROM meeting_index m
 type searchDeps struct {
 	index   *searchStore
 	aliases func() [][]string
+	// limiter bounds how often one caller can make this app talk to Nextcloud.
+	// Nil outside a running operator, which the limiter itself tolerates.
+	limiter *searchRateLimiter
 }
 
 // aliasIndex merges the shipped groups with whatever the operator has

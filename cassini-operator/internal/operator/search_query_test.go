@@ -376,3 +376,110 @@ func TestSearchWithNoAliasTableStillWorks(t *testing.T) {
 		t.Fatalf("hits = %+v, want a plain exact match", got.Hits)
 	}
 }
+
+// Word-derived rows overlap by construction, so one spoken word lands in two
+// rows. Returned as-is that is two "moments" for something said once, and the
+// wider row cites a start that can be almost a window early.
+func TestSearchCollapsesOverlappingWindowHits(t *testing.T) {
+	store := newTestSearchStore(t)
+	rows := deriveSearchRowsFromWords([]searchTranscriptWord{
+		{SpeakerID: "S1", StartMS: 1_000, EndMS: 1_200, Text: "hello"},
+		{SpeakerID: "S1", StartMS: 20_000, EndMS: 20_400, Text: "acquisition"},
+		{SpeakerID: "S1", StartMS: 40_000, EndMS: 40_400, Text: "goodbye"},
+	})
+	if err := store.ReplaceMeeting(context.Background(), "M.opus", "d", searchRowSourceWords, rows); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, err := store.Search(context.Background(), searchRequest{Text: "acquisition", Visible: []string{"M.opus"}})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got.Hits) != 1 {
+		t.Fatalf("hits = %d, want 1 for one spoken word: %+v", len(got.Hits), got.Hits)
+	}
+	// The reference is a RANGE the words fall inside, never a claim about the
+	// instant — the index cannot say which word matched.
+	if got.Hits[0].StartMS > 20_000 || got.Hits[0].EndMS < 20_400 {
+		t.Errorf("span [%d,%d] does not contain the spoken word at 20000",
+			got.Hits[0].StartMS, got.Hits[0].EndMS)
+	}
+}
+
+// Two speakers talking at once are two moments, not one.
+func TestSearchKeepsOverlappingHitsFromDifferentSpeakers(t *testing.T) {
+	store := newTestSearchStore(t)
+	if err := store.ReplaceMeeting(context.Background(), "M.opus", "d", searchRowSourceSegments,
+		searchRowsFromSegments([]searchTranscriptSegment{
+			seg("a", "S1", 1_000, 5_000, "the acquisition"),
+			seg("b", "S2", 2_000, 6_000, "the acquisition"),
+		})); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got, err := store.Search(context.Background(), searchRequest{Text: "acquisition", Visible: []string{"M.opus"}})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got.Hits) != 2 {
+		t.Fatalf("hits = %d, want both speakers: %+v", len(got.Hits), got.Hits)
+	}
+}
+
+// Collapsing must not eat the caller's limit: the query over-fetches so a full
+// page of distinct moments still comes back.
+func TestSearchReturnsAFullPageDespiteCollapsing(t *testing.T) {
+	store := newTestSearchStore(t)
+	words := make([]searchTranscriptWord, 0, 40)
+	for i := 0; i < 40; i++ {
+		words = append(words, searchTranscriptWord{
+			SpeakerID: "S1", StartMS: int64(i) * 31_000, EndMS: int64(i)*31_000 + 400, Text: "acquisition",
+		})
+	}
+	if err := store.ReplaceMeeting(context.Background(), "M.opus", "d", searchRowSourceWords,
+		deriveSearchRowsFromWords(words)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	got, err := store.Search(context.Background(), searchRequest{
+		Text: "acquisition", Visible: []string{"M.opus"}, Limit: 20,
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got.Hits) != 20 {
+		t.Fatalf("hits = %d, want a full page of 20", len(got.Hits))
+	}
+}
+
+// The label is resolved on the rows actually returned. Before, a separately
+// ranked and limited probe could put a genuine word match outside its own top N
+// and label it `alias` — and a wrong label is worse than none.
+func TestSearchLabelsExactMatchesBeyondTheProbeLimit(t *testing.T) {
+	store := newTestSearchStore(t)
+	segments := make([]searchTranscriptSegment, 0, searchMaxLimit+40)
+	for i := 0; i < searchMaxLimit+40; i++ {
+		segments = append(segments, seg(
+			"s"+string(rune('A'+i%26))+string(rune('a'+i/26)), "S1",
+			int64(i)*10_000, int64(i)*10_000+4_000, "cassini deployment notes"))
+	}
+	if err := store.ReplaceMeeting(context.Background(), "M.opus", "d", searchRowSourceSegments,
+		searchRowsFromSegments(segments)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got, err := store.Search(context.Background(), searchRequest{
+		Text: "cassini", Visible: []string{"M.opus"}, Limit: 20, UseAliases: true,
+		AliasIndex: buildSearchAliasIndex(searchAliasGroups),
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got.Hits) == 0 {
+		t.Fatal("no hits")
+	}
+	for _, hit := range got.Hits {
+		if hit.Matched != searchMatchedExact {
+			t.Fatalf("hit %s labelled %q, but every row contains the typed word",
+				hit.SegmentID, hit.Matched)
+		}
+	}
+}

@@ -72,6 +72,22 @@ func doSearch(t *testing.T, cfg ExAppConfig, index *searchStore, query, caller s
 	return rec
 }
 
+// doSearchWithDeps drives the proxy with explicit deps, for the cases that care
+// about more than the index.
+func doSearchWithDeps(t *testing.T, cfg ExAppConfig, deps searchDeps, query, caller string) *httptest.ResponseRecorder {
+	t.Helper()
+	target := "/published/" + searchURLPath
+	if query != "" {
+		target += "?" + query
+	}
+	rec := httptest.NewRecorder()
+	proxy := cfg.ncFilesProxy(nil, deps)
+	if !proxy(rec, callerReq(http.MethodGet, target, caller), searchURLPath) {
+		t.Fatal("proxy declined the search request")
+	}
+	return rec
+}
+
 func decodeSearch(t *testing.T, rec *httptest.ResponseRecorder) searchResponse {
 	t.Helper()
 	var got searchResponse

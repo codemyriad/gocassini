@@ -168,6 +168,7 @@ function normalizeSettings(raw: unknown): Settings {
     quality: normalizeQuality(value.quality),
     device_override: asString(value.device_override),
     transcription_terms: asStringArray(value.transcription_terms),
+    search_aliases: asStringArrayArray(value.search_aliases),
     source: asString(value.source) || "auto",
     detected_gpu: value.detected_gpu === true,
     cores: typeof value.cores === "number" && Number.isFinite(value.cores) ? value.cores : 0,
@@ -188,6 +189,13 @@ function asNumber(value: unknown): number {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function asStringArrayArray(value: unknown): string[][] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((group) => asStringArray(group)).filter((group) => group.length > 0);
 }
 
 function asStringArray(value: unknown): string[] {

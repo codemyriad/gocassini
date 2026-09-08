@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { Cpu, CircleGauge, RefreshCw, Settings as SettingsIcon } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
+  import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
   import type { Settings, SettingsQuality } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
@@ -34,6 +35,8 @@
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
   let transcriptionTermsText = "";
+  let searchAliasesText = "";
+  let savedSearchAliasesText = "";
 
   let savedQuality: SettingsQuality = "balanced";
   let savedDeviceOverride = "";
@@ -76,6 +79,7 @@
         quality,
         device_override: deviceOverride,
         transcription_terms: transcriptionTermsText.split(/\r?\n/),
+        search_aliases: parseSearchAliases(searchAliasesText),
       });
       applySettings(next);
     } catch (error) {
@@ -90,9 +94,11 @@
     quality = next.quality;
     deviceOverride = next.device_override;
     transcriptionTermsText = next.transcription_terms.join("\n");
+    searchAliasesText = formatSearchAliases(next.search_aliases);
     savedQuality = next.quality;
     savedDeviceOverride = next.device_override;
     savedTranscriptionTermsText = transcriptionTermsText;
+    savedSearchAliasesText = searchAliasesText;
   }
 
   function asMessage(error: unknown): string {
@@ -141,7 +147,8 @@
     settings !== null &&
     (quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
-      transcriptionTermsText !== savedTranscriptionTermsText);
+      transcriptionTermsText !== savedTranscriptionTermsText ||
+      searchAliasesText !== savedSearchAliasesText);
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
@@ -344,6 +351,34 @@
             corrects spellings without putting words in anyone's mouth. It needs a transcription
             model that ships a BPE vocabulary, which the <em>fast</em> tier never does; when a
             vocabulary cannot be used, the build records that and says why.
+          </span>
+        </label>
+      </section>
+
+      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
+        <div>
+          <h3 class="text-sm font-semibold">Search spellings</h3>
+          <p class="text-xs text-base-content/60">
+            What transcription writes when it mishears a name. Searching for the name also
+            finds the recordings where it came out differently.
+          </p>
+        </div>
+        <label class="flex w-full flex-col gap-1">
+          <span class="text-xs font-medium text-base-content/70">
+            One name per line, spellings separated by commas
+          </span>
+          <textarea
+            bind:value={searchAliasesText}
+            class="textarea min-h-28 w-full border-base-300 shadow-none"
+            maxlength={10_100}
+            placeholder={'Cassini, casino, casini\nEisbuk, ice book, icebook'}
+          ></textarea>
+          <span class="text-xs text-base-content/60">
+            Up to 100 names and 25 spellings each. This does not change any recording — it
+            only widens what a search looks for, and a result says whether it matched what you
+            typed or one of these. Add a spelling when you notice a transcript using it. The
+            vocabulary above is the other half: it biases new transcriptions so the name comes
+            out right next time.
           </span>
         </label>
       </section>

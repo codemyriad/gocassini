@@ -62,7 +62,7 @@ type searchArchiveReader func(ctx context.Context, opusName string) ([]searchTra
 // per-request answers are filtered by the caller's own visibility. Reading as
 // the owner here is what the publish path already does for the catalog, and the
 // index it fills grants nobody anything.
-func (c ExAppConfig) archiveOpusReader(cassiniBin, workDir string, logger *loggerFunc) searchArchiveReader {
+func (c ExAppConfig) archiveOpusReader(cassiniBin, workDir string) searchArchiveReader {
 	client := &http.Client{Timeout: archiveOpusReadTimeout}
 	return func(ctx context.Context, opusName string) ([]searchTranscriptWord, string, error) {
 		tmp, err := os.MkdirTemp(workDir, "search-backfill-")
@@ -88,10 +88,6 @@ func (c ExAppConfig) archiveOpusReader(cassiniBin, workDir string, logger *logge
 // meeting over a slow link is normal, and this runs in a hand-started command
 // with somebody watching.
 const archiveOpusReadTimeout = 10 * time.Minute
-
-// loggerFunc is a tiny indirection so this file does not care whether it was
-// handed a *log.Logger or nothing.
-type loggerFunc struct{ printf func(string, ...any) }
 
 // downloadArchiveOpus streams one recording to disk, digesting as it goes.
 //

@@ -2,6 +2,8 @@ package operator
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -52,6 +54,9 @@ const (
 	// job row is gone is ordinary rather than exceptional.
 	searchBackfillReasonNoJobRecord   = "job-record-missing"
 	searchBackfillReasonArchiveUnread = "archive-recording-unreadable"
+	// The job database could not be read at all — distinct from a row that is
+	// genuinely absent, because only the second justifies the archive fallback.
+	searchBackfillReasonJobStoreUnavailable = "job-store-unavailable"
 )
 
 // searchBackfillTarget is one published meeting to consider.
@@ -73,9 +78,11 @@ type searchBackfillReport struct {
 	Unchanged int
 	// Unavailable: recorded as not searchable, with a reason.
 	Unavailable int
-	// Failed: could not even be recorded — no join key, or the index rejected
-	// the write. These are the ones a retry might fix.
+	// Failed: could not even be recorded — no join key, a job store that could
+	// not be read, or an index that rejected the write. Retryable.
 	Failed int
+	// Forgotten: rows dropped for meetings the archive no longer holds.
+	Forgotten int
 }
 
 // backfillSearchIndex indexes each target that can be indexed safely.
@@ -87,7 +94,7 @@ func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBack
 	if rt.searchStore == nil {
 		return report, fmt.Errorf("search index is not open")
 	}
-	indexed, err := rt.searchStore.indexedDigests(ctx)
+	indexed, err := rt.searchStore.indexedState(ctx)
 	if err != nil {
 		return report, err
 	}
@@ -114,7 +121,74 @@ func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBack
 			rt.logger.Printf("search backfill: %s failed (%s)", name, reason)
 		}
 	}
+
+	forgotten, err := rt.forgetVanishedMeetings(ctx, targets)
+	if err != nil {
+		// Housekeeping: failing it must not discard a run that indexed
+		// successfully.
+		rt.logger.Printf("search backfill: could not prune vanished meetings (%v)", err)
+	}
+	report.Forgotten = forgotten
 	return report, nil
+}
+
+// forgetVanishedMeetings drops index rows for meetings the archive no longer
+// holds — the "converge" half of this command, which nothing else does.
+//
+// It changes nothing a caller sees: a recording they cannot read is already
+// absent from their visibility scan. It matters because without it the index
+// only ever grows, and a deleted meeting's words stay in the file for anyone
+// who can run SQL against it.
+//
+// Guarded on a non-empty target list. An archive read that came back empty is
+// indistinguishable from an archive that is genuinely empty, and erasing the
+// whole index on a transient failure is exactly the kind of destructive
+// convergence the D-631 assessment warned about.
+func (rt *Runtime) forgetVanishedMeetings(ctx context.Context, targets []searchBackfillTarget) (int, error) {
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	present := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		if name := strings.TrimSpace(target.OpusName); name != "" {
+			present[name] = struct{}{}
+		}
+	}
+	known, err := rt.searchStore.indexedNames(ctx)
+	if err != nil {
+		return 0, err
+	}
+	forgotten := 0
+	for _, name := range known {
+		if _, still := present[name]; still {
+			continue
+		}
+		if err := rt.searchStore.ForgetMeeting(ctx, name); err != nil {
+			return forgotten, err
+		}
+		rt.logger.Printf("search backfill: %s is no longer in the archive; dropped from the index", name)
+		forgotten++
+	}
+	return forgotten, nil
+}
+
+// indexedNames lists every meeting the index holds a record for, in any state,
+// so convergence can tell which the archive has stopped carrying.
+func (s *searchStore) indexedNames(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT opus_name FROM meeting_index`)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed meetings: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan indexed meeting: %w", err)
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
 }
 
 type searchBackfillOutcome int
@@ -128,7 +202,7 @@ const (
 
 func (rt *Runtime) backfillOneMeeting(
 	ctx context.Context, target searchBackfillTarget, opusName string,
-	indexed map[string]string, archive searchArchiveReader,
+	indexed map[string]searchIndexedState, archive searchArchiveReader,
 ) (searchBackfillOutcome, string) {
 	// The local bundle is preferred wherever it can be trusted: it carries the
 	// producer's own segments and costs nothing to read. Anything that cannot be
@@ -136,8 +210,14 @@ func (rt *Runtime) backfillOneMeeting(
 	// recording is the one artifact that is definitely there.
 	delivered, localReason := rt.deliveredDigestFor(ctx, target)
 	if localReason == "" {
-		if existing, ok := indexed[opusName]; ok && existing != "" && existing == delivered {
+		if existing, ok := indexed[opusName]; ok && existing.digest != "" &&
+			existing.digest == delivered && existing.source == searchRowSourceSegments {
 			// Re-runnable by design: identical rows are not rewritten.
+			//
+			// The source is compared as well as the digest. Without it, a
+			// meeting once indexed from the archive would report `unchanged`
+			// forever and keep its coarse word rows even after the bundle came
+			// back — the digest matches either way.
 			return searchBackfillUnchanged, ""
 		}
 		outcome, reason, settled := rt.indexFromLocalBundle(ctx, target, opusName, delivered)
@@ -151,6 +231,12 @@ func (rt *Runtime) backfillOneMeeting(
 		localReason = reason
 	}
 
+	if localReason == searchBackfillReasonJobStoreUnavailable {
+		// Retryable, and not something to paper over by rebuilding from the
+		// archive: the local bundle may be perfectly good and simply unreadable
+		// right now.
+		return searchBackfillFailed, localReason
+	}
 	if archive == nil {
 		// No archive access: record why the local copy could not be used, so the
 		// meeting is known-unsearchable rather than merely absent.
@@ -161,7 +247,7 @@ func (rt *Runtime) backfillOneMeeting(
 		rt.logger.Printf("search backfill: %s archive read failed (%v)", opusName, err)
 		return rt.recordUnavailable(ctx, opusName, searchBackfillReasonArchiveUnread)
 	}
-	if existing, ok := indexed[opusName]; ok && existing != "" && existing == digest {
+	if existing, ok := indexed[opusName]; ok && existing.digest != "" && existing.digest == digest {
 		return searchBackfillUnchanged, ""
 	}
 	rows := deriveSearchRowsFromWords(words)
@@ -180,11 +266,20 @@ func (rt *Runtime) backfillOneMeeting(
 // the reason the local record cannot say.
 func (rt *Runtime) deliveredDigestFor(ctx context.Context, target searchBackfillTarget) (string, string) {
 	job, err := rt.store.GetJob(ctx, target.JobID)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		// The archive outlives the operator's volume, so a published recording
 		// with no job row is ordinary rather than exceptional. Named, not
 		// counted as a failure.
 		return "", searchBackfillReasonNoJobRecord
+	}
+	if err != nil {
+		// Anything else is the job database being unavailable, and it must NOT
+		// look like an absent row. The command's own usage warns that a publish
+		// in flight fails this read with "database is locked" — and treating
+		// that as "no job record" would send every meeting down the archive
+		// fallback, re-indexing a whole archive at the coarser granularity and
+		// overwriting good segment rows on the way.
+		return "", searchBackfillReasonJobStoreUnavailable
 	}
 	if job.ArtifactOpusSHA256 == nil || strings.TrimSpace(*job.ArtifactOpusSHA256) == "" {
 		return "", searchBackfillReasonNoDigest
@@ -238,25 +333,34 @@ func (rt *Runtime) recordUnavailable(ctx context.Context, opusName, reason strin
 	return searchBackfillUnavailable, reason
 }
 
-// indexedDigests reports the artifact digest each meeting was last indexed
-// from, so a re-run can skip what is already current.
-func (s *searchStore) indexedDigests(ctx context.Context) (map[string]string, error) {
+// searchIndexedState is what a meeting was last indexed from: which artifact,
+// and at which granularity. Both matter to a re-run — the digest says whether
+// the content changed, the source says whether a better one is now available.
+type searchIndexedState struct {
+	digest string
+	source string
+}
+
+// indexedState reports how each meeting was last indexed, so a re-run can skip
+// what is already current and upgrade what is not.
+func (s *searchStore) indexedState(ctx context.Context) (map[string]searchIndexedState, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT opus_name, opus_sha256 FROM meeting_index WHERE state = ?`, searchStateIndexed)
+		`SELECT opus_name, opus_sha256, row_source FROM meeting_index WHERE state = ?`, searchStateIndexed)
 	if err != nil {
-		return nil, fmt.Errorf("read indexed digests: %w", err)
+		return nil, fmt.Errorf("read indexed state: %w", err)
 	}
 	defer rows.Close()
-	out := map[string]string{}
+	out := map[string]searchIndexedState{}
 	for rows.Next() {
-		var name, digest string
-		if err := rows.Scan(&name, &digest); err != nil {
-			return nil, fmt.Errorf("scan indexed digest: %w", err)
+		var name string
+		var state searchIndexedState
+		if err := rows.Scan(&name, &state.digest, &state.source); err != nil {
+			return nil, fmt.Errorf("scan indexed state: %w", err)
 		}
-		out[name] = digest
+		out[name] = state
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read indexed digests: %w", err)
+		return nil, fmt.Errorf("read indexed state: %w", err)
 	}
 	return out, nil
 }

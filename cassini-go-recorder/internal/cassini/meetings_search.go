@@ -32,7 +32,8 @@ func runMeetingsSearch(ctx context.Context, args []string, stdout, stderr io.Wri
 	fs := flag.NewFlagSet("cassini meetings search", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	registerMeetingsConnectionFlags(fs, &cfg)
-	speaker := fs.String("speaker", "", "only moments spoken by this speaker id")
+	speaker := fs.String("speaker", "",
+		"only moments spoken by this speaker id — the speaker= value a previous\nsearch result printed (ids are opaque and are not typed from memory)")
 	limit := fs.Int("limit", 0, "how many moments to return (default 20, max 100)")
 	noAliases := fs.Bool("no-aliases", false,
 		"do not also search the spellings transcription produces for a name\n(by default, searching for a project name finds it however it was misheard)")
@@ -94,6 +95,13 @@ permissions.
 		Query: query, Speaker: strings.TrimSpace(*speaker), Limit: *limit, NoAliases: *noAliases,
 	})
 	if err != nil {
+		if errors.Is(err, errMeetingsSearchRateLimited) {
+			// Neither an outage nor a denial: the app is working and is asking
+			// this caller to slow down. Reported as its own thing so an agent
+			// backs off rather than retrying immediately or giving up.
+			fmt.Fprintf(stderr, "meetings search failed: too many searches in a short time; each one asks Nextcloud what you may read, so they are rate limited — wait a moment and retry\n")
+			return 1
+		}
 		if errors.Is(err, errMeetingsSearchUnavailable) {
 			// Distinguished from every other failure: the app is reachable and
 			// working, it just does not offer this. Retrying will not help, and
@@ -141,14 +149,14 @@ permissions.
 	for _, hit := range results.Hits {
 		fmt.Fprintf(stdout, "moment=%s at=%s speaker=%s matched=%s room=%s date=%s title=%s\n",
 			blankMeetingsDash(hit.MeetingID),
-			formatMeetingsTimestamp(hit.StartMS),
+			formatMeetingsSpan(hit.StartMS, hit.EndMS),
 			blankMeetingsDash(hit.SpeakerID),
 			blankMeetingsDash(hit.Matched),
 			blankMeetingsDash(firstNonBlank(hit.RoomName, hit.RoomID)),
 			blankMeetingsDash(hit.DateLabel),
 			blankMeetingsDash(hit.Title))
 	}
-	fmt.Fprintf(stdout, "hint=read one with `cassini meetings context <meeting-id>`\n")
+	fmt.Fprintf(stdout, "hint=read one with `cassini meetings context <meeting-id>`; narrow to one voice with --speaker <the speaker= value above>\n")
 	return 0
 }
 
@@ -191,6 +199,11 @@ type meetingsSearchHit struct {
 // every other failure because no retry and no permission change will help.
 var errMeetingsSearchUnavailable = errors.New("this Cassini app does not serve the search route")
 
+// errMeetingsSearchRateLimited is the app asking this caller to slow down. It
+// is distinct from every other failure because the right response is to wait,
+// which is neither "fix your query" nor "give up".
+var errMeetingsSearchRateLimited = errors.New("too many searches in a short time")
+
 func (c *meetingsClient) search(ctx context.Context, req meetingsSearchRequest) (meetingsSearchResults, error) {
 	root, err := c.appRootURL()
 	if err != nil {
@@ -218,6 +231,9 @@ func (c *meetingsClient) search(ctx context.Context, req meetingsSearchRequest) 
 		var httpErr *meetingsHTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
 			return meetingsSearchResults{}, errMeetingsSearchUnavailable
+		}
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusTooManyRequests {
+			return meetingsSearchResults{}, errMeetingsSearchRateLimited
 		}
 		return meetingsSearchResults{}, err
 	}
@@ -274,6 +290,21 @@ func formatMeetingsTimestamp(ms int64) string {
 		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
 	}
 	return fmt.Sprintf("%d:%02d", minutes, seconds)
+}
+
+// formatMeetingsSpan renders where in a recording to listen.
+//
+// A span rather than an instant, because that is what the answer actually
+// supports: the words matched somewhere inside this stretch of speech and the
+// index cannot say where. Printing only the start would read as "they said it
+// at 0:01" when the match may be most of a window later — false precision
+// dressed as a citation.
+func formatMeetingsSpan(startMS, endMS int64) string {
+	start := formatMeetingsTimestamp(startMS)
+	if endMS <= startMS {
+		return start
+	}
+	return start + "-" + formatMeetingsTimestamp(endMS)
 }
 
 func firstNonBlank(values ...string) string {
