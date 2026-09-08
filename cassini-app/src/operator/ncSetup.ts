@@ -125,6 +125,9 @@ interface OcsEnvelope {
     meta?: { status?: string; statuscode?: number; message?: string };
     data?: unknown;
   };
+  // alreadyThere is set by ncRequest, not by Nextcloud: the write was accepted
+  // because the thing it would have created is already there.
+  alreadyThere?: boolean;
 }
 
 // ncPost issues one write to Nextcloud as the signed-in administrator.
@@ -138,12 +141,27 @@ async function ncPost(
   form: Record<string, string>,
   fetchImpl: typeof fetch = fetch,
 ): Promise<OcsEnvelope> {
+  return ncRequest("POST", path, form, fetchImpl);
+}
+
+// ncRequest is the same call with the verb as a parameter.
+//
+// Changing an account's password is `PUT /ocs/v2.php/cloud/users/{id}` with a
+// `key`/`value` pair, and it is the only write here that is not a POST — the
+// provisioning API models editing a user as a field update rather than as a
+// distinct route (D-708).
+async function ncRequest(
+  method: string,
+  path: string,
+  form: Record<string, string>,
+  fetchImpl: typeof fetch = fetch,
+): Promise<OcsEnvelope> {
   const body = new URLSearchParams();
   for (const [key, value] of Object.entries(form)) {
     body.append(key, value);
   }
   const response = await fetchImpl(nextcloudUrl(path), {
-    method: "POST",
+    method,
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -172,8 +190,13 @@ async function ncPost(
   // exists" and "User already exists" from the provisioning API, "Group already
   // assigned" from Group Folders. The operator's own provisioner settled on the
   // same loose test for the same reason (nc_provision.go).
+  //
+  // It is flagged as well as accepted. "The account already existed" and "the
+  // account was created just now" are the same success to the flow and opposite
+  // answers to the one question the caller has to get right: whether the
+  // password it is about to show anybody was actually set (D-708).
   if (code === 102 || /already/i.test(meta?.message ?? "")) {
-    return payload;
+    return { ...payload, alreadyThere: true };
   }
   if (response.ok && (code === undefined || code === 100 || code === 200)) {
     return payload;
@@ -193,11 +216,21 @@ async function ncPost(
   throw new NcSetupError("failed", `Nextcloud refused: ${message}`);
 }
 
-// randomPassword satisfies the create-account contract and nothing else.
-// Nothing ever authenticates with it: every Cassini call acts as the service
-// account through AppAPI's act-as-user header, signed with the app secret.
-// Mirrors the operator's own randomPassword (nc_provision.go).
-function randomPassword(): string {
+// randomPassword mints the service account's credential, in the browser, from
+// the platform's own CSPRNG.
+//
+// It is generated HERE and nowhere else, and that is the whole design of the
+// password flow (D-708). Cassini's operator authenticates as this account
+// through AppAPI's act-as-user header, signed with the app secret, so it needs
+// no password of its own — and a password reaching the operator would be a
+// credential at rest, on its volume, for an account nothing authenticates as.
+// What an administrator needs is to be able to SIGN IN as it, so the value is
+// shown to them once and kept by them.
+//
+// The shape satisfies every Nextcloud password policy the app ships with: 32
+// bytes of entropy, base64url, with an upper/lower/digit/special prefix so a
+// policy demanding character classes cannot reject it.
+export function randomPassword(): string {
   const bytes = new Uint8Array(32);
   globalThis.crypto.getRandomValues(bytes);
   const base64 = btoa(String.fromCharCode(...bytes))
@@ -219,6 +252,20 @@ export interface SetupProgress {
   step: StorageSetupStep;
   index: number;
   total: number;
+}
+
+// SetupOutcome is what a run produced that the caller has to show.
+//
+// Today that is one thing: the service account's password, when this run created
+// the account. It exists as a returned value rather than as anything stored
+// because the value must not outlive the render — the panel shows it once, the
+// administrator copies it, and nothing else in the app or the operator ever has
+// it.
+export interface SetupOutcome {
+  // createdAccount is the account this run created, or "" when it created none.
+  createdAccount: string;
+  // password is the credential set on it. Empty unless createdAccount is set.
+  password: string;
 }
 
 interface RunOptions {
@@ -273,11 +320,12 @@ async function findFolderId(
 export async function runSetupPlan(
   steps: StorageSetupStep[],
   options: RunOptions = {},
-): Promise<void> {
+): Promise<SetupOutcome> {
   const fetchImpl = options.fetchImpl ?? fetch;
+  const outcome: SetupOutcome = { createdAccount: "", password: "" };
   const browserSteps = steps.filter((step) => step.browser);
   if (browserSteps.length === 0) {
-    return;
+    return outcome;
   }
   if (!isSetupAvailable()) {
     throw new NcSetupError(
@@ -287,6 +335,15 @@ export async function runSetupPlan(
   }
 
   await confirmPassword();
+
+  // Generated ONCE, before the first attempt, and reused by the retry.
+  //
+  // The retry below re-runs a denied step after re-confirming, and `create_user`
+  // used to mint a fresh password each time. Combined with ncPost treating an
+  // "already exists" reply as success, that meant a run whose first attempt
+  // actually created the account could report a second password that was never
+  // set. Invisible while nothing read the value; a lie the moment it is shown.
+  const accountPassword = randomPassword();
 
   // One resolution of the Team folder id, shared by every step that needs it —
   // the existence check that makes creating it idempotent, and the mappings
@@ -317,14 +374,26 @@ export async function runSetupPlan(
     const step = browserSteps[index];
     options.onProgress?.({ step, index, total: browserSteps.length });
     try {
-      await runStep(step, requireFolder, folders, fetchImpl);
+      const existed = await runStep(step, requireFolder, folders, accountPassword, fetchImpl);
+      // Only a real creation yields a credential to show. An account that was
+      // already there kept whatever password it had, and offering this run's
+      // generated one would hand an administrator a string that does not sign
+      // in anywhere — the reset control is what covers that case.
+      if (step.action === "create_user" && !existed) {
+        outcome.createdAccount = step.args?.user ?? "";
+        outcome.password = accountPassword;
+      }
     } catch (error) {
       // A denial mid-run is almost always the confirmation window closing.
       // Re-confirm and retry the step once; anything else is real.
       if (error instanceof NcSetupError && error.reason === "denied") {
         await confirmPassword();
         try {
-          await runStep(step, requireFolder, folders, fetchImpl);
+          const existed = await runStep(step, requireFolder, folders, accountPassword, fetchImpl);
+          if (step.action === "create_user" && !existed) {
+            outcome.createdAccount = step.args?.user ?? "";
+            outcome.password = accountPassword;
+          }
         } catch (retryError) {
           // The retry's failure has to carry the step too, or the second
           // attempt reports less than the first did.
@@ -341,25 +410,78 @@ export async function runSetupPlan(
       throw error;
     }
   }
+  return outcome;
+}
+
+// resetServiceAccountPassword mints a new credential for an account that already
+// exists, and hands it back to be shown once.
+//
+// It is a first-class call rather than an eighth plan action, because a plan is
+// emitted only for a mode that is NOT ready — a healthy instance has an empty
+// plan, so there would be no step to hang it on, which is exactly when an
+// administrator who has lost the password needs this.
+//
+// `PUT /ocs/v2.php/cloud/users/{id}` with `key=password` is guarded by the same
+// password-confirmation middleware every other provisioning write is. Whether it
+// is the STRICT variant — which no session satisfies, however recently confirmed
+// — has not been measured anywhere in this repo. So it is attempted, and a
+// refusal is reported as one rather than as a failure, with the `occ` line the
+// operator supplies as the way through.
+export async function resetServiceAccountPassword(
+  user: string,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<string> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  if (!isSetupAvailable()) {
+    throw new NcSetupError(
+      "unavailable",
+      "This page cannot change the account's password: Nextcloud's own scripts are not available here.",
+    );
+  }
+  await confirmPassword();
+  const password = randomPassword();
+  const set = () =>
+    ncRequest(
+      "PUT",
+      `/ocs/v2.php/cloud/users/${encodeURIComponent(user)}?format=json`,
+      { key: "password", value: password },
+      fetchImpl,
+    );
+  try {
+    await set();
+  } catch (error) {
+    // The same re-confirm-and-retry the plan uses, for the same reason: a
+    // denial is most often the 30-minute confirmation window closing.
+    if (error instanceof NcSetupError && error.reason === "denied") {
+      await confirmPassword();
+      await set();
+    } else {
+      throw error;
+    }
+  }
+  return password;
 }
 
 async function runStep(
   step: StorageSetupStep,
   requireFolder: (step: StorageSetupStep) => Promise<number>,
   folders: FolderCache,
+  accountPassword: string,
   fetchImpl: typeof fetch,
-): Promise<void> {
+): Promise<boolean> {
   const args = step.args ?? {};
   switch (step.action) {
     case "create_group":
       await ncPost("/ocs/v2.php/cloud/groups?format=json", { groupid: args.group ?? "" }, fetchImpl);
-      return;
-    case "create_user":
-      await ncPost(
+      return false;
+    case "create_user": {
+      const answer = await ncPost(
         "/ocs/v2.php/cloud/users?format=json",
         {
           userid: args.user ?? "",
-          password: randomPassword(),
+          // The run's password, not a fresh one: a retried step must set the
+          // credential the caller is about to show, not a second one.
+          password: accountPassword,
           displayname: args.display_name ?? "",
           // "groups[]", not "groups". OCS decodes this field as a PHP array and
           // answers a bare 400 for a scalar — the same trap the operator's own
@@ -368,7 +490,8 @@ async function runStep(
         },
         fetchImpl,
       );
-      return;
+      return answer.alreadyThere === true;
+    }
     case "create_team_folder": {
       // Look before creating. `POST /folders` has no idempotency of its own —
       // it makes a NEW folder every time, mount point and all — so a re-run
@@ -377,7 +500,7 @@ async function runStep(
       // being done twice; this is the one call that cannot.
       const mount = args.mount ?? "";
       if ((await folders.resolve(mount)) !== null) {
-        return;
+        return true;
       }
       await ncPost(
         "/index.php/apps/groupfolders/folders?format=json",
@@ -387,7 +510,7 @@ async function runStep(
       // The id the cache should now hand out is the one that did not exist a
       // moment ago.
       folders.invalidate();
-      return;
+      return false;
     }
     case "map_group": {
       const id = await requireFolder(step);
@@ -403,12 +526,12 @@ async function runStep(
         { permissions: args.permissions ?? "" },
         fetchImpl,
       );
-      return;
+      return false;
     }
     case "enable_folder_acl": {
       const id = await requireFolder(step);
       await ncPost(`/index.php/apps/groupfolders/folders/${id}/acl?format=json`, { acl: "1" }, fetchImpl);
-      return;
+      return false;
     }
     case "delegate_manager": {
       const id = await requireFolder(step);
@@ -417,7 +540,7 @@ async function runStep(
         { mappingType: "user", mappingId: args.user ?? "", manageAcl: "1" },
         fetchImpl,
       );
-      return;
+      return false;
     }
     default:
       // An action this build does not know. Skipping would silently produce a
