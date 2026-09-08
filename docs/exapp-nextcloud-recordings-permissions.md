@@ -134,27 +134,20 @@ Team folder mounted and empty rather than unmapping it. See [Switching modes on
 an instance that already has
 recordings](#switching-modes-on-an-instance-that-already-has-recordings).
 
-**What happens to recordings that are already there is a choice, when it is one.**
+**Switching always replaces the destination archive with the source archive.**
 
-| | What it does | The source afterwards |
-|---|---|---|
-| Copy them across (`merge`) | carries everything the destination does not have | cleared |
-| Leave them (`switch_only`) | copies nothing; the mode moves alone | untouched, and reported as a stranded archive |
-| Replace (`overwrite`) | makes the destination match the source exactly, **deleting** what the source does not have | cleared |
+Normally the destination is empty and the switch copies the source, flips the
+mode, then clears the source. If the destination contains recordings or a
+catalog, Cassini stops before writing, lists those artefacts in the Setup tab,
+and requires the administrator to explicitly confirm their overwrite. Once
+confirmed, it clears the destination, copies the complete source archive, and
+then clears the source. There is no keep, skip, merge, or newest-copy mode.
+Selecting the mode already in force only records the administrator's explicit
+choice; it does not move or overwrite the archive already at that root.
 
-and, for a recording that exists under the **same name** in both:
-
-| | Which copy the destination keeps | The source's copy |
-|---|---|---|
-| Keep both (`skip`) | the destination's | **kept**, so both survive |
-| Keep whichever is newer (`newest_wins`) | the later write, compared not assumed | removed |
-
-The controls appear **only when the answer would differ**. Recordings in both
-folders make the strategy matter; the same recording in both makes the conflict
-rule matter; neither means nothing is asked and the switch behaves as it always
-has (`merge` + `skip`). A switch that arrives with no policy on an instance that
-turns out to have a choice is refused rather than defaulted — picking one for an
-archive nobody has seen is the class of mistake the preview exists to prevent.
+The operator repeats this guard under its provisioning lock: a `PUT /storage`
+request without `confirm_overwrite: true` is refused if the destination contains
+artefacts, even when an earlier preview was empty or stale.
 
 > **Cassini can set most of this up for you (D-671).** The Setup tab lists what
 > is missing and offers to make it: the `cassini` group and account, the Team
@@ -697,7 +690,9 @@ arm on a guess.
      │
      │  PUT /storage {"access_control_enabled": Y}
      ▼
-  0. sanity-check Y's prerequisites.               nothing written yet
+  0. sanity-check Y and inspect its archive.        nothing written yet
+     Stop and list artefacts if Y is populated;      wait for explicit overwrite
+     continue only after confirmation.
   ─────────────────────────────────────────────────────────────────────────
   1. WRITE {mode: X, clean: false}                 before any byte moves
   2. MKCOL the destination tree                    into the Team folder: the
@@ -706,12 +701,12 @@ arm on a guess.
                                                    through the broad container
                                                    grant before it states its own
                                                    rules
-  3. COPY every src/meetings/* the destination     Overwrite: F, always
-     does not already have                         into the Team folder: PROPPATCH
+  3. CLEAR the confirmed destination, then COPY     Overwrite: F, always
+     every src/meetings/*                          into the Team folder: PROPPATCH
                                                    the public rule set on the
                                                    DESTINATION leaf afterwards
                                                    out of it: nothing (see below)
-  4. MERGE src/catalog.json into dst/catalog.json  merge, never replace
+  4. REPLACE dst/catalog.json with src/catalog.json
   5. WIDEN the container ACL (opt-in only),        the verification is what
      then VERIFY every source recording is         licenses step 6
      at the destination
@@ -745,10 +740,9 @@ folder (a 500 with `groupfolders` installed, a *false* 207 without it — measur
 
 **`Overwrite` is never `T`.** For a file it destroys the destination's id and with
 it every ACL row keyed to that id; for a *directory* the server deletes the whole
-destination tree first. The cost is that a COPY onto a name that already exists
-answers 412, which is why step 3 lists the destination first and skips what is
-already there — that is also what makes a re-run finish an interrupted copy
-instead of failing on it.
+destination tree first. Cassini instead lists the destination before it writes,
+requires confirmation if it finds artefacts, clears that confirmed archive, then
+copies each source entry with `Overwrite: F` as a final guard.
 
 **Migrated recordings are public.** Opting in leaves every copied recording
 readable by every account, deliberately: the room's attendee list today is not
@@ -894,14 +888,15 @@ once, in default mode only:
       └─ none of the above                              ─▶ nothing to do
                      │
                      ▼
-        copy into CassiniNoACL/Recordings (skipping names already there),
+        if CassiniNoACL/Recordings is empty, copy into it,
         verify, then empty the source
 ```
 
 The staging name is looked at before the renamed tree because it is *ours*, so
-finding it is unambiguous evidence about which transition left it. Recordings
-already sitting at `CassiniNoACL/Recordings` do not stop an adoption either: the
-copy is by name, so a half-done one finishes instead of stalling.
+finding it is unambiguous evidence about which transition left it. Automatic
+adoption runs only into an empty `CassiniNoACL/Recordings`; if it finds files
+there, it stops and logs their names rather than overwriting them while Cassini
+is being enabled.
 
 It never adopts from a **mounted** Team folder. That is not a stranded default
 archive; it is the access-controlled mode, and copying it into a private home tree
@@ -913,10 +908,10 @@ property rather than a shortcut. A mode switch can flip which root is
 authoritative; an adoption cannot — the default mode already reads
 `CassiniNoACL/Recordings`, so *during* an adoption the active root is the
 incomplete one, and marking the instance dirty would arm the recovery against the
-very tree still holding the recordings. Instead the source is the state: copies
-skip what is already at the destination, the source is emptied only once the copy
-is verified, and an adoption that dies half way is finished by the next enabled
-edge with nothing recorded and nothing at risk.
+very tree still holding the recordings. Instead the source is the state: the
+source is emptied only once the copy is verified. A later enabled edge can retry
+an interrupted adoption only while its destination remains empty; it refuses to
+overwrite any artefacts it finds there.
 
 **What an upgrade meets.** An install that upgrades into this build has nothing
 recorded, so it is **undecided**: publishing and recording are refused, and the
@@ -942,9 +937,10 @@ a latch — `mode_mismatch:access_controlled_archive`, which fired when the
 monitor keyed on it will now see nothing. It caught one shape; the refusal above
 covers every shape, because it does not depend on noticing anything.
 
-Choosing access control from the Setup tab is a switch like any other: it carries
-the (empty or nearly empty) private tree across, finds the archive already there
-and leaves it alone, flips the mode, and records it.
+Choosing access control from the Setup tab is a switch like any other: it checks
+the destination first. If the private archive is not empty, it lists the files
+that will be overwritten and waits for the administrator's confirmation before
+replacing that archive, flipping the mode, and recording it.
 
 A **recorded** or **declared** `default` on an instance whose Team folder still
 holds recordings is an administrator's decision plus a tidy-up, not a

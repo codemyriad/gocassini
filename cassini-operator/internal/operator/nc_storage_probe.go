@@ -110,19 +110,16 @@ type ncStorageProbe struct {
 
 	// ACLArchive and DefaultArchive are what each model's root actually holds.
 	//
-	// BOTH are read on every probe, under either mode, and that symmetry is the
-	// point (D-708). The setup wizard's first screen is "here is what is on this
-	// Nextcloud", the migration policy needs to know which names exist on both
-	// sides and which side is newer, and a declared mode has to be checked
-	// against recordings it was not told about. None of those can be answered by
-	// looking at the mode in force.
+	// BOTH are read on every probe, under either mode, so the setup wizard can
+	// show an administrator what exists before they choose a mode. A declared
+	// development/CI mode is also checked against recordings it was not told
+	// about. None of that can be answered by looking at the mode in force.
 	ACLArchive     ncArchiveFacts
 	DefaultArchive ncArchiveFacts
 
 	// DuplicateNames are the names present under BOTH roots' `meetings`
-	// collections, sorted. The same meeting id in both trees is what the spec
-	// calls a duplicate file, and it is the only conflict a migration policy can
-	// actually be asked about.
+	// collections, sorted. They make an incompatible development/CI declaration
+	// explainable without choosing an archive on the administrator's behalf.
 	//
 	// Empty is only meaningful when both roots were probed; ArchivesComparable
 	// is the guard.
@@ -142,12 +139,10 @@ type ncArchiveFacts struct {
 	// absent rather than empty, and that is not a fault: the preflight creates
 	// it on demand.
 	Present bool
-	// Entries is every child of `meetings`, with its last-modified time. The
-	// time is best-effort — an unparseable date is the zero time, which every
-	// comparison treats as "cannot say" rather than as "very old".
+	// Entries is every child of `meetings`.
 	Entries []davEntry
 	// Catalog says a catalog.json sits beside `meetings`. It is the only index
-	// there is, so a policy that moves recordings has to have an answer for it.
+	// there is, so migration must copy or remove it along with the recordings.
 	Catalog bool
 	// CatalogProbed distinguishes "there is no catalog" from "the root could not
 	// be listed", for the same reason Probed exists.
@@ -164,15 +159,6 @@ func (a ncArchiveFacts) Names() []string {
 		out = append(out, entry.Name)
 	}
 	sort.Strings(out)
-	return out
-}
-
-// byName indexes the entries for a per-name comparison.
-func (a ncArchiveFacts) byName() map[string]davEntry {
-	out := make(map[string]davEntry, len(a.Entries))
-	for _, entry := range a.Entries {
-		out[entry.Name] = entry
-	}
 	return out
 }
 
@@ -200,10 +186,13 @@ func duplicateNames(a, b ncArchiveFacts) []string {
 	if len(a.Entries) == 0 || len(b.Entries) == 0 {
 		return nil
 	}
-	present := b.byName()
+	present := make(map[string]bool, len(b.Entries))
+	for _, entry := range b.Entries {
+		present[entry.Name] = true
+	}
 	var out []string
 	for _, entry := range a.Entries {
-		if _, ok := present[entry.Name]; ok {
+		if present[entry.Name] {
 			out = append(out, entry.Name)
 		}
 	}

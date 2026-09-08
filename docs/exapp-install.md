@@ -390,13 +390,12 @@ mode's tree is not private, and the preflight refuses with
 **Upgrading a default-mode install.** Installs that predate the split kept their
 default-mode archive at `Cassini/Recordings` — the path the Team folder also
 wants — or under a `Cassini (N)` the server had renamed it to. The first enable
-after the update carries it into `CassiniNoACL/Recordings`, copying what is not
-already there and emptying the old tree once the copy is proven complete. It
-runs only in default mode, only inside the service account's own home, and
-never from a *mounted* Team folder — that is not a stranded archive, it is the
-access-controlled model. If it does not finish, nothing is recorded and nothing
-is at risk: the next enable finishes it. An access-controlled install moves
-nothing.
+after the update carries it into an empty `CassiniNoACL/Recordings`, then empties
+the old tree once the copy is proven complete. It runs only in default mode, only
+inside the service account's own home, and never from a *mounted* Team folder —
+that is not a stranded archive, it is the access-controlled model. If the new
+root already contains artefacts, automatic adoption stops and logs their names
+rather than overwriting them. An access-controlled install moves nothing.
 
 `/status` reports the active mode's root as `recordings_access.root`, so a
 monitor never has to map a mode name to a path itself.
@@ -527,12 +526,18 @@ The Setup tab is where a mode changes; `PUT /operator/storage` with
 `{"access_control_enabled": true|false}` is the same operation underneath. It is
 a **copy**, never a move, and the order is what makes it safe to interrupt:
 
+If the preview finds destination artefacts, the first request is refused without
+writing anything. The administrator must review the list and send the same
+request with `"confirm_overwrite": true` to replace them.
+
 ```text
+  0. inspect the destination; if it contains artefacts, list them and wait for
+     explicit overwrite confirmation
   1. record {mode: current, migration_clean: false}   before anything is written
   2. build the destination tree  (into the Team folder: the owner-only floor
                                   goes on first, so nothing is readable early)
-  3. copy every recording the destination does not already have
-  4. merge catalog.json into the destination's — merge, never replace
+  3. clear the confirmed destination, then copy every source recording
+  4. replace catalog.json with the source's
   5. verify every recording at the source is at the destination
   6. record {mode: target, migration_clean: false}    ← the flip, one write
   7. delete the source's contents  (the directories themselves stay)
@@ -560,10 +565,10 @@ A switch out of a dirty state cleans up first, so a copy never inherits somebody
 else's leftovers at its destination.
 
 `POST /operator/storage` with `{"action":"preview","access_control_enabled":…}`
-answers what a switch *would* do — how many recordings would be copied, what is
-already at the destination, whether the source could be read at all — without
-issuing a single write. The Setup tab's confirmation dialog is that response
-rendered.
+answers what a switch *would* do — how many recordings would be copied, which
+destination artefacts would be overwritten, and whether the source could be
+read at all — without issuing a single write. The Setup tab's confirmation
+dialog is that response rendered.
 
 Two things the switch deliberately does **not** do:
 

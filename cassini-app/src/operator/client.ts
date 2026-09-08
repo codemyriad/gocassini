@@ -13,8 +13,6 @@ import type {
   SettingsUpdate,
   AppInstallOutcome,
   StorageArchiveFacts,
-  StorageConflictReport,
-  StorageMigrationPolicy,
   StorageMode,
   StorageModeOption,
   StorageServiceAccount,
@@ -165,24 +163,16 @@ export class OperatorClient {
   // operator holds its provisioning lock for the whole transition and re-runs
   // its preflight before answering, so there is no half-switched state to poll
   // for and nothing useful this client could do with one.
-  async putStorage(
-    accessControlEnabled: boolean,
-    policy?: StorageMigrationPolicy,
-  ): Promise<StorageStatus> {
+  async putStorage(accessControlEnabled: boolean, confirmOverwrite = false): Promise<StorageStatus> {
     return normalizeStorage(
       await this.#request<unknown>("/storage", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
-        // The policy is sent ONLY when the administrator was asked. Sending a
-        // default unconditionally would defeat the operator's own refusal to
-        // pick one for a conflict nobody was shown — it re-checks under its own
-        // lock, and a request that carries an answer is taken to have been
-        // answered by a person.
         body: JSON.stringify({
           access_control_enabled: accessControlEnabled,
-          ...(policy ? { strategy: policy.strategy, on_conflict: policy.on_conflict } : {}),
+          ...(confirmOverwrite ? { confirm_overwrite: true } : {}),
         }),
       }),
     );
@@ -210,16 +200,11 @@ export class OperatorClient {
   //
   // The transition relocates an entire published archive and, going into the
   // Team folder, makes every already-published recording readable by every
-  // account. The confirmation used to state the policy but none of the facts —
-  // how many recordings, whether anything is already at the destination,
-  // whether a previous run left a staging root behind — so an administrator
-  // pressed the button and found out afterwards.
+  // account. The preview names the source, the destination artefacts that need
+  // confirmation before replacement, and any cleanup left by a prior run.
   //
   // Read-only: the operator issues PROPFINDs and nothing else.
-  async previewStorageSwitch(
-    accessControlEnabled: boolean,
-    policy?: StorageMigrationPolicy,
-  ): Promise<StorageStatus> {
+  async previewStorageSwitch(accessControlEnabled: boolean): Promise<StorageStatus> {
     return normalizeStorage(
       await this.#request<unknown>("/storage", {
         method: "POST",
@@ -227,7 +212,6 @@ export class OperatorClient {
         body: JSON.stringify({
           action: "preview",
           access_control_enabled: accessControlEnabled,
-          ...(policy ? { strategy: policy.strategy, on_conflict: policy.on_conflict } : {}),
         }),
       }),
     );
@@ -436,7 +420,6 @@ function normalizeStorage(raw: unknown): StorageStatus {
     // mode, and the wizard asking about it once is the safe direction.
     mode_confirmed: value.mode_confirmed === true,
     awaiting_choice: value.awaiting_choice === true,
-    conflicts: normalizeConflicts(value.conflicts),
     service_account: normalizeServiceAccount(value.service_account),
     ok: value.ok === true,
     state: asString(value.state),
@@ -454,20 +437,6 @@ function normalizeStorage(raw: unknown): StorageStatus {
     transition: normalizeStorageTransition(value.transition),
     installs: normalizeInstalls(value.installs),
     preview: normalizeStoragePreview(value.preview),
-  };
-}
-
-// normalizeConflicts refuses to invent `comparable`. An operator that did not
-// send the block is one that cannot answer the question, and treating silence as
-// "there are no conflicts" is what would hide the migration controls on exactly
-// the instance that needs them.
-function normalizeConflicts(value: unknown): StorageConflictReport {
-  const row = (value ?? {}) as Record<string, unknown>;
-  return {
-    comparable: row.comparable === true,
-    both_populated: row.both_populated === true,
-    duplicate_names: asStringList(row.duplicate_names),
-    duplicates: asCount(row.duplicates),
   };
 }
 
@@ -518,21 +487,9 @@ function normalizeStoragePreview(value: unknown): StorageTransitionPreview | nul
     catalog_present: row.catalog_present === true,
     destination_meetings: asCount(row.destination_meetings),
     destination_readable: row.destination_readable === true,
+    overwrite_names: asStringList(row.overwrite_names),
+    overwrite_required: row.overwrite_required === true,
     nothing_to_move: row.nothing_to_move === true,
-    strategy: asString(row.strategy),
-    on_conflict: asString(row.on_conflict),
-    // Absent reads as "no choice", which is what an operator predating the
-    // field means: it had one behaviour and no controls to offer.
-    choice_required: row.choice_required === true,
-    strategy_matters: row.strategy_matters === true,
-    conflict_matters: row.conflict_matters === true,
-    conflict_names: asStringList(row.conflict_names),
-    conflicts: asCount(row.conflicts),
-    would_copy: asCount(row.would_copy),
-    would_replace: asCount(row.would_replace),
-    would_skip: asCount(row.would_skip),
-    would_keep_in_source: asCount(row.would_keep_in_source),
-    would_delete_at_destination: asCount(row.would_delete_at_destination),
     pending_cleanup: asString(row.pending_cleanup),
     warnings: Array.isArray(row.warnings)
       ? row.warnings.filter((w): w is string => typeof w === "string" && w !== "")
@@ -641,20 +598,14 @@ function normalizeStorageTransition(value: unknown): StorageTransition | null {
   return {
     mode: asString(row.mode),
     confirmed: row.confirmed === true,
-    strategy: asString(row.strategy),
-    on_conflict: asString(row.on_conflict),
     meetings_moved:
       typeof row.meetings_moved === "number" && Number.isFinite(row.meetings_moved)
         ? row.meetings_moved
         : 0,
-    meetings_replaced: asCount(row.meetings_replaced),
-    meetings_skipped: asCount(row.meetings_skipped),
-    meetings_kept_in_source: asCount(row.meetings_kept_in_source),
     meetings_deleted_at_destination: asCount(row.meetings_deleted_at_destination),
     catalog_moved: row.catalog_moved === true,
     source_root: asString(row.source_root),
     destination_root: asString(row.destination_root),
-    meetings_already_there: asCount(row.meetings_already_there),
     source_cleared: row.source_cleared === true,
     leftover_source: asString(row.leftover_source),
   };

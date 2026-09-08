@@ -224,29 +224,6 @@ export interface StorageArchiveFacts {
   catalog: boolean;
 }
 
-// StorageMigrationStrategy is what a switch does with the recordings that are
-// already there, and StorageConflictPolicy is how it resolves a name that exists
-// under both roots (D-708). The pair is offered ONLY when the answer would
-// differ — see StorageConflictReport.
-export type StorageMigrationStrategy = "switch_only" | "merge" | "overwrite";
-export type StorageConflictPolicy = "newest_wins" | "skip";
-
-export interface StorageMigrationPolicy {
-  strategy: StorageMigrationStrategy;
-  on_conflict: StorageConflictPolicy;
-}
-
-// StorageConflictReport is what stands between the two roots. `comparable` is
-// false when either could not be read, which is not evidence that there is no
-// conflict — the operator re-asks under its own lock and refuses a policy-free
-// switch that finds one.
-export interface StorageConflictReport {
-  comparable: boolean;
-  both_populated: boolean;
-  duplicate_names: string[];
-  duplicates: number;
-}
-
 // StorageServiceAccount is the account every recording is written and read as.
 // There is no password field and never will be: it is generated in the browser,
 // shown once, and never reaches the operator.
@@ -291,27 +268,14 @@ export interface StorageTransition {
   // something: an administrator agreeing to the mode already in force, which is
   // what turns an unconfirmed install into a settled one.
   confirmed: boolean;
-  // strategy / on_conflict are the policy that actually ran, after defaulting.
-  strategy: string;
-  on_conflict: string;
-  // meetings_moved is everything that landed at the destination: copied plus
-  // replaced.
+  // meetings_moved is how many recordings were copied from the source archive.
   meetings_moved: number;
-  meetings_replaced: number;
-  meetings_skipped: number;
-  // meetings_kept_in_source is how many kept a copy in the SOURCE as well,
-  // which only the `skip` conflict policy produces.
-  meetings_kept_in_source: number;
-  // meetings_deleted_at_destination is what `overwrite` removed because the
-  // source did not have it. Nothing else ever makes this non-zero.
+  // meetings_deleted_at_destination is what was removed from the confirmed
+  // destination before the source archive was copied.
   meetings_deleted_at_destination: number;
   catalog_moved: boolean;
   source_root: string;
   destination_root: string;
-  // meetings_already_there is how many of the source's recordings were already
-  // at the destination and so were not copied again. Non-zero on a re-run after
-  // a partial failure, which is the case worth naming out loud.
-  meetings_already_there: number;
   // source_cleared is false when the archive arrived but the tidy-up did not
   // finish. The switch worked; there is a leftover copy and a button for it.
   source_cleared: boolean;
@@ -328,7 +292,6 @@ export interface StorageStatus {
   // awaiting_choice says nothing is recorded at all. Not the same as
   // `mode === ""`, which also happens before any preflight has run.
   awaiting_choice: boolean;
-  conflicts: StorageConflictReport;
   service_account: StorageServiceAccount;
   // migration_clean is false when a mode switch stopped before it finished
   // tidying up. The archive is complete at the mode's own root — that is the
@@ -356,7 +319,7 @@ export interface StorageStatus {
 }
 
 // StorageTransitionPreview is what a mode switch WOULD do, before it does any
-// of it — the facts the confirmation states alongside the policy.
+// of it — including the destination artefacts that require confirmation.
 export interface StorageTransitionPreview {
   // mode is the mode being previewed, not the one in force.
   mode: StorageMode;
@@ -373,31 +336,14 @@ export interface StorageTransitionPreview {
   source_readable: boolean;
   meetings: number;
   catalog_present: boolean;
-  // destination_meetings is what is already where this would write. Not fatal —
-  // the transition merges — but the single most important thing to say out loud
-  // before merging somebody's archive.
+  // destination_meetings is what is already where this would write.
   destination_meetings: number;
   // destination_readable is the same distinction source_readable draws, for the
   // other tree.
   destination_readable: boolean;
+  overwrite_names: string[];
+  overwrite_required: boolean;
   nothing_to_move: boolean;
-  // strategy / on_conflict are the policy these numbers describe.
-  strategy: string;
-  on_conflict: string;
-  // choice_required is the ONLY thing the migration controls are shown for: a
-  // choice with one possible answer is not a choice, and asking anyway is how a
-  // confirmation dialog stops being read.
-  choice_required: boolean;
-  strategy_matters: boolean;
-  conflict_matters: boolean;
-  conflict_names: string[];
-  conflicts: number;
-  // What THIS policy would do, computed by the operator's own engine.
-  would_copy: number;
-  would_replace: number;
-  would_skip: number;
-  would_keep_in_source: number;
-  would_delete_at_destination: number;
   // pending_cleanup is set when an earlier switch did not finish, so the
   // administrator is told the stale root is cleared before this one starts.
   pending_cleanup: string;

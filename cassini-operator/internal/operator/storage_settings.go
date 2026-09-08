@@ -138,7 +138,7 @@ const (
 	storageSettingsFileName = "storage_settings.json"
 )
 
-// StorageSettings is the persisted storage-mode policy: one flag, and whether
+// StorageSettings is the persisted storage-mode decision: one flag, and whether
 // it was ever actually written.
 //
 // The pointer is the whole point. A bare bool cannot tell "an administrator

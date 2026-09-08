@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { HardDrive, KeyRound, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
-  import MigrationPolicy from "./MigrationPolicy.svelte";
   import PasswordReveal from "./PasswordReveal.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import {
@@ -13,14 +12,10 @@
   import { runModeSetup } from "./operator/runModeSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
   import {
-    DEFAULT_MIGRATION_POLICY,
-    carryChoiceNeeded,
     describeArchive,
     migrationFacts,
-    policyToSend,
   } from "./operator/storageWizard";
   import type {
-    StorageMigrationPolicy,
     StorageModeOption,
     StorageStatus,
     StorageTransitionPreview,
@@ -81,11 +76,6 @@
   // `switching` because it has no confirmation prompt: there is nothing to
   // decide, only leftovers to clear.
   let repairing = false;
-  // policy is what a switch does with the recordings that are already there. It
-  // is only ever SENT when the operator said there was a choice to make — see
-  // policyToSend, and the operator's own refusal to pick one for a conflict
-  // nobody was shown (D-708).
-  let policy: StorageMigrationPolicy = { ...DEFAULT_MIGRATION_POLICY };
   // credential is the service account's password, when this session just minted
   // one. It is component state and nothing else: it exists nowhere on disk, at
   // either end, and there is no second chance at it.
@@ -152,7 +142,6 @@
       return;
     }
     pending = option;
-    policy = { ...DEFAULT_MIGRATION_POLICY };
     if (pendingKind === "switch") {
       void loadPreview(option);
     }
@@ -177,10 +166,7 @@
     previewToken += 1;
     const token = previewToken;
     try {
-      const next = await operatorClient.previewStorageSwitch(
-        option.mode === "access_controlled",
-        policy,
-      );
+      const next = await operatorClient.previewStorageSwitch(option.mode === "access_controlled");
       // The prompt may have been cancelled or re-pointed while this was in
       // flight, and a later request for a different policy may already have
       // been issued; a diff for a mode nobody is looking at, or for a policy
@@ -199,15 +185,6 @@
     }
   }
 
-  // Re-previewing on every policy change is one PROPFIND pair against Nextcloud,
-  // and it is what keeps the numbers under the controls true. A confirmation
-  // whose counts describe a policy the administrator has since changed is worse
-  // than one with no counts.
-  function onPolicyChanged(): void {
-    if (pending && pendingKind === "switch" && carryChoiceNeeded(preview)) {
-      void loadPreview(pending);
-    }
-  }
 
   // resetServiceAccount mints a new password for the account and shows it once.
   //
@@ -315,7 +292,7 @@
           // Sent only when the operator said there was a choice. It refuses a
           // policy-free switch that finds one under its own lock, and a request
           // carrying an answer is taken to have been answered by a person.
-          policyToSend(preview, policy),
+          preview?.overwrite_required === true,
         );
         finishAndAnnounce({
           tone: status.transition?.leftover_source ? "warning" : "success",
@@ -383,13 +360,7 @@
     }
   }
 
-  // describeTransition says what the switch DID, per policy.
-  //
-  // The first pass had one sentence — "N recordings were copied" — because there
-  // was one behaviour. Under `switch_only` that sentence is flatly false, and
-  // under `skip` it is incomplete in the direction that matters: some recordings
-  // stayed in the source on purpose, and an administrator who is not told will
-  // read the leftover as a failure.
+  // describeTransition says what the overwrite-only switch actually did.
   function describeTransition(from: StorageStatus | null): string {
     const transition = from?.transition;
     if (!transition) {
@@ -402,12 +373,9 @@
       return "Nothing moved — the recordings were already where this mode keeps them.";
     }
     const parts: string[] = [];
-    // The deletion leads, and it is called a deletion. `overwrite` removes
-    // recordings the switch was not asked to move, and they are in no other
-    // folder afterwards.
     if (transition.meetings_deleted_at_destination > 0) {
       parts.push(
-        `${plural(transition.meetings_deleted_at_destination, "recording")} in ${transition.destination_root} ${were(transition.meetings_deleted_at_destination)} deleted, because replacing it is what you chose.`,
+        `${plural(transition.meetings_deleted_at_destination, "recording")} in ${transition.destination_root} ${were(transition.meetings_deleted_at_destination)} removed before the source archive was copied.`,
       );
     }
     if (transition.meetings_moved > 0) {
@@ -416,11 +384,6 @@
       );
     } else if (transition.meetings_deleted_at_destination === 0) {
       parts.push(`Nothing was copied; the recordings stayed in ${transition.source_root}.`);
-    }
-    if (transition.meetings_kept_in_source > 0) {
-      parts.push(
-        `${plural(transition.meetings_kept_in_source, "recording")} also kept a copy in ${transition.source_root}, as you asked.`,
-      );
     }
     if (transition.leftover_source) {
       parts.push(
@@ -503,7 +466,7 @@
   $: activeRoot =
     status?.mode === "access_controlled" ? "Cassini/Recordings" : "CassiniNoACL/Recordings";
   $: unresolved = status !== null && status.mode === "";
-  $: askCarry = carryChoiceNeeded(preview);
+  $: needsOverwriteConfirmation = preview?.overwrite_required === true;
   $: facts = migrationFacts(preview);
   // Whether this page can act as the administrator at all. False on the
   // standalone build, which has neither Nextcloud's scripts nor its session.
@@ -822,11 +785,9 @@
               {:else}
                 <p class="text-sm font-semibold">Switch to {pending.label.toLowerCase()}?</p>
                 <p class="text-xs break-words text-base-content/80">{pending.consequence}</p>
-                <!-- The policy is above; these are the FACTS. What actually
-                     moves, from where, and what is already at the destination.
-                     Fetched when this prompt opened, so the numbers are on
-                     screen while the decision is being made rather than in the
-                     result afterwards. -->
+                <!-- These are the migration facts: what moves, from where, and
+                     what would be replaced at the destination. They are fetched
+                     when this prompt opens, before any confirmation is sent. -->
                 {#if previewing}
                   <p class="text-xs text-base-content/60" aria-live="polite">
                     <span class="loading loading-spinner loading-xs align-middle" aria-hidden="true"
@@ -834,11 +795,11 @@
                     Working out what would move…
                   </p>
                 {:else if preview}
-                  {#if askCarry}
-                    <!-- Only when the answer would differ. A question with one
-                         possible answer is not a question, and asking anyway is
-                         how a confirmation stops being read. -->
-                    <MigrationPolicy {preview} bind:policy disabled={switching} on:change={onPolicyChanged} />
+                  {#if needsOverwriteConfirmation}
+                    <div class="grid gap-1 rounded-box border border-warning bg-warning/10 p-2 text-xs">
+                      <p class="font-semibold">These destination files will be overwritten or removed:</p>
+                      <p class="break-all">{preview.overwrite_names.join(", ")}</p>
+                    </div>
                   {/if}
                   <div class="grid gap-1 rounded-box bg-base-100/60 p-2 text-xs">
                     {#if !preview.source_readable}

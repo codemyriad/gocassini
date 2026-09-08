@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 // readyProbe is the shape of an instance the provisioner built: both apps, the
@@ -41,8 +40,8 @@ func readyProbe() ncStorageProbe {
 // A fully provisioned instance can run the access-controlled model.
 //
 // Note what this does NOT say: nothing here decides the MODE. The mode comes
-// from storage_settings.json, or CASSINI_STORAGE_MODE, or the default — never
-// from the instance. This is the sanity gate, which answers a different
+// from storage_settings.json or CASSINI_STORAGE_MODE — never from the instance.
+// This is the sanity gate, which answers a different
 // question: given a mode, is this storage able to serve it?
 func TestAccessControlIsReadyOnAFullyProvisionedInstance(t *testing.T) {
 	if ready, step, detail := readyProbe().accessControlReady(); !ready {
@@ -322,14 +321,7 @@ func TestRecordingsTreeDirsWalkTheRootOutermostFirst(t *testing.T) {
 	}
 }
 
-// The listing carries WHEN each recording was last written, in the same request
-// that says which recordings there are (D-708).
-//
-// The `newest_wins` conflict policy compares those timestamps, and it must
-// compare two readings of the same instant — a second PROPFIND could describe a
-// tree that changed in between, and then "which side is newer" would be answered
-// about a pair that never coexisted.
-func TestPropfindEntriesCarryTheModificationTime(t *testing.T) {
+func TestPropfindEntriesListsEveryChild(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "PROPFIND" {
 			w.WriteHeader(http.StatusNotFound)
@@ -338,14 +330,8 @@ func TestPropfindEntriesCarryTheModificationTime(t *testing.T) {
 		w.WriteHeader(http.StatusMultiStatus)
 		io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">`+
 			`<d:response><d:href>`+r.URL.Path+`/</d:href></d:response>`+
-			`<d:response><d:href>`+r.URL.Path+`/dated.opus</d:href>`+
-			`<d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>`+
-			`<d:getlastmodified>Tue, 03 Jun 2025 09:15:00 GMT</d:getlastmodified>`+
-			`</d:prop></d:propstat></d:response>`+
-			`<d:response><d:href>`+r.URL.Path+`/mangled.opus</d:href>`+
-			`<d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>`+
-			`<d:getlastmodified>whenever</d:getlastmodified>`+
-			`</d:prop></d:propstat></d:response>`+
+			`<d:response><d:href>`+r.URL.Path+`/dated.opus</d:href></d:response>`+
+			`<d:response><d:href>`+r.URL.Path+`/another.opus</d:href></d:response>`+
 			`<d:response><d:href>`+r.URL.Path+`/silent.opus</d:href></d:response>`+
 			`</d:multistatus>`)
 	}))
@@ -356,29 +342,22 @@ func TestPropfindEntriesCarryTheModificationTime(t *testing.T) {
 	if err != nil || !visible {
 		t.Fatalf("davPropfindEntries() = (%v, %t, %v)", entries, visible, err)
 	}
-	byName := map[string]davEntry{}
+	byName := map[string]bool{}
 	for _, entry := range entries {
-		byName[entry.Name] = entry
+		byName[entry.Name] = true
 	}
 	if len(byName) != 3 {
 		t.Fatalf("entries = %+v, want three children and no self", entries)
 	}
-	want := time.Date(2025, 6, 3, 9, 15, 0, 0, time.UTC)
-	if got := byName["dated.opus"].Modified; !got.Equal(want) {
-		t.Fatalf("dated.opus modified = %v, want %v", got, want)
-	}
-	// An unparseable date and an absent one are the SAME answer: "cannot say".
-	// Turning either into a very old timestamp would let a comparison decide
-	// which of two recordings to keep on the strength of a date nobody read.
-	for _, name := range []string{"mangled.opus", "silent.opus"} {
-		if got := byName[name].Modified; !got.IsZero() {
-			t.Fatalf("%s modified = %v, want the zero time", name, got)
+	for _, name := range []string{"dated.opus", "another.opus", "silent.opus"} {
+		if !byName[name] {
+			t.Fatalf("entries = %+v, missing %s", entries, name)
 		}
 	}
 }
 
-// The overlap between the two roots is the only conflict a migration policy can
-// be asked about, and it is computed once, on the probe.
+// The overlap between the two roots is computed once, on the probe, so a
+// rejected development/CI declaration can name the ambiguity it encountered.
 func TestDuplicateNamesIsTheIntersectionOfTheTwoRoots(t *testing.T) {
 	acl := ncArchiveFacts{Probed: true, Present: true, Entries: []davEntry{{Name: "a.opus"}, {Name: "b.opus"}, {Name: "c.opus"}}}
 	def := ncArchiveFacts{Probed: true, Present: true, Entries: []davEntry{{Name: "c.opus"}, {Name: "a.opus"}, {Name: "z.opus"}}}

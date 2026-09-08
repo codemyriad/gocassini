@@ -90,43 +90,6 @@ func archiveFactsFor(facts ncArchiveFacts) storageArchiveFacts {
 	}
 }
 
-// storageConflictReport is what stands between the two roots, and it is the
-// whole basis of "do not show the migration controls unless there is a choice to
-// make" (D-708).
-//
-// Two conflicts, because they are genuinely different questions:
-//
-//	BothPopulated   there are recordings in both roots. Whichever model is
-//	                chosen, the other one's archive is unread until something
-//	                carries it across — so switch-only, merge and overwrite
-//	                produce three different outcomes and the administrator has
-//	                to pick one.
-//	DuplicateNames  the same recording is in both. Only then does HOW to merge
-//	                mean anything, and only then is the newest-wins / skip
-//	                control worth showing.
-//
-// Comparable is the guard on both. `false` means at least one root could not be
-// read, which is not evidence of anything — and every writer treats it as a
-// refusal rather than as "no conflicts".
-type storageConflictReport struct {
-	Comparable     bool     `json:"comparable"`
-	BothPopulated  bool     `json:"both_populated"`
-	DuplicateNames []string `json:"duplicate_names,omitempty"`
-	Duplicates     int      `json:"duplicates"`
-}
-
-func storageConflictsFor(probe ncStorageProbe, probed bool) storageConflictReport {
-	if !probed {
-		return storageConflictReport{}
-	}
-	return storageConflictReport{
-		Comparable:     probe.ArchivesComparable(),
-		BothPopulated:  probe.DefaultArchive.Populated() && probe.ACLArchive.Populated(),
-		DuplicateNames: clip(probe.DuplicateNames, 20),
-		Duplicates:     len(probe.DuplicateNames),
-	}
-}
-
 // storageServiceAccount is the `cassini` account, and the one thing about it an
 // administrator has to be able to do (D-708).
 //
@@ -166,9 +129,6 @@ type storageStatusResponse struct {
 	// `Mode == ""`, which also happens before any preflight has run — the UI has
 	// to tell "nobody has chosen" apart from "nobody has looked yet".
 	AwaitingChoice bool `json:"awaiting_choice"`
-	// Conflicts is what makes a migration a decision rather than a copy, and it
-	// is the ONLY thing the migration-policy controls are shown for.
-	Conflicts storageConflictReport `json:"conflicts"`
 	// ServiceAccount is the account every recording is written and read as, and
 	// what an administrator can do about its password.
 	ServiceAccount storageServiceAccount `json:"service_account"`
@@ -252,6 +212,7 @@ const ncStorageSwitchTimeout = 60 * time.Minute
 // there is one vocabulary for this decision end to end.
 type storageUpdate struct {
 	AccessControlEnabled *bool `json:"access_control_enabled"`
+	ConfirmOverwrite     bool  `json:"confirm_overwrite,omitempty"`
 }
 
 const (
@@ -419,14 +380,6 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 	// how two concurrent PUTs for the same target both get past it and the second
 	// one migrates a root onto itself.
 	//
-	// It also no longer forces a cleanup before a switch. That looked prudent and
-	// was a dead end: after a failure before the flip the "stale" root is the
-	// TARGET, so on an instance that already had recordings there, finishMigration
-	// correctly refuses to clear them — and every retry of the switch then failed
-	// on the cleanup instead of running. The migration merges into its
-	// destination and skips names already present, so there was nothing the
-	// cleanup was protecting it from.
-	//
 	// The context is deliberately not the request's. This is the one call that
 	// COPIES an entire archive over WebDAV and rewrites the recorded mode; a
 	// browser that navigates away, or a proxy that gives up, must not abort it
@@ -434,10 +387,10 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), ncStorageSwitchTimeout)
 	defer cancel()
 
-	result, err := c.switchStorageMode(ctx, want, rt.logger)
+	result, err := c.switchStorageMode(ctx, want, in.ConfirmOverwrite, rt.logger)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, errTransitionNotReady) {
+		if errors.Is(err, errTransitionNotReady) || errors.Is(err, errOverwriteConfirmationRequired) {
 			// Nothing was touched and nothing is wrong with the operator — the
 			// instance simply is not set up for the mode that was asked for.
 			status = http.StatusConflict
@@ -471,7 +424,6 @@ func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionRes
 		ModeSource:     source,
 		ModeConfirmed:  ncStorage.confirmedMode(),
 		AwaitingChoice: !resolved,
-		Conflicts:      storageConflictsFor(probe, probed),
 		ServiceAccount: storageServiceAccount{
 			User:     ncRecordingsOwner,
 			Known:    probed,
