@@ -60,11 +60,37 @@
   let preview: StorageTransitionPreview | null = null;
   let previewing = false;
   let previewError = "";
+  // previewToken orders the in-flight previews. Changing a control fires a new
+  // one, and without this the slower of two answers wins — leaving numbers on
+  // screen that describe a policy the button will not send.
+  let previewToken = 0;
   let policy: StorageMigrationPolicy = { ...DEFAULT_MIGRATION_POLICY };
 
   // The service account's credential, when a scaffold run just created it. It is
   // component state and nothing else: it exists nowhere on disk, at either end.
   let credential: { user: string; password: string } | null = null;
+  // decidedPending holds the hand-over to the settled panel until the password
+  // above has been acknowledged, because that hand-over unmounts it.
+  let decidedPending = false;
+
+  // rememberCredential pulls the service account's password off a FAILED setup
+  // run. runSetupPlan attaches whatever it produced before it threw, because a
+  // run that created the account and then failed on a later step has minted a
+  // credential that exists nowhere else — not in the operator, not on disk, not
+  // in Nextcloud in any readable form.
+  function rememberCredential(error: unknown): void {
+    if (error instanceof NcSetupError && error.outcome?.password) {
+      credential = { user: error.outcome.createdAccount, password: error.outcome.password };
+    }
+  }
+
+  function acknowledgeCredential(): void {
+    credential = null;
+    if (decidedPending) {
+      decidedPending = false;
+      dispatch("decided");
+    }
+  }
 
   onMount(() => {
     void load();
@@ -127,20 +153,24 @@
     previewing = true;
     previewError = "";
     const asked = option.mode;
+    previewToken += 1;
+    const token = previewToken;
     try {
       const next = await operatorClient.previewStorageSwitch(
         option.mode === "access_controlled",
         policy,
       );
-      if (target?.mode === asked) {
+      if (token === previewToken && target?.mode === asked) {
         preview = next.preview;
       }
     } catch (error) {
-      if (target?.mode === asked) {
+      if (token === previewToken && target?.mode === asked) {
         previewError = asMessage(error);
       }
     } finally {
-      previewing = false;
+      if (token === previewToken) {
+        previewing = false;
+      }
     }
   }
 
@@ -185,6 +215,10 @@
       target = null;
     } catch (error) {
       actionError = asMessage(error);
+      // A run that failed AFTER creating the account still minted a password,
+      // and it exists nowhere else. Show it with the error rather than losing it
+      // to a Team folder that 404'd three steps later.
+      rememberCredential(error);
       try {
         status = await operatorClient.getStorage();
       } catch {
@@ -214,20 +248,28 @@
       target = null;
       preview = null;
       notifySetupChanged();
-      dispatch("decided");
+      // The Setup surface swaps this component for the settled panel, which
+      // unmounts the one-time password with it — so the hand-over waits until
+      // the administrator has acknowledged it. There is no second chance at
+      // that string.
+      if (!credential) {
+        dispatch("decided");
+      } else {
+        decidedPending = true;
+      }
     } catch (error) {
       actionError = asMessage(error);
+      // A 409 here is the operator saying a choice appeared between the preview
+      // and the switch. Re-previewing is what puts the controls on screen,
+      // rather than leaving the administrator with a refusal and no way to
+      // answer it. `target` is still set: the success path is what clears it.
       try {
         status = await operatorClient.getStorage();
-        // A 409 here is the operator saying a choice appeared between the
-        // preview and the switch. Re-previewing is what puts the controls on
-        // screen, rather than leaving the administrator with a refusal and no
-        // way to answer it.
-        if (target) {
-          await loadPreview(target);
-        }
       } catch {
         // Keep what we had.
+      }
+      if (target) {
+        await loadPreview(target);
       }
     } finally {
       busy = false;
@@ -306,7 +348,7 @@
           user={credential.user}
           password={credential.password}
           resetOcc={status.service_account.reset_occ}
-          on:acknowledge={() => (credential = null)}
+          on:acknowledge={acknowledgeCredential}
         />
       {/if}
 
@@ -382,7 +424,7 @@
               type="button"
               role="radio"
               aria-checked={target?.mode === card.mode}
-              disabled={busy || card.action === "blocked"}
+              disabled={busy || credential !== null || card.action === "blocked"}
               on:click={() => {
                 const option = status?.modes.find((entry) => entry.mode === card.mode);
                 if (!option) return;
@@ -444,14 +486,25 @@
             {#if askCarry}
               <MigrationPolicy {preview} bind:policy disabled={busy} on:change={onPolicyChanged} />
             {/if}
-            <ul class="grid gap-1 rounded-box bg-base-100/60 p-2 text-xs">
-              {#each facts as fact (fact)}
-                <li class="flex items-start gap-1.5 break-words">
-                  <span class="mt-0.5 shrink-0 text-base-content/40" aria-hidden="true">•</span>
-                  <span>{fact}</span>
-                </li>
-              {/each}
-            </ul>
+            {#if !preview.source_readable}
+              <!-- The plan's counts are zero for a tree nobody could list, and
+                   rendering them as facts would say "nothing moves" on the
+                   strength of a question nobody managed to ask. That is the
+                   exact shape QA reported against the first pass. -->
+              <p class="rounded-box bg-base-100/60 p-2 text-xs break-words text-base-content/80">
+                Cassini could not read <code class="break-all">{preview.source_root}</code>, so it
+                cannot say what this would do. It checks again before it writes anything.
+              </p>
+            {:else}
+              <ul class="grid gap-1 rounded-box bg-base-100/60 p-2 text-xs">
+                {#each facts as fact (fact)}
+                  <li class="flex items-start gap-1.5 break-words">
+                    <span class="mt-0.5 shrink-0 text-base-content/40" aria-hidden="true">•</span>
+                    <span>{fact}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
             {#each preview.warnings as warning (warning)}
               <p class="flex items-start gap-1.5 text-xs break-words text-warning">
                 <span class="mt-0.5 shrink-0" aria-hidden="true">•</span>
@@ -461,7 +514,15 @@
           {/if}
 
           <div class="flex flex-wrap items-center gap-2">
-            <button class="btn btn-sm btn-primary" type="button" disabled={busy} on:click={confirm}>
+            <!-- Disabled while a preview is in flight: confirming then would
+                 commit to a policy whose consequences are not yet on screen, and
+                 the operator would refuse a choice the administrator never saw. -->
+            <button
+              class="btn btn-sm btn-primary"
+              type="button"
+              disabled={busy || previewing || credential !== null}
+              on:click={confirm}
+            >
               {#if busy}
                 <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
                 {progress || "Applying…"}

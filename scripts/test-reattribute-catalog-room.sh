@@ -19,6 +19,19 @@ PAYLOAD="$SCRIPT_DIR/reattribute-catalog-room-in-container.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# The payload resolves the archive root from the operator's own
+# storage_settings.json, beside the jobs database — so every fixture below needs
+# one. Since D-708 an ABSENT file is fatal rather than defaulted: an install that
+# has not been told which storage model to use has no archive root, and these
+# scripts run with --apply against the archive's only index, so inventing the
+# decision the app stopped making is the one guess they must not take.
+printf '%s\n' '{"access_control_enabled": true, "source": "user", "migration_clean": true}' \
+  >"$WORK/storage_settings.json"
+# CASSINI_STORAGE_SETTINGS_PATH pins it for the cases that run without
+# --jobs-db, where the payload would otherwise look beside the image's default
+# database path.
+export CASSINI_STORAGE_SETTINGS_PATH="$WORK/storage_settings.json"
+
 failures=0
 fail() { echo "  FAIL: $*" >&2; failures=$((failures + 1)); }
 ok() { echo "  ok: $*"; }

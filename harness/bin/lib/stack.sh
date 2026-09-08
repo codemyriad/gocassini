@@ -773,25 +773,43 @@ harness_http_ok_with_retry() {
 # an accepted steady state. Contract tests set the expectation to 0 (require a
 # CUDA-ready operator) or 1 (require a CPU-ready one) so an unexpected execution
 # mode fails loudly instead of passing as "some kind of ready".
+#
+# `--storage-mode undecided` is the one shape where a NOT-ready recordings
+# substrate is the expected outcome rather than a failure: since D-708 an ExApp
+# that has not been told which storage model to use refuses to publish, which is
+# exactly the state that shape exists to produce. It answers 503 with
+# `recordings_access.step == "storage_mode_undecided"`, and demanding
+# `recordings_access.ok` there would make the flag unable to bring a stack up at
+# all. Every other check still has to pass.
 harness_operator_status_matches() {
   local code="$1" body="$2" expectation="${CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE:-auto}"
   [[ "$expectation" == "auto" || "$expectation" == "0" || "$expectation" == "1" ]] \
     || return 1
-  [[ "$code" == "200" ]] || return 1
+  local recordings_filter='.recordings_access.ok == true'
+  local aggregate_filter='.ok == true'
+  if harness_storage_mode_is_undecided; then
+    recordings_filter='(.recordings_access.ok == true or .recordings_access.step == "storage_mode_undecided")'
+    # The aggregate follows the substrate, so it has to be relaxed with it —
+    # every other component check below is still demanded individually.
+    aggregate_filter='(.ok == true or .recordings_access.step == "storage_mode_undecided")'
+    [[ "$code" == "200" || "$code" == "503" ]] || return 1
+  else
+    [[ "$code" == "200" ]] || return 1
+  fi
   local device_filter='true'
   case "$expectation" in
     0) device_filter='.stt.device == "cuda"' ;;
     1) device_filter='.stt.device == "cpu"' ;;
   esac
   jq -e "
-    .ok == true
+    $aggregate_filter
     and $device_filter
     and .stt.device_usable == true
     and (.stt.detail | type == \"string\" and length > 0)
     and .db.ok == true
     and .storage.work_root.ok == true
     and .storage.site_root.ok == true
-    and .recordings_access.ok == true
+    and $recordings_filter
   " <<<"$body" >/dev/null 2>&1
 }
 

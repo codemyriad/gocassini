@@ -58,6 +58,11 @@ export async function runModeSetup(
   let password = "";
   const browserSteps = plan.setup.filter((step) => step.browser);
   if (browserSteps.length > 0) {
+    // A failure AFTER the account was created still has a credential, and it
+    // exists nowhere else — the account is made and its password is set, and
+    // nothing anywhere holds the value. runSetupPlan attaches it to the error it
+    // throws (NcSetupError.outcome), and the callers read it from there, so the
+    // failure and the password reach the screen together.
     const outcome = await runSetupPlan(browserSteps, {
       onProgress: ({ step, index, total }) => onProgress(`${index + 1}/${total} — ${step.title}`),
     });

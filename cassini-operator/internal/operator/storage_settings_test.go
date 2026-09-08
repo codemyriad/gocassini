@@ -24,12 +24,33 @@ func resetStorageMode(t *testing.T) {
 // It does NOT touch ncAccessSubstrate. The default model's read path requires
 // both a resolved mode and a substrate the last probe agreed with, so a test
 // about reading has to arrange both — see setUsableStorageMode.
+// setStorageMode puts the process in a mode an administrator CHOSE.
+//
+// `user` rather than `configured`, because since D-708 the two behave
+// differently in the one place most of these tests care about: a PUT for the
+// mode already in force is a no-op for a chosen mode and a CONFIRMATION for one
+// nobody chose, which is the only way out of the unconfirmed state.
+// setUnconfirmedStorageMode is the other half.
 func setStorageMode(t *testing.T, accessControlled bool) string {
 	t.Helper()
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
 	ncStorage.setPath(path)
-	ncStorage.set(accessControlled, storageModeSourceConfigured, true)
+	ncStorage.set(accessControlled, storageModeSourceUser, true)
+	return path
+}
+
+// setUnconfirmedStorageMode is a mode that GOVERNS and that nobody chose — a
+// fallback an older build recorded, or a settings file of unknown provenance.
+func setUnconfirmedStorageMode(t *testing.T, accessControlled bool) string {
+	t.Helper()
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	if err := SaveStorageSettings(path, accessControlled, storageModeSourceDefault, true); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	ncStorage.setPath(path)
+	ncStorage.set(accessControlled, storageModeSourceDefault, true)
 	return path
 }
 

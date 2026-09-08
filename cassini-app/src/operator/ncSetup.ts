@@ -60,6 +60,14 @@ export type NcSetupFailure =
 export class NcSetupError extends Error {
   reason: NcSetupFailure;
   step: string;
+  // outcome carries whatever the run produced BEFORE it failed.
+  //
+  // Without it the service account's password is lost on any failure after the
+  // step that created it — a Team folder that 404s, a confirmation dialog
+  // dismissed three steps later — and there is no second chance at it: the
+  // account exists, its password was set, and nothing anywhere has the value.
+  // The caller shows it alongside the error.
+  outcome?: SetupOutcome;
 
   constructor(reason: NcSetupFailure, message: string, step = "") {
     super(message);
@@ -384,6 +392,9 @@ export async function runSetupPlan(
         outcome.password = accountPassword;
       }
     } catch (error) {
+      if (error instanceof NcSetupError) {
+        error.outcome = outcome;
+      }
       // A denial mid-run is almost always the confirmation window closing.
       // Re-confirm and retry the step once; anything else is real.
       if (error instanceof NcSetupError && error.reason === "denied") {
@@ -399,6 +410,7 @@ export async function runSetupPlan(
           // attempt reports less than the first did.
           if (retryError instanceof NcSetupError) {
             retryError.step = step.id;
+            retryError.outcome = outcome;
           }
           throw retryError;
         }

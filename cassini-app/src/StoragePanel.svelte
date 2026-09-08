@@ -69,6 +69,10 @@
   let preview: StorageTransitionPreview | null = null;
   let previewing = false;
   let previewError = "";
+  // previewToken orders the in-flight previews. Changing a control fires a new
+  // one, and without this the slower of two answers wins — leaving numbers on
+  // screen that describe a policy the button will not send.
+  let previewToken = 0;
   // outcome is what the last successful action did, kept on screen until the
   // next one starts. It is ordinary component state: nothing reloads the page,
   // so there is nothing for it to survive.
@@ -91,6 +95,17 @@
   onMount(() => {
     void loadStorage();
   });
+
+  // rememberCredential pulls the service account's password off a FAILED setup
+  // run. runSetupPlan attaches whatever it produced before it threw, because a
+  // run that created the account and then failed on a later step has minted a
+  // credential that exists nowhere else — not in the operator, not on disk, not
+  // in Nextcloud in any readable form.
+  function rememberCredential(error: unknown): void {
+    if (error instanceof NcSetupError && error.outcome?.password) {
+      credential = { user: error.outcome.createdAccount, password: error.outcome.password };
+    }
+  }
 
   // finishAndAnnounce is how every successful action ends: say what happened,
   // and tell the shell this Nextcloud is not the one it looked at.
@@ -159,22 +174,28 @@
     previewError = "";
     previewing = true;
     const asked = option.mode;
+    previewToken += 1;
+    const token = previewToken;
     try {
       const next = await operatorClient.previewStorageSwitch(
         option.mode === "access_controlled",
         policy,
       );
       // The prompt may have been cancelled or re-pointed while this was in
-      // flight; a diff for a mode nobody is looking at must not appear.
-      if (pending?.mode === asked) {
+      // flight, and a later request for a different policy may already have
+      // been issued; a diff for a mode nobody is looking at, or for a policy
+      // nobody has selected, must not appear.
+      if (token === previewToken && pending?.mode === asked) {
         preview = next.preview;
       }
     } catch (error) {
-      if (pending?.mode === asked) {
+      if (token === previewToken && pending?.mode === asked) {
         previewError = asMessage(error);
       }
     } finally {
-      previewing = false;
+      if (token === previewToken) {
+        previewing = false;
+      }
     }
   }
 
@@ -206,6 +227,10 @@
       credential = { user, password: await resetServiceAccountPassword(user) };
     } catch (error) {
       switchError = asMessage(error);
+      // A setup run that failed AFTER creating the account still minted a
+      // password, and it exists nowhere else. Show it with the error rather than
+      // losing it to a step that failed later.
+      rememberCredential(error);
     } finally {
       resetting = false;
     }
@@ -281,6 +306,9 @@
     try {
       if (kind === "setup") {
         await runSetup(target);
+        // A scaffold that created the account leaves a password on screen that
+        // exists nowhere else. Keep the prompt closed but do not proceed past
+        // it: everything is disabled until it is acknowledged.
       } else {
         status = await operatorClient.putStorage(
           target.mode === "access_controlled",
@@ -299,8 +327,6 @@
       preview = null;
     } catch (error) {
       switchError = asMessage(error);
-      pending = null;
-      preview = null;
       // Re-read rather than trusting the pre-switch snapshot. Most failures
       // change nothing — the operator refuses before it touches anything — but
       // one does not: a transition that fails AFTER moving the archive has
@@ -310,6 +336,17 @@
         status = await operatorClient.getStorage();
       } catch {
         // Keep what we had; the switch error is the thing worth showing.
+      }
+      // A refused switch keeps the prompt open and re-previews. The one refusal
+      // that MUST leave it open is the operator saying a choice appeared between
+      // the preview and the switch: closing the prompt there would leave an
+      // administrator with a message telling them to decide and nothing to
+      // decide with.
+      if (kind === "switch" && target.available) {
+        await loadPreview(target);
+      } else {
+        pending = null;
+        preview = null;
       }
     } finally {
       switching = false;
@@ -358,22 +395,31 @@
     if (!transition) {
       return "The storage mode changed.";
     }
+    // Confirming the mode already in force moves nothing and still changes
+    // something: who is on record as having chosen it. "0 recordings were
+    // copied" is a strange way to say "thank you, noted".
+    if (transition.confirmed) {
+      return "Nothing moved — the recordings were already where this mode keeps them.";
+    }
     const parts: string[] = [];
+    // The deletion leads, and it is called a deletion. `overwrite` removes
+    // recordings the switch was not asked to move, and they are in no other
+    // folder afterwards.
     if (transition.meetings_deleted_at_destination > 0) {
       parts.push(
-        `${count(transition.meetings_deleted_at_destination, "recording")} in ${transition.destination_root} was replaced by the switch.`,
+        `${plural(transition.meetings_deleted_at_destination, "recording")} in ${transition.destination_root} ${were(transition.meetings_deleted_at_destination)} deleted, because replacing it is what you chose.`,
       );
     }
     if (transition.meetings_moved > 0) {
       parts.push(
-        `${count(transition.meetings_moved, "recording")} moved into ${transition.destination_root}.`,
+        `${plural(transition.meetings_moved, "recording")} ${were(transition.meetings_moved)} moved into ${transition.destination_root}.`,
       );
-    } else {
+    } else if (transition.meetings_deleted_at_destination === 0) {
       parts.push(`Nothing was copied; the recordings stayed in ${transition.source_root}.`);
     }
     if (transition.meetings_kept_in_source > 0) {
       parts.push(
-        `${count(transition.meetings_kept_in_source, "recording")} also kept a copy in ${transition.source_root}, as you asked.`,
+        `${plural(transition.meetings_kept_in_source, "recording")} also kept a copy in ${transition.source_root}, as you asked.`,
       );
     }
     if (transition.leftover_source) {
@@ -384,8 +430,12 @@
     return parts.join(" ");
   }
 
-  function count(n: number, noun: string): string {
-    return n === 1 ? `1 ${noun} was` : `${n} ${noun}s were`;
+  function plural(n: number, noun: string): string {
+    return n === 1 ? `1 ${noun}` : `${n} ${noun}s`;
+  }
+
+  function were(n: number): string {
+    return n === 1 ? "was" : "were";
   }
 
   function asMessage(error: unknown): string {
@@ -674,6 +724,7 @@
               role="radio"
               aria-checked={option.active}
               disabled={switching ||
+                credential !== null ||
                 (option.active && option.available) ||
                 (!option.available && option.setup.length === 0)}
               on:click={() =>
@@ -831,7 +882,17 @@
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <button class="btn btn-sm btn-warning" type="button" disabled={switching} on:click={confirmSwitch}>
+            <!-- Disabled while a preview is in flight: confirming then would
+                 commit to a policy whose consequences are not yet on screen, and
+                 the operator would refuse a choice the administrator never saw.
+                 Disabled while an unsaved password is up, because acting again
+                 would replace it and there is no second chance at it. -->
+            <button
+              class="btn btn-sm btn-warning"
+              type="button"
+              disabled={switching || (pendingKind === "switch" && previewing) || credential !== null}
+              on:click={confirmSwitch}
+            >
               {#if switching}
                 <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
                 {pendingKind === "setup" ? "Setting up…" : "Moving recordings…"}

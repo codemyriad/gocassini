@@ -132,12 +132,20 @@ describe("StoragePanel transition preview", () => {
       storagePanelSource.indexOf("async function loadPreview"),
     );
     expect(requestSwitch).toContain("loadPreview");
-    // And NOT inside confirmSwitch, where it would be too late to matter.
+    // Inside confirmSwitch it appears exactly once, and only on the FAILURE
+    // path: the operator refuses a switch whose conflicts appeared between the
+    // preview and the lock, and closing the prompt there would leave an
+    // administrator with a message telling them to decide and nothing to decide
+    // with. It must never run before the switch, where it would be too late to
+    // matter and would delay the one action that was asked for.
     const confirmSwitch = storagePanelSource.slice(
       storagePanelSource.indexOf("async function confirmSwitch"),
-      storagePanelSource.indexOf("function asMessage"),
+      storagePanelSource.indexOf("async function finishMigration"),
     );
-    expect(confirmSwitch).not.toContain("loadPreview");
+    expect(confirmSwitch.match(/loadPreview\(/g) ?? []).toHaveLength(1);
+    expect(confirmSwitch.indexOf("loadPreview(")).toBeGreaterThan(
+      confirmSwitch.indexOf("switchError = asMessage(error);"),
+    );
   });
 
   it("only previews a switch, never a setup", () => {
@@ -145,8 +153,12 @@ describe("StoragePanel transition preview", () => {
   });
 
   it("discards a diff for a mode nobody is looking at any more", () => {
-    // The prompt can be cancelled or re-pointed while the request is in flight.
-    expect(storagePanelSource).toContain("if (pending?.mode === asked)");
+    // The prompt can be cancelled or re-pointed while the request is in flight,
+    // and changing a migration control fires another one — so the slower of two
+    // answers must not win, or the numbers describe a policy the button will not
+    // send.
+    expect(storagePanelSource).toContain("pending?.mode === asked");
+    expect(storagePanelSource).toContain("token === previewToken");
   });
 
   // The counts are the operator's own plan, rendered. Arithmetic in the dialog

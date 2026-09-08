@@ -684,3 +684,48 @@ describe("buildSetupNotice when nobody has chosen a storage model", () => {
     expect(notice?.steps[0].action).toBe("setup");
   });
 });
+
+// An unmade decision must not blank a working meeting list (D-708 review).
+//
+// Every deployed installation upgrades into this state, and in it the operator
+// has touched nothing: reads are exactly what they were. Standing in for the
+// list would blank a working archive on every existing instance to report
+// something that is not wrong with it.
+describe("buildSetupNotice does not blank the list for an unmade decision", () => {
+  const health = { ok: false, state: "unavailable", awaitingChoice: true };
+
+  it("is advisory for a non-administrator, whose archive still reads", () => {
+    const notice = buildSetupNotice({ health, access: null, isAdmin: false, appUrl: APP_URL });
+    expect(notice?.blocking).toBe(false);
+  });
+
+  it("is advisory for an administrator too", () => {
+    const notice = buildSetupNotice({
+      health,
+      access: {
+        ok: false,
+        state: "unavailable",
+        step: "storage_mode_undecided",
+        detail: "",
+        mode: "",
+        modeConfirmed: false,
+        prerequisites: [],
+      },
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+    expect(notice?.blocking).toBe(false);
+  });
+
+  // …and every OTHER unavailable state still blocks, because there the archive
+  // genuinely cannot be read.
+  it("still blocks when the substrate is actually broken", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable", awaitingChoice: false },
+      access: null,
+      isAdmin: false,
+      appUrl: APP_URL,
+    });
+    expect(notice?.blocking).toBe(true);
+  });
+});
