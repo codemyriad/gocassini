@@ -133,6 +133,20 @@ func (rt *Runtime) readWorkflowRegistry(r *http.Request, bin string) ([]workflow
 	if err := json.Unmarshal(stdout.buf.Bytes(), &entries); err != nil {
 		return nil, fmt.Errorf("decode the workflow registry: %w", err)
 	}
+	if err := validateWorkflowListing(entries); err != nil {
+		return nil, err
+	}
+	if entries == nil {
+		entries = []workflowView{}
+	}
+	return entries, nil
+}
+
+// validateWorkflowListing refuses a listing the panel could not render
+// honestly. A free function so the rules can be reached by a test without
+// spawning a child: they are the part worth pinning, and one of them turns on
+// the difference between two kinds of workflow.
+func validateWorkflowListing(entries []workflowView) error {
 	for _, entry := range entries {
 		// The fields the panel cannot render a row without, checked here rather
 		// than tolerated: a blank one means the recorder printed a shape this
@@ -141,15 +155,22 @@ func (rt *Runtime) readWorkflowRegistry(r *http.Request, bin string) ([]workflow
 		// is the sharpest case — a workflow a document could not be traced back
 		// to is the one thing this endpoint exists to carry.
 		if strings.TrimSpace(entry.ID) == "" || strings.TrimSpace(entry.SHA256) == "" {
-			return nil, fmt.Errorf("the workflow registry holds an entry with no id or no content hash")
+			return fmt.Errorf("the workflow registry holds an entry with no id or no content hash")
 		}
 		if strings.TrimSpace(entry.Version) == "" || strings.TrimSpace(entry.Name) == "" ||
-			strings.TrimSpace(entry.Question) == "" || strings.TrimSpace(entry.Instruction) == "" {
-			return nil, fmt.Errorf("workflow %q was printed without its version, name, question or instruction", entry.ID)
+			strings.TrimSpace(entry.Instruction) == "" {
+			return fmt.Errorf("workflow %q was printed without its version, name or instruction", entry.ID)
+		}
+		// A workflow's own question is the one field that may be absent, and
+		// only for the one reason: a FREEFORM workflow has no question of its
+		// own because the question is the caller's, and the app reads the empty
+		// field as "write it yourself". The instruction is what says which kind
+		// this is — it carries the placeholder Run splices the caller's text
+		// into — so an empty question with no slot for one is still a row the
+		// panel cannot render honestly, and is still refused.
+		if strings.TrimSpace(entry.Question) == "" && !strings.Contains(entry.Instruction, insightQuestionPlaceholder) {
+			return fmt.Errorf("workflow %q was printed with no question of its own and no %s to put one in", entry.ID, insightQuestionPlaceholder)
 		}
 	}
-	if entries == nil {
-		entries = []workflowView{}
-	}
-	return entries, nil
+	return nil
 }

@@ -9,6 +9,7 @@
   // Gated exactly like the rest of the operator surface: the shell only shows it
   // to admins, and every call it makes hits the ADMIN routes anyway. There is no
   // second notion of admin here.
+  import { createEventDispatcher } from "svelte";
   import { loadConfig } from "./operator/config";
   import { OperatorClient } from "./operator/client";
   import SettingsPanel from "./SettingsPanel.svelte";
@@ -17,6 +18,12 @@
   import type { OperatorPanel } from "./surfaceRouting";
 
   export let panel: OperatorPanel = "endpoints";
+
+  // A locked panel offers the way out of being locked, and the nav that can
+  // take it belongs to the operator surface. Forwarded rather than handled
+  // here: this host does not own which panel is showing, and a second way to
+  // change it would be a second answer to the one the URL holds.
+  const dispatch = createEventDispatcher<{ panel: OperatorPanel }>();
 
   let operatorClient: OperatorClient | null = null;
   let configError = "";
@@ -34,9 +41,12 @@
   {:else if panel === "endpoints"}
     <LLMSettingsPanel {operatorClient} />
   {:else if panel === "pipeline"}
-    <SettingsPanel {operatorClient} />
+    <SettingsPanel {operatorClient} on:openProviders={() => dispatch("panel", "endpoints")} />
   {:else if panel === "templates"}
-    <InsightTemplatesPanel {operatorClient} />
+    <InsightTemplatesPanel
+      {operatorClient}
+      on:openProviders={() => dispatch("panel", "endpoints")}
+    />
   {:else}
     <!-- Unreachable: the operator surface renders the run console itself and
          only mounts this host for a Settings panel. Saying so beats a blank

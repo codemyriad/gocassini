@@ -30,10 +30,13 @@
     type MeetingSelection,
   } from "./viewer/selectionModel";
   import {
+    ALL_BROWSE_TYPES,
     filterInsightsByRoom,
-    insightHeadline,
     insightsForMeeting,
     resolveInsightSources,
+    toggleBrowseType,
+    type BrowseType,
+    type BrowseTypeFilter,
     type InsightRecord,
   } from "./viewer/insights";
   import InsightDocument from "./components/InsightDocument.svelte";
@@ -647,6 +650,18 @@
   // provider cannot, and then there is no type filter, no card and no document
   // — the honest reading of a build with no operator behind it.
   $: insightsOffered = typeof dataProvider.listInsights === "function";
+  // Which kinds the browse list is showing. Owned here rather than in the list
+  // because the control that changes it is in the rail: two components reading
+  // one filter cannot each keep their own copy of it.
+  let browseTypes: BrowseTypeFilter = ALL_BROWSE_TYPES;
+  // What each kind would contribute under the current room and search, reported
+  // by the list because the search box is the list's.
+  let browseCounts = { meetings: 0, insights: 0 };
+  // A build with no insights must not be left narrowed to insights: the control
+  // that would put the meetings back is not rendered there.
+  $: if (!insightsOffered) {
+    browseTypes = ALL_BROWSE_TYPES;
+  }
   $: canLoadInsightDocument = typeof dataProvider.loadInsightDocument === "function";
   // Resolved against the WHOLE catalog, not the room-narrowed list: an insight
   // spanning rooms names sources in each of them, and counting only the ones in
@@ -839,12 +854,18 @@
       {selectedRoomKey}
       totalCount={catalogMeetings.length}
       open={railOpen}
+      {insightsOffered}
+      types={browseTypes}
+      meetingCount={browseCounts.meetings}
+      insightCount={browseCounts.insights}
       on:select={handleRoomSelect}
       on:close={() => (railOpen = false)}
+      on:toggleType={(event) => (browseTypes = toggleBrowseType(browseTypes, event.detail as BrowseType))}
     />
 
     <MeetingList
       meetings={roomMeetings}
+      types={browseTypes}
       totalCount={catalogMeetings.length}
       insights={roomInsights}
       totalInsightCount={insights.length}
@@ -865,6 +886,7 @@
       on:pick={handlePick}
       on:openInsight={(event) => openInsight(event.detail)}
       on:visible={(event) => (visibleMeetings = event.detail)}
+      on:counts={(event) => (browseCounts = event.detail)}
       on:clearRoom={() => (selectedRoomKey = null)}
       on:openRooms={() => (railOpen = true)}
       on:toggleTheme={toggleTheme}
@@ -921,6 +943,12 @@
             on:openSource={openInsightSource}
           />
         {:else}
+          <!-- The other direction (D-721): a meeting says which insights read
+               it. It used to be a strip pinned under the sheet, below the whole
+               transcript, where nobody scrolled to it; it is a section of the
+               meeting now, under the summary. Still the shell's fact rather
+               than the artifact's — what a meeting was used FOR is not part of
+               the recording — so it is handed down rather than looked up. -->
           <MeetingView
             {dataProvider}
             meeting={selectedMeeting}
@@ -930,31 +958,12 @@
             {prefersReducedMotion}
             hasCatalog={catalogMeetings.length > 0}
             {notFoundMessage}
+            {linkedInsights}
+            {insightSourceCounts}
             on:back={handleBackToList}
             on:enriched={handleEnriched}
+            on:openInsight={(event) => openInsight(event.detail)}
           />
-          <!-- The other direction (D-721): a meeting says which insights read
-               it. Rendered beside the meeting rather than inside it, because
-               what a meeting was used FOR is not part of the recording. -->
-          {#if linkedInsights.length > 0}
-            <footer class="sheet-linked">
-              <span class="sheet-linked-label">
-                Used in {linkedInsights.length}
-                {linkedInsights.length === 1 ? "insight" : "insights"}
-              </span>
-              <div class="sheet-linked-chips">
-                {#each linkedInsights as record (record.id)}
-                  <button
-                    type="button"
-                    class="sheet-linked-chip"
-                    on:click={() => openInsight(record)}
-                  >
-                    {insightHeadline(record)}
-                  </button>
-                {/each}
-              </div>
-            </footer>
-          {/if}
         {/if}
       </aside>
     {/if}
@@ -1044,57 +1053,6 @@
     background-color: var(--color-base-200);
     border-left: 1px solid var(--color-base-300);
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
-  }
-
-  /* Sits under the meeting, inside the same sheet: the strip is about the
-     meeting rather than part of it, and MeetingView's own scroll (with the
-     player floating in it) has no room for a second thing at its bottom.
-     flex: none so the view above shrinks to make space instead of pushing it
-     off the sheet. */
-  .sheet-linked {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    min-width: 0;
-    padding: 0.5rem 0.75rem;
-    background-color: var(--color-base-100);
-    border-top: 1px solid var(--color-base-300);
-  }
-  .sheet-linked-label {
-    flex: none;
-    font-size: 11px;
-    font-weight: 650;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
-  }
-  /* One line that scrolls: a meeting can be read by several insights, and a
-     strip that wrapped would take height from the meeting itself. */
-  .sheet-linked-chips {
-    display: flex;
-    flex: 1;
-    gap: 0.375rem;
-    min-width: 0;
-    overflow-x: auto;
-  }
-  .sheet-linked-chip {
-    flex: none;
-    max-width: 20rem;
-    padding: 3px 10px;
-    cursor: pointer;
-    background-color: color-mix(in oklch, var(--color-secondary) 15%, transparent);
-    border: 1px solid color-mix(in oklch, var(--color-secondary) 40%, transparent);
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--color-base-content);
-  }
-  .sheet-linked-chip:hover {
-    background-color: color-mix(in oklch, var(--color-secondary) 28%, transparent);
   }
 
   /* The selection bar floats over the list it belongs to — inset past the rail

@@ -46,9 +46,15 @@ export interface InsightRun {
   meetingIds: string[];
   roomIds: string[];
   question: string;
+  // What the asker CHOSE in Prepare. Empty when they chose nothing, which is
+  // every run made before the picker existed and any caller who sent none —
+  // then the deployment's configured endpoint answers. A retry re-runs THIS,
+  // not the receipt below.
+  requestedProvider?: string;
+  requestedModel?: string;
   // The endpoint and model the attempt that produced the bytes actually
-  // resolved to — empty until a run has started, and different from the last
-  // attempt's whenever a retry re-resolved them.
+  // reached. A receipt: empty until a run has started, and different from the
+  // request whenever the chosen endpoint had been removed by then.
   provider: string;
   model: string;
   // Where the document landed in the requester's own Nextcloud files. Empty
@@ -71,7 +77,87 @@ export interface CreateInsightRequest {
   // a non-admin can ask for: the template registry is ADMIN at the proxy.
   workflow?: string;
   question?: string;
+  // The endpoint this run should reach, chosen by the asker. Empty means the
+  // deployment's own. Unlike the template, this IS offered to everybody: the
+  // provider list is served by a USER route carrying ids and display names
+  // only, because choosing where your transcripts go is the asker's decision.
+  provider?: string;
+  model?: string;
 }
+
+// AIProviderChoice is one endpoint as somebody choosing between them sees it:
+// `GET operator/ai/providers`, USER-readable. An id and a name, and nothing
+// else — the base URL, the key and the request bounds stay on the ADMIN
+// settings surface.
+export interface AIProviderChoice {
+  id: string;
+  name: string;
+}
+
+// listAIProviders and listAIProviderModels are the picker's data, for everyone.
+//
+// Addressed off the operator base rather than the insights one: they are
+// operator routes (`operator/ai/...`), and the insight routes are a sibling of
+// the published archive. Both are USER at the proxy.
+export async function listAIProviders(
+  operatorBasePath: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AIProviderChoice[]> {
+  return readChoices(await sendAI(operatorBasePath, "providers", fetchImpl));
+}
+
+export async function listAIProviderModels(
+  operatorBasePath: string,
+  providerId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AIProviderChoice[]> {
+  const payload = await sendAI(
+    operatorBasePath,
+    `providers/${encodeURIComponent(providerId)}/models`,
+    fetchImpl,
+  );
+  // The ADMIN models route answers {provider, models:[…]}; this one relays the
+  // same shape. Read defensively either way: an operator older than this build
+  // answers 404, which send() has already turned into an error.
+  if (isRecord(payload) && Array.isArray(payload.models)) {
+    return readChoices(payload.models);
+  }
+  return readChoices(payload);
+}
+
+function readChoices(payload: unknown): AIProviderChoice[] {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  const choices: AIProviderChoice[] = [];
+  for (const entry of payload) {
+    if (isRecord(entry) && typeof entry.id === "string" && entry.id !== "") {
+      choices.push({ id: entry.id, name: typeof entry.name === "string" ? entry.name : entry.id });
+    }
+  }
+  return choices;
+}
+
+async function sendAI(
+  operatorBasePath: string,
+  path: string,
+  fetchImpl: typeof fetch,
+): Promise<unknown> {
+  const base = operatorBasePath.replace(/\/+$/, "");
+  // no-store for the reason every other per-deployment answer is fetched that
+  // way: AppAPI caches a proxied GET for an hour, and this list changes the
+  // moment an administrator registers or removes an endpoint.
+  const response = await fetchImpl(`${base}/ai/${path}`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new InsightRequestError(response.status, `AI providers could not be read (HTTP ${response.status}).`);
+  }
+  return response.json();
+}
+
 
 // isTerminalStatus is the whole of the polling stop condition. Anything that is
 // not succeeded or failed is still moving.
@@ -148,6 +234,19 @@ export async function createInsight(
   const question = request.question?.trim() ?? "";
   if (question !== "") {
     body.question = question;
+  }
+  // Sent only when chosen. Absent means "whatever this deployment is
+  // configured with", which is the honest default and what the operator reads
+  // an empty field as — sending "" would be a choice nobody made.
+  const provider = request.provider?.trim() ?? "";
+  if (provider !== "") {
+    body.provider = provider;
+  }
+  const model = request.model?.trim() ?? "";
+  if (model !== "" && provider !== "") {
+    // Never without a provider: a model chosen for one endpoint arriving at
+    // another is the one combination the operator refuses outright.
+    body.model = model;
   }
   return readRun(
     await send("create", resolveInsightsUrl(), fetchImpl, {

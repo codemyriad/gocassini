@@ -278,27 +278,33 @@ describe("describeSelectionGaps", () => {
   it("never counts an unknown summary as a missing one", () => {
     // The whole point of the third state: an archive published before the index
     // recorded summaries says nothing, and stating a gap that is not there is
-    // as wrong as hiding one.
+    // as wrong as hiding one. It is counted, and it is not a sentence — see
+    // the note in describeSelectionGaps.
     const totals = summarizeSelection([
       meeting({ id: "a", wordCount: 10 }),
       meeting({ id: "b", wordCount: 20 }),
     ]);
+    expect(totals.summaryUnknown).toBe(2);
     const gaps = describeSelectionGaps(totals);
-    expect(gaps).toEqual([
-      "2 of these do not record whether they have a summary. The bundle carries one wherever the recording holds it.",
-    ]);
+    expect(gaps).toEqual([]);
     expect(gaps.join(" ")).not.toContain("have no summary");
   });
 
-  it("reports the two summary states as two separate claims", () => {
+  it("says nothing about the meetings that do not record whether they have one", () => {
+    // Only the meeting KNOWN to have no summary is worth a sentence. The
+    // unknown one changes nothing about what the bundle carries — Prepare
+    // reads the recording either way — and on an archive published before the
+    // catalog carried the field it fired on every row, burying the one gap
+    // that actually stops the bundle being assembled.
     const totals = summarizeSelection([
       meeting({ id: "a", hasSummary: false, wordCount: 10 }),
       meeting({ id: "b", wordCount: 20 }),
       meeting({ id: "c", hasSummary: true, wordCount: 30 }),
     ]);
+    expect(totals.withoutSummary).toBe(1);
+    expect(totals.summaryUnknown).toBe(1);
     expect(describeSelectionGaps(totals)).toEqual([
       "One of these has no summary. Its transcript is complete; only the summary section is missing.",
-      "One of these does not record whether it has a summary. The bundle carries one if the recording holds it.",
     ]);
   });
 

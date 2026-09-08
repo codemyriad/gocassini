@@ -114,6 +114,13 @@ plainly rather than leaving to be discovered:
   in order, plus the question they typed. It is assembled **as them** — a
   meeting they cannot open in Nextcloud is not in the bundle and cannot be asked
   about — so an insight can never widen what somebody may read.
+- **Which endpoint it reaches.** The asker chooses, in Prepare, from the
+  endpoints an administrator has registered — they cannot reach one that is not
+  on that list, and the list they are shown carries only each endpoint's name.
+  Choosing none runs it on the deployment's configured endpoint. A retry re-runs
+  the endpoint that was chosen, so a run cannot quietly move to a different
+  third party between the ask and the retry; the one exception is an endpoint
+  removed in the meantime, which falls back to the configured one.
 - **Who it is attributable to.** The call uses the endpoint and API key
   configured for the **instance**, not credentials belonging to the asker. At
   your LLM provider the request therefore arrives as this deployment, and the
@@ -141,17 +148,30 @@ Controls:
   alternative OpenAI-compatible endpoint instead of OpenRouter. A keyless
   self-hosted endpoint is enough; `OPENROUTER_API_KEY` is needed only when the
   endpoint requires one.
-- **Per-step endpoints in the app's AI settings** — summaries and insights each
-  resolve their own endpoint, so one can be pointed at a local model without the
-  other. Switching insights off is **not** one of the things this does: an
-  insight step with no endpoint of its own **inherits the summary one**, because
-  the recorder layers `INSIGHT_*` over `SUMMARY_*`, so an insight still reaches
-  whatever the summary step is configured with. To stop insight text leaving
-  your infrastructure, give the insight step an endpoint you accept — a local
-  model — or remove the summary endpoint too. The inherited case is reported as
-  `effective.insight.inherited = true` by `GET <cassini>/operator/settings/llm`,
-  which is how an administrator checks which endpoint an insight will actually
-  reach.
+- **Which endpoints exist, in the app's AI providers settings.** Registering a
+  provider is the act that says this deployment may talk to that endpoint, and
+  it is what an insight needs — the whole of it. Whoever creates an insight
+  chooses which registered endpoint answers it; a run that chooses none falls
+  back to the endpoint the insight step names, then the summary step's, then any
+  registered provider. Either way the rule to hold on to is the same: *every
+  endpoint you register is one an insight may reach.* There is no switch that
+  turns insights off while an endpoint is registered; removing the endpoint is
+  how they are turned off.
+- **Registering your first endpoint switches summarising on**, pointed at it.
+  That is deliberate: an install that has just configured an endpoint and still
+  publishes meetings without summaries has done the work and not got the
+  feature. It happens **once**, on the save that takes a deployment from having
+  no endpoint to having one — adding a second endpoint, or any later save, never
+  switches it back on, so turning it off in Publish pipeline stays turned off.
+  A deployment that wants a model for questions people ask by hand and nothing
+  else can therefore register an endpoint and switch summarising off, and then
+  nothing leaves except the questions people type.
+- **A local model for insights, a hosted one for summaries (or the reverse).**
+  The summary step and the insight step each resolve their own endpoint, so one
+  can be pointed at a local model without the other. Which endpoint an insight
+  will actually reach is reported by `GET <cassini>/operator/settings/llm` as
+  `effective.insight`, with `inherited = true` whenever it is not the insight
+  step's own — which is how an administrator checks it rather than inferring it.
 - **`CASSINI_SUMMARY_DISABLED`** — keep the endpoint configured but stop
   summarising meetings. It means "publish meetings without a summary" and so
   does not disable insights; leave the endpoint unset if the intent is that

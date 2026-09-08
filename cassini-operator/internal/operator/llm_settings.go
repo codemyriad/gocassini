@@ -34,12 +34,11 @@ type LLMSettings struct {
 	Providers []LLMProvider `json:"providers"`
 	Summary   LLMStep       `json:"summary"`
 	// Insight is the endpoint an ad-hoc insight runs on. Off here does not
-	// mean "no insights": the recorder layers INSIGHT_* over SUMMARY_*, so an
-	// insight step with no endpoint of its own runs on the summary one. That
-	// fallback is the point — a deployment that only ever configured a summary
-	// endpoint must not lose the ability to ask a question of its meetings.
-	// Turning insights off is removing the endpoint, exactly as it is for the
-	// summary (D-719).
+	// mean "no insights": insightEndpoint falls back to the summary step's
+	// endpoint and then to any saved provider, so a deployment that registered
+	// an endpoint at all can be asked a question of its meetings. Turning
+	// insights off is removing the endpoint, exactly as it is for the summary
+	// (D-719).
 	Insight LLMStep `json:"insight"`
 }
 
@@ -354,6 +353,42 @@ func newLLMProviderID() string {
 	return "p-" + hex.EncodeToString(b[:])
 }
 
+// insightEndpoint resolves the endpoint an insight run actually reaches, and
+// the model it asks for. Three sources, in order:
+//
+//	its own step      an administrator pointed insights somewhere of their own
+//	the summary step  no endpoint of its own, so it runs on the summary one
+//	any saved provider  neither step is switched on, but an endpoint exists
+//
+// The third is what makes "registering a provider" the whole of the setup an
+// insight needs, which is what the product promises: summarising is the
+// automatic step and is opted into per deployment, while an insight is asked
+// for by hand, one question at a time. An administrator who saved a key and
+// deliberately left every meeting unsummarised has still said the one thing
+// that matters — that this deployment may talk to that endpoint — and refusing
+// to ask it a question they typed themselves reads as a bug, not as a policy
+// (it is the bug this fallback fixes). Turning insights off is removing the
+// endpoint; there is no switch here that does it.
+//
+// `ok` false means no provider is registered at all, which is the only state in
+// which an insight has nothing to ask.
+func (s LLMSettings) insightEndpoint() (LLMProvider, string, bool) {
+	if p, ok := s.provider(s.Insight); ok {
+		return p, s.Insight.Model, true
+	}
+	if p, ok := s.provider(s.Summary); ok {
+		return p, s.Summary.Model, true
+	}
+	if len(s.Providers) > 0 {
+		// The step's own model still applies: it is a preference an
+		// administrator recorded, and it outlives the step being switched off.
+		// Empty means the endpoint's default, which is what a bare provider
+		// with no step behind it can honestly promise.
+		return s.Providers[0], s.Insight.Model, true
+	}
+	return LLMProvider{}, "", false
+}
+
 // provider returns the provider a step resolves to, or false when the step is
 // off or its provider is gone.
 func (s LLMSettings) provider(step LLMStep) (LLMProvider, bool) {
@@ -375,9 +410,11 @@ func (s LLMSettings) provider(step LLMStep) (LLMProvider, bool) {
 // endpoint, or nothing at all when it is off. The recorder's kill-switches are
 // never emitted: "off" is simply the absence of an endpoint.
 //
-// An insight step that is off is the one case where absence is not silence:
-// the recorder layers INSIGHT_* over SUMMARY_*, so emitting nothing here leaves
-// insights running on the summary endpoint (D-719).
+// The insight step is emitted from insightEndpoint rather than from its own
+// row, so what the recorder receives is the endpoint this policy says an
+// insight reaches — including the summary step's, and the bare provider that
+// answers when neither step is on. Leaving it to the recorder's own INSIGHT_*
+// over SUMMARY_* layering would cover the first of those and not the second.
 func (s LLMSettings) ChildEnv(base []string) []string {
 	drop := inheritedLLMEnv()
 	out := make([]string, 0, len(base)+8)
@@ -391,13 +428,14 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 		}
 		out = append(out, kv)
 	}
-	out = s.appendStepEnv(out, llmStepSummary, s.Summary)
-	out = s.appendStepEnv(out, llmStepInsight, s.Insight)
+	summaryProvider, summaryOK := s.provider(s.Summary)
+	out = s.appendStepEnv(out, llmStepSummary, summaryProvider, s.Summary.Model, summaryOK)
+	insightProvider, insightModel, insightOK := s.insightEndpoint()
+	out = s.appendStepEnv(out, llmStepInsight, insightProvider, insightModel, insightOK)
 	return out
 }
 
-func (s LLMSettings) appendStepEnv(out []string, name string, step LLMStep) []string {
-	p, ok := s.provider(step)
+func (s LLMSettings) appendStepEnv(out []string, name string, p LLMProvider, model string, ok bool) []string {
 	if !ok {
 		return out
 	}
@@ -406,8 +444,8 @@ func (s LLMSettings) appendStepEnv(out []string, name string, step LLMStep) []st
 	if p.APIKey != "" {
 		out = append(out, keyKey+"="+p.APIKey)
 	}
-	if step.Model != "" {
-		out = append(out, modelKey+"="+step.Model)
+	if model != "" {
+		out = append(out, modelKey+"="+model)
 	}
 	if p.TimeoutSec > 0 {
 		out = append(out, timeoutKey+"="+strconv.Itoa(p.TimeoutSec))
@@ -416,6 +454,37 @@ func (s LLMSettings) appendStepEnv(out []string, name string, step LLMStep) []st
 		out = append(out, tokensKey+"="+strconv.Itoa(p.MaxTokens))
 	}
 	return out
+}
+
+// enableSummaryOnFirstProvider switches summarising on when the FIRST endpoint
+// is registered, pointed at it.
+//
+// Registering an endpoint is the act that says this deployment may talk to a
+// model, and a fresh install that has just done it and still publishes meetings
+// without summaries has configured the thing and not got it — the summarise
+// step is the reason most people register one at all. So the configured state
+// is reachable in one go rather than in two, which is what the design prototype
+// does when its first endpoint lands.
+//
+// Only on the transition from NO providers to some, and only when the step is
+// not already enabled and names nothing. Those guards are the whole safety of
+// it: an administrator who deliberately switched summarising off must not have
+// it switched back on by adding a second endpoint, or by any later save. It can
+// therefore fire at most once in a deployment's life, on the save that takes it
+// from having no endpoint to having one.
+//
+// docs/privacy.md carries this: registering the first endpoint is the opt-in,
+// not a step you separately arm afterwards.
+func enableSummaryOnFirstProvider(before, after LLMSettings) LLMSettings {
+	if len(before.Providers) > 0 || len(after.Providers) == 0 {
+		return after
+	}
+	if after.Summary.Enabled || strings.TrimSpace(after.Summary.Provider) != "" {
+		return after
+	}
+	after.Summary.Enabled = true
+	after.Summary.Provider = after.Providers[0].ID
+	return after
 }
 
 // currentLLMSettings returns a copy of the in-memory LLM policy, safe for
@@ -494,21 +563,28 @@ func (s LLMSettings) view() llmSettingsResponse {
 	}
 }
 
-// effectiveInsight is the endpoint an insight run will actually reach. An
-// insight step with no endpoint of its own does not mean no insights: the
-// recorder layers INSIGHT_* over SUMMARY_*, so the summary endpoint answers.
-// Reporting that as null would tell an administrator insights are off when they
-// are not (D-719).
+// effectiveInsight is the endpoint an insight run will actually reach, read off
+// insightEndpoint so this answer and the environment the child is spawned with
+// cannot drift. Null means no provider is registered at all — the only state in
+// which an insight has nothing to ask. Reporting anything else as null would
+// tell an administrator insights are off when they are not (D-719).
 func (s LLMSettings) effectiveInsight() *llmEffectiveStep {
-	if step := s.effectiveStep(s.Insight); step != nil {
-		return step
-	}
-	step := s.effectiveStep(s.Summary)
-	if step == nil {
+	p, model, ok := s.insightEndpoint()
+	if !ok {
 		return nil
 	}
-	step.Inherited = true
-	return step
+	own, ownOK := s.provider(s.Insight)
+	return &llmEffectiveStep{
+		Provider:         p.ID,
+		BaseURL:          p.BaseURL,
+		Model:            model,
+		APIKeyConfigured: p.APIKey != "",
+		// Inherited is "this is not the insight step's own endpoint", which
+		// covers both the summary step's and the bare provider that answers
+		// when neither step is on: in each case repointing something else moves
+		// it, and a reader who cannot see that cannot predict it.
+		Inherited: !ownOK || own.ID != p.ID,
+	}
 }
 
 func (s LLMSettings) effectiveStep(step LLMStep) *llmEffectiveStep {
@@ -619,6 +695,7 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 	if in.Insight != nil {
 		updated.Insight = *in.Insight
 	}
+	updated = enableSummaryOnFirstProvider(rt.currentLLMSettings(), updated)
 	updated, err = normalizeLLMSettings(updated)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
@@ -719,4 +796,59 @@ func listLLMModels(ctx context.Context, p LLMProvider) ([]llmModel, error) {
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].ID < models[j].ID })
 	return models, nil
+}
+
+// --- USER: GET /ai/providers, GET /ai/providers/{id}/models ---------------------
+//
+// The picker's data, for everybody rather than for administrators.
+//
+// Choosing which of the configured endpoints answers an insight is the ASKER's
+// decision (the Prepare panel offers it), so the list of endpoints has to reach
+// whoever is asking — and most of them are not administrators. What crosses
+// that line is deliberately thin: an id and a display name, and nothing else.
+// The base URL, the API key and the request bounds stay on the ADMIN settings
+// surface. A person choosing between "OpenRouter" and "Local Qwen" is choosing
+// where their own transcripts go, which is a thing they are owed; the URL and
+// the credential are not part of that answer.
+//
+// The model list is the endpoint's own public catalogue and is fetched
+// server-side, so the key never leaves the operator. It is the same call the
+// ADMIN route makes, against the same provider record.
+
+// llmProviderChoice is one endpoint as somebody choosing between them sees it.
+type llmProviderChoice struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (rt *Runtime) aiProvidersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	settings := rt.currentLLMSettings()
+	choices := make([]llmProviderChoice, 0, len(settings.Providers))
+	for _, p := range settings.Providers {
+		choices = append(choices, llmProviderChoice{ID: p.ID, Name: p.Name})
+	}
+	// no-store for the reason /setup is: this answer changes the moment an
+	// administrator registers or removes an endpoint, and AppAPI caches a
+	// proxied GET for an hour.
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, choices)
+}
+
+func (rt *Runtime) aiProviderModelsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/ai/providers/")
+	id, suffix, found := strings.Cut(rest, "/")
+	if !found || strings.Trim(suffix, "/") != "models" || id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	rt.handleLLMProviderModels(w, r, id)
 }

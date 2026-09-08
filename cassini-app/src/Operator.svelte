@@ -1550,7 +1550,7 @@
   {#if panel !== "recordings"}
     <!-- Mounted only while its row is selected, so a panel's settings fetch
          happens on entry — the same contract the shell applies to this surface. -->
-    <Settings {panel} />
+    <Settings {panel} on:panel={(event) => selectPanel(event.detail)} />
   {/if}
 </div>
 

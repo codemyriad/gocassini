@@ -571,3 +571,37 @@ func TestInsightAnswersAreNeverCached(t *testing.T) {
 		}
 	}
 }
+
+// The asker names an endpoint this deployment does not have. Refused, not
+// quietly answered on a different one: which third party sees the transcripts
+// is the one question this field exists to answer.
+func TestCreateRefusesAnEndpointThisDeploymentDoesNotHave(t *testing.T) {
+	rt := &Runtime{}
+	rt.setLLMSettings(LLMSettings{Providers: []LLMProvider{{ID: "hosted", BaseURL: openRouterBaseURL}}})
+	s := &insightService{rt: rt}
+
+	if err := s.checkRequestedEndpoint(insightCreateRequest{Provider: "hosted"}); err != nil {
+		t.Fatalf("a configured provider was refused: %v", err)
+	}
+	err := s.checkRequestedEndpoint(insightCreateRequest{Provider: "nope"})
+	if err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("err = %v, want a refusal naming the unknown provider", err)
+	}
+}
+
+// A model with no endpoint to send it to is refused rather than applied to
+// whatever the deployment resolves: a model chosen for one endpoint arriving at
+// another is the combination that produces a confident wrong answer.
+func TestCreateRefusesAModelWithNoProvider(t *testing.T) {
+	rt := &Runtime{}
+	rt.setLLMSettings(LLMSettings{Providers: []LLMProvider{{ID: "hosted", BaseURL: openRouterBaseURL}}})
+	s := &insightService{rt: rt}
+
+	if err := s.checkRequestedEndpoint(insightCreateRequest{Model: "claude"}); err == nil {
+		t.Fatal("a model with no provider was accepted")
+	}
+	// And naming neither is the ordinary case: the deployment's own endpoint.
+	if err := s.checkRequestedEndpoint(insightCreateRequest{}); err != nil {
+		t.Fatalf("naming no endpoint was refused: %v", err)
+	}
+}

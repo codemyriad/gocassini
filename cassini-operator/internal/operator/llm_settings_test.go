@@ -112,6 +112,14 @@ func TestLLMChildEnvStripsInheritedAndEmitsPerStep(t *testing.T) {
 		"SUMMARY_API_KEY":     "sk-or-secret",
 		"SUMMARY_MODEL":       "big",
 		"SUMMARY_TIMEOUT_SEC": "600",
+		// The insight step has no endpoint of its own, so it runs on the
+		// summary one — emitted in full rather than left to the recorder's
+		// layering, so the deploy environment's stale INSIGHT_* is replaced
+		// rather than merely uncontradicted.
+		"INSIGHT_BASE_URL":    openRouterBaseURL,
+		"INSIGHT_API_KEY":     "sk-or-secret",
+		"INSIGHT_MODEL":       "big",
+		"INSIGHT_TIMEOUT_SEC": "600",
 	}
 	for key, value := range want {
 		if got, ok := envValue(env, key); !ok || got != value {
@@ -122,9 +130,6 @@ func TestLLMChildEnvStripsInheritedAndEmitsPerStep(t *testing.T) {
 		"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "LLM_BASE_URL", "LLM_MODEL",
 		"CASSINI_SUMMARY_DISABLED", "CASSINI_READABLE_DISABLED", "CASSINI_LLM_MAX_TOKENS",
 		"CASSINI_LLM_TIMEOUT_SEC", "READABLE_BASE_URL", "READABLE_API_KEY", "READABLE_MODEL",
-		// The insight step is off, so nothing is emitted for it — and the
-		// deploy environment's own INSIGHT_* must not survive to stand in.
-		"INSIGHT_BASE_URL", "INSIGHT_API_KEY",
 	} {
 		if got, ok := envValue(env, key); ok {
 			t.Fatalf("%s should be absent, got %q", key, got)
@@ -416,10 +421,15 @@ func TestLLMInsightWithNoEndpointOfItsOwnInheritsSummary(t *testing.T) {
 		Providers: []LLMProvider{{ID: "local", BaseURL: "http://qwen.internal:8000/v1"}},
 		Summary:   LLMStep{Enabled: true, Provider: "local", Model: "qwen3-8b"},
 	}
-	// Nothing is emitted for the insight step: the recorder layers INSIGHT_*
-	// over SUMMARY_*, so silence here is the fallback, not an outage.
-	if got, ok := envValue(s.ChildEnv(nil), "INSIGHT_BASE_URL"); ok {
-		t.Fatalf("INSIGHT_BASE_URL = %q, want absent so SUMMARY_* stands", got)
+	// The summary endpoint is emitted for the insight step by name rather than
+	// left to the recorder's INSIGHT_*-over-SUMMARY_* layering, so what the
+	// child receives says the same thing the settings view does.
+	env := s.ChildEnv(nil)
+	if got, ok := envValue(env, "INSIGHT_BASE_URL"); !ok || got != "http://qwen.internal:8000/v1" {
+		t.Fatalf("INSIGHT_BASE_URL = %q (present=%v), want the summary endpoint", got, ok)
+	}
+	if got, ok := envValue(env, "INSIGHT_MODEL"); !ok || got != "qwen3-8b" {
+		t.Fatalf("INSIGHT_MODEL = %q (present=%v), want the summary model", got, ok)
 	}
 	effective := s.view().Effective.Insight
 	if effective == nil {
@@ -433,10 +443,42 @@ func TestLLMInsightWithNoEndpointOfItsOwnInheritsSummary(t *testing.T) {
 	}
 }
 
-func TestLLMEffectiveInsightIsNilWhenNothingIsConfigured(t *testing.T) {
-	s := LLMSettings{Providers: []LLMProvider{{ID: "local", BaseURL: "http://qwen.internal:8000/v1"}}}
+// A registered provider is the whole of the setup an insight needs. Neither
+// step is switched on here — an administrator who saved a key and left every
+// meeting unsummarised — and the question they type by hand still has somewhere
+// to go.
+func TestLLMInsightRunsOnASavedProviderWithNeitherStepOn(t *testing.T) {
+	s := LLMSettings{Providers: []LLMProvider{
+		{ID: "local", BaseURL: "http://qwen.internal:8000/v1", APIKey: "sk-local"},
+	}}
+	effective := s.view().Effective.Insight
+	if effective == nil {
+		t.Fatal("effective insight is nil with an endpoint registered, which is the state that reads as 'no AI endpoint is available'")
+	}
+	if effective.BaseURL != "http://qwen.internal:8000/v1" || !effective.Inherited {
+		t.Fatalf("effective insight = %+v, want the saved provider marked inherited", effective)
+	}
+	env := s.ChildEnv(nil)
+	if got, ok := envValue(env, "INSIGHT_BASE_URL"); !ok || got != "http://qwen.internal:8000/v1" {
+		t.Fatalf("INSIGHT_BASE_URL = %q (present=%v), want the saved provider", got, ok)
+	}
+	if got, ok := envValue(env, "INSIGHT_API_KEY"); !ok || got != "sk-local" {
+		t.Fatalf("INSIGHT_API_KEY = %q (present=%v), want the saved provider's key", got, ok)
+	}
+	// Summarising is a separate opt-in and stays off: the fallback unlocks the
+	// question somebody asks for, not the step that runs on every recording.
+	if summary := s.view().Effective.Summary; summary != nil {
+		t.Fatalf("effective summary = %+v, want nil with the step off", summary)
+	}
+	if got, ok := envValue(env, "SUMMARY_BASE_URL"); ok {
+		t.Fatalf("SUMMARY_BASE_URL = %q, want absent with the step off", got)
+	}
+}
+
+func TestLLMEffectiveInsightIsNilWhenNoProviderExists(t *testing.T) {
+	s := LLMSettings{}
 	if got := s.view().Effective.Insight; got != nil {
-		t.Fatalf("effective insight = %+v, want nil with no step configured", got)
+		t.Fatalf("effective insight = %+v, want nil with no provider registered", got)
 	}
 }
 
@@ -572,5 +614,68 @@ func TestNormalizeLLMSettingsRejectsUnusableTemplate(t *testing.T) {
 	}
 	if got.Insight.Template != "decisions" {
 		t.Fatalf("template = %q, want it trimmed", got.Insight.Template)
+	}
+}
+
+// Registering the FIRST endpoint is the opt-in: a fresh install that has just
+// configured the thing and still publishes meetings without summaries has done
+// the work and not got the feature.
+func TestFirstProviderSwitchesSummarisingOn(t *testing.T) {
+	before := LLMSettings{}
+	after := LLMSettings{Providers: []LLMProvider{{ID: "p-1", BaseURL: openRouterBaseURL}}}
+	got := enableSummaryOnFirstProvider(before, after)
+	if !got.Summary.Enabled || got.Summary.Provider != "p-1" {
+		t.Fatalf("summary = %+v, want enabled against p-1", got.Summary)
+	}
+}
+
+// And at most once in a deployment's life. Every one of these is somebody who
+// has already made a decision the save must not overturn.
+func TestSummarisingIsNotSwitchedBackOn(t *testing.T) {
+	existing := []LLMProvider{{ID: "p-1", BaseURL: openRouterBaseURL}}
+	for _, tc := range []struct {
+		name          string
+		before, after LLMSettings
+	}{
+		{
+			// The second endpoint, added by an administrator who deliberately
+			// switched summarising off after the first.
+			name:   "a second endpoint",
+			before: LLMSettings{Providers: existing},
+			after: LLMSettings{Providers: append(append([]LLMProvider{}, existing...),
+				LLMProvider{ID: "p-2", BaseURL: "http://local:8000/v1"})},
+		},
+		{
+			// Switching it off IS a save, and it carries the providers with it.
+			name:   "switching it off",
+			before: LLMSettings{Providers: existing, Summary: LLMStep{Enabled: true, Provider: "p-1"}},
+			after:  LLMSettings{Providers: existing},
+		},
+		{
+			// Removing the last endpoint. Nothing to point at, and turning a
+			// step on against no provider is a body the operator refuses.
+			name:   "the last endpoint removed",
+			before: LLMSettings{Providers: existing},
+			after:  LLMSettings{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := enableSummaryOnFirstProvider(tc.before, tc.after); got.Summary.Enabled {
+				t.Fatalf("summary = %+v, want left off", got.Summary)
+			}
+		})
+	}
+}
+
+// A first save that asks for summarising OFF explicitly is still honoured: the
+// rule fills a gap, it does not overrule an answer.
+func TestFirstProviderDoesNotOverruleAnExplicitChoice(t *testing.T) {
+	before := LLMSettings{}
+	after := LLMSettings{
+		Providers: []LLMProvider{{ID: "p-1", BaseURL: openRouterBaseURL}},
+		Summary:   LLMStep{Enabled: false, Provider: "p-1"},
+	}
+	if got := enableSummaryOnFirstProvider(before, after); got.Summary.Enabled {
+		t.Fatalf("summary = %+v, want left off — the request named a provider and said no", got.Summary)
 	}
 }

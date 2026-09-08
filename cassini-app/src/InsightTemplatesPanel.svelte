@@ -20,10 +20,13 @@
   // Read-only, deliberately. Prompts are authored in the repository and
   // compiled into the image, a change is a new version rather than an edit, and
   // there is no PUT behind this panel to write one with.
-  import { onMount } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import { FileText, RefreshCw } from "@lucide/svelte";
   import { OperatorClient } from "./operator/client";
+  import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import type { InsightWorkflow } from "./operator/types";
+
+  const dispatch = createEventDispatcher<{ openProviders: void }>();
 
   // Handed in by Settings.svelte, exactly as the two sibling panels are: it
   // already builds the client and already renders the config error, so a second
@@ -39,6 +42,13 @@
   let workflows: InsightWorkflow[] = [];
   let loading = true;
   let loadError = "";
+
+  // A template on its own does nothing: it is the starting point for a request
+  // to a model, so the list reads as inert until there is one to send it to.
+  // Three states again — null is "the question was never answered", and a panel
+  // that could not read the AI settings must not accuse a configured
+  // deployment of having no endpoint.
+  let hasProvider: boolean | null = null;
 
   onMount(() => {
     void load();
@@ -57,6 +67,20 @@
       loadError = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
+    }
+    void loadProviders();
+  }
+
+  async function loadProviders() {
+    if (!client) {
+      return;
+    }
+    try {
+      hasProvider = (await client.getLLMSettings()).providers.length > 0;
+    } catch {
+      // Swallowed: the templates are the page, and an unreadable AI setting
+      // costs the locked notice and nothing else.
+      hasProvider = null;
     }
   }
 </script>
@@ -82,7 +106,13 @@
     </button>
   </header>
 
-  <div class="border-t border-base-300 p-4">
+  <div class="grid gap-4 border-t border-base-300 p-4">
+    {#if hasProvider === false}
+      <NeedsProviderCard
+        title="Add a provider to use these templates"
+        on:open={() => dispatch("openProviders")}
+      />
+    {/if}
     {#if loadError}
       <div class="grid gap-2">
         <div class="alert alert-error text-sm">{loadError}</div>
@@ -107,7 +137,9 @@
         </p>
       </div>
     {:else}
-      <div class="grid gap-2">
+      <!-- Dimmed rather than hidden while there is no endpoint: the templates
+           are real and worth reading, they just have nowhere to be sent. -->
+      <div class="grid gap-2" class:opacity-60={hasProvider === false}>
         {#each workflows as workflow (workflow.id)}
           <article class="rounded-box border border-base-300 bg-base-200 p-3">
             <div class="flex flex-wrap items-start justify-between gap-2">

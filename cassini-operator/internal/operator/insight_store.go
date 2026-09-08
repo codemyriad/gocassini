@@ -50,28 +50,39 @@ var insightSweep struct {
 // InsightRun is one insight: a question asked once of several meetings, and
 // whatever the latest attempt at answering it produced.
 //
-// Provider, Model, DocumentPath and Error describe the attempt that ran, not the
-// request that was made. A retry re-resolves the endpoint from current settings
-// — if it replayed the stored one, "no provider configured" and "401" would be
-// unfixable by the action that exists to fix them (D-720 §4) — so nothing here
-// may be read back as an input to the next attempt.
+// Two endpoints are recorded, and the difference is the whole of D-720 §4 as it
+// now stands:
+//
+//	RequestedProvider/RequestedModel  what the asker CHOSE, in Prepare. An
+//	    input. Empty means they chose nothing — every run made before the picker
+//	    existed, and every run by a caller who has no picker — and then the
+//	    deployment's configured endpoint answers.
+//	Provider/Model  what the attempt actually REACHED. A receipt. Never read
+//	    back as an input to the next attempt, which is why a retry can still be
+//	    the fix for "no provider configured".
+//
+// A retry re-runs the REQUEST, not the receipt: the asker picked an endpoint
+// and a retry of their insight is a retry of the thing they asked for, not of
+// whatever the deployment happens to be pointed at by then.
 type InsightRun struct {
-	ID              string    `json:"id"`
-	CreatedBy       string    `json:"createdBy"`
-	Status          string    `json:"status"`
-	WorkflowID      string    `json:"workflowId"`
-	WorkflowVersion string    `json:"workflowVersion"`
-	WorkflowSHA256  string    `json:"workflowSha256"`
-	MeetingIDs      []string  `json:"meetingIds"`
-	RoomIDs         []string  `json:"roomIds"`
-	Question        string    `json:"question"`
-	Provider        string    `json:"provider"`
-	Model           string    `json:"model"`
-	DocumentPath    string    `json:"documentPath"`
-	Error           string    `json:"error"`
-	AttemptNumber   int       `json:"attemptNumber"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID                string    `json:"id"`
+	CreatedBy         string    `json:"createdBy"`
+	Status            string    `json:"status"`
+	WorkflowID        string    `json:"workflowId"`
+	WorkflowVersion   string    `json:"workflowVersion"`
+	WorkflowSHA256    string    `json:"workflowSha256"`
+	MeetingIDs        []string  `json:"meetingIds"`
+	RoomIDs           []string  `json:"roomIds"`
+	Question          string    `json:"question"`
+	RequestedProvider string    `json:"requestedProvider"`
+	RequestedModel    string    `json:"requestedModel"`
+	Provider          string    `json:"provider"`
+	Model             string    `json:"model"`
+	DocumentPath      string    `json:"documentPath"`
+	Error             string    `json:"error"`
+	AttemptNumber     int       `json:"attemptNumber"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 // InsightRunAttempt is one try at answering an InsightRun, kept after the run
@@ -211,8 +222,9 @@ INSERT INTO insight_runs (
   id, created_by, status,
   workflow_id, workflow_version, workflow_sha256,
   meeting_ids, room_ids, question,
+  requested_provider, requested_model,
   attempt_number, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID,
 		createdBy,
 		insightStatusQueued,
@@ -222,6 +234,8 @@ INSERT INTO insight_runs (
 		meetingIDs,
 		roomIDs,
 		run.Question,
+		run.RequestedProvider,
+		run.RequestedModel,
 		1,
 		stamp,
 		stamp,
@@ -521,6 +535,7 @@ const insightRunSelect = `
 SELECT id, created_by, status,
        workflow_id, workflow_version, workflow_sha256,
        meeting_ids, room_ids, question,
+       requested_provider, requested_model,
        provider, model, document_path, error,
        attempt_number, created_at, updated_at
 FROM insight_runs`
@@ -532,6 +547,7 @@ func scanInsightRun(scanner rowScanner) (InsightRun, error) {
 		&run.ID, &run.CreatedBy, &run.Status,
 		&run.WorkflowID, &run.WorkflowVersion, &run.WorkflowSHA256,
 		&meetingIDs, &roomIDs, &run.Question,
+		&run.RequestedProvider, &run.RequestedModel,
 		&run.Provider, &run.Model, &run.DocumentPath, &run.Error,
 		&run.AttemptNumber, &createdAt, &updatedAt,
 	); err != nil {

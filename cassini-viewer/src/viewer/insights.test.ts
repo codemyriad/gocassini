@@ -13,6 +13,7 @@ import {
   insightsForMeeting,
   isLastBrowseType,
   resolveInsightSources,
+  stripInsightFrontMatter,
   toggleBrowseType,
   type InsightRecord,
 } from "./insights";
@@ -363,5 +364,54 @@ describe("groupBrowseFeedByMonth", () => {
     );
 
     expect(groups[0].label).toBe("March 2026");
+  });
+});
+
+describe("stripInsightFrontMatter", () => {
+  // The real shape, from internal/insight/record.go: every value double-quoted,
+  // nested blocks for the workflow and the provider, then the answer.
+  const document = [
+    "---",
+    'version: "cassini.insight.record.v1"',
+    'artifactId: "ins_69ada1aa0c6b8e88"',
+    'status: "succeeded"',
+    'startedAtUtc: "2026-09-04T10:24:20Z"',
+    "workflow:",
+    '  id: "summarise"',
+    '  version: "v0"',
+    '  sha256: "eba6bd6674d35522dddbd774d3fc6a1fbcdab025aa30a5993d49216d0c13f59f"',
+    "---",
+    "",
+    "## Meeting Summary",
+    "",
+    "The group agreed to ship the catalogue first.",
+  ].join("\n");
+
+  it("leaves the answer, and only the answer", () => {
+    expect(stripInsightFrontMatter(document)).toBe(
+      "## Meeting Summary\n\nThe group agreed to ship the catalogue first.",
+    );
+  });
+
+  it("keeps a document that merely starts with a rule", () => {
+    // An unclosed fence is not front matter. Swallowing to the end would delete
+    // the answer rather than tidy it.
+    const rule = "---\n\nThe group agreed to ship the catalogue first.";
+    expect(stripInsightFrontMatter(rule)).toBe(rule);
+  });
+
+  it("leaves a document with no front matter alone", () => {
+    const plain = "## Meeting Summary\n\nWhat was decided.";
+    expect(stripInsightFrontMatter(plain)).toBe(plain);
+  });
+
+  it("does not cut a rule that appears later in the answer", () => {
+    const later = "## Summary\n\nOne thing.\n\n---\n\nAnother thing.";
+    expect(stripInsightFrontMatter(later)).toBe(later);
+  });
+
+  it("survives CRLF and a byte-order mark", () => {
+    const crlf = "﻿---\r\nversion: \"v1\"\r\n---\r\n\r\nThe answer.\r\n";
+    expect(stripInsightFrontMatter(crlf).trim()).toBe("The answer.");
   });
 });

@@ -57,7 +57,31 @@ describe("InsightDocument", () => {
   it("sanitises the model's markdown before it reaches the DOM", () => {
     // The document is model output. Same two steps the sealed meeting summary
     // is rendered with.
-    expect(insightDocumentSource).toContain("marked.parse(markdown");
+    expect(insightDocumentSource).toContain("marked.parse(body");
     expect(insightDocumentSource).toContain("DOMPurify.sanitize(rawHtml");
+  });
+
+  it("cuts the recorder's YAML provenance rather than rendering it as prose", () => {
+    // To markdown `---` is a horizontal rule, so the front matter arrived as two
+    // rules with a run-on paragraph of quoted hashes and ids between them, above
+    // the answer somebody asked for. The facts are shown by the header and the
+    // provenance list instead. See insights.test.ts for the cut itself.
+    expect(insightDocumentSource).toContain("stripInsightFrontMatter(markdown)");
+  });
+
+  it("puts what identifies the run in the header, not under the answer", () => {
+    expect(insightDocumentSource).toContain("<h2>{headline}</h2>");
+    expect(insightDocumentSource).toContain('class="ins-head-meta"');
+    expect(insightDocumentSource).toContain("formatInsightCreated(insight)");
+    expect(insightDocumentSource).toContain("{insight.model}");
+  });
+
+  it("never names a room whose meeting this caller cannot see", () => {
+    // Derived from the resolved sources, not record.roomIds: a source they may
+    // not read is absent, and naming its room would disclose it.
+    expect(insightDocumentSource).toContain(
+      "sources.map((source) => roomLabelOf(source))",
+    );
+    expect(insightDocumentSource).not.toContain("insight.roomIds");
   });
 });

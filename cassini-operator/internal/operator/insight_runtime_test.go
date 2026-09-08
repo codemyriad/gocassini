@@ -758,3 +758,93 @@ exit 0
 		t.Error("a killed run still wrote into the caller's files")
 	}
 }
+
+// A retry re-runs the REQUEST, not the receipt. Somebody picked an endpoint in
+// Prepare; retrying their insight is retrying the thing they asked for, not
+// whatever the deployment happens to be pointed at by then. This is the
+// deliberate reversal of D-720 §4, which was written when nobody could choose.
+func TestAnAttemptReachesTheEndpointTheAskerChose(t *testing.T) {
+	rt := &Runtime{}
+	rt.setLLMSettings(LLMSettings{
+		Providers: []LLMProvider{
+			{ID: "hosted", Name: "OpenRouter", BaseURL: openRouterBaseURL, APIKey: "sk-or"},
+			{ID: "local", Name: "Qwen", BaseURL: "http://qwen.internal:8000/v1"},
+		},
+		Summary: LLMStep{Enabled: true, Provider: "hosted", Model: "small"},
+	})
+	s := &insightService{rt: rt}
+
+	got := s.endpointFor(InsightRun{ID: "r1", RequestedProvider: "local", RequestedModel: "qwen3-30b"})
+	if got.id != "local" || got.model != "qwen3-30b" {
+		t.Fatalf("endpoint = %+v, want the chosen local/qwen3-30b", got)
+	}
+}
+
+// Nothing chosen is every run made before the picker existed, and any caller
+// who sent none. The deployment's own endpoint answers.
+func TestAnAttemptWithNoChoiceFallsBackToTheConfiguredEndpoint(t *testing.T) {
+	rt := &Runtime{}
+	rt.setLLMSettings(LLMSettings{
+		Providers: []LLMProvider{{ID: "hosted", BaseURL: openRouterBaseURL}},
+		Summary:   LLMStep{Enabled: true, Provider: "hosted", Model: "small"},
+	})
+	s := &insightService{rt: rt}
+
+	got := s.endpointFor(InsightRun{ID: "r1"})
+	if got.id != "hosted" || got.model != "small" {
+		t.Fatalf("endpoint = %+v, want the configured hosted/small", got)
+	}
+}
+
+// The endpoint somebody chose can be removed between the ask and the retry.
+// There is then nothing to honour, and falling back is what keeps "configure an
+// endpoint, then retry" a fix rather than a suggestion.
+func TestAnAttemptFallsBackWhenTheChosenEndpointIsGone(t *testing.T) {
+	rt := &Runtime{}
+	rt.setLLMSettings(LLMSettings{
+		Providers: []LLMProvider{{ID: "hosted", BaseURL: openRouterBaseURL}},
+		Summary:   LLMStep{Enabled: true, Provider: "hosted"},
+	})
+	s := &insightService{rt: rt, logger: log.New(io.Discard, "", 0)}
+
+	got := s.endpointFor(InsightRun{ID: "r1", RequestedProvider: "deleted", RequestedModel: "gone"})
+	if got.id != "hosted" {
+		t.Fatalf("endpoint = %+v, want a fall back to the configured endpoint", got)
+	}
+	if got.model == "gone" {
+		t.Fatalf("endpoint = %+v, want the removed provider's model dropped with it", got)
+	}
+}
+
+// The child is spawned against the chosen endpoint, not merely told about it —
+// and the chosen provider's own bounds and key come with it.
+func TestTheChildEnvCarriesTheChosenEndpoint(t *testing.T) {
+	rt := &Runtime{}
+	rt.setLLMSettings(LLMSettings{
+		Providers: []LLMProvider{
+			{ID: "hosted", BaseURL: openRouterBaseURL, APIKey: "sk-or"},
+			{ID: "local", BaseURL: "http://qwen.internal:8000/v1", TimeoutSec: 1800},
+		},
+		Summary: LLMStep{Enabled: true, Provider: "hosted", Model: "small"},
+	})
+	s := &insightService{rt: rt}
+
+	env := s.insightChildEnvFor(insightProviderRef{id: "local", model: "qwen3-30b"})
+	for key, want := range map[string]string{
+		"INSIGHT_BASE_URL":    "http://qwen.internal:8000/v1",
+		"INSIGHT_MODEL":       "qwen3-30b",
+		"INSIGHT_TIMEOUT_SEC": "1800",
+	} {
+		if got, ok := envValue(env, key); !ok || got != want {
+			t.Errorf("%s = %q (present=%v), want %q", key, got, ok, want)
+		}
+	}
+	// The keyless local endpoint must not inherit the hosted one's credential.
+	if got, ok := envValue(env, "INSIGHT_API_KEY"); ok {
+		t.Errorf("a keyless endpoint was given a key: %q", got)
+	}
+	// And the summary step is untouched: only the insight endpoint moves.
+	if got, ok := envValue(env, "SUMMARY_BASE_URL"); !ok || got != openRouterBaseURL {
+		t.Errorf("SUMMARY_BASE_URL = %q (present=%v), want the configured summary endpoint", got, ok)
+	}
+}

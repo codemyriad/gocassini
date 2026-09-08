@@ -85,17 +85,23 @@ describe("MeetingList insights", () => {
     expect(insightBranch).toContain('dispatch("openInsight", item.insight)');
   });
 
-  it("offers no type filter where insights cannot exist", () => {
-    // A standalone export's provider cannot list insights, so the shell passes
-    // insightsOffered=false and the list is exactly what it was before D-721.
-    expect(meetingListSource).toContain("export let insightsOffered = false;");
-    expect(meetingListSource).toMatch(/\{#if insightsOffered\}[\s\S]{0,200}class="typefilter"/);
+  it("takes the type filter from the shell rather than owning one", () => {
+    // The control moved into the rooms rail — both are narrowings of the same
+    // archive and belong in the same column — so the shell owns the filter and
+    // both surfaces read the one copy of it. See RoomsRail.test.ts for the
+    // control itself.
+    expect(meetingListSource).toContain("export let types: BrowseTypeFilter = ALL_BROWSE_TYPES;");
+    expect(meetingListSource).not.toContain('class="typefilter"');
+    expect(meetingListSource).not.toContain("toggleBrowseType");
   });
 
-  it("cannot be narrowed down to showing nothing at all", () => {
-    // Everything hidden is indistinguishable on screen from nothing being here.
-    expect(meetingListSource).toContain('disabled={isLastBrowseType(types, "meetings")}');
-    expect(meetingListSource).toContain('disabled={isLastBrowseType(types, "insights")}');
+  it("reports what is behind each Show box, under the search only it knows", () => {
+    // The rail draws the boxes and has to say what each one would bring back.
+    // Counted BEFORE the type filter is applied: the question a box answers is
+    // "what would I get if I ticked this?".
+    expect(meetingListSource).toContain('dispatch("counts", {');
+    expect(meetingListSource).toContain("meetings: visibleMeetings.length,");
+    expect(meetingListSource).toContain("insights: visibleInsights.length,");
   });
 
   it("tells a failed listing apart from an empty one", () => {

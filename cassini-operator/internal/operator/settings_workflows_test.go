@@ -172,3 +172,46 @@ func TestSettingsWorkflowsIsRoutedAheadOfTheLLMSettingsPrefix(t *testing.T) {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A freeform workflow declares no question of its own — the question is the
+// caller's — so the field the panel usually renders is empty on purpose. What
+// makes that legible rather than a half-printed row is the placeholder in the
+// instruction, which is the same byte the create handler decides on.
+func TestWorkflowListingAcceptsAFreeformWorkflowWithNoQuestionOfItsOwn(t *testing.T) {
+	entries := []workflowView{{
+		ID:          "ask",
+		Version:     "v0",
+		SHA256:      "a0ff18109e752c2539dc99f3577349c7f81f251521d87c92beaf05be6366d1e3",
+		Name:        "Ask your own question",
+		Question:    "",
+		Description: "Answers a question you type.",
+		Origin:      "Built in",
+		Instruction: "You are a meeting analyst.\n\n" + insightQuestionPlaceholder + "\n",
+	}}
+	if err := validateWorkflowListing(entries); err != nil {
+		t.Fatalf("a freeform workflow was refused: %v", err)
+	}
+}
+
+// The other half of the same rule: no question and nowhere to put one is a
+// workflow nothing could ever be asked of, and a row the panel cannot render
+// honestly.
+func TestWorkflowListingRefusesAQuestionlessWorkflowWithNoSlotForOne(t *testing.T) {
+	entries := []workflowView{{
+		ID:          "mute",
+		Version:     "v0",
+		SHA256:      "deadbeef",
+		Name:        "Says nothing",
+		Question:    "",
+		Description: "…",
+		Origin:      "Built in",
+		Instruction: "You are a meeting analyst.",
+	}}
+	err := validateWorkflowListing(entries)
+	if err == nil {
+		t.Fatal("a workflow with no question and no placeholder was accepted")
+	}
+	if !strings.Contains(err.Error(), "mute") {
+		t.Fatalf("the refusal does not name the workflow: %v", err)
+	}
+}

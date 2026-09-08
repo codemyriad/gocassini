@@ -1,66 +1,86 @@
 <script lang="ts">
+  // AI providers: where Cassini sends transcripts, and nothing else.
+  //
+  // This panel used to carry the summarise step and an insight step as well.
+  // Both are gone, for different reasons.
+  //
+  // The summarise step moved to Publish pipeline (SettingsPanel), where it
+  // belongs: it is a step between the call ending and the meeting being
+  // published, and it was only here because its endpoint is. An endpoint is a
+  // thing you register once; a pipeline step is a thing you switch on, and the
+  // two answer different questions.
+  //
+  // The insight step is gone from the UI altogether. It described a
+  // configuration nobody was asking for — "run insights somewhere OTHER than
+  // the summary endpoint" — while looking like the switch that turns insights
+  // on, which it never was. Registering a provider is what an insight needs,
+  // and now says so. The field is still persisted and still served, so a
+  // deployment that wants a larger model for questions can set it through
+  // `PUT operator/settings/llm`; what is removed is a control that mostly
+  // taught the wrong model of the product. It is round-tripped here untouched
+  // rather than dropped, so saving a provider cannot clear it.
+  //
+  // No page-level Save, deliberately, and that is the mock's shape rather than
+  // an omission: each action here is its own write — saving a provider, or
+  // removing one — because there is no coherent half-edited state of a list of
+  // endpoints worth holding on to.
   import { onMount } from "svelte";
-  import { Bot, Plus, RefreshCw, Trash2 } from "@lucide/svelte";
+  import {
+    CircleCheck,
+    FileText,
+    Plus,
+    RefreshCw,
+    TextAlignStart,
+    TriangleAlert,
+  } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import type {
-    InsightWorkflow,
-    LLMEffectiveStep,
-    LLMModel,
     LLMProviderUpdate,
+    LLMProviderView,
     LLMSettings,
     LLMStep,
   } from "./operator/types";
 
   export let operatorClient: OperatorClient | null = null;
 
-  // Editable provider rows carry UI-only key state beside the wire fields.
-  // The server never sends a stored key (api_key_configured only), so the key
-  // column is: a badge for "stored", a password input for a replacement, and a
-  // remove toggle that sends api_key: "" on save. Leaving the input empty
-  // omits api_key entirely, which keeps the stored key.
-  interface ProviderRow {
-    id: string;
-    name: string;
-    baseUrl: string;
-    keyConfigured: boolean;
-    keyInput: string;
-    keyCleared: boolean;
-    // null renders the input empty so the placeholder shows the default.
-    timeoutSec: number | null;
-    maxTokens: number | null;
-  }
-
   let settings: LLMSettings | null = null;
-  let providers: ProviderRow[] = [];
-  let summary: LLMStep = emptyStep();
-  let insight: LLMStep = emptyStep();
-  let snapshot = "";
-
-  function emptyStep(): LLMStep {
-    return { enabled: false, provider: "", model: "", template: "" };
-  }
 
   let loading = true;
   let saving = false;
   let loadError = "";
   let saveError = "";
 
-  // Fetched model lists per provider id, feeding the datalists. Fetching is a
-  // convenience: model fields always accept free text.
-  let modelsByProvider: Record<string, LLMModel[]> = {};
-  let modelsError = "";
-  let loadingModelsFor = "";
+  // The draft in the add/edit form. Null when no form is open. Editing carries
+  // the id it is editing, so the same form serves both: the mock offers only
+  // add and remove, but removing an endpoint to change its timeout would make
+  // an administrator retype a key they cannot read back.
+  interface ProviderDraft {
+    id: string;
+    name: string;
+    baseUrl: string;
+    key: string;
+    // True when this id already exists on the server, which is what decides
+    // whether an empty key field means "no key" or "keep the stored one".
+    existing: boolean;
+    keyConfigured: boolean;
+    // Explicit, because an empty key input is ambiguous on an edit.
+    keyCleared: boolean;
+    timeoutSec: number | null;
+    maxTokens: number | null;
+    advanced: boolean;
+  }
+  let draft: ProviderDraft | null = null;
 
-  // The workflows this build actually ships (D-718's GET /settings/workflows).
-  // A step stores its workflow as a plain id and the operator validates only
-  // the shape of it — it is a separate Go module and cannot see the registry —
-  // so this panel is the only place a typo can be caught before it is saved.
-  // The list is advisory, not a gate: the field stays free text so an id from a
-  // newer recorder image can still be typed, and a failed fetch must not stop
-  // an administrator configuring an endpoint. It only lets the panel say when
-  // an id will not resolve.
-  let knownWorkflows: InsightWorkflow[] = [];
-  let workflowsKnown = false;
+  // What each saved endpoint answered when asked for its models. It doubles as
+  // the mock's verified tick: "we listed 41 models from this URL with this key"
+  // is a fact, where a tick that only means "a row exists" is decoration. A
+  // failure here is reported as itself and never as a broken endpoint — the
+  // list may 404 on a server that answers completions perfectly well.
+  type ProbeState =
+    | { status: "checking" }
+    | { status: "ok"; count: number }
+    | { status: "failed"; message: string };
+  let probes: Record<string, ProbeState> = {};
 
   onMount(() => {
     void load();
@@ -74,64 +94,46 @@
     loadError = "";
     saveError = "";
     try {
-      apply(await operatorClient.getLLMSettings());
+      apply(await settingsClient().getLLMSettings());
     } catch (error) {
       loadError = asMessage(error);
     } finally {
       loading = false;
     }
-    void loadWorkflows();
   }
 
-  async function loadWorkflows() {
+  function settingsClient(): OperatorClient {
     if (!operatorClient) {
-      return;
+      throw new Error("No operator client is available.");
     }
-    try {
-      knownWorkflows = await operatorClient.listInsightWorkflows();
-      workflowsKnown = true;
-    } catch {
-      // Swallowed on purpose. Not knowing the registry costs the warning below
-      // and nothing else; reporting it beside the endpoint errors would put a
-      // failure in front of an administrator who came here to fix a different
-      // one.
-      workflowsKnown = false;
-    }
+    return operatorClient;
   }
-
-  // Empty means "the workflow Cassini ships", which is what every policy
-  // written before the field existed reads as, so it is never unknown.
-  function unknownWorkflow(id: string, known: InsightWorkflow[], answered: boolean): boolean {
-    return answered && id.trim() !== "" && !known.some((w) => w.id === id.trim());
-  }
-
-  // Reactive rather than called from the markup: the registry arrives after the
-  // settings do, and a template expression naming only `summary` would never be
-  // re-evaluated when it lands.
-  $: summaryWorkflowUnknown = unknownWorkflow(summary.template, knownWorkflows, workflowsKnown);
-  $: insightWorkflowUnknown = unknownWorkflow(insight.template, knownWorkflows, workflowsKnown);
-
-  // Named ids rather than "unknown workflow": the remedy is one of them, and
-  // an administrator should not have to open another panel to find out which.
-  $: unknownWorkflowWarning =
-    `This build ships no workflow with that id, so a run naming it would refuse to start. ` +
-    `It ships: ${knownWorkflows.map((w) => w.id).join(", ")}.`;
 
   function apply(next: LLMSettings) {
     settings = next;
-    providers = next.providers.map((p) => ({
-      id: p.id,
-      name: p.name,
-      baseUrl: p.base_url,
-      keyConfigured: p.api_key_configured,
-      keyInput: "",
-      keyCleared: false,
-      timeoutSec: p.timeout_sec > 0 ? p.timeout_sec : null,
-      maxTokens: p.max_tokens > 0 ? p.max_tokens : null,
-    }));
-    summary = { ...next.summary };
-    insight = { ...next.insight };
-    snapshot = JSON.stringify({ providers, summary, insight });
+    // Opened on a fresh install with nothing configured: the form IS the page,
+    // because there is no reveal worth putting between an administrator and
+    // the field they came to fill.
+    draft = next.providers.length === 0 ? freshDraft() : null;
+    void probeAll(next.providers);
+  }
+
+  async function probeAll(providers: LLMProviderView[]) {
+    probes = {};
+    await Promise.all(providers.map((provider) => probe(provider.id)));
+  }
+
+  async function probe(providerId: string) {
+    if (!operatorClient) {
+      return;
+    }
+    probes = { ...probes, [providerId]: { status: "checking" } };
+    try {
+      const models = await operatorClient.listProviderModels(providerId);
+      probes = { ...probes, [providerId]: { status: "ok", count: models.length } };
+    } catch (error) {
+      probes = { ...probes, [providerId]: { status: "failed", message: asMessage(error) } };
+    }
   }
 
   function newProviderId(): string {
@@ -140,79 +142,124 @@
     return "p-" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
 
-  function addProvider() {
-    providers = [
-      ...providers,
-      {
-        id: newProviderId(),
-        name: "",
-        baseUrl: "",
-        keyConfigured: false,
-        keyInput: "",
-        keyCleared: false,
-        timeoutSec: null,
-        maxTokens: null,
-      },
-    ];
+  function freshDraft(): ProviderDraft {
+    return {
+      id: newProviderId(),
+      name: "",
+      baseUrl: "",
+      key: "",
+      existing: false,
+      keyConfigured: false,
+      keyCleared: false,
+      timeoutSec: null,
+      maxTokens: null,
+      advanced: false,
+    };
   }
 
-  function removeProvider(id: string) {
-    providers = providers.filter((p) => p.id !== id);
-    // A step pointing at the removed endpoint cannot stay enabled — the server
-    // would reject it; disable it and forget the reference instead.
-    if (summary.provider === id) {
-      summary = { ...summary, provider: "", enabled: false };
-    }
-    if (insight.provider === id) {
-      insight = { ...insight, provider: "", enabled: false };
-    }
+  function editDraft(provider: LLMProviderView): ProviderDraft {
+    return {
+      id: provider.id,
+      name: provider.name,
+      baseUrl: provider.base_url,
+      key: "",
+      existing: true,
+      keyConfigured: provider.api_key_configured,
+      keyCleared: false,
+      timeoutSec: provider.timeout_sec > 0 ? provider.timeout_sec : null,
+      maxTokens: provider.max_tokens > 0 ? provider.max_tokens : null,
+      advanced: provider.timeout_sec > 0 || provider.max_tokens > 0,
+    };
   }
 
-  async function loadModels(providerId: string) {
-    if (!operatorClient || providerId === "" || loadingModelsFor !== "") {
+  // A URL is the only field a request cannot be made without. A key is not:
+  // llama.cpp, vLLM and Ollama need none, and demanding one would lock this
+  // panel against exactly the self-hosted endpoints the privacy story is built
+  // around.
+  $: draftReady = (draft?.baseUrl ?? "").trim() !== "";
+
+  // Every provider, with the draft's edits standing in for the row it is
+  // editing: PUT replaces the whole list, so a save has to send the untouched
+  // rows back exactly as they came.
+  function providerUpdates(current: ProviderDraft): LLMProviderUpdate[] {
+    const rows = (settings?.providers ?? []).map((provider): LLMProviderUpdate => ({
+      id: provider.id,
+      name: provider.name,
+      base_url: provider.base_url,
+      timeout_sec: provider.timeout_sec,
+      max_tokens: provider.max_tokens,
+      // api_key omitted: the server keeps the stored key for an id it is not
+      // told about, which is the only way a list it never serves can survive a
+      // round trip.
+    }));
+    const edited: LLMProviderUpdate = {
+      id: current.id,
+      name: current.name.trim(),
+      base_url: current.baseUrl.trim(),
+      timeout_sec: current.timeoutSec ?? 0,
+      max_tokens: current.maxTokens ?? 0,
+    };
+    if (current.keyCleared) {
+      edited.api_key = "";
+    } else if (current.key !== "") {
+      edited.api_key = current.key;
+    } else if (!current.existing) {
+      // A new keyless endpoint says so outright rather than leaving the field
+      // absent, which on a fresh id would mean nothing either way.
+      edited.api_key = "";
+    }
+    const at = rows.findIndex((row) => row.id === current.id);
+    if (at >= 0) {
+      rows[at] = edited;
+      return rows;
+    }
+    return [...rows, edited];
+  }
+
+  async function saveProvider() {
+    if (!draft || !draftReady || saving) {
       return;
     }
-    modelsError = "";
-    if (!settings?.providers.some((p) => p.id === providerId)) {
-      modelsError = "Save the endpoint first, then load its models.";
-      return;
-    }
-    loadingModelsFor = providerId;
+    const current = draft;
+    saving = true;
+    saveError = "";
     try {
-      modelsByProvider = { ...modelsByProvider, [providerId]: await operatorClient.listProviderModels(providerId) };
+      apply(await settingsClient().putLLMSettings({ providers: providerUpdates(current) }));
     } catch (error) {
-      modelsError = asMessage(error);
+      saveError = asMessage(error);
+      // The draft survives a rejected save: an administrator who mistyped a URL
+      // should be able to fix that character, not retype the key.
+      draft = current;
     } finally {
-      loadingModelsFor = "";
+      saving = false;
     }
   }
 
-  async function handleSave() {
-    if (!operatorClient || saving) {
+  async function removeProvider(provider: LLMProviderView) {
+    if (!settings || saving) {
       return;
     }
+    const current = settings;
     saving = true;
     saveError = "";
     try {
       apply(
-        await operatorClient.putLLMSettings({
-          providers: providers.map((row): LLMProviderUpdate => {
-            const update: LLMProviderUpdate = {
+        await settingsClient().putLLMSettings({
+          providers: current.providers
+            .filter((row) => row.id !== provider.id)
+            .map((row) => ({
               id: row.id,
               name: row.name,
-              base_url: row.baseUrl,
-              timeout_sec: row.timeoutSec ?? 0,
-              max_tokens: row.maxTokens ?? 0,
-            };
-            if (row.keyCleared) {
-              update.api_key = "";
-            } else if (row.keyInput !== "") {
-              update.api_key = row.keyInput;
-            }
-            return update;
-          }),
-          summary,
-          insight,
+              base_url: row.base_url,
+              timeout_sec: row.timeout_sec,
+              max_tokens: row.max_tokens,
+            })),
+          // A step still pointing at the removed endpoint would be rejected —
+          // the operator refuses an enabled step with an unknown provider —
+          // so removing an endpoint switches off what was running on it. That
+          // is the truth either way: the step could not have run.
+          summary: detachedStep(current.summary, provider.id),
+          insight: detachedStep(current.insight, provider.id),
         }),
       );
     } catch (error) {
@@ -222,6 +269,13 @@
     }
   }
 
+  function detachedStep(step: LLMStep, removedId: string): LLMStep {
+    if (step.provider !== removedId) {
+      return step;
+    }
+    return { ...step, enabled: false, provider: "" };
+  }
+
   function asMessage(error: unknown): string {
     if (error instanceof OperatorHttpError) {
       return error.message;
@@ -229,61 +283,60 @@
     return error instanceof Error ? error.message : String(error);
   }
 
-  function endpointLabel(effective: LLMEffectiveStep): string {
-    return `${effective.base_url} · ${effective.model || "endpoint default model"}`;
-  }
+  $: providers = settings?.providers ?? [];
+  // The tiles below say it better than a subtitle can, so the line only appears
+  // once they are gone.
+  $: showSubtitle = providers.length > 0;
 
-  function summaryEffectiveLabel(): string {
-    const effective = settings?.effective.summary;
-    if (!effective) {
-      return "Currently off — meetings publish without a summary.";
-    }
-    return `Currently: ${endpointLabel(effective)}`;
-  }
+  // The endpoint an insight reaches when NOBODY CHOSE one — not "the endpoint
+  // insights run on", which stopped being a single answer when the Prepare
+  // panel began letting the asker pick.
+  //
+  // That distinction is the whole reason this line is worded the way it is
+  // below. The asker's choice is the normal path now (the picker defaults to
+  // the first provider, so most runs name one outright); this is the fallback,
+  // and it covers a run that named none, a caller whose provider list could not
+  // be read, and a run whose chosen endpoint has since been removed. The
+  // operator computes it — insightEndpoint, which is also what builds the
+  // child's environment — so this page and the run cannot say different things.
+  $: effectiveInsight = settings?.effective.insight ?? null;
+  $: insightEndpointLabel = effectiveInsight
+    ? `${providerName(effectiveInsight.provider)}${effectiveInsight.model ? ` · ${effectiveInsight.model}` : ""}`
+    : "";
 
-  // Three outcomes, not two. An insight step with no endpoint of its own is
-  // not off — the recorder layers INSIGHT_* over SUMMARY_* — and an admin who
-  // cannot tell the inherited case from the owned one cannot predict what
-  // happens when the summary endpoint is repointed (D-719).
-  function insightEffectiveLabel(): string {
-    const effective = settings?.effective.insight;
-    if (!effective) {
-      return "No endpoint configured — an insight has nothing to ask.";
-    }
-    if (effective.inherited) {
-      return `Inherits the meeting-summary endpoint: ${endpointLabel(effective)} — and moves with it.`;
-    }
-    return `Currently: ${endpointLabel(effective)}`;
+  function providerName(id: string): string {
+    const provider = providers.find((row) => row.id === id);
+    return provider ? provider.name || provider.base_url || provider.id : id;
   }
-
-  $: current = JSON.stringify({ providers, summary, insight });
-  $: isDirty = settings !== null && current !== snapshot;
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
-  <header class="flex items-center justify-between gap-3 px-4 py-3">
+  <header class="flex items-start justify-between gap-3 px-4 py-3">
     <div>
-      <h2 class="font-semibold">AI providers</h2>
-      <p class="text-xs text-base-content/60">
-        Which model endpoint each step runs on. The full transcript is sent to that endpoint;
-        summaries and insights can use different ones, so a small local model can write every
-        meeting's summary while a larger one answers a question you ask by hand.
-      </p>
+      <div class="flex items-center gap-2">
+        <h2 class="font-semibold">AI providers</h2>
+        <!-- Optional, and said out loud: recording and transcription need none
+             of this, and an administrator who reads this page as a required
+             step has been misled about what Cassini does on its own. -->
+        <span class="badge badge-outline badge-sm border-base-content/25 text-base-content/70">
+          Optional
+        </span>
+      </div>
+      {#if showSubtitle}
+        <p class="text-xs text-base-content/60">
+          Where Cassini sends transcripts for summaries and insights.
+        </p>
+      {/if}
     </div>
     <div class="flex items-center gap-2">
-      {#if settings}
+      {#if settings && providers.length > 0 && draft === null}
         <button
-          class="btn btn-primary btn-sm hidden text-sm sm:inline-flex"
+          class="btn btn-primary btn-sm text-sm"
           type="button"
-          disabled={saving || !isDirty}
-          on:click={handleSave}
+          on:click={() => (draft = freshDraft())}
         >
-          {#if saving}
-            <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-            Saving…
-          {:else}
-            Save
-          {/if}
+          <Plus size={14} aria-hidden="true" />
+          Add a provider
         </button>
       {/if}
       <button
@@ -291,7 +344,7 @@
         type="button"
         on:click={load}
         disabled={loading || !operatorClient}
-        aria-label="Reload LLM settings"
+        aria-label="Reload AI providers"
       >
         <RefreshCw size={16} aria-hidden="true" />
       </button>
@@ -303,279 +356,282 @@
       <div class="alert alert-error text-sm">{loadError}</div>
     </div>
   {:else if loading}
-    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">Loading LLM settings…</div>
+    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">
+      Loading AI providers…
+    </div>
   {:else if !settings}
-    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">No LLM settings available.</div>
+    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">
+      No AI provider settings available.
+    </div>
   {:else}
     <div class="grid gap-4 p-4">
-      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <Bot size={16} aria-hidden="true" />
-            <h3 class="text-sm font-semibold">Endpoints</h3>
+      {#if providers.length === 0}
+        <!-- Nobody arrives here knowing what an endpoint buys them, so the empty
+             screen says it before it asks for a key. -->
+        <section class="grid gap-3">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="rounded-box border border-base-300 bg-base-200 p-3">
+              <TextAlignStart size={16} class="mb-2 text-secondary" aria-hidden="true" />
+              <p class="text-sm font-semibold">Summaries</p>
+              <p class="text-xs text-base-content/60">Shown at the top of every meeting.</p>
+            </div>
+            <div class="rounded-box border border-base-300 bg-base-200 p-3">
+              <FileText size={16} class="mb-2 text-secondary" aria-hidden="true" />
+              <p class="text-sm font-semibold">Insights</p>
+              <p class="text-xs text-base-content/60">
+                Answers drawn from meetings you choose.
+              </p>
+            </div>
           </div>
-          <button class="btn btn-ghost btn-sm" type="button" on:click={addProvider}>
-            <Plus size={14} aria-hidden="true" />
-            Add endpoint
-          </button>
-        </div>
-        {#if providers.length === 0}
-          <p class="text-sm text-base-content/60">
-            No endpoints yet. Add an OpenAI-compatible one — a hosted provider, or your own model
-            server (llama.cpp, vLLM, Ollama), which usually needs no key.
+          <p class="text-xs leading-relaxed text-base-content/70">
+            Recording and transcription run entirely on your own infrastructure. This is the
+            only step that sends data to a third party. Without an endpoint you still get the
+            transcript, just no summary or insights.
           </p>
-        {/if}
-        {#each providers as row (row.id)}
-          <div class="grid gap-2 rounded-box border border-base-300 bg-base-100 p-2 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)_minmax(0,1fr)_auto] lg:items-end">
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">Name</span>
-              <input
-                bind:value={row.name}
-                type="text"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="OpenRouter, local Qwen…"
-              />
-            </label>
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">Base URL</span>
-              <input
-                bind:value={row.baseUrl}
-                type="url"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="https://openrouter.ai/api/v1 or http://your-host:8000/v1"
-              />
-            </label>
+          <!-- Said before the save, not discovered after it. Registering the
+               first endpoint switches summarising on — which is what a fresh
+               install wants and what makes the configured state reachable in
+               one go — and that is a decision about what leaves this
+               deployment, so it is not a surprise worth saving for later. -->
+          <p class="text-xs leading-relaxed text-base-content/70">
+            Saving your first endpoint switches meeting summaries on, so every recording's
+            transcript is sent to it. You can turn that off again in Publish pipeline.
+          </p>
+        </section>
+      {:else}
+        <ul class="grid gap-2">
+          {#each providers as provider (provider.id)}
+            <li class="rounded-box border border-base-300 bg-base-200 p-3">
+              <div class="flex flex-wrap items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-sm font-semibold">
+                      {provider.name || provider.base_url || provider.id}
+                    </span>
+                    <!-- The tick is a listing that came back, not a row that
+                         exists. A failure says so in its own words: an endpoint
+                         with no /models route still answers completions, and
+                         calling that broken would be wrong. -->
+                    {#if probes[provider.id]?.status === "ok"}
+                      <CircleCheck
+                        size={14}
+                        class="text-success"
+                        aria-label="This endpoint answered with its model list"
+                      />
+                    {:else if probes[provider.id]?.status === "failed"}
+                      <TriangleAlert
+                        size={14}
+                        class="text-warning"
+                        aria-label="This endpoint did not list its models"
+                      />
+                    {/if}
+                  </div>
+                  <div
+                    class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60"
+                  >
+                    <code class="font-mono">{provider.base_url}</code>
+                    <span>
+                      {provider.api_key_configured ? "Key stored" : "No key"}
+                    </span>
+                    {#if probes[provider.id]?.status === "ok"}
+                      {@const state = probes[provider.id]}
+                      <span>
+                        {state.status === "ok" ? state.count : 0}
+                        {state.status === "ok" && state.count === 1 ? "model" : "models"}
+                      </span>
+                    {:else if probes[provider.id]?.status === "checking"}
+                      <span>listing models…</span>
+                    {/if}
+                    {#if provider.timeout_sec > 0}
+                      <span>{provider.timeout_sec}s timeout</span>
+                    {/if}
+                    {#if provider.max_tokens > 0}
+                      <span>{provider.max_tokens} token limit</span>
+                    {/if}
+                  </div>
+                  {#if probes[provider.id]?.status === "failed"}
+                    {@const state = probes[provider.id]}
+                    <p class="mt-1 text-xs text-warning">
+                      Its model list could not be read: {state.status === "failed"
+                        ? state.message
+                        : ""} Summaries and insights may still work — a model can always be
+                      named by hand.
+                    </p>
+                  {/if}
+                </div>
+                <div class="flex flex-none items-center gap-1">
+                  <button
+                    class="btn btn-ghost btn-xs"
+                    type="button"
+                    disabled={saving}
+                    on:click={() => (draft = editDraft(provider))}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    class="btn btn-ghost btn-xs text-error"
+                    type="button"
+                    disabled={saving}
+                    on:click={() => void removeProvider(provider)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      {#if draft}
+        <!-- Keyed on the draft's id so switching from one row's Edit straight to
+             another's resets the inputs rather than carrying the first row's
+             text into the second. -->
+        {#key draft.id}
+          <section class="grid gap-3 rounded-box border border-base-300 bg-base-200 p-3">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="flex w-full flex-col gap-1">
+                <span class="text-xs font-medium text-base-content/70">Provider</span>
+                <input
+                  bind:value={draft.name}
+                  type="text"
+                  class="input input-sm w-full border-base-300 shadow-none"
+                  placeholder="OpenRouter, local Qwen…"
+                />
+              </label>
+              <label class="flex w-full flex-col gap-1">
+                <span class="text-xs font-medium text-base-content/70">Base URL</span>
+                <input
+                  bind:value={draft.baseUrl}
+                  type="url"
+                  class="input input-sm w-full border-base-300 shadow-none"
+                  placeholder="https://openrouter.ai/api/v1 or http://your-host:8000/v1"
+                />
+              </label>
+            </div>
             <label class="flex w-full flex-col gap-1">
               <span class="text-xs font-medium text-base-content/70">
                 API key
-                {#if row.keyConfigured && !row.keyCleared}
-                  <span class="badge badge-success badge-outline badge-xs align-middle">stored</span>
-                {:else if row.keyCleared}
-                  <span class="badge badge-warning badge-outline badge-xs align-middle">will be removed</span>
+                {#if draft.keyConfigured && !draft.keyCleared}
+                  <span class="badge badge-success badge-outline badge-xs align-middle">
+                    stored
+                  </span>
+                {:else if draft.keyCleared}
+                  <span class="badge badge-warning badge-outline badge-xs align-middle">
+                    will be removed
+                  </span>
                 {/if}
               </span>
               <input
-                bind:value={row.keyInput}
+                bind:value={draft.key}
                 type="password"
                 autocomplete="off"
                 class="input input-sm w-full border-base-300 shadow-none"
-                placeholder={row.keyConfigured && !row.keyCleared
+                placeholder={draft.keyConfigured && !draft.keyCleared
                   ? "leave blank to keep the stored key"
-                  : "optional — self-hosted servers usually need none"}
+                  : "sk-or-v1-… — self-hosted servers usually need none"}
               />
-            </label>
-            <div class="flex items-center gap-1">
-              {#if row.keyConfigured}
+              {#if draft.keyConfigured}
                 <button
-                  class="btn btn-ghost btn-sm"
+                  class="link link-hover self-start text-xs text-base-content/60"
                   type="button"
                   on:click={() => {
-                    row.keyCleared = !row.keyCleared;
-                    if (row.keyCleared) {
-                      row.keyInput = "";
+                    if (draft) {
+                      draft.keyCleared = !draft.keyCleared;
+                      if (draft.keyCleared) {
+                        draft.key = "";
+                      }
                     }
                   }}
                 >
-                  {row.keyCleared ? "Keep key" : "Remove key"}
+                  {draft.keyCleared ? "Keep the stored key" : "Remove the stored key"}
                 </button>
               {/if}
-              <button
-                class="btn btn-ghost btn-sm btn-square"
-                type="button"
-                aria-label={`Delete endpoint ${row.name || row.baseUrl || row.id}`}
-                on:click={() => removeProvider(row.id)}
-              >
-                <Trash2 size={14} aria-hidden="true" />
-              </button>
-            </div>
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">Request timeout (s)</span>
-              <input
-                bind:value={row.timeoutSec}
-                type="number"
-                min="1"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="900 (default)"
-              />
             </label>
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">Response token limit</span>
-              <input
-                bind:value={row.maxTokens}
-                type="number"
-                min="1"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="4096 (default)"
-              />
-            </label>
-          </div>
-        {/each}
-      </section>
 
-      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
-        <label class="flex cursor-pointer items-center gap-2">
-          <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={summary.enabled} />
-          <h3 class="text-sm font-semibold">Meeting summary</h3>
-        </label>
-        <label class="flex w-full flex-col gap-1">
-          <span class="text-xs font-medium text-base-content/70">Endpoint</span>
-          <select bind:value={summary.provider} class="select select-sm w-full border-base-300 shadow-none">
-            <option value="">— none —</option>
-            {#each providers as p (p.id)}
-              <option value={p.id}>{p.name || p.baseUrl || p.id}</option>
-            {/each}
-          </select>
-        </label>
-        <label class="flex w-full flex-col gap-1">
-          <span class="text-xs font-medium text-base-content/70">Model</span>
-          <div class="flex w-full items-center gap-1">
-            <input
-              bind:value={summary.model}
-              type="text"
-              class="input input-sm w-full border-base-300 shadow-none"
-              placeholder="endpoint default"
-              list="llm-models-summary"
-            />
-            <button
-              class="btn btn-ghost btn-sm shrink-0"
-              type="button"
-              disabled={summary.provider === "" || loadingModelsFor !== ""}
-              on:click={() => loadModels(summary.provider)}
-            >
-              {#if loadingModelsFor !== "" && loadingModelsFor === summary.provider}
-                <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-              {:else}
-                Load models
-              {/if}
-            </button>
-          </div>
-          <datalist id="llm-models-summary">
-            {#each modelsByProvider[summary.provider] ?? [] as model (model.id)}
-              <option value={model.id}>{model.name ?? model.id}</option>
-            {/each}
-          </datalist>
-        </label>
-        <label class="flex w-full flex-col gap-1">
-          <span class="text-xs font-medium text-base-content/70">Workflow</span>
-          <input
-            bind:value={summary.template}
-            type="text"
-            class="input input-sm w-full border-base-300 shadow-none"
-            placeholder="summarise (the one Cassini ships)"
-            list="llm-workflows"
-          />
-          {#if summaryWorkflowUnknown}
-            <span class="text-xs text-warning">{unknownWorkflowWarning}</span>
-          {/if}
-          <!-- The field is saved and served; the publish pipeline does not read
-               it back yet. Saying so beats a control that silently does nothing
-               — delete this line when the pipeline resolves it (D-719). -->
-          <span class="text-xs text-base-content/50">
-            Saved with the policy. The publish pipeline still runs the workflow Cassini ships.
-          </span>
-        </label>
-        <p class="text-xs text-base-content/60">{summaryEffectiveLabel()}</p>
-      </section>
+            <!-- Behind a disclosure rather than dropped: these describe the
+                 HOST, and a CPU-bound local model needs a longer leash than a
+                 hosted API does. Nobody adding their first endpoint needs to
+                 decide either. -->
+            <details bind:open={draft.advanced}>
+              <summary class="cursor-pointer text-xs text-base-content/60">
+                Request bounds
+              </summary>
+              <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                <label class="flex w-full flex-col gap-1">
+                  <span class="text-xs font-medium text-base-content/70">
+                    Request timeout (s)
+                  </span>
+                  <input
+                    bind:value={draft.timeoutSec}
+                    type="number"
+                    min="1"
+                    class="input input-sm w-full border-base-300 shadow-none"
+                    placeholder="900 (default)"
+                  />
+                </label>
+                <label class="flex w-full flex-col gap-1">
+                  <span class="text-xs font-medium text-base-content/70">
+                    Response token limit
+                  </span>
+                  <input
+                    bind:value={draft.maxTokens}
+                    type="number"
+                    min="1"
+                    class="input input-sm w-full border-base-300 shadow-none"
+                    placeholder="4096 (default)"
+                  />
+                </label>
+              </div>
+            </details>
 
-      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
-        <label class="flex cursor-pointer items-center gap-2">
-          <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={insight.enabled} />
-          <h3 class="text-sm font-semibold">Insights</h3>
-        </label>
-        <p class="text-xs text-base-content/60">
-          A question asked of several meetings at once. Off means insights run on the meeting-summary
-          endpoint above; turn it on to send them somewhere else — a larger model, or one you are
-          willing to wait longer for. There is no setting here that stops insights running: that is
-          removing the endpoint.
-        </p>
-        {#if insight.enabled}
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Endpoint</span>
-            <select bind:value={insight.provider} class="select select-sm w-full border-base-300 shadow-none">
-              <option value="">— none —</option>
-              {#each providers as p (p.id)}
-                <option value={p.id}>{p.name || p.baseUrl || p.id}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Model</span>
-            <div class="flex w-full items-center gap-1">
-              <input
-                bind:value={insight.model}
-                type="text"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="endpoint default"
-                list="llm-models-insight"
-              />
+            <div class="flex items-center gap-2">
               <button
-                class="btn btn-ghost btn-sm shrink-0"
+                class="btn btn-primary btn-sm text-sm"
                 type="button"
-                disabled={insight.provider === "" || loadingModelsFor !== ""}
-                on:click={() => loadModels(insight.provider)}
+                disabled={!draftReady || saving}
+                on:click={saveProvider}
               >
-                {#if loadingModelsFor !== "" && loadingModelsFor === insight.provider}
+                {#if saving}
                   <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+                  Saving…
                 {:else}
-                  Load models
+                  Save provider
                 {/if}
               </button>
+              {#if providers.length > 0}
+                <button
+                  class="btn btn-ghost btn-sm text-sm"
+                  type="button"
+                  disabled={saving}
+                  on:click={() => (draft = null)}
+                >
+                  Cancel
+                </button>
+              {/if}
             </div>
-            <datalist id="llm-models-insight">
-              {#each modelsByProvider[insight.provider] ?? [] as model (model.id)}
-                <option value={model.id}>{model.name ?? model.id}</option>
-              {/each}
-            </datalist>
-          </label>
-        {/if}
-        <label class="flex w-full flex-col gap-1">
-          <span class="text-xs font-medium text-base-content/70">Workflow</span>
-          <input
-            bind:value={insight.template}
-            type="text"
-            class="input input-sm w-full border-base-300 shadow-none"
-            placeholder="summarise (the one Cassini ships)"
-            list="llm-workflows"
-          />
-          {#if insightWorkflowUnknown}
-            <span class="text-xs text-warning">{unknownWorkflowWarning}</span>
-          {/if}
-          <!-- Same caveat as the summary step's, and for the same reason:
-               nothing runs an insight from here yet, so the field is stored and
-               served and read by nobody. Delete this line when the operator
-               spawns a run. -->
-          <span class="text-xs text-base-content/50">
-            Saved with the policy. Nothing runs an insight from the Operator yet; `cassini insight
-            run --workflow` names one on the command line.
-          </span>
-        </label>
-        <!-- One list for both steps: the registry is what the recorder ships,
-             not a property of a step. Insight templates renders the same set in
-             full, with each one's instruction. -->
-        <datalist id="llm-workflows">
-          {#each knownWorkflows as workflow (workflow.id)}
-            <option value={workflow.id}>{workflow.name}</option>
-          {/each}
-        </datalist>
-        <p class="text-xs text-base-content/60">{insightEffectiveLabel()}</p>
-      </section>
-      {#if modelsError}
-        <div class="alert alert-warning text-sm">{modelsError}</div>
+          </section>
+        {/key}
       {/if}
 
-      <button
-        class="btn btn-primary w-full text-sm sm:hidden"
-        type="button"
-        disabled={saving || !isDirty}
-        on:click={handleSave}
-      >
-        {#if saving}
-          <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-          Saving…
-        {:else}
-          Save
-        {/if}
-      </button>
+      {#if effectiveInsight}
+        <!-- Two facts, and only the second one used to be here.
+             "Insights run on X" was true while the endpoint was policy and
+             nobody could choose. It is not any more: whoever creates an insight
+             picks from this list, so there is no single endpoint insights run
+             on — X is what a run that chose none falls back to.
+             The rule underneath it survives the change and is now literally
+             true rather than true by fallback: the create handler accepts any
+             registered provider, and every user is shown all of them. So every
+             endpoint on this page is one somebody's transcripts can be sent to,
+             and removing them all is still the off switch. -->
+        <p class="text-xs text-base-content/60">
+          Anyone creating an insight chooses which of these answers it; one that chooses none
+          runs on <span class="font-medium">{insightEndpointLabel}</span>. Every endpoint listed
+          here is one an insight may reach, and removing them all is how insights are switched
+          off.
+        </p>
+      {/if}
 
       {#if saveError}
         <div class="alert alert-error text-sm">{saveError}</div>

@@ -30,13 +30,39 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("This runs the template your administrator configured");
   });
 
-  it("puts the run in the list before it has done anything", () => {
-    // A record exists before its content does (D-720). Without this the row
-    // materialises out of nowhere a minute after the button was pressed, which
+  it("shows the run before it has done anything", () => {
+    // A record exists before its content does (D-720). Without this the button
+    // goes quiet for the minutes a local model takes over five meetings, which
     // is the gap the prototype's 900ms "Generating…" hides.
-    expect(generateCardSource).toMatch(
-      /runs = \[run, \.\.\.runs\.filter\(\(existing\) => existing\.id !== run\.id\)\];/,
-    );
+    expect(generateCardSource).toContain("run = started;");
+    expect(generateCardSource).toContain("{#if run}");
+    expect(generateCardSource).toContain("describeRunProgress(run)");
+  });
+
+  it("owns the run it started and no others", () => {
+    // It used to open on a listing of every previous run, which put a job
+    // console in a panel whose subject is the meetings you just picked — and
+    // made it a second place insights are listed, free to disagree with the
+    // browse catalogue behind it. One run, the one this button started.
+    expect(generateCardSource).toContain("let run: InsightRun | null = null;");
+    expect(generateCardSource).not.toContain("listInsights");
+    expect(generateCardSource).not.toContain("visibleRuns");
+    expect(generateCardSource).not.toContain("hiddenRunCount");
+  });
+
+  it("opens on a real template, not on a synthetic default", () => {
+    // "This deployment's default" named no template and disclosed no question,
+    // and the template it stood for was in the list beside it.
+    expect(generateCardSource).not.toContain("This deployment's default");
+    expect(generateCardSource).toContain('const SHIPPED_DEFAULT_WORKFLOW = "summarise";');
+    expect(generateCardSource).toContain("workflows[0].id");
+  });
+
+  it("shows what the chosen template will ask", () => {
+    // The name says nothing about what the model is asked to do; the question
+    // is the affordance, and the description says what comes back.
+    expect(generateCardSource).toContain("chosenWorkflowEntry.question");
+    expect(generateCardSource).toContain("chosenWorkflowEntry.description");
   });
 
   it("stops polling when the run is terminal or the panel closes", () => {
@@ -47,7 +73,7 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("onDestroy(() => {");
     expect(generateCardSource).toContain("stopped = true;");
     expect(generateCardSource).toContain("clearPollTimer();");
-    expect(generateCardSource).toContain("if (pendingRuns().length === 0) {");
+    expect(generateCardSource).toContain("if (!run || isTerminalStatus(run.status)) {");
     expect(generateCardSource).toMatch(/if \(stopped\) \{\s*return;\s*\}/);
   });
 
@@ -62,23 +88,26 @@ describe("GenerateCard", () => {
     // The status is the lock: a retry against queued or running is a 409 no-op,
     // and the run is already doing what was asked.
     expect(generateCardSource).toContain("error.status === 409");
-    expect(generateCardSource).toContain("void refresh(run.id);");
+    expect(generateCardSource).toContain("void refresh(id);");
   });
 
   it("does not promise a retry replays the endpoint that failed", () => {
     // Retry re-resolves provider and model from current settings — that is what
     // makes "add a key" a fix rather than a suggestion — so the copy beside the
     // button must not describe a replay.
-    expect(generateCardSource).toContain("Uses the endpoint and model configured now.");
+    expect(generateCardSource).toContain("Runs again on the endpoint you chose.");
   });
 
   it("distinguishes a run that failed from a question that could not be asked", () => {
     // A failed poll says nothing about the run: the run is whatever the
     // operator says it is, and painting it red because one request timed out
     // would be the app inventing a failure.
-    expect(generateCardSource).toContain("pollError = failedToAsk;");
-    expect(generateCardSource).toContain("let listError");
+    expect(generateCardSource).toContain("pollError = describe(error);");
     expect(generateCardSource).toContain("let createError");
+    // And they are rendered as different things: one is an alert on the action,
+    // the other a status note on the run.
+    expect(generateCardSource).toContain('<p class="text-xs text-error" role="alert">{createError}</p>');
+    expect(generateCardSource).toContain('role="status">{pollError}</p>');
   });
 
   it("is contained by the panel it sits in", () => {
@@ -96,20 +125,49 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("written into your own Nextcloud files");
   });
 
-  it("does not imply a typed question is saveable", () => {
-    // Freeform text is user-authored prompt text at run time, not a template:
-    // templates ship with Cassini and there is no PUT behind this panel.
-    expect(generateCardSource).toContain("It is not saved as a template.");
+  it("never puts a raw workflow id in front of somebody who has no names", () => {
+    // The registry is ADMIN at the proxy, so a non-admin can look nothing up —
+    // and they have no picker either, so the only run this card ever shows them
+    // is one they started against the deployment's configured template. It is
+    // named by the question asked, or by the template's display name where this
+    // reader has one, never by the raw id.
+    expect(generateCardSource).not.toContain("run.workflowId");
   });
 
-  it("never puts a raw workflow id in front of somebody who has no names", () => {
-    // The registry is ADMIN at the proxy, so a non-admin can look nothing up.
-    // Falling back to the id would show them "summarise" where an administrator
-    // reading the same row sees "Meeting summary" — two vocabularies for one
-    // thing. The picker's own substitute is what a reader without names gets.
-    expect(generateCardSource).toContain(
-      'return isAdmin ? run.workflowId : "The template your administrator configured";',
+  it("lets anybody choose the endpoint, not only administrators", () => {
+    // Where your own transcripts go is the asker's decision. The template
+    // picker is admin-only because its registry is ADMIN at the proxy; the
+    // provider list is a USER route carrying ids and names, so this one is not
+    // behind {#if isAdmin}.
+    const adminBlock = generateCardSource.slice(
+      generateCardSource.indexOf("{#if isAdmin}"),
+      generateCardSource.indexOf("{#if providers.length > 0}"),
     );
+    expect(adminBlock).not.toContain(">Provider<");
+    expect(generateCardSource).toContain("listAIProviders(operatorBasePath)");
+    expect(generateCardSource).toContain("$: if (operatorBasePath !== \"\" && !providersAsked)");
+  });
+
+  it("defaults to the first provider and the endpoint's own model", () => {
+    // Somebody who does not care should get a working run without touching
+    // anything.
+    expect(generateCardSource).toContain("chosenProvider = providers[0].id;");
+    expect(generateCardSource).toContain('let chosenModel = "";');
+  });
+
+  it("clears the model when the endpoint changes", () => {
+    // Carried across it would name a model the new endpoint may never have
+    // heard of, and the operator refuses a model with no provider to run it on.
+    expect(generateCardSource).toContain("function chooseProvider(id: string) {");
+    expect(generateCardSource).toContain('chosenModel = "";');
+  });
+
+  it("still runs when the endpoints cannot be listed", () => {
+    // No list means no provider on the request, which the operator reads as
+    // "this deployment's own" — exactly what happened before there was a
+    // picker. It narrows the card; it does not block it.
+    expect(generateCardSource).toContain("providersError = describe(error);");
+    expect(generateCardSource).toContain("The AI endpoints could not be listed");
   });
 
   it("offers the question box only where a question can be asked", () => {

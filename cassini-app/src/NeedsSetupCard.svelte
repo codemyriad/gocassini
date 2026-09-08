@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { TriangleAlert } from "@lucide/svelte";
+  import { KeyRound, TriangleAlert } from "@lucide/svelte";
   import type { FeatureNotice } from "./operator/setupHealth";
   import { applyPanel, applySurface, type OperatorPanel } from "./surfaceRouting";
 
@@ -57,6 +57,23 @@
 </script>
 
 {#if notice}
+  {#if notice.actionTitle && notice.panel}
+    <!-- The compact form, for an administrator looking at a capability that is
+         simply not set up yet: they know what an endpoint is, the button is
+         right there, and three sentences under a warning triangle are in the
+         way of it. Same card the operator's own settings panels draw, so the
+         locked state looks the same wherever it is met.
+         Everyone else, and every run FAILURE, gets the prose below — "the
+         endpoint rejected the request" is not something anyone can infer from a
+         title. -->
+    <section class="needs-key" role="status">
+      <KeyRound size={20} class="needs-key-icon" aria-hidden="true" />
+      <strong class="needs-key-title">{notice.actionTitle}</strong>
+      <a class="needs-key-go" href={panelUrl(notice.panel)} on:click={handleOpen}>
+        {notice.actionShortLabel ?? notice.actionLabel}
+      </a>
+    </section>
+  {:else}
   <section class="rounded-box border border-base-300 bg-base-200 p-3" role="status">
     <div class="flex items-start gap-2">
       <TriangleAlert size={16} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
@@ -75,4 +92,48 @@
       </div>
     </div>
   </section>
+  {/if}
 {/if}
+
+<style>
+  /* Secondary is this theme's amber — the colour the design gives everything
+     model-written, and the colour it gives this card. Unlike primary it is not
+     remapped to the Nextcloud accent in the embedded build, so a locked state
+     looks the same whatever the instance is themed. */
+  .needs-key {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background-color: color-mix(in oklch, var(--color-secondary) 14%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-secondary) 40%, transparent);
+    border-radius: var(--radius-box, 0.75rem);
+  }
+  .needs-key :global(.needs-key-icon) {
+    flex: none;
+    color: var(--color-secondary);
+  }
+  .needs-key-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-base-content);
+  }
+  /* An anchor, not a button, for the reason the prose form's link is one: it has
+     a real address, so it can be copied and opened in a tab like any other. */
+  .needs-key-go {
+    flex: none;
+    padding: 6px 12px;
+    background-color: var(--color-secondary);
+    border-radius: var(--radius-field, 0.5rem);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--color-secondary-content);
+  }
+  .needs-key-go:hover {
+    background-color: color-mix(in oklch, var(--color-secondary) 85%, black);
+  }
+</style>

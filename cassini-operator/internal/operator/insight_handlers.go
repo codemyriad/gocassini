@@ -67,6 +67,18 @@ type insightCreateRequest struct {
 	// dropped, and withheld from one that needs it, the prompt would go out with
 	// its placeholder still in it.
 	Question string `json:"question"`
+	// Provider and Model are the endpoint the asker chose in Prepare. Both
+	// optional: absent means "whatever this deployment is configured with",
+	// which is what a caller with no picker sends and what every run made
+	// before the picker existed reads as.
+	//
+	// A named provider must be one this deployment has registered — refused, not
+	// ignored, because a run that quietly answered on a different endpoint than
+	// the one somebody picked is the failure this field exists to prevent. The
+	// model is free text: the registry of models belongs to the endpoint, and an
+	// id from a newer catalogue must still be sendable.
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
 }
 
 // insightDetailResponse is one run with the document it produced. The document
@@ -218,6 +230,13 @@ func (s *insightService) create(w http.ResponseWriter, r *http.Request, caller s
 		}
 	}
 
+	// Checked before anything is stored, so a request naming an endpoint this
+	// deployment does not have costs nothing and cannot half-run.
+	if err := s.checkRequestedEndpoint(request); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	id, err := s.newID()
 	if err != nil {
 		s.logf("insights: %v", err)
@@ -225,17 +244,19 @@ func (s *insightService) create(w http.ResponseWriter, r *http.Request, caller s
 		return
 	}
 	run := InsightRun{
-		ID:              id,
-		CreatedBy:       caller,
-		Status:          insightStatusQueued,
-		WorkflowID:      workflow.ID,
-		WorkflowVersion: workflow.Version,
-		WorkflowSHA256:  workflow.SHA256,
-		MeetingIDs:      request.MeetingIDs,
-		RoomIDs:         insightCatalogRooms(catalog, request.MeetingIDs),
-		Question:        request.Question,
-		AttemptNumber:   1,
-		CreatedAt:       s.now(),
+		ID:                id,
+		CreatedBy:         caller,
+		Status:            insightStatusQueued,
+		WorkflowID:        workflow.ID,
+		WorkflowVersion:   workflow.Version,
+		WorkflowSHA256:    workflow.SHA256,
+		MeetingIDs:        request.MeetingIDs,
+		RoomIDs:           insightCatalogRooms(catalog, request.MeetingIDs),
+		Question:          request.Question,
+		RequestedProvider: strings.TrimSpace(request.Provider),
+		RequestedModel:    strings.TrimSpace(request.Model),
+		AttemptNumber:     1,
+		CreatedAt:         s.now(),
 	}
 	if err := s.store.CreateRun(r.Context(), run); err != nil {
 		s.logf("insights: create run=%s for caller=%s: %v", id, caller, err)
@@ -391,6 +412,41 @@ func (s *insightService) resolveWorkflow(r *http.Request, request insightCreateR
 		return workflowView{}, fmt.Errorf("the %q workflow needs a question to ask", chosen.ID)
 	}
 	return chosen, nil
+}
+
+// checkRequestedEndpoint refuses an endpoint this deployment cannot reach.
+//
+// Named and unknown is a 400 rather than a silent fall back to the configured
+// one: somebody picked an endpoint, and answering on a different one — then
+// recording that different one on the run — would be the product doing
+// something other than what it was asked, in the one place where which third
+// party sees the transcripts is the question.
+//
+// A model is never checked against the endpoint's catalogue. That list is the
+// endpoint's, it can change under us, and a model id it has not published yet
+// is still one the endpoint may accept — so the bound is length, and the
+// endpoint's own refusal is the answer.
+func (s *insightService) checkRequestedEndpoint(request insightCreateRequest) error {
+	provider := strings.TrimSpace(request.Provider)
+	model := strings.TrimSpace(request.Model)
+	if utf8.RuneCountInString(model) > maxLLMFieldRunes {
+		return fmt.Errorf("that model name is longer than %d characters", maxLLMFieldRunes)
+	}
+	if provider == "" {
+		if model != "" {
+			// A model with no endpoint to send it to. Refused rather than
+			// applied to whatever the deployment resolves, which would be a
+			// model chosen for one endpoint arriving at another.
+			return errors.New("a model was chosen with no provider to run it on")
+		}
+		return nil
+	}
+	for _, candidate := range s.rt.currentLLMSettings().Providers {
+		if candidate.ID == provider {
+			return nil
+		}
+	}
+	return fmt.Errorf("no AI provider called %q is configured on this deployment", provider)
 }
 
 // --- GET insights ---------------------------------------------------------------

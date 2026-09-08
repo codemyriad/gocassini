@@ -75,6 +75,13 @@
      colour the prototype gives insights — and, unlike primary, it is not
      remapped to the Nextcloud accent in the embedded build, so the distinction
      survives whatever the instance is themed. */
+  /* Filled, not outlined. On the list's own ground an insight card with a
+     base-100 fill is the same colour as everything around it, and the left rule
+     alone is doing all the work of saying "different kind of thing". A wash of
+     the secondary — this theme's amber, and the colour every insight surface
+     already uses — carries that at a glance, and mixing INTO base-100 rather
+     than into transparent keeps it opaque over the row separators and stable in
+     both themes. */
   .insight-card {
     display: flex;
     flex-direction: column;
@@ -83,18 +90,18 @@
     padding: 10px 12px;
     text-align: left;
     cursor: pointer;
-    background-color: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
+    background-color: color-mix(in oklch, var(--color-secondary) 10%, var(--color-base-100));
+    border: 1px solid color-mix(in oklch, var(--color-secondary) 22%, var(--color-base-300));
     border-left: 3px solid var(--color-secondary);
     border-radius: var(--radius-field, 0.5rem);
     color: var(--color-base-content);
   }
   .insight-card:hover {
-    background-color: var(--color-base-200);
+    background-color: color-mix(in oklch, var(--color-secondary) 18%, var(--color-base-100));
   }
   .insight-card[aria-current="page"] {
-    background-color: color-mix(in oklch, var(--color-secondary) 15%, transparent);
-    border-color: color-mix(in oklch, var(--color-secondary) 45%, transparent);
+    background-color: color-mix(in oklch, var(--color-secondary) 26%, var(--color-base-100));
+    border-color: color-mix(in oklch, var(--color-secondary) 55%, transparent);
     border-left-color: var(--color-secondary);
   }
 

@@ -599,8 +599,15 @@ func TestInsightWorkflowsJSONCarriesTheInstructionItSends(t *testing.T) {
 		if entry.SHA256 != workflow.SHA256 || entry.Version != workflow.Version {
 			t.Errorf("workflow %q: listing says %s/%s, registry says %s/%s", entry.ID, entry.Version, entry.SHA256, workflow.Version, workflow.SHA256)
 		}
-		if entry.Name == "" || entry.Question == "" || entry.Description == "" || entry.Origin == "" {
+		if entry.Name == "" || entry.Description == "" || entry.Origin == "" {
 			t.Errorf("workflow %q is listed without everything the panel renders: %+v", entry.ID, entry)
+		}
+		// A workflow that TAKES a question declares none of its own — the
+		// question is the caller's, and an invented one would promise to ask
+		// something it does not. Every other workflow must declare one: it is
+		// the only thing on the row that says what the model is asked to do.
+		if entry.Question == "" && !workflow.TakesQuestion() {
+			t.Errorf("workflow %q asks nothing of its own and takes no question, so it can never be asked anything: %+v", entry.ID, entry)
 		}
 	}
 }

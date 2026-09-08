@@ -2,12 +2,14 @@
   import { createEventDispatcher } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { FileText, X } from "@lucide/svelte";
+  import { Calendar, FileText, MessageSquare, X } from "@lucide/svelte";
   import { formatMeetingDateShort, type MeetingCatalogEntry } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
   import {
     formatInsightCreated,
     formatInsightStatus,
+    insightHeadline,
+    stripInsightFrontMatter,
     type InsightRecord,
   } from "../viewer/insights";
 
@@ -43,17 +45,40 @@
   }>();
 
   $: question = insight.question?.trim() ?? "";
+  $: headline = insightHeadline(insight);
   $: pending = insight.status === "queued" || insight.status === "running";
   $: failed = insight.status === "failed";
 
+  // The mock files an insight under one room. A real one can span them —
+  // spanning rooms is the whole premise of asking one question of several
+  // meetings — so this names the room only when every source agrees, and counts
+  // them otherwise. Read off the resolved sources rather than record.roomIds,
+  // so it names what this caller can actually see and never discloses a room
+  // whose meeting is hidden from them.
+  $: roomLabels = [...new Set(sources.map((source) => roomLabelOf(source)))];
+  $: room =
+    roomLabels.length === 1
+      ? roomLabels[0]
+      : roomLabels.length > 1
+        ? `${roomLabels.length} rooms`
+        : "";
+
   function renderDocumentHtml(markdown: string): string {
-    if (markdown.trim() === "") {
+    // The recorder writes its provenance as YAML front matter, and to markdown
+    // `---` is a horizontal rule: rendered as-is it became two rules with a
+    // run-on paragraph of quoted hashes and IDs between them, sitting above the
+    // answer somebody actually asked for. The facts in it are shown by this
+    // panel anyway — the header and the provenance list below both read them
+    // off the run record — so it is cut here rather than kept as text nobody
+    // can use.
+    const body = stripInsightFrontMatter(markdown);
+    if (body.trim() === "") {
       return "";
     }
     // Same two steps MeetingView renders a sealed summary with: the document is
     // model output, so it is parsed as markdown and then sanitised, never
     // trusted into the DOM as it arrived.
-    const rawHtml = marked.parse(markdown, { async: false }) as string;
+    const rawHtml = marked.parse(body, { async: false }) as string;
     return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
   }
 
@@ -61,11 +86,34 @@
 </script>
 
 <section class="ins-doc" aria-label="Insight">
+  <!-- The insight's own identity, and it stays put while the answer scrolls
+       under it. The eyebrow that used to be the whole header said only which
+       KIND of thing the sheet was holding, which the amber rule down its side
+       already says; the room, the date and the model that answered were at the
+       bottom of the page, under the answer, where they are provenance nobody
+       reaches. The three that identify this run are here. -->
   <header class="ins-head">
-    <h2>Insight</h2>
-    <button type="button" on:click={() => dispatch("close")} aria-label="Close the insight">
-      <X size={16} aria-hidden="true" />
-    </button>
+    <div class="ins-head-top">
+      <h2>{headline}</h2>
+      <button type="button" on:click={() => dispatch("close")} aria-label="Close the insight">
+        <X size={16} aria-hidden="true" />
+      </button>
+    </div>
+    <div class="ins-head-meta">
+      {#if room}
+        <span class="ins-head-fact">
+          <MessageSquare size={13} aria-hidden="true" />
+          {room}
+        </span>
+      {/if}
+      <span class="ins-head-fact">
+        <Calendar size={13} aria-hidden="true" />
+        {formatInsightCreated(insight)}
+      </span>
+      {#if insight.model}
+        <code class="ins-head-model">{insight.model}</code>
+      {/if}
+    </div>
   </header>
 
   <div class="ins-body">
@@ -158,6 +206,10 @@
          invented the most important one; a re-run is append-only, so what ran,
          who asked for it and how it ended have to be on the document itself or
          two attempts are indistinguishable. -->
+    <!-- What is left after the header took the date and the model: who asked,
+         and which prompt answered. A re-run is append-only, so what ran, who
+         asked for it and how it ended have to be ON the document or two
+         attempts are indistinguishable. -->
     <section class="ins-prov">
       <h3 class="ins-eyebrow">This run</h3>
       <dl>
@@ -170,19 +222,13 @@
           <dd>{formatInsightStatus(insight.status)}</dd>
         </div>
         <div>
-          <dt>Created</dt>
-          <dd>{formatInsightCreated(insight)}</dd>
-        </div>
-        <div>
-          <dt>Workflow</dt>
+          <dt>Template</dt>
           <dd><code>{insight.workflowId}</code> {insight.workflowVersion}</dd>
         </div>
-        {#if insight.model}
+        {#if insight.provider}
           <div>
-            <dt>Model</dt>
-            <dd>
-              <code>{insight.model}</code>{insight.provider ? ` · ${insight.provider}` : ""}
-            </dd>
+            <dt>Provider</dt>
+            <dd>{insight.provider}</dd>
           </div>
         {/if}
         {#if insight.attemptNumber > 1}
@@ -209,20 +255,42 @@
   }
 
   .ins-head {
-    display: flex;
     flex: none;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--color-base-300);
   }
+  .ins-head-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-width: 0;
+  }
   .ins-head h2 {
-    font-size: 0.75rem;
+    min-width: 0;
+    font-size: 1.0625rem;
     font-weight: 650;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: color-mix(in oklch, var(--color-secondary) 80%, var(--color-base-content));
+    line-height: 1.3;
+    color: var(--color-base-content);
+  }
+  .ins-head-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 1rem;
+    margin-top: 0.375rem;
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .ins-head-fact {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .ins-head-model {
+    font-family: monospace;
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
   }
   .ins-head button {
     display: inline-flex;

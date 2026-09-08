@@ -33,10 +33,16 @@
 // questions" and "What changed over time" — have no prompt authored on any
 // branch, and a name in this table with no bytes behind it would be a template
 // an administrator could select and never run. The panel renders this registry,
-// so a workflow whose bytes do not resolve is simply absent. The prototype's
-// fifth, "Ask your own question", is not a stored prompt at all: it is the
-// caller's own text at run time, which is why insight.QuestionPlaceholder
-// exists and why no entry here carries it yet.
+// so a workflow whose bytes do not resolve is simply absent.
+//
+// The prototype's fifth, "Ask your own question", IS here (AskID). It is still
+// a stored prompt like any other — the thing that makes it freeform is that its
+// system prompt carries insight.QuestionPlaceholder, so Run splices the
+// caller's own text into it and Workflow.TakesQuestion reports true. That is
+// the whole of the mechanism: a workflow "takes a question" because its bytes
+// have somewhere to put one, not because a flag on this table says so. It is
+// what lets the app offer a question box for exactly the templates that can use
+// one, and refuse a question given to one that cannot.
 //
 // A prompt is never edited in place. A change is a new version, a new pair of
 // files and a new entry, because two documents claiming the same version and
@@ -93,6 +99,8 @@ const (
 	SummariseVersion = "v0"
 	TodosID          = "todos"
 	TodosVersion     = "v0"
+	AskID            = "ask"
+	AskVersion       = "v0"
 )
 
 // spec is one shipped workflow: its identity, the two files its prompt is made
@@ -143,6 +151,20 @@ var shipped = []spec{
 		Name:         "Commitments and owners",
 		Question:     "List the commitments and who owns them.",
 		Description:  "One section per person who spoke, with what they took on and when they said so, then what was assigned to somebody who never answered, then what nobody claimed. Every participant gets a section even when they took nothing on.",
+	},
+	{
+		ID:           AskID,
+		Version:      AskVersion,
+		SystemFile:   "ask.v0.md",
+		TemplateFile: "ask-template.v0.md",
+		SkillDir:     "cassini-meeting-ask",
+		Name:         "Ask your own question",
+		// Empty on purpose, and the one entry for which that is right: this
+		// workflow has no question of its own, because the question is the
+		// caller's. The panel reads an empty Question as "write it yourself"
+		// and shows the box; every other entry shows the question it asks.
+		Question:    "",
+		Description: "Answers a question you type, from the meetings you picked: the answer in at most three sentences, the evidence for it with who said what, and — never omitted — what these meetings do not answer. Use it when no other template asks the thing you want to know.",
 	},
 }
 

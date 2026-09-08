@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -319,10 +320,10 @@ func (s *insightService) claim(id string, claimed bool) (InsightRun, error) {
 // something a caller must decide how to render.
 func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOutcome {
 	// The endpoint this attempt will reach, read now rather than after the fact.
-	// The child receives it through rt.childEnv() and the run row records which
-	// of the configured providers answered — never its URL, which is ADMIN-only
-	// on the settings surface and must not become USER-readable here.
-	provider := s.resolvedInsightProvider()
+	// The run row records which of the configured providers answered — never its
+	// URL, which is ADMIN-only on the settings surface and must not become
+	// USER-readable here.
+	provider := s.endpointFor(run)
 
 	staging, err := os.MkdirTemp("", "cassini-insight-*")
 	if err != nil {
@@ -339,7 +340,7 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 		return outcome
 	}
 
-	documentPath, recordPath, outcome, ok := s.runWorkflow(ctx, staging, run, bundlePath)
+	documentPath, recordPath, outcome, ok := s.runWorkflow(ctx, staging, run, bundlePath, provider)
 	if !ok {
 		outcome.Provider = provider.id
 		return outcome
@@ -441,7 +442,7 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 // written: `cassini insight run` prints the document to stdout and its notes to
 // stderr, and a bound that fails the write is the difference between a loud
 // refusal and a wedged child filling the ExApp volume.
-func (s *insightService) runWorkflow(ctx context.Context, staging string, run InsightRun, bundlePath string) (documentPath, recordPath string, outcome InsightOutcome, ok bool) {
+func (s *insightService) runWorkflow(ctx context.Context, staging string, run InsightRun, bundlePath string, endpoint insightProviderRef) (documentPath, recordPath string, outcome InsightOutcome, ok bool) {
 	documentPath = filepath.Join(staging, "insight.md")
 	recordPath = filepath.Join(staging, "record.json")
 	args := []string{"insight", "run", "--context", bundlePath, "--workflow", run.WorkflowID, "--record", recordPath}
@@ -449,12 +450,11 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 		args = append(args, "--question", question)
 	}
 
-	// No --model. The endpoint and its model reach the child through
-	// rt.childEnv(), which reads the CURRENT LLM policy at spawn time, and that
-	// is what makes a retry re-resolve rather than replay: if the stored provider
-	// were replayed, "no provider configured" and "401" would be exactly the two
-	// failures the retry button could never fix.
-	code, err := s.runCassini(ctx, args, s.insightChildEnv(), documentPath, "insight", maxInsightDocumentBytes, run.ID)
+	// No --model on the command line. The endpoint and its model reach the child
+	// through its environment, built from the endpoint THIS run resolved to —
+	// the one the asker picked, or the deployment's own where they picked none
+	// or picked one that has since been removed. See endpointFor.
+	code, err := s.runCassini(ctx, args, s.insightChildEnvFor(endpoint), documentPath, "insight", maxInsightDocumentBytes, run.ID)
 	if err != nil {
 		return "", "", InsightOutcome{Status: insightStatusFailed, Error: explainInsightExit(ctx, code)}, false
 	}
@@ -763,12 +763,80 @@ type insightProviderRef struct {
 	model string
 }
 
-func (s *insightService) resolvedInsightProvider() insightProviderRef {
-	step := s.rt.currentLLMSettings().view().Effective.Insight
+// endpointFor is the endpoint an attempt at this run will reach.
+//
+// The run's OWN request wins: somebody picked an endpoint in Prepare, and a
+// retry of their insight is a retry of the thing they asked for — not of
+// whatever the deployment happens to be pointed at by the time they press it.
+// That is the reversal of D-720 §4, and it is deliberate: §4 was written when
+// nobody could choose, so re-resolving could only ever be an improvement. Now
+// it would silently answer a different question.
+//
+// It falls back to the configured endpoint in exactly two cases, and both are
+// "the request named nothing this deployment still has":
+//
+//   - no provider was named at all — every run made before the picker existed,
+//     and any caller who sent none;
+//   - the named provider has since been removed, so there is nothing to honour.
+//
+// The fallback is what keeps "configure an endpoint, then retry" a fix.
+func (s *insightService) endpointFor(run InsightRun) insightProviderRef {
+	settings := s.rt.currentLLMSettings()
+	if id := strings.TrimSpace(run.RequestedProvider); id != "" {
+		for _, p := range settings.Providers {
+			if p.ID == id {
+				return insightProviderRef{id: p.ID, model: strings.TrimSpace(run.RequestedModel)}
+			}
+		}
+		s.logf("insights: run=%s asked for provider=%s, which is no longer configured; falling back to this deployment's endpoint", run.ID, id)
+	}
+	step := settings.view().Effective.Insight
 	if step == nil {
 		return insightProviderRef{}
 	}
 	return insightProviderRef{id: step.Provider, model: step.Model}
+}
+
+// insightChildEnvFor is the child environment for one attempt: the operator's
+// own, with the INSIGHT_* trio re-emitted from the endpoint THIS run resolved
+// to rather than from the deployment policy alone.
+//
+// Layered over insightChildEnv rather than replacing it, so everything that
+// environment already decides — the STT policy, the operator's own secrets
+// being withheld — keeps deciding it, and only the endpoint moves.
+func (s *insightService) insightChildEnvFor(ref insightProviderRef) []string {
+	base := s.insightChildEnv()
+	if ref.id == "" {
+		return base
+	}
+	var chosen *LLMProvider
+	for _, p := range s.rt.currentLLMSettings().Providers {
+		if p.ID == ref.id {
+			chosen = &p
+			break
+		}
+	}
+	if chosen == nil {
+		return base
+	}
+	baseKey, keyKey, modelKey, timeoutKey, tokensKey := llmStepEnv(llmStepInsight)
+	out := withoutEnv(base, map[string]bool{
+		baseKey: true, keyKey: true, modelKey: true, timeoutKey: true, tokensKey: true,
+	})
+	out = append(out, baseKey+"="+chosen.BaseURL)
+	if chosen.APIKey != "" {
+		out = append(out, keyKey+"="+chosen.APIKey)
+	}
+	if ref.model != "" {
+		out = append(out, modelKey+"="+ref.model)
+	}
+	if chosen.TimeoutSec > 0 {
+		out = append(out, timeoutKey+"="+strconv.Itoa(chosen.TimeoutSec))
+	}
+	if chosen.MaxTokens > 0 {
+		out = append(out, tokensKey+"="+strconv.Itoa(chosen.MaxTokens))
+	}
+	return out
 }
 
 // readRunRecord returns the model named by the record the child wrote beside the

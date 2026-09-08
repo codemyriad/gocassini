@@ -13,8 +13,6 @@
     buildBrowseFeed,
     filterInsights,
     groupBrowseFeedByMonth,
-    isLastBrowseType,
-    toggleBrowseType,
     type BrowseTypeFilter,
     type InsightRecord,
   } from "../viewer/insights";
@@ -80,15 +78,17 @@
 
   // The filter is list-local state — no other surface reads it.
   let filter = "";
-  // Which kinds the list is showing. List-local for the same reason: unlike the
-  // room, nothing outside this component narrows by it.
-  let types: BrowseTypeFilter = ALL_BROWSE_TYPES;
+  // Which kinds the list is showing. The SHELL owns this now: the control moved
+  // into the rooms rail, beside the other narrowing of the same archive, and
+  // two components reading one filter cannot each keep their own copy of it.
+  export let types: BrowseTypeFilter = ALL_BROWSE_TYPES;
 
   const dispatch = createEventDispatcher<{
     select: MeetingCatalogEntry;
     pick: MeetingCatalogEntry;
     openInsight: InsightRecord;
     visible: MeetingCatalogEntry[];
+    counts: { meetings: number; insights: number };
     clearRoom: void;
     openRooms: void;
     toggleTheme: void;
@@ -103,11 +103,14 @@
   // computed whether or not their kind is being shown: the count is what
   // answers "is there anything behind that switch?".
   $: visibleInsights = insightsOffered ? filterInsights(insights, filter) : [];
-  // A build with no insights must not be left narrowed to insights: the control
-  // that would put the meetings back is not rendered there.
-  $: if (!insightsOffered) {
-    types = ALL_BROWSE_TYPES;
-  }
+  // The rail draws the Show boxes and has to say what is behind each of them,
+  // which is a count under the current room AND the current search — and the
+  // search is here. Reported before the type filter is applied, because the
+  // question a box answers is "what would I get back if I ticked this?".
+  $: dispatch("counts", {
+    meetings: visibleMeetings.length,
+    insights: visibleInsights.length,
+  });
   $: feedItems = buildBrowseFeed({
     meetings: visibleMeetings,
     insights: visibleInsights,
@@ -191,34 +194,9 @@
       {/if}
     </div>
 
-    <!-- The two kinds in the list, and which of them it is showing. Only where
-         insights exist at all: a static export has none and gets the list it
-         has always had. The prototype puts this in the rooms rail; it lives
-         here because the rail is one narrowing of the archive and this is
-         another one of the same list, beside the search that already narrows
-         it the same way. -->
-    {#if insightsOffered}
-      <div class="typefilter" role="group" aria-label="Show">
-        <button
-          type="button"
-          class="type-toggle"
-          aria-pressed={types.meetings}
-          disabled={isLastBrowseType(types, "meetings")}
-          on:click={() => (types = toggleBrowseType(types, "meetings"))}
-        >
-          Meetings
-        </button>
-        <button
-          type="button"
-          class="type-toggle"
-          aria-pressed={types.insights}
-          disabled={isLastBrowseType(types, "insights")}
-          on:click={() => (types = toggleBrowseType(types, "insights"))}
-        >
-          Insights
-        </button>
-      </div>
-    {/if}
+    <!-- The two kinds in the list, and which of them it is showing, are in the
+         rooms rail: both are narrowings of the same archive and belong in the
+         same column, which is the prototype's own arrangement. -->
 
     <!-- Fixed height: a chip appearing must not push the list down under the
          pointer. -->
@@ -544,39 +522,6 @@
     height: 3px;
     border-radius: 50%;
     background-color: currentColor;
-  }
-
-  .typefilter {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    margin-top: 0.5rem;
-  }
-  /* Pressed is the ON state, and the resting state is legible rather than
-     greyed: both kinds are shown by default, so "off" is the exception the eye
-     should catch. */
-  .type-toggle {
-    padding: 3px 10px;
-    cursor: pointer;
-    background: none;
-    border: 1px solid var(--color-base-300);
-    border-radius: 20px;
-    font-size: 0.71875rem;
-    font-weight: 550;
-    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
-  }
-  .type-toggle:hover:not(:disabled) {
-    border-color: color-mix(in oklch, var(--color-base-content) 35%, transparent);
-  }
-  .type-toggle[aria-pressed="true"] {
-    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
-    border-color: color-mix(in oklch, var(--color-base-content) 25%, transparent);
-    color: var(--color-base-content);
-  }
-  /* The last kind standing cannot be switched off; it stays legible because it
-     is still reporting what the list is showing. */
-  .type-toggle:disabled {
-    cursor: default;
   }
 
   /* An incomplete list says so where the list is, not in the footer with the

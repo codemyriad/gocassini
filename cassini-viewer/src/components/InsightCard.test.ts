@@ -45,3 +45,26 @@ describe("InsightCard", () => {
     expect(insightCardSource).not.toContain("var(--color-primary)");
   });
 });
+
+describe("InsightCard surface", () => {
+  it("is filled, not outlined", () => {
+    // On the list's own ground a base-100 fill is the same colour as everything
+    // around it, leaving the left rule to do all the work of saying "different
+    // kind of thing". Mixed INTO base-100 rather than into transparent so it
+    // stays opaque over the row separators and stable in both themes.
+    expect(insightCardSource).toContain(
+      "background-color: color-mix(in oklch, var(--color-secondary) 10%, var(--color-base-100));",
+    );
+    expect(insightCardSource).not.toContain("background-color: var(--color-base-100);");
+  });
+
+  it("keeps the open card distinguishable from a hovered one", () => {
+    // Three states on one surface, so the wash has to step rather than repeat.
+    expect(insightCardSource).toContain(
+      "background-color: color-mix(in oklch, var(--color-secondary) 18%, var(--color-base-100));",
+    );
+    expect(insightCardSource).toContain(
+      "background-color: color-mix(in oklch, var(--color-secondary) 26%, var(--color-base-100));",
+    );
+  });
+});

@@ -244,17 +244,21 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
         : `${totals.withoutSummary} of these have no summary. Their transcripts are complete; only the summary section is missing.`,
     );
   }
-  if (totals.summaryUnknown > 0) {
-    // Deliberately not folded into the sentence above. These meetings were
-    // published before the index recorded summaries, so "no summary" is a claim
-    // nothing here can support — and the bundle will carry one for each of them
-    // that turns out to have it.
-    gaps.push(
-      totals.summaryUnknown === 1
-        ? "One of these does not record whether it has a summary. The bundle carries one if the recording holds it."
-        : `${totals.summaryUnknown} of these do not record whether they have a summary. The bundle carries one wherever the recording holds it.`,
-    );
-  }
+  // summaryUnknown is deliberately NOT a sentence, though it is still counted.
+  //
+  // It is the hasSummary === undefined case: a meeting published before the
+  // catalog carried the field, which is every meeting in an archive that
+  // predates D-716. The honest version of the claim — "we do not know, and the
+  // bundle will carry a summary if the recording turns out to hold one" — tells
+  // the reader nothing they can act on and nothing that changes what they get:
+  // either way Prepare reads the recording and includes whatever is in it. On
+  // an older archive it fired on every row, which made the whole gap list read
+  // as noise and buried withoutPortableAudio, the one gap here that actually
+  // stops the bundle being assembled.
+  //
+  // The count stays on SelectionTotals because it is a real distinction the
+  // model must keep — "no summary" and "no record of one" are different claims
+  // about different meetings — and something else may yet want to say it.
   if (totals.withoutPortableAudio > 0) {
     // Certain, and about the whole bundle, because that is what happens: every
     // meeting in a bundle is read from its single-file recording, and one that

@@ -415,6 +415,21 @@ export interface FeatureNotice {
   // the whole of the remedy available to them.
   panel: OperatorPanel | "";
   actionLabel: string;
+  // actionTitle is the REMEDY as a heading — "Add a provider to create
+  // insights" — and its presence is what tells NeedsSetupCard to draw the
+  // compact locked card rather than the explanatory block.
+  //
+  // Set only for an administrator looking at an unconfigured capability, which
+  // is the one case where the paragraph is wasted: they know what an endpoint
+  // is, the button is right there, and a warning triangle over three sentences
+  // is in the way. Everyone else, and every run FAILURE, keeps the prose —
+  // "the endpoint rejected the request" is not a state anybody can be expected
+  // to infer from a title.
+  actionTitle?: string;
+  // The compact card's button. Shorter than actionLabel because the title
+  // beside it has already said what is missing, and it is the same words as the
+  // button on the panel it opens.
+  actionShortLabel?: string;
 }
 
 // The one panel behind both facts: providers and the summarise step are edited
@@ -424,6 +439,9 @@ const AI_PANEL: OperatorPanel = "endpoints";
 // Only an administrator can act, and only they are told there is somewhere to
 // go — see FeatureNotice.panel.
 const ADMIN_ACTION = "Open AI providers";
+// The button on the compact card. Same words as the button on the panel it
+// opens, so the second press is the one the first one promised.
+const ADMIN_ACTION_SHORT = "Add a provider";
 const NOT_YOURS_TO_FIX = " Only a Nextcloud administrator can change that, and there is nothing " +
   "wrong with your account.";
 
@@ -455,6 +473,12 @@ export function buildFeatureNotice(options: {
     summary: isAdmin ? summary : summary + NOT_YOURS_TO_FIX,
     panel: isAdmin ? AI_PANEL : "",
     actionLabel: isAdmin ? ADMIN_ACTION : "",
+    actionTitle: isAdmin
+      ? feature === "insights"
+        ? "Add a provider to create insights"
+        : "Add a provider to write summaries"
+      : undefined,
+    actionShortLabel: isAdmin ? ADMIN_ACTION_SHORT : undefined,
   };
 }
 

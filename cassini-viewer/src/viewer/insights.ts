@@ -186,6 +186,47 @@ export function formatInsightCreated(record: InsightRecord): string {
   return CREATED_DATE_FORMAT.format(new Date(ms));
 }
 
+// stripInsightFrontMatter removes the YAML provenance block the recorder writes
+// at the top of every insight document, leaving the model's answer.
+//
+// The block is deliberate and it stays in the file: `cassini insight run`
+// writes it so a document that gets moved, shared and found again a month later
+// can still say which meetings, which prompt version and which model produced
+// it (internal/insight/record.go). Nothing parses it back — the machine-readable
+// copy is the JSON beside it — and it is not written for a reader.
+//
+// It reached the screen because a document is rendered as markdown, and to
+// markdown `---` is a horizontal rule: the fences became two lines and the
+// twenty YAML keys between them became one run-on paragraph of quoted hashes
+// and IDs above the answer somebody asked for. The panel shows the same facts
+// from the run record instead, in its header and its provenance list, so
+// nothing is lost by cutting it here.
+//
+// Cut conservatively. A document whose opening fence is never closed is not
+// front matter — it is a document that happens to start with a rule — and
+// swallowing it to the end would delete the answer rather than tidy it.
+export function stripInsightFrontMatter(markdown: string): string {
+  // A leading BOM survives a round trip through Files and would stop the fence
+  // matching on the first character.
+  const text = markdown.replace(/^﻿/, "");
+  if (!/^---[ \t]*\r?\n/.test(text)) {
+    return markdown;
+  }
+  const lines = text.split("\n");
+  for (let i = 1; i < lines.length; i += 1) {
+    if (/^---[ \t]*\r?$/.test(lines[i]) || lines[i].trimEnd() === "---") {
+      // Past the closing fence, and past the blank lines under it, so the
+      // answer starts at the top rather than after a gap.
+      let start = i + 1;
+      while (start < lines.length && lines[start].trim() === "") {
+        start += 1;
+      }
+      return lines.slice(start).join("\n");
+    }
+  }
+  return markdown;
+}
+
 // resolveInsightSources answers, for every insight at once, which of its source
 // meetings this caller can actually see — the entries present in the catalog
 // they were served, in the order the run recorded them.

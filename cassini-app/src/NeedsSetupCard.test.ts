@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import needsSetupCardSource from "./NeedsSetupCard.svelte?raw";
+import { buildFeatureNotice } from "./operator/setupHealth";
+import { buildRunFailureNotice } from "./insights/client";
 
 // Source-level assertions, the convention this repo already follows for
 // .svelte files (see InsightTemplatesPanel.test.ts): the suite runs in node
@@ -65,5 +67,54 @@ describe("NeedsSetupCard", () => {
     // It is a real link with a real address. Swallowing cmd/ctrl-click into an
     // in-page surface switch would take away the one thing an anchor is for.
     expect(needsSetupCardSource).toContain("event.metaKey || event.ctrlKey");
+  });
+});
+
+describe("the locked card", () => {
+  it("is compact for an administrator and prose for everyone else", () => {
+    // An admin looking at an unconfigured capability knows what an endpoint is
+    // and the button is right there; three sentences under a warning triangle
+    // are in the way of it. A non-admin has no button and needs the sentences.
+    const forAdmin = buildFeatureNotice({
+      features: { summaries: false, insights: false },
+      feature: "insights",
+      isAdmin: true,
+    });
+    expect(forAdmin?.actionTitle).toBe("Add a provider to create insights");
+    expect(forAdmin?.actionShortLabel).toBe("Add a provider");
+
+    const forEveryoneElse = buildFeatureNotice({
+      features: { summaries: false, insights: false },
+      feature: "insights",
+      isAdmin: false,
+    });
+    expect(forEveryoneElse?.actionTitle).toBeUndefined();
+    expect(forEveryoneElse?.summary).toContain("nothing wrong with your account");
+  });
+
+  it("names the remedy for the capability that is missing", () => {
+    const summaries = buildFeatureNotice({
+      features: { summaries: false, insights: true },
+      feature: "summaries",
+      isAdmin: true,
+    });
+    expect(summaries?.actionTitle).toBe("Add a provider to write summaries");
+  });
+
+  it("keeps the prose for a run that failed", () => {
+    // "The endpoint rejected the request" is not a state anybody can infer from
+    // a title, so a failure never collapses into the compact card even for an
+    // administrator who could act on it.
+    const failure = buildRunFailureNotice({
+      run: {
+        id: "r1",
+        status: "failed",
+        // classifyRunError matches on the reason key the operator reports.
+        error: "provider-refused: 401 from the endpoint",
+      } as Parameters<typeof buildRunFailureNotice>[0]["run"],
+      isAdmin: true,
+    });
+    expect(failure?.actionTitle).toBeUndefined();
+    expect(failure?.panel).toBe("endpoints");
   });
 });

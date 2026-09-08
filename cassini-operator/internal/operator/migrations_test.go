@@ -12,8 +12,8 @@ func TestMigrationsRunContiguouslyThroughInsightRuns(t *testing.T) {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
 	last := migrations[len(migrations)-1]
-	if last.Version != 8 || last.Name != "insight_runs" {
-		t.Fatalf("last migration = %04d_%s, want 0008_insight_runs", last.Version, last.Name)
+	if last.Version != 9 || last.Name != "insight_requested_endpoint" {
+		t.Fatalf("last migration = %04d_%s, want 0009_insight_requested_endpoint", last.Version, last.Name)
 	}
 }
 

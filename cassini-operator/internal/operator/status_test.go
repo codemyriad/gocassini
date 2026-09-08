@@ -1017,14 +1017,14 @@ func TestSetupReportsWhichAICapabilitiesAreConfigured(t *testing.T) {
 			name: "no endpoint at all",
 		},
 		{
-			// A provider row nothing points at is not an endpoint anything can
-			// reach: ChildEnv emits a step's variables only when that step
-			// resolves, and strips the shared ones, so the recorder is handed
-			// nothing and an insight run exits "no model endpoint is
-			// configured". Saying "insights" here would offer a question whose
-			// every answer is that error.
-			name: "an endpoint, but no step points at it",
-			llm:  LLMSettings{Providers: []LLMProvider{provider}},
+			// Registering a provider IS the setup an insight needs: it is the
+			// one thing an administrator says that means "this deployment may
+			// talk to that endpoint", and insightEndpoint hands it to the
+			// child, so the question somebody types has somewhere to go.
+			// Summarising is the separate opt-in and stays off.
+			name:         "an endpoint, but no step points at it",
+			llm:          LLMSettings{Providers: []LLMProvider{provider}},
+			wantInsights: true,
 		},
 		{
 			// Insight creation needs less than summarising does — an endpoint
@@ -1045,10 +1045,17 @@ func TestSetupReportsWhichAICapabilitiesAreConfigured(t *testing.T) {
 		{
 			// A step enabled against an endpoint that has since been deleted
 			// will not run. Reporting it as on would have the app promise a
-			// summary that never arrives — and there is nothing left for an
-			// insight to inherit either.
-			name: "summarising on, its endpoint gone",
-			llm:  LLMSettings{Providers: []LLMProvider{provider}, Summary: LLMStep{Enabled: true, Provider: "p-deleted"}},
+			// summary that never arrives. An insight is unaffected: a provider
+			// row still exists, and that is all one needs.
+			name:         "summarising on, its endpoint gone",
+			llm:          LLMSettings{Providers: []LLMProvider{provider}, Summary: LLMStep{Enabled: true, Provider: "p-deleted"}},
+			wantInsights: true,
+		},
+		{
+			// No provider at all is the one state in which an insight has
+			// nothing to ask, and the only one the locked card belongs in.
+			name: "no endpoint at all",
+			llm:  LLMSettings{},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

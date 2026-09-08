@@ -738,6 +738,8 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/setup", rt.setupHandler)
+	api.HandleFunc("/ai/providers", rt.aiProvidersHandler)
+	api.HandleFunc("/ai/providers/", rt.aiProviderModelsHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
 	// A sibling of the /settings/ prefix rather than another branch inside the
 	// LLM settings handler: the workflow registry is not LLM policy, it is what

@@ -24,6 +24,7 @@ import (
 var pinnedSHA256 = map[string]string{
 	SummariseID: "eba6bd6674d35522dddbd774d3fc6a1fbcdab025aa30a5993d49216d0c13f59f",
 	TodosID:     "08b57fcab6894ab355d329c3a852bddda45e22ba11e93c1f3e0165c6d7c3c12f",
+	AskID:       "a0ff18109e752c2539dc99f3577349c7f81f251521d87c92beaf05be6366d1e3",
 }
 
 func TestShippedPromptBytesAreThePinnedOnes(t *testing.T) {
@@ -118,8 +119,21 @@ func TestCatalogShowsExactlyWhatTheRegistryWouldSend(t *testing.T) {
 		// The name is what a person picks by and says nothing about what the
 		// model is asked to do; the question is what the row discloses instead.
 		// A row missing either is a row that cannot be chosen honestly.
-		if strings.TrimSpace(entry.Name) == "" || strings.TrimSpace(entry.Question) == "" || strings.TrimSpace(entry.Description) == "" {
-			t.Errorf("workflow %q: name=%q question=%q description=%q — the panel needs all three", entry.ID, entry.Name, entry.Question, entry.Description)
+		//
+		// The one exception is a workflow that TAKES a question: its question is
+		// the caller's, so there is none to disclose, and an invented one would
+		// be a row promising to ask something it does not. The panel reads the
+		// empty question as "write it yourself" and shows the box — which is
+		// only honest if the bytes really do have somewhere to put it, so that
+		// is asserted here rather than assumed.
+		if strings.TrimSpace(entry.Name) == "" || strings.TrimSpace(entry.Description) == "" {
+			t.Errorf("workflow %q: name=%q description=%q — the panel needs both", entry.ID, entry.Name, entry.Description)
+		}
+		if strings.TrimSpace(entry.Question) == "" && !workflow.TakesQuestion() {
+			t.Errorf("workflow %q asks no question of its own and has no %s to put one in, so nothing could ever be asked of it", entry.ID, insight.QuestionPlaceholder)
+		}
+		if strings.TrimSpace(entry.Question) != "" && workflow.TakesQuestion() {
+			t.Errorf("workflow %q both declares a question (%q) and takes one, so the panel cannot tell which it is", entry.ID, entry.Question)
 		}
 	}
 }
