@@ -3,6 +3,8 @@ package operator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -543,6 +545,8 @@ func (c ExAppConfig) davPutBytes(ctx context.Context, client *http.Client, userI
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Content-Type", contentType)
+	sum := sha256.Sum256(body)
+	req.Header.Set("OC-Checksum", "SHA256:"+hex.EncodeToString(sum[:]))
 	req.ContentLength = int64(len(body))
 	resp, err := client.Do(req)
 	if err != nil {

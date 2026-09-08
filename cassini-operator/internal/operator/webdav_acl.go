@@ -580,9 +580,10 @@ func audienceApplied(rules []aclRule) bool {
 // it is there at all, how many bytes Nextcloud thinks it holds, and the ACL rows
 // bound to it.
 type ncLeafState struct {
-	Exists bool
-	Size   int64
-	Rules  []aclRule
+	Exists   bool
+	Size     int64
+	Checksum string
+	Rules    []aclRule
 }
 
 // davPropfindLeafState reads one leaf's length and ACL rules in a single Depth-0
@@ -593,8 +594,8 @@ type ncLeafState struct {
 // of a first publish, and the caller distinguishes it via Exists.
 func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Client, userID, relPath string) (ncLeafState, error) {
 	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
-		`<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">` +
-		`<d:prop><d:getcontentlength/><nc:acl-list/></d:prop></d:propfind>`)
+		`<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">` +
+		`<d:prop><d:getcontentlength/><oc:checksums/><nc:acl-list/></d:prop></d:propfind>`)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relPath), bytes.NewReader(reqBody))
 	if err != nil {
 		return ncLeafState{}, err
@@ -621,8 +622,9 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 	var ms struct {
 		Responses []struct {
 			Propstat []struct {
-				Length string `xml:"prop>getcontentlength"`
-				ACLs   []struct {
+				Length    string   `xml:"prop>getcontentlength"`
+				Checksums []string `xml:"prop>checksums>checksum"`
+				ACLs      []struct {
 					Type        string `xml:"acl-mapping-type"`
 					ID          string `xml:"acl-mapping-id"`
 					Mask        int    `xml:"acl-mask"`
@@ -645,6 +647,11 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 		if trimmed := strings.TrimSpace(ps.Length); trimmed != "" {
 			if n, convErr := strconv.ParseInt(trimmed, 10, 64); convErr == nil {
 				state.Size = n
+			}
+		}
+		for _, checksum := range ps.Checksums {
+			if checksum = strings.TrimSpace(checksum); strings.HasPrefix(strings.ToLower(checksum), "sha256:") {
+				state.Checksum = checksum[len("sha256:"):]
 			}
 		}
 		for _, a := range ps.ACLs {

@@ -2,6 +2,8 @@ package operator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -62,12 +64,15 @@ type transitionMock struct {
 	// failCopyOf makes the COPY of exactly this source path answer 507, which is
 	// how a transition dies half way with the source untouched.
 	failCopyOf string
+	// putChecksums records the content identity submitted with each final PUT.
+	putChecksums map[string]string
 }
 
 func newTransitionMock() *transitionMock {
 	return &transitionMock{
 		files:          map[string]string{},
 		dirs:           map[string]bool{},
+		putChecksums:   map[string]string{},
 		serviceAccount: true,
 		everyoneGroup:  true,
 	}
@@ -270,7 +275,12 @@ func (m *transitionMock) server(t *testing.T) *httptest.Server {
 				return
 			}
 			var b strings.Builder
-			b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>` + p + `/</d:href></d:response>`)
+			b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>` + p + `/</d:href>`)
+			if body, ok := m.files[rel]; ok {
+				sum := sha256.Sum256([]byte(body))
+				fmt.Fprintf(&b, `<d:propstat><d:prop><d:getcontentlength>%d</d:getcontentlength><oc:checksums><oc:checksum>SHA256:%s</oc:checksum></oc:checksums></d:prop></d:propstat>`, len(body), hex.EncodeToString(sum[:]))
+			}
+			b.WriteString(`</d:response>`)
 			for _, child := range m.childrenOf(rel) {
 				fmt.Fprintf(&b, `<d:response><d:href>%s/%s</d:href></d:response>`, strings.TrimRight(p, "/"), child)
 			}
@@ -286,7 +296,9 @@ func (m *transitionMock) server(t *testing.T) *httptest.Server {
 			io.WriteString(w, body)
 		case r.Method == http.MethodPut:
 			body, _ := io.ReadAll(r.Body)
-			m.files[relOf(p)] = string(body)
+			rel := relOf(p)
+			m.files[rel] = string(body)
+			m.putChecksums[rel] = r.Header.Get("OC-Checksum")
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodDelete:
 			rel := relOf(p)
@@ -583,6 +595,40 @@ func TestSwitchResumesAPartialCopy(t *testing.T) {
 	}
 	if !mock.has(ncACLRecordingsRoot + "/meetings/m2.opus") {
 		t.Fatal("the recording that had not arrived was not copied on the re-run")
+	}
+}
+
+// A failed migration leaves the source authoritative. If a later publish
+// replaces a recording under the same name, the retry must not let the stale
+// partial copy win merely because that name is already present.
+func TestSwitchResumeReplacesAStaleSameNameRecording(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-v2")
+	// This is what an interrupted first attempt copied before the source was
+	// re-published. It has the same name, but different authoritative bytes.
+	mock.addFile(ncACLRecordingsRoot+"/meetings/m1.opus", "audio-v1")
+
+	cfg := testExAppConfig(mock.server(t).URL)
+	result, err := cfg.switchStorageMode(context.Background(), true, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("switchStorageMode(true) error = %v", err)
+	}
+	if !result.SourceCleared || result.MeetingsAlreadyThere != 1 {
+		t.Fatalf("transition = %+v, want reconciled collision and cleared source", result)
+	}
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	if got := mock.files[ncACLRecordingsRoot+"/meetings/m1.opus"]; got != "audio-v2" {
+		t.Fatalf("destination content = %q, want the newer authoritative source", got)
+	}
+	if got := mock.putChecksums[ncACLRecordingsRoot+"/meetings/m1.opus"]; !strings.HasPrefix(got, "SHA256:") {
+		t.Fatalf("reconciled recording checksum = %q, want SHA256 header", got)
 	}
 }
 
