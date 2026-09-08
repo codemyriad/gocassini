@@ -34,12 +34,12 @@ describe("StoragePanel", () => {
 
   it("never switches modes as a side effect of setting one up", () => {
     // Building a mode and moving into it are separate decisions. runSetup
-    // re-checks; it must not call putStorage.
+    // delegates to runModeSetup, which re-checks; it must not call putStorage.
     const runSetup = storagePanelSource.slice(
       storagePanelSource.indexOf("async function runSetup("),
       storagePanelSource.indexOf("async function confirmSwitch("),
     );
-    expect(runSetup).toContain("recheckStorage()");
+    expect(runSetup).toContain("runModeSetup(");
     expect(runSetup).not.toContain("putStorage(");
   });
 
@@ -59,42 +59,23 @@ describe("StoragePanel", () => {
     expect(storagePanelSource).toContain("Switching the storage mode failed.");
     expect(storagePanelSource).not.toContain("The storage mode was not changed.");
     // The catch block re-reads before it finishes.
+    const from = storagePanelSource.indexOf("async function confirmSwitch(");
     const catchBlock = storagePanelSource.slice(
-      storagePanelSource.indexOf("switchError = asMessage(error);"),
-      storagePanelSource.indexOf("} finally {", storagePanelSource.indexOf("switchError = asMessage(error);")),
+      storagePanelSource.indexOf("switchError = asMessage(error);", from),
+      storagePanelSource.indexOf("} finally {", from),
     );
     expect(catchBlock).toContain("operatorClient.getStorage()");
   });
 
-  // The plan is emitted in dependency order and everything after the apps lives
-  // INSIDE them: creating the Team folder POSTs to /apps/groupfolders/…, which
-  // 404s while the app is absent. Running the browser steps first aborted the
-  // whole run at the folder on exactly the instance this feature is for — one
-  // with neither app installed.
-  it("installs the Nextcloud apps before the steps that live inside them", () => {
-    const runSetup = storagePanelSource.slice(
-      storagePanelSource.indexOf("async function runSetup("),
-      storagePanelSource.indexOf("function modeOptionFor("),
-    );
-    const installAt = runSetup.indexOf("installStorageApps()");
-    const browserAt = runSetup.indexOf("runSetupPlan(");
-    expect(installAt).toBeGreaterThan(-1);
-    expect(browserAt).toBeGreaterThan(-1);
-    expect(installAt).toBeLessThan(browserAt);
-  });
-
-  // The operator cannot SEE a Team folder until groupfolders is enabled, so a
-  // plan built before the install says "create the folder" whether or not one
-  // exists. Acting on the stale plan would make a second Cassini folder.
-  it("recomputes the plan after installing the apps", () => {
-    const runSetup = storagePanelSource.slice(
-      storagePanelSource.indexOf("async function runSetup("),
-      storagePanelSource.indexOf("function modeOptionFor("),
-    );
-    expect(runSetup).toContain("modeOptionFor(status, plan.mode)");
-    expect(runSetup).toContain("plan = refreshed");
-    // …and it stops rather than running folder steps that would 404.
-    expect(runSetup).toContain("refreshed.setup.some((step) => !step.browser)");
+  // The apps-first ordering and the plan recompute moved into
+  // operator/runModeSetup.ts, because the setup wizard performs the same
+  // sequence and doing it twice is how one of them drifts. They are asserted
+  // there as BEHAVIOUR rather than as source text, which is strictly better —
+  // see runModeSetup.test.ts.
+  it("performs the setup through the shared sequence rather than its own", () => {
+    expect(storagePanelSource).toContain('from "./operator/runModeSetup"');
+    expect(storagePanelSource).not.toContain("installStorageApps()");
+    expect(storagePanelSource).not.toContain("runSetupPlan(");
   });
 
   it("renders the operator's own words rather than copy of its own", () => {
@@ -168,15 +149,27 @@ describe("StoragePanel transition preview", () => {
     expect(storagePanelSource).toContain("if (pending?.mode === asked)");
   });
 
-  it("renders the counts and the source and destination roots", () => {
-    expect(storagePanelSource).toContain("preview.meetings");
+  // The counts are the operator's own plan, rendered. Arithmetic in the dialog
+  // would be a second implementation of the migration rules, which is exactly
+  // how a confirmation comes to promise something the operation does not do.
+  it("renders the operator's plan rather than counting for itself", () => {
+    expect(storagePanelSource).toContain("migrationFacts");
+    expect(storagePanelSource).toContain("{#each facts as fact");
     expect(storagePanelSource).toContain("preview.source_root");
-    expect(storagePanelSource).toContain("preview.destination_root");
   });
 
-  it("says there is nothing to move rather than showing an empty diff", () => {
-    expect(storagePanelSource).toContain("preview.nothing_to_move");
-    expect(storagePanelSource).toContain("no published recordings to move");
+  // Only when the answer would differ. A question with one possible answer is
+  // not a question, and asking anyway is how a confirmation stops being read.
+  it("offers the carry-over controls only on a real choice", () => {
+    expect(storagePanelSource).toContain("{#if askCarry}");
+    expect(storagePanelSource).toContain("carryChoiceNeeded(preview)");
+    expect(storagePanelSource).toContain("<MigrationPolicy");
+  });
+
+  // The operator refuses a policy-free switch that finds a choice under its own
+  // lock, so sending a default unconditionally would defeat it.
+  it("sends a policy only when one was asked for", () => {
+    expect(storagePanelSource).toContain("policyToSend(preview, policy)");
   });
 
   it("renders every warning the operator returned", () => {
@@ -388,9 +381,10 @@ describe("StoragePanel preview", () => {
     );
     expect(dialog).toContain("{#if !preview.source_readable}");
     expect(dialog).toContain("Cassini could not read");
-    // The unreadable branch comes FIRST, so nothing_to_move cannot win it.
+    // The unreadable branch comes FIRST, so the plan's counts — which are zero
+    // for a tree nobody could list — cannot be rendered as facts about it.
     expect(dialog.indexOf("!preview.source_readable")).toBeLessThan(
-      dialog.indexOf("preview.nothing_to_move"),
+      dialog.indexOf("{#each facts as fact"),
     );
   });
 });
