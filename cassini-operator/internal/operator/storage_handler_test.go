@@ -338,12 +338,13 @@ func TestStorageReportsAStrandedArchiveWithoutCallingItAFailure(t *testing.T) {
 	resetSubstrateRecord(t)
 	setStorageMode(t, false)
 	ncAccessSubstrate.setProbe(ncStorageProbe{
-		ServiceAccount:     true,
-		FolderProbed:       true,
-		DefaultRootProbed:  true,
-		FolderPresent:      true,
-		FolderMounted:      true,
-		ACLArchiveMeetings: 4,
+		ServiceAccount:    true,
+		FolderProbed:      true,
+		DefaultRootProbed: true,
+		FolderPresent:     true,
+		FolderMounted:     true,
+		ACLArchive:        ncArchiveFacts{Root: ncACLRecordingsRoot, Probed: true, Present: true, Entries: []davEntry{{Name: "a.opus"}, {Name: "b.opus"}, {Name: "c.opus"}, {Name: "d.opus"}}},
+		DefaultArchive:    ncArchiveFacts{Root: ncDefaultRecordingsRoot, Probed: true},
 	})
 	ncAccessSubstrate.succeed()
 

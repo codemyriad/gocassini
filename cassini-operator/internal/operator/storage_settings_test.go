@@ -292,3 +292,41 @@ func TestUnresolvedStorageModeReportsSettled(t *testing.T) {
 		t.Fatal("an unresolved mode reported an unfinished migration")
 	}
 }
+
+// "A mode is recorded" and "somebody chose this mode" are different facts, and
+// until D-708 the file could not tell them apart — every resolver flattened the
+// provenance to "configured" on the way out, so an administrator's click, a
+// deploy option and the old `default` fallback were indistinguishable
+// downstream. The setup wizard's whole premise is being able to tell them apart.
+func TestConfirmedDistinguishesAChoiceFromARecording(t *testing.T) {
+	cases := []struct {
+		source string
+		want   bool
+	}{
+		{storageModeSourceUser, true},
+		{storageModeSourceEnv, true},
+		// A build that decided on its own. Not a decision, whatever it wrote.
+		{storageModeSourceDefault, false},
+		{storageModeSourceDerived, false},
+		// A switch interrupted before the flip, on an install that had never
+		// chosen. It says where the recordings are, not what anybody wanted.
+		{storageModeSourceMigrating, false},
+		// Unknown provenance, from a build predating the field. Asking once is
+		// cheap; assuming consent is what this whole change removes.
+		{"", false},
+		{storageModeSourceConfigured, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.source, func(t *testing.T) {
+			enabled := true
+			settings := StorageSettings{AccessControlEnabled: &enabled, Source: tc.source}
+			if got := settings.Confirmed(); got != tc.want {
+				t.Fatalf("Confirmed() with source %q = %t, want %t", tc.source, got, tc.want)
+			}
+		})
+	}
+	// Nothing recorded is never confirmed, whatever the source field says.
+	if (StorageSettings{Source: storageModeSourceUser}).Confirmed() {
+		t.Fatal("a settings file with no recorded mode reported as confirmed")
+	}
+}

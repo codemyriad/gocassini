@@ -62,6 +62,11 @@ const (
 	// operator acting as the owner.
 	ncDefaultRecordingsRoot = ncDefaultRecordingsMount + "/Recordings"
 
+	// ncSiteCatalogName is the archive's index, beside `meetings` under every
+	// root. Named here because three things now ask whether one is present, and
+	// a literal in each of them is a literal that can drift.
+	ncSiteCatalogName = "catalog.json"
+
 	// ncLegacyDefaultRecordingsRoot is where the default model's archive lived
 	// before the split — the same path the Team folder wants. Installs from the
 	// first pass have their recordings here (or under a server-renamed

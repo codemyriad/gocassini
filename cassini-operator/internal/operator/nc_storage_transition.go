@@ -17,6 +17,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Moving an existing archive between the two storage models (D-616 followups).
@@ -146,14 +147,18 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 	// the verification compares a listing with itself, and step 7 deletes the
 	// archive it was supposed to be protecting. Reported as success.
 	//
-	// An unresolved record is the same trap by a different route: it reads as
-	// `default`, so a PUT asking for `default` gets source == destination too.
-	// Nothing may switch a mode nobody has decided.
+	// An unresolved record used to be the same trap by a different route: it read
+	// as `default`, so a PUT asking for `default` got source == destination too,
+	// and the first pass refused the whole operation there.
+	//
+	// Since D-708 an unresolved record is the ORDINARY starting state — nothing
+	// falls back any more, so a fresh install has no mode until somebody picks
+	// one, and this call is how they pick it. The trap is closed by naming the
+	// source explicitly instead: with nothing recorded, the source is the root
+	// the target does NOT name, which on an empty instance holds nothing and on
+	// an upgraded one holds the archive the administrator is deciding about.
 	current, resolved := ncStorage.mode()
-	if !resolved {
-		return storageTransitionResult{}, fmt.Errorf("Cassini has not resolved a storage mode yet, so there is nothing to switch from — it decides on the AppAPI enabled edge, so disable and re-enable the app")
-	}
-	if current == enableAccessControl {
+	if resolved && current == enableAccessControl {
 		// Already there. An unsettled instance still has a tidy-up to finish,
 		// which is the request an administrator makes by pressing the button for
 		// the mode already in force — see finishMigration.
@@ -175,33 +180,48 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 	if ready, step, detail := probe.sanityForTarget(enableAccessControl); !ready {
 		return storageTransitionResult{}, fmt.Errorf("%w (%s): %s", errTransitionNotReady, step, detail)
 	}
-	return c.migrateStorageLocked(ctx, client, current, enableAccessControl, logger)
+	return c.migrateStorageLocked(ctx, client, resolved, enableAccessControl, logger)
 }
 
 // migrateStorageLocked is the sequence itself, with provisionMu held and the
 // target's prerequisites already confirmed.
-func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Client, current, enableAccessControl bool, logger *log.Logger) (storageTransitionResult, error) {
-	source := recordingsRootFor(current)
+//
+// `recorded` says whether a mode was in force at all. It decides two things and
+// nothing else: what the dirty mark names, and how the result describes where
+// the archive was.
+func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Client, recorded, enableAccessControl bool, logger *log.Logger) (storageTransitionResult, error) {
+	// The source is the OTHER root, always.
+	//
+	// With a mode in force the caller has already established that it is not the
+	// target, so "the other root" and "the recorded mode's root" are the same
+	// thing. With nothing in force there is no recorded mode to ask, and the
+	// other root is still where an archive would be — a pre-split install's
+	// recordings, or the tree a previous attempt left behind. Deriving it this
+	// way rather than from the mode is what makes source == destination
+	// structurally impossible, which is the shape of the worst defect the first
+	// pass shipped: a switch that migrated a root onto itself and then emptied it.
+	source := recordingsRootFor(!enableAccessControl)
 	destination := recordingsRootFor(enableAccessControl)
 
-	result := storageTransitionResult{
-		Mode:            storageModeName(current),
-		SourceRoot:      source,
-		DestinationRoot: destination,
+	// The mode the dirty mark names, and its provenance. NOT the user's choice:
+	// they chose the target, and writing `user` here would confirm a decision in
+	// the direction they are switching away from.
+	originMode := !enableAccessControl
+	originSource := storageModeSourceMigrating
+	if recorded {
+		originSource = ncStorage.recordedSource()
 	}
 
-	// Belt and braces for the trap the caller's mode check exists to avoid. If
-	// these are ever the same root, step 7 would delete the archive step 5 had
-	// just "verified" against itself — so refuse here too rather than trusting
-	// one caller to have got it right.
-	if source == destination {
-		return result, fmt.Errorf("refusing to migrate %s onto itself: the storage mode is already %s", source, storageModeName(current))
+	result := storageTransitionResult{
+		Mode:            storageModeName(originMode),
+		SourceRoot:      source,
+		DestinationRoot: destination,
 	}
 
 	// 1. Dirty BEFORE the first write, not after it. A process killed between the
 	//    first MKCOL and this line would leave a directory nobody accounted for;
 	//    killed after it, the leftovers are already claimed by the recovery.
-	if err := c.recordStorageMode(current, storageModeSourceUser, false, logger); err != nil {
+	if err := c.recordStorageMode(originMode, originSource, false, logger); err != nil {
 		return result, fmt.Errorf("could not record that a storage migration is in progress, so nothing was moved: %w", err)
 	}
 
@@ -210,8 +230,8 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	result.MeetingsAlreadyThere = copied.AlreadyPresent
 	result.CatalogMoved = copied.CatalogMerged
 	if err != nil {
-		return result, fmt.Errorf("%w — nothing was removed and Cassini is still in %s mode, so the recordings are all still in %s; fix the cause and switch again",
-			err, storageModeName(current), source)
+		return result, fmt.Errorf("%w — nothing was removed and the recordings are all still in %s; fix the cause and switch again",
+			err, source)
 	}
 
 	// 6. The flip. The archive is verified at the destination, so this is the
@@ -219,7 +239,7 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	//    recordings". Memory first, then disk: a running operator that kept
 	//    believing the old mode would write the next recording into the tree
 	//    that is about to be emptied.
-	ncStorage.set(enableAccessControl, storageModeSourceConfigured, false)
+	ncStorage.set(enableAccessControl, storageModeSourceUser, false)
 	result.Mode = storageModeName(enableAccessControl)
 	if err := c.recordStorageMode(enableAccessControl, storageModeSourceUser, false, logger); err != nil {
 		// The flip is the settings write, so a write that failed is a flip that
@@ -232,9 +252,9 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 		// this message must not claim otherwise — an earlier draft said Cassini
 		// would keep using the new mode until it restarted, which the very next
 		// line makes false.
-		result.Mode = storageModeName(current)
+		result.Mode = storageModeName(originMode)
 		c.preflightNCStorageLocked(ctx, client, logger)
-		return result, fmt.Errorf("every recording was copied into %s, but the new mode could not be saved: %w — Cassini is still in %s mode, where the recordings also still are, so nothing is lost and the switch can simply be asked for again once the volume is writable", destination, err, storageModeName(current))
+		return result, fmt.Errorf("every recording was copied into %s, but the new mode could not be saved: %w — Cassini is still in %s mode, where the recordings also still are, so nothing is lost and the switch can simply be asked for again once the volume is writable", destination, err, storageModeName(originMode))
 	}
 
 	// 7. Empty the source. Its collections stay: an empty `meetings` directory is
@@ -253,7 +273,7 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 		result.LeftoverSource = ""
 		logger.Printf("nc storage: the switch finished but the settled flag could not be written: %v", err)
 	} else {
-		ncStorage.set(enableAccessControl, storageModeSourceConfigured, true)
+		ncStorage.set(enableAccessControl, storageModeSourceUser, true)
 	}
 
 	logger.Printf("nc storage: switched to %s — %d recording(s) copied from %s into %s, source emptied",
@@ -276,16 +296,19 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 func (c ExAppConfig) recordStorageMode(accessControlled bool, source string, clean bool, logger *log.Logger) error {
 	path := ncStorage.settingsPath()
 	if path == "" {
-		ncStorage.set(accessControlled, storageModeSourceConfigured, clean)
+		ncStorage.set(accessControlled, source, clean)
 		if logger != nil {
-			logger.Printf("nc storage: no settings path configured; mode=%s clean=%t governs this process only", storageModeName(accessControlled), clean)
+			logger.Printf("nc storage: no settings path configured; mode=%s source=%s clean=%t governs this process only", storageModeName(accessControlled), source, clean)
 		}
 		return nil
 	}
 	if err := SaveStorageSettings(path, accessControlled, source, clean); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	ncStorage.set(accessControlled, storageModeSourceConfigured, clean)
+	// The source it just WROTE, not a stand-in for "read from disk". Flattening
+	// it here is what made a fallback and an administrator's click read back the
+	// same, so /storage could not say whether anybody had chosen (D-708).
+	ncStorage.set(accessControlled, source, clean)
 	return nil
 }
 
@@ -641,7 +664,14 @@ func (c ExAppConfig) finishMigration(ctx context.Context, client *http.Client, l
 		return result, fmt.Errorf("could not clear %s: %w — the recordings in %s are unaffected", stale, err, result.DestinationRoot)
 	}
 	result.SourceCleared = true
-	if err := c.recordStorageMode(accessControlled, storageModeSourceUser, true, logger); err != nil {
+	// The provenance is PRESERVED, not promoted. Finishing a switch is a
+	// tidy-up, and an instance that reached this state without anybody choosing
+	// a mode — an interrupted first decision — must still be asked.
+	source := ncStorage.recordedSource()
+	if source == "" {
+		source = storageModeSourceMigrating
+	}
+	if err := c.recordStorageMode(accessControlled, source, true, logger); err != nil {
 		result.LeftoverSource = stale
 		return result, fmt.Errorf("%s was cleared but the settled flag could not be written: %w", stale, err)
 	}
@@ -922,6 +952,20 @@ func (c ExAppConfig) davCopy(ctx context.Context, client *http.Client, userID, r
 	return fmt.Errorf("COPY %s -> %s: HTTP %d", relPath, destination, resp.StatusCode)
 }
 
+// davEntry is one child of a collection: its basename and when it was last
+// written.
+//
+// The timestamp is what the `newest_wins` conflict policy compares (D-708). It
+// is best-effort — an entry whose `getlastmodified` is absent or unparseable
+// carries the zero time, and every caller treats that as "cannot say", never as
+// "very old". Deciding which of two recordings to keep on the strength of a date
+// nobody could read is exactly the shape of mistake this feature keeps
+// eliminating.
+type davEntry struct {
+	Name     string
+	Modified time.Time
+}
+
 // davPropfindChildren lists the immediate children of relDir as userID and
 // returns their basenames, excluding the collection itself.
 //
@@ -930,8 +974,27 @@ func (c ExAppConfig) davCopy(ctx context.Context, client *http.Client, userID, r
 // may carry a legacy directory-shaped export, and a copy that skipped it would
 // be verified as complete and then have its source deleted.
 func (c ExAppConfig) davPropfindChildren(ctx context.Context, client *http.Client, userID, relDir string) (names []string, visible bool, err error) {
+	entries, visible, err := c.davPropfindEntries(ctx, client, userID, relDir)
+	if err != nil || !visible {
+		return nil, visible, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry.Name)
+	}
+	return out, true, nil
+}
+
+// davPropfindEntries is davPropfindChildren with the modification times, in the
+// same single request.
+//
+// `getlastmodified` rides along with `resourcetype` rather than in a second
+// PROPFIND because the two answers must describe the same instant: a conflict
+// policy that decided which side is newer from one listing and which names exist
+// from another could act on a pair that never coexisted.
+func (c ExAppConfig) davPropfindEntries(ctx context.Context, client *http.Client, userID, relDir string) (entries []davEntry, visible bool, err error) {
 	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
-		`<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>`)
+		`<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getlastmodified/></d:prop></d:propfind>`)
 	selfURL := c.davFileURL(userID, relDir)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", selfURL, bytes.NewReader(reqBody))
 	if err != nil {
@@ -958,7 +1021,13 @@ func (c ExAppConfig) davPropfindChildren(ctx context.Context, client *http.Clien
 	}
 	var ms struct {
 		Responses []struct {
-			Href string `xml:"href"`
+			Href     string `xml:"href"`
+			Propstat []struct {
+				Status string `xml:"status"`
+				Prop   struct {
+					LastModified string `xml:"getlastmodified"`
+				} `xml:"prop"`
+			} `xml:"propstat"`
 		} `xml:"response"`
 	}
 	if err := xml.Unmarshal(body, &ms); err != nil {
@@ -971,7 +1040,7 @@ func (c ExAppConfig) davPropfindChildren(ctx context.Context, client *http.Clien
 	if parsed, perr := url.Parse(selfURL); perr == nil {
 		selfPath = path.Clean(parsed.Path)
 	}
-	out := make([]string, 0, len(ms.Responses))
+	out := make([]davEntry, 0, len(ms.Responses))
 	for _, r := range ms.Responses {
 		href := strings.TrimRight(r.Href, "/")
 		decoded := href
@@ -985,7 +1054,21 @@ func (c ExAppConfig) davPropfindChildren(ctx context.Context, client *http.Clien
 		if base == "" || base == "." || base == "/" {
 			continue
 		}
-		out = append(out, base)
+		entry := davEntry{Name: base}
+		for _, ps := range r.Propstat {
+			raw := strings.TrimSpace(ps.Prop.LastModified)
+			if raw == "" {
+				continue
+			}
+			// RFC 1123 with a numeric zone is what Nextcloud sends; the `GMT`
+			// spelling is what RFC 4918 requires. Try both and give up quietly:
+			// a date nobody can parse must not become a very old one.
+			if when, perr := http.ParseTime(raw); perr == nil {
+				entry.Modified = when
+				break
+			}
+		}
+		out = append(out, entry)
 	}
 	return out, true, nil
 }

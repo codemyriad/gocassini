@@ -74,8 +74,28 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 	ncAccessSubstrate.setProbe(probe)
 	logger.Printf("nc storage: probe %s", summarizeProbe(probe))
 
-	accessControlled, source, clean, recordAfterSanity := c.resolveStorageMode(logger)
-	ncStorage.set(accessControlled, source, clean)
+	resolution := c.resolveStorageMode(logger)
+
+	// Nobody has decided. This is the state the setup wizard exists to end, and
+	// it is deliberately terminal for this run: no tree is arranged, no legacy
+	// archive is adopted, nothing is written down. Publishing and recording are
+	// refused through the substrate verdict, and reads stay per-caller — so an
+	// access-controlled archive is still readable by the people it belongs to
+	// while an administrator makes up their mind.
+	//
+	// It replaces a fallback to the deps-free model that was written to disk on
+	// the first healthy enable and never reconsidered. That fallback made who can
+	// read an organisation's meetings a decision Cassini took on its own, from
+	// the shape of one instant.
+	if !resolution.Decided {
+		ncAccessSubstrate.setMode("", "")
+		logger.Printf("nc storage: %s", storageModeUndecidedDetail())
+		ncAccessSubstrate.unavailable(storageStepModeUndecided, errors.New(storageModeUndecidedDetail()))
+		return
+	}
+
+	accessControlled, source := resolution.AccessControlled, resolution.Source
+	ncStorage.set(accessControlled, source, resolution.Clean)
 	ncAccessSubstrate.setMode(storageModeName(accessControlled), source)
 
 	if ok, step, detail := probe.sanity(accessControlled); !ok {
@@ -84,33 +104,39 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 		return
 	}
 
-	// The upgrade latch. It sits between the sanity gate and the persist for the
-	// same reason the persist is deferred at all: a fallback that this instance
-	// should not be running must not be written down, because a recorded mode is
-	// never reconsidered and would then shadow CASSINI_STORAGE_MODE.
-	if source == storageModeSourceDefault {
-		if stranded, detail := probe.unclaimedAccessControlledArchive(); stranded {
-			logger.Printf("nc storage: %s", detail)
-			ncAccessSubstrate.unavailable(storageStepModeMismatch+":"+storageStepStrandedACLArchive, errors.New(detail))
-			return
-		}
+	// A mode is recorded, and nobody chose it.
+	//
+	// Three things produce this: a settings file written by a build that fell
+	// back on its own, a first decision interrupted between the dirty mark and
+	// the flip, and a file this operator could not parse. In all three the mode
+	// governs — the archive really is at that root, and reads work — but nothing
+	// is arranged, nothing is adopted and nothing is published on the strength of
+	// a decision that was never taken. The Setup tab is what ends it.
+	if !ncStorage.confirmedMode() {
+		detail := storageModeUnconfirmedDetail(accessControlled, source)
+		logger.Printf("nc storage: %s", detail)
+		ncAccessSubstrate.unavailable(storageStepModeUnconfirmed, errors.New(detail))
+		return
 	}
 
-	// The fallback is written down HERE, after the gate agreed — not where it was
-	// decided.
+	// A DECLARED mode is checked against the instance before it is believed, and
+	// written down only once it survives.
 	//
-	// A recorded mode is never reconsidered, so recording a `default` that this
-	// instance cannot actually run is how an administrator gets stuck: the file
-	// would then shadow CASSINI_STORAGE_MODE, and the deploy option they reach
-	// for to fix the mismatch would be ignored. Deciding late costs one probe per
-	// enable until the instance is coherent, and keeps every escape hatch open.
-	//
-	// A DECLARED mode is already on disk by this point, deliberately. That is a
-	// decision rather than a fallback, and an administrator who set it should be
-	// able to read it back even while the storage behind it is still missing.
-	if recordAfterSanity {
+	// The first pass persisted it immediately, so an administrator could read
+	// back what they had declared even while the storage was still missing. That
+	// was the right trade for a production affordance; this is a development and
+	// CI one, the same value re-arrives on the next enable, and what matters more
+	// is that a harness which declares a mode its own stack does not match finds
+	// out loudly rather than recording the disagreement forever.
+	if resolution.PersistAfterGates {
+		if conflicts := probe.declaredModeConflicts(accessControlled); len(conflicts) > 0 {
+			detail := declaredModeConflictDetail(accessControlled, conflicts)
+			logger.Printf("ERROR: nc storage: %s", detail)
+			ncAccessSubstrate.unavailable(storageStepDeclaredConflict, errors.New(detail))
+			return
+		}
 		c.persistInitialMode(ncStorage.settingsPath(), accessControlled, source,
-			fmt.Sprintf("this instance is coherent with the %q mode it fell back to", storageModeName(accessControlled)), logger)
+			fmt.Sprintf("%s declared the storage mode %q and this instance matches it", envStorageMode, storageModeName(accessControlled)), logger)
 	}
 
 	if err := c.arrangeRecordingsTree(ctx, client, accessControlled, logger); err != nil {
@@ -131,69 +157,129 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 	logger.Printf("nc storage: ready mode=%s source=%s root=%s owner=%s", storageModeName(accessControlled), source, recordingsRootFor(accessControlled), ncRecordingsOwner)
 }
 
-// resolveStorageMode returns the mode this process operates under, where it came
-// from, and whether the caller must write it down once the sanity gate agrees.
+// storageResolution is what one attempt to answer "which model is this install
+// in" produced. Undecided is a value here, not the absence of one.
+type storageResolution struct {
+	// Decided is false when nobody has chosen. Everything else is meaningless
+	// then, and the caller stops.
+	Decided          bool
+	AccessControlled bool
+	// Source is the provenance, carried through rather than flattened. It is
+	// what tells an administrator's click apart from a deploy option, and both
+	// apart from a mode a previous build recorded on its own.
+	Source string
+	Clean  bool
+	// PersistAfterGates marks a DECLARED mode that has not been written down
+	// yet, because it has still to be checked against the instance.
+	PersistAfterGates bool
+}
+
+// resolveStorageMode answers which model this process operates under, or says
+// that nobody has decided.
 //
 //	recorded on disk               use it verbatim. Nothing re-opens it, ever.
-//	CASSINI_STORAGE_MODE declared  that mode, written down immediately
-//	otherwise                      default, written down only if it survives
-//	                               the sanity gate
+//	CASSINI_STORAGE_MODE declared  that mode, checked against the instance and
+//	                               written down only if it survives (dev/CI)
+//	otherwise                      UNDECIDED. Nothing is written, nothing is
+//	                               assumed, and the Setup tab asks.
 //
 // It never looks at the probe. Cassini used to derive the mode from the
 // instance, and that made who can read the archive a function of what Nextcloud
 // happened to look like on whichever enabled edge fired first — which on a stack
-// still being assembled is the wrong instant. An access-controlled Nextcloud
-// with no recorded mode and no declaration now lands on `default`, finds its
-// Team folder in the way, and is reported as a mismatch that refuses to publish.
-// That is loud and recoverable, where a wrong inference is silent and permanent.
+// still being assembled is the wrong instant.
 //
-// The deploy option is what skips that: a deployment that KNOWS which model it
-// wants says so, and is believed.
-func (c ExAppConfig) resolveStorageMode(logger *log.Logger) (accessControlled bool, source string, clean bool, recordAfterSanity bool) {
+// Until D-708 the last branch was a fallback to the deps-free model, written to
+// disk the moment a sanity gate agreed and never reconsidered afterwards. That
+// is a quieter version of the same mistake: `default` is the model in which
+// every account can read every recording, and nobody had asked for it. The
+// branch is gone. An install that has not been told is an install that does not
+// publish, which is loud, reversible, and somebody's decision to make.
+func (c ExAppConfig) resolveStorageMode(logger *log.Logger) storageResolution {
 	path := ncStorage.settingsPath()
 	if path != "" {
 		settings, err := LoadStorageSettings(path)
 		switch {
 		case err != nil:
-			// An unreadable file must not fall through to the default: the
-			// default model serves the whole archive as its owner, so one bad
-			// byte on an access-controlled install would publish the next
-			// recording where every account can read it. Keep the safe model,
-			// say why, and write nothing over a file we could not read.
+			// An unreadable file must not fall through to undecided either: an
+			// access-controlled install whose file lost a byte would stop
+			// refusing to serve the archive as its owner only because nothing
+			// could say it was access-controlled. Keep the safe model, say why,
+			// and write nothing over a file we could not read.
+			//
+			// Reported as UNCONFIRMED, so the Setup tab offers a decision rather
+			// than presenting one — writing a mode is how an administrator gets
+			// out of this state.
 			logger.Printf("ERROR: nc storage: %v — keeping access control ON until the file is readable or removed", err)
 			// Clean, deliberately. An unreadable file is not evidence that a
 			// migration is half done, and reporting one would offer a cleanup
 			// that DELETES from a root chosen on the strength of a mode this
 			// branch only assumed.
-			return true, storageModeSourceConfigured, true, false
+			return storageResolution{Decided: true, AccessControlled: true, Source: storageModeSourceConfigured, Clean: true}
 		case settings.Configured():
-			return settings.AccessControlled(), storageModeSourceConfigured, settings.Clean(), false
+			source := settings.Source
+			if source == "" {
+				// A file from a build that predates the field. Unknown
+				// provenance reads as unconfirmed, which costs one question and
+				// buys the guarantee that nothing presents an unmade decision as
+				// a made one.
+				source = storageModeSourceConfigured
+			}
+			return storageResolution{
+				Decided:          true,
+				AccessControlled: settings.AccessControlled(),
+				Source:           source,
+				Clean:            settings.Clean(),
+			}
 		}
 	}
 
-	// Nothing recorded. A declaration is a decision, so it is written down now —
-	// an administrator who set the deploy option should be able to read the mode
-	// back even if this instance's storage turns out not to match it yet.
+	// Nothing recorded. A declaration is a decision — but a development and CI
+	// one, so it is believed only where it fits, and written down by the caller
+	// once the gates agree.
 	//
 	// An unrecognised value is not silently ignored: starting an instance in a
 	// mode nobody asked for is the failure this variable exists to prevent.
 	declared, ok, raw := storageModeFromEnv(os.Getenv)
 	switch {
 	case ok:
-		c.persistInitialMode(path, declared, storageModeSourceEnv,
-			fmt.Sprintf("%s=%s declared the initial storage mode %q", envStorageMode, raw, storageModeName(declared)), logger)
-		return declared, storageModeSourceEnv, true, false
+		logger.Printf("WARNING: nc storage: %s=%s declared the storage mode %q. That deploy option is for development and CI; a production install is asked in the Setup tab", envStorageMode, raw, storageModeName(declared))
+		return storageResolution{
+			Decided:           true,
+			AccessControlled:  declared,
+			Source:            storageModeSourceEnv,
+			Clean:             true,
+			PersistAfterGates: true,
+		}
 	case raw != "":
-		logger.Printf("ERROR: nc storage: %s=%q is not %s; ignoring it and starting in %q instead", envStorageMode, raw, storageModeEnvValues, storageModeDefault)
+		logger.Printf("ERROR: nc storage: %s=%q is not %s; ignoring it. No storage mode has been chosen, so Cassini will not publish until one is", envStorageMode, raw, storageModeEnvValues)
 	}
 
-	// The fallback, and it is deliberately NOT written down here — see the
-	// caller. A `default` that turns out to be wrong for this instance (a Team
-	// folder is mounted over the canonical path) must not be recorded, because a
-	// recorded mode is never reconsidered and would then shadow the very deploy
-	// option an administrator would reach for to fix it.
-	logger.Printf("nc storage: no storage mode recorded and none declared by %s; starting in %q, which needs no third-party Nextcloud apps", envStorageMode, storageModeDefault)
-	return false, storageModeSourceDefault, true, true
+	return storageResolution{}
+}
+
+// storageModeUnconfirmedDetail is what an administrator reads about a mode that
+// is in force but was never chosen. It names the mode, so the Setup tab's
+// one-click confirmation is obviously the smaller of the two actions on offer.
+func storageModeUnconfirmedDetail(accessControlled bool, source string) string {
+	why := "an earlier version of Cassini recorded it without asking"
+	switch source {
+	case storageModeSourceMigrating:
+		why = "a storage-mode switch was interrupted before it finished, so this is where the recordings are rather than where anybody put them"
+	case storageModeSourceConfigured:
+		why = "Cassini cannot tell where that decision came from"
+	}
+	return fmt.Sprintf(
+		"Cassini is keeping recordings under the %q model, but nobody has confirmed that is what this Nextcloud should do — %s. The two models differ in who can read a recording, so publishing and recording are refused until an administrator confirms this one, or picks the other, in the Setup tab. Recordings already published are unaffected and still readable",
+		storageModeName(accessControlled), why)
+}
+
+// storageModeUndecidedDetail is the sentence an administrator reads on /status,
+// in the Setup tab and in the container log when nobody has chosen yet. One
+// sentence, one place, so the three cannot drift.
+func storageModeUndecidedDetail() string {
+	return fmt.Sprintf(
+		"nobody has chosen where Cassini keeps recordings on this Nextcloud, and Cassini does not choose for you — the two models differ in who can read a recording. Open the Setup tab and pick one: %q keeps every recording in the %q account's own private %s, readable by everyone who can open Cassini; %q keeps them in the %q Team folder, each one readable only by the people who were in the meeting. Nothing is published or recorded until one is chosen",
+		storageModeDefault, ncRecordingsOwner, ncDefaultRecordingsRoot, storageModeAccessControlled, ncRecordingsMount)
 }
 
 // persistInitialMode writes the first decision an install makes and says where
