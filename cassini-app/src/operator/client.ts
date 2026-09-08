@@ -542,6 +542,7 @@ function normalizeStorageTransition(value: unknown): StorageTransition | null {
   const row = value as Record<string, unknown>;
   return {
     mode: asString(row.mode),
+    confirmed: row.confirmed === true,
     strategy: asString(row.strategy),
     on_conflict: asString(row.on_conflict),
     meetings_moved:

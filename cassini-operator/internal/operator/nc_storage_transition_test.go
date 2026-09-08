@@ -1687,7 +1687,7 @@ func TestFinishMigrationSparesWhatASkippedConflictKept(t *testing.T) {
 	mock.addFile(ncDefaultRecordingsRoot+"/catalog.json", catalogWith("both", "only-src"))
 
 	if err := SaveStorageSettingsWithMigration(settings, true, storageModeSourceUser, false,
-		&StorageMigrationRecord{Strategy: storageStrategyMerge, OnConflict: storageConflictSkip, KeepInSource: []string{"both.opus"}}); err != nil {
+		&StorageMigrationRecord{Strategy: storageStrategyMerge, OnConflict: storageConflictSkip, KeepInSource: []string{"both.opus"}}, nil); err != nil {
 		t.Fatalf("SaveStorageSettingsWithMigration() error = %v", err)
 	}
 	ncStorage.set(true, storageModeSourceUser, false)
@@ -1848,4 +1848,186 @@ func TestPreviewAsksNothingWhenTheDestinationIsEmpty(t *testing.T) {
 		t.Fatalf("would copy %d, want the one recording", got.WouldCopy)
 	}
 	_ = mock
+}
+
+// --- What the adversarial review found (D-708) --------------------------------
+
+// Confirming the mode already in force is what the setup wizard's own button
+// does, and it has to WRITE something.
+//
+// The first cut returned the zero result here, which made that button a silent
+// no-op: `storageModeSourceUser` is written only by migrateStorageLocked, which
+// the already-there branch never reaches, so `Confirmed()` stayed false, the
+// preflight went on refusing with `storage_mode_unconfirmed`, and the wizard
+// re-rendered the same question forever. The only PUT that DID confirm anything
+// was the one for the OTHER model — which for an access-controlled install means
+// copying the whole restricted archive into the open root to escape a dialog.
+func TestConfirmingTheModeInForceRecordsTheChoiceWithoutMovingAnything(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	path := setUnconfirmedStorageMode(t, true)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncACLRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	mock.addFile(ncACLRecordingsRoot+"/catalog.json", catalogWith("m1"))
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	result, err := cfg.switchStorageMode(context.Background(), true, storageMigrationPolicy{}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("switchStorageMode() error = %v", err)
+	}
+	if !result.Confirmed {
+		t.Fatalf("result = %+v, want the confirmation reported", result)
+	}
+	settings, err := LoadStorageSettings(path)
+	if err != nil {
+		t.Fatalf("LoadStorageSettings() error = %v", err)
+	}
+	if !settings.Confirmed() || !settings.AccessControlled() {
+		t.Fatalf("%s = %+v, want a confirmed access-controlled mode", storageSettingsFileName, settings)
+	}
+	if !ncStorage.confirmedMode() {
+		t.Fatal("the process still reports the mode as unconfirmed")
+	}
+	// Nothing moved, and nothing was removed. Confirming is agreement, not work.
+	mock.mu.Lock()
+	copies, deletes := len(mock.copies), len(mock.deleted)
+	mock.mu.Unlock()
+	if copies != 0 || deletes != 0 {
+		t.Fatalf("confirming issued %d COPY and %d DELETE; it must issue neither", copies, deletes)
+	}
+	if !mock.has(ncACLRecordingsRoot + "/meetings/m1.opus") {
+		t.Fatal("confirming touched the archive")
+	}
+
+	// And a SECOND press is the ordinary no-op it always was.
+	again, err := cfg.switchStorageMode(context.Background(), true, storageMigrationPolicy{}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("second switchStorageMode() error = %v", err)
+	}
+	if again.Mode != "" || again.Confirmed {
+		t.Fatalf("a second confirmation reported %+v, want a bare no-op", again)
+	}
+}
+
+// A `skip` leaves two copies of one recording on purpose, and the promise that
+// both survive has to outlive the switch that made it.
+//
+// `migration.keep_in_source` protects the skipped copy only while that switch is
+// in flight. The moment the instance settles the record is dropped, and the next
+// switch's dirty mark writes an empty one — so a recovery run for a LATER switch
+// that died before its flip clears the root with nothing to spare. Its
+// verification cannot object: the name IS present at the active root, because
+// that is exactly what a conflict is.
+func TestASkippedConflictSurvivesALaterSwitchsRecovery(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	settings := setStorageMode(t, false)
+	mock, cfg := bothRootsPopulated(t, true)
+	logger := log.New(io.Discard, "", 0)
+
+	// 1. default -> access controlled, keeping both copies of `both.opus`.
+	if _, err := cfg.switchStorageMode(context.Background(), true,
+		storageMigrationPolicy{Strategy: storageStrategyMerge, OnConflict: storageConflictSkip}, logger); err != nil {
+		t.Fatalf("first switchStorageMode() error = %v", err)
+	}
+	persisted, err := LoadStorageSettings(settings)
+	if err != nil {
+		t.Fatalf("LoadStorageSettings() error = %v", err)
+	}
+	if len(persisted.DuplicatedNames) != 1 || persisted.DuplicatedNames[0] != "both.opus" {
+		t.Fatalf("%s recorded duplicates %v, want [both.opus] — the promise has to outlive the switch",
+			storageSettingsFileName, persisted.DuplicatedNames)
+	}
+
+	// 2. Back again, and this one dies on a COPY before it can flip.
+	mock.mu.Lock()
+	mock.failCopyOf = ncACLRecordingsRoot + "/meetings/only-dst.opus"
+	mock.mu.Unlock()
+	if _, err := cfg.switchStorageMode(context.Background(), false,
+		storageMigrationPolicy{Strategy: storageStrategyMerge, OnConflict: storageConflictSkip}, logger); err == nil {
+		t.Fatal("the second switch reported success although a copy failed")
+	}
+	if ncStorage.migrationClean() {
+		t.Fatal("a switch that died before its flip left the instance settled")
+	}
+
+	// 3. "Finish the switch". The stale root is the DESTINATION of the switch
+	//    that died — which is where the earlier skip's second copy lives.
+	if _, err := cfg.finishMigration(context.Background(), &http.Client{}, logger); err != nil {
+		t.Fatalf("finishMigration() error = %v", err)
+	}
+	mock.mu.Lock()
+	body, present := mock.files[ncDefaultRecordingsRoot+"/meetings/both.opus"]
+	mock.mu.Unlock()
+	if !present {
+		t.Fatal("the recovery deleted the copy an earlier skipped conflict was promised to keep")
+	}
+	if body != "src-version" {
+		t.Fatalf("the surviving copy is %q, want the source version the skip kept", body)
+	}
+}
+
+// `switch_only` cannot run out of an unsettled instance.
+//
+// Every other strategy copies the source into the destination first, so the
+// destination is complete before the mode flips whatever an earlier switch left
+// there. This one copies nothing, so it would move the recorded mode onto
+// somebody else's partial copy — and then assert `clean`, disarming the one
+// action that could repair it.
+func TestSwitchOnlyRefusesToSettleAnUnfinishedMigration(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+	ncStorage.set(false, storageModeSourceUser, false)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	// The partial copy an earlier switch left at the destination.
+	mock.addFile(ncACLRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	_, err := cfg.switchStorageMode(context.Background(), true,
+		storageMigrationPolicy{Strategy: storageStrategySwitchOnly}, log.New(io.Discard, "", 0))
+	if !errors.Is(err, errTransitionNotReady) {
+		t.Fatalf("error = %v, want %v", err, errTransitionNotReady)
+	}
+	if ncStorage.migrationClean() {
+		t.Fatal("the refused switch settled the instance anyway, disarming the recovery")
+	}
+	if accessControlled, _ := ncStorage.mode(); accessControlled {
+		t.Fatal("the refused switch moved the mode")
+	}
+}
+
+// `overwrite` removes destination recordings BEFORE the first copy, so a later
+// failure cannot claim nothing was removed. Those recordings are in no other
+// root.
+func TestAFailedOverwriteSaysWhatItAlreadyDeleted(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+	mock, cfg := bothRootsPopulated(t, false)
+	mock.mu.Lock()
+	mock.failCopyOf = ncDefaultRecordingsRoot + "/meetings/only-src.opus"
+	mock.mu.Unlock()
+
+	_, err := cfg.switchStorageMode(context.Background(), true,
+		storageMigrationPolicy{Strategy: storageStrategyOverwrite}, log.New(io.Discard, "", 0))
+	if err == nil {
+		t.Fatal("a failed overwrite reported success")
+	}
+	if strings.Contains(err.Error(), "nothing was removed") {
+		t.Fatalf("a failed overwrite claimed nothing was removed, after deleting: %v", err)
+	}
+	if !strings.Contains(err.Error(), "already been removed") {
+		t.Fatalf("error %q does not say what it had already deleted", err)
+	}
+	if mock.has(ncACLRecordingsRoot + "/meetings/only-dst.opus") {
+		t.Fatal("the fixture is wrong: overwrite did not delete the destination-only recording")
+	}
 }

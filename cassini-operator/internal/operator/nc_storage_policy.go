@@ -303,6 +303,19 @@ func nameSet(names []string) map[string]bool {
 	return out
 }
 
+// sortedNames turns a lookup back into a stable list, for writing down.
+func sortedNames(set map[string]bool) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // catalogIDFor maps an archive entry's file name to the meeting id its catalog
 // entry is keyed by.
 //

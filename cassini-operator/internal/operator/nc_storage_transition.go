@@ -93,6 +93,12 @@ var errTransitionNotReady = errors.New("the target storage mode is not ready")
 // describing a different operation from the one that ran (D-708).
 type storageTransitionResult struct {
 	Mode string `json:"mode"`
+	// Confirmed marks the one outcome that moves nothing and still changes
+	// something: an administrator agreeing to the mode already in force. It is
+	// what turns an unconfirmed install into a settled one, and the UI reports
+	// it differently from a move because "0 recordings were copied" is a strange
+	// way to say "thank you, noted".
+	Confirmed bool `json:"confirmed,omitempty"`
 	// Strategy and OnConflict are what was actually applied, after defaulting —
 	// so the UI reports the policy that ran rather than the one it asked for.
 	Strategy   string `json:"strategy,omitempty"`
@@ -181,17 +187,48 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 	// an upgraded one holds the archive the administrator is deciding about.
 	current, resolved := ncStorage.mode()
 	if resolved && current == enableAccessControl {
-		// Already there. An unsettled instance still has a tidy-up to finish,
-		// which is the request an administrator makes by pressing the button for
-		// the mode already in force — see finishMigration.
-		if ncStorage.migrationClean() {
-			// The zero result IS the answer: nothing moved, so there is no
-			// transition to report and the caller renders the current state
-			// unchanged. A no-op that described a move would put "0 recordings
-			// were copied" on screen every time somebody double-clicked.
-			return storageTransitionResult{}, nil
+		// Already there — which is three different requests, not one.
+		//
+		// An unsettled instance has a tidy-up to finish, which is what pressing
+		// the button for the mode in force asks for.
+		if !ncStorage.migrationClean() {
+			return c.finishMigration(ctx, &http.Client{Timeout: ncProvisionTimeout}, logger)
 		}
-		return c.finishMigration(ctx, &http.Client{Timeout: ncProvisionTimeout}, logger)
+		// A settled instance whose mode nobody CHOSE is asking to confirm it,
+		// and that is the only way out of the unconfirmed state.
+		//
+		// The first cut of this returned the zero result here, which made the
+		// setup wizard's own button a silent no-op: `storageModeSourceUser` is
+		// written only by migrateStorageLocked, which this branch never reaches,
+		// so `Confirmed()` stayed false, the preflight went on refusing with
+		// `storage_mode_unconfirmed`, and the wizard re-rendered the same
+		// question forever. The only PUT that DID confirm anything was the one
+		// for the other model — which for an access-controlled install means
+		// copying the whole restricted archive into the open root to escape a
+		// dialog box.
+		//
+		// Nothing moves: the mode is already in force and the archive is already
+		// at its root. What changes is who is on record as having chosen it.
+		if !ncStorage.confirmedMode() {
+			if err := c.recordStorageMode(current, storageModeSourceUser, true, logger); err != nil {
+				return storageTransitionResult{}, fmt.Errorf("could not record that you chose the %s storage mode: %w", storageModeName(current), err)
+			}
+			logger.Printf("nc storage: %s confirmed by an administrator; nothing moved", storageModeName(current))
+			client := &http.Client{Timeout: ncProvisionTimeout}
+			c.preflightNCStorageLocked(ctx, client, logger)
+			return storageTransitionResult{
+				Mode:            storageModeName(current),
+				Confirmed:       true,
+				SourceRoot:      recordingsRootFor(!current),
+				DestinationRoot: recordingsRootFor(current),
+				SourceCleared:   true,
+			}, nil
+		}
+		// Settled and chosen. The zero result IS the answer: nothing moved, so
+		// there is no transition to report and the caller renders the current
+		// state unchanged. A no-op that described a move would put "0 recordings
+		// were copied" on screen every time somebody double-clicked.
+		return storageTransitionResult{}, nil
 	}
 
 	client := &http.Client{Timeout: ncProvisionTimeout}
@@ -206,6 +243,20 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 	policy, err := normalizeStorageMigrationPolicy(requested)
 	if err != nil {
 		return storageTransitionResult{}, fmt.Errorf("%w: %v", errStorageBadPolicy, err)
+	}
+
+	// A strategy that carries nothing cannot run out of an unsettled instance.
+	//
+	// Every other strategy copies the source into the destination first, so the
+	// destination is complete before the mode flips and the invariant survives
+	// whatever an earlier switch left there. `switch_only` copies nothing, so it
+	// would move the recorded mode onto a root holding somebody else's partial
+	// copy — and then assert `clean`, which disarms the one action that could
+	// repair it. The tidy-up comes first.
+	if !policy.copiesAnything() && !ncStorage.migrationClean() {
+		return storageTransitionResult{}, fmt.Errorf(
+			"%w: an earlier storage switch did not finish, so %s still holds a partial copy — switching without carrying the recordings across would make that partial copy the archive. Finish the earlier switch first (the Setup tab has a button for it), or choose a strategy that carries the recordings",
+			errTransitionNotReady, recordingsRootFor(!current))
 	}
 
 	// The choice is re-taken HERE, under the lock, against the probe this switch
@@ -305,8 +356,12 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	// 1. Dirty BEFORE the first write, not after it. A process killed between the
 	//    first MKCOL and this line would leave a directory nobody accounted for;
 	//    killed after it, the leftovers are already claimed by the recovery.
+	// What an EARLIER switch left duplicated on purpose, carried forward through
+	// this one's writes. It is not this switch's business, and erasing it is what
+	// lets a later recovery delete a copy that was promised to survive.
+	carriedDuplicates := c.currentDuplicatedNames()
 	inFlight := &StorageMigrationRecord{Strategy: policy.Strategy, OnConflict: policy.OnConflict}
-	if err := c.recordStorageModeWithMigration(originMode, originSource, false, inFlight, logger); err != nil {
+	if err := c.recordStorageModeWithMigration(originMode, originSource, false, inFlight, carriedDuplicates, logger); err != nil {
 		return result, fmt.Errorf("could not record that a storage migration is in progress, so nothing was moved: %w", err)
 	}
 
@@ -319,6 +374,15 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	result.MeetingsAlreadyThere = len(copied.Plan.Skip)
 	result.CatalogMoved = copied.CatalogMerged
 	if err != nil {
+		// The message has to branch, because `overwrite` is the one strategy
+		// that has ALREADY removed something by the time a later step can fail:
+		// it clears the destination's non-source recordings before the first
+		// copy, and those are in no other root. Telling an administrator
+		// "nothing was removed" there is not a reassurance, it is wrong.
+		if result.MeetingsDeletedAtDestination > 0 {
+			return result, fmt.Errorf("%w — every recording in %s is untouched, but %d recording(s) that were only in %s have already been removed, because that is what replacing it means; fix the cause and switch again",
+				err, source, result.MeetingsDeletedAtDestination, destination)
+		}
 		return result, fmt.Errorf("%w — nothing was removed and the recordings are all still in %s; fix the cause and switch again",
 			err, source)
 	}
@@ -331,7 +395,7 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	//    that is about to be emptied.
 	ncStorage.set(enableAccessControl, storageModeSourceUser, false)
 	result.Mode = storageModeName(enableAccessControl)
-	if err := c.recordStorageModeWithMigration(enableAccessControl, storageModeSourceUser, false, inFlight, logger); err != nil {
+	if err := c.recordStorageModeWithMigration(enableAccessControl, storageModeSourceUser, false, inFlight, carriedDuplicates, logger); err != nil {
 		// The flip is the settings write, so a write that failed is a flip that
 		// did not happen. Nothing is lost: the copy is verified at the
 		// destination and the source has not been touched, so BOTH roots hold a
@@ -359,9 +423,11 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	}
 	result.SourceCleared = true
 
-	// 8. Settled. The in-flight record goes with it: a clean file must never
-	//    describe a migration that is over.
-	if err := c.recordStorageMode(enableAccessControl, storageModeSourceUser, true, logger); err != nil {
+	// 8. Settled. The in-flight record goes with it — a clean file must never
+	//    describe a migration that is over — and the DURABLE one is rewritten to
+	//    what this switch left behind on purpose, which is empty for every policy
+	//    but `skip`.
+	if err := c.recordStorageModeWithMigration(enableAccessControl, storageModeSourceUser, true, nil, copied.Plan.KeepInSource, logger); err != nil {
 		result.LeftoverSource = ""
 		logger.Printf("nc storage: the switch finished but the settled flag could not be written: %v", err)
 	} else {
@@ -387,13 +453,28 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 // treats a failed write as fatal to the step it was part of, because the
 // invariant this file rests on is a claim about what is written down.
 func (c ExAppConfig) recordStorageMode(accessControlled bool, source string, clean bool, logger *log.Logger) error {
-	return c.recordStorageModeWithMigration(accessControlled, source, clean, nil, logger)
+	return c.recordStorageModeWithMigration(accessControlled, source, clean, nil, c.currentDuplicatedNames(), logger)
+}
+
+// currentDuplicatedNames reads the durable duplicate record forward, so a write
+// that is not about it does not erase it.
+func (c ExAppConfig) currentDuplicatedNames() []string {
+	path := ncStorage.settingsPath()
+	if path == "" {
+		return nil
+	}
+	settings, err := LoadStorageSettings(path)
+	if err != nil {
+		return nil
+	}
+	return settings.DuplicatedNames
 }
 
 // recordStorageModeWithMigration is the same write, carrying the in-flight
 // switch so the recovery knows which policy it is finishing and which names it
-// must NOT delete.
-func (c ExAppConfig) recordStorageModeWithMigration(accessControlled bool, source string, clean bool, migration *StorageMigrationRecord, logger *log.Logger) error {
+// must NOT delete, and the durable record of what an earlier switch left
+// duplicated on purpose.
+func (c ExAppConfig) recordStorageModeWithMigration(accessControlled bool, source string, clean bool, migration *StorageMigrationRecord, duplicated []string, logger *log.Logger) error {
 	path := ncStorage.settingsPath()
 	if path == "" {
 		ncStorage.set(accessControlled, source, clean)
@@ -402,7 +483,7 @@ func (c ExAppConfig) recordStorageModeWithMigration(accessControlled bool, sourc
 		}
 		return nil
 	}
-	if err := SaveStorageSettingsWithMigration(path, accessControlled, source, clean, migration); err != nil {
+	if err := SaveStorageSettingsWithMigration(path, accessControlled, source, clean, migration, duplicated); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	// The source it just WROTE, not a stand-in for "read from disk". Flattening
@@ -789,19 +870,36 @@ func (c ExAppConfig) finishMigration(ctx context.Context, client *http.Client, l
 	// does not name" would take them. The list is written at the flip, which is
 	// the first instant it is known and the last instant before anything is
 	// removed.
-	var keep map[string]bool
+	// TWO lists, because there are two ways a name can be at the stale root on
+	// purpose and only one of them belongs to the switch being repaired.
+	//
+	//	migration.keep_in_source  what THIS switch skipped and left in its source.
+	//	                          Relevant when it died after the flip, where the
+	//	                          stale root IS that source.
+	//	duplicated_names          what an EARLIER completed `skip` left duplicated
+	//	                          across the roots. Relevant when this switch died
+	//	                          BEFORE its flip, where the stale root is its
+	//	                          destination — which is where those copies live.
+	//
+	// The verification below cannot tell them from leftovers: the name is present
+	// at the active root, because that is exactly what a conflict is. Union both
+	// and spare them; over-sparing leaves a duplicate an administrator can remove,
+	// under-sparing deletes a recording that was promised to survive.
+	var kept []string
 	if path := ncStorage.settingsPath(); path != "" {
 		settings, err := LoadStorageSettings(path)
 		if err != nil {
 			return result, fmt.Errorf("could not read %s to find out what the interrupted switch was doing: %w", storageSettingsFileName, err)
 		}
+		kept = append(kept, settings.DuplicatedNames...)
 		if settings.Migration != nil {
-			keep = nameSet(settings.Migration.KeepInSource)
+			kept = append(kept, settings.Migration.KeepInSource...)
 			result.Strategy = settings.Migration.Strategy
 			result.OnConflict = settings.Migration.OnConflict
-			result.MeetingsKeptInSource = len(settings.Migration.KeepInSource)
 		}
 	}
+	keep := nameSet(kept)
+	result.MeetingsKeptInSource = len(keep)
 
 	// Never delete the only copy.
 	//
@@ -830,7 +928,9 @@ func (c ExAppConfig) finishMigration(ctx context.Context, client *http.Client, l
 	if source == "" {
 		source = storageModeSourceMigrating
 	}
-	if err := c.recordStorageMode(accessControlled, source, true, logger); err != nil {
+	// The durable duplicate record survives the repair, minus anything the clear
+	// actually removed — which is nothing, since every one of them was spared.
+	if err := c.recordStorageModeWithMigration(accessControlled, source, true, nil, sortedNames(keep), logger); err != nil {
 		result.LeftoverSource = stale
 		return result, fmt.Errorf("%s was cleared but the settled flag could not be written: %w", stale, err)
 	}
@@ -1511,7 +1611,12 @@ func previewWarnings(p storageTransitionPreview, enableAccessControl bool, polic
 		out = append(out, fmt.Sprintf(
 			"Nothing is copied. All %d recording(s) stay in %s, which the %s mode does not read, so they will not be listed until you switch back or migrate them.",
 			p.Meetings, p.SourceRoot, storageModeName(enableAccessControl)))
-	} else if p.DestinationMeetings > 0 && p.WouldDeleteAtDestination == 0 {
+	} else if p.DestinationMeetings > 0 && p.WouldDeleteAtDestination == 0 && p.WouldReplace == 0 {
+		// Only when NOTHING at the destination is touched. Under `overwrite`
+		// every one of them is either replaced or deleted, and under
+		// `newest_wins` some are replaced — saying they "stay where they are" in
+		// the same dialog that says they are replaced is the confirmation
+		// contradicting itself where somebody is being asked to consent.
 		out = append(out, fmt.Sprintf(
 			"%s already holds %d recording(s). They stay where they are.", p.DestinationRoot, p.DestinationMeetings))
 	}

@@ -203,6 +203,23 @@ type StorageSettings struct {
 	// a recovery that did not know which names those were would delete exactly
 	// the copies an administrator asked to keep.
 	Migration *StorageMigrationRecord `json:"migration,omitempty"`
+
+	// DuplicatedNames are recordings that exist under BOTH roots on purpose,
+	// left there by a completed switch whose conflict rule was `skip`.
+	//
+	// It is DURABLE, where Migration is not, and that distinction is the whole
+	// reason it exists. `keep_in_source` protects a skipped copy only for as long
+	// as the switch that produced it is in flight; the moment the instance
+	// settles the record is dropped, and the next switch's dirty mark writes an
+	// empty one. A recovery run after THAT — for a switch that died before its
+	// flip, where the stale root is the earlier skip's destination — then clears
+	// the root with nothing to spare, and its verification cannot object: the
+	// name IS present at the active root, because that is precisely what a
+	// conflict is. The second copy is deleted, having been promised to survive.
+	//
+	// So the fact outlives the switch. Every completed migration rewrites it to
+	// what IT left duplicated, which is empty for every policy but `skip`.
+	DuplicatedNames []string `json:"duplicated_names,omitempty"`
 }
 
 // StorageMigrationRecord is the in-flight switch, written at the dirty mark and
@@ -335,13 +352,14 @@ func LoadStorageSettings(path string) (StorageSettings, error) {
 // crash mid-write cannot leave a truncated file that the loader above would
 // then refuse — which would take the operator's storage mode with it.
 func SaveStorageSettings(path string, accessControlEnabled bool, source string, migrationClean bool) error {
-	return SaveStorageSettingsWithMigration(path, accessControlEnabled, source, migrationClean, nil)
+	return SaveStorageSettingsWithMigration(path, accessControlEnabled, source, migrationClean, nil, nil)
 }
 
 // SaveStorageSettingsWithMigration is the same write, carrying the in-flight
-// switch. The record is dropped whenever the instance is settled, so a clean
-// file never describes a migration that is over.
-func SaveStorageSettingsWithMigration(path string, accessControlEnabled bool, source string, migrationClean bool, migration *StorageMigrationRecord) error {
+// switch and the durable duplicate record. The MIGRATION is dropped whenever the
+// instance is settled, so a clean file never describes a migration that is over;
+// `duplicated` is not, because it describes the archive rather than the switch.
+func SaveStorageSettingsWithMigration(path string, accessControlEnabled bool, source string, migrationClean bool, migration *StorageMigrationRecord, duplicated []string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("storage settings path must not be empty")
 	}
@@ -356,6 +374,7 @@ func SaveStorageSettingsWithMigration(path string, accessControlEnabled bool, so
 		Source:               source,
 		MigrationClean:       &migrationClean,
 		Migration:            migration,
+		DuplicatedNames:      duplicated,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal storage settings: %w", err)

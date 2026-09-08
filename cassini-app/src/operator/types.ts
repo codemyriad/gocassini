@@ -227,6 +227,10 @@ export interface AppInstallOutcome {
 // performed one.
 export interface StorageTransition {
   mode: string;
+  // confirmed marks the one outcome that moves nothing and still changes
+  // something: an administrator agreeing to the mode already in force, which is
+  // what turns an unconfirmed install into a settled one.
+  confirmed: boolean;
   // strategy / on_conflict are the policy that actually ran, after defaulting.
   strategy: string;
   on_conflict: string;

@@ -264,12 +264,22 @@ export function buildSetupNotice(options: {
   if (!verdict || verdict.ok) {
     return null;
   }
-  const blocking = blocksBrowsing(verdict.state);
   // A decision nobody has taken is not a broken install, and saying it is
   // sends both audiences after the wrong thing (D-708). The administrator has
   // nothing to fix and one button to press; the person who is not an
   // administrator is not looking at a fault they should report as one.
   const awaitingChoice = isAwaitingChoice(health, access);
+  // …and it does not blank the meeting list, which is the difference between an
+  // unmade decision and a broken substrate.
+  //
+  // Every deployed installation upgrades into this state, and in it the operator
+  // has touched nothing: reads are exactly what they were, so an
+  // access-controlled archive still lists for the people it belongs to and a
+  // recorded-but-unconfirmed default one still lists for everybody. Standing in
+  // for the list there would blank a working archive on every existing instance
+  // to report something that is not wrong with it. On a fresh install the list
+  // is empty anyway, so the strip sits above nothing.
+  const blocking = !awaitingChoice && blocksBrowsing(verdict.state);
   const title = awaitingChoice
     ? "Cassini needs to be told where recordings are kept"
     : blocking
@@ -335,6 +345,9 @@ export function buildSetupNotice(options: {
 //	unavailable   NOT READABLE. Nothing was provisioned, or the app supplying
 //	              the mount is gone; the per-caller scan finds no mount and the
 //	              catalog fails closed to empty.
+//	              The ONE exception is carved out by the caller rather than here:
+//	              an unmade storage decision reports `unavailable`, and in that
+//	              state the operator has touched nothing — see buildSetupNotice.
 //	degraded      NOT READABLE. The steps that abort (migration, catalog
 //	              migration, root ACL) all run after the mount root has been
 //	              narrowed to owner-only, so nobody can traverse to the
