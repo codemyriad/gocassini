@@ -1043,6 +1043,13 @@ func TestSetupReportsWhichAICapabilitiesAreConfigured(t *testing.T) {
 			wantInsights:  true,
 		},
 		{
+			// Disabling publish-time summaries leaves the selected provider in
+			// place for an insight somebody explicitly requests.
+			name:         "an endpoint selected, summarising off",
+			llm:          LLMSettings{Providers: []LLMProvider{provider}, Summary: LLMStep{Enabled: false, Provider: provider.ID}},
+			wantInsights: true,
+		},
+		{
 			// A step enabled against an endpoint that has since been deleted
 			// will not run. Reporting it as on would have the app promise a
 			// summary that never arrives — and there is nothing left for an

@@ -114,8 +114,8 @@ start_container() {
     -e APP_VERSION="$version" -e APP_SECRET="$secret" -e AA_VERSION=5.0.0 \
     -e CASSINI_APPAPI_REQUIRED=true -e NEXTCLOUD_URL="$NEXTCLOUD_URL_INTERNAL" \
     --entrypoint /usr/local/bin/cassini-operator "$IMAGE_REF" >/dev/null
-  local attempt status
-  for attempt in $(seq 1 40); do
+  local status
+  for _ in $(seq 1 40); do
     status=$(docker exec "$CONTAINER_NAME" curl -s -o /dev/null -w '%{http_code}' \
       http://127.0.0.1:8080/heartbeat || echo 000)
     [[ "$status" == "200" ]] && return 0

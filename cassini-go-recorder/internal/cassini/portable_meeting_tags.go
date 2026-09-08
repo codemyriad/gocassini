@@ -86,19 +86,6 @@ func assembleTranscriptInputs(manifest portable.Manifest, source portableMeeting
 	if defaultID == "" {
 		return nil, "", fmt.Errorf("portable meeting bundle has no words transcript to use as default")
 	}
-	if source.ReadableTranscript != nil {
-		inputs = append(inputs, portable.TranscriptInput{
-			ID:                 "readable",
-			Role:               portable.RoleReadableCleanup,
-			Default:            true,
-			Format:             portableDocumentFormat(source.ReadableTranscript),
-			Language:           manifest.Meeting.Language,
-			CreatedAtUTC:       manifest.Meeting.ProcessedAtUTC,
-			SourceTranscriptID: defaultID,
-			Body:               source.ReadableTranscript,
-			Provenance:         provenanceReadableCleanup(manifest),
-		})
-	}
 	if source.DisplayTranscript != nil {
 		inputs = append(inputs, portable.TranscriptInput{
 			ID:                 "display",
@@ -153,13 +140,6 @@ func provenanceSpeechToText(manifest portable.Manifest) *portable.ProcessingStep
 		return nil
 	}
 	return manifest.Provenance.SpeechToText
-}
-
-func provenanceReadableCleanup(manifest portable.Manifest) *portable.ProcessingStep {
-	if manifest.Provenance == nil {
-		return nil
-	}
-	return manifest.Provenance.ReadableCleanup
 }
 
 func provenanceDisplayTranscript(manifest portable.Manifest) *portable.ProcessingStep {

@@ -70,43 +70,6 @@ func TestTranscriptJSONSerialisesAttributionEvidence(t *testing.T) {
 	}
 }
 
-// The readable transcript contract has no per-word entries at all: the
-// attribution evidence lives in the canonical words file, and the readable
-// document must not grow half of the contract by accident.
-func TestReadableTranscriptJSONCarriesNoWordLevelAttributionKeys(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "transcript.readable.v1.json")
-	streams := []AudioStream{{SpeakerID: "spk_one", SpeakerLabel: "One"}}
-	segments := []Segment{{SpeakerID: "spk_one", StartMS: 0, EndMS: 900, Text: "ghost clean",
-		Words: []Word{
-			{Text: "ghost", StartMS: 0, EndMS: 400,
-				AttributionGapDB: 18.5, HasAttributionGap: true, LowConfidenceSpeaker: true},
-			{Text: "clean", StartMS: 450, EndMS: 900},
-		}}}
-
-	if err := WriteReadableTranscriptJSON(path, streams, segments, 900); err != nil {
-		t.Fatalf("WriteReadableTranscriptJSON: %v", err)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read readable transcript: %v", err)
-	}
-	var doc struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("parse readable transcript: %v", err)
-	}
-	if doc.Version != "transcript.readable.v1" {
-		t.Errorf("version = %q, want transcript.readable.v1", doc.Version)
-	}
-	for _, key := range []string{"attributionGapDb", "lowConfidenceSpeaker", `"words"`} {
-		if strings.Contains(string(raw), key) {
-			t.Errorf("readable transcript must not carry %s, got:\n%s", key, raw)
-		}
-	}
-}
-
 // assertWordConformsToViewerSchema checks one emitted word object against the
 // viewer's transcript-words-v1 schema. The package has no JSON Schema
 // validator, so this is the structural core of one: the schema declares word

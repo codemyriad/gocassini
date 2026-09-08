@@ -12,7 +12,7 @@ import (
 )
 
 // LLMConfig holds settings for an OpenAI-compatible chat completions endpoint,
-// used for meeting summaries.
+// used for meeting summaries and generated insights.
 type LLMConfig struct {
 	APIKey     string
 	BaseURL    string // e.g. "https://openrouter.ai/api/v1"
@@ -51,7 +51,7 @@ func (c LLMConfig) IsConfigured() bool {
 	return !c.Disabled && c.BaseURL != ""
 }
 
-// Segment is a contiguous block of speech from one speaker, used for LLM cleanup.
+// Segment is a contiguous block of speech from one speaker.
 type Segment struct {
 	SpeakerID string
 	StartMS   int64

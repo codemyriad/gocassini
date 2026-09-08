@@ -69,6 +69,27 @@ func TestSeedLLMSettingsHonoursSwitchAndSummaryModel(t *testing.T) {
 	if s.Providers[0].TimeoutSec != 1800 || s.Providers[0].MaxTokens != 8192 {
 		t.Fatalf("provider bounds = %d/%d, want 1800/8192", s.Providers[0].TimeoutSec, s.Providers[0].MaxTokens)
 	}
+	view := s.view()
+	if view.Effective.Summary != nil {
+		t.Fatalf("effective summary = %+v, want disabled", view.Effective.Summary)
+	}
+	if got := view.Effective.Insight; got == nil || !got.Inherited || got.Provider != "default" || got.Model != "large" {
+		t.Fatalf("effective insight = %+v, want the disabled summary's provider and model inherited", got)
+	}
+	env := s.ChildEnv(nil)
+	for key, want := range map[string]string{
+		"INSIGHT_BASE_URL":    "http://qwen.internal:8000/v1",
+		"INSIGHT_MODEL":       "large",
+		"INSIGHT_TIMEOUT_SEC": "1800",
+		"INSIGHT_MAX_TOKENS":  "8192",
+	} {
+		if got, ok := envValue(env, key); !ok || got != want {
+			t.Fatalf("%s = %q (present=%v), want %q; env=%v", key, got, ok, want, env)
+		}
+	}
+	if _, ok := envValue(env, "SUMMARY_BASE_URL"); ok {
+		t.Fatalf("disabled summary endpoint leaked into env: %v", env)
+	}
 }
 
 func TestSeedLLMSettingsEmptyWithoutEndpoint(t *testing.T) {
@@ -135,7 +156,7 @@ func TestLLMChildEnvStripsInheritedAndEmitsPerStep(t *testing.T) {
 	}
 }
 
-func TestLLMChildEnvDisabledStepEmitsNothing(t *testing.T) {
+func TestLLMChildEnvDisabledSummaryStillSuppliesInheritedInsight(t *testing.T) {
 	s := LLMSettings{
 		Providers: []LLMProvider{{ID: "local", BaseURL: "http://qwen.internal:8000/v1"}},
 		Summary:   LLMStep{Enabled: false, Provider: "local", Model: "cheap"},
@@ -143,6 +164,15 @@ func TestLLMChildEnvDisabledStepEmitsNothing(t *testing.T) {
 	env := s.ChildEnv(nil)
 	if _, ok := envValue(env, "SUMMARY_BASE_URL"); ok {
 		t.Fatalf("disabled summary step leaked into env: %v", env)
+	}
+	if got, ok := envValue(env, "INSIGHT_BASE_URL"); !ok || got != "http://qwen.internal:8000/v1" {
+		t.Fatalf("INSIGHT_BASE_URL = %q (present=%v), want the selected summary provider; env=%v", got, ok, env)
+	}
+	if got, ok := envValue(env, "INSIGHT_MODEL"); !ok || got != "cheap" {
+		t.Fatalf("INSIGHT_MODEL = %q (present=%v), want inherited summary model; env=%v", got, ok, env)
+	}
+	if got, ok := envValue(env, "INSIGHT_API_KEY"); ok {
+		t.Fatalf("keyless inherited endpoint got a key: %q", got)
 	}
 }
 
