@@ -48,6 +48,10 @@ const (
 	searchBackfillReasonStaleBundle = "bundle-newer-than-delivered"
 	searchBackfillReasonUnreadable  = "transcript-unreadable"
 	searchBackfillReasonNoSegments  = "transcript-has-no-segments"
+	// The archive outlives the operator's volume, so a published recording whose
+	// job row is gone is ordinary rather than exceptional.
+	searchBackfillReasonNoJobRecord   = "job-record-missing"
+	searchBackfillReasonArchiveUnread = "archive-recording-unreadable"
 )
 
 // searchBackfillTarget is one published meeting to consider.
@@ -78,7 +82,7 @@ type searchBackfillReport struct {
 //
 // It never stops on one meeting's failure: an archive with a single unreadable
 // bundle should still end up with every other meeting searchable.
-func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBackfillTarget) (searchBackfillReport, error) {
+func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBackfillTarget, archive searchArchiveReader) (searchBackfillReport, error) {
 	var report searchBackfillReport
 	if rt.searchStore == nil {
 		return report, fmt.Errorf("search index is not open")
@@ -96,7 +100,7 @@ func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBack
 			report.Failed++
 			continue
 		}
-		outcome, reason := rt.backfillOneMeeting(ctx, target, name, indexed)
+		outcome, reason := rt.backfillOneMeeting(ctx, target, name, indexed, archive)
 		switch outcome {
 		case searchBackfillIndexed:
 			report.Indexed++
@@ -123,52 +127,108 @@ const (
 )
 
 func (rt *Runtime) backfillOneMeeting(
-	ctx context.Context, target searchBackfillTarget, opusName string, indexed map[string]string,
+	ctx context.Context, target searchBackfillTarget, opusName string,
+	indexed map[string]string, archive searchArchiveReader,
 ) (searchBackfillOutcome, string) {
-	job, err := rt.store.GetJob(ctx, target.JobID)
+	// The local bundle is preferred wherever it can be trusted: it carries the
+	// producer's own segments and costs nothing to read. Anything that cannot be
+	// trusted falls through to the archive rather than giving up, because the
+	// recording is the one artifact that is definitely there.
+	delivered, localReason := rt.deliveredDigestFor(ctx, target)
+	if localReason == "" {
+		if existing, ok := indexed[opusName]; ok && existing != "" && existing == delivered {
+			// Re-runnable by design: identical rows are not rewritten.
+			return searchBackfillUnchanged, ""
+		}
+		outcome, reason, settled := rt.indexFromLocalBundle(ctx, target, opusName, delivered)
+		if settled {
+			return outcome, reason
+		}
+		// Carry the SPECIFIC reason the local copy could not be used. Collapsing
+		// them here would record "bundle-newer-than-delivered" for a bundle that
+		// is simply absent, which is the kind of plausible-but-wrong reason an
+		// operator would chase.
+		localReason = reason
+	}
+
+	if archive == nil {
+		// No archive access: record why the local copy could not be used, so the
+		// meeting is known-unsearchable rather than merely absent.
+		return rt.recordUnavailable(ctx, opusName, localReason)
+	}
+	words, digest, err := archive(ctx, opusName)
 	if err != nil {
-		return searchBackfillFailed, fmt.Sprintf("read job: %v", err)
+		rt.logger.Printf("search backfill: %s archive read failed (%v)", opusName, err)
+		return rt.recordUnavailable(ctx, opusName, searchBackfillReasonArchiveUnread)
 	}
-	delivered := ""
-	if job.ArtifactOpusSHA256 != nil {
-		delivered = strings.TrimSpace(*job.ArtifactOpusSHA256)
-	}
-	if delivered == "" {
-		// Without the delivered digest there is no way to tell whether the local
-		// bundle is the one that was published, and guessing is the failure this
-		// whole check exists to prevent.
-		return rt.recordUnavailable(ctx, opusName, searchBackfillReasonNoDigest)
-	}
-	// Already current: re-reading and re-writing identical rows is pure cost, and
-	// a backfill is expected to be re-runnable.
-	if existing, ok := indexed[opusName]; ok && existing != "" && existing == delivered {
+	if existing, ok := indexed[opusName]; ok && existing != "" && existing == digest {
 		return searchBackfillUnchanged, ""
 	}
-
-	// The same whole-container digest the seal-to-publish chain uses, so the two
-	// sides of this comparison are the same claim (digest.go).
-	localDigest, err := fileSHA256(canonicalOpusPath(rt.cfg.WorkRoot, target.JobID))
-	if err != nil {
-		return rt.recordUnavailable(ctx, opusName, searchBackfillReasonNoBundle)
-	}
-	if !strings.EqualFold(localDigest, delivered) {
-		// The promoted bundle is not the artifact that was delivered. See the
-		// header: this is a rerun that built and then failed to publish.
-		return rt.recordUnavailable(ctx, opusName, searchBackfillReasonStaleBundle)
-	}
-
-	transcript, err := readBundleTranscript(canonicalMeetingPath(rt.cfg.WorkRoot, target.JobID))
-	if err != nil {
-		return rt.recordUnavailable(ctx, opusName, searchBackfillReasonUnreadable)
-	}
-	rows := searchRowsFromSegments(bundleTranscriptSegments(transcript))
+	rows := deriveSearchRowsFromWords(words)
 	if len(rows) == 0 {
 		return rt.recordUnavailable(ctx, opusName, searchBackfillReasonNoSegments)
 	}
-	if err := rt.searchStore.ReplaceMeeting(ctx, opusName, delivered, searchRowSourceSegments, rows); err != nil {
+	// row_source records these as the coarser kind, so an answer built on them
+	// never implies the precision a segment row would carry.
+	if err := rt.searchStore.ReplaceMeeting(ctx, opusName, digest, searchRowSourceWords, rows); err != nil {
 		return searchBackfillFailed, fmt.Sprintf("write rows: %v", err)
 	}
 	return searchBackfillIndexed, ""
+}
+
+// deliveredDigestFor reports the digest of the artifact this job delivered, or
+// the reason the local record cannot say.
+func (rt *Runtime) deliveredDigestFor(ctx context.Context, target searchBackfillTarget) (string, string) {
+	job, err := rt.store.GetJob(ctx, target.JobID)
+	if err != nil {
+		// The archive outlives the operator's volume, so a published recording
+		// with no job row is ordinary rather than exceptional. Named, not
+		// counted as a failure.
+		return "", searchBackfillReasonNoJobRecord
+	}
+	if job.ArtifactOpusSHA256 == nil || strings.TrimSpace(*job.ArtifactOpusSHA256) == "" {
+		return "", searchBackfillReasonNoDigest
+	}
+	return strings.TrimSpace(*job.ArtifactOpusSHA256), ""
+}
+
+// indexFromLocalBundle indexes from current/, or reports that it could not.
+//
+// settled is false when the caller should try the archive instead, and the
+// returned reason then says WHY the local copy was unusable — the bundle is
+// missing, unreadable, or is not the artifact that was delivered. settled is
+// true when the meeting is decided either way: indexed, or genuinely holding
+// no speech.
+func (rt *Runtime) indexFromLocalBundle(
+	ctx context.Context, target searchBackfillTarget, opusName, delivered string,
+) (searchBackfillOutcome, string, bool) {
+	// The same whole-container digest the seal-to-publish chain uses, so both
+	// sides of this comparison are the same claim (digest.go).
+	localDigest, err := fileSHA256(canonicalOpusPath(rt.cfg.WorkRoot, target.JobID))
+	if err != nil {
+		return 0, searchBackfillReasonNoBundle, false
+	}
+	if !strings.EqualFold(localDigest, delivered) {
+		// A rerun that built and then failed to publish. The archive holds what
+		// was actually delivered, so falling through to it does not work around
+		// the mismatch — it resolves it.
+		return 0, searchBackfillReasonStaleBundle, false
+	}
+	transcript, err := readBundleTranscript(canonicalMeetingPath(rt.cfg.WorkRoot, target.JobID))
+	if err != nil {
+		return 0, searchBackfillReasonUnreadable, false
+	}
+	rows := searchRowsFromSegments(bundleTranscriptSegments(transcript))
+	if len(rows) == 0 {
+		// The bundle parsed and holds no speech. The archive would say the same,
+		// so this is settled rather than worth a download.
+		outcome, reason := rt.recordUnavailable(ctx, opusName, searchBackfillReasonNoSegments)
+		return outcome, reason, true
+	}
+	if err := rt.searchStore.ReplaceMeeting(ctx, opusName, delivered, searchRowSourceSegments, rows); err != nil {
+		return searchBackfillFailed, fmt.Sprintf("write rows: %v", err), true
+	}
+	return searchBackfillIndexed, "", true
 }
 
 func (rt *Runtime) recordUnavailable(ctx context.Context, opusName, reason string) (searchBackfillOutcome, string) {
