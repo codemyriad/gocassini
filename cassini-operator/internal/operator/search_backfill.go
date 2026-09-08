@@ -78,9 +78,11 @@ type searchBackfillReport struct {
 	Unchanged int
 	// Unavailable: recorded as not searchable, with a reason.
 	Unavailable int
-	// Failed: could not even be recorded — no join key, or the index rejected
-	// the write. These are the ones a retry might fix.
+	// Failed: could not even be recorded — no join key, a job store that could
+	// not be read, or an index that rejected the write. Retryable.
 	Failed int
+	// Forgotten: rows dropped for meetings the archive no longer holds.
+	Forgotten int
 }
 
 // backfillSearchIndex indexes each target that can be indexed safely.
@@ -119,7 +121,74 @@ func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBack
 			rt.logger.Printf("search backfill: %s failed (%s)", name, reason)
 		}
 	}
+
+	forgotten, err := rt.forgetVanishedMeetings(ctx, targets)
+	if err != nil {
+		// Housekeeping: failing it must not discard a run that indexed
+		// successfully.
+		rt.logger.Printf("search backfill: could not prune vanished meetings (%v)", err)
+	}
+	report.Forgotten = forgotten
 	return report, nil
+}
+
+// forgetVanishedMeetings drops index rows for meetings the archive no longer
+// holds — the "converge" half of this command, which nothing else does.
+//
+// It changes nothing a caller sees: a recording they cannot read is already
+// absent from their visibility scan. It matters because without it the index
+// only ever grows, and a deleted meeting's words stay in the file for anyone
+// who can run SQL against it.
+//
+// Guarded on a non-empty target list. An archive read that came back empty is
+// indistinguishable from an archive that is genuinely empty, and erasing the
+// whole index on a transient failure is exactly the kind of destructive
+// convergence the D-631 assessment warned about.
+func (rt *Runtime) forgetVanishedMeetings(ctx context.Context, targets []searchBackfillTarget) (int, error) {
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	present := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		if name := strings.TrimSpace(target.OpusName); name != "" {
+			present[name] = struct{}{}
+		}
+	}
+	known, err := rt.searchStore.indexedNames(ctx)
+	if err != nil {
+		return 0, err
+	}
+	forgotten := 0
+	for _, name := range known {
+		if _, still := present[name]; still {
+			continue
+		}
+		if err := rt.searchStore.ForgetMeeting(ctx, name); err != nil {
+			return forgotten, err
+		}
+		rt.logger.Printf("search backfill: %s is no longer in the archive; dropped from the index", name)
+		forgotten++
+	}
+	return forgotten, nil
+}
+
+// indexedNames lists every meeting the index holds a record for, in any state,
+// so convergence can tell which the archive has stopped carrying.
+func (s *searchStore) indexedNames(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT opus_name FROM meeting_index`)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed meetings: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan indexed meeting: %w", err)
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
 }
 
 type searchBackfillOutcome int

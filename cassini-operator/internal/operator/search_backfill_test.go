@@ -450,3 +450,105 @@ func TestBackfillSkipsAnArchiveMeetingAlreadyIndexed(t *testing.T) {
 		t.Errorf("archive read %d times, want 2", *calls)
 	}
 }
+
+// The "converge" half: nothing else prunes, so a deleted recording's rows would
+// stay forever and its words stay readable to anyone who can run SQL on the file.
+func TestBackfillForgetsMeetingsTheArchiveNoLongerHolds(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.publishedJob(t, "JOB1", "audio-one", ingestTranscript)
+	f.publishedJob(t, "JOB2", "audio-two", ingestTranscript)
+	both := []searchBackfillTarget{
+		{JobID: "JOB1", OpusName: "JOB1.opus"},
+		{JobID: "JOB2", OpusName: "JOB2.opus"},
+	}
+	if _, err := f.rt.backfillSearchIndex(context.Background(), both, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	report, err := f.rt.backfillSearchIndex(context.Background(), both[:1], nil)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if report.Forgotten != 1 {
+		t.Fatalf("report = %+v, want forgotten=1", report)
+	}
+	for _, hit := range matches(t, f.rt.searchStore, "acquisition") {
+		if hit.Text == "JOB2.opus" {
+			t.Error("a deleted recording is still searchable")
+		}
+	}
+}
+
+// An archive read that came back empty is indistinguishable from an empty
+// archive, so convergence must not erase the index on a transient failure.
+func TestBackfillDoesNotForgetEverythingOnAnEmptyTargetList(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.publishedJob(t, "JOB1", "audio-one", ingestTranscript)
+	targets := []searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	report, err := f.rt.backfillSearchIndex(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("empty run: %v", err)
+	}
+	if report.Forgotten != 0 || len(matches(t, f.rt.searchStore, "acquisition")) != 1 {
+		t.Fatalf("an empty target list pruned the index: %+v", report)
+	}
+}
+
+// A locked job database must not look like a missing job row: that would send a
+// backfill against a busy operator down the archive path for every meeting,
+// overwriting good segment rows with coarse word rows.
+func TestBackfillTreatsAnUnreadableJobStoreAsRetryable(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.publishedJob(t, "JOB1", "audio-one", ingestTranscript)
+	if err := f.store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	archive, calls := stubArchive(archiveWords, "archive-digest", nil)
+
+	report, err := f.rt.backfillSearchIndex(context.Background(),
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, archive)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if report.Failed != 1 || report.Indexed != 0 {
+		t.Fatalf("report = %+v, want failed=1", report)
+	}
+	if *calls != 0 {
+		t.Errorf("archive was read %d times for a job-store outage", *calls)
+	}
+}
+
+// A meeting first indexed from the archive is upgraded to segment rows once its
+// bundle is available: the digest matches either way, so the source must be
+// compared too or it keeps the coarse rows forever.
+func TestBackfillUpgradesArchiveRowsWhenTheBundleReturns(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.publishedJob(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
+	targets := []searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}
+
+	// Pretend an earlier run indexed it from the archive, at the same digest.
+	if err := f.rt.searchStore.ReplaceMeeting(context.Background(), "JOB1.opus",
+		digestOf("sealed-audio-bytes"), searchRowSourceWords,
+		deriveSearchRowsFromWords(archiveWords)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets, nil)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if report.Indexed != 1 {
+		t.Fatalf("report = %+v, want the meeting upgraded, not skipped", report)
+	}
+	var source string
+	if err := f.rt.searchStore.db.QueryRow(
+		`SELECT row_source FROM meeting_index WHERE opus_name = 'JOB1.opus'`).Scan(&source); err != nil {
+		t.Fatalf("read row_source: %v", err)
+	}
+	if source != searchRowSourceSegments {
+		t.Errorf("row_source = %q, want the bundle's segments", source)
+	}
+}

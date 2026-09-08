@@ -597,6 +597,10 @@ type settingsUpdate struct {
 	Quality            string    `json:"quality"`
 	DeviceOverride     *string   `json:"device_override"`
 	TranscriptionTerms *[]string `json:"transcription_terms"`
+	// SearchAliases is a pointer for the same reason as the fields above: nil
+	// means "leave it alone", so a client that does not know about aliases
+	// cannot erase them by omitting the field.
+	SearchAliases *[][]string `json:"search_aliases"`
 }
 
 // currentSettings returns a copy of the in-memory STT policy, safe for
@@ -695,6 +699,14 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			device = ""
 		}
 		updated.DeviceOverride = device
+	}
+	if in.SearchAliases != nil {
+		aliases, err := normalizeSearchAliases(*in.SearchAliases)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid search_aliases: %v", err))
+			return
+		}
+		updated.SearchAliases = aliases
 	}
 	if in.TranscriptionTerms != nil {
 		terms, err := normalizeTranscriptionTerms(*in.TranscriptionTerms)
