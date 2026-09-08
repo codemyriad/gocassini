@@ -115,6 +115,18 @@ func (c ExAppConfig) serveSearch(
 		}
 		limit = parsed
 	}
+	// Before the expensive part, which is the point: a refused request must not
+	// have already cost a PROPFIND and a catalog GET against Nextcloud.
+	if allowed, wait := search.limiter.allow(caller); !allowed {
+		seconds := int(wait.Seconds())
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeJSONError(w, http.StatusTooManyRequests,
+			"too many searches; each one asks Nextcloud what you may read, so they are rate limited — retry shortly")
+		return
+	}
 	if index == nil {
 		// Not an empty result: the index is unavailable, and an agent must be
 		// able to tell "ask again later" from "there is nothing".
@@ -309,6 +321,9 @@ SELECT COUNT(*) FROM meeting_index m
 type searchDeps struct {
 	index   *searchStore
 	aliases func() [][]string
+	// limiter bounds how often one caller can make this app talk to Nextcloud.
+	// Nil outside a running operator, which the limiter itself tolerates.
+	limiter *searchRateLimiter
 }
 
 // aliasIndex merges the shipped groups with whatever the operator has

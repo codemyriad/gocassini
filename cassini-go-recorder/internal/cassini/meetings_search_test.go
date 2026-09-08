@@ -262,3 +262,42 @@ func TestMeetingsSearchAsksForAQuotedQuery(t *testing.T) {
 		t.Errorf("stderr should ask for quoting:\n%s", stderr)
 	}
 }
+
+// A 429 is neither an outage nor a denial: the app is working and asking this
+// caller to slow down, so the right response is to wait. Reported as its own
+// thing or an agent either retries immediately or gives up.
+func TestMeetingsSearchReportsRateLimiting(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":"too many searches"}`)
+	})
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "search", "acquisition")
+
+	if code == 0 {
+		t.Fatalf("exit=0 when rate limited; stdout=%q", stdout)
+	}
+	if !strings.Contains(stderr, "wait a moment and retry") {
+		t.Errorf("stderr should say to wait:\n%s", stderr)
+	}
+	// Not confusable with the two failures that look similar from outside.
+	if strings.Contains(stderr, "outage") || strings.Contains(stderr, "does not offer search") {
+		t.Errorf("rate limiting was reported as something else:\n%s", stderr)
+	}
+}
+
+// The speaker id is opaque, so the output has to say where one comes from —
+// otherwise --speaker is a flag nobody can supply a value for.
+func TestMeetingsSearchPointsAtWhereSpeakerIdsComeFrom(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, serveSearchRoute(searchOneHit))
+
+	_, stdout, _ := runMeetingsCLI(t, fake.server.URL, "search", "acquisition")
+
+	if !strings.Contains(stdout, "--speaker") {
+		t.Errorf("stdout should point at the speaker filter:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "speaker=") {
+		t.Errorf("stdout should show the value to copy:\n%s", stdout)
+	}
+}

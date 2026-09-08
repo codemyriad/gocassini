@@ -96,19 +96,22 @@ type Runtime struct {
 	store    *Store
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
-	searchStore  *searchStore
-	cfg          Config
-	logger       *log.Logger
-	stdout       io.Writer
-	stderr       io.Writer
-	recordSlots  chan struct{}
-	buildQueue   chan buildTask
-	sealQueue    chan sealTask
-	publishQueue chan publishTask
-	events       *eventHub
-	recordMu     sync.Mutex
-	recordJobs   map[string]*recordProcessState
-	recordWG     sync.WaitGroup
+	searchStore *searchStore
+	// searchLimiter bounds searches per caller, because each one makes this app
+	// talk to Nextcloud on the caller's behalf.
+	searchLimiter *searchRateLimiter
+	cfg           Config
+	logger        *log.Logger
+	stdout        io.Writer
+	stderr        io.Writer
+	recordSlots   chan struct{}
+	buildQueue    chan buildTask
+	sealQueue     chan sealTask
+	publishQueue  chan publishTask
+	events        *eventHub
+	recordMu      sync.Mutex
+	recordJobs    map[string]*recordProcessState
+	recordWG      sync.WaitGroup
 	// buildExecutionMu is the final admission gate around the whole build. The
 	// configured worker count may exceed one, but CUDA recognizers and the RAM/
 	// VRAM headroom probe are not safely reservable between concurrent workers.
@@ -662,6 +665,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	// pipeline keeps publishing. Logged rather than swallowed, because a
 	// permanently unopenable index would otherwise look like an archive that
 	// simply never matches anything.
+	rt.searchLimiter = newSearchRateLimiter()
 	if searchIndex, err := openSearchStore(searchStorePath(cfg.DBPath), logger); err != nil {
 		logger.Printf("search index unavailable (%v); meetings will publish but not be indexed", err)
 	} else {
@@ -729,7 +733,8 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 // consumer uses, so an edit is picked up without a restart.
 func (rt *Runtime) searchDeps() searchDeps {
 	return searchDeps{
-		index: rt.searchStore,
+		index:   rt.searchStore,
+		limiter: rt.searchLimiter,
 		aliases: func() [][]string {
 			rt.settingsMu.RLock()
 			defer rt.settingsMu.RUnlock()
