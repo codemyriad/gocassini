@@ -202,7 +202,7 @@ func decodeDefaultTranscriptItemsForTest(t *testing.T, tags map[string]string) [
 // bundle — flagged words already deleted from the transcript, the artifact
 // manifest's provenance.attribution as the only trace they existed — through
 // the real `cassini pack` path, and asserts the record reaches the published
-// wire verbatim, is declared by the closed schema, comes back through
+// wire verbatim, is declared by the reference schema, comes back through
 // the typed read path, and survives a retag. A sibling attribution-less pack
 // must emit no attribution key at all.
 func TestPackedPortableMeetingCarriesAttributionRecord(t *testing.T) {
@@ -287,7 +287,7 @@ func TestPackedPortableMeetingCarriesAttributionRecord(t *testing.T) {
 // assertPackedAttributionRecord reads the published file's wire manifest as
 // raw JSON — key level, not a Go struct, so an omitempty regression cannot
 // hide behind zero values — and asserts provenance.attribution matches `want`
-// exactly and is fully declared by the closed schema.
+// exactly and is fully declared by the reference schema.
 func assertPackedAttributionRecord(t *testing.T, path string, want map[string]any) {
 	t.Helper()
 	provenance := decodePackedProvenanceForTest(t, path)
@@ -333,7 +333,7 @@ func decodePackedProvenanceForTest(t *testing.T, path string) map[string]any {
 
 // assertAttributionKeysDeclaredBySchema checks the emitted attribution object
 // against the portable meeting schema, which pins the record down with
-// additionalProperties: false — a key the producer emits and the schema does
+// The public schema is open; nevertheless, a key the producer emits and it does
 // not declare makes every packed file invalid.
 func assertAttributionKeysDeclaredBySchema(t *testing.T, attribution map[string]any) {
 	t.Helper()
@@ -357,9 +357,6 @@ func assertAttributionKeysDeclaredBySchema(t *testing.T, attribution map[string]
 		def := nested(doc, "$defs", "attributionProvenance")
 		if def == nil {
 			t.Fatalf("%s has no $defs.attributionProvenance", schemaPath)
-		}
-		if additional, ok := def["additionalProperties"].(bool); !ok || additional {
-			t.Fatalf("%s: attributionProvenance.additionalProperties is not false; this test assumes it is", schemaPath)
 		}
 		declared, _ := def["properties"].(map[string]any)
 		for key := range attribution {
@@ -458,7 +455,7 @@ func writeProvenancedMeetingBundleFixture(meetingDir, attributionJSON, wordTimin
 // TestPackedPortableMeetingCarriesWordTimingProvenance packs a bundle whose
 // artifact manifest declares provenance.wordTimings through the real
 // `cassini pack` path, and asserts the record reaches the published wire
-// verbatim, is declared by the closed schema, comes back through the
+// verbatim, is declared by the reference schema, comes back through the
 // typed read path, and survives a retag — the same journey the attribution
 // record is held to above.
 //
@@ -556,7 +553,7 @@ func TestPackedPortableMeetingCarriesWordTimingProvenance(t *testing.T) {
 // assertPackedWordTimingRecord reads the published file's wire manifest as raw
 // JSON — key level, not a Go struct, so an omitempty regression cannot hide
 // behind zero values — and asserts provenance.wordTimings matches `want`
-// exactly and is fully declared by the closed schema.
+// exactly and is fully declared by the reference schema.
 func assertPackedWordTimingRecord(t *testing.T, path string, want map[string]any) {
 	t.Helper()
 	provenance := decodePackedProvenanceForTest(t, path)
@@ -582,7 +579,7 @@ func assertPackedWordTimingRecord(t *testing.T, path string, want map[string]any
 
 // assertWordTimingKeysDeclaredBySchema checks the emitted wordTimings object
 // against the portable meeting schema, which pins the record down with
-// additionalProperties: false — a key the producer emits and the schema does
+// The public schema is open; nevertheless, a key the producer emits and it does
 // not declare makes every packed file invalid.
 func assertWordTimingKeysDeclaredBySchema(t *testing.T, wordTimings map[string]any) {
 	t.Helper()
@@ -606,9 +603,6 @@ func assertWordTimingKeysDeclaredBySchema(t *testing.T, wordTimings map[string]a
 		def := nested(doc, "$defs", "wordTimingProvenance")
 		if def == nil {
 			t.Fatalf("%s has no $defs.wordTimingProvenance", schemaPath)
-		}
-		if additional, ok := def["additionalProperties"].(bool); !ok || additional {
-			t.Fatalf("%s: wordTimingProvenance.additionalProperties is not false; this test assumes it is", schemaPath)
 		}
 		declared, _ := def["properties"].(map[string]any)
 		for key := range wordTimings {
@@ -635,12 +629,14 @@ func assertWordTimingKeysDeclaredBySchema(t *testing.T, wordTimings map[string]a
 func TestWriteManifestWordTimingsDecodeIntoThePackerModel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.json")
 	streams := []transcribe.AudioStream{{SpeakerID: "spk_host", SpeakerLabel: "Host"}}
-	if err := transcribe.WriteManifest(
-		path, "source.mkv", 250, 250, streams, nil,
-		transcribe.SherpaOnnxBackend, transcribe.ModelID("test-stt"), "cpu",
-		"", false, nil, nil,
-		&transcribe.WordTimingProvenance{EndsBoundedByAudio: true},
-	); err != nil {
+	if err := transcribe.WriteManifest(path, transcribe.ManifestInput{
+		SrcBasename: "source.mkv", SrcDurationMS: 250, DigestDurationMS: 250,
+		Streams:     streams,
+		STTBackend:  transcribe.SherpaOnnxBackend,
+		STTModelID:  transcribe.ModelID("test-stt"),
+		STTDevice:   "cpu",
+		WordTimings: &transcribe.WordTimingProvenance{EndsBoundedByAudio: true},
+	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	raw, err := os.ReadFile(path)

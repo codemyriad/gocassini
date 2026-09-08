@@ -12,12 +12,12 @@ func TestMigrationsRunContiguouslyThroughInsightRuns(t *testing.T) {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
 	last := migrations[len(migrations)-1]
-	if last.Version != 9 || last.Name != "insight_requested_endpoint" {
-		t.Fatalf("last migration = %04d_%s, want 0009_insight_requested_endpoint", last.Version, last.Name)
+	if last.Version != 10 || last.Name != "insight_requested_endpoint" {
+		t.Fatalf("last migration = %04d_%s, want 0010_insight_requested_endpoint", last.Version, last.Name)
 	}
 }
 
-// TestMigrateDownRemovesTheInsightTablesAndUpRestoresThem exercises 0008 the way
+// TestMigrateDownRemovesTheInsightTablesAndUpRestoresThem exercises 0009 the way
 // an installation upgrading from the last release does, and the way a rollback
 // does: the down migration must leave the job tables — which are the operator's
 // only other state — exactly where it found them.

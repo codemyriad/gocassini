@@ -44,7 +44,7 @@ func TestInspectPathPublishedMeetingReadsChunkedTranscript(t *testing.T) {
 		"cassini=ok",
 		"opus_sha256=",
 		"payload encoding=base64url+gzip+utf8json",
-		"transcript id=raw-asr role=raw-asr default=yes",
+		"transcript id=raw-asr default=yes",
 		"speech_to_text backend=local-asr engine=asr-engine model=meeting-model",
 	} {
 		if !strings.Contains(got, want) {
@@ -146,18 +146,18 @@ func TestPublishedTranscriptChunkSetIsReadAndHolesFailClosed(t *testing.T) {
 	}
 
 	bodies := readPortableTranscriptBodies(tags, manifest)
-	if got := bodies.WordCounts[portable.RoleRawASR]; got != len(words) {
+	if got := bodies.WordCounts[portable.DefaultWordsTranscriptID]; got != len(words) {
 		t.Fatalf("decoded word count = %d, want %d", got, len(words))
 	}
 	if len(bodies.Unreadable) != 0 {
 		t.Fatalf("whole chunk set reported unreadable: %v", bodies.Unreadable)
 	}
 
-	prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+	prefix := portable.TranscriptIDToTagPrefix(portable.DefaultWordsTranscriptID)
 	count, _ := strconv.Atoi(tags[prefix+"CHUNK_COUNT"])
 	delete(tags, fmt.Sprintf("%s%03d", prefix, count-1))
 	bodies = readPortableTranscriptBodies(tags, manifest)
-	if len(bodies.Unreadable) != 1 || bodies.Unreadable[0] != portable.RoleRawASR {
+	if len(bodies.Unreadable) != 1 || bodies.Unreadable[0] != portable.DefaultWordsTranscriptID {
 		t.Fatalf("Unreadable = %v, want [raw-asr]", bodies.Unreadable)
 	}
 	if err := bodies.err("meeting.opus"); err == nil {
@@ -207,7 +207,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 	basePath := createTestOpus(t, outPath+".audio.opus")
 	audio := readTestOpusIntegrity(t, basePath)
 	tags := buildPublishedPortableTags(t, opts, &audio)
-	prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+	prefix := portable.TranscriptIDToTagPrefix(portable.DefaultWordsTranscriptID)
 	if opts.dropLastTranscriptChunk {
 		delete(tags, fmt.Sprintf("%s%03d", prefix, parseIntOrZero(tags[prefix+"CHUNK_COUNT"])-1))
 	}
@@ -253,7 +253,7 @@ func buildPublishedPortableTags(t *testing.T, opts portableFixtureOptions, audio
 	manifest := portable.NormalizePublishedManifest(portable.Manifest{
 		Meeting: portable.Meeting{
 			ID: "mtg_" + strings.Repeat("c", 64), Title: "Weekly Sync",
-			CreatedAtUTC: "2026-03-11T08:30:00Z", DurationMS: identity.DurationMS, Language: "en",
+			CreatedAtUTC: "2026-03-11T08:30:00Z", DurationMS: identity.DurationMS,
 		},
 		Audio: portable.Audio{
 			Container: "ogg", Codec: "opus", SampleRate: identity.SampleRate, Channels: identity.Channels,
@@ -283,7 +283,7 @@ func buildPublishedPortableTags(t *testing.T, opts portableFixtureOptions, audio
 		}}
 	}
 	inputs := []portable.TranscriptInput{{
-		ID: portable.RoleRawASR, Role: portable.RoleRawASR, Default: true,
+		ID: portable.DefaultWordsTranscriptID, Default: true,
 		Language: "en", Provenance: manifest.Provenance.SpeechToText,
 		Body: portable.TranscriptBody{
 			Format: "cassini.words.v1", Language: "en", WordCount: len(items), Items: items,
@@ -291,15 +291,15 @@ func buildPublishedPortableTags(t *testing.T, opts portableFixtureOptions, audio
 	}}
 	if opts.withDerived {
 		inputs = append(inputs, portable.TranscriptInput{
-			ID:                 "readable",
-			Role:               portable.RoleReadableCleanup,
+			ID:                 "display",
+			Role:               portable.RoleDisplay,
 			Default:            true,
-			Format:             "transcript.readable.v1",
-			SourceTranscriptID: portable.RoleRawASR,
+			Format:             "transcript.display.v1",
+			SourceTranscriptID: portable.DefaultWordsTranscriptID,
 			Body: map[string]any{
-				"version": "transcript.readable.v1",
-				"segments": []any{map[string]any{
-					"id": "readable-1", "text": strings.Join(opts.words, " "),
+				"version": "transcript.display.v1",
+				"blocks": []any{map[string]any{
+					"id": "display-1", "text": strings.Join(opts.words, " "),
 				}},
 			},
 		})
@@ -308,7 +308,7 @@ func buildPublishedPortableTags(t *testing.T, opts portableFixtureOptions, audio
 	if err != nil {
 		t.Fatalf("encode published manifest: %v", err)
 	}
-	return portable.BuildPublishedOpusTags(manifest, encoded, portable.RoleRawASR)
+	return portable.BuildPublishedOpusTags(manifest, encoded, portable.DefaultWordsTranscriptID)
 }
 
 func rewriteMainManifest(t *testing.T, tags map[string]string, mutate func(map[string]any)) {

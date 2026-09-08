@@ -116,16 +116,16 @@ The main payload is an index. Its required top-level fields are:
 }
 ```
 
-Transcript bodies are not stored inline. `transcripts` indexes raw,
-human-corrected, and translated bodies. `readableTranscripts` optionally
-indexes cleanup and display bodies.
+Transcript bodies are not stored inline. `transcripts` indexes word transcripts;
+`readableTranscripts` optionally indexes display bodies. Word entries have no
+origin role or derivation link. Older `role` and `sourceTranscriptId` members
+on word entries are ignored.
 
 Example descriptor:
 
 ```json
 {
   "id": "raw-asr",
-  "role": "raw-asr",
   "default": true,
   "format": "cassini.words.v1",
   "language": "en",
@@ -162,12 +162,16 @@ Words transcript bodies have this shape:
 ```
 
 Each `items[]` entry is exactly one timed word. Its `text` is non-empty and
-contains no whitespace; paragraph text belongs in a readable or display body.
+contains no whitespace; paragraph text belongs in a display body.
 
-Readable-cleanup and display entries retain their native JSON documents:
-`transcript.readable.v1` with `segments`, and `transcript.display.v1` with
+Display entries retain their native JSON document: `transcript.display.v1` with
 `blocks`. The entry's `format`, role, and MIME identify which body it carries;
 all body kinds use the same chunk and integrity mechanism below.
+
+Readers skip unrecognised readable roles, including the withdrawn
+`readable-cleanup` entries in older files. The schema no longer defines that
+role or `provenance.readableCleanup`; both are ignored as unknown metadata.
+The audio and word transcripts remain usable.
 
 The body tags repeat the descriptor metadata:
 
@@ -193,11 +197,21 @@ For the raw transcript shown first, readers select the entry marked
 `CASSINI_TRANSCRIPT_DEFAULT` tag is a discoverability copy: a disagreement
 should be reported, but the manifest still wins.
 
-`raw-asr` and `scripted` entries come directly from the recording and do not
-set `sourceTranscriptId`. `human-corrected` and `translation` entries require
-it. Readable-cleanup and display entries also require it and name the words
-transcript they came from. When switching words transcripts, consumers should
-use only a derived entry whose source id matches the newly selected entry.
+Display entries require `role: "display"` and a `sourceTranscriptId` naming a
+words transcript. When selecting or switching words transcripts, first filter
+displays by that source id, then prefer `default: true`, then array order. If
+none matches, show the words without a display. Cassini retains `raw-asr` as
+its single-transcript id for compatibility; ids are opaque and imply no role.
+
+The reference schema also omits unused `chapters` and the duplicate meeting
+hints `summary`, `language`, and `roomName`. The supported top-level summary
+and attachments, entry/body language, and `meeting.roomId` remain. Older files
+with the retired members still open because readers ignore unknown metadata.
+
+A speech-to-text step may carry a `hints` record describing the decoder biasing
+that ran. It is absent when the pass ran unbiased; `applied: false` with a
+`reason` means a vocabulary was configured but could not be used, which is a
+different thing from no vocabulary at all and must not be reported as success.
 
 Processing provenance is keyed by transcript id:
 

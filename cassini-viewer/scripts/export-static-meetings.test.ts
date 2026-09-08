@@ -1603,9 +1603,8 @@ describe("validatePublishedPortableManifest", () => {
     },
     transcripts: [{
       id: "raw-asr",
-      role: "raw-asr",
       default: true,
-      format: "transcript.words.v1",
+      format: "cassini.words.v1",
       payloadRef: {
         prefix: "CASSINI_TX_RAW_ASR_PAYLOAD_",
         chunkCount: 1,
@@ -1646,10 +1645,6 @@ describe("validatePublishedPortableManifest", () => {
   it("rejects malformed or unsupported transcript descriptors", () => {
     expect(() => validatePublishedPortableManifest({
       ...manifest,
-      transcripts: [{ ...manifest.transcripts[0], role: "unknown" }],
-    })).toThrow(/unsupported portable transcript role/i);
-    expect(() => validatePublishedPortableManifest({
-      ...manifest,
       transcripts: [{
         ...manifest.transcripts[0],
         payloadRef: { ...manifest.transcripts[0].payloadRef, encoding: "unknown" },
@@ -1661,30 +1656,32 @@ describe("validatePublishedPortableManifest", () => {
     })).toThrow(/invalid portable transcript id/i);
   });
 
-  it("enforces source relationships for every words role", () => {
+  it.each([undefined, "raw-asr", "scripted", "human-corrected", "translation", "unknown", "display", 42, { legacy: true }])(
+    "ignores word origin metadata %j",
+    (role) => {
+      expect(() => validatePublishedPortableManifest({
+        ...manifest,
+        transcripts: [{ ...manifest.transcripts[0], role, sourceTranscriptId: { unknown: true } }],
+      })).not.toThrow();
+    },
+  );
+
+  it("skips withdrawn readable entries without resolving their source or body", () => {
     expect(() => validatePublishedPortableManifest({
       ...manifest,
-      transcripts: [{ ...manifest.transcripts[0], sourceTranscriptId: "raw-asr" }],
-    })).toThrow(/must not set sourceTranscriptId/i);
+      readableTranscripts: [{ id: "old-cleanup", role: "readable-cleanup", sourceTranscriptId: "missing" }],
+    })).not.toThrow();
+  });
+
+  it("still validates display source relationships", () => {
+    const display = { ...manifest.transcripts[0], id: "display", role: "display" };
     expect(() => validatePublishedPortableManifest({
       ...manifest,
-      transcripts: [{ ...manifest.transcripts[0], id: "fixed", role: "human-corrected" }],
+      readableTranscripts: [{ ...display, sourceTranscriptId: "missing" }],
     })).toThrow(/unknown sourceTranscriptId/i);
     expect(() => validatePublishedPortableManifest({
       ...manifest,
-      transcripts: [
-        manifest.transcripts[0],
-        {
-          ...manifest.transcripts[0],
-          id: "fixed",
-          role: "human-corrected",
-          sourceTranscriptId: "raw-asr",
-          payloadRef: {
-            ...manifest.transcripts[0].payloadRef,
-            prefix: "CASSINI_TX_FIXED_PAYLOAD_",
-          },
-        },
-      ],
+      readableTranscripts: [{ ...display, sourceTranscriptId: "raw-asr" }],
     })).not.toThrow();
   });
 });

@@ -26,17 +26,19 @@ Optional capability pass-through:
 
 | Variable | Purpose |
 |---|---|
-| `OPENROUTER_API_KEY` | summary capability configuration |
-| `OPENROUTER_BASE_URL` | summary capability configuration |
-| `LLM_BASE_URL` | summary capability configuration |
-| `LLM_MODEL` | summary model (SUMMARY_MODEL overrides) |
+| `OPENROUTER_API_KEY` | optional key for the summary endpoint |
+| `OPENROUTER_BASE_URL` | legacy summary endpoint base URL |
+| `LLM_BASE_URL` | summary endpoint base URL |
+| `LLM_MODEL` | summary model, unless `SUMMARY_MODEL` overrides it |
 | `SUMMARY_MODEL` | summary generation model |
 | `CASSINI_SUMMARY_DISABLED` | disable summary generation |
 | `CASSINI_STT_BACKEND` | speech-to-text engine id (default `sherpa-onnx`; unknown ids fail the build loudly) |
+| `CASSINI_STT_HINTS_DISABLED` | disable decoder vocabulary biasing without deleting the vocabulary |
+| `CASSINI_STT_HINTS_SCORE` | override the decoder hotword boost (default `2.0`) |
 | `CASSINI_ATTRIBUTION_DISABLED` | skip the cross-track speaker-attribution measurement |
 | `CASSINI_ATTRIBUTION_DROP` | delete words the attribution evidence contradicts instead of annotating them |
 
-The base URL is what enables these steps; the API key is optional, so a
+The base URL is what enables summaries; the API key is optional, so a
 self-hosted OpenAI-compatible endpoint with no authentication works.
 
 ### Per-step endpoints

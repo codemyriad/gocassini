@@ -11,7 +11,7 @@ import {
   getDefaultTranscriptId,
   listAvailableTranscripts,
   loadPortableTranscriptBody,
-  pickReadableForTranscript,
+  pickDisplayForTranscript,
   readPortableSummaryMarkdown,
   sha256HexFallback,
   type PortableMeetingManifest,
@@ -554,7 +554,6 @@ function makeTranscriptEntry(
   overrides: Partial<PortableTranscriptEntry> & { id: string },
 ): PortableTranscriptEntry {
   return {
-    role: "raw-asr",
     format: "cassini.words.v1",
     payloadRef: {
       prefix: `CASSINI_TX_${overrides.id.toUpperCase()}_PAYLOAD_`,
@@ -697,21 +696,21 @@ describe("readPortableSummaryMarkdown", () => {
   });
 });
 
-describe("pickReadableForTranscript", () => {
+describe("pickDisplayForTranscript", () => {
   const manifest: PortableMeetingManifest = {
     version: 1,
     readableTranscripts: [
       {
         id: "readable-paired-canary",
-        role: "readable-cleanup",
-        format: "cassini.readable.v1",
+        role: "display",
+        format: "transcript.display.v1",
         sourceTranscriptId: "canary",
         payloadRef: { prefix: "X_", chunkCount: 1, sha256: "0".repeat(64) },
       },
       {
         id: "readable-default",
-        role: "readable-cleanup",
-        format: "cassini.readable.v1",
+        role: "display",
+        format: "transcript.display.v1",
         default: true,
         sourceTranscriptId: "parakeet",
         payloadRef: { prefix: "Y_", chunkCount: 1, sha256: "0".repeat(64) },
@@ -720,19 +719,32 @@ describe("pickReadableForTranscript", () => {
   };
 
   it("matches sourceTranscriptId", () => {
-    expect(pickReadableForTranscript(manifest, "canary")?.id).toBe("readable-paired-canary");
+    expect(pickDisplayForTranscript(manifest, "canary")?.id).toBe("readable-paired-canary");
   });
 
   it("matches another transcript to its own readable body", () => {
-    expect(pickReadableForTranscript(manifest, "parakeet")?.id).toBe("readable-default");
+    expect(pickDisplayForTranscript(manifest, "parakeet")?.id).toBe("readable-default");
   });
 
   it("does not substitute a body derived from another transcript", () => {
-    expect(pickReadableForTranscript(manifest, "whisper")).toBeNull();
+    expect(pickDisplayForTranscript(manifest, "whisper")).toBeNull();
+  });
+
+  it("prefers the flagged default after filtering by role and source", () => {
+    const paired = manifest.readableTranscripts![0]!;
+    const withVariants = {
+      ...manifest,
+      readableTranscripts: [
+        { ...paired, id: "cleanup", role: "readable-cleanup", default: true },
+        paired,
+        { ...paired, id: "display-later", default: true },
+      ],
+    };
+    expect(pickDisplayForTranscript(withVariants, "canary")?.id).toBe("display-later");
   });
 
   it("returns null when no readable transcripts are present", () => {
-    expect(pickReadableForTranscript({} as PortableMeetingManifest, "anything")).toBeNull();
+    expect(pickDisplayForTranscript({} as PortableMeetingManifest, "anything")).toBeNull();
   });
 });
 

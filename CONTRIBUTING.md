@@ -28,6 +28,18 @@ them as public and unsuitable for any real deployment.
   behavior, app-store metadata, security posture, or operator documentation.
   Do not edit `CHANGELOG.md` directly except during release preparation.
 
+## PR conflict warnings
+
+The PR conflict impact workflow compares each open PR against the other open PRs
+targeting its base branch. It comments only when merging the candidate would make
+a currently mergeable PR conflict. Pre-existing conflicts are omitted. The bot
+updates one comment in place and deletes it when the warning clears.
+
+The simulation assumes **merge commits**. Squash and rebase merges can produce
+different results, especially with stacked PRs. Warnings are advisory and cover
+Git merge conflicts, not build or test compatibility. PR updates, branch pushes,
+and an hourly refresh keep the comments current.
+
 ## Releases
 
 Maintainers cut releases with `scripts/prepare-release.sh` and the **Release**

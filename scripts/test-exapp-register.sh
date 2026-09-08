@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Offline unit tests for ops/deploy/lib/exapp-register.sh.
+# Offline unit tests for scripts/lib-exapp-register.sh.
 #
 # No Docker, no network, no stack — the pure decision functions only. The rules
 # under test are the ones that cost real production incidents: refusing moving
@@ -10,8 +10,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=ops/deploy/lib/exapp-register.sh
-source "$SCRIPT_DIR/lib/exapp-register.sh"
+# shellcheck source=scripts/lib-exapp-register.sh
+source "$SCRIPT_DIR/lib-exapp-register.sh"
 
 exapp_log() { :; }
 
@@ -32,9 +32,9 @@ expect_eq() {
   if [[ "$want" == "$got" ]]; then ok "$desc"; else fail "$desc (want '$want', got '$got')"; fi
 }
 
-# --- moving tags are refused ------------------------------------------------
-for moving in latest latest-cuda latest-rocm cuda rocm main stable branch-foo dispatch-20260101; do
-  expect_fail "refuses moving tag '$moving'" exapp_assert_immutable_tag "$moving"
+# --- moving and non-release tags are refused --------------------------------
+for invalid in latest latest-cuda latest-rocm cuda rocm main stable branch-foo dispatch-20260101 nightly develop prod-current v1.0.0; do
+  expect_fail "refuses non-release tag '$invalid'" exapp_assert_immutable_tag "$invalid"
 done
 expect_fail "refuses an empty tag" exapp_assert_immutable_tag ""
 
@@ -67,6 +67,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 cat > "$WORK/info.xml" <<'XML'
 <info>
+  <name>TOP_LEVEL_ONLY</name>
   <version>9.9.9</version>
   <external-app>
     <docker-install>
@@ -77,6 +78,7 @@ cat > "$WORK/info.xml" <<'XML'
     <environment-variables>
       <variable><name>CASSINI_TALK_RECORDING_SECRET</name></variable>
       <variable><name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name></variable>
+      <!-- <variable><name>COMMENTED_ONLY</name></variable> -->
     </environment-variables>
   </external-app>
 </info>
@@ -100,9 +102,13 @@ expect_ok "accepts a manifest declaring both Talk secrets" \
 # AppAPI silently drops --env for undeclared keys, so this must be loud.
 expect_fail "rejects a manifest missing a required declaration" \
   exapp_assert_manifest_declares "$WORK/out.xml" CASSINI_TOTALLY_UNDECLARED
+expect_fail "does not mistake the app name for an environment declaration" \
+  exapp_assert_manifest_declares "$WORK/out.xml" TOP_LEVEL_ONLY
+expect_fail "does not accept an environment declaration inside an XML comment" \
+  exapp_assert_manifest_declares "$WORK/out.xml" COMMENTED_ONLY
 
 # --- the real manifest must stay deployable --------------------------------
-REAL_INFO="$SCRIPT_DIR/../../appinfo/info.xml"
+REAL_INFO="$SCRIPT_DIR/../appinfo/info.xml"
 expect_ok "the checked-in manifest declares both Talk secrets" \
   exapp_assert_manifest_declares "$REAL_INFO" \
     CASSINI_TALK_RECORDING_SECRET CASSINI_TALK_SIGNALING_INTERNAL_SECRET
@@ -115,13 +121,12 @@ expect_ok "the checked-in <image-tag> is a deployable pin" \
 # --- the library must never be able to destroy the archive ------------------
 # The volume is the recording archive. Comments may name --rm-data (they
 # explain why it is absent); executable lines may not.
-for f in "$SCRIPT_DIR/lib/exapp-register.sh" "$SCRIPT_DIR/deploy-exapp.sh"; do
-  if grep -n -- '--rm-data' "$f" | grep -qv ':[[:space:]]*#'; then
-    fail "$(basename "$f") has a --rm-data code path"
-  else
-    ok "$(basename "$f") has no --rm-data code path"
-  fi
-done
+f="$SCRIPT_DIR/lib-exapp-register.sh"
+if grep -n -- '--rm-data' "$f" | grep -qv ':[[:space:]]*#'; then
+  fail "$(basename "$f") has a --rm-data code path"
+else
+  ok "$(basename "$f") has no --rm-data code path"
+fi
 
 echo
 if (( FAILURES )); then

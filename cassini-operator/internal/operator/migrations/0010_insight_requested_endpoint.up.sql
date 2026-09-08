@@ -1,6 +1,6 @@
 -- The endpoint an insight was ASKED for, as distinct from the one that answered.
 --
--- 0008 stored only the latter and said so: "a retry re-resolves provider and
+-- 0009 stored only the latter and said so: "a retry re-resolves provider and
 -- model from current settings, so a stored provider is a record, not an input
 -- (D-720 §4)". That was right while the endpoint was purely deployment policy
 -- and nobody chose it per run. It stopped being right when the Prepare panel

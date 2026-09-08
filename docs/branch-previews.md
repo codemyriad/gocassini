@@ -11,7 +11,7 @@ publish paths:
   as the source. Cheap, runs on a GitHub-hosted runner, parallel across
   branches. Triggered automatically when viewer/workflow files change.
 - **Processing preview** — builds a GPU `cassini-bin`, downloads the latest
-  N raw recordings, runs STT + cleanup on the self-hosted GPU runner, then
+  N raw recordings, runs STT on the self-hosted GPU runner, then
   publishes per-branch meeting artifacts alongside the viewer. **Opt-in
   only.** Serialized on the single GPU.
 

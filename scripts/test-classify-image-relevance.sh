@@ -46,7 +46,7 @@ expect true  "cassini-go-recorder/main.go"
 expect true  "Dockerfile"                         # a bare root build input
 expect true  ".dockerignore"                      # #131's point-fix, now covered by default
 expect true  ".gitattributes"
-expect true  "ops/process-recordings.sh"          # un-enumerated build input
+expect true  "scripts/process-recordings.sh"          # un-enumerated build input
 expect true  "sandbox/whatever.txt"               # enumerated nowhere
 expect true  "harness/bin/x.sh"                   # PR #36's original incident
 
@@ -59,7 +59,7 @@ expect true  $'spec/x.schema.json\nREADME.md'
 # The deny-list must now classify them relevant. spec/ is even called out by
 # name in ci.yml as deliberately not-ignorable.
 expect true  "spec/cassini-portable-meeting-manifest-v1.schema.json"
-expect true  "ops/process-recordings.sh"
+expect true  "scripts/process-recordings.sh"
 
 echo "PASS: classifier behavioral fixtures"
 

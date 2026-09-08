@@ -58,9 +58,11 @@
   let settings: Settings | null = null;
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
+  let transcriptionTermsText = "";
 
   let savedQuality: SettingsQuality = "balanced";
   let savedDeviceOverride = "";
+  let savedTranscriptionTermsText = "";
 
   // The LLM half. Null when it could not be read, which is not the same as a
   // deployment with no providers: the summarisation step says so rather than
@@ -162,8 +164,10 @@
     settings = next;
     quality = next.quality;
     deviceOverride = next.device_override;
+    transcriptionTermsText = next.transcription_terms.join("\n");
     savedQuality = next.quality;
     savedDeviceOverride = next.device_override;
+    savedTranscriptionTermsText = transcriptionTermsText;
   }
 
   function applyLLM(next: LLMSettings) {
@@ -208,7 +212,11 @@
     if (sttDirty) {
       try {
         applySettings(
-          await operatorClient.putSettings({ quality, device_override: deviceOverride }),
+          await operatorClient.putSettings({
+            quality,
+            device_override: deviceOverride,
+            transcription_terms: transcriptionTermsText.split(/\r?\n/),
+          }),
         );
       } catch (error) {
         failures.push(asMessage(error));
@@ -333,8 +341,15 @@
   $: hasProvider = llm === null ? null : providers.length > 0;
   $: summaryModels = modelsByProvider[summary.provider] ?? [];
 
+  // Two stores, two dirty bits, and the transcription terms belong to the STT
+  // one: they ride the same PUT as quality and the device override, so a page
+  // whose only edit was a term must still send that request and must not send
+  // the LLM one.
   $: sttDirty =
-    settings !== null && (quality !== savedQuality || deviceOverride !== savedDeviceOverride);
+    settings !== null &&
+    (quality !== savedQuality ||
+      deviceOverride !== savedDeviceOverride ||
+      transcriptionTermsText !== savedTranscriptionTermsText);
   $: summaryDirty = llm !== null && JSON.stringify(summary) !== savedSummary;
   $: isDirty = sttDirty || summaryDirty;
 </script>
@@ -623,6 +638,32 @@
           {/if}
         </div>
 
+      </section>
+
+      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
+        <div>
+          <h3 class="text-sm font-semibold">Participant and project vocabulary</h3>
+          <p class="text-xs text-base-content/60">
+            Preferred spellings for names and terms. The transcriber is biased towards them,
+            so it can write words it would otherwise get wrong.
+          </p>
+        </div>
+        <label class="flex w-full flex-col gap-1">
+          <span class="text-xs font-medium text-base-content/70">One term per line</span>
+          <textarea
+            bind:value={transcriptionTermsText}
+            class="textarea min-h-28 w-full border-base-300 shadow-none"
+            maxlength={10_100}
+            placeholder={'Gocassini\nNextcloud Talk\nProject Cassini'}
+          ></textarea>
+          <span class="text-xs text-base-content/60">
+            Up to 100 terms and 100 characters per term. Participant display names are supplied
+            automatically. A term is only written where the audio already supports it, so this
+            corrects spellings without putting words in anyone's mouth. It needs a transcription
+            model that ships a BPE vocabulary, which the <em>fast</em> tier never does; when a
+            vocabulary cannot be used, the build records that and says why.
+          </span>
+        </label>
       </section>
 
       <button

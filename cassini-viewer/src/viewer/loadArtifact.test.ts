@@ -14,6 +14,7 @@ import {
   buildDisplayTranscriptFromArtifacts,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  extractPortableManifestFromArrayBuffer,
 } from "./portable";
 import { canonicalWordsForBlock, isLikelyCrosstalkTurn } from "../core/transcript";
 import {
@@ -746,14 +747,12 @@ describe("switchPortableTranscript", () => {
       transcripts: [
         {
           id: "parakeet",
-          role: "raw-asr",
-          format: "cassini.words.v1",
+              format: "cassini.words.v1",
           payloadRef: parakeetPayload.payloadRef,
         },
         {
           id: "canary",
-          role: "raw-asr",
-          default: true,
+              default: true,
           format: "cassini.words.v1",
           payloadRef: canaryPayload.payloadRef,
         },
@@ -889,14 +888,12 @@ describe("switchPortableTranscript", () => {
       transcripts: [
         {
           id: "parakeet",
-          role: "raw-asr",
-          format: "cassini.words.v1",
+              format: "cassini.words.v1",
           payloadRef: { ...parakeetPayload.payloadRef, sha256: "0".repeat(64) },
         },
         {
           id: "canary",
-          role: "raw-asr",
-          default: true,
+              default: true,
           format: "cassini.words.v1",
           payloadRef: canaryPayload.payloadRef,
         },
@@ -1285,7 +1282,11 @@ describe("portable attribution end-to-end (crosstalk badge judgement)", () => {
       },
     };
     const { transcript: rawTranscript, readableTranscript, ...manifest } = portableFixture;
-    serveOpus(buildPortableOpusFixture({ manifest, rawTranscript, readableTranscript }));
+    const displayTranscript = buildDisplayTranscriptFromArtifacts(
+      buildTranscriptWordsFromPortable({ ...manifest, transcript: rawTranscript }),
+      readableTranscript as never,
+    );
+    serveOpus(buildPortableOpusFixture({ manifest, rawTranscript, displayTranscript }));
 
     const artifact = await loadPortableArtifactFromAudioPath("./attributed.opus");
 
@@ -1645,11 +1646,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     expect(segments[0]?.endMs).toBe(5400);
   });
 
-  /** A published readable body may omit a display body. In that case the
-   * viewer builds the display while preserving the readable paragraph and its
-   * word-level overlap evidence.
-   */
-  it("keeps a rebuilt paragraph whole and marks what landed inside it", async () => {
+  it("keeps a published display paragraph whole and marks what landed inside it", async () => {
     const hostWords = [
       { text: "So", startMs: 1000, endMs: 1700 },
       { text: "the", startMs: 1700, endMs: 2400 },
@@ -1662,7 +1659,7 @@ describe("the display pipeline MeetingView runs, end to end", () => {
       { text: "went", startMs: 6600, endMs: 7300 },
       { text: "out.", startMs: 7300, endMs: 8000 },
     ];
-    servePortableMeeting({
+    const fixture = {
       manifest: {
         meeting: { durationMs: 9000 },
         integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
@@ -1713,13 +1710,21 @@ describe("the display pipeline MeetingView runs, end to end", () => {
           },
         ],
       },
-    });
+    };
 
+    servePortableMeeting({
+      manifest: fixture.manifest,
+      rawTranscript: fixture.rawTranscript,
+      displayTranscript: buildDisplayTranscriptFromArtifacts(
+        buildTranscriptWordsFromPortable({ ...fixture.manifest, transcript: fixture.rawTranscript }),
+        fixture.readableTranscript as never,
+      ),
+    });
     const artifact = await loadPortableArtifactFromAudioPath("./readable-words.opus");
     const segments = displaySegmentsFor(artifact);
     const analysis = analyzeOverlap(segments);
 
-    // The display builder used the published readable word timing.
+    // The viewer retained the published display word timing.
     expect(segments[0]?.tokens[0]).toMatchObject({ text: "So", startMs: 1000, endMs: 1700 });
     // The paragraph is not cut, and no prose is redistributed by word count.
     expect(segments).toHaveLength(2);
@@ -1732,6 +1737,60 @@ describe("the display pipeline MeetingView runs, end to end", () => {
       ["rseg_1", ["Bob"]],
       ["rseg_2", ["Alice"]],
     ]);
+  });
+});
+
+describe("portable word origin compatibility", () => {
+  const manifest = {
+    meeting: { durationMs: 1000 },
+    speakers: [{ id: "speaker", label: "Speaker" }],
+  };
+  const rawTranscript = {
+    format: "cassini.words.v1", wordCount: 1,
+    items: [{ speaker: "speaker", text: "hello", startMs: 0, endMs: 100 }],
+  };
+
+  it.each([undefined, "raw-asr", "scripted", "human-corrected", "translation", "unknown-origin", "display", 42, { future: true }])(
+    "ignores word origin metadata %j", async (role) => {
+      const bytes = buildPortableOpusFixture({
+        manifest, rawTranscript,
+        wordMetadata: { role, sourceTranscriptId: { not: "an id" } },
+      });
+      const result = await extractPortableManifestFromArrayBuffer(bytes);
+      expect(result.manifest.transcript?.items).toEqual(rawTranscript.items);
+    },
+  );
+
+  it("skips an unavailable withdrawn cleanup body without losing the words", async () => {
+    const bytes = buildPortableOpusFixture({
+      manifest: {
+        ...manifest,
+        readableTranscripts: [{
+          id: "old", role: "readable-cleanup", sourceTranscriptId: "not-declared",
+          format: "transcript.readable.v1",
+          payloadRef: { prefix: "CASSINI_TX_OLD_PAYLOAD_", chunkCount: 1, sha256: "0".repeat(64) },
+        }],
+      },
+      rawTranscript,
+    });
+    const result = await extractPortableManifestFromArrayBuffer(bytes);
+    expect(result.manifest.transcript?.items).toEqual(rawTranscript.items);
+    expect(result.manifest.readableTranscript).toBeUndefined();
+  });
+
+  it("still rejects a display entry without a matching words source", async () => {
+    const display = encodeBodyForOpusTags({ version: "transcript.display.v1", blocks: [] }, "CASSINI_TX_DISPLAY_PAYLOAD_");
+    const bytes = buildPortableOpusFixture({
+      manifest: {
+        ...manifest,
+        readableTranscripts: [{
+          id: "display", role: "display", sourceTranscriptId: "missing",
+          format: "transcript.display.v1", payloadRef: display.payloadRef,
+        }],
+      },
+      rawTranscript, extraTags: display.tags,
+    });
+    await expect(extractPortableManifestFromArrayBuffer(bytes)).rejects.toThrow(/unknown sourceTranscriptId/);
   });
 });
 
@@ -1777,12 +1836,14 @@ function buildPortableOpusFixture({
   readableTranscript,
   displayTranscript,
   extraTags = {},
+  wordMetadata = {},
 }: {
   manifest: object;
   rawTranscript?: unknown;
   readableTranscript?: unknown;
   displayTranscript?: unknown;
   extraTags?: Record<string, string>;
+  wordMetadata?: Record<string, unknown>;
 }): Uint8Array {
   const wire = structuredClone(manifest) as Record<string, any>;
   const bodyTags: Record<string, string> = {};
@@ -1792,12 +1853,12 @@ function buildPortableOpusFixture({
     Object.assign(bodyTags, encoded.tags);
     wire.transcripts = [{
       id: rawTranscriptId,
-      role: "raw-asr",
       default: true,
       format: String((rawTranscript as any)?.format ?? (rawTranscript as any)?.version ?? "cassini.words.v1"),
       language: typeof (rawTranscript as any)?.language === "string" ? (rawTranscript as any).language : undefined,
       wordCount: Array.isArray((rawTranscript as any)?.items) ? (rawTranscript as any).items.length : 0,
       payloadRef: encoded.payloadRef,
+      ...wordMetadata,
     }];
   }
 

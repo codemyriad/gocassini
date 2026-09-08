@@ -1,6 +1,5 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
-  import { writable, type Writable } from "svelte/store";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { marked } from "marked";
@@ -26,7 +25,14 @@
     parseTimeHash,
     type JudgedDisplaySegment,
   } from "../core/transcript";
-  import { getActiveTimedRange } from "../core/timing";
+  import TranscriptWords from "./TranscriptWords.svelte";
+  import { createWordHighlighter } from "../core/wordHighlight";
+  import {
+    keyboardEventTargetsControl,
+    tokensPreserveText,
+    transcriptWordParts,
+    type TranscriptWordPart,
+  } from "../core/wordInteraction";
   import {
     buildTranscriptRows,
     followRowKeyForBlocks,
@@ -40,9 +46,7 @@
     type PlayheadIndex,
   } from "../core/playhead";
   import type {
-    DisplayTranscriptToken,
     DisplayTranscriptV1,
-    IndexedWord,
     ReadableTranscriptV1,
     TranscriptIndex,
   } from "../core/types";
@@ -52,7 +56,7 @@
     ArtifactTimingPrecision,
     LoadedArtifact,
   } from "../viewer/loadArtifact";
-  import type { PortableTranscriptDescriptor } from "../viewer/portable";
+  import { buildDisplayTranscriptFromArtifacts, type PortableTranscriptDescriptor } from "../viewer/portable";
   import { formatMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
   import {
@@ -143,11 +147,9 @@
   // Which turns are sounding right now, pushed by syncHighlight rather than
   // derived per frame. `activeSegments` holds the very objects
   // `displaySegments` holds, so identity comparisons downstream stay sound.
-  //
-  // This used to carry a second, per-WORD layer (a store per block, a token map
-  // to diff against). Word-level playback highlighting is gone (D-654), so the
-  // playhead is asked only which lines are sounding — which is what the ring
-  // and the auto-scroll target need.
+  // Word controls subscribe separately, so neither a frame nor a row change
+  // invalidates every rendered word. Acoustic row evidence stays independent
+  // of display alignment, which may contain rewritten or untimed prose.
   let activeSegments: DisplaySegment[] = [];
   let activeSegmentIds = new Set<string>();
   let activeFollowRowKey: string | null = null;
@@ -156,6 +158,8 @@
   // empty to begin with, so the first call always resolves.
   let highlightValidFromMs = Number.POSITIVE_INFINITY;
   let highlightValidUntilMs = Number.NEGATIVE_INFINITY;
+  const wordHighlighter = createWordHighlighter();
+  let wordHighlightSource: Map<string, TranscriptWordPart[]> | null = null;
   let durationMs = 0;
   let playing = false;
   let followPlayback = true;
@@ -548,7 +552,7 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.code !== "Space" || event.repeat) {
+    if (event.code !== "Space" || event.repeat || event.defaultPrevented) {
       return;
     }
     // This is a WINDOW-level handler, so it stays live while the component is
@@ -560,14 +564,7 @@
     if (!viewRootEl || viewRootEl.offsetParent === null) {
       return;
     }
-    const target = event.target;
-    if (
-      target instanceof HTMLElement &&
-      (target.isContentEditable ||
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.tagName === "SELECT")
-    ) {
+    if (keyboardEventTargetsControl(event)) {
       return;
     }
     event.preventDefault();
@@ -601,8 +598,11 @@
       }));
     }
 
+    // Reuse the artifact projection's existing readable-to-source alignment;
+    // retain this view's block IDs/extents and canonical acoustic evidence.
+    const projected = buildDisplayTranscriptFromArtifacts(index.transcript, readable);
     const canonicalById = new Map(index.segments.map((segment) => [segment.id, segment]));
-    return readable.segments.map((segment) => {
+    return readable.segments.map((segment, segmentIndex) => {
       const sourceSegments = segment.sourceSegmentIds
         .map((segmentId) => canonicalById.get(segmentId))
         .filter((value): value is NonNullable<typeof value> => Boolean(value));
@@ -617,7 +617,9 @@
         startMs: segment.startMs,
         endMs: segment.endMs,
         text: segment.text,
-        tokens: [],
+        tokens: tokensPreserveText(segment.text, projected.blocks[segmentIndex]?.tokens ?? [])
+          ? projected.blocks[segmentIndex]!.tokens
+          : [],
         words,
         sourceSegmentIds: [...segment.sourceSegmentIds],
       };
@@ -670,12 +672,6 @@
    * identity test is both sound and complete.
    */
   // Which lines are sounding, recomputed only when the answer can have moved.
-  //
-  // The validity window is D-692's doing and still earns its keep: resolvePlayhead
-  // reports the span its answer holds for, so sixty playhead writes a second
-  // become a few resolves a second. What is gone is the per-word half — a store
-  // per block, diffed token by token — which existed solely to light one word at
-  // a time (D-654).
   function syncHighlight(segments: DisplaySegment[], timeMs: number): void {
     const rebuilt = playheadIndex.source !== segments;
     if (rebuilt) {
@@ -695,6 +691,21 @@
 
     activeSegments = state.soundingBlocks as DisplaySegment[];
     activeSegmentIds = new Set(activeSegments.map((segment) => segment.id));
+  }
+
+  function syncWordHighlight(partsByBlock: Map<string, TranscriptWordPart[]>, timeMs: number, soundingBlockIds: Set<string>): void {
+    if (wordHighlightSource !== partsByBlock) {
+      wordHighlightSource = partsByBlock;
+      wordHighlighter.setWords([...partsByBlock].flatMap(([blockId, parts]) =>
+        parts.flatMap((part, order) => part.startMs !== undefined && part.endMs !== undefined
+          ? [{ id: part.id, startMs: part.startMs, endMs: part.endMs, blockId, order,
+              ambiguous: part.alignment === "interpolated" || part.sourceWordsRejected }]
+          : []),
+      ));
+    }
+    // Seeking is allowed for display tokens with rejected source references;
+    // playback must still respect D-690's independent acoustic eligibility.
+    wordHighlighter.update(timeMs, soundingBlockIds);
   }
 
   // The blocks a row renders as its own speaker's prose — the turn's own
@@ -750,11 +761,7 @@
     if (!transcriptIndex) {
       return "Load a meeting artifact to inspect its transcript and timing.";
     }
-    // One line for every transcript kind (D-654, per Alex's mock). The old copy
-    // advertised word-level playback highlighting, which is being retired: it
-    // described a precision our transcripts do not actually carry, and it named
-    // an affordance the page no longer offers.
-    return "Select a line to play from there.";
+    return "Select a word to seek to it.";
   }
 
   function formatMetadataLabel(label: string): string {
@@ -848,6 +855,7 @@
   // change, so one sentence spoken over somebody else arrives as a dozen
   // fragments and only the turn they came from is worth reading (D-693).
   $: transcriptRows = buildTranscriptRows(displaySegments);
+  $: wordPartsByBlock = new Map(displaySegments.map((block) => [block.id, transcriptWordParts(block)]));
   $: activeFollowRowKey = followRowKeyForBlocks(transcriptRows, activeSegments);
   $: continuationKeys = continuationRowKeys(transcriptRows);
   // Highlight membership runs on the same effective audible spans the overlap
@@ -867,6 +875,7 @@
   // word lasts a few hundred milliseconds, is a few times a second rather than
   // sixty. The work is not made cheaper; it is not entered.
   $: syncHighlight(displaySegments, currentTimeMs);
+  $: syncWordHighlight(wordPartsByBlock, currentTimeMs, activeSegmentIds);
   $: hasPrecomputedDisplay = displayTranscript !== null;
   $: metadataSections = artifactMetadata?.sections ?? [];
   $: safeDurationMs = asFiniteMilliseconds(durationMs);
@@ -1133,14 +1142,12 @@
              own, and two people who genuinely held the floor at once are named
              on each other's rows ("over Chris"). No durations anywhere: the
              model keeps the measurement, the page shows who. -->
-        <!-- The whole turn is one seek target. Word-level highlighting used to
-             split this into per-token buttons; the line is the unit now, which
-             is what the mock offers and what our timings can honestly support. -->
-        {#snippet blockProse(block: DisplaySegment)}<button
-              class="inline p-0 border-0 bg-transparent text-left text-[1.06rem] leading-[1.72] rounded cursor-pointer hover:bg-primary/40"
-              on:click={() => seekTo(block.startMs)}
-              type="button"
-            >{block.text}</button>{/snippet}
+        {#snippet blockProse(block: DisplaySegment)}<TranscriptWords
+              parts={wordPartsByBlock.get(block.id) ?? []}
+              speakerLabel={block.speakerLabel}
+              highlighter={wordHighlighter}
+              seek={seekTo}
+            />{/snippet}
         {#each transcriptRows as row (row.key)}
           <article
             aria-current={isRowSounding(row, activeSegmentIds) ? "true" : undefined}

@@ -304,16 +304,14 @@ export function readPortableMeeting(path) {
   }
 
   const manifest = structuredClone(indexManifest);
+  delete manifest.readableTranscript;
+  delete manifest.displayTranscript;
   const defaultRaw = pickPortableEntry(indexManifest.transcripts, "", "");
   manifest.transcript = decodePortableTranscriptBody(tags, defaultRaw, path);
 
   const readables = Array.isArray(indexManifest.readableTranscripts)
     ? indexManifest.readableTranscripts
     : [];
-  const readable = pickPortableEntry(readables, "readable-cleanup", defaultRaw.id);
-  if (readable) {
-    manifest.readableTranscript = decodePortableTranscriptBody(tags, readable, path);
-  }
   const display = pickPortableEntry(readables, "display", defaultRaw.id);
   if (display) {
     manifest.displayTranscript = decodePortableTranscriptBody(tags, display, path);
@@ -349,11 +347,7 @@ export function validatePublishedPortableManifest(manifest, path = "portable mee
   const wordIDs = new Set();
   const allIDs = new Set();
   for (const entry of manifest.transcripts) {
-    validatePortableTranscriptEntry(
-      entry,
-      path,
-      new Set(["raw-asr", "human-corrected", "translation", "scripted"]),
-    );
+    validatePortableTranscriptEntry(entry, path);
     if (allIDs.has(entry.id)) {
       throw new Error(`Duplicate portable transcript id ${String(entry.id)} in ${path}`);
     }
@@ -361,26 +355,15 @@ export function validatePublishedPortableManifest(manifest, path = "portable mee
     wordIDs.add(entry.id);
   }
   for (const entry of readable) {
-    validatePortableTranscriptEntry(entry, path, new Set(["readable-cleanup", "display"]));
+    if (entry?.role !== "display") continue;
+    validatePortableTranscriptEntry(entry, path);
     if (allIDs.has(entry.id)) {
       throw new Error(`Duplicate portable transcript id ${String(entry.id)} in ${path}`);
     }
     allIDs.add(entry.id);
   }
-  for (const entry of manifest.transcripts) {
-    if (entry.role === "raw-asr" || entry.role === "scripted") {
-      if (entry.sourceTranscriptId !== undefined) {
-        throw new Error(`Portable transcript ${entry.id} must not set sourceTranscriptId in ${path}`);
-      }
-      continue;
-    }
-    if (!entry.sourceTranscriptId || !wordIDs.has(entry.sourceTranscriptId)) {
-      throw new Error(
-        `Portable transcript ${String(entry.id)} has unknown sourceTranscriptId in ${path}`,
-      );
-    }
-  }
   for (const entry of readable) {
+    if (entry?.role !== "display") continue;
     if (!entry.sourceTranscriptId || !wordIDs.has(entry.sourceTranscriptId)) {
       throw new Error(
         `Portable transcript ${String(entry.id)} has unknown sourceTranscriptId in ${path}`,
@@ -389,13 +372,10 @@ export function validatePublishedPortableManifest(manifest, path = "portable mee
   }
 }
 
-function validatePortableTranscriptEntry(entry, path, roles) {
+function validatePortableTranscriptEntry(entry, path) {
   const id = String(entry?.id ?? "");
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
     throw new Error(`Invalid portable transcript id ${JSON.stringify(id)} in ${path}`);
-  }
-  if (!roles.has(entry?.role)) {
-    throw new Error(`Unsupported portable transcript role ${String(entry?.role)} in ${path}`);
   }
   if (typeof entry?.format !== "string" || entry.format.trim() === "") {
     throw new Error(`Invalid portable transcript format for ${id} in ${path}`);
@@ -429,16 +409,13 @@ function validatePortableTranscriptEntry(entry, path, roles) {
 
 function pickPortableEntry(entries, role, sourceTranscriptId) {
   const candidates = Array.isArray(entries)
-    ? entries.filter((entry) => !role || entry?.role === role)
+    ? entries.filter((entry) => (!role || entry?.role === role)
+      && (!sourceTranscriptId || entry?.sourceTranscriptId === sourceTranscriptId))
     : [];
   if (candidates.length === 0) {
     return null;
   }
-  if (sourceTranscriptId) {
-    const paired = candidates.find((entry) => entry?.sourceTranscriptId === sourceTranscriptId);
-    return paired ?? null;
-  }
-  return candidates.find((entry) => entry?.default) ?? candidates[0];
+  return candidates.find((entry) => entry?.default === true) ?? candidates[0];
 }
 
 function decodePortableTranscriptBody(tags, entry, path) {
