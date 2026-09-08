@@ -122,8 +122,8 @@ describe("the Setup surface", () => {
 describe("StoragePanel transition preview", () => {
   // The transition relocates an entire published archive and, going into the
   // Team folder, makes every already-published recording readable by every
-  // account. The confirmation stated the policy but none of the facts, so an
-  // administrator pressed the button and found out afterwards.
+  // account. The confirmation must name the files that would be overwritten
+  // before an administrator presses the button.
   it("fetches the preview when the prompt opens, not when it is confirmed", () => {
     expect(storagePanelSource).toContain("void loadPreview(option)");
     // Inside requestSwitch, which is what opens the prompt.
@@ -170,18 +170,14 @@ describe("StoragePanel transition preview", () => {
     expect(storagePanelSource).toContain("preview.source_root");
   });
 
-  // Only when the answer would differ. A question with one possible answer is
-  // not a question, and asking anyway is how a confirmation stops being read.
-  it("offers the carry-over controls only on a real choice", () => {
-    expect(storagePanelSource).toContain("{#if askCarry}");
-    expect(storagePanelSource).toContain("carryChoiceNeeded(preview)");
-    expect(storagePanelSource).toContain("<MigrationPolicy");
+  it("lists destination artefacts before overwrite confirmation", () => {
+    expect(storagePanelSource).toContain("{#if needsOverwriteConfirmation}");
+    expect(storagePanelSource).toContain("preview?.overwrite_required === true");
+    expect(storagePanelSource).toContain("preview.overwrite_names.join");
   });
 
-  // The operator refuses a policy-free switch that finds a choice under its own
-  // lock, so sending a default unconditionally would defeat it.
-  it("sends a policy only when one was asked for", () => {
-    expect(storagePanelSource).toContain("policyToSend(preview, policy)");
+  it("confirms overwrite only when the preview found destination artefacts", () => {
+    expect(storagePanelSource).toContain("preview?.overwrite_required === true");
   });
 
   it("renders every warning the operator returned", () => {

@@ -169,7 +169,6 @@ describe("OperatorClient storage", () => {
             catalog_moved: true,
             source_root: "CassiniNoACL/Recordings",
             destination_root: "Cassini/Recordings",
-            meetings_already_there: 1,
             source_cleared: true,
           },
         }),
@@ -182,7 +181,6 @@ describe("OperatorClient storage", () => {
       meetings_moved: 3,
       catalog_moved: true,
       source_root: "CassiniNoACL/Recordings",
-      meetings_already_there: 1,
       source_cleared: true,
       leftover_source: "",
     });
@@ -373,17 +371,12 @@ describe("preview readability", () => {
   });
 });
 
-// The migration policy on the wire (D-708).
-describe("OperatorClient storage migration policy", () => {
+describe("OperatorClient overwrite confirmation", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  // The policy is sent only when the administrator was asked. Sending a default
-  // unconditionally would defeat the operator's refusal to pick one for a
-  // conflict nobody was shown — it takes a request that carries an answer to
-  // have been answered by a person.
-  it("omits the policy when there was nothing to decide", async () => {
+  it("omits confirmation when the destination was empty", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(READY_STORAGE));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -394,59 +387,31 @@ describe("OperatorClient storage migration policy", () => {
     });
   });
 
-  it("sends the policy the administrator chose", async () => {
+  it("sends the explicit overwrite confirmation", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(READY_STORAGE));
     vi.stubGlobal("fetch", fetchMock);
 
-    await new OperatorClient("/operator").putStorage(false, {
-      strategy: "overwrite",
-      on_conflict: "newest_wins",
-    });
+    await new OperatorClient("/operator").putStorage(false, true);
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       access_control_enabled: false,
-      strategy: "overwrite",
-      on_conflict: "newest_wins",
+      confirm_overwrite: true,
     });
   });
 
-  it("asks the preview about the policy, so the numbers describe it", async () => {
+  it("previews the fixed overwrite operation without sending a mode", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(READY_STORAGE));
     vi.stubGlobal("fetch", fetchMock);
 
-    await new OperatorClient("/operator").previewStorageSwitch(true, {
-      strategy: "switch_only",
-      on_conflict: "skip",
-    });
+    await new OperatorClient("/operator").previewStorageSwitch(true);
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       action: "preview",
       access_control_enabled: true,
-      strategy: "switch_only",
-      on_conflict: "skip",
     });
   });
 
-  // An operator that does not send the conflict block cannot answer the
-  // question, and silence must not read as "there are no conflicts" — that is
-  // what would hide the controls on exactly the instance that needs them.
-  it("does not invent a comparable conflict report", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(READY_STORAGE)));
-
-    const status = await new OperatorClient("/operator").getStorage();
-
-    expect(status.conflicts).toEqual({
-      comparable: false,
-      both_populated: false,
-      duplicate_names: [],
-      duplicates: 0,
-    });
-    // And an unconfirmed mode is the safe default for an operator predating the
-    // field: the wizard asks once rather than presenting a decision as made.
-    expect(status.mode_confirmed).toBe(false);
-  });
-
-  it("carries the per-policy preview counts through", async () => {
+  it("carries the destination overwrite list through", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -461,18 +426,8 @@ describe("OperatorClient storage migration policy", () => {
             destination_readable: true,
             meetings: 3,
             destination_meetings: 2,
-            strategy: "merge",
-            on_conflict: "skip",
-            choice_required: true,
-            strategy_matters: true,
-            conflict_matters: true,
-            conflict_names: ["both.opus"],
-            conflicts: 1,
-            would_copy: 2,
-            would_replace: 0,
-            would_skip: 1,
-            would_keep_in_source: 1,
-            would_delete_at_destination: 0,
+            overwrite_names: ["both.opus", "old.opus", "catalog.json"],
+            overwrite_required: true,
             warnings: [],
           },
         }),
@@ -481,10 +436,7 @@ describe("OperatorClient storage migration policy", () => {
 
     const status = await new OperatorClient("/operator").previewStorageSwitch(true);
 
-    expect(status.preview?.choice_required).toBe(true);
-    expect(status.preview?.conflict_names).toEqual(["both.opus"]);
-    expect(status.preview?.would_skip).toBe(1);
-    expect(status.preview?.would_keep_in_source).toBe(1);
-    expect(status.preview?.would_delete_at_destination).toBe(0);
+    expect(status.preview?.overwrite_required).toBe(true);
+    expect(status.preview?.overwrite_names).toEqual(["both.opus", "old.opus", "catalog.json"]);
   });
 });

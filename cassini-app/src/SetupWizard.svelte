@@ -1,21 +1,16 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import { HardDrive, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
-  import MigrationPolicy from "./MigrationPolicy.svelte";
   import PasswordReveal from "./PasswordReveal.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import { NcSetupError, isSetupAvailable, nextcloudUrl } from "./operator/ncSetup";
   import { runModeSetup } from "./operator/runModeSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
   import {
-    DEFAULT_MIGRATION_POLICY,
-    carryChoiceNeeded,
     migrationFacts,
     modeCards,
-    policyToSend,
   } from "./operator/storageWizard";
   import type {
-    StorageMigrationPolicy,
     StorageModeOption,
     StorageStatus,
     StorageTransitionPreview,
@@ -64,7 +59,6 @@
   // one, and without this the slower of two answers wins — leaving numbers on
   // screen that describe a policy the button will not send.
   let previewToken = 0;
-  let policy: StorageMigrationPolicy = { ...DEFAULT_MIGRATION_POLICY };
 
   // The service account's credential, when a scaffold run just created it. It is
   // component state and nothing else: it exists nowhere on disk, at either end.
@@ -139,13 +133,11 @@
     target = option;
     preview = null;
     previewError = "";
-    policy = { ...DEFAULT_MIGRATION_POLICY };
     await loadPreview(option);
   }
 
-  // loadPreview asks what choosing this mode would do, under the policy on
-  // screen. It re-runs when the policy changes, because the numbers are the
-  // whole reason the controls are there.
+  // loadPreview asks what choosing this mode would do, including whether the
+  // destination contains artefacts that require overwrite confirmation.
   async function loadPreview(option: StorageModeOption): Promise<void> {
     if (!operatorClient) {
       return;
@@ -156,10 +148,7 @@
     previewToken += 1;
     const token = previewToken;
     try {
-      const next = await operatorClient.previewStorageSwitch(
-        option.mode === "access_controlled",
-        policy,
-      );
+      const next = await operatorClient.previewStorageSwitch(option.mode === "access_controlled");
       if (token === previewToken && target?.mode === asked) {
         preview = next.preview;
       }
@@ -171,16 +160,6 @@
       if (token === previewToken) {
         previewing = false;
       }
-    }
-  }
-
-  // Re-previewing on every policy change is one PROPFIND pair against Nextcloud
-  // and it is what keeps the numbers under the controls true. A dialog whose
-  // counts describe a policy the administrator has since changed is worse than
-  // one with no counts.
-  function onPolicyChanged(): void {
-    if (target && carryChoiceNeeded(preview)) {
-      void loadPreview(target);
     }
   }
 
@@ -243,7 +222,7 @@
         // Sent only when the administrator was asked. The operator refuses a
         // policy-free switch that finds a choice under its own lock, and a
         // request carrying an answer is taken to have been answered by a person.
-        policyToSend(preview, policy),
+        preview?.overwrite_required === true,
       );
       target = null;
       preview = null;
@@ -307,7 +286,7 @@
   $: cards = modeCards(status);
   $: setupAvailable = isSetupAvailable();
   $: facts = migrationFacts(preview);
-  $: askCarry = carryChoiceNeeded(preview);
+  $: needsOverwriteConfirmation = preview?.overwrite_required === true;
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
@@ -483,8 +462,11 @@
               it writes anything.
             </p>
           {:else if preview}
-            {#if askCarry}
-              <MigrationPolicy {preview} bind:policy disabled={busy} on:change={onPolicyChanged} />
+            {#if needsOverwriteConfirmation}
+              <div class="rounded-box border border-warning bg-warning/10 p-2 text-xs">
+                <p class="font-semibold">These destination files will be overwritten or removed:</p>
+                <p class="mt-1 break-all">{preview.overwrite_names.join(", ")}</p>
+              </div>
             {/if}
             {#if !preview.source_readable}
               <!-- The plan's counts are zero for a tree nobody could list, and

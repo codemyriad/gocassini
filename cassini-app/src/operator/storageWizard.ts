@@ -1,8 +1,5 @@
 import type {
   StorageArchiveFacts,
-  StorageConflictPolicy,
-  StorageMigrationPolicy,
-  StorageMigrationStrategy,
   StorageModeOption,
   StorageStatus,
   StorageTransitionPreview,
@@ -111,103 +108,20 @@ export function wizardNeeded(status: StorageStatus | null): boolean {
   return status !== null && !status.mode_confirmed;
 }
 
-// carryChoiceNeeded is the spec's rule, read off the preview the operator
-// computed.
-//
-// Neither half is guessed here. The operator listed both roots under its own
-// lock, and it re-checks before it writes — this is the render of its answer,
-// not a second opinion about it.
-export function carryChoiceNeeded(preview: StorageTransitionPreview | null): boolean {
-  return preview?.choice_required === true;
-}
-
-// conflictChoiceNeeded is the narrower half: `on_conflict` can only act on a
-// name that exists under both roots, so it is offered only when one does.
-export function conflictChoiceNeeded(preview: StorageTransitionPreview | null): boolean {
-  return preview?.conflict_matters === true;
-}
-
-export const DEFAULT_MIGRATION_POLICY: StorageMigrationPolicy = {
-  strategy: "merge",
-  on_conflict: "skip",
-};
-
-export interface PolicyOption<T> {
-  value: T;
-  label: string;
-  detail: string;
-}
-
-// The copy for the controls. It lives here rather than in the component because
-// this is what the tests can read, and because a wrong description of
-// `overwrite` is a description of a deletion.
-export function strategyOptions(sourceRoot: string, destinationRoot: string): PolicyOption<StorageMigrationStrategy>[] {
-  return [
-    {
-      value: "merge",
-      label: "Copy them across",
-      detail: `Everything in ${sourceRoot} is carried into ${destinationRoot}. Anything already there that the other folder does not have stays.`,
-    },
-    {
-      value: "switch_only",
-      label: "Leave them where they are",
-      detail: `Nothing is copied. The recordings stay in ${sourceRoot}, which the new mode does not read, so they will not be listed until you carry them across later.`,
-    },
-    {
-      value: "overwrite",
-      label: `Replace what is in ${destinationRoot}`,
-      detail: `${destinationRoot} is made to match ${sourceRoot} exactly. Recordings there that are not in ${sourceRoot} are deleted.`,
-    },
-  ];
-}
-
-export function conflictOptions(sourceRoot: string, destinationRoot: string): PolicyOption<StorageConflictPolicy>[] {
-  return [
-    {
-      value: "skip",
-      label: "Keep both",
-      detail: `${destinationRoot} keeps its copy, and ${sourceRoot} keeps its own — so nothing is lost and ${sourceRoot} is not fully emptied.`,
-    },
-    {
-      value: "newest_wins",
-      label: "Keep whichever is newer",
-      detail: "The copy that was written last survives, in whichever folder it is, and the other one is removed.",
-    },
-  ];
-}
-
-// migrationFacts is the confirmation's body: what THIS policy would do, in
-// sentences, ordered most-consequential first.
-//
-// The numbers come from the operator's own plan, not from arithmetic here. A
-// second implementation of the rules in the confirmation dialog is precisely how
-// a dialog comes to promise something the operation does not do.
+// migrationFacts is the fixed overwrite migration in administrator-facing
+// language. The operator supplies every count and enforces confirmation again
+// under its own lock.
 export function migrationFacts(preview: StorageTransitionPreview | null): string[] {
   if (!preview) {
     return [];
   }
   const out: string[] = [];
-  if (preview.would_delete_at_destination > 0) {
+  if (preview.overwrite_required) {
     out.push(
-      `${plural(preview.would_delete_at_destination, "recording")} in ${preview.destination_root} will be deleted.`,
+      `${plural(preview.overwrite_names.length, "destination artefact")} will be overwritten or removed.`,
     );
   }
-  if (preview.would_copy > 0) {
-    out.push(`${plural(preview.would_copy, "recording")} will be copied across.`);
-  }
-  if (preview.would_replace > 0) {
-    out.push(`${plural(preview.would_replace, "recording")} will replace the copy already there.`);
-  }
-  if (preview.would_skip > 0) {
-    out.push(
-      `${plural(preview.would_skip, "recording")} already at ${preview.destination_root} will be left as it is.`,
-    );
-  }
-  if (preview.would_keep_in_source > 0) {
-    out.push(
-      `${plural(preview.would_keep_in_source, "recording")} will also stay in ${preview.source_root}, so both copies survive.`,
-    );
-  }
+  if (preview.meetings > 0) out.push(`${plural(preview.meetings, "recording")} will be copied across.`);
   if (out.length === 0) {
     out.push("Nothing moves. Only the storage mode changes.");
   }
@@ -216,17 +130,4 @@ export function migrationFacts(preview: StorageTransitionPreview | null): string
 
 function plural(count: number, noun: string): string {
   return count === 1 ? `1 ${noun}` : `${count} ${noun}s`;
-}
-
-// policyToSend decides what the PUT carries.
-//
-// `undefined` when the administrator was never asked, which is what lets the
-// operator refuse rather than assume: a request carrying an answer is taken to
-// have been answered by a person, and one carrying none is refused if a choice
-// turns out to exist under the operator's own lock.
-export function policyToSend(
-  preview: StorageTransitionPreview | null,
-  chosen: StorageMigrationPolicy,
-): StorageMigrationPolicy | undefined {
-  return carryChoiceNeeded(preview) ? chosen : undefined;
 }
