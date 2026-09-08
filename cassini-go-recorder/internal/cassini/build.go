@@ -29,9 +29,7 @@ type buildOptions struct {
 }
 
 func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	opts := buildOptions{
-		device: "auto",
-	}
+	opts := buildOptions{device: "auto"}
 
 	fs := flag.NewFlagSet("cassini build", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -267,7 +265,6 @@ func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle Meetin
 	if d := strings.ToLower(strings.TrimSpace(opts.device)); d == "cpu" || d == "cuda" {
 		cfg.Device = opts.device
 	}
-
 	if err := buildArtifactFn(ctx, input.RecordingPath, bundle.RootDir, cfg, stdout); err != nil {
 		_ = UpdateMeetingBundleStatus(bundle, bundleStateFailed, "build", err.Error())
 		return fmt.Errorf("build failed: %w", err)

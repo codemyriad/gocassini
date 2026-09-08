@@ -154,14 +154,9 @@ func TestAssembleTranscriptInputsCarriesPublishedReadableAndDisplayBodies(t *tes
 		},
 		Speakers: []portable.Speaker{{ID: "spk_0", Label: "Alice"}},
 		Provenance: &portable.Provenance{
-			ReadableCleanup:   &portable.ProcessingStep{Backend: "local", Model: "cleaner"},
 			DisplayTranscript: &portable.ProcessingStep{Backend: "cassini", Model: "display-v1"},
 		},
 	})
-	readable := map[string]any{
-		"version":  "transcript.readable.v1",
-		"segments": []any{map[string]any{"id": "r1", "text": "Hello."}},
-	}
 	display := map[string]any{
 		"version": "transcript.display.v1",
 		"blocks":  []any{map[string]any{"id": "d1", "text": "Hello."}},
@@ -173,8 +168,7 @@ func TestAssembleTranscriptInputsCarriesPublishedReadableAndDisplayBodies(t *tes
 				Words: []portableTranscriptWord{{Text: "Hello.", StartMS: 0, EndMS: 400}},
 			}},
 		},
-		ReadableTranscript: readable,
-		DisplayTranscript:  display,
+		DisplayTranscript: display,
 	}
 
 	inputs, defaultID, err := assembleTranscriptInputs(manifest, source)
@@ -184,24 +178,21 @@ func TestAssembleTranscriptInputsCarriesPublishedReadableAndDisplayBodies(t *tes
 	if defaultID != portable.RoleRawASR {
 		t.Fatalf("default transcript = %q, want %q", defaultID, portable.RoleRawASR)
 	}
-	if len(inputs) != 3 {
-		t.Fatalf("inputs = %d, want 3", len(inputs))
+	if len(inputs) != 2 {
+		t.Fatalf("inputs = %d, want 2", len(inputs))
 	}
-	if inputs[1].Role != portable.RoleReadableCleanup || inputs[1].SourceTranscriptID != defaultID {
-		t.Fatalf("readable descriptor = %+v", inputs[1])
-	}
-	if inputs[2].Role != portable.RoleDisplay || inputs[2].SourceTranscriptID != defaultID {
-		t.Fatalf("display descriptor = %+v", inputs[2])
+	if inputs[1].Role != portable.RoleDisplay || inputs[1].SourceTranscriptID != defaultID {
+		t.Fatalf("display descriptor = %+v", inputs[1])
 	}
 
 	encoded, err := portable.EncodePublishedManifest(manifest, inputs, portable.DefaultPayloadChunkSize)
 	if err != nil {
 		t.Fatalf("EncodePublishedManifest: %v", err)
 	}
-	if len(encoded.ReadableTranscripts) != 2 {
-		t.Fatalf("encoded derived transcripts = %d, want 2", len(encoded.ReadableTranscripts))
+	if len(encoded.ReadableTranscripts) != 1 {
+		t.Fatalf("encoded derived transcripts = %d, want 1", len(encoded.ReadableTranscripts))
 	}
-	for idx, want := range []map[string]any{readable, display} {
+	for idx, want := range []map[string]any{display} {
 		wantJSON, err := json.Marshal(want)
 		if err != nil {
 			t.Fatal(err)
@@ -214,7 +205,7 @@ func TestAssembleTranscriptInputsCarriesPublishedReadableAndDisplayBodies(t *tes
 
 func TestPickDefaultWordsTranscriptID(t *testing.T) {
 	inputs := []portable.TranscriptInput{
-		{ID: "qwen", Role: portable.RoleReadableCleanup},
+		{ID: "qwen", Role: portable.RoleDisplay},
 		{ID: "parakeet", Role: portable.RoleRawASR},
 		{ID: "canary", Role: portable.RoleRawASR, Default: true},
 	}
@@ -224,7 +215,7 @@ func TestPickDefaultWordsTranscriptID(t *testing.T) {
 
 	// No explicit default → first raw-ASR
 	inputs2 := []portable.TranscriptInput{
-		{ID: "qwen", Role: portable.RoleReadableCleanup},
+		{ID: "qwen", Role: portable.RoleDisplay},
 		{ID: "parakeet", Role: portable.RoleRawASR},
 	}
 	if got := pickDefaultWordsTranscriptID(inputs2); got != "parakeet" {
@@ -233,7 +224,7 @@ func TestPickDefaultWordsTranscriptID(t *testing.T) {
 
 	// No raw-ASR at all → empty
 	inputs3 := []portable.TranscriptInput{
-		{ID: "qwen", Role: portable.RoleReadableCleanup},
+		{ID: "qwen", Role: portable.RoleDisplay},
 	}
 	if got := pickDefaultWordsTranscriptID(inputs3); got != "" {
 		t.Errorf("expected empty default, got %q", got)

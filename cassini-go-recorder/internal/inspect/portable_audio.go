@@ -195,6 +195,12 @@ func readPortableTranscriptBodies(tags map[string]string, manifest portable.Mani
 		bodies.WordCounts[entry.ID] = len(body.Items)
 	}
 	for _, entry := range manifest.ReadableTranscripts {
+		// A withdrawn readable-cleanup body is skipped, not decoded. Its shape
+		// is not a words transcript, so validating it would report a perfectly
+		// good legacy file as carrying an unreadable body.
+		if entry.Role == portable.RoleWithdrawnReadableCleanup {
+			continue
+		}
 		_, warnings, err := decodeTranscriptBody(tags, entry)
 		bodies.Warnings = append(bodies.Warnings, warnings...)
 		if err != nil {
@@ -266,11 +272,10 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 		printPortableTranscriptEntry(out, "transcript", entry, bodies.DefaultID)
 	}
 	for _, entry := range manifest.ReadableTranscripts {
-		printPortableTranscriptEntry(out, "readable_transcript", entry, "")
+		printPortableTranscriptEntry(out, "derived_transcript", entry, "")
 	}
 	if manifest.Provenance != nil {
 		printProcessingStep(out, "speech_to_text", manifest.Provenance.SpeechToText)
-		printProcessingStep(out, "readable_cleanup", manifest.Provenance.ReadableCleanup)
 		printProcessingStep(out, "meeting_summary", manifest.Provenance.MeetingSummary)
 	}
 	printSummaryMetadata(out, manifest.Summary)
@@ -880,7 +885,7 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 	if err := json.Unmarshal(rawJSON, &body); err != nil {
 		return portable.TranscriptBody{}, warnings, fmt.Errorf("parse transcript body JSON: %w", err)
 	}
-	if entry.Role != portable.RoleReadableCleanup && entry.Role != portable.RoleDisplay {
+	if entry.Role != portable.RoleDisplay {
 		if err := portable.ValidateTranscriptBody(body); err != nil {
 			return portable.TranscriptBody{}, warnings, fmt.Errorf("invalid published transcript body: %w", err)
 		}

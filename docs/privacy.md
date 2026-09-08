@@ -7,7 +7,8 @@ what (if anything) leaves your infrastructure, and what happens on deletion.
 Cassini records Nextcloud Talk meetings, transcribes them, optionally summarizes
 them, and publishes a readable archive. Recording and transcription happen
 entirely within your own infrastructure. Exactly one step sends data to a third
-party. It is optional, off by default, and enabled only when you set an API key.
+party when its configured endpoint is external: meeting summarisation. It is
+optional, off by default, and enabled only when you configure an LLM endpoint.
 
 ## Summary
 
@@ -83,15 +84,16 @@ Nextcloud Files deletes that copy.
 
 ## What leaves your infrastructure, and when
 
-The only step that transmits data off your infrastructure is optional LLM
-transcript cleanup and summarization. It runs **only when `OPENROUTER_API_KEY` is
-set**, and it is unset by default.
+The only step that can transmit data off your infrastructure is optional LLM
+summarisation. It runs **only when an LLM endpoint is configured**, and no
+endpoint is configured by default.
 
 When it is enabled, after a meeting is transcribed locally, the full local
-transcript text is sent to the configured endpoint — OpenRouter
-(`https://openrouter.ai/api/v1`) by default, or whatever `LLM_BASE_URL` points at
-— to produce the readable transcript and the summary. That third party then
-processes the transcript under its own terms; review them before enabling this.
+transcript text is sent to the configured endpoint — a self-hosted model server,
+OpenRouter (`https://openrouter.ai/api/v1`) when only an OpenRouter key is set,
+or whatever `LLM_BASE_URL` points at — to produce the summary. If that endpoint
+is external, its operator processes the transcript under its own terms; review
+them before enabling this.
 
 Call audio and the recording are **never** sent off your infrastructure for the
 sake of this step. Only the text transcript is transmitted, and only for
@@ -99,12 +101,13 @@ post-processing.
 
 Controls:
 
-- **Leave `OPENROUTER_API_KEY` unset** — no external calls at all; the raw local
-  transcript is still published.
-- **`LLM_BASE_URL`** — point cleanup/summaries at a self-hosted or alternative
+- **Leave the LLM endpoint unconfigured** — no LLM calls at all; the local
+  transcript is still published. An API key is optional for endpoints that do
+  not require one.
+- **`LLM_BASE_URL`** — point summaries at a self-hosted or alternative
   OpenAI-compatible endpoint instead of OpenRouter.
-- **`CASSINI_SUMMARY_DISABLED`** — keep readable-transcript cleanup but skip the
-  summary.
+- **`CASSINI_SUMMARY_DISABLED`** — skip the summary while leaving the endpoint
+  configuration in place.
 
 See [Summarisation & the privacy caveat](./README.md#summarisation--the-privacy-caveat)
 and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.

@@ -23,7 +23,7 @@ The package is built in layers:
 4. live room/session management in `internal/talk`
 5. on-disk packet/session formats in `internal/cassette` and `pkg/core/{session,store}`
 6. offline remux, validation, timeline analysis, and inspection in `pkg/core/*` plus `cmd/gocassini-inspect` and `cmd/gocassini-remux`
-7. post-recording transcription pipeline in `internal/transcribe` (STT + readable-text cleanup + summary generation), driven by `internal/cassini` (`cassini build`)
+7. post-recording transcription pipeline in `internal/transcribe` (STT + optional summary generation), driven by `internal/cassini` (`cassini build`)
 
 The architectural center is the session artifact. Live capture writes packet truth first, and final outputs are derived from that truth.
 
@@ -185,9 +185,9 @@ Files:
 
 Responsibilities:
 
-- take a finished `.mkv` recording and produce a meeting artifact bundle (`meeting.webm`, `transcript.words.v1.json`, optional `transcript.readable.v1.json`, `captions.vtt`, optional `summary.md`, `manifest.json`)
+- take a finished `.mkv` recording and produce a meeting artifact bundle (`meeting.webm`, `transcript.words.v1.json`, `captions.vtt`, optional `summary.md`, `manifest.json`)
 - run the local STT model (sherpa-onnx + Parakeet by default) per speaker track
-- call an OpenAI-compatible LLM for optional readable-transcript cleanup and meeting summary generation
+- call an OpenAI-compatible LLM for optional meeting summary generation
 - write integrity-tagged artifacts (PCM SHA-256 embedded in the transcript JSON)
 
 This is the layer that turns a recorder output into a viewer input. It is intentionally pipeline-shaped — every step writes a durable artifact so failures can be re-run from the last good output. See [`transcription-pipeline.md`](transcription-pipeline.md) for the full step list and configuration surface.
@@ -229,7 +229,7 @@ This package owns:
 - packet/session persistence
 - final remux into the recorder’s main media artifact
 - recorder-side diagnostics
-- post-recording transcription, readable-text cleanup, and meeting summary generation (`internal/transcribe`)
+- post-recording transcription and optional meeting summary generation (`internal/transcribe`)
 
 This package does not own:
 

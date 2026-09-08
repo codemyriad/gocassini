@@ -75,3 +75,4 @@ bin/cassini-bin
 
 # Vite temp artefacts
 */.vite/*
+.gstack/

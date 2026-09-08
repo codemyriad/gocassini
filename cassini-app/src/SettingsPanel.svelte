@@ -33,9 +33,11 @@
   let settings: Settings | null = null;
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
+  let transcriptionTermsText = "";
 
   let savedQuality: SettingsQuality = "balanced";
   let savedDeviceOverride = "";
+  let savedTranscriptionTermsText = "";
 
   let loading = true;
   let saving = false;
@@ -73,6 +75,7 @@
       const next = await operatorClient.putSettings({
         quality,
         device_override: deviceOverride,
+        transcription_terms: transcriptionTermsText.split(/\r?\n/),
       });
       applySettings(next);
     } catch (error) {
@@ -86,8 +89,10 @@
     settings = next;
     quality = next.quality;
     deviceOverride = next.device_override;
+    transcriptionTermsText = next.transcription_terms.join("\n");
     savedQuality = next.quality;
     savedDeviceOverride = next.device_override;
+    savedTranscriptionTermsText = transcriptionTermsText;
   }
 
   function asMessage(error: unknown): string {
@@ -134,7 +139,9 @@
 
   $: isDirty =
     settings !== null &&
-    (quality !== savedQuality || deviceOverride !== savedDeviceOverride);
+    (quality !== savedQuality ||
+      deviceOverride !== savedDeviceOverride ||
+      transcriptionTermsText !== savedTranscriptionTermsText);
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
@@ -314,6 +321,32 @@
           </div>
         </section>
       </div>
+
+      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
+        <div>
+          <h3 class="text-sm font-semibold">Participant and project vocabulary</h3>
+          <p class="text-xs text-base-content/60">
+            Preferred spellings for names and terms. The transcriber is biased towards them,
+            so it can write words it would otherwise get wrong.
+          </p>
+        </div>
+        <label class="flex w-full flex-col gap-1">
+          <span class="text-xs font-medium text-base-content/70">One term per line</span>
+          <textarea
+            bind:value={transcriptionTermsText}
+            class="textarea min-h-28 w-full border-base-300 shadow-none"
+            maxlength={10_100}
+            placeholder={'Gocassini\nNextcloud Talk\nProject Cassini'}
+          ></textarea>
+          <span class="text-xs text-base-content/60">
+            Up to 100 terms and 100 characters per term. Participant display names are supplied
+            automatically. A term is only written where the audio already supports it, so this
+            corrects spellings without putting words in anyone's mouth. It needs a transcription
+            model that ships a BPE vocabulary, which the <em>fast</em> tier never does; when a
+            vocabulary cannot be used, the build records that and says why.
+          </span>
+        </label>
+      </section>
 
       <button
         class="btn btn-primary w-full text-sm sm:hidden"

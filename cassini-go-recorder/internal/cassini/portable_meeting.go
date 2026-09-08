@@ -41,13 +41,12 @@ type portablePackOptions struct {
 }
 
 type portableMeetingSource struct {
-	MeetingDir         string
-	AudioPath          string
-	Transcript         portableTranscriptArtifact
-	ReadableTranscript map[string]any
-	DisplayTranscript  map[string]any
-	SummaryMarkdown    []byte
-	Artifact           portableMeetingArtifact
+	MeetingDir        string
+	AudioPath         string
+	Transcript        portableTranscriptArtifact
+	DisplayTranscript map[string]any
+	SummaryMarkdown   []byte
+	Artifact          portableMeetingArtifact
 	// AdditionalTranscripts is populated when the bundle's manifest.json
 	// includes files.transcripts[]. Each entry already has its file loaded
 	// off disk. It is empty for single-transcript bundles.
@@ -75,12 +74,11 @@ type portableMeetingArtifact struct {
 	} `json:"source"`
 	Provenance *portable.Provenance `json:"provenance"`
 	Files      struct {
-		Audio              string                               `json:"audio"`
-		Transcript         string                               `json:"transcript"`
-		ReadableTranscript string                               `json:"readableTranscript"`
-		DisplayTranscript  string                               `json:"displayTranscript"`
-		Summary            string                               `json:"summary"`
-		Transcripts        []portableMeetingTranscriptInputFile `json:"transcripts,omitempty"`
+		Audio             string                               `json:"audio"`
+		Transcript        string                               `json:"transcript"`
+		DisplayTranscript string                               `json:"displayTranscript"`
+		Summary           string                               `json:"summary"`
+		Transcripts       []portableMeetingTranscriptInputFile `json:"transcripts,omitempty"`
 	} `json:"files"`
 	SpeakerCount int `json:"speakerCount"`
 	WordCount    int `json:"wordCount"`
@@ -352,7 +350,6 @@ func loadPortableMeetingSource(meetingDir string) (portableMeetingSource, error)
 		return portableMeetingSource{}, fmt.Errorf("parse transcript artifact: %w", err)
 	}
 
-	readableTranscript, err := loadPortableJSONArtifact(rootDir, artifact.Files.ReadableTranscript, "transcript.readable.v1.json", "readable transcript")
 	if err != nil {
 		return portableMeetingSource{}, err
 	}
@@ -374,7 +371,6 @@ func loadPortableMeetingSource(meetingDir string) (portableMeetingSource, error)
 		MeetingDir:            rootDir,
 		AudioPath:             audioPath,
 		Transcript:            transcript,
-		ReadableTranscript:    readableTranscript,
 		DisplayTranscript:     displayTranscript,
 		SummaryMarkdown:       summaryMarkdown,
 		Artifact:              artifact,
