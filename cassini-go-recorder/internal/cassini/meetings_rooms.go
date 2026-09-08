@@ -79,7 +79,11 @@ deliberate act — see scripts/reattribute-catalog-room.sh.
 	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
-	listing, err := client.fetchCatalog(ctx)
+	// Unfiltered, but through the same loud path `list` uses: a room listing
+	// built from an empty catalog looks identical whether the account may read
+	// nothing or the archive is unreachable, and answering "no rooms" to an
+	// outage is the same false negative one subcommand over (D-701).
+	listing, _, err := client.fetchMeetings(ctx, meetingsFilter{})
 	if err != nil {
 		return reportMeetingsError(stderr, "rooms", cfg, err)
 	}

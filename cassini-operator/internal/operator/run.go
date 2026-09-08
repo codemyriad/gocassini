@@ -110,9 +110,12 @@ type Runtime struct {
 	// callback still in flight. The disable edge writes back into Nextcloud and
 	// cannot run before the response (single-worker PHP deadlocks), so waiting
 	// here is the only point at which it can be given a chance to finish.
-	lifecycle    *LifecycleHandlers
-	workerWG     sync.WaitGroup
-	store        *Store
+	lifecycle *LifecycleHandlers
+	workerWG  sync.WaitGroup
+	store     *Store
+	// searchStore is the disposable full-text index (D-623). Nil when it could
+	// not be opened: search degrades, the pipeline does not.
+	searchStore  *searchStore
 	cfg          Config
 	logger       *log.Logger
 	stdout       io.Writer
@@ -248,10 +251,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// server. Everything else is the server with flags, as it has always been —
 	// the binary's job is to be the operator, and a subcommand is the exception.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		if args[0] == backfillNCFilesCommand {
+		switch args[0] {
+		case backfillNCFilesCommand:
 			return runBackfillNCFiles(ctx, args[1:], stdout, stderr)
+		case backfillSearchCommand:
+			return runBackfillSearch(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: %s)\n", args[0], backfillNCFilesCommand)
+		fmt.Fprintf(stderr, "unknown command %q (known commands: %s, %s)\n",
+			args[0], backfillNCFilesCommand, backfillSearchCommand)
 		return 2
 	}
 
@@ -537,6 +544,7 @@ Usage:
 
 Commands:
   `+backfillNCFilesCommand+`   one-shot migration of a legacy in-container archive
+  `+backfillSearchCommand+`      index meetings published before the search index existed
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
 
@@ -725,6 +733,17 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordHealthTimeout:       recordHealthProbeTimeout,
 		settingsPath:              settingsPath(cfg),
 	}
+	// The search index is disposable and nothing depends on it, so a failure to
+	// open it must not take the operator down — it degrades search, and the
+	// pipeline keeps publishing. Logged rather than swallowed, because a
+	// permanently unopenable index would otherwise look like an archive that
+	// simply never matches anything.
+	if searchIndex, err := openSearchStore(searchStorePath(cfg.DBPath), logger); err != nil {
+		logger.Printf("search index unavailable (%v); meetings will publish but not be indexed", err)
+	} else {
+		rt.searchStore = searchIndex
+	}
+
 	// Detect hardware on first start (or track it under an auto default) and
 	// load the persisted STT policy. A failure here must not take the operator
 	// down: fall back to an in-memory auto default so jobs still run (D-435).
@@ -784,9 +803,29 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 // the publish worker and the requeue dispatcher — the four that write under
 // WorkRoot. D-583 removed the detached `cassini pack` goroutine this used to
 // wait on separately; sealing is now one of those registered workers.
+// searchDeps hands the search route the index and a live view of the operator's
+// configured aliases. Reading them under the same lock every other settings
+// consumer uses, so an edit is picked up without a restart.
+func (rt *Runtime) searchDeps() searchDeps {
+	return searchDeps{
+		index: rt.searchStore,
+		aliases: func() [][]string {
+			rt.settingsMu.RLock()
+			defer rt.settingsMu.RUnlock()
+			return rt.settings.SearchAliases
+		},
+	}
+}
+
 func (rt *Runtime) Shutdown() {
 	rt.cancel()
 	rt.workerWG.Wait()
+	// After the workers, so nothing is still writing rows when the handle goes.
+	if rt.searchStore != nil {
+		if err := rt.searchStore.Close(); err != nil {
+			rt.logger.Printf("search index close failed: %v", err)
+		}
+	}
 }
 
 func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.Handler {
@@ -817,7 +856,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	rt.lifecycle = exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	rt.lifecycle = exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, rt.searchDeps())
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
 
@@ -1737,9 +1776,27 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Printf("%s %s", r.Method, r.URL.RequestURI())
+		logger.Printf("%s %s", r.Method, loggableRequestURI(r))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loggableRequestURI is the request line as it may safely be written to the
+// operator's stderr — which is the container log, and which the artifact
+// retention policy does not govern at all.
+//
+// A meeting list's filter values are innocuous there. A search query is not:
+// `?q=severance package for Bob` would sit in that log indefinitely, and in CI
+// output, for anyone with container access. The path still identifies the
+// route, which is all a request log needs.
+func loggableRequestURI(r *http.Request) string {
+	if r.URL == nil {
+		return ""
+	}
+	if r.URL.RawQuery != "" && strings.HasSuffix(r.URL.Path, "/"+searchURLPath) {
+		return r.URL.Path + "?<redacted>"
+	}
+	return r.URL.RequestURI()
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter, allow string) {

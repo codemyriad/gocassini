@@ -137,7 +137,7 @@ func TestNCProxyServesADeniedReadAsNotFound(t *testing.T) {
 
 		var logs bytes.Buffer
 		cfg := testExAppConfig(srv.URL)
-		proxy := cfg.ncFilesProxy(log.New(&logs, "", 0))
+		proxy := cfg.ncFilesProxy(log.New(&logs, "", 0), searchDeps{})
 		if proxy == nil {
 			t.Fatalf("expected a proxy for an AppAPI-active config")
 		}
@@ -169,7 +169,7 @@ func TestNCProxyStillReportsAnUpstreamOutage(t *testing.T) {
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	proxy := cfg.ncFilesProxy(log.New(&bytes.Buffer{}, "", 0))
+	proxy := cfg.ncFilesProxy(log.New(&bytes.Buffer{}, "", 0), searchDeps{})
 	r := callerReq(http.MethodGet, "/published/meetings/x.opus", "alice")
 	w := httptest.NewRecorder()
 	proxy(w, r, "meetings/x.opus")
