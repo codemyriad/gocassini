@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -38,9 +39,7 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 7 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 || versions[6] != 7 {
-		t.Fatalf("expected migration versions [1 2 3 4 5 6 7], got %v", versions)
-	}
+	assertAllMigrationsApplied(t, store.db)
 	if !sqliteTableExists(t, store.db, "job_attempts") {
 		t.Fatalf("expected job_attempts table to exist")
 	}
@@ -58,9 +57,7 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 7 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 || versions[6] != 7 {
-		t.Fatalf("expected migration versions [1 2 3 4 5 6 7], got %v", versions)
-	}
+	assertAllMigrationsApplied(t, store.db)
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
 		t.Fatalf("unexpected legacy job after baseline = %#v", job)
@@ -2768,6 +2765,25 @@ func readFileString(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(body)
+}
+
+// assertAllMigrationsApplied checks that every embedded migration is recorded,
+// contiguously from 1. Asserting against the embedded set rather than a
+// hand-written list is what the tests actually mean, and it does not have to be
+// edited each time a migration is added.
+func assertAllMigrationsApplied(t *testing.T, db *sql.DB) {
+	t.Helper()
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	want := make([]int, 0, len(migrations))
+	for i := range migrations {
+		want = append(want, i+1)
+	}
+	if got := migrationVersions(t, db); !slices.Equal(got, want) {
+		t.Fatalf("expected migration versions %v, got %v", want, got)
+	}
 }
 
 func migrationVersions(t *testing.T, db *sql.DB) []int {
