@@ -578,3 +578,55 @@ describe("the service account's password", () => {
     expect(seen.size).toBe(8);
   });
 });
+
+// A run that fails AFTER creating the account has still minted a credential
+// that exists nowhere else — not in the operator, not on disk, not in Nextcloud
+// in any readable form. Losing it to a Team folder that 404s three steps later
+// leaves an administrator with an account they cannot sign in to and no way to
+// find out until they try (D-708 review).
+describe("a failed setup run keeps the password it already set", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("attaches the credential to the error it throws", async () => {
+    stubNextcloud();
+    const { impl } = stubFetch([
+      ["groupfolders/folders?format=json", () => ocsOk({ "3": { id: 3, mount_point: "Cassini" } })],
+      ["/manageACL?format=json", () => ocsFail(500, 500, "boom")],
+    ]);
+
+    const error = await runSetupPlan(
+      [
+        ACCOUNT_STEP,
+        step({
+          id: "manager",
+          action: "delegate_manager",
+          args: { mount: "Cassini", user: "cassini" },
+        }),
+      ],
+      { fetchImpl: impl },
+    ).then(
+      () => null,
+      (thrown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(NcSetupError);
+    expect(error.step).toBe("manager");
+    expect(error.outcome?.createdAccount).toBe("cassini");
+    expect(error.outcome?.password?.length).toBeGreaterThan(40);
+  });
+
+  it("attaches nothing when there was no account to create", async () => {
+    stubNextcloud();
+    const { impl } = stubFetch([["/cloud/groups", () => ocsFail(500, 500, "boom")]]);
+
+    const error = await runSetupPlan([GROUP_STEP], { fetchImpl: impl }).then(
+      () => null,
+      (thrown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(NcSetupError);
+    expect(error.outcome?.password).toBe("");
+  });
+});
