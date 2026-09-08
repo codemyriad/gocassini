@@ -824,8 +824,22 @@ harness_skip_storage_scaffold() {
 # harness_storage_mode_is_acl reports whether this stack is being built for the
 # access-controlled model. Defaults to true, which is what the harness has
 # always built and what the e2e suites assert.
+#
+# `undecided` builds the same substrate: it is about what the ExApp is TOLD, not
+# about what exists, and a wizard with only one usable mode is not a choice.
 harness_storage_mode_is_acl() {
   [[ "${CASSINI_HARNESS_STORAGE_MODE:-acl-enabled}" != "default" ]]
+}
+
+# harness_storage_mode_is_undecided reports whether the ExApp is to be told
+# nothing, so it starts with no storage mode chosen.
+#
+# Since D-708 nothing falls back: an app that has not been told does not publish,
+# and the Setup tab is what ends that. Every other harness shape declares a mode
+# precisely to skip it, which left the wizard unreachable from the harness at
+# all — this is the shape that reaches it.
+harness_storage_mode_is_undecided() {
+  [[ "${CASSINI_HARNESS_STORAGE_MODE:-}" == "undecided" ]]
 }
 
 # harness_exapp_storage_mode names the mode the ExApp is told to START in, in
@@ -841,6 +855,10 @@ harness_storage_mode_is_acl() {
 harness_exapp_storage_mode() {
   if [[ -n "${CASSINI_STORAGE_MODE:-}" ]]; then
     printf '%s' "$CASSINI_STORAGE_MODE"
+  elif harness_storage_mode_is_undecided; then
+    # Deliberately empty: the caller omits the declaration entirely, and the app
+    # starts with nothing chosen.
+    printf ''
   elif harness_storage_mode_is_acl; then
     printf 'access_controlled'
   else
@@ -860,15 +878,21 @@ harness_register_exapp() {
     --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET"
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
     --env "CASSINI_PUBLISH_SINK=${CASSINI_PUBLISH_SINK:-nextcloud-files}"
-    # The mode the ExApp STARTS in. Declared rather than left to be derived,
-    # because deriving reads whatever Nextcloud looks like on the first enabled
-    # edge — and on a stack still being assembled that is the wrong moment. The
-    # app records it once; the Setup tab is what changes it afterwards.
-    --env "CASSINI_STORAGE_MODE=$(harness_exapp_storage_mode)"
     --test-deploy-mode
     --log "$register_log"
     --enable-cycle
   )
+  # The mode the ExApp STARTS in. Declared rather than left to be worked out,
+  # because a harness knows what it built — and since D-708 the app works
+  # nothing out: an install that is not told does not publish at all.
+  #
+  # OMITTED for `--storage-mode undecided`, which is the point of that shape:
+  # it is the only way to reach the state the setup wizard exists for.
+  local exapp_storage_mode
+  exapp_storage_mode="$(harness_exapp_storage_mode)"
+  if [[ -n "$exapp_storage_mode" ]]; then
+    register_args+=(--env "CASSINI_STORAGE_MODE=$exapp_storage_mode")
+  fi
   if [[ -n "${CASSINI_TALK_BACKEND_URL:-}" ]]; then
     register_args+=(--env "CASSINI_TALK_BACKEND_URL=$CASSINI_TALK_BACKEND_URL")
   fi

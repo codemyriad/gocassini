@@ -124,14 +124,18 @@ folder is the normal end state of an opt-out, and switching back later is
 immediate.
 
 **An upgrade never widens an existing archive.** Nothing is inferred from the
-instance: an install that has never recorded a storage mode starts in `default`.
-If the `Cassini` Team folder is mounted and still holds recordings — what an
-access-controlled installation looks like to a Cassini that has not been told —
-the app **refuses to publish** and says so, rather than starting a fresh archive
-in the private tree and leaving the old one unread. An administrator resolves it
-by turning access control on in the Setup tab, or by setting
-`CASSINI_STORAGE_MODE=access_controlled` and re-enabling the app. No recording
-changes audience while that refusal stands.
+instance, and nothing falls back: an install that has never recorded a storage
+mode has no storage mode. It **refuses to publish and refuses to record** until
+an administrator chooses one in the Setup tab, which shows what is already in
+each of the two folders before it asks. Recordings already published are
+unaffected and stay readable throughout, under whatever rules they were
+published with. No recording changes audience while that refusal stands.
+
+An earlier build fell back to `default` here and wrote that down permanently on
+the first healthy enable, with one latch to catch the shape where the mistake
+would have been obvious. `default` is the model in which every account can read
+every recording, so the fallback was itself a decision about who may read an
+organisation's meetings — taken without asking. It is gone.
 
 **Recordings migrated from an older version are owner-only.** Installations that
 published before recordings moved into Nextcloud Files migrate them with
