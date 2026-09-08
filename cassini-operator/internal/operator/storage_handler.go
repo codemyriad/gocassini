@@ -60,6 +60,71 @@ type storageModeOption struct {
 	// Setup is the same thing as something to EXECUTE rather than retype
 	// (D-671). Empty when the mode is already available.
 	Setup []storageSetupStep `json:"setup,omitempty"`
+	// Root is where this model keeps recordings, and Archive is what is actually
+	// there right now.
+	//
+	// Both are reported for BOTH models, always (D-708). The question the setup
+	// wizard is built around — "which of these should this Nextcloud use" — is
+	// answered by what is already in each of them, and until this existed the
+	// only counts that ever left the operator were for the mode already in force.
+	Root    string              `json:"root"`
+	Archive storageArchiveFacts `json:"archive"`
+}
+
+// storageArchiveFacts is one recordings root as the last probe saw it.
+type storageArchiveFacts struct {
+	// Probed says the tree was actually listed. Everything else is meaningless
+	// when it is false, and false must never be rendered as "empty".
+	Probed   bool `json:"probed"`
+	Present  bool `json:"present"`
+	Meetings int  `json:"meetings"`
+	Catalog  bool `json:"catalog"`
+}
+
+func archiveFactsFor(facts ncArchiveFacts) storageArchiveFacts {
+	return storageArchiveFacts{
+		Probed:   facts.Probed,
+		Present:  facts.Present,
+		Meetings: facts.Meetings(),
+		Catalog:  facts.Catalog,
+	}
+}
+
+// storageConflictReport is what stands between the two roots, and it is the
+// whole basis of "do not show the migration controls unless there is a choice to
+// make" (D-708).
+//
+// Two conflicts, because they are genuinely different questions:
+//
+//	BothPopulated   there are recordings in both roots. Whichever model is
+//	                chosen, the other one's archive is unread until something
+//	                carries it across — so switch-only, merge and overwrite
+//	                produce three different outcomes and the administrator has
+//	                to pick one.
+//	DuplicateNames  the same recording is in both. Only then does HOW to merge
+//	                mean anything, and only then is the newest-wins / skip
+//	                control worth showing.
+//
+// Comparable is the guard on both. `false` means at least one root could not be
+// read, which is not evidence of anything — and every writer treats it as a
+// refusal rather than as "no conflicts".
+type storageConflictReport struct {
+	Comparable     bool     `json:"comparable"`
+	BothPopulated  bool     `json:"both_populated"`
+	DuplicateNames []string `json:"duplicate_names,omitempty"`
+	Duplicates     int      `json:"duplicates"`
+}
+
+func storageConflictsFor(probe ncStorageProbe, probed bool) storageConflictReport {
+	if !probed {
+		return storageConflictReport{}
+	}
+	return storageConflictReport{
+		Comparable:     probe.ArchivesComparable(),
+		BothPopulated:  probe.DefaultArchive.Populated() && probe.ACLArchive.Populated(),
+		DuplicateNames: clip(probe.DuplicateNames, 20),
+		Duplicates:     len(probe.DuplicateNames),
+	}
 }
 
 // storageStatusResponse is the body of both GET and a successful PUT, so the UI
@@ -69,6 +134,18 @@ type storageStatusResponse struct {
 	// as "default", and the UI has to be able to tell them apart.
 	Mode       string `json:"mode"`
 	ModeSource string `json:"mode_source,omitempty"`
+	// ModeConfirmed says a PERSON (or a dev/CI deploy option) chose this mode,
+	// as opposed to a build recording one on its own or an interrupted first
+	// decision leaving one behind. False is what puts the Setup tab into its
+	// wizard rather than its settled panel.
+	ModeConfirmed bool `json:"mode_confirmed"`
+	// AwaitingChoice says nothing is recorded at all. It is not the same as
+	// `Mode == ""`, which also happens before any preflight has run — the UI has
+	// to tell "nobody has chosen" apart from "nobody has looked yet".
+	AwaitingChoice bool `json:"awaiting_choice"`
+	// Conflicts is what makes a migration a decision rather than a copy, and it
+	// is the ONLY thing the migration-policy controls are shown for.
+	Conflicts storageConflictReport `json:"conflicts"`
 	// MigrationClean is false when a mode switch did not finish tidying up. The
 	// archive is still complete at Mode's own root — that is the invariant — but
 	// the OTHER root holds leftovers, and there is a button for it.
@@ -361,9 +438,14 @@ func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionRes
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
 	mode, source := ncStorage.snapshot()
 	clean := ncStorage.migrationClean()
+	_, resolved := ncStorage.mode()
+	probe, probed := ncAccessSubstrate.lastProbe()
 	resp := storageStatusResponse{
 		Mode:           mode,
 		ModeSource:     source,
+		ModeConfirmed:  ncStorage.confirmedMode(),
+		AwaitingChoice: !resolved,
+		Conflicts:      storageConflictsFor(probe, probed),
 		MigrationClean: clean,
 		OK:             access.OK,
 		State:          access.State,
@@ -372,7 +454,6 @@ func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionRes
 		CheckedAt:      access.CheckedAt,
 		Transition:     transition,
 	}
-	probe, probed := ncAccessSubstrate.lastProbe()
 	if current, resolved := ncStorage.mode(); resolved {
 		if !clean {
 			resp.PendingCleanup = recordingsRootFor(!current)
@@ -404,6 +485,10 @@ func storageOption(accessControlled bool, activeMode string, probe ncStorageProb
 		Active:      activeMode == name,
 		Summary:     storageModeSummary(accessControlled),
 		Consequence: storageModeConsequence(accessControlled),
+		Root:        recordingsRootFor(accessControlled),
+	}
+	if probed {
+		option.Archive = archiveFactsFor(probe.archiveFor(accessControlled))
 	}
 	if accessControlled {
 		option.Label = storageLabelAccessControlled

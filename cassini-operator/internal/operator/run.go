@@ -316,25 +316,36 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
 		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
 		// Clean: an unreadable file is not evidence of a half-done migration.
+		// Unconfirmed: writing a mode is how an administrator gets out of this.
 		ncStorage.set(true, storageModeSourceConfigured, true)
 	} else if settings.Configured() {
-		ncStorage.set(settings.AccessControlled(), storageModeSourceConfigured, settings.Clean())
-		logger.Printf("storage_mode -> %s (recorded, source=%s)", settings.Mode(), settings.Source)
+		// The RECORDED source, carried through rather than flattened to
+		// "configured". It is what tells an administrator's click apart from a
+		// deploy option, and both apart from a mode a previous build wrote down
+		// on its own — which is the question the Setup tab now has to answer
+		// before it presents a decision as made (D-708).
+		source := settings.Source
+		if source == "" {
+			source = storageModeSourceConfigured
+		}
+		ncStorage.set(settings.AccessControlled(), source, settings.Clean())
+		logger.Printf("storage_mode -> %s (recorded, source=%s, confirmed=%t)", settings.Mode(), source, settings.Confirmed())
 	} else if declared, ok, raw := storageModeFromEnv(os.Getenv); ok {
-		// Declared but not yet recorded: the first enabled edge will persist it.
-		// Logged here so a deployment can see its own setting took, without
-		// waiting for that edge.
-		logger.Printf("storage_mode -> %s (declared by %s=%s; recorded on first enable)", storageModeName(declared), envStorageMode, raw)
+		// Declared but not yet recorded: the first enabled edge checks it against
+		// the instance and persists it only if it fits. Logged here so a
+		// deployment can see its own setting arrived, without waiting for that
+		// edge — and warned about, because this is a development and CI option.
+		logger.Printf("WARNING: storage_mode -> %s (declared by %s=%s, a development/CI deploy option; recorded on first enable if this instance matches it)", storageModeName(declared), envStorageMode, raw)
 	} else if raw != "" {
 		// Refused at startup rather than only on the enabled edge, because this
 		// is where a deploy option's typo is cheapest to notice.
-		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and this install will start in %q instead", envStorageMode, raw, storageModeEnvValues, storageModeDefault)
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and no storage mode will be chosen for this install", envStorageMode, raw, storageModeEnvValues)
 	} else {
 		// Nothing recorded, nothing declared. Say so here rather than leaving an
-		// administrator to infer it from silence: on an instance that IS
-		// access-controlled this is the line that precedes the mode_mismatch,
-		// and CASSINI_STORAGE_MODE is what would have avoided it.
-		logger.Printf("storage_mode -> %s (nothing recorded, nothing declared by %s; the mode is never inferred from the instance)", storageModeDefault, envStorageMode)
+		// administrator to infer it from silence: this is the line that precedes
+		// every refusal to publish on a fresh install, and the Setup tab is what
+		// ends it.
+		logger.Printf("storage_mode -> undecided (nothing recorded, nothing declared by %s). Cassini does not choose a storage model on its own; publishing and recording are refused until an administrator picks one in the Setup tab", envStorageMode)
 	}
 
 	// The preflight remains tied to the AppAPI enabled edge, but not to the

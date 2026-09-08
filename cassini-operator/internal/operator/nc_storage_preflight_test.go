@@ -219,77 +219,76 @@ func readPersistedMode(t *testing.T, path string) StorageSettings {
 	return settings
 }
 
-// The mode is NEVER inferred from the instance. A Nextcloud carrying the entire
-// access-controlled substrate, with nothing recorded and nothing declared, falls
-// back to `default` like any other — and is then reported as a mismatch, because
-// its Team folder still holds recordings the default model does not read.
+// The mode is NEVER inferred from the instance, and since D-708 it is never
+// fallen back to either. A Nextcloud carrying the entire access-controlled
+// substrate, with nothing recorded and nothing declared, is UNDECIDED — it
+// publishes nothing and it writes nothing down, until somebody says.
 //
-// This is the case the removed derivation existed to smooth over. Smoothing it
-// over made who can read the archive a function of what Nextcloud looked like at
-// one instant, and got it wrong on a stack still being assembled. The loud
-// failure is the feature: CASSINI_STORAGE_MODE is how a deployment avoids it.
-//
-// The first pass got this refusal for free, because the Team folder was mounted
-// over the very path the default model wrote to. Since the roots were split it
-// has to be asked for explicitly, and it keys on the ARCHIVE rather than the
-// mount: a mounted but emptied Team folder is what a completed opt-out leaves,
-// and refusing there would make every opted-out instance unpublishable.
-func TestPreflightNeverInfersAccessControlFromACompleteSubstrate(t *testing.T) {
+// The first pass fell back to the deps-free model here and recorded that on the
+// first healthy enable. It is a quieter version of the inference it replaced:
+// `default` is the model in which every account can read every recording, and
+// nobody had asked for it. An upgrade latch caught the one shape where the
+// mistake would have been obvious; nothing caught the rest.
+func TestPreflightLeavesACompleteSubstrateUndecided(t *testing.T) {
 	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true, aclArchive: []string{"m1.opus", "m2.opus"}}
 	_, path := runStoragePreflight(t, mock, io.Discard)
 
-	if accessControlled, resolved := ncStorage.mode(); !resolved || accessControlled {
-		t.Fatalf("mode() = (%t, %t), want the default model — a complete substrate must not decide the mode", accessControlled, resolved)
+	if _, resolved := ncStorage.mode(); resolved {
+		t.Fatal("a complete substrate decided the mode; nothing may choose who can read the archive")
 	}
 	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
 	if snap.OK {
-		t.Fatalf("substrate = %+v, want unusable: the Team folder still holds recordings the default mode cannot see", snap)
+		t.Fatalf("substrate = %+v, want unusable: nobody has chosen a storage model", snap)
 	}
-	if snap.Step != storageStepModeMismatch+":"+storageStepStrandedACLArchive {
-		t.Fatalf("step = %q, want the stranded-archive mismatch", snap.Step)
+	if snap.Step != storageStepModeUndecided {
+		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUndecided)
 	}
-	// It must also name the way out, because this is exactly what an
-	// access-controlled install upgrading into this build looks like.
-	if !strings.Contains(snap.Detail, envStorageMode) {
-		t.Fatalf("detail %q never mentions %s, so an administrator is told what is wrong but not how to fix it", snap.Detail, envStorageMode)
+	// The detail has to name both models, because the whole remedy is a choice
+	// between them.
+	for _, want := range []string{storageModeDefault, storageModeAccessControlled, ncDefaultRecordingsRoot, ncRecordingsMount} {
+		if !strings.Contains(snap.Detail, want) {
+			t.Fatalf("detail %q never mentions %q", snap.Detail, want)
+		}
 	}
-	// And nothing is written down, so setting the deploy option still works.
 	if readPersistedMode(t, path).Configured() {
-		t.Fatalf("%s recorded a mode the sanity gate rejected; a recorded mode is never reconsidered, so this would shadow %s forever", storageSettingsFileName, envStorageMode)
+		t.Fatalf("%s recorded a mode nobody chose", storageSettingsFileName)
+	}
+	// Both roots are on the probe, under no mode at all — that symmetry is what
+	// the setup wizard's first screen renders.
+	probe, probed := ncAccessSubstrate.lastProbe()
+	if !probed || probe.ACLArchive.Meetings() != 2 || !probe.DefaultArchive.Probed {
+		t.Fatalf("probe did not describe both roots: %+v", probe)
 	}
 }
 
-// A Nextcloud with neither prerequisite app and no service account: the mode
-// falls back to `default`, and the setup is reported as unusable naming the one
-// thing that is missing — not as a provisioning failure.
-func TestPreflightFallsBackToDefaultOnADepsFreeInstance(t *testing.T) {
+// A Nextcloud with neither prerequisite app and no service account is undecided
+// too, and its status names the decision rather than the missing account: there
+// is no mode yet whose prerequisites could be missing.
+func TestPreflightLeavesADepsFreeInstanceUndecided(t *testing.T) {
 	mock := &storageMock{apps: []string{}}
 	var logs strings.Builder
 	_, path := runStoragePreflight(t, mock, &logs)
 
-	if accessControlled, resolved := ncStorage.mode(); !resolved || accessControlled {
-		t.Fatalf("mode() = (%t, %t), want the default model, resolved", accessControlled, resolved)
+	if _, resolved := ncStorage.mode(); resolved {
+		t.Fatal("an empty instance decided its own mode")
 	}
-	// The fallback failed its own sanity gate (no service account), so it is not
-	// recorded — the next enable decides again, once the account exists.
 	if readPersistedMode(t, path).Configured() {
-		t.Fatalf("%s recorded a mode that could not be used", storageSettingsFileName)
+		t.Fatalf("%s recorded a mode nobody chose", storageSettingsFileName)
 	}
 	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
 	if snap.OK {
-		t.Fatal("substrate reported healthy with no service account to write recordings as")
+		t.Fatal("substrate reported healthy with no storage model chosen")
 	}
-	if snap.Step != storageStepServiceAccount {
-		t.Fatalf("step = %q, want %q", snap.Step, storageStepServiceAccount)
-	}
-	if !strings.Contains(snap.Detail, "occ user:add") {
-		t.Fatalf("detail %q does not tell the administrator how to create the account", snap.Detail)
+	if snap.Step != storageStepModeUndecided {
+		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUndecided)
 	}
 }
 
 // The whole point of the deps-free model: neither third-party app, one service
-// account, and the app works.
+// account, and the app works — once somebody has said that is what they want.
+// Here the deployment says it, which is what the deploy option is for.
 func TestPreflightAcceptsADepsFreeInstanceWithAServiceAccount(t *testing.T) {
+	t.Setenv(envStorageMode, storageModeDefault)
 	mock := &storageMock{apps: []string{}, serviceAccount: true}
 	_, path := runStoragePreflight(t, mock, io.Discard)
 
@@ -297,17 +296,20 @@ func TestPreflightAcceptsADepsFreeInstanceWithAServiceAccount(t *testing.T) {
 	if !snap.OK {
 		t.Fatalf("substrate = %+v, want usable with only a service account", snap)
 	}
-	if snap.Mode != storageModeDefault || snap.ModeSource != storageModeSourceDefault {
-		t.Fatalf("status mode = (%q, %q), want (%q, %q)", snap.Mode, snap.ModeSource, storageModeDefault, storageModeSourceDefault)
+	if snap.Mode != storageModeDefault || snap.ModeSource != storageModeSourceEnv {
+		t.Fatalf("status mode = (%q, %q), want (%q, %q)", snap.Mode, snap.ModeSource, storageModeDefault, storageModeSourceEnv)
 	}
-	// This fallback DID survive its sanity gate, so it is written down — the
-	// counterpart to the deps-free test above, where it is not.
+	if !snap.ModeConfirmed {
+		t.Fatal("a declared mode is not reported as confirmed; a deploy option is as explicit as a button")
+	}
+	// The declaration survived both gates, so it is written down — the
+	// counterpart to the refusal tests below, where it is not.
 	settings := readPersistedMode(t, path)
 	if !settings.Configured() || settings.AccessControlled() {
 		t.Fatalf("%s = %+v, want a recorded access_control_enabled=false", storageSettingsFileName, settings)
 	}
-	if settings.Source != storageModeSourceDefault {
-		t.Fatalf("recorded source = %q, want %q", settings.Source, storageModeSourceDefault)
+	if settings.Source != storageModeSourceEnv || !settings.Confirmed() {
+		t.Fatalf("recorded source = %q (confirmed %t), want %q", settings.Source, settings.Confirmed(), storageModeSourceEnv)
 	}
 	if !mock.saw("MKCOL", "/"+ncDefaultRecordingsRoot+"/meetings") {
 		t.Fatalf("the canonical collections were never created; requests: %v", mock.reqs)
@@ -352,8 +354,8 @@ func TestPreflightHonoursARecordedFlagAndReportsAStrandedArchive(t *testing.T) {
 	if !snap.OK {
 		t.Fatalf("substrate = %+v; an administrator who recorded `default` can publish into their own private root whatever else is mounted", snap)
 	}
-	if snap.ModeSource != storageModeSourceConfigured {
-		t.Fatalf("mode_source = %q, want %q", snap.ModeSource, storageModeSourceConfigured)
+	if snap.ModeSource != storageModeSourceUser || !snap.ModeConfirmed {
+		t.Fatalf("mode_source = %q (confirmed %t), want %q — the recorded provenance is carried through, not flattened", snap.ModeSource, snap.ModeConfirmed, storageModeSourceUser)
 	}
 	// But the two recordings nobody is reading are said out loud, because the
 	// symptom is "my recordings are gone" and the cause is a mode nobody switched.
@@ -387,6 +389,45 @@ func TestPreflightKeepsAccessControlWhenTheSettingsFileIsUnreadable(t *testing.T
 	}
 	if !strings.Contains(logs.String(), "keeping access control ON") {
 		t.Fatalf("the refusal was not explained in the log:\n%s", logs.String())
+	}
+	// And it is UNCONFIRMED, so the Setup tab offers a decision rather than
+	// presenting one: writing a mode is how an administrator leaves this state.
+	// (The step here is the missing prerequisite rather than the unconfirmed
+	// mode, because sanity runs first — a named prerequisite is the more
+	// actionable of the two, and the wizard reports both regardless.)
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.ModeConfirmed {
+		t.Fatalf("a mode nobody could read was reported as one somebody chose: %+v", snap)
+	}
+}
+
+// The same file, on an instance the assumed mode CAN run: the refusal is then
+// the unconfirmed mode itself, which is what the Setup tab keys on.
+func TestPreflightRefusesToPublishUnderAModeNobodyChose(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	if err := os.WriteFile(path, []byte("{broken"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	ncStorage.setPath(path)
+
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatalf("substrate = %+v, want unusable: the mode governs but nobody chose it", snap)
+	}
+	if snap.Step != storageStepModeUnconfirmed {
+		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUnconfirmed)
+	}
+	if !mock.saw("PROPFIND", "/"+ncACLRecordingsRoot+"/meetings") {
+		t.Fatal("the probe did not read the archive an administrator has to decide about")
+	}
+	// Nothing was arranged on the strength of a decision nobody took.
+	if mock.saw("PROPPATCH", "/"+ncRecordingsMount) {
+		t.Fatal("the container ACL was rewritten under an unconfirmed mode")
 	}
 }
 
@@ -486,7 +527,7 @@ func TestPreflightStillSeesAMountedFolderWhenTheEveryoneAppIsOff(t *testing.T) {
 	if !probed || !probe.FolderMounted {
 		t.Fatalf("probe did not see the mounted Team folder: %+v", probe)
 	}
-	if probe.ACLArchiveMeetings != 1 {
+	if probe.ACLArchive.Meetings() != 1 {
 		t.Fatalf("the Team folder's archive was not counted: %+v", probe)
 	}
 	// And the read proxy still serves the DEFAULT root as its owner, because
@@ -583,8 +624,17 @@ func TestPreflightNeverReconsidersARecordedMode(t *testing.T) {
 	if accessControlled, _ := ncStorage.mode(); accessControlled {
 		t.Fatalf("the recorded default was re-opened against the instance:\n%s", logs.String())
 	}
-	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.ModeSource != storageModeSourceConfigured {
-		t.Fatalf("mode source = %q, want %q — anything read from disk reports as configured", snap.ModeSource, storageModeSourceConfigured)
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.ModeSource != storageModeSourceDefault {
+		t.Fatalf("mode source = %q, want %q — the recorded provenance is carried through, not flattened to \"configured\"", snap.ModeSource, storageModeSourceDefault)
+	}
+	// And a mode an older build recorded on its own is not a decision: it
+	// governs, and it does not publish, until somebody confirms it (D-708).
+	if snap.ModeConfirmed {
+		t.Fatal("a fallback recorded by an earlier build was reported as an administrator's choice")
+	}
+	if snap.Step != storageStepModeUnconfirmed {
+		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUnconfirmed)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -645,10 +695,9 @@ func TestPreflightDoesNotOverruleAnAdministratorsChoiceOfDefault(t *testing.T) {
 	}
 }
 
-// A declared mode is written down IMMEDIATELY, before the sanity gate, because
-// it is a decision rather than a fallback — an administrator who set the deploy
-// option should be able to read the mode back even while the storage behind it
-// is still missing. The fallback is the opposite; see the deferred-persist test.
+// A declared mode on an instance it FITS is believed, written down, and then
+// authoritative — the deploy option's whole job, for a harness or a CI stack
+// that knows what it built.
 func TestPreflightHonoursTheDeclaredInitialMode(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
@@ -657,11 +706,10 @@ func TestPreflightHonoursTheDeclaredInitialMode(t *testing.T) {
 	ncStorage.setPath(path)
 	t.Setenv(envStorageMode, "default")
 
-	// An instance whose substrate is complete, and whose Team folder still holds
-	// recordings. The declaration decides anyway — the upgrade latch fires only
-	// on the FALLBACK, because a deploy option is a decision and this is exactly
-	// the lever an administrator pulls to make one.
-	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true, aclArchive: []string{"m1.opus"}}
+	// A complete access-controlled substrate whose Team folder is EMPTY, which
+	// is what a completed opt-out leaves. Nothing is stranded and nothing is
+	// duplicated, so the declaration is coherent with the instance.
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
 	cfg := testExAppConfig(mock.server(t).URL)
 	cfg.preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
 
@@ -670,23 +718,88 @@ func TestPreflightHonoursTheDeclaredInitialMode(t *testing.T) {
 	}
 	persisted := readPersistedMode(t, path)
 	if !persisted.Configured() || persisted.AccessControlled() || persisted.Source != storageModeSourceEnv {
-		t.Fatalf("%s = %+v, want a recorded default with source %q — written before the gate ran", storageSettingsFileName, persisted, storageModeSourceEnv)
+		t.Fatalf("%s = %+v, want a recorded default with source %q", storageSettingsFileName, persisted, storageModeSourceEnv)
 	}
 	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); !snap.OK {
-		t.Fatalf("substrate = %+v; a declared mode is a decision, not a guess to be refused", snap)
-	}
-	// The recording nobody is reading is still reported, so a declaration made by
-	// mistake is visible rather than silent.
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
-	if status := cfg.storageStatus(rt, nil); status.StrandedRecordings != 1 {
-		t.Fatalf("stranded = %d, want the 1 recording left in the Team folder", status.StrandedRecordings)
+		t.Fatalf("substrate = %+v; a declared mode that fits its instance is a decision", snap)
 	}
 	// Recorded, so the next run reads it back rather than consulting the
-	// environment again.
+	// environment again — and reads back the provenance with it.
 	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
-	if _, source := ncStorage.snapshot(); source != storageModeSourceConfigured {
-		t.Fatalf("source = %q on the second run, want %q — the file is authoritative once written", source, storageModeSourceConfigured)
+	if _, source := ncStorage.snapshot(); source != storageModeSourceEnv {
+		t.Fatalf("source = %q on the second run, want %q — the file is authoritative once written, provenance and all", source, storageModeSourceEnv)
+	}
+}
+
+// A declared mode that would strand a live archive is REFUSED and not recorded
+// (D-708).
+//
+// The first pass believed it and wrote it down immediately, on the argument that
+// a deploy option is as explicit as a button. That is true of the intent and
+// false of the outcome: the harness declares a mode because it knows what it
+// built, so a declaration meeting recordings it was never told about is a bug in
+// the stack. Recording it would be the worst of the two outcomes, because a
+// recorded mode is never reconsidered.
+func TestPreflightRefusesADeclaredModeThatWouldStrandAnArchive(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	ncStorage.setPath(path)
+	t.Setenv(envStorageMode, "default")
+
+	// The shape an access-controlled install upgrading into this build has: a
+	// Team folder still holding recordings the declared model does not read.
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true, aclArchive: []string{"m1.opus"}}
+	var logs strings.Builder
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(&logs, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatalf("substrate = %+v, want unusable: the declaration disagrees with the instance", snap)
+	}
+	if snap.Step != storageStepDeclaredConflict {
+		t.Fatalf("step = %q, want %q", snap.Step, storageStepDeclaredConflict)
+	}
+	if !strings.Contains(snap.Detail, ncACLRecordingsRoot) {
+		t.Fatalf("detail %q never names the root holding the recordings", snap.Detail)
+	}
+	if !strings.Contains(logs.String(), "ERROR") {
+		t.Fatalf("the refusal was not loud:\n%s", logs.String())
+	}
+	if readPersistedMode(t, path).Configured() {
+		t.Fatalf("%s recorded a declaration the conflict gate rejected", storageSettingsFileName)
+	}
+}
+
+// The same gate on the other conflict the spec names: the SAME recording under
+// both roots. Which copy is authoritative is not a question a deploy option can
+// answer.
+func TestPreflightRefusesADeclaredModeOverDuplicateRecordings(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	ncStorage.setPath(path)
+	t.Setenv(envStorageMode, storageModeAccessControlled)
+
+	mock := &storageMock{
+		serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(),
+		recordingsRoot: true,
+		aclArchive:     []string{"m1.opus", "m2.opus"},
+		defaultArchive: []string{"m2.opus"},
+	}
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.Step != storageStepDeclaredConflict {
+		t.Fatalf("step = %q, want %q", snap.Step, storageStepDeclaredConflict)
+	}
+	if !strings.Contains(snap.Detail, "m2.opus") {
+		t.Fatalf("detail %q does not name the duplicated recording", snap.Detail)
+	}
+	if readPersistedMode(t, path).Configured() {
+		t.Fatalf("%s recorded a declaration the conflict gate rejected", storageSettingsFileName)
 	}
 }
 
@@ -716,7 +829,7 @@ func TestPreflightHonoursADeclaredAccessControlOnAnEmptyInstance(t *testing.T) {
 	}
 }
 
-// A misspelt deploy option falls back to the default model and says so loudly —
+// A misspelt deploy option leaves the install undecided and says so loudly —
 // the value is the operator's typo, not a mode.
 func TestPreflightIgnoresAnUnrecognisedDeclaredMode(t *testing.T) {
 	resetProvisioningUser(t)
@@ -729,48 +842,51 @@ func TestPreflightIgnoresAnUnrecognisedDeclaredMode(t *testing.T) {
 	var logs strings.Builder
 	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(&logs, "", 0))
 
-	// A typo is not a mode. It falls through to the fallback like an unset
-	// variable would — it does NOT become access control because the instance
-	// happens to look access-controlled, which is the inference that was removed.
-	if accessControlled, _ := ncStorage.mode(); accessControlled {
-		t.Fatalf("a rejected value still produced access control:\n%s", logs.String())
+	// A typo is not a mode. It leaves the install exactly as an unset variable
+	// would — it does NOT become access control because the instance happens to
+	// look access-controlled, which is the inference that was removed.
+	if _, resolved := ncStorage.mode(); resolved {
+		t.Fatalf("a rejected value still decided a mode:\n%s", logs.String())
 	}
 	if !strings.Contains(logs.String(), "acl_enabld") {
 		t.Fatalf("the rejected value was not named in the log:\n%s", logs.String())
 	}
-	// And because it fell through to the FALLBACK on an instance whose Team
-	// folder still holds recordings, the upgrade latch catches it — so the typo
-	// surfaces as a problem rather than as a quietly different instance.
-	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepModeMismatch+":"+storageStepStrandedACLArchive {
-		t.Fatalf("step = %q, want the stranded-archive mismatch", snap.Step)
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepModeUndecided {
+		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUndecided)
 	}
 }
 
-// Deferred persist, over two runs. The fallback is written down only once the
-// sanity gate has agreed the instance can actually run it.
+// Deferred persist, over two runs. A declaration is written down only once BOTH
+// gates have agreed: the prerequisites are there, and it does not disagree with
+// what is in the two roots.
 //
 // The order matters more than it looks. A recorded mode is never reconsidered,
-// so recording a `default` this instance cannot run would shadow
-// CASSINI_STORAGE_MODE — and the deploy option is exactly what an administrator
-// reaches for to resolve the mismatch. Deciding late costs one probe per enable
-// until the instance is coherent, and keeps every escape hatch open.
-func TestPreflightRecordsTheFallbackOnlyOnceItSurvivesTheGate(t *testing.T) {
+// so recording a declaration this instance cannot run would outlive every fix —
+// and unlike the first pass, where the same argument applied to a fallback and
+// the escape hatch was the deploy option itself, the deploy option IS what is
+// being written here. Checking late costs one probe per enable until the stack
+// is coherent, which for a harness is the run that would have failed anyway.
+func TestPreflightRecordsADeclaredModeOnlyOnceItSurvivesTheGates(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
 	ncStorage.setPath(path)
+	t.Setenv(envStorageMode, storageModeDefault)
 
-	// Run 1: the default mode cannot run here — no service account.
+	// Run 1: the declared mode cannot run here — no service account.
 	broken := &storageMock{apps: []string{}}
 	testExAppConfig(broken.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("os.Stat(%s) = %v, want the file absent — a mode the gate rejected must not be recorded", storageSettingsFileName, err)
 	}
-	// The env var still works, which is the whole reason for the deferral.
-	if _, source := ncStorage.snapshot(); source != storageModeSourceDefault {
-		t.Fatalf("source = %q, want %q", source, storageModeSourceDefault)
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepServiceAccount {
+		t.Fatalf("step = %q, want %q — the prerequisite is the better message, so it is checked first", snap.Step, storageStepServiceAccount)
+	}
+	// The mode still governs this process, so the Setup tab can describe it.
+	if _, source := ncStorage.snapshot(); source != storageModeSourceEnv {
+		t.Fatalf("source = %q, want %q", source, storageModeSourceEnv)
 	}
 
 	// Run 2: the administrator created the account. Now it records.
@@ -780,44 +896,58 @@ func TestPreflightRecordsTheFallbackOnlyOnceItSurvivesTheGate(t *testing.T) {
 
 	settings := readPersistedMode(t, path)
 	if !settings.Configured() || settings.AccessControlled() {
-		t.Fatalf("%s = %+v, want a recorded default once the gate passed", storageSettingsFileName, settings)
+		t.Fatalf("%s = %+v, want a recorded default once the gates passed", storageSettingsFileName, settings)
 	}
-	if settings.Source != storageModeSourceDefault {
-		t.Fatalf("recorded source = %q, want %q", settings.Source, storageModeSourceDefault)
+	if settings.Source != storageModeSourceEnv {
+		t.Fatalf("recorded source = %q, want %q", settings.Source, storageModeSourceEnv)
 	}
 }
 
-// The counterpart to the deferral, and the reason it is safe: a mismatch leaves
-// CASSINI_STORAGE_MODE able to fix it. This is the recovery path an
-// access-controlled install upgrading into this build actually walks.
-func TestADeclaredModeRescuesAnInstanceStuckOnTheFallback(t *testing.T) {
+// An undecided install is not stuck: the Setup tab's switch is what decides, and
+// it decides from a state where nothing is recorded at all.
+//
+// This is the recovery path an access-controlled install upgrading into this
+// build walks. The first pass walked it by setting a deploy option, because the
+// fallback had already recorded a mode that shadowed everything else; there is
+// no fallback to shadow anything now.
+func TestAnUndecidedInstanceIsDecidedByTheSwitch(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
 	ncStorage.setPath(path)
-	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true, aclArchive: []string{"m1.opus", "m2.opus"}}
+	mock := &storageMock{
+		serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(),
+		recordingsRoot: true, aclArchive: []string{"m1.opus", "m2.opus"},
+		dirs: map[string][]string{
+			ncACLRecordingsRoot:                   {"meetings"},
+			ncACLRecordingsRoot + "/meetings":     {"m1.opus", "m2.opus"},
+			ncDefaultRecordingsRoot:               {"meetings"},
+			ncDefaultRecordingsRoot + "/meetings": {},
+		},
+	}
+	cfg := testExAppConfig(mock.server(t).URL)
 
-	// Run 1: nothing declared. Falls back to default, which the upgrade latch
-	// refuses because the Team folder still holds an archive, and records nothing.
-	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
-	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.OK {
-		t.Fatal("a fallback default reported healthy while the Team folder still held recordings")
+	// Run 1: nothing recorded, nothing declared. Undecided, and nothing written.
+	cfg.preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepModeUndecided {
+		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUndecided)
 	}
 
-	// Run 2: the administrator sets the deploy option and re-enables.
-	t.Setenv(envStorageMode, storageModeAccessControlled)
-	resetSubstrateRecord(t)
-	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+	// The administrator picks access control in the Setup tab.
+	if _, err := cfg.switchStorageMode(context.Background(), true, log.New(io.Discard, "", 0)); err != nil {
+		t.Fatalf("switchStorageMode() error = %v", err)
+	}
 
-	if accessControlled, _ := ncStorage.mode(); !accessControlled {
-		t.Fatal("the declaration did not take; the fallback had recorded a mode that shadowed it")
+	if accessControlled, resolved := ncStorage.mode(); !resolved || !accessControlled {
+		t.Fatalf("mode() = (%t, %t), want access control chosen", accessControlled, resolved)
+	}
+	settings := readPersistedMode(t, path)
+	if settings.Source != storageModeSourceUser || !settings.Confirmed() {
+		t.Fatalf("recorded source = %q (confirmed %t), want %q", settings.Source, settings.Confirmed(), storageModeSourceUser)
 	}
 	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); !snap.OK {
-		t.Fatalf("substrate = %+v, want usable once the mode matches the storage", snap)
-	}
-	if settings := readPersistedMode(t, path); settings.Source != storageModeSourceEnv {
-		t.Fatalf("recorded source = %q, want %q", settings.Source, storageModeSourceEnv)
+		t.Fatalf("substrate = %+v, want usable once a mode has been chosen", snap)
 	}
 }
 
@@ -975,6 +1105,7 @@ func TestProbeFindsCassiniBesideAWellFormedSibling(t *testing.T) {
 
 // An empty instance answers `[]`, and that IS an answer: no folders.
 func TestProbeAcceptsAnEmptyFolderList(t *testing.T) {
+	t.Setenv(envStorageMode, storageModeDefault)
 	mock := &storageMock{apps: nil, serviceAccount: true}
 	cfg, _ := runStoragePreflight(t, mock, io.Discard)
 	_ = cfg

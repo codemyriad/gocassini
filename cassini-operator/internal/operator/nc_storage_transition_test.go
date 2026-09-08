@@ -1188,32 +1188,54 @@ func TestSwitchStaysInTheOldModeWhenTheFlipCannotBeWritten(t *testing.T) {
 //
 // Two ways in, and both are closed here.
 
-// An unresolved mode reads as `default`, so a PUT asking for `default` used to
-// walk straight into it — the handler's short-circuit is gated on `resolved`, so
-// it does not catch this, and it is the one call site in the package that
+// An unresolved mode used to read as `default`, so a PUT asking for `default`
+// walked straight into it — the handler's short-circuit is gated on `resolved`,
+// so it did not catch this, and it was the one call site in the package that
 // discarded that second return value.
-func TestSwitchRefusesWhenNoModeHasBeenResolved(t *testing.T) {
+//
+// The first pass closed it by refusing the whole operation on an unresolved
+// mode. Since D-708 that refusal would close the ONLY route out of an undecided
+// install, so it is closed differently: the source is derived from the TARGET
+// (the other root), which makes source == destination impossible to express
+// rather than something to check for.
+func TestSwitchFromNoModeDecidesWithoutMigratingARootOntoItself(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
-	ncStorage.setPath(filepath.Join(t.TempDir(), storageSettingsFileName))
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	ncStorage.setPath(path)
 
 	mock := newTransitionMock()
 	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
 	mock.addFile(ncDefaultRecordingsRoot+"/catalog.json", catalogWith("m1"))
 
 	cfg := testExAppConfig(mock.server(t).URL)
-	if _, err := cfg.switchStorageMode(context.Background(), false, log.New(io.Discard, "", 0)); err == nil {
-		t.Fatal("switchStorageMode(false) succeeded on an unresolved mode — it would have migrated the default root onto itself")
+	if _, err := cfg.switchStorageMode(context.Background(), false, log.New(io.Discard, "", 0)); err != nil {
+		t.Fatalf("switchStorageMode(false) error = %v — choosing a mode is how an undecided install becomes usable", err)
 	}
+	// The archive that was already at the chosen mode's root is untouched: the
+	// source was the OTHER root, which is empty.
 	if !mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
-		t.Fatal("the archive was deleted by a switch that had no mode to switch from")
+		t.Fatal("choosing the default mode deleted the archive already at its root")
 	}
+	// The tidy-up runs against the OTHER root, which is empty — so nothing under
+	// the chosen mode's own root may be touched. (A DELETE of an absent
+	// catalog.json at the empty source is expected and harmless; davDelete
+	// tolerates a 404 so a re-run is idempotent.)
 	mock.mu.Lock()
-	deleted := len(mock.deleted)
+	deleted := append([]string(nil), mock.deleted...)
 	mock.mu.Unlock()
-	if deleted != 0 {
-		t.Fatalf("a refused switch deleted %d path(s)", deleted)
+	for _, path := range deleted {
+		if strings.Contains(path, ncDefaultRecordingsRoot) {
+			t.Fatalf("choosing the default mode deleted %q under its own root; deletes were %v", path, deleted)
+		}
+	}
+	settings, err := LoadStorageSettings(path)
+	if err != nil {
+		t.Fatalf("LoadStorageSettings() error = %v", err)
+	}
+	if !settings.Confirmed() || settings.AccessControlled() {
+		t.Fatalf("%s = %+v, want a confirmed default", storageSettingsFileName, settings)
 	}
 }
 
@@ -1256,9 +1278,14 @@ func TestSwitchReTakesTheAlreadyThereDecisionUnderTheLock(t *testing.T) {
 	}
 }
 
-// The same trap, guarded a second time at the point of harm — so that a future
-// caller that gets the mode check wrong fails loudly instead of deleting.
-func TestMigrateRefusesARootOntoItself(t *testing.T) {
+// The same trap, closed at the point of harm — but by construction rather than
+// by a check, which is the stronger form.
+//
+// migrateStorageLocked derives its source from the TARGET, so the two roots it
+// addresses are always the two different roots, whatever a caller believes about
+// the mode in force. There is no argument it can be passed that makes them the
+// same, which is what this pins.
+func TestMigrateCannotAddressOneRootTwice(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	setStorageMode(t, false)
@@ -1267,15 +1294,20 @@ func TestMigrateRefusesARootOntoItself(t *testing.T) {
 	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
 	cfg := testExAppConfig(mock.server(t).URL)
 
-	_, err := cfg.migrateStorageLocked(context.Background(), &http.Client{}, false, false, log.New(io.Discard, "", 0))
-	if err == nil {
-		t.Fatal("migrateStorageLocked ran with source == destination")
+	// The wrong belief the first pass could hold: "the current mode is default"
+	// while switching TO default. The source is the ACL root regardless.
+	result, err := cfg.migrateStorageLocked(context.Background(), &http.Client{}, true, false, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("migrateStorageLocked() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "onto itself") {
-		t.Fatalf("error %q does not name what it refused", err)
+	if result.SourceRoot == result.DestinationRoot {
+		t.Fatalf("source == destination == %q; step 7 would empty the archive step 5 verified against itself", result.SourceRoot)
+	}
+	if result.SourceRoot != ncACLRecordingsRoot || result.DestinationRoot != ncDefaultRecordingsRoot {
+		t.Fatalf("roots = %q -> %q, want %q -> %q", result.SourceRoot, result.DestinationRoot, ncACLRecordingsRoot, ncDefaultRecordingsRoot)
 	}
 	if !mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
-		t.Fatal("the archive was deleted despite the refusal")
+		t.Fatal("the archive at the destination was deleted")
 	}
 }
 
