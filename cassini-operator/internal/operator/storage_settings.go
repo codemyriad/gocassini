@@ -191,6 +191,29 @@ type StorageSettings struct {
 	// the leftovers are at the other one, so "clear the root the mode does not
 	// name" finishes every case. See finishMigration.
 	MigrationClean *bool `json:"migration_clean,omitempty"`
+
+	// Migration describes the switch that is in flight, and is present only
+	// while MigrationClean is false.
+	//
+	// One flag was enough while there was one policy: whatever went wrong, the
+	// archive was at the recorded mode's root and the leftovers were at the other
+	// one, so "clear the root the mode does not name" finished every case. The
+	// `skip` conflict policy breaks that sentence on purpose — it leaves the
+	// source's copy of a conflicting recording in the source, deliberately — and
+	// a recovery that did not know which names those were would delete exactly
+	// the copies an administrator asked to keep.
+	Migration *StorageMigrationRecord `json:"migration,omitempty"`
+}
+
+// StorageMigrationRecord is the in-flight switch, written at the dirty mark and
+// completed at the flip.
+type StorageMigrationRecord struct {
+	Strategy   string `json:"strategy,omitempty"`
+	OnConflict string `json:"on_conflict,omitempty"`
+	// KeepInSource are the names whose SOURCE copy survives the tidy-up. Written
+	// at the flip, which is the first instant it is known and the last instant
+	// before anything is removed.
+	KeepInSource []string `json:"keep_in_source,omitempty"`
 }
 
 // storageModeFromEnv reads the declared initial mode.
@@ -312,16 +335,27 @@ func LoadStorageSettings(path string) (StorageSettings, error) {
 // crash mid-write cannot leave a truncated file that the loader above would
 // then refuse — which would take the operator's storage mode with it.
 func SaveStorageSettings(path string, accessControlEnabled bool, source string, migrationClean bool) error {
+	return SaveStorageSettingsWithMigration(path, accessControlEnabled, source, migrationClean, nil)
+}
+
+// SaveStorageSettingsWithMigration is the same write, carrying the in-flight
+// switch. The record is dropped whenever the instance is settled, so a clean
+// file never describes a migration that is over.
+func SaveStorageSettingsWithMigration(path string, accessControlEnabled bool, source string, migrationClean bool, migration *StorageMigrationRecord) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("storage settings path must not be empty")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir storage settings dir: %w", err)
 	}
+	if migrationClean {
+		migration = nil
+	}
 	data, err := json.MarshalIndent(StorageSettings{
 		AccessControlEnabled: &accessControlEnabled,
 		Source:               source,
 		MigrationClean:       &migrationClean,
+		Migration:            migration,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal storage settings: %w", err)

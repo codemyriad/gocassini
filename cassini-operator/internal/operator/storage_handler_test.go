@@ -91,8 +91,8 @@ func TestStorageReportsTheActiveModeAndWhatTheOtherOneNeeds(t *testing.T) {
 	if !strings.Contains(other.Consequence, "readable by every account") {
 		t.Fatalf("the opt-in consequence does not say that migrated recordings stay public: %q", other.Consequence)
 	}
-	if !strings.Contains(optionFor(t, body, storageModeDefault).Consequence, "dropped") {
-		t.Fatal("the opt-out consequence does not say that access rules are dropped")
+	if !strings.Contains(optionFor(t, body, storageModeDefault).Consequence, "lose their access rules") {
+		t.Fatalf("the opt-out consequence does not say that access rules are lost: %q", optionFor(t, body, storageModeDefault).Consequence)
 	}
 }
 

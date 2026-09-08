@@ -188,6 +188,11 @@ type storageAction struct {
 	// AccessControlEnabled names the mode a `preview` asks about. Ignored by
 	// every other action.
 	AccessControlEnabled *bool `json:"access_control_enabled"`
+	// Strategy and OnConflict are the migration policy a `preview` asks about,
+	// so the numbers on screen are the numbers that policy would produce rather
+	// than the numbers the default one would (D-708). Absent means the default.
+	Strategy   string `json:"strategy,omitempty"`
+	OnConflict string `json:"on_conflict,omitempty"`
 }
 
 const (
@@ -226,6 +231,12 @@ const ncStorageSwitchTimeout = 60 * time.Minute
 // there is one vocabulary for this decision end to end.
 type storageUpdate struct {
 	AccessControlEnabled *bool `json:"access_control_enabled"`
+	// Strategy and OnConflict are what happens to the recordings that are
+	// already there. Both may be absent, which means "there was nothing to
+	// decide" — and the switch refuses rather than assuming when that turns out
+	// to be untrue under its own lock. See errStorageChoiceRequired.
+	Strategy   string `json:"strategy,omitempty"`
+	OnConflict string `json:"on_conflict,omitempty"`
 }
 
 const (
@@ -294,9 +305,14 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 			writeJSONError(w, http.StatusBadRequest, "access_control_enabled is required and must be true or false")
 			return
 		}
-		preview, err := c.previewStorageModeSwitch(ctx, *in.AccessControlEnabled, rt.logger)
+		preview, err := c.previewStorageModeSwitch(ctx, *in.AccessControlEnabled,
+			storageMigrationPolicy{Strategy: in.Strategy, OnConflict: in.OnConflict}, rt.logger)
 		if err != nil {
-			writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+			status := http.StatusServiceUnavailable
+			if errors.Is(err, errStorageBadPolicy) {
+				status = http.StatusBadRequest
+			}
+			writeJSONError(w, status, err.Error())
 			return
 		}
 		// Answered alongside the current state, so the panel renders the diff
@@ -377,6 +393,7 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 		return
 	}
 	want := *in.AccessControlEnabled
+	policy := storageMigrationPolicy{Strategy: in.Strategy, OnConflict: in.OnConflict}
 
 	// Everything below happens inside switchStorageMode, under the provisioning
 	// lock, and that is load-bearing rather than tidy.
@@ -408,13 +425,20 @@ func (c ExAppConfig) handlePutStorage(w http.ResponseWriter, r *http.Request, rt
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), ncStorageSwitchTimeout)
 	defer cancel()
 
-	result, err := c.switchStorageMode(ctx, want, rt.logger)
+	result, err := c.switchStorageMode(ctx, want, policy, rt.logger)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, errTransitionNotReady) {
+		switch {
+		case errors.Is(err, errTransitionNotReady):
 			// Nothing was touched and nothing is wrong with the operator — the
 			// instance simply is not set up for the mode that was asked for.
 			status = http.StatusConflict
+		case errors.Is(err, errStorageChoiceRequired):
+			// Nothing was touched either, and the remedy is a decision rather
+			// than a fix: the panel opens the migration controls on this.
+			status = http.StatusConflict
+		case errors.Is(err, errStorageBadPolicy):
+			status = http.StatusBadRequest
 		}
 		rt.logger.Printf("storage mode switch to %s failed: %v", storageModeName(want), err)
 		writeJSONError(w, status, err.Error())
@@ -520,13 +544,21 @@ func storageModeSummary(accessControlled bool) string {
 		ncRecordingsOwner, ncDefaultRecordingsRoot)
 }
 
+// storageModeConsequence is the POLICY of switching to a mode: what it means for
+// who can read a recording, in the sentence a confirmation prompt leads with.
+//
+// It deliberately does not say how many recordings move or where they end up.
+// That depends on the migration policy, changes as the administrator picks one,
+// and is the preview's job — a static sentence claiming "every recording is
+// copied" would be flatly false under `switch_only` and would be saying it in
+// the one place somebody is being asked to consent.
 func storageModeConsequence(accessControlled bool) string {
 	if accessControlled {
 		return fmt.Sprintf(
-			"Every recording already published is copied into the %q Team folder and left readable by every account — Cassini does not guess who was in a past meeting. Recordings published from now on are restricted to the people in the call. You can narrow an existing one afterwards from Files → Advanced permissions.",
+			"Recordings live in the %q Team folder. Ones published from now on are restricted to the people who were in the call; any that are carried across are left readable by every account, because Cassini does not guess who was in a past meeting — you can narrow one afterwards from Files → Advanced permissions.",
 			ncRecordingsMount)
 	}
 	return fmt.Sprintf(
-		"Every recording already published is copied out of the %q Team folder into the %q account's own %s, and all of their access rules are dropped: after this, everyone who can open Cassini can read every recording, including the ones that were restricted to a call's participants. The Team folder itself is emptied but left in place, so switching back later is immediate.",
-		ncRecordingsMount, ncRecordingsOwner, ncDefaultRecordingsRoot)
+		"Recordings live in the %q account's own %s, and everyone who can open Cassini can read all of them. Any that are carried across out of the Team folder lose their access rules, including the ones that were restricted to a call's participants. The Team folder itself is left in place, so switching back later is immediate.",
+		ncRecordingsOwner, ncDefaultRecordingsRoot)
 }

@@ -935,7 +935,7 @@ func TestAnUndecidedInstanceIsDecidedByTheSwitch(t *testing.T) {
 	}
 
 	// The administrator picks access control in the Setup tab.
-	if _, err := cfg.switchStorageMode(context.Background(), true, log.New(io.Discard, "", 0)); err != nil {
+	if _, err := cfg.switchStorageMode(context.Background(), true, defaultStorageMigrationPolicy(), log.New(io.Discard, "", 0)); err != nil {
 		t.Fatalf("switchStorageMode() error = %v", err)
 	}
 

@@ -86,19 +86,44 @@ var errTransitionNotReady = errors.New("the target storage mode is not ready")
 
 // storageTransitionResult is what one transition did, so the UI can say more
 // than "ok".
+//
+// The counters are per-outcome rather than one total because the policies differ
+// in exactly what they do to each name, and a result that said "12 recordings
+// were copied" about a switch that replaced four and left three behind would be
+// describing a different operation from the one that ran (D-708).
 type storageTransitionResult struct {
-	Mode            string `json:"mode"`
+	Mode string `json:"mode"`
+	// Strategy and OnConflict are what was actually applied, after defaulting —
+	// so the UI reports the policy that ran rather than the one it asked for.
+	Strategy   string `json:"strategy,omitempty"`
+	OnConflict string `json:"on_conflict,omitempty"`
+	// MeetingsMoved is everything that LANDED at the destination: copied plus
+	// replaced. Kept under its first-pass name because it is the number an
+	// administrator reads.
 	MeetingsMoved   int    `json:"meetings_moved"`
 	CatalogMoved    bool   `json:"catalog_moved"`
 	SourceRoot      string `json:"source_root,omitempty"`
 	DestinationRoot string `json:"destination_root,omitempty"`
+	// MeetingsReplaced is how many of those overwrote a copy already at the
+	// destination — `overwrite`, or `newest_wins` where the source was newer.
+	MeetingsReplaced int `json:"meetings_replaced,omitempty"`
+	// MeetingsSkipped is how many the destination kept.
+	MeetingsSkipped int `json:"meetings_skipped,omitempty"`
+	// MeetingsKeptInSource is how many kept a copy in the SOURCE as well, which
+	// only the `skip` conflict policy produces. They are why the source is not
+	// simply emptied, and why the recovery has to be told about them.
+	MeetingsKeptInSource int `json:"meetings_kept_in_source,omitempty"`
+	// MeetingsDeletedAtDestination is what `overwrite` removed because the
+	// source did not have it. Nothing else ever makes this non-zero.
+	MeetingsDeletedAtDestination int `json:"meetings_deleted_at_destination,omitempty"`
 	// MeetingsAlreadyThere is how many of the source's recordings were already at
 	// the destination and were therefore not copied again. Non-zero on a re-run
 	// after a partial failure, which is the case worth naming out loud.
 	MeetingsAlreadyThere int `json:"meetings_already_there,omitempty"`
 	// SourceCleared says the source's contents were removed. False means the
 	// archive arrived but the tidy-up did not finish, `migration_clean` is false,
-	// and the Setup tab has a button for it.
+	// and the Setup tab has a button for it. It is also false, legitimately, for
+	// `switch_only` — nothing was carried, so nothing is cleared.
 	SourceCleared bool `json:"source_cleared"`
 	// LeftoverSource names the root still holding a copy, when SourceCleared is
 	// false.
@@ -125,7 +150,7 @@ type storageTransitionResult struct {
 //  6. FLIP                  {mode: target, clean: false}    one write
 //  7. empty the source      contents only; the collections stay
 //  8. mark clean            {mode: target, clean: true}
-func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl bool, logger *log.Logger) (storageTransitionResult, error) {
+func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl bool, requested storageMigrationPolicy, logger *log.Logger) (storageTransitionResult, error) {
 	if !c.appAPIActive() {
 		return storageTransitionResult{}, fmt.Errorf("storage mode can only be changed in a Nextcloud (AppAPI) deployment")
 	}
@@ -177,7 +202,47 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 	if ready, step, detail := probe.sanityForTarget(enableAccessControl); !ready {
 		return storageTransitionResult{}, fmt.Errorf("%w (%s): %s", errTransitionNotReady, step, detail)
 	}
-	return c.migrateStorageLocked(ctx, client, resolved, enableAccessControl, logger)
+
+	policy, err := normalizeStorageMigrationPolicy(requested)
+	if err != nil {
+		return storageTransitionResult{}, fmt.Errorf("%w: %v", errStorageBadPolicy, err)
+	}
+
+	// The choice is re-taken HERE, under the lock, against the probe this switch
+	// just ran — not against the one the preview showed.
+	//
+	// The preview takes the lock separately, so the conflicts an administrator
+	// was shown are not necessarily the conflicts this switch will act on. A
+	// request that DID name a policy is honoured either way: a policy for a
+	// conflict that has since gone is a no-op, and refusing it would turn a race
+	// into an error for no gain. A request that named none, on an instance that
+	// now has a choice to make, is refused with the conflicts attached — so the
+	// panel opens the controls the administrator was never shown, rather than a
+	// default being picked on their behalf for an archive they have not seen.
+	choice := storageChoiceFor(probe.archiveFor(!enableAccessControl), probe.archiveFor(enableAccessControl))
+	if !requested.Asked() && choice.Required() {
+		return storageTransitionResult{}, choiceRequiredError(choice, !enableAccessControl, enableAccessControl)
+	}
+	return c.migrateStorageLocked(ctx, client, resolved, enableAccessControl, policy, logger)
+}
+
+// errStorageBadPolicy is an unusable strategy or conflict rule. Nothing was
+// touched; the request is wrong.
+var errStorageBadPolicy = errors.New("that migration policy is not one Cassini knows")
+
+// errStorageChoiceRequired means the two roots make the outcome depend on a
+// decision the request did not carry. Nothing was touched.
+var errStorageChoiceRequired = errors.New("this switch needs you to say what happens to the recordings that are already there")
+
+func choiceRequiredError(choice storageMigrationChoice, from, to bool) error {
+	var because []string
+	if choice.StrategyMatters {
+		because = append(because, fmt.Sprintf("there are recordings in both %s and %s", recordingsRootFor(from), recordingsRootFor(to)))
+	}
+	if choice.ConflictMatters {
+		because = append(because, fmt.Sprintf("%d recording(s) exist under both (%s)", len(choice.Conflicts), strings.Join(clip(choice.Conflicts, 3), ", ")))
+	}
+	return fmt.Errorf("%w: %s", errStorageChoiceRequired, strings.Join(because, ", and "))
 }
 
 // migrateStorageLocked is the sequence itself, with provisionMu held and the
@@ -186,7 +251,7 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 // `recorded` says whether a mode was in force at all. It decides two things and
 // nothing else: what the dirty mark names, and how the result describes where
 // the archive was.
-func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Client, recorded, enableAccessControl bool, logger *log.Logger) (storageTransitionResult, error) {
+func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Client, recorded, enableAccessControl bool, policy storageMigrationPolicy, logger *log.Logger) (storageTransitionResult, error) {
 	// The source is the OTHER root, always.
 	//
 	// With a mode in force the caller has already established that it is not the
@@ -211,25 +276,53 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 
 	result := storageTransitionResult{
 		Mode:            storageModeName(originMode),
+		Strategy:        policy.Strategy,
+		OnConflict:      policy.OnConflict,
 		SourceRoot:      source,
 		DestinationRoot: destination,
+	}
+
+	// `switch_only` is a settings write and nothing else.
+	//
+	// It does not go through the dirty/flip/clean sequence because it has nothing
+	// to be interrupted between: no byte moves, so there is never a moment when
+	// one root holds half an archive. What it DOES produce is an instance whose
+	// recorded mode names a root the recordings are not in — which is exactly the
+	// stranded-archive state /storage already reports and the Setup tab already
+	// explains, and which switching back (or switching again with `merge`) ends.
+	if !policy.copiesAnything() {
+		if err := c.recordStorageMode(enableAccessControl, storageModeSourceUser, true, logger); err != nil {
+			return result, fmt.Errorf("the storage mode could not be saved: %w — nothing was moved and Cassini is still in %s mode", err, storageModeName(originMode))
+		}
+		result.Mode = storageModeName(enableAccessControl)
+		result.MeetingsKeptInSource = len(archiveNamesAt(ctx, c, client, source))
+		logger.Printf("nc storage: switched to %s without moving anything; the recordings stay in %s",
+			storageModeName(enableAccessControl), source)
+		c.preflightNCStorageLocked(ctx, client, logger)
+		return result, nil
 	}
 
 	// 1. Dirty BEFORE the first write, not after it. A process killed between the
 	//    first MKCOL and this line would leave a directory nobody accounted for;
 	//    killed after it, the leftovers are already claimed by the recovery.
-	if err := c.recordStorageMode(originMode, originSource, false, logger); err != nil {
+	inFlight := &StorageMigrationRecord{Strategy: policy.Strategy, OnConflict: policy.OnConflict}
+	if err := c.recordStorageModeWithMigration(originMode, originSource, false, inFlight, logger); err != nil {
 		return result, fmt.Errorf("could not record that a storage migration is in progress, so nothing was moved: %w", err)
 	}
 
-	copied, err := c.copyArchive(ctx, client, source, destination, enableAccessControl, logger)
-	result.MeetingsMoved = copied.Copied
-	result.MeetingsAlreadyThere = copied.AlreadyPresent
+	copied, err := c.copyArchive(ctx, client, source, destination, enableAccessControl, policy, logger)
+	result.MeetingsMoved = len(copied.Plan.Copy) + len(copied.Plan.Replace)
+	result.MeetingsReplaced = len(copied.Plan.Replace)
+	result.MeetingsSkipped = len(copied.Plan.Skip)
+	result.MeetingsKeptInSource = len(copied.Plan.KeepInSource)
+	result.MeetingsDeletedAtDestination = len(copied.Plan.DeleteAtDestination)
+	result.MeetingsAlreadyThere = len(copied.Plan.Skip)
 	result.CatalogMoved = copied.CatalogMerged
 	if err != nil {
 		return result, fmt.Errorf("%w — nothing was removed and the recordings are all still in %s; fix the cause and switch again",
 			err, source)
 	}
+	inFlight.KeepInSource = copied.Plan.KeepInSource
 
 	// 6. The flip. The archive is verified at the destination, so this is the
 	//    instant the destination becomes the answer to "where are the
@@ -238,7 +331,7 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	//    that is about to be emptied.
 	ncStorage.set(enableAccessControl, storageModeSourceUser, false)
 	result.Mode = storageModeName(enableAccessControl)
-	if err := c.recordStorageMode(enableAccessControl, storageModeSourceUser, false, logger); err != nil {
+	if err := c.recordStorageModeWithMigration(enableAccessControl, storageModeSourceUser, false, inFlight, logger); err != nil {
 		// The flip is the settings write, so a write that failed is a flip that
 		// did not happen. Nothing is lost: the copy is verified at the
 		// destination and the source has not been touched, so BOTH roots hold a
@@ -254,10 +347,11 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 		return result, fmt.Errorf("every recording was copied into %s, but the new mode could not be saved: %w — Cassini is still in %s mode, where the recordings also still are, so nothing is lost and the switch can simply be asked for again once the volume is writable", destination, err, storageModeName(originMode))
 	}
 
-	// 7. Empty the source. Its collections stay: an empty `meetings` directory is
-	//    what a re-opt-in writes into, and deleting a directory to recreate it a
-	//    moment later is a chance to fail for nothing.
-	if err := c.clearArchiveContents(ctx, client, source, logger); err != nil {
+	// 7. Empty the source, EXCEPT what a skipped conflict deliberately kept
+	//    there. Its collections stay: an empty `meetings` directory is what a
+	//    re-opt-in writes into, and deleting a directory to recreate it a moment
+	//    later is a chance to fail for nothing.
+	if err := c.clearArchiveContents(ctx, client, source, copied.Plan.keepSet(), logger); err != nil {
 		result.LeftoverSource = source
 		logger.Printf("nc storage: %s still holds a copy of the archive: %v", source, err)
 		c.preflightNCStorageLocked(ctx, client, logger)
@@ -265,7 +359,8 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	}
 	result.SourceCleared = true
 
-	// 8. Settled.
+	// 8. Settled. The in-flight record goes with it: a clean file must never
+	//    describe a migration that is over.
 	if err := c.recordStorageMode(enableAccessControl, storageModeSourceUser, true, logger); err != nil {
 		result.LeftoverSource = ""
 		logger.Printf("nc storage: the switch finished but the settled flag could not be written: %v", err)
@@ -273,8 +368,9 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 		ncStorage.set(enableAccessControl, storageModeSourceUser, true)
 	}
 
-	logger.Printf("nc storage: switched to %s — %d recording(s) copied from %s into %s, source emptied",
-		storageModeName(enableAccessControl), result.MeetingsMoved, source, destination)
+	logger.Printf("nc storage: switched to %s (%s/%s) — %d carried from %s into %s (%d replaced, %d skipped, %d kept in the source, %d removed at the destination)",
+		storageModeName(enableAccessControl), policy.Strategy, policy.OnConflict, result.MeetingsMoved, source, destination,
+		result.MeetingsReplaced, result.MeetingsSkipped, result.MeetingsKeptInSource, result.MeetingsDeletedAtDestination)
 
 	// Re-run the preflight in the same critical section so /status, /setup and
 	// the publish gate describe the archive as it is NOW, rather than as it was
@@ -291,6 +387,13 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 // treats a failed write as fatal to the step it was part of, because the
 // invariant this file rests on is a claim about what is written down.
 func (c ExAppConfig) recordStorageMode(accessControlled bool, source string, clean bool, logger *log.Logger) error {
+	return c.recordStorageModeWithMigration(accessControlled, source, clean, nil, logger)
+}
+
+// recordStorageModeWithMigration is the same write, carrying the in-flight
+// switch so the recovery knows which policy it is finishing and which names it
+// must NOT delete.
+func (c ExAppConfig) recordStorageModeWithMigration(accessControlled bool, source string, clean bool, migration *StorageMigrationRecord, logger *log.Logger) error {
 	path := ncStorage.settingsPath()
 	if path == "" {
 		ncStorage.set(accessControlled, source, clean)
@@ -299,7 +402,7 @@ func (c ExAppConfig) recordStorageMode(accessControlled bool, source string, cle
 		}
 		return nil
 	}
-	if err := SaveStorageSettings(path, accessControlled, source, clean); err != nil {
+	if err := SaveStorageSettingsWithMigration(path, accessControlled, source, clean, migration); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	// The source it just WROTE, not a stand-in for "read from disk". Flattening
@@ -329,9 +432,11 @@ func (p ncStorageProbe) sanityForTarget(accessControlled bool) (ok bool, step, d
 
 // archiveCopyResult is what one copy pass did.
 type archiveCopyResult struct {
-	Copied         int
-	AlreadyPresent int
-	CatalogMerged  bool
+	// Plan is what was decided before anything was written. The preview computes
+	// exactly this and renders the counts, so the numbers an administrator
+	// confirms come from the code that acts on them.
+	Plan          archiveCarryPlan
+	CatalogMerged bool
 }
 
 // copyArchive carries every meeting and the catalog from one root to another,
@@ -341,8 +446,26 @@ type archiveCopyResult struct {
 // opt-in, the opt-out, and the one-time adoption of a pre-split default tree.
 // They differ in exactly one respect — whether the destination is inside the
 // Team folder, which decides the ACL work — so that is the only parameter.
-func (c ExAppConfig) copyArchive(ctx context.Context, client *http.Client, source, destination string, intoTeamFolder bool, logger *log.Logger) (archiveCopyResult, error) {
+func (c ExAppConfig) copyArchive(ctx context.Context, client *http.Client, source, destination string, intoTeamFolder bool, policy storageMigrationPolicy, logger *log.Logger) (archiveCopyResult, error) {
 	var result archiveCopyResult
+
+	// The plan comes first, from one listing of each side, and every write below
+	// follows it. Deciding per name inside the copy loop would mean the counts
+	// were a by-product of the loop rather than the thing it executes — and the
+	// preview could then only guess at them.
+	sourceFacts, err := c.archiveEntriesAt(ctx, client, source)
+	if err != nil {
+		return result, err
+	}
+	destinationFacts, err := c.archiveEntriesAt(ctx, client, destination)
+	if err != nil {
+		// Not swallowed. "We could not see what is already there" would make
+		// every copy below a 412 and the whole switch a failure with no useful
+		// message; worse, a later verification could pass against a tree we never
+		// actually read.
+		return result, err
+	}
+	result.Plan = planArchiveCarry(policy, sourceFacts, destinationFacts)
 
 	// 2. The destination tree. Under access control the owner-only floor goes on
 	//    the mount FIRST — the D-534/D-594 ordering: nothing may be reachable
@@ -356,15 +479,27 @@ func (c ExAppConfig) copyArchive(ctx context.Context, client *http.Client, sourc
 		return result, err
 	}
 
+	// 2b. Overwrite, and only overwrite, empties the destination of what the
+	//     source does not have. This is the one thing a switch does that the
+	//     administrator did not ask to MOVE, which is why it is counted and
+	//     stated separately everywhere it appears.
+	for _, name := range result.Plan.DeleteAtDestination {
+		rel := destination + "/meetings/" + name
+		if err := c.davDelete(ctx, client, ncRecordingsOwner, rel); err != nil {
+			return result, fmt.Errorf("remove %s: %w", rel, err)
+		}
+		if logger != nil {
+			logger.Printf("nc storage: removed %s (overwrite)", rel)
+		}
+	}
+
 	// 3. The meetings.
-	copied, already, err := c.copyMeetings(ctx, client, source+"/meetings", destination+"/meetings", intoTeamFolder, logger)
-	result.Copied, result.AlreadyPresent = copied, already
-	if err != nil {
+	if err := c.carryMeetings(ctx, client, source+"/meetings", destination+"/meetings", intoTeamFolder, result.Plan, logger); err != nil {
 		return result, err
 	}
 
 	// 4. The index.
-	merged, err := c.mergeCatalogInto(ctx, client, source+"/catalog.json", destination+"/catalog.json", intoTeamFolder, logger)
+	merged, err := c.mergeCatalogInto(ctx, client, source+"/catalog.json", destination+"/catalog.json", intoTeamFolder, policy, result.Plan, logger)
 	result.CatalogMerged = merged
 	if err != nil {
 		return result, err
@@ -384,18 +519,54 @@ func (c ExAppConfig) copyArchive(ctx context.Context, client *http.Client, sourc
 	return result, nil
 }
 
-// copyMeetings copies every child of srcDir that is not already at dstDir.
+// archiveEntriesAt lists one root's meetings collection with timestamps, as the
+// facts the plan is computed from.
+func (c ExAppConfig) archiveEntriesAt(ctx context.Context, client *http.Client, root string) (ncArchiveFacts, error) {
+	facts := ncArchiveFacts{Root: root}
+	entries, visible, err := c.davPropfindEntries(ctx, client, ncRecordingsOwner, root+"/meetings")
+	if err != nil {
+		return facts, fmt.Errorf("list %s: %w", root+"/meetings", err)
+	}
+	facts.Probed = true
+	facts.Present = visible
+	facts.Entries = entries
+	return facts, nil
+}
+
+// archiveNamesAt lists a root's recordings for a report, and answers an empty
+// list rather than an error — it is used where the count is decoration on an
+// operation that has already succeeded.
+func archiveNamesAt(ctx context.Context, c ExAppConfig, client *http.Client, root string) []string {
+	names, _, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, root+"/meetings")
+	if err != nil {
+		return nil
+	}
+	return names
+}
+
+// carryMeetings executes a plan: copy what the destination does not have,
+// replace what the policy says the source wins, and leave the rest.
 //
 // Skipping what is already there is what makes a re-run finish an interrupted
 // copy rather than fail on it: `Overwrite` is never set, so a COPY onto an
 // existing name answers 412, and treating that as an error would make the second
 // attempt strictly worse than the first.
 //
+// A REPLACE is delete-then-copy, and never `Overwrite: T`. Measured, D-660
+// part 2: `Overwrite: T` destroys the destination's fileid — and with it every
+// groupfolders ACL row keyed on that fileid — for a file, and for a collection
+// it deletes the whole destination tree first. Stating the intent as two
+// requests is the same operation with none of that delegated to a header whose
+// default is data loss.
+//
 // intoTeamFolder decides the ACL work, and only one direction has any:
 //
 //	into the Team folder    PROPPATCH the public rule set onto the DESTINATION
 //	                        leaf. The owner-only container floor is in force
 //	                        while this runs, so nothing is readable in between.
+//	                        It is applied to a REPLACED leaf too, and that is not
+//	                        belt and braces: the replacement is a new file with a
+//	                        new fileid, so it has no rules at all until this runs.
 //	out of the Team folder  nothing. A copy into the service account's own home
 //	                        gets a new fileid outside any group folder, and
 //	                        groupfolders keys its rules by fileid — so the copy
@@ -403,48 +574,43 @@ func (c ExAppConfig) copyArchive(ctx context.Context, client *http.Client, sourc
 //	                        `nc:acl-list` is not settable outside a Team folder
 //	                        (500 with groupfolders installed, a false 207
 //	                        without it — measured, D-616 spike x1).
-func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcDir, dstDir string, intoTeamFolder bool, logger *log.Logger) (copied, alreadyPresent int, err error) {
-	names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, srcDir)
-	if err != nil {
-		return 0, 0, fmt.Errorf("list %s: %w", srcDir, err)
-	}
-	if !visible {
-		return 0, 0, nil
-	}
-	existing, _, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, dstDir)
-	if err != nil {
-		// Not swallowed. "We could not see what is already there" would make
-		// every copy below a 412 and the whole switch a failure with no useful
-		// message; worse, a later verification could pass against a tree we never
-		// actually read.
-		return 0, 0, fmt.Errorf("list %s: %w", dstDir, err)
-	}
-	present := make(map[string]bool, len(existing))
-	for _, name := range existing {
-		present[name] = true
-	}
-
-	for _, name := range names {
+func (c ExAppConfig) carryMeetings(ctx context.Context, client *http.Client, srcDir, dstDir string, intoTeamFolder bool, plan archiveCarryPlan, logger *log.Logger) error {
+	carry := func(name string, replacing bool) error {
 		src := srcDir + "/" + name
 		dst := dstDir + "/" + name
-		if present[name] {
-			alreadyPresent++
-			continue
+		if replacing {
+			if err := c.davDelete(ctx, client, ncRecordingsOwner, dst); err != nil {
+				return fmt.Errorf("remove %s before replacing it: %w", dst, err)
+			}
 		}
 		if err := c.davCopy(ctx, client, ncRecordingsOwner, src, dst); err != nil {
-			return copied, alreadyPresent, fmt.Errorf("copy %s to %s: %w", src, dst, err)
+			return fmt.Errorf("copy %s to %s: %w", src, dst, err)
 		}
 		if intoTeamFolder {
 			if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, dst, publicRecordingACLRules()); err != nil {
-				return copied, alreadyPresent, fmt.Errorf("make %s readable after copying it: %w", dst, err)
+				return fmt.Errorf("make %s readable after copying it: %w", dst, err)
 			}
 		}
-		copied++
 		if logger != nil {
-			logger.Printf("nc storage: copied %s -> %s", src, dst)
+			if replacing {
+				logger.Printf("nc storage: replaced %s with %s", dst, src)
+			} else {
+				logger.Printf("nc storage: copied %s -> %s", src, dst)
+			}
+		}
+		return nil
+	}
+	for _, name := range plan.Copy {
+		if err := carry(name, false); err != nil {
+			return err
 		}
 	}
-	return copied, alreadyPresent, nil
+	for _, name := range plan.Replace {
+		if err := carry(name, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // verifyArchiveCopied refuses to let the caller flip the mode until every
@@ -491,20 +657,30 @@ func clip(items []string, max int) []string {
 	return append(append([]string{}, items[:max]...), fmt.Sprintf("and %d more", len(items)-max))
 }
 
-// clearArchiveContents empties a recordings root without removing it.
+// clearArchiveContents empties a recordings root without removing it, except for
+// whatever `keep` names.
 //
 // "Clear, do not delete" is deliberate, and it is not only tidiness: the empty
 // collections are what the next migration in the other direction copies into,
 // and an MKCOL that has already succeeded once is one fewer thing to fail. It
 // also means an administrator looking at Files sees where the archive used to be
 // rather than a hole.
-func (c ExAppConfig) clearArchiveContents(ctx context.Context, client *http.Client, root string, logger *log.Logger) error {
+//
+// `keep` is the `skip` conflict policy made real. Those recordings exist under
+// both roots on purpose — the destination's copy was chosen, and the source's
+// was NOT thrown away — so the tidy-up steps over them, and the catalog is
+// rewritten to describe exactly what is left rather than deleted outright. Every
+// other policy converges on one copy and passes nil.
+func (c ExAppConfig) clearArchiveContents(ctx context.Context, client *http.Client, root string, keep map[string]bool, logger *log.Logger) error {
 	names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, root+"/meetings")
 	if err != nil {
 		return fmt.Errorf("list %s: %w", root+"/meetings", err)
 	}
 	if visible {
 		for _, name := range names {
+			if keep[name] {
+				continue
+			}
 			rel := root + "/meetings/" + name
 			if err := c.davDelete(ctx, client, ncRecordingsOwner, rel); err != nil {
 				return fmt.Errorf("remove %s: %w", rel, err)
@@ -514,8 +690,60 @@ func (c ExAppConfig) clearArchiveContents(ctx context.Context, client *http.Clie
 			}
 		}
 	}
-	if err := c.davDelete(ctx, client, ncRecordingsOwner, root+"/catalog.json"); err != nil {
-		return fmt.Errorf("remove %s: %w", root+"/catalog.json", err)
+	if len(keep) == 0 {
+		if err := c.davDelete(ctx, client, ncRecordingsOwner, root+"/catalog.json"); err != nil {
+			return fmt.Errorf("remove %s: %w", root+"/catalog.json", err)
+		}
+		return nil
+	}
+	// Something stayed, so the index has to describe what stayed. Left whole it
+	// would list recordings this root no longer has, and a viewer pointed at it
+	// would render entries whose audio is gone.
+	return c.restrictCatalogTo(ctx, client, root+"/"+ncSiteCatalogName, keep, logger)
+}
+
+// restrictCatalogTo rewrites a catalog down to the entries whose recordings are
+// still under this root.
+func (c ExAppConfig) restrictCatalogTo(ctx context.Context, client *http.Client, path string, keep map[string]bool, logger *log.Logger) error {
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if status == http.StatusNotFound {
+		return nil
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("read %s -> HTTP %d", path, status)
+	}
+	var catalog siteCatalog
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	keepIDs := make(map[string]bool, len(keep))
+	for name := range keep {
+		keepIDs[catalogIDFor(name)] = true
+	}
+	kept := make([]json.RawMessage, 0, len(keepIDs))
+	for _, entry := range catalog.Meetings {
+		id, err := catalogEntryID(entry)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if keepIDs[id] {
+			kept = append(kept, entry)
+		}
+	}
+	catalog.Meetings = kept
+	body, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+	body = append(body, '\n')
+	if err := c.davPutBytes(ctx, client, ncRecordingsOwner, path, body, "application/json"); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if logger != nil {
+		logger.Printf("nc storage: %s now lists the %d recording(s) that stayed", path, len(kept))
 	}
 	return nil
 }
@@ -553,6 +781,28 @@ func (c ExAppConfig) finishMigration(ctx context.Context, client *http.Client, l
 		return result, nil
 	}
 
+	// What the interrupted switch asked to KEEP at the stale root.
+	//
+	// Without this the recovery would delete exactly the copies an administrator
+	// chose to preserve: `skip` leaves the source's version of a conflicting
+	// recording where it is, on purpose, and "clear the root the recorded mode
+	// does not name" would take them. The list is written at the flip, which is
+	// the first instant it is known and the last instant before anything is
+	// removed.
+	var keep map[string]bool
+	if path := ncStorage.settingsPath(); path != "" {
+		settings, err := LoadStorageSettings(path)
+		if err != nil {
+			return result, fmt.Errorf("could not read %s to find out what the interrupted switch was doing: %w", storageSettingsFileName, err)
+		}
+		if settings.Migration != nil {
+			keep = nameSet(settings.Migration.KeepInSource)
+			result.Strategy = settings.Migration.Strategy
+			result.OnConflict = settings.Migration.OnConflict
+			result.MeetingsKeptInSource = len(settings.Migration.KeepInSource)
+		}
+	}
+
 	// Never delete the only copy.
 	//
 	// The invariant says the recorded mode names a complete archive, so
@@ -568,7 +818,7 @@ func (c ExAppConfig) finishMigration(ctx context.Context, client *http.Client, l
 			stale, err, result.DestinationRoot)
 	}
 
-	if err := c.clearArchiveContents(ctx, client, stale, logger); err != nil {
+	if err := c.clearArchiveContents(ctx, client, stale, keep, logger); err != nil {
 		result.LeftoverSource = stale
 		return result, fmt.Errorf("could not clear %s: %w — the recordings in %s are unaffected", stale, err, result.DestinationRoot)
 	}
@@ -626,19 +876,22 @@ func (c ExAppConfig) adoptLegacyDefaultArchive(ctx context.Context, client *http
 		return
 	}
 	logger.Printf("nc storage: found a pre-split archive at %s; carrying it into %s", source, ncDefaultRecordingsRoot)
-	copied, err := c.copyArchive(ctx, client, source, ncDefaultRecordingsRoot, false, logger)
+	// The adoption is always a plain merge that skips what is already at the
+	// destination: it is finishing a move nobody chose a policy for, and the
+	// destination's copy is by definition the one an earlier run put there.
+	copied, err := c.copyArchive(ctx, client, source, ncDefaultRecordingsRoot, false, defaultStorageMigrationPolicy(), logger)
 	if err != nil {
 		logger.Printf("ERROR: nc storage: could not carry %s into %s: %v — the recordings are still in %s and this will be retried on the next enable",
 			source, ncDefaultRecordingsRoot, err, source)
 		return
 	}
-	if err := c.clearArchiveContents(ctx, client, source, logger); err != nil {
+	if err := c.clearArchiveContents(ctx, client, source, nil, logger); err != nil {
 		logger.Printf("nc storage: carried %d recording(s) from %s into %s, but %s could not be emptied: %v — it is a harmless duplicate and can be removed by hand",
-			copied.Copied, source, ncDefaultRecordingsRoot, source, err)
+			len(copied.Plan.Copy), source, ncDefaultRecordingsRoot, source, err)
 		return
 	}
 	logger.Printf("nc storage: carried %d recording(s) from %s into %s and emptied it (%d were already there)",
-		copied.Copied, source, ncDefaultRecordingsRoot, copied.AlreadyPresent)
+		len(copied.Plan.Copy), source, ncDefaultRecordingsRoot, len(copied.Plan.Skip))
 }
 
 // legacyDefaultArchiveRoot names a pre-split default archive that still holds
@@ -695,16 +948,27 @@ func publicRecordingACLRules() []aclRule {
 	return recordingACLRules(nil, true)
 }
 
-// mergeCatalogInto copies the archive's index, merging rather than replacing
-// when both sides have one. It leaves the source copy in place — removing it is
-// the tidy-up's job, and doing it here would break the invariant that the source
-// is only read until the mode has flipped.
+// mergeCatalogInto copies the archive's index, applying the same policy the
+// recordings got.
 //
-// Replacing rather than merging would be the ordinary failure here and it is
-// unrecoverable: the catalog is the only thing that makes a recording
-// discoverable, upsert writes the merged document whole, and a later publish
-// would append to whatever truncated file it found.
-func (c ExAppConfig) mergeCatalogInto(ctx context.Context, client *http.Client, srcPath, dstPath string, intoTeamFolder bool, logger *log.Logger) (bool, error) {
+// The catalog is not a file among files: it is the only thing that makes a
+// recording discoverable, upsert writes the merged document whole, and a later
+// publish appends to whatever it finds. So each policy needs its own rule rather
+// than inheriting one:
+//
+//	merge      upsert, MINUS the ids whose recording the destination kept. Those
+//	           entries describe the destination's file, not the source's, and
+//	           letting the source's entry win would point the index at a
+//	           recording that is not the one under that name.
+//	overwrite  replace. The destination is being made into the source, and an
+//	           entry for a recording overwrite has just deleted is an index that
+//	           renders a meeting with no audio.
+//	switch_only never reaches here — nothing moved, so neither index changes.
+//
+// It leaves the source copy in place: removing it is the tidy-up's job, and doing
+// it here would break the invariant that the source is only read until the mode
+// has flipped.
+func (c ExAppConfig) mergeCatalogInto(ctx context.Context, client *http.Client, srcPath, dstPath string, intoTeamFolder bool, policy storageMigrationPolicy, plan archiveCarryPlan, logger *log.Logger) (bool, error) {
 	srcRaw, srcStatus, err := c.davGetBytes(ctx, client, ncRecordingsOwner, srcPath)
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", srcPath, err)
@@ -718,6 +982,27 @@ func (c ExAppConfig) mergeCatalogInto(ctx context.Context, client *http.Client, 
 	var source siteCatalog
 	if err := json.Unmarshal(srcRaw, &source); err != nil {
 		return false, fmt.Errorf("parse %s: %w", srcPath, err)
+	}
+	// The entries whose recording did NOT come from the source are dropped
+	// before the merge, which is how "the destination won this name" is
+	// expressed — upsertSiteCatalog replaces a matching id in place, so ordering
+	// cannot say it.
+	if !policy.clearsDestinationFirst() && len(plan.Skip) > 0 {
+		held := make(map[string]bool, len(plan.Skip))
+		for _, name := range plan.Skip {
+			held[catalogIDFor(name)] = true
+		}
+		kept := make([]json.RawMessage, 0, len(source.Meetings))
+		for _, entry := range source.Meetings {
+			id, err := catalogEntryID(entry)
+			if err != nil {
+				return false, fmt.Errorf("%s: %w", srcPath, err)
+			}
+			if !held[id] {
+				kept = append(kept, entry)
+			}
+		}
+		source.Meetings = kept
 	}
 
 	dstRaw, dstStatus, err := c.davGetBytes(ctx, client, ncRecordingsOwner, dstPath)
@@ -734,9 +1019,17 @@ func (c ExAppConfig) mergeCatalogInto(ctx context.Context, client *http.Client, 
 		return false, fmt.Errorf("read %s -> HTTP %d", dstPath, dstStatus)
 	}
 
-	merged, err := upsertSiteCatalog(destination, source, catalogEntryOverlay{})
-	if err != nil {
-		return false, fmt.Errorf("merge %s into %s: %w", srcPath, dstPath, err)
+	merged := source
+	if !policy.clearsDestinationFirst() {
+		var err error
+		merged, err = upsertSiteCatalog(destination, source, catalogEntryOverlay{})
+		if err != nil {
+			return false, fmt.Errorf("merge %s into %s: %w", srcPath, dstPath, err)
+		}
+	} else if strings.TrimSpace(merged.Version) == "" {
+		// Overwrite replaces the document, so the destination's version string
+		// is the only thing worth carrying forward from it.
+		merged.Version = destination.Version
 	}
 	if merged.Meetings == nil {
 		merged.Meetings = []json.RawMessage{}
@@ -1018,6 +1311,39 @@ type storageTransitionPreview struct {
 	// single most important thing to say out loud before merging somebody's
 	// archive.
 	DestinationMeetings int `json:"destination_meetings"`
+	// DestinationReadable is the same distinction SourceReadable draws, for the
+	// other tree. Without it a destination nobody could list looks empty, and an
+	// empty destination is the one shape where no policy question arises.
+	DestinationReadable bool `json:"destination_readable"`
+
+	// Strategy and OnConflict are the policy these numbers describe, after
+	// defaulting — so the panel can label a diff it asked for with the policy
+	// that actually produced it.
+	Strategy   string `json:"strategy"`
+	OnConflict string `json:"on_conflict"`
+
+	// ChoiceRequired says the outcome depends on a decision. It is the ONLY
+	// thing the migration controls are shown for: the spec's rule is that a
+	// choice with one possible answer is not a choice, and asking anyway is how
+	// a confirmation dialog stops being read.
+	//
+	// StrategyMatters is recordings in both roots; ConflictMatters is the SAME
+	// recording in both, which is the only thing `on_conflict` can act on.
+	ChoiceRequired  bool `json:"choice_required"`
+	StrategyMatters bool `json:"strategy_matters"`
+	ConflictMatters bool `json:"conflict_matters"`
+	// ConflictNames are the names in both roots, clipped for display.
+	ConflictNames []string `json:"conflict_names,omitempty"`
+	Conflicts     int      `json:"conflicts"`
+
+	// What THIS policy would do, per outcome. Computed by the same function the
+	// switch executes, so the numbers on screen are not a second implementation
+	// of the rules.
+	WouldCopy                int `json:"would_copy"`
+	WouldReplace             int `json:"would_replace"`
+	WouldSkip                int `json:"would_skip"`
+	WouldKeepInSource        int `json:"would_keep_in_source"`
+	WouldDeleteAtDestination int `json:"would_delete_at_destination"`
 
 	// NothingToMove distinguishes "this is a no-op" from "this will move 41
 	// meetings", which the confirmation copy has to say differently. It is false
@@ -1048,7 +1374,7 @@ type storageTransitionPreview struct {
 // archive — so on a normal default-mode install it answered "there is nothing
 // here", the count was skipped, and the dialog said no recordings would move
 // while the switch went on to move all of them.
-func (c ExAppConfig) previewStorageModeSwitch(ctx context.Context, enableAccessControl bool, logger *log.Logger) (storageTransitionPreview, error) {
+func (c ExAppConfig) previewStorageModeSwitch(ctx context.Context, enableAccessControl bool, requested storageMigrationPolicy, logger *log.Logger) (storageTransitionPreview, error) {
 	if !c.appAPIActive() {
 		return storageTransitionPreview{}, fmt.Errorf("storage mode can only be changed in a Nextcloud (AppAPI) deployment")
 	}
@@ -1058,6 +1384,12 @@ func (c ExAppConfig) previewStorageModeSwitch(ctx context.Context, enableAccessC
 	defer provisionMu.Unlock()
 
 	out := storageTransitionPreview{Mode: storageModeName(enableAccessControl)}
+	policy, err := normalizeStorageMigrationPolicy(requested)
+	if err != nil {
+		return out, fmt.Errorf("%w: %v", errStorageBadPolicy, err)
+	}
+	out.Strategy, out.OnConflict = policy.Strategy, policy.OnConflict
+
 	client := &http.Client{Timeout: ncProvisionTimeout}
 	probe, err := c.probeNCStorage(ctx, client, logger)
 	if err != nil {
@@ -1065,21 +1397,44 @@ func (c ExAppConfig) previewStorageModeSwitch(ctx context.Context, enableAccessC
 	}
 	out.Ready, out.Step, out.Detail = probe.sanityForTarget(enableAccessControl)
 
+	// The source is the OTHER root, exactly as the switch derives it — including
+	// on an install that has not chosen a mode yet, which is the state the setup
+	// wizard previews from.
 	current, resolved := ncStorage.mode()
-	if !resolved {
-		return out, fmt.Errorf("Cassini has not resolved a storage mode yet, so it cannot say what a switch would move")
-	}
-	out.SourceRoot = recordingsRootFor(current)
+	out.SourceRoot = recordingsRootFor(!enableAccessControl)
 	out.DestinationRoot = recordingsRootFor(enableAccessControl)
-	if !ncStorage.migrationClean() {
+	if resolved && !ncStorage.migrationClean() {
 		out.PendingCleanup = recordingsRootFor(!current)
 	}
 
-	out.Meetings, out.CatalogPresent, out.SourceReadable = c.countArchiveAt(ctx, client, out.SourceRoot)
+	sourceFacts := probe.archiveFor(!enableAccessControl)
+	destinationFacts := probe.archiveFor(enableAccessControl)
+	out.SourceReadable = sourceFacts.Probed
+	out.Meetings = sourceFacts.Meetings()
+	out.CatalogPresent = sourceFacts.Catalog
+	out.DestinationReadable = destinationFacts.Probed
+	out.DestinationMeetings = destinationFacts.Meetings()
 	out.NothingToMove = out.SourceReadable && out.Meetings == 0 && !out.CatalogPresent
-	out.DestinationMeetings, _, _ = c.countArchiveAt(ctx, client, out.DestinationRoot)
 
-	out.Warnings = previewWarnings(out, enableAccessControl)
+	choice := storageChoiceFor(sourceFacts, destinationFacts)
+	out.ChoiceRequired = choice.Required()
+	out.StrategyMatters = choice.StrategyMatters
+	out.ConflictMatters = choice.ConflictMatters
+	out.Conflicts = len(choice.Conflicts)
+	out.ConflictNames = clip(choice.Conflicts, 20)
+
+	// The plan, from the function the switch executes. A second implementation
+	// of the rules here is exactly how a confirmation dialog comes to promise
+	// something the operation does not do — which is the class of bug the
+	// preview was added to fix in the first place.
+	plan := planArchiveCarry(policy, sourceFacts, destinationFacts)
+	out.WouldCopy = len(plan.Copy)
+	out.WouldReplace = len(plan.Replace)
+	out.WouldSkip = len(plan.Skip)
+	out.WouldKeepInSource = len(plan.KeepInSource)
+	out.WouldDeleteAtDestination = len(plan.DeleteAtDestination)
+
+	out.Warnings = previewWarnings(out, enableAccessControl, policy)
 	return out, nil
 }
 
@@ -1117,32 +1472,62 @@ func (c ExAppConfig) countArchiveAt(ctx context.Context, client *http.Client, ro
 // previewWarnings is the copy an administrator reads before confirming. It says
 // what is surprising, not what is normal — a preview that warns about everything
 // is one nobody reads.
-func previewWarnings(p storageTransitionPreview, enableAccessControl bool) []string {
+func previewWarnings(p storageTransitionPreview, enableAccessControl bool, policy storageMigrationPolicy) []string {
 	var out []string
 	if !p.SourceReadable {
 		out = append(out, fmt.Sprintf(
 			"Cassini could not read %s, so it cannot say how many recordings would move. The switch checks again before it writes anything.", p.SourceRoot))
 	}
+	if !p.DestinationReadable {
+		out = append(out, fmt.Sprintf(
+			"Cassini could not read %s, so it cannot say what is already there. The switch checks again before it writes anything.", p.DestinationRoot))
+	}
 	if p.PendingCleanup != "" {
 		out = append(out, fmt.Sprintf(
 			"An earlier switch did not finish, so %s still holds a copy of the archive. This switch merges rather than duplicating, and \"Finish the switch\" clears the leftovers afterwards.", p.PendingCleanup))
 	}
-	if p.DestinationMeetings > 0 {
+
+	// The single most consequential sentence, and the only one that describes a
+	// DELETION the administrator did not ask to move.
+	if p.WouldDeleteAtDestination > 0 {
 		out = append(out, fmt.Sprintf(
-			"%s already holds %d recording(s). They stay where they are, and any recording that is already there is not copied again.",
-			p.DestinationRoot, p.DestinationMeetings))
+			"%d recording(s) in %s are not in %s and will be DELETED, because \"overwrite\" makes the destination match the source exactly. Choose \"merge\" to keep them.",
+			p.WouldDeleteAtDestination, p.DestinationRoot, p.SourceRoot))
 	}
-	if enableAccessControl && p.Meetings > 0 {
+	if p.WouldReplace > 0 {
 		out = append(out, fmt.Sprintf(
-			"All %d copied recording(s) will be readable by every account. Cassini does not guess who was in a past meeting; narrow them afterwards from Files → Advanced permissions.", p.Meetings))
+			"%d recording(s) exist in both, and %s's copy replaces the one in %s.", p.WouldReplace, p.SourceRoot, p.DestinationRoot))
 	}
-	if !enableAccessControl && p.Meetings > 0 {
+	if p.WouldSkip > 0 && p.WouldKeepInSource > 0 {
 		out = append(out, fmt.Sprintf(
-			"All %d recording(s) lose their access rules. After this, everyone who can open Cassini can read every one — including the ones restricted to a call's participants.", p.Meetings))
+			"%d recording(s) exist in both. %s keeps its copy, and %s keeps its own — so both survive and %s is not fully emptied.",
+			p.WouldSkip, p.DestinationRoot, p.SourceRoot, p.SourceRoot))
+	} else if p.WouldSkip > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d recording(s) exist in both. %s keeps its copy and the one in %s is removed with the rest.",
+			p.WouldSkip, p.DestinationRoot, p.SourceRoot))
+	}
+	if !policy.copiesAnything() && p.Meetings > 0 {
+		out = append(out, fmt.Sprintf(
+			"Nothing is copied. All %d recording(s) stay in %s, which the %s mode does not read, so they will not be listed until you switch back or migrate them.",
+			p.Meetings, p.SourceRoot, storageModeName(enableAccessControl)))
+	} else if p.DestinationMeetings > 0 && p.WouldDeleteAtDestination == 0 {
+		out = append(out, fmt.Sprintf(
+			"%s already holds %d recording(s). They stay where they are.", p.DestinationRoot, p.DestinationMeetings))
+	}
+
+	carried := p.WouldCopy + p.WouldReplace
+	if enableAccessControl && carried > 0 {
+		out = append(out, fmt.Sprintf(
+			"All %d copied recording(s) will be readable by every account. Cassini does not guess who was in a past meeting; narrow them afterwards from Files → Advanced permissions.", carried))
+	}
+	if !enableAccessControl && carried > 0 {
+		out = append(out, fmt.Sprintf(
+			"All %d copied recording(s) lose their access rules. After this, everyone who can open Cassini can read every one — including the ones restricted to a call's participants.", carried))
 	}
 	if !enableAccessControl {
 		out = append(out, fmt.Sprintf(
-			"The %q Team folder is emptied but left in place. Nothing is deleted from Nextcloud's folder list, and switching back later is immediate.", ncRecordingsMount))
+			"The %q Team folder is left in place. Nothing is deleted from Nextcloud's folder list, and switching back later is immediate.", ncRecordingsMount))
 	}
 	return out
 }
