@@ -108,6 +108,7 @@ func TestNewRuntimeReconcilesPromotionLeftoversAtStartup(t *testing.T) {
 	}
 	defer store.Close()
 	rt := NewRuntime(context.Background(), store, Config{
+		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
 		WorkRoot:         workRoot,
 		SiteRoot:         siteRoot,
 		MaxRecordWorkers: 1,

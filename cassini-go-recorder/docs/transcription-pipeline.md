@@ -12,7 +12,7 @@ This document describes the post-recording transcription pipeline that turns a f
 | Pipeline orchestration | `internal/transcribe/transcribe.go` | The 10-step build flow described below |
 | Audio + STT | `internal/transcribe/audio.go`, `models.go`, `stt.go` | ffmpeg probe/mix, model download/cache, sherpa-onnx recognizer |
 | Segmentation + format | `internal/transcribe/format.go` | Segment assembly, JSON/VTT emitters, manifest writer |
-| LLM integration | `internal/transcribe/llm.go` | OpenAI-compatible HTTP client used by summary generation |
+| LLM integration | `internal/transcribe/llm.go` | OpenAI-compatible HTTP client for the summary call |
 | Decoder hints | `internal/transcribe/hotwords.go` | Turns the configured vocabulary into sherpa-onnx contextual biasing |
 | Summary generation (V4) | `internal/transcribe/summary.go` | Embedded V0 template, system prompt, transcript flattening |
 | Template (V0 contract) | `internal/transcribe/templates/summary.v0.md` | The summary's section structure — single source of truth |
@@ -30,11 +30,11 @@ This document describes the post-recording transcription pipeline that turns a f
 | 5 | Create recognizer | `NewRecognizer` loads the sherpa-onnx model on the chosen device (`cpu`/`cuda`), biased towards the configured vocabulary when one is set (see Decoder hints below) | — |
 | 6 | Per-speaker transcribe | For each input stream: extract floats, transcribe, assemble into segments | — |
 | 7 | Merge + sort + write words | `MergeAndSortSegments` then `writeTranscriptWithHash(version="transcript.words.v1")` | `transcript.words.v1.json` |
-| 8 | Captions | `WriteCaptionsVTT` renders the transcript as WebVTT | `captions.vtt` |
+| 8 | Captions | `WriteCaptionsVTT` renders the canonical transcript as WebVTT | `captions.vtt` |
 | **9** | **Meeting summary *(optional)*** | **`writeSummaryArtifact` calls `BuildMeetingSummary` (system prompt embeds the V0 template) and writes the model's markdown output as a sidecar** | **`summary.md`** |
-| 10 | Manifest | `WriteManifest` emits the artifact catalog with provenance for STT, decoder hints and the summary | `manifest.json` |
+| 10 | Manifest | `WriteManifest` emits the artifact catalog with provenance for STT, decoder hints, and the summary | `manifest.json` |
 
-Step 9 summarises the canonical word transcript, minus any words the attribution stage flagged as probable crosstalk.
+Step 9 summarises the canonical transcript, minus words the crosstalk gate marked low-confidence.
 
 ## Output bundle
 
@@ -52,19 +52,27 @@ After a successful build, `outputDir` contains:
 
 The viewer (`cassini-viewer`) treats `summary.md`, `captions.vtt`, and `chapters.vtt` as **optional** sidecars — see `cassini-viewer/scripts/demo-data-pull.mjs:144`. A 404 is tolerated; the UI falls back to a "no summary" state. This is what makes step 9's warn-and-skip semantics safe end-to-end.
 
-The portable `.opus` packer (`internal/cassini/portable_meeting.go`) embeds the audio and transcript into a base64-gzip payload. It does **not** yet read `summary.md` — a Followups item, since the V0 contract is a sidecar file and V6 (self-host bundle) is the right place to decide if/how to embed it.
+The portable `.opus` packer (`internal/cassini/portable_meeting.go`) embeds the audio, the transcripts, and — when the bundle carries one — `summary.md` as a manifest attachment plus summary metadata (`format`, `templateVersion`, `model`), so a published file carries its summary inside.
+
+For files sealed **before** summaries existed, `cassini meetings summarize <meeting.opus>` backfills one without re-running transcription: it reads the transcript back out of the file, makes the same single LLM call `cassini build` would make (configured by the same environment variables), and rewrites the metadata through the stage-verify-rename path with the audio bytes untouched. A file that already carries a summary is skipped unless `--force` replaces it, and a backfilled summary is recognisable by `provenance.meetingSummary.source = "backfill"` in the manifest.
 
 ## LLM integration
 
-There is one HTTP client, `chatCompletion(cfg, system, user)` in `llm.go`, used by two distinct callers with two distinct configurations:
+There is one HTTP client, `chatCompletion(cfg, system, user)` in `llm.go`, used by summary generation:
 
 | Caller | Config field | Default model | Env override |
 |---|---|---|---|
 | `BuildMeetingSummary` (step 9) | `BuildConfig.SummaryLLM` | inherits from `LLM_MODEL`; falls back to `openai/gpt-4o-mini` | `SUMMARY_MODEL` |
 
-Auth is `OPENROUTER_API_KEY` and the base URL is `OPENROUTER_BASE_URL`, falling back to `LLM_BASE_URL`. If no key is set, `IsConfigured()` returns false and the step is skipped silently.
+The summary call reads the shared auth (`OPENROUTER_API_KEY`) and base URL (`OPENROUTER_BASE_URL`, falling back to `LLM_BASE_URL`), unless given its own endpoint: `SUMMARY_BASE_URL` / `SUMMARY_API_KEY` / `SUMMARY_MODEL` override the shared values. An endpoint override brings its own key — the shared key is never sent to a different host. The operator emits these from its persisted LLM settings.
+
+**The base URL is the switch, not the key.** `IsConfigured()` requires a base URL and an unset kill-switch; the API key is optional, because a self-hosted OpenAI-compatible server (llama.cpp, vLLM, Ollama) usually has none. When the key is empty the `Authorization` header is omitted entirely rather than sent as an empty bearer token, which some self-hosted servers reject. With no base URL, the summary step is skipped silently.
 
 Summarisation is the only remaining LLM step in the pipeline. Transcript text is never rewritten by a model: the words a reader sees are the words the decoder produced.
+
+`CASSINI_SUMMARY_DISABLED=1` turns summaries off while keeping the endpoint configuration in place.
+
+`SUMMARY_MODEL` overrides `LLM_MODEL` for the summary call, so a stronger model can be picked without changing the shared default.
 
 ### Failure semantics
 
@@ -76,12 +84,12 @@ Summarisation is the only remaining LLM step in the pipeline. Transcript text is
 
 ```go
 type BuildConfig struct {
-    Device           string    // "cpu" | "cuda"
-    ModelID          ModelID   // STT model
-    CacheDir         string    // model cache root
-    SummaryLLM       LLMConfig // step 9
-    Vocabulary       []string  // preferred spellings, biases the decoder
-    NumThreads       int
+    Device       string    // "cpu" | "cuda"
+    ModelID      ModelID   // STT model
+    CacheDir     string    // model cache root
+    SummaryLLM   LLMConfig // step 9
+    Vocabulary   []string  // preferred spellings, biases the decoder
+    NumThreads   int
 }
 ```
 
@@ -91,8 +99,11 @@ type BuildConfig struct {
 |---|---|
 | `OPENROUTER_API_KEY` | `SummaryLLM.APIKey` |
 | `OPENROUTER_BASE_URL` (or `LLM_BASE_URL`) | `SummaryLLM.BaseURL` |
-| `LLM_MODEL` | `SummaryLLM.Model` until `SUMMARY_MODEL` overrides it |
-| `SUMMARY_MODEL` | `SummaryLLM.Model` (overrides the default) |
+| `LLM_MODEL` | `SummaryLLM.Model` until overridden |
+| `SUMMARY_BASE_URL` / `SUMMARY_API_KEY` / `SUMMARY_MODEL` | `SummaryLLM.BaseURL` / `SummaryLLM.APIKey` / `SummaryLLM.Model` for the summary alone |
+| `CASSINI_LLM_TIMEOUT_SEC` | `SummaryLLM.TimeoutSec` (default 900; raise for CPU-bound local models) |
+| `CASSINI_LLM_MAX_TOKENS` | `SummaryLLM.MaxTokens` (default 4096) |
+| `CASSINI_SUMMARY_DISABLED` | `SummaryLLM.Disabled` |
 | `CASSINI_TRANSCRIPTION_TERMS` | `Vocabulary` (JSON array of preferred spellings) |
 | `CASSINI_STT_HINTS_DISABLED` | turns decoder biasing off while keeping the vocabulary |
 | `CASSINI_STT_HINTS_SCORE` | overrides the hotword boost (default 2.0) |
@@ -104,9 +115,9 @@ V4 introduces step 9 — meeting summary generation — and nothing else in the 
 
 - **No new artifact contract.** `summary.md` is plain markdown. The contract is the V0 template in `internal/transcribe/templates/summary.v0.md`, embedded into the system prompt at compile time via `go:embed` so edits to the template propagate without code changes.
 - **No new dependencies.** Reuses `chatCompletion` from `llm.go`.
-- **No manifest schema change.** `manifest.json` does not currently list `summary.md` or summary provenance — see Followups for V6.
-- **No new CLI flags.** Operators set `OPENROUTER_API_KEY` (and optionally `SUMMARY_MODEL`) and the summary path turns on automatically. Unset the key and step 9 is skipped silently.
-- **Test mocking** swaps the `buildMeetingSummaryFn` package var, so no live LLM is called in CI.
+- **Summary provenance travels with the artifact.** `manifest.json` lists `summary.md` and records the model that produced it; the portable packer carries both into the sealed `.opus`.
+- **No new CLI flags.** Operators set an endpoint (`LLM_BASE_URL`, or `OPENROUTER_API_KEY` which implies the OpenRouter one) and optionally `SUMMARY_MODEL`, and the summary path turns on automatically. With no endpoint, step 9 is skipped silently; `CASSINI_SUMMARY_DISABLED=1` also skips it.
+- **Test mocking** uses the `func` package-var pattern (`buildMeetingSummaryFn`), so no live LLM is called in CI.
 
 The acceptance criteria from D-242 map to:
 
@@ -144,7 +155,7 @@ cannot introduce a word nobody said.
 The CTC tier keeps greedy search. sherpa-onnx has no hotword support for CTC, so
 the wider beam would cost decode time and buy nothing.
 
-Two conditions have to hold, both imposed by sherpa-onnx:
+Applying hints requires both of these model properties:
 
 1. the model must be a transducer. The `nemo_ctc` tier cannot be biased.
 2. the model bundle must ship `bpe.vocab`, and `modeling_unit` must be `bpe`.
@@ -159,11 +170,3 @@ Two conditions have to hold, both imposed by sherpa-onnx:
 When neither holds, the build records `provenance.speechToText.hints` with
 `applied: false` and a reason, and decodes unbiased. A vocabulary that could not
 be applied is always visible in the manifest rather than silently ignored.
-
-Beam search costs 1.3x to 1.5x the decode time of greedy search, and changes
-transcription for every word rather than only for the listed terms. Measured on
-CPU with Parakeet TDT 0.6B v3 over 32.9 s and 45 s of real meeting audio: worst
-realtime factor 0.091, so an hour of meeting decodes in about five and a half
-minutes. Memory is unchanged. On one clip beam search lost a sentence; on
-another it gained words. It is a different decoder, not a better one, and the
-question of which is more accurate needs the scored corpus in D-681.
