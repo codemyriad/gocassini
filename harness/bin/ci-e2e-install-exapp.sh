@@ -81,11 +81,16 @@ log "starting Nextcloud core stack on host port $NEXTCLOUD_HOST_PORT"
 # `cassini dev stack up`; plain `up` (no --reset) because the PID-scoped
 # project is fresh by construction.
 export PROJECT_NAME NEXTCLOUD_HOST_PORT
+# --storage-mode acl-enabled because this job asserts the ACCESS-CONTROLLED
+# topology below — the Team folder, its mappings, the ACL floor, and a third
+# account's PROPFIND. Without it bootstrap builds the account and nothing else,
+# and every one of those assertions is about a folder nothing created.
 "$REPO_ROOT/bin/cassini" dev stack up \
   --public-mode local-http \
   --services core \
   --cassini none \
   --recording-backend none \
+  --storage-mode acl-enabled \
   >"$LOG_DIR/stack-up.log" 2>&1 \
   || { tail -n 40 "$LOG_DIR/stack-up.log"; fail "cassini dev stack up failed"; }
 
@@ -119,6 +124,13 @@ log "starting Cassini ExApp container ($IMAGE_REF)"
 # No CASSINI_OPERATOR_BASE_PATH injection: a real AppAPI deploy never sets
 # CASSINI_* vars, so this test relies on the /operator default baked into the
 # runtime image and must catch the image ever losing it.
+#
+# CASSINI_STORAGE_MODE is the one CASSINI_* variable this job does declare, and
+# it has to. Since D-708 nothing falls back: an app that has not been told which
+# storage model to use is UNDECIDED, publishes nothing, and reports
+# `storage_mode_undecided` — so the `await_substrate provisioned` below would
+# never come true. This is a CI stack whose bootstrap built the access-controlled
+# substrate a step earlier, which is the one place that deploy option belongs.
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \
   --name "$CONTAINER_NAME" \
@@ -131,6 +143,7 @@ docker run -d \
   -e AA_VERSION=5.0.0 \
   -e CASSINI_APPAPI_REQUIRED=true \
   -e NEXTCLOUD_URL="$NEXTCLOUD_URL_INTERNAL" \
+  -e CASSINI_STORAGE_MODE=access_controlled \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" >/dev/null
 

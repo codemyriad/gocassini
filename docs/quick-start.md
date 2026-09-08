@@ -68,9 +68,15 @@ this mode nothing uses them.)
 Add `--storage-mode acl-enabled` and the harness also builds a mapped,
 ACL-enabled `Cassini` Team folder and starts the ExApp **access-controlled**:
 recordings go to `Cassini/Recordings` inside that folder, each readable only by
-the people who were in the meeting. The mode is declared rather than inferred,
-because Cassini infers nothing — on a Nextcloud where nobody has said, it starts
-in `default`. Each mode has its own root, so neither can shadow the other.
+the people who were in the meeting. Each mode has its own root, so neither can
+shadow the other.
+
+The harness declares the mode because Cassini decides nothing: on a Nextcloud
+where nobody has said, it publishes nothing and records nothing until an
+administrator chooses in the app's **Setup** tab. `--storage-mode undecided` is
+how you deliberately reach that state — it builds the access-controlled
+substrate and tells the ExApp nothing, which is the only way to see the setup
+wizard the way a real administrator meets it.
 
 Either way it is only the *initial* value: the app records it on its first
 enable, and the **Setup** tab is what changes it afterwards — which mode is in

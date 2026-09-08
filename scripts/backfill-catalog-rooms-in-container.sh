@@ -128,6 +128,13 @@ fail_usage() { echo "error: $*" >&2; exit 2; }
 # A file that exists but says nothing usable is FATAL rather than defaulted, for
 # the same reason: "I could not tell which mode this is" and "this is the default
 # mode" are different answers, and only one of them is safe to act on.
+#
+# So is an ABSENT file, since D-708. It used to read as the default model,
+# because that was the operator's own fallback when nothing had been recorded —
+# a defensible reading of somebody else's rule. There is no fallback now: an
+# install with no settings file has not chosen a storage model at all, and
+# nothing publishes into either root until it does. Reading it as `default` here
+# would be this script inventing the very decision the app stopped making.
 resolve_archive_root() {
   local settings="$STORAGE_SETTINGS" enabled=""
 
@@ -143,12 +150,7 @@ resolve_archive_root() {
   fi
 
   if [[ ! -f "$settings" ]]; then
-    # No recorded decision at all. That is the ordinary state of an install that
-    # has never had its enabled edge run, and the operator's own fallback there
-    # is the default model — so it is the honest answer, not a guess.
-    ROOT="CassiniNoACL/Recordings"
-    log "no storage settings at $settings; assuming the default storage mode ($ROOT)"
-    return 0
+    fail_before "no storage settings at $settings — this install has not been told which storage model to use, so there is no archive root to work on. Choose one in Cassini's Setup tab first"
   fi
 
   enabled="$(jq -r 'if has("access_control_enabled") then (.access_control_enabled|tostring) else "" end' "$settings" 2>/dev/null || true)"

@@ -267,7 +267,7 @@ Options).
 | `CASSINI_DISALLOW_MODEL_DOWNLOAD` | No | Set `1` on a host with no outbound network access. Each image bundles the model of the quality tier it runs by default, and any other tier downloads once into the model cache on the persistent volume. With this set, a build whose tier needs that download is blocked with a message that names the missing model and asks for a tier the image bundles, instead of starting and failing at the network |
 | `CASSINI_ATTRIBUTION_DISABLED` | No | Set `1` to skip the cross-track speaker-attribution stage. By default every word is annotated with acoustic evidence; no words are changed or removed either way |
 | `CASSINI_ATTRIBUTION_DROP` | No | Set `1` to delete words the acoustic evidence contradicts instead of annotating them (room-system microphones). The manifest records how many words were removed |
-| `CASSINI_STORAGE_MODE` | No | Which storage model a **fresh** install starts in: `default` keeps recordings in the `cassini` account's own `CassiniNoACL/Recordings`, readable by everyone who can open Cassini; `access_controlled` keeps them in `Cassini/Recordings` inside a Cassini Team folder, restricted to each meeting's participants, and additionally needs the Group folders and Everyone Group apps plus that Team folder. Leave empty and a fresh install starts in `default` — **nothing is inferred from the instance**, because what Nextcloud looks like on the first enabled edge is not evidence of what an administrator intends, and a wrong guess is silent and permanent. This is therefore the only way to *start* an install access-controlled; an upgrade whose Team folder still holds recordings is refused rather than re-interpreted (see [Verifying the recordings substrate](#verifying-the-recordings-substrate)). It only seeds the choice: the app's Setup tab is where it changes afterwards, and changing this variable does not move an archive that already exists |
+| `CASSINI_STORAGE_MODE` | No | **Development and CI only — leave empty on a production install.** Which storage model a **fresh** install starts in: `default` keeps recordings in the `cassini` account's own `CassiniNoACL/Recordings`, readable by everyone who can open Cassini; `access_controlled` keeps them in `Cassini/Recordings` inside a Cassini Team folder, restricted to each meeting's participants, and additionally needs the Group folders and Everyone Group apps plus that Team folder. On a production install the choice is an administrator's, in the app's Setup tab, which shows what is already in both folders before it asks — **nothing is inferred and nothing falls back**, so an install that has not been told does not publish or record until somebody chooses. A declared mode is believed only where it fits: missing prerequisites, recordings in both folders, or the same recording in both are refused loudly at enable time and **not** recorded (see [Verifying the recordings substrate](#verifying-the-recordings-substrate)). It only seeds the choice: the Setup tab is where it changes afterwards, and changing this variable does not move an archive that already exists |
 | `CASSINI_ARTIFACT_RETENTION` | No | How much of each recording's per-run working files the app keeps on its own volume. `sealed` (the default) reclaims a completed run's working copies — all duplicated in the canonical library or transient staging — and keeps the sealed meeting file and every log; `superseded` reclaims only runs a rerun replaced; `all` keeps everything, as the escape hatch when something must be recovered from a completed run. Nothing removes the last copy of anything, and published recordings are never touched |
 | `CASSINI_ROOM_ID_PEPPER` | No (recommended) | Deployment-wide secret mixed into the one-way derivation of each meeting's room id. A meeting publishes a derived id rather than its Talk conversation token, because for a public conversation that token is also the link that joins it — and a Talk token is short enough that an unpeppered derivation can be reversed by enumeration offline. With a pepper set it cannot. **Choose it once:** changing it changes every room id, while meetings already published keep the ids they were written with, so a room splits in two. Re-running `scripts/backfill-catalog-rooms.sh --apply` repairs every meeting this installation has a job row for; only recordings imported from elsewhere need the manual merge in `scripts/reattribute-catalog-room.sh` |
 | `OPENROUTER_API_KEY` | No | Initial API key for the LLM endpoint, when it needs one (a self-hosted model server usually does not). Pre-fills the app's LLM settings on first start; afterwards keys are managed in the app |
@@ -456,23 +456,30 @@ substrate is visible rather than a silently empty archive.
   "detail": "administrator: no Nextcloud administrator could be resolved (probed 3: [admin alice bob]); set CASSINI_NC_ADMIN_USER to an account in the \"admin\" group" }
 ```
 
-Two of those `step` values are **mismatches** rather than missing pieces:
-nothing is absent, the storage and the mode simply are not the same thing, and
-writing under that disagreement is how recordings end up somewhere nobody is
-looking — or somewhere everybody can read.
+Three of those `step` values are **questions** rather than missing pieces:
+nothing is absent and nothing is broken, and what is needed is a decision.
+
+| `step` | What it means | The way out |
+|---|---|---|
+| `storage_mode_undecided` | Nobody has told Cassini which storage model this Nextcloud should use. The ordinary state of a fresh install, and of every install upgrading into this release. Publishing and recording are refused; **reading is not**, so an existing access-controlled archive is still readable by the people it belongs to. | Open the app's Setup tab and choose. It shows what is in both folders first. |
+| `storage_mode_unconfirmed` | A mode is in force that nobody chose — an older version recorded one on its own, a first switch was interrupted, or `storage_settings.json` could not be parsed. The archive is where the recorded mode says and reads work; what is missing is somebody's agreement. | Confirm it in the Setup tab, or pick the other one. |
+| `storage_mode_declared_conflict` | `CASSINI_STORAGE_MODE` named a model this instance does not match: recordings in both folders, the same recording in both, or a folder that could not be read. Nothing was written down. | Fix the stack, or remove the variable and choose in the Setup tab. That option is for development and CI, where the stack knows what it built. |
+
+Two more are **mismatches**: nothing is absent, the storage and the mode simply
+are not the same thing, and writing under that disagreement is how recordings end
+up somewhere nobody is looking — or somewhere everybody can read.
 
 | `step` | What it means | The way out |
 |---|---|---|
 | `mode_mismatch:default_root_unknown` | Nobody could say whether a Team folder is mounted at `CassiniNoACL`, usually because the apps list or the Team-folder list could not be read. Publishing is refused; **reading is not**, so the archive still lists. | Check that Nextcloud is answering, then disable and re-enable Cassini. |
 | `mode_mismatch:default_root_shadowed` | A Team folder is mounted at `CassiniNoACL`, which is where the default mode keeps recordings. The mount would win that path, so writes would land in a shared folder and owner-identity reads would serve it to whoever is mapped to it. | Unmap or rename that Team folder (`occ groupfolders:list`, then `occ groupfolders:group <id> <group> --delete`), or switch to access-controlled storage in the Setup tab. |
-| `mode_mismatch:access_controlled_archive` | Nothing had recorded a mode, so this install fell back to `default` — but the `Cassini` Team folder is mounted and still holds recordings, which the default mode does not read. This is what an **access-controlled install upgrading into this release** looks like. | Turn access control on in the Setup tab, or set `CASSINI_STORAGE_MODE=access_controlled` and re-enable the app. If the instance really is meant to be open, switch to the default mode from the Setup tab and Cassini copies those recordings across. |
 
-The second is a deliberate latch on the upgrade path, and it fires **only** on
-the fallback — a mode that was recorded or declared is never second-guessed. Its
-job is to refuse loudly instead of publishing into a fresh, empty private tree
-while an existing archive sits unread in the Team folder. A `Cassini` Team
-folder that is mounted but **empty** is not a mismatch: that is exactly what a
-completed opt-out leaves behind.
+`mode_mismatch:access_controlled_archive` is **gone**, and a monitor keyed on it
+will now see nothing. It was an upgrade latch: it caught the one shape where the
+old fallback to the open model would have been obviously wrong — a `Cassini`
+Team folder still holding recordings — and nothing caught the rest. There is no
+fallback to latch, so every upgrade lands on `storage_mode_undecided` instead,
+which is the same refusal for every shape rather than one of them.
 
 Until the substrate is `provisioned`, publishing **fails** rather than writing
 recordings somewhere the read path is not looking, and Talk **refuses to start**
@@ -481,19 +488,31 @@ Talk's own "The recording failed" and the reason is in Cassini's Setup tab. The
 `occ`-side verification of the resulting topology is in
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
-`recordings_access` also reports `mode` (`default` / `access_controlled`),
-`mode_source` — how *this process* resolved the mode, which is one of
-`configured` (read back from the app's own `storage_settings.json`), `env`
-(`CASSINI_STORAGE_MODE`) or `default` (the fallback) — `root`, the path that
-mode keeps recordings at, and `migration_clean`. The file has a `source` field
-of its own that records where the decision came from, and it carries two values
-`mode_source` never shows: `user`, written when the Setup tab switched the mode,
-and `derived` on installs whose file was written by a build that still inferred
-it. Both read back as `mode_source: configured`, because that is what the app
-did — a recorded mode is used verbatim and never reconsidered. A `false`
-`migration_clean` is not a health failure and does not make `/status` answer
-503: the archive is complete at `root`, and the only consequence is a leftover
-copy at the other root. See [Switching storage
+`recordings_access` also reports `mode` (`default` / `access_controlled`, empty
+until one is chosen), `mode_source`, `mode_confirmed`, `root` — the path that
+mode keeps recordings at — and `migration_clean`.
+
+`mode_source` is the provenance recorded in the app's own
+`storage_settings.json`, carried through verbatim rather than flattened:
+
+| `mode_source` | Where the mode came from | `mode_confirmed` |
+|---|---|---|
+| `user` | An administrator chose it in the Setup tab | yes |
+| `env` | `CASSINI_STORAGE_MODE` declared it, and the instance matched | yes |
+| `migrating` | A switch was interrupted before it finished; this is where the recordings are, not what anybody wanted | no |
+| `default` | A fallback an older version recorded on its own. Nothing writes this any more | no |
+| `derived` | Inferred from the instance by a build older still | no |
+| `configured` | A settings file whose provenance cannot be established | no |
+
+An **unconfirmed** mode governs — the archive really is at that root and reads
+work — and refuses to publish, because the two models differ in who can read a
+recording and nobody agreed to this one. Earlier releases reported every one of
+these as `configured`, so a fallback and an administrator's click were
+indistinguishable; that is what `mode_confirmed` exists to end.
+
+A `false` `migration_clean` is not a health failure and does not make `/status`
+answer 503: the archive is complete at `root`, and the only consequence is a
+leftover copy at the other root. See [Switching storage
 modes](#switching-storage-modes).
 
 `GET /operator/storage` is the fuller view: both modes, which one is active,

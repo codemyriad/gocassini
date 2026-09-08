@@ -10,6 +10,12 @@
 # The defaults are the load-bearing part. The harness has always built the
 # access-controlled substrate and every e2e suite asserts it, so an absent or
 # empty variable must keep meaning that.
+#
+# Since D-708 there is a third shape, `undecided`: build that same substrate and
+# tell the ExApp NOTHING, so it starts with no storage mode chosen. Nothing falls
+# back any more — an app that has not been told does not publish — and every
+# other harness shape declares a mode precisely to skip that state, which left
+# the setup wizard unreachable from the harness at all.
 
 set -euo pipefail
 
@@ -56,6 +62,20 @@ export CASSINI_HARNESS_STORAGE_MODE=default
 if harness_storage_mode_is_acl; then
   fail "default was treated as access-controlled — the stack would be built for a mode the app is not in"
 fi
+
+# `undecided` is about what the ExApp is TOLD, not about what exists. It builds
+# the access-controlled substrate, because a wizard with only one usable mode is
+# not offering a choice.
+export CASSINI_HARNESS_STORAGE_MODE=undecided
+harness_storage_mode_is_acl || fail "undecided did not build the access-controlled substrate; the wizard would have only one usable mode"
+harness_storage_mode_is_undecided || fail "undecided was not recognised"
+
+for value in "" "acl-enabled" "default"; do
+  export CASSINI_HARNESS_STORAGE_MODE="$value"
+  if harness_storage_mode_is_undecided; then
+    fail "CASSINI_HARNESS_STORAGE_MODE=$value was treated as undecided; only the literal word may be"
+  fi
+done
 unset CASSINI_HARNESS_STORAGE_MODE
 
 # --- what the ExApp is told ---------------------------------------------------
@@ -80,8 +100,17 @@ expect_exapp_mode access_controlled
 export CASSINI_HARNESS_STORAGE_MODE=default
 expect_exapp_mode default
 
-# An explicit override still wins — that is how a deliberate mismatch is tested.
+# `undecided` declares NOTHING. The empty answer is what makes the caller omit
+# the deploy option entirely, which is the only way to reach the state the setup
+# wizard exists for.
+export CASSINI_HARNESS_STORAGE_MODE=undecided
+expect_exapp_mode ""
+
+# An explicit override still wins — that is how a deliberate mismatch is tested,
+# and it overrides `undecided` too.
 export CASSINI_STORAGE_MODE=access_controlled
+expect_exapp_mode access_controlled
+export CASSINI_HARNESS_STORAGE_MODE=acl-enabled
 expect_exapp_mode access_controlled
 unset CASSINI_HARNESS_STORAGE_MODE CASSINI_STORAGE_MODE
 
@@ -115,11 +144,20 @@ declared="$(grep -c '<name>CASSINI_STORAGE_MODE</name>' "$MANIFEST" || true)"
 [[ "$declared" == "1" ]] \
   || fail "appinfo/info.xml declares CASSINI_STORAGE_MODE $declared times, want exactly 1"
 
-# The harness passes it through registration, and derives it from the same
-# predicate that decides what is built rather than hard-coding a second default.
+# The harness passes it through registration, derives it from the same predicate
+# that decides what is built rather than hard-coding a second default, and OMITS
+# it when that predicate answers empty. The omission is the `undecided` shape;
+# passing `CASSINI_STORAGE_MODE=` instead would declare an unrecognised value and
+# the app would log an error rather than simply not having been told.
 # shellcheck disable=SC2016 # the literal `$(...)` IS the pattern being matched.
-grep -qF -- '--env "CASSINI_STORAGE_MODE=$(harness_exapp_storage_mode)"' "$STACK_LIB" \
-  || fail "lib/stack.sh does not pass CASSINI_STORAGE_MODE through AppAPI registration from harness_exapp_storage_mode"
+grep -qF -- 'exapp_storage_mode="$(harness_exapp_storage_mode)"' "$STACK_LIB" \
+  || fail "lib/stack.sh does not derive the ExApp's mode from harness_exapp_storage_mode"
+# shellcheck disable=SC2016 # the literal `$...` IS the pattern being matched.
+grep -qF -- 'register_args+=(--env "CASSINI_STORAGE_MODE=$exapp_storage_mode")' "$STACK_LIB" \
+  || fail "lib/stack.sh does not pass CASSINI_STORAGE_MODE through AppAPI registration"
+# shellcheck disable=SC2016 # the literal `$...` IS the pattern being matched.
+grep -qF -- 'if [[ -n "$exapp_storage_mode" ]]; then' "$STACK_LIB" \
+  || fail "lib/stack.sh declares CASSINI_STORAGE_MODE unconditionally; the undecided shape needs it omitted"
 
 # The dogfood box states its mode rather than letting it fall back. Switching it
 # to the default model would move a real archive and make every recording
@@ -128,5 +166,12 @@ grep -qF -- '--env "CASSINI_STORAGE_MODE=$(harness_exapp_storage_mode)"' "$STACK
 # shellcheck disable=SC2016 # the literal `${...}` IS the pattern being matched.
 grep -qF 'CASSINI_STORAGE_MODE=${CASSINI_STORAGE_MODE:-access_controlled}' "$SANDBOX_WIRE" \
   || fail "sandbox/wire-cassini.sh does not declare access_controlled; the dogfood archive must not depend on a fallback"
+
+# The deploy option is documented as development and CI only (D-708). It cannot
+# be removed from the manifest — AppAPI silently drops undeclared keys, so the
+# harness's own --env would stop arriving — so the demotion is copy, and copy
+# that CI does not check is copy that rots.
+grep -qi 'development' "$MANIFEST" \
+  || fail "appinfo/info.xml no longer says CASSINI_STORAGE_MODE is a development/CI option"
 
 echo "PASS: storage-mode predicates default to the substrate the e2e suites assert, and reach the ExApp intact"

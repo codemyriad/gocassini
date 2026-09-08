@@ -220,7 +220,7 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
-| `--storage-mode default|acl-enabled` | `CASSINI_HARNESS_STORAGE_MODE` | `default` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). See §2.8.1. |
+| `--storage-mode default|acl-enabled|undecided` | `CASSINI_HARNESS_STORAGE_MODE` | `default` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). `undecided` builds the access-controlled substrate and tells the ExApp nothing, which is the only way to reach the setup wizard. See §2.8.1. |
 | `--debug-skip-storage-scaffold` | `CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1` | off | Build no recordings storage at all. Debug only. See §2.8.1. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |
@@ -231,11 +231,12 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 #### 2.8.1 Recording storage mode
 
 Cassini stores published recordings in one of two models, and which one a stack
-is built for has to be decided rather than inferred. The ExApp does not infer:
-with nothing recorded and nothing declared it falls back to `default`, which on
-a stack that IS access-controlled is a loud failure rather than a silent
-re-interpretation. The harness declares the mode so that failure never happens
-by accident.
+is built for has to be decided rather than inferred. The ExApp does not infer,
+and since D-708 it does not fall back either: with nothing recorded and nothing
+declared it is UNDECIDED, publishes nothing, records nothing, and waits for the
+Setup tab. The harness declares the mode so a stack comes up usable — and
+`--storage-mode undecided` is how you deliberately do not, which is the only way
+to reach the wizard.
 
 The two models keep their archives in different places, on purpose — neither can
 shadow the other:
@@ -258,15 +259,30 @@ shadow the other:
     ExApp:     CASSINI_STORAGE_MODE=access_controlled
     note:      privacy-focused e2e suites select this explicitly
 
-  --debug-skip-storage-scaffold       (composes with either mode)
+  --storage-mode undecided
+    bootstrap: the same as acl-enabled — account, group, both apps, a mapped
+               ACL-enabled Team folder. A wizard with only one usable mode is
+               not offering a choice.
+    ExApp:     nothing. CASSINI_STORAGE_MODE is OMITTED from the registration,
+               not passed empty — an empty value is an unrecognised one, which
+               the app logs as an error rather than as "nobody told me".
+    note:      publishing and recording are refused until the Setup tab is used.
+               This is the state every real install starts in.
+
+  --debug-skip-storage-scaffold       (composes with any mode)
     bootstrap: no account, no group, neither app, no folder
     ExApp:     started in whichever mode was selected
 ```
 
 The two together — `--storage-mode acl-enabled --debug-skip-storage-scaffold` —
-give you access control selected with none of it built, which is the state a
-production Nextcloud is in before an administrator has set Cassini up and what
-the app's own setup flow exists to fix.
+give you access control selected with none of it built, which is what the app's
+own setup flow exists to fix.
+
+`--storage-mode undecided --debug-skip-storage-scaffold` is the fuller version
+of that: nothing built AND nothing chosen, which is exactly what an
+administrator meets on the day they install Cassini. The Setup tab then has to
+scaffold a mode before it can offer to use it, which is the rule the wizard
+enforces.
 
 The mode is only the ExApp's *initial* value. It is recorded in the app's
 `storage_settings.json` on the first enable and the Setup tab is what changes it

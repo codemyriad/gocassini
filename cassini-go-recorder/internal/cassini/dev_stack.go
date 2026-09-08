@@ -50,6 +50,15 @@ const (
 	// ExApp derived its mode from whichever it happened to see.
 	devStackStorageDefault = "default"
 	devStackStorageACL     = "acl-enabled"
+	// devStackStorageUndecided builds the access-controlled substrate and tells
+	// the ExApp NOTHING, so it starts with no storage mode chosen.
+	//
+	// That is the state a real install is in on its first day, and since D-708 it
+	// is the state the setup wizard exists for — nothing falls back any more, so
+	// an app that is not told does not publish. Every other harness shape
+	// declares a mode precisely to skip it, which left the wizard unreachable
+	// from the harness at all.
+	devStackStorageUndecided = "undecided"
 )
 
 type devStackPlan struct {
@@ -125,7 +134,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	recordingBackend := stringFlag("recording-backend", "Talk recording backend: legacy, direct-operator, installed-exapp, none")
 	exAppImageMode := stringFlag("exapp-image-mode", "ExApp image mode: build, reuse-local, pull")
 	patchMode := stringFlag("patch", "patch mode: auto, none, force")
-	storageMode := stringFlag("storage-mode", "recording storage mode the stack is built in and the ExApp starts in: default, acl-enabled")
+	storageMode := stringFlag("storage-mode", "recording storage mode the stack is built in and the ExApp starts in: default, acl-enabled, undecided (build the access-controlled substrate and let the app's Setup tab choose)")
 	skipStorageScaffold := fs.Bool("debug-skip-storage-scaffold", false,
 		"debug: build no recordings storage at all — no cassini service account, no Team folder, and neither native app")
 	build := fs.Bool("build", false, "build the Cassini ExApp image before registration")
@@ -432,8 +441,8 @@ func validateDevStackPlan(plan devStackPlan) error {
 	if !oneOf(plan.ExistingResourceMode, devStackExistingFail, devStackExistingResume, devStackExistingReset) {
 		return fmt.Errorf("invalid existing-resource mode %q", plan.ExistingResourceMode)
 	}
-	if !oneOf(plan.StorageMode, devStackStorageDefault, devStackStorageACL) {
-		return fmt.Errorf("invalid storage mode %q (want %s or %s)", plan.StorageMode, devStackStorageDefault, devStackStorageACL)
+	if !oneOf(plan.StorageMode, devStackStorageDefault, devStackStorageACL, devStackStorageUndecided) {
+		return fmt.Errorf("invalid storage mode %q (want %s, %s or %s)", plan.StorageMode, devStackStorageDefault, devStackStorageACL, devStackStorageUndecided)
 	}
 	if plan.PublicHost != "" && strings.Contains(plan.PublicHost, "://") {
 		return fmt.Errorf("public host must be a bare host, got %q", plan.PublicHost)
@@ -552,11 +561,18 @@ func isLoopbackHost(host string) bool {
 // differ on purpose: `acl-enabled` is what reads well on a command line, and
 // `access_controlled` is the one vocabulary the config file, the API and the UI
 // already share.
+//
+// It answers "" for `undecided`, and the caller then declares nothing — which is
+// what makes the setup wizard reachable from the harness.
 func devStackExAppStorageMode(storageMode string) string {
-	if storageMode == devStackStorageACL {
+	switch storageMode {
+	case devStackStorageACL:
 		return "access_controlled"
+	case devStackStorageUndecided:
+		return ""
+	default:
+		return "default"
 	}
-	return "default"
 }
 
 func boolEnv(v bool) string {
@@ -615,7 +631,7 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "  mode: %s\n", plan.PatchMode)
 	fmt.Fprintln(w, "storage:")
 	fmt.Fprintf(w, "  mode: %s\n", plan.StorageMode)
-	fmt.Fprintf(w, "  exapp_initial_mode: %s\n", devStackExAppStorageMode(plan.StorageMode))
+	fmt.Fprintf(w, "  exapp_initial_mode: %s\n", yamlValueOrNull(devStackExAppStorageMode(plan.StorageMode)))
 	fmt.Fprintf(w, "  skip_scaffold: %t\n", plan.SkipStorageScaffold)
 	fmt.Fprintln(w, "lifecycle:")
 	fmt.Fprintf(w, "  existing_resources: %s\n", plan.ExistingResourceMode)

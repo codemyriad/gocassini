@@ -865,6 +865,10 @@ func TestDevStackExportsTheExAppsOwnVocabulary(t *testing.T) {
 	for _, tc := range []struct{ harness, exapp string }{
 		{devStackStorageACL, "access_controlled"},
 		{devStackStorageDefault, "default"},
+		// `undecided` declares NOTHING. The empty value is what makes the
+		// harness omit the deploy option entirely, which is the only way to
+		// reach the state the app's setup wizard exists for (D-708).
+		{devStackStorageUndecided, ""},
 	} {
 		plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", tc.harness}, testEnv(nil))
 		if err != nil {
@@ -940,4 +944,37 @@ func containsEnv(env []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// `undecided` builds the access-controlled substrate and tells the ExApp
+// nothing (D-708).
+//
+// It is about what the app is TOLD, not about what exists: since nothing falls
+// back any more, an app that has not been told does not publish, and every other
+// harness shape declares a mode precisely to skip that state. A wizard with only
+// one usable mode would not be offering a choice, so the substrate is the full
+// one.
+func TestDevStackUndecidedBuildsTheSubstrateAndDeclaresNothing(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageUndecided}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan(undecided): %v", err)
+	}
+	if plan.StorageMode != devStackStorageUndecided {
+		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageUndecided)
+	}
+	env := plan.env()
+	if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE="+devStackStorageUndecided) {
+		t.Fatalf("harness env did not carry the mode: %v", env)
+	}
+	// Empty, not absent, in the plan's env: the harness scripts read the whole
+	// plan as their source of truth and an omitted key would let an ambient
+	// value through. The OMISSION happens at registration, in lib/stack.sh.
+	if !containsEnv(env, "CASSINI_STORAGE_MODE=") {
+		t.Fatalf("ExApp env did not declare an empty mode: %v", env)
+	}
+	for _, declared := range []string{"CASSINI_STORAGE_MODE=default", "CASSINI_STORAGE_MODE=access_controlled"} {
+		if containsEnv(env, declared) {
+			t.Fatalf("undecided declared %q to the ExApp: %v", declared, env)
+		}
+	}
 }
