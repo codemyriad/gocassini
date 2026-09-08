@@ -400,6 +400,21 @@ run_payload() {
     bash "$PAYLOAD" --jobs-db "$JOBS_DB" "$@" >"$WORK/stdout" 2>"$WORK/stderr"
 }
 
+# This variant deliberately leaves the database unspecified. It exercises the
+# production AppAPI path where the script must derive both the DB and its
+# sibling storage_settings.json from APP_PERSISTENT_STORAGE.
+run_payload_without_jobs_db() {
+  rm -f "$WORK/put-body.json" "$WORK/proppatch-body.xml" \
+        "$WORK/opus-puts.tsv" "$WORK/opus-proppatch.txt" "$WORK/retag-argv"
+  env PATH="$STUBS:$PATH" \
+    NEXTCLOUD_URL="https://cloud.test" APP_SECRET="s3cret" APP_ID="gocassini" APP_VERSION="0.2.0" \
+    CASSINI_ROOM_ID_PEPPER="test-pepper" \
+    OPUS_PUT_STATUS="${OPUS_PUT_STATUS:-204}" \
+    RETAG_FAILS="${RETAG_FAILS:-}" \
+    RETAG_CHANGES="${RETAG_CHANGES:-some}" \
+    bash "$PAYLOAD" --no-jobs-db "$@" >"$WORK/stdout" 2>"$WORK/stderr"
+}
+
 # room_id_for_name / room_id_for_token derive the ids the payload must produce,
 # the same way the Go recorder and the payload both do. Written out here rather
 # than shared, so a change to either side fails this test instead of silently
@@ -603,8 +618,9 @@ else
   fail "the catalog should be two-space indented and end with a newline"
 fi
 
-# The PROPPATCH is the difference between a private archive index and one every
-# signed-in account can read, so it must happen on every write.
+# In access-controlled mode the PROPPATCH is the difference between a private
+# archive index and one every signed-in account can read, so it must happen on
+# every write.
 if [[ -f "$WORK/proppatch-body.xml" ]]; then
   check "--apply restores the owner-only permissions" "$WORK/proppatch-body.xml" \
     "<nc:acl-mapping-id>everyone</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>0</nc:acl-permissions>"
@@ -930,6 +946,50 @@ else
   fail "an absent storage_settings.json exited $status rather than 4"
 fi
 check "and says what to do about it" "$WORK/stderr" "Setup tab"
+
+# --- settings follow the effective DB, and default mode has no ACL call ------
+# The operator redirects its baked database path into
+# APP_PERSISTENT_STORAGE/operator. The settings file is its sibling, not a file
+# at the volume root. This fixture puts contradictory modes in both locations:
+# selecting the root file would take the wrong archive path and issue a
+# Team-folder PROPPATCH that default mode rejects.
+write_fake_archive <<'EOF'
+{"version":"cassini.viewer.catalog.v1","meetings":[
+  {"id":"DEFAULT1","title":"Private recap","dateLabel":"2026-08-13 10:32","audioPath":"./meetings/DEFAULT1.opus"}]}
+EOF
+write_tags DEFAULT1 <<'EOF'
+{"format":{"tags":{"TITLE":"Private recap"}},"streams":[]}
+EOF
+PERSIST="$WORK/persistent-storage"
+mkdir -p "$PERSIST/operator"
+printf '%s\n' '{"access_control_enabled": false, "source": "user", "migration_clean": true}' \
+  >"$PERSIST/operator/storage_settings.json"
+printf '%s\n' '{"access_control_enabled": true}' >"$PERSIST/storage_settings.json"
+CASSINI_STORAGE_SETTINGS_PATH= APP_PERSISTENT_STORAGE="$PERSIST" \
+  run_payload_without_jobs_db --apply --no-retag \
+  || fail "default-mode apply through the persistent DB path should succeed: $(cat "$WORK/stderr")"
+check "persistent storage resolves settings beside operator/jobs.sqlite3" "$WORK/stdout" \
+  "storage mode from $PERSIST/operator/storage_settings.json: archive root is CassiniNoACL/Recordings"
+[[ -f "$WORK/put-body.json" ]] \
+  && ok "default-mode apply writes the catalog" \
+  || fail "default-mode apply did not write the catalog"
+if [[ -f "$WORK/proppatch-body.xml" ]]; then
+  fail "default-mode apply must not issue nc:acl-list: $(cat "$WORK/proppatch-body.xml")"
+else
+  ok "default-mode apply skips the unsupported Team-folder ACL"
+fi
+
+# A deliberate --jobs-db override has the same authority. Its sibling settings
+# must win even when an AppAPI persistent volume is mounted.
+DB_OVERRIDE="$WORK/db-override/jobs.sqlite3"
+mkdir -p "${DB_OVERRIDE%/*}"
+printf '%s\n' '{"access_control_enabled": false, "source": "user", "migration_clean": true}' \
+  >"${DB_OVERRIDE%/*}/storage_settings.json"
+CASSINI_STORAGE_SETTINGS_PATH= APP_PERSISTENT_STORAGE="$PERSIST" \
+  run_payload --jobs-db "$DB_OVERRIDE" --no-retag \
+  || fail "an explicit database override should resolve its sibling settings: $(cat "$WORK/stderr")"
+check "an explicit DB override selects its sibling settings" "$WORK/stdout" \
+  "storage mode from ${DB_OVERRIDE%/*}/storage_settings.json: archive root is CassiniNoACL/Recordings"
 
 
 if [[ "$failures" -ne 0 ]]; then

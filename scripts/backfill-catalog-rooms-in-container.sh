@@ -40,7 +40,8 @@
 # <archive root> is Cassini/Recordings under access control and
 # CassiniNoACL/Recordings in the default mode; it is read from
 # storage_settings.json rather than assumed (see resolve_archive_root).
-#   PROPPATCH the owner-only ACL on catalog.json      (only with --apply)
+#   PROPPATCH the owner-only ACL on catalog.json      (only with --apply in
+#                                                     access-controlled mode)
 #
 # The artifact is re-tagged because the exporter re-derives a catalog entry's
 # room from the FILE on every republish. A catalog-only backfill is silently
@@ -56,10 +57,11 @@
 # means the file was NOT there and a fresh, ruleless fileid was minted, which
 # inherits the container's grant to everyone.
 #
-# The catalog's PROPPATCH, by contrast, is not optional. A PUT that recreates
-# catalog.json inherits that same grant, which would publish the unfiltered
-# archive index — every meeting, including ones the reader may not open — to
-# every signed-in account.
+# In access-controlled mode the catalog's PROPPATCH is not optional. A PUT that
+# recreates catalog.json inherits that same grant, which would publish the
+# unfiltered archive index — every meeting, including ones the reader may not
+# open — to every signed-in account. The default root is private to its owner
+# and does not support Team-folder ACL properties.
 #
 # Exit codes, which the wrapper turns into instructions. The line they draw is
 # whether the CATALOG was written:
@@ -99,6 +101,7 @@ OWNER="cassini"
 # the other, and — with --apply — would WRITE that empty catalog back over the
 # archive's only index. resolve_archive_root below is what stops that.
 ROOT=""
+ACCESS_CONTROLLED=0
 # An override for a deployment whose persistent volume is somewhere unusual.
 STORAGE_SETTINGS="${CASSINI_STORAGE_SETTINGS_PATH:-}"
 STORAGE_SETTINGS_REL="storage_settings.json"
@@ -110,11 +113,29 @@ STORAGE_SETTINGS_REL="storage_settings.json"
 # baked env value IS the image default and the operator redirects it.
 JOBS_DB_IMAGE_DEFAULT="/var/lib/cassini-operator/jobs.sqlite3"
 JOBS_DB_PERSIST_REL="operator/jobs.sqlite3"
+EFFECTIVE_JOBS_DB=""
 
 log() { echo "backfill-catalog-rooms: $*"; }
 fail_before() { echo "error: $*" >&2; exit 4; }
 fail_after() { echo "error: $*" >&2; exit 1; }
 fail_usage() { echo "error: $*" >&2; exit 2; }
+
+# resolve_effective_jobs_db mirrors the operator's data-path resolution. The
+# --jobs-db flag is an explicit command override, so unlike the image's baked
+# environment default it is never redirected under APP_PERSISTENT_STORAGE.
+resolve_effective_jobs_db() {
+  if [[ -n "$JOBS_DB" ]]; then
+    EFFECTIVE_JOBS_DB="$JOBS_DB"
+    return
+  fi
+
+  local configured="${CASSINI_OPERATOR_DB_PATH:-}"
+  if [[ -n "${APP_PERSISTENT_STORAGE:-}" && ( -z "$configured" || "$configured" == "$JOBS_DB_IMAGE_DEFAULT" ) ]]; then
+    EFFECTIVE_JOBS_DB="${APP_PERSISTENT_STORAGE%/}/$JOBS_DB_PERSIST_REL"
+  else
+    EFFECTIVE_JOBS_DB="${configured:-$JOBS_DB_IMAGE_DEFAULT}"
+  fi
+}
 
 # resolve_archive_root reads which storage model this install is in, and returns
 # the root that model keeps its archive under.
@@ -139,14 +160,10 @@ resolve_archive_root() {
   local settings="$STORAGE_SETTINGS" enabled=""
 
   if [[ -z "$settings" ]]; then
-    settings="${APP_PERSISTENT_STORAGE:-}"
-    if [[ -n "$settings" ]]; then
-      settings="${settings%/}/$STORAGE_SETTINGS_REL"
-    else
-      # No persistent volume in the environment: fall back to the directory the
-      # jobs database resolved to, which is where the operator puts both.
-      settings="$(dirname -- "${JOBS_DB:-$JOBS_DB_IMAGE_DEFAULT}")/$STORAGE_SETTINGS_REL"
-    fi
+    # The settings are the jobs database's sibling, not a file at the root of
+    # AppAPI's persistent volume. Deriving them from the already-resolved DB
+    # keeps this tool aligned with an explicit database override too.
+    settings="$(dirname -- "$EFFECTIVE_JOBS_DB")/$STORAGE_SETTINGS_REL"
   fi
 
   if [[ ! -f "$settings" ]]; then
@@ -155,8 +172,8 @@ resolve_archive_root() {
 
   enabled="$(jq -r 'if has("access_control_enabled") then (.access_control_enabled|tostring) else "" end' "$settings" 2>/dev/null || true)"
   case "$enabled" in
-    true)  ROOT="Cassini/Recordings" ;;
-    false) ROOT="CassiniNoACL/Recordings" ;;
+    true)  ROOT="Cassini/Recordings"; ACCESS_CONTROLLED=1 ;;
+    false) ROOT="CassiniNoACL/Recordings"; ACCESS_CONTROLLED=0 ;;
     *)
       fail_before "could not read access_control_enabled from $settings — refusing to guess which storage mode this instance is in, because writing to the wrong root would overwrite the archive's index"
       ;;
@@ -195,6 +212,7 @@ fi
 if [[ -n "$JOBS_DB" && "$USE_JOBS_DB" == "0" ]]; then
   fail_usage "--jobs-db and --no-jobs-db contradict each other"
 fi
+resolve_effective_jobs_db
 
 for tool in curl ffprobe node base64; do
   command -v "$tool" >/dev/null 2>&1 || fail_usage "$tool is not available in this container"
@@ -307,13 +325,7 @@ JOBS_TSV="$WORK/jobs.tsv"
 jobs_source="none"
 
 if [[ "$USE_JOBS_DB" == "1" ]]; then
-  if [[ -z "$JOBS_DB" ]]; then
-    JOBS_DB="${CASSINI_OPERATOR_DB_PATH:-}"
-    if [[ -n "${APP_PERSISTENT_STORAGE:-}" && ( -z "$JOBS_DB" || "$JOBS_DB" == "$JOBS_DB_IMAGE_DEFAULT" ) ]]; then
-      JOBS_DB="${APP_PERSISTENT_STORAGE%/}/$JOBS_DB_PERSIST_REL"
-    fi
-    JOBS_DB="${JOBS_DB:-$JOBS_DB_IMAGE_DEFAULT}"
-  fi
+  JOBS_DB="$EFFECTIVE_JOBS_DB"
 
   if [[ ! -f "$JOBS_DB" ]]; then
     # Not fatal, and not silent. An installation whose job history is genuinely
@@ -813,30 +825,38 @@ case "$status" in
   *) fail_before "writing the catalog returned HTTP $status (only a 2xx means it was stored)" ;;
 esac
 
-# From here on the catalog IS written, so every failure is exit 1: the file may
-# be sitting there with the containing folder's grant to everyone.
-log "restoring the owner-only permissions on $ROOT/catalog.json"
-ACL_BODY="$WORK/acl.xml"
-cat > "$ACL_BODY" <<EOF
+# In the default model the root is the service account's private home. It has
+# no Team-folder ACL surface — attempting nc:acl-list there fails after the
+# catalog has already been changed. The access-controlled model needs this
+# explicit file rule to override its containing folder's read grant.
+if [[ "$ACCESS_CONTROLLED" == "1" ]]; then
+  # From here on the catalog IS written, so every failure is exit 1: the file may
+  # be sitting there with the containing folder's grant to everyone.
+  log "restoring the owner-only permissions on $ROOT/catalog.json"
+  ACL_BODY="$WORK/acl.xml"
+  cat > "$ACL_BODY" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <d:propertyupdate xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:set><d:prop><nc:acl-list><nc:acl><nc:acl-mapping-type>group</nc:acl-mapping-type><nc:acl-mapping-id>everyone</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>0</nc:acl-permissions></nc:acl><nc:acl><nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>$OWNER</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>31</nc:acl-permissions></nc:acl></nc:acl-list></d:prop></d:set></d:propertyupdate>
 EOF
-status="$(dav PROPPATCH "$ROOT/catalog.json" "$WORK/acl.out" \
-  -H "Content-Type: application/xml; charset=utf-8" --data-binary "@$ACL_BODY")" \
-  || fail_after "the permissions request could not be sent, and the catalog is already written"
-case "$status" in
-  20*) ;;
-  *) fail_after "restoring the catalog permissions returned HTTP $status" ;;
-esac
-# A PROPPATCH answers 207 Multi-Status, and a REJECTED property lands in the
-# per-property status inside it — the 207 alone only says the request was
-# understood. Not reading it is how a file ends up with no ACL while every
-# response looks fine (D-585).
-if grep -qE 'HTTP/1\.[01] [45][0-9][0-9]' "$WORK/acl.out"; then
-  fail_after "Nextcloud rejected the catalog permissions:
+  status="$(dav PROPPATCH "$ROOT/catalog.json" "$WORK/acl.out" \
+    -H "Content-Type: application/xml; charset=utf-8" --data-binary "@$ACL_BODY")" \
+    || fail_after "the permissions request could not be sent, and the catalog is already written"
+  case "$status" in
+    20*) ;;
+    *) fail_after "restoring the catalog permissions returned HTTP $status" ;;
+  esac
+  # A PROPPATCH answers 207 Multi-Status, and a REJECTED property lands in the
+  # per-property status inside it — the 207 alone only says the request was
+  # understood. Not reading it is how a file ends up with no ACL while every
+  # response looks fine (D-585).
+  if grep -qE 'HTTP/1\.[01] [45][0-9][0-9]' "$WORK/acl.out"; then
+    fail_after "Nextcloud rejected the catalog permissions:
 $(cat "$WORK/acl.out")
 The catalog is written but may be readable by every signed-in account. Check
 $ROOT/catalog.json in the Files app."
+  fi
+else
+  log "default storage keeps $ROOT/catalog.json in the owner's private tree; no Team-folder ACL is applicable"
 fi
 
 log "done: $resolved_count entr(y/ies) now carry a room"
