@@ -371,6 +371,7 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		ModeSource:  s.modeSource,
 		CheckedAt:   s.checkedAtUTC,
 	}
+	out.ModeConfirmed = ncStorage.confirmedMode()
 	if s.mode != "" {
 		out.Root = recordingsRootFor(s.mode == storageModeAccessControlled)
 		clean := ncStorage.migrationClean()

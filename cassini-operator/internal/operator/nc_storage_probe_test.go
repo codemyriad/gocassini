@@ -1,8 +1,13 @@
 package operator
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // readyProbe is the shape of an instance the provisioner built: both apps, the
@@ -28,7 +33,8 @@ func readyProbe() ncStorageProbe {
 		EveryoneRead:      true,
 		OwnerAll:          true,
 		OwnerManages:      true,
-		ACLRecordingsRoot: true,
+		ACLArchive:        ncArchiveFacts{Root: ncACLRecordingsRoot, Probed: true, Present: true},
+		DefaultArchive:    ncArchiveFacts{Root: ncDefaultRecordingsRoot, Probed: true},
 	}
 }
 
@@ -67,7 +73,7 @@ func TestAccessControlIsNotReadyWhenAnythingIsMissing(t *testing.T) {
 			p.OwnerAll = false
 			p.ACLEnabled = false
 			p.OwnerManages = false
-			p.ACLRecordingsRoot = false
+			p.ACLArchive = ncArchiveFacts{Root: ncACLRecordingsRoot, Probed: true}
 		}},
 		{"Cassini/Recordings is a private home tree, not a Team folder", func(p *ncStorageProbe) {
 			p.FolderPresent = false
@@ -76,7 +82,7 @@ func TestAccessControlIsNotReadyWhenAnythingIsMissing(t *testing.T) {
 			p.OwnerAll = false
 			p.ACLEnabled = false
 			p.OwnerManages = false
-			p.DefaultRecordingsRoot = true
+			p.DefaultArchive = ncArchiveFacts{Root: ncDefaultRecordingsRoot, Probed: true, Present: true}
 		}},
 		{"no everyone group", func(p *ncStorageProbe) { p.EveryoneGroup = false }},
 		{"advanced ACL is off", func(p *ncStorageProbe) { p.ACLEnabled = false }},
@@ -313,5 +319,92 @@ func TestRecordingsTreeDirsWalkTheRootOutermostFirst(t *testing.T) {
 	staged := recordingsTreeDirs(ncStorageStagingRoot + "/Recordings")
 	if staged[0] != ncStorageStagingRoot {
 		t.Fatalf("recordingsTreeDirs(staging)[0] = %q, want %q", staged[0], ncStorageStagingRoot)
+	}
+}
+
+// The listing carries WHEN each recording was last written, in the same request
+// that says which recordings there are (D-708).
+//
+// The `newest_wins` conflict policy compares those timestamps, and it must
+// compare two readings of the same instant — a second PROPFIND could describe a
+// tree that changed in between, and then "which side is newer" would be answered
+// about a pair that never coexisted.
+func TestPropfindEntriesCarryTheModificationTime(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PROPFIND" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusMultiStatus)
+		io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">`+
+			`<d:response><d:href>`+r.URL.Path+`/</d:href></d:response>`+
+			`<d:response><d:href>`+r.URL.Path+`/dated.opus</d:href>`+
+			`<d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>`+
+			`<d:getlastmodified>Tue, 03 Jun 2025 09:15:00 GMT</d:getlastmodified>`+
+			`</d:prop></d:propstat></d:response>`+
+			`<d:response><d:href>`+r.URL.Path+`/mangled.opus</d:href>`+
+			`<d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop>`+
+			`<d:getlastmodified>whenever</d:getlastmodified>`+
+			`</d:prop></d:propstat></d:response>`+
+			`<d:response><d:href>`+r.URL.Path+`/silent.opus</d:href></d:response>`+
+			`</d:multistatus>`)
+	}))
+	t.Cleanup(srv.Close)
+
+	entries, visible, err := testExAppConfig(srv.URL).davPropfindEntries(
+		context.Background(), &http.Client{}, ncRecordingsOwner, ncACLRecordingsRoot+"/meetings")
+	if err != nil || !visible {
+		t.Fatalf("davPropfindEntries() = (%v, %t, %v)", entries, visible, err)
+	}
+	byName := map[string]davEntry{}
+	for _, entry := range entries {
+		byName[entry.Name] = entry
+	}
+	if len(byName) != 3 {
+		t.Fatalf("entries = %+v, want three children and no self", entries)
+	}
+	want := time.Date(2025, 6, 3, 9, 15, 0, 0, time.UTC)
+	if got := byName["dated.opus"].Modified; !got.Equal(want) {
+		t.Fatalf("dated.opus modified = %v, want %v", got, want)
+	}
+	// An unparseable date and an absent one are the SAME answer: "cannot say".
+	// Turning either into a very old timestamp would let a comparison decide
+	// which of two recordings to keep on the strength of a date nobody read.
+	for _, name := range []string{"mangled.opus", "silent.opus"} {
+		if got := byName[name].Modified; !got.IsZero() {
+			t.Fatalf("%s modified = %v, want the zero time", name, got)
+		}
+	}
+}
+
+// The overlap between the two roots is the only conflict a migration policy can
+// be asked about, and it is computed once, on the probe.
+func TestDuplicateNamesIsTheIntersectionOfTheTwoRoots(t *testing.T) {
+	acl := ncArchiveFacts{Probed: true, Present: true, Entries: []davEntry{{Name: "a.opus"}, {Name: "b.opus"}, {Name: "c.opus"}}}
+	def := ncArchiveFacts{Probed: true, Present: true, Entries: []davEntry{{Name: "c.opus"}, {Name: "a.opus"}, {Name: "z.opus"}}}
+	got := duplicateNames(acl, def)
+	if len(got) != 2 || got[0] != "a.opus" || got[1] != "c.opus" {
+		t.Fatalf("duplicateNames = %v, want [a.opus c.opus] sorted", got)
+	}
+	if empty := duplicateNames(acl, ncArchiveFacts{Probed: true}); len(empty) != 0 {
+		t.Fatalf("duplicateNames against an empty root = %v, want none", empty)
+	}
+}
+
+// A declared mode is refused when it disagrees with what is in the two roots —
+// and "we could not look" is one of the disagreements, because the declaration
+// is about to be recorded permanently and half the evidence is missing.
+func TestDeclaredModeConflictsFailClosedOnAnUnreadableRoot(t *testing.T) {
+	probe := readyProbe()
+	probe.ACLArchive = ncArchiveFacts{Root: ncACLRecordingsRoot} // never probed
+	conflicts := probe.declaredModeConflicts(true)
+	if len(conflicts) != 1 || !strings.Contains(conflicts[0], "could not read both") {
+		t.Fatalf("conflicts = %v, want a single unreadable-root refusal", conflicts)
+	}
+
+	// Both roots read, both empty: nothing to disagree about.
+	clean := readyProbe()
+	if conflicts := clean.declaredModeConflicts(true); len(conflicts) != 0 {
+		t.Fatalf("conflicts on a coherent instance = %v, want none", conflicts)
 	}
 }

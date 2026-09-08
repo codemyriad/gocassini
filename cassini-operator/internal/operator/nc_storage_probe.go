@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -107,23 +108,107 @@ type ncStorageProbe struct {
 	// mounted" is how an unanswered question becomes a clean bill of health.
 	DefaultRootProbed bool
 
-	// ACLRecordingsRoot is true when the access-controlled archive's meetings
-	// collection is reachable as the service account, and ACLArchiveMeetings is
-	// how many recordings are in it.
+	// ACLArchive and DefaultArchive are what each model's root actually holds.
 	//
-	// The COUNT is what makes the upgrade latch possible. An access-controlled
-	// install that upgrades into this build has nothing recorded, falls back to
-	// `default`, and — since the roots no longer collide — would find nothing in
-	// its way and quietly start publishing into a fresh empty private tree while
-	// its real archive sat unread in the Team folder. Knowing the Team folder
-	// still holds recordings is what turns that into a refusal.
-	ACLRecordingsRoot  bool
-	ACLArchiveMeetings int
-	// DefaultRecordingsRoot and DefaultArchiveMeetings are the same pair for the
-	// default model's own root. Its absence is not a fault: the tree is created
-	// on demand by the preflight.
-	DefaultRecordingsRoot  bool
-	DefaultArchiveMeetings int
+	// BOTH are read on every probe, under either mode, and that symmetry is the
+	// point (D-708). The setup wizard's first screen is "here is what is on this
+	// Nextcloud", the migration policy needs to know which names exist on both
+	// sides and which side is newer, and a declared mode has to be checked
+	// against recordings it was not told about. None of those can be answered by
+	// looking at the mode in force.
+	ACLArchive     ncArchiveFacts
+	DefaultArchive ncArchiveFacts
+
+	// DuplicateNames are the names present under BOTH roots' `meetings`
+	// collections, sorted. The same meeting id in both trees is what the spec
+	// calls a duplicate file, and it is the only conflict a migration policy can
+	// actually be asked about.
+	//
+	// Empty is only meaningful when both roots were probed; ArchivesComparable
+	// is the guard.
+	DuplicateNames []string
+}
+
+// ncArchiveFacts is one recordings root, as the service account sees it.
+type ncArchiveFacts struct {
+	// Root is the path, so a caller reporting these facts does not have to know
+	// which mode they belong to.
+	Root string
+	// Probed says the `meetings` collection was actually listed. False means
+	// nobody could look — never that the tree is empty. Every writer fails
+	// closed on it; readers deliberately do not (see ncStorageServesAsOwner).
+	Probed bool
+	// Present says the collection exists. A root that has never been used is
+	// absent rather than empty, and that is not a fault: the preflight creates
+	// it on demand.
+	Present bool
+	// Entries is every child of `meetings`, with its last-modified time. The
+	// time is best-effort — an unparseable date is the zero time, which every
+	// comparison treats as "cannot say" rather than as "very old".
+	Entries []davEntry
+	// Catalog says a catalog.json sits beside `meetings`. It is the only index
+	// there is, so a policy that moves recordings has to have an answer for it.
+	Catalog bool
+	// CatalogProbed distinguishes "there is no catalog" from "the root could not
+	// be listed", for the same reason Probed exists.
+	CatalogProbed bool
+}
+
+// Meetings is how many recordings are under this root.
+func (a ncArchiveFacts) Meetings() int { return len(a.Entries) }
+
+// Names is the sorted basenames, for set arithmetic and for messages.
+func (a ncArchiveFacts) Names() []string {
+	out := make([]string, 0, len(a.Entries))
+	for _, entry := range a.Entries {
+		out = append(out, entry.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// byName indexes the entries for a per-name comparison.
+func (a ncArchiveFacts) byName() map[string]davEntry {
+	out := make(map[string]davEntry, len(a.Entries))
+	for _, entry := range a.Entries {
+		out[entry.Name] = entry
+	}
+	return out
+}
+
+// Populated reports whether this root holds recordings. It answers false for an
+// unprobed root, so every caller must ask Probed as well when the difference
+// matters — which for a write it always does.
+func (a ncArchiveFacts) Populated() bool { return a.Probed && len(a.Entries) > 0 }
+
+// archiveFor names the facts for one model.
+func (p ncStorageProbe) archiveFor(accessControlled bool) ncArchiveFacts {
+	if accessControlled {
+		return p.ACLArchive
+	}
+	return p.DefaultArchive
+}
+
+// ArchivesComparable reports whether both roots were read, which is what makes
+// DuplicateNames and "content in both directories" answerable at all.
+func (p ncStorageProbe) ArchivesComparable() bool {
+	return p.ACLArchive.Probed && p.DefaultArchive.Probed
+}
+
+// duplicateNames is the intersection of two sorted name sets.
+func duplicateNames(a, b ncArchiveFacts) []string {
+	if len(a.Entries) == 0 || len(b.Entries) == 0 {
+		return nil
+	}
+	present := b.byName()
+	var out []string
+	for _, entry := range a.Entries {
+		if _, ok := present[entry.Name]; ok {
+			out = append(out, entry.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // prereqEnabled reports whether one native app was positively reported as
@@ -281,33 +366,61 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 		}
 	}
 
-	// Two WebDAV reads, one per model's root. They answer as the service account,
-	// so an instance where the account does not exist would only get a 401 — skip
-	// them and let the missing account be the diagnosis.
+	// Both roots, on every probe, under either mode. They answer as the service
+	// account, so an instance where the account does not exist would only get a
+	// 401 — skip them and let the missing account be the diagnosis.
+	probe.ACLArchive.Root = ncACLRecordingsRoot
+	probe.DefaultArchive.Root = ncDefaultRecordingsRoot
 	if probe.ServiceAccount {
-		// The meetings collection rather than the root, because the interesting
-		// question about the other model's tree is not "does it exist" but "does
-		// it still hold recordings" — see ACLArchiveMeetings.
-		//
-		// Counted with davPropfindChildren, not davPropfindNames: the latter keeps
-		// only `.opus` basenames, and an archive may carry a legacy
-		// directory-shaped export. Everything that MOVES an archive counts with
-		// Children, so a safety net counting with Names would decide "there is
-		// nothing here" about a tree the copy would then carry.
-		if names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/meetings"); err != nil {
-			logger.Printf("nc storage: inspect %s as %q: %v", ncACLRecordingsRoot, ncRecordingsOwner, err)
-		} else {
-			probe.ACLRecordingsRoot = visible
-			probe.ACLArchiveMeetings = len(names)
-		}
-		if names, visible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, ncDefaultRecordingsRoot+"/meetings"); err != nil {
-			logger.Printf("nc storage: inspect %s as %q: %v", ncDefaultRecordingsRoot, ncRecordingsOwner, err)
-		} else {
-			probe.DefaultRecordingsRoot = visible
-			probe.DefaultArchiveMeetings = len(names)
+		probe.ACLArchive = c.probeArchiveAt(ctx, client, ncACLRecordingsRoot, logger)
+		probe.DefaultArchive = c.probeArchiveAt(ctx, client, ncDefaultRecordingsRoot, logger)
+		if probe.ArchivesComparable() {
+			probe.DuplicateNames = duplicateNames(probe.ACLArchive, probe.DefaultArchive)
 		}
 	}
 	return probe, nil
+}
+
+// probeArchiveAt reads one recordings root: what is under `meetings`, when each
+// entry was last written, and whether a catalog sits beside it.
+//
+// The meetings collection rather than the root, because the interesting question
+// about a model's tree is not "does it exist" but "does it still hold
+// recordings".
+//
+// Listed with davPropfindEntries, not davPropfindNames: the latter keeps only
+// `.opus` basenames, and an archive may carry a legacy directory-shaped export.
+// Everything that MOVES an archive works from this listing, so a probe that
+// filtered by extension would decide "there is nothing here" about a tree the
+// copy would then carry.
+func (c ExAppConfig) probeArchiveAt(ctx context.Context, client *http.Client, root string, logger *log.Logger) ncArchiveFacts {
+	facts := ncArchiveFacts{Root: root}
+	entries, visible, err := c.davPropfindEntries(ctx, client, ncRecordingsOwner, root+"/meetings")
+	if err != nil {
+		// Not probed. A failed listing is not an empty tree, and the whole
+		// conflict model rests on that distinction.
+		logger.Printf("nc storage: inspect %s as %q: %v", root, ncRecordingsOwner, err)
+		return facts
+	}
+	facts.Probed = true
+	facts.Present = visible
+	facts.Entries = entries
+
+	siblings, siblingsVisible, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, root)
+	if err != nil {
+		logger.Printf("nc storage: inspect %s as %q: %v", root, ncRecordingsOwner, err)
+		return facts
+	}
+	facts.CatalogProbed = true
+	if siblingsVisible {
+		for _, name := range siblings {
+			if name == ncSiteCatalogName {
+				facts.Catalog = true
+				break
+			}
+		}
+	}
+	return facts
 }
 
 // accessControlReady reports whether every prerequisite of the access-
@@ -369,7 +482,7 @@ func (p ncStorageProbe) defaultReady() (ok bool, step, detail string) {
 // that is NOT in force. Zero is the ordinary answer.
 func (p ncStorageProbe) strandedArchiveMeetings(accessControlled bool) int {
 	if accessControlled {
-		return p.DefaultArchiveMeetings
+		return p.DefaultArchive.Meetings()
 	}
 	// Only a MOUNTED Team folder counts, and only when the mount question was
 	// actually answered. An unmounted folder is not reachable by anybody,
@@ -380,48 +493,87 @@ func (p ncStorageProbe) strandedArchiveMeetings(accessControlled bool) int {
 	if p.FolderProbed && !p.FolderMounted {
 		return 0
 	}
-	return p.ACLArchiveMeetings
+	return p.ACLArchive.Meetings()
 }
 
-// storageStepStrandedACLArchive names the upgrade latch: this instance fell back
-// to the default model because nothing had recorded one, but its Team folder
-// still holds recordings — so it is almost certainly an access-controlled
-// install that has never been told which model it is in.
-const storageStepStrandedACLArchive = "access_controlled_archive"
+// storageStepModeUndecided means nobody has chosen a storage model, so Cassini
+// will not publish. It is not a failure and nothing is missing — it is a
+// question with no answer yet, and it is the one state the setup wizard exists
+// to end (D-708).
+const storageStepModeUndecided = "storage_mode_undecided"
 
-// unclaimedAccessControlledArchive reports whether a FALLBACK default mode would
-// strand an existing access-controlled archive.
+// storageStepModeUnconfirmed means a mode is in force that nobody chose: a
+// fallback from an older build, an interrupted first decision, or a settings
+// file this operator could not parse. It governs, and it does not publish.
+const storageStepModeUnconfirmed = "storage_mode_unconfirmed"
+
+// storageStepDeclaredConflict means CASSINI_STORAGE_MODE named a model this
+// instance does not match. See declaredModeConflicts.
+const storageStepDeclaredConflict = "storage_mode_declared_conflict"
+
+// declaredModeConflicts reports why a DECLARED mode must not be believed, as a
+// list of sentences. Empty means the declaration fits.
 //
-// This is the upgrade latch, and it is the one thing the path split took away
-// that had to be put back. In the first pass the latch was free: both models
-// wanted `Cassini/Recordings`, so an access-controlled install falling back to
-// `default` found its own Team folder in the way and refused. With separate
-// roots nothing is in the way — the fallback would find an empty private tree,
-// report itself healthy, and publish into it while every existing recording sat
-// unread in the Team folder. No disclosure, but a silently vanished archive,
-// which is not a better failure.
+// The deploy option is a development and CI affordance, and the whole reason a
+// harness declares a mode is that it knows what it built. So a declaration that
+// disagrees with the instance is a bug in the stack rather than an instruction
+// to follow, and the loudest available answer is the right one: refuse, and do
+// not write it down. Writing it down would be worse than the disagreement,
+// because a recorded mode is never reconsidered — the next enable would carry
+// the same mistake with nothing left to notice it.
 //
-// It applies ONLY to the fallback. A recorded or declared `default` on an
-// instance whose Team folder still holds recordings is an administrator's
-// decision plus a tidy-up (see migration_clean), not a misconfiguration.
-func (p ncStorageProbe) unclaimedAccessControlledArchive() (bool, string) {
-	if p.ACLArchiveMeetings == 0 {
-		return false, ""
+// It deliberately does NOT include the prerequisite check: that is sanity(), it
+// runs first, and it produces a better message. What is here is the set of
+// conflicts a mode's prerequisites can all be present for.
+func (p ncStorageProbe) declaredModeConflicts(accessControlled bool) []string {
+	var out []string
+	if !p.ArchivesComparable() {
+		// Failing closed on an unanswered question, which for a WRITE is the
+		// only defensible direction: the declaration is about to be recorded
+		// permanently, and half the evidence is missing.
+		out = append(out, fmt.Sprintf(
+			"Cassini could not read both recordings roots (%s: %t, %s: %t), so it cannot tell whether this declaration would strand or overwrite an existing archive",
+			ncDefaultRecordingsRoot, p.DefaultArchive.Probed, ncACLRecordingsRoot, p.ACLArchive.Probed))
+		return out
 	}
-	// FolderMounted is false both when nothing is mounted and when the folder
-	// list could not be read, and only the first of those means "this archive is
-	// not in a Team folder". The count comes from a WebDAV PROPFIND, which
-	// answered — so on an unanswered folder question the recordings are known to
-	// exist at the access-controlled root and their storage is unknown, which is
-	// precisely when a fallback `default` must not be recorded and never
-	// reconsidered.
-	if p.FolderProbed && !p.FolderMounted {
-		return false, ""
+	if len(p.DuplicateNames) > 0 {
+		out = append(out, fmt.Sprintf(
+			"the same %d recording(s) exist under BOTH %s and %s (%s), so which copy is authoritative is a question a deploy option cannot answer",
+			len(p.DuplicateNames), ncDefaultRecordingsRoot, ncACLRecordingsRoot, strings.Join(clip(p.DuplicateNames, 3), ", ")))
 	}
-	return true, fmt.Sprintf(
-		"nothing has recorded which storage mode this instance uses, so Cassini fell back to %q — but the %q Team folder still holds %d recording(s), which the default mode does not read. This is what an access-controlled installation looks like to a Cassini that has not been told. Turn access control on in the Setup tab, or set %s=%s and re-enable the app. If this instance really is meant to be open, turn access control on first and then switch back to the default mode: that switch is what copies those recordings into the open tree",
-		storageModeDefault, ncRecordingsMount, p.ACLArchiveMeetings, envStorageMode, storageModeAccessControlled)
+	if p.DefaultArchive.Populated() && p.ACLArchive.Populated() {
+		out = append(out, fmt.Sprintf(
+			"there are recordings in both roots (%d in %s, %d in %s), so declaring one model would leave the other one's archive unread",
+			p.DefaultArchive.Meetings(), ncDefaultRecordingsRoot, p.ACLArchive.Meetings(), ncACLRecordingsRoot))
+	}
+	if other := p.archiveFor(!accessControlled); other.Populated() && !p.archiveFor(accessControlled).Populated() {
+		out = append(out, fmt.Sprintf(
+			"%d recording(s) are in %s, which the %q model does not read, and nothing here can decide whether to carry them across",
+			other.Meetings(), other.Root, storageModeName(accessControlled)))
+	}
+	return out
 }
+
+// declaredModeConflictDetail is the sentence /status, the Setup tab and the
+// container log all carry for a refused declaration.
+func declaredModeConflictDetail(accessControlled bool, conflicts []string) string {
+	return fmt.Sprintf(
+		"%s declared the storage mode %q, but this instance does not match it: %s. That deploy option is for development and CI, where the stack knows what it built — so a disagreement is refused rather than recorded. Nothing has been written down. Fix the stack, or remove %s and choose a mode in the Setup tab",
+		envStorageMode, storageModeName(accessControlled), strings.Join(conflicts, "; "), envStorageMode)
+}
+
+// The upgrade latch is gone, and its name is recorded here rather than silently
+// dropped because a monitor keyed on it will now see nothing.
+//
+//	storageStepStrandedACLArchive = "access_controlled_archive"
+//
+// It existed to catch the one FALLBACK that would have been obviously wrong: an
+// install that recorded nothing, fell back to the deps-free model, and would
+// have published into a fresh private tree while its real archive sat unread in
+// the Team folder. There is no fallback any more (D-708) — an install that has
+// not been told does not publish at all — so the latch has nothing left to
+// catch. The fact it read is not lost: both roots' contents are on every probe,
+// and they are the first thing the setup wizard shows.
 
 func missingServiceAccountDetail() string {
 	return fmt.Sprintf(
@@ -502,8 +654,9 @@ func summarizeProbe(p ncStorageProbe) string {
 		fmt.Sprintf("team_folder=%t", p.FolderPresent),
 		fmt.Sprintf("mounted=%t", p.FolderMounted),
 		fmt.Sprintf("acl=%t", p.ACLEnabled),
-		fmt.Sprintf("acl_root=%t/%d", p.ACLRecordingsRoot, p.ACLArchiveMeetings),
-		fmt.Sprintf("default_root=%t/%d", p.DefaultRecordingsRoot, p.DefaultArchiveMeetings),
+		fmt.Sprintf("acl_root=%t/%t/%d", p.ACLArchive.Probed, p.ACLArchive.Present, p.ACLArchive.Meetings()),
+		fmt.Sprintf("default_root=%t/%t/%d", p.DefaultArchive.Probed, p.DefaultArchive.Present, p.DefaultArchive.Meetings()),
+		fmt.Sprintf("duplicates=%d", len(p.DuplicateNames)),
 		fmt.Sprintf("default_root_shadowed=%t", p.DefaultRootShadowed),
 	}
 	return strings.Join(fields, " ")

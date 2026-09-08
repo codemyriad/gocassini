@@ -27,17 +27,20 @@ import (
 //	                   mount, and a per-recording audience frozen at publish.
 //
 // ┌──────────────── storage_settings.json ────────────────┐
-// │  {"access_control_enabled": true|false}   (or absent) │
+// │  {"access_control_enabled": true|false,               │
+// │   "source": "user"|"env"|…,                           │
+// │   "migration_clean": bool}          (or absent)       │
 // └───────────────────────────┬───────────────────────────┘
 //
 //	│ read on the AppAPI enabled edge
 //	▼
 //
 // ┌──────────────────── preflight ────────────────────────┐
-// │  probe Nextcloud (read only)                          │
+// │  probe Nextcloud (read only), BOTH modes, BOTH roots   │
 // │  resolve the mode WITHOUT looking at the probe:        │
-// │      file ─▶ env ─▶ default                            │
+// │      file ─▶ env ─▶ UNDECIDED                          │
 // │  sanity-check the resolved mode AGAINST the probe      │
+// │  refuse unless somebody CHOSE it                       │
 // └───────────────────────────┬───────────────────────────┘
 //
 // The probe never decides the mode, only whether the decided mode is usable.
@@ -47,6 +50,15 @@ import (
 // assembled is the wrong instant. Now nothing is inferred: an instance whose
 // storage does not match its mode is reported as a mismatch and refuses to
 // publish, rather than being quietly re-interpreted.
+//
+// D-708 removed the last thing that decided on its own. There used to be a third
+// resolution branch — fall back to the deps-free model, and write THAT down on
+// the first healthy enable — which is a quieter version of the same mistake,
+// because `default` is the model in which every account can read every
+// recording. There is no fallback now, and a recorded mode nobody CHOSE (a
+// fallback from an older build, a mode an interrupted first switch wrote) is
+// reported as a question rather than acted on. Both states refuse to publish and
+// both are ended in the Setup tab.
 //
 //	│
 //	▼            ncStorage (process-wide)
@@ -67,32 +79,60 @@ const (
 	// storageModeAccessControlled is the Team-folder + per-recording-ACL model.
 	storageModeAccessControlled = "access_controlled"
 
-	// storageModeSourceConfigured means the flag was read from disk. Once
-	// written the file is authoritative for the life of the install: nothing
-	// re-opens it, so an administrator who reads storage_settings.json or
-	// /storage knows what the app will do.
+	// storageModeSourceConfigured is the legacy stand-in for "read from disk".
+	// Nothing writes it any more: the resolvers carry the RECORDED source
+	// through instead, because flattening it here is what made a fallback and an
+	// administrator's click indistinguishable on the wire (D-708). Files written
+	// by earlier builds do not carry it either — it was only ever an in-memory
+	// label — so it survives as the answer for a settings file whose provenance
+	// is genuinely unknown.
 	storageModeSourceConfigured = "configured"
-	// storageModeSourceDefault means nothing said otherwise. No file recorded a
-	// mode, no deploy option declared one, so Cassini took the model that needs
-	// no third-party apps — and did NOT guess from the instance.
+	// storageModeSourceDefault means nothing said otherwise.
+	//
+	// Nothing writes this any more either. Until D-708 an install that recorded
+	// no mode and declared none fell back to the deps-free model and wrote THAT
+	// down, permanently, on its first healthy enable — which made who can read
+	// an organisation's meetings a decision Cassini took on its own. There is no
+	// fallback now; an undecided install stays undecided until somebody says.
+	// The constant remains because installs from those builds carry the value,
+	// and it is what marks their mode as unconfirmed.
 	storageModeSourceDefault = "default"
+	// storageModeSourceDerived is older still: a mode inferred from the shape of
+	// the instance. Removed long before D-708 and, like the fallback, kept here
+	// only so a file carrying it reads as unconfirmed rather than as a choice.
+	storageModeSourceDerived = "derived"
 	// storageModeSourceUser means an administrator chose it, by switching modes
 	// in the Setup tab.
 	storageModeSourceUser = "user"
+	// storageModeSourceMigrating marks the mode a switch is carrying an archive
+	// OUT of, on an install that had not chosen one.
+	//
+	// A switch marks the instance dirty before it writes a byte, naming the mode
+	// the archive is currently under — that is what makes a crash recoverable.
+	// Starting from undecided there is no such mode, and writing the origin down
+	// as a CHOICE would confirm a decision nobody took, in the direction they
+	// were switching away from. This says what is true instead: the archive is
+	// at this model's root, and nobody has chosen anything. It never confirms.
+	storageModeSourceMigrating = "migrating"
 	// storageModeSourceEnv means the deployment declared it, through
 	// envStorageMode. A deploy option is as explicit as a button.
 	storageModeSourceEnv = "env"
 
-	// envStorageMode declares the mode a FRESH install starts in. It seeds the
-	// flag and nothing more: once storage_settings.json records a decision, the
-	// file is authoritative and changing this variable does not move an archive
-	// that already exists.
+	// envStorageMode declares the mode a FRESH install starts in, for a
+	// DEVELOPMENT OR CI deployment. It is not a production affordance: a
+	// production install is asked, in the Setup tab, and nothing else decides
+	// (D-708).
 	//
-	// It is the ONLY way to start an install in the access-controlled model,
-	// because nothing infers it any more. An access-controlled Nextcloud whose
-	// Cassini has no recorded mode and no declaration resolves to `default`,
-	// finds its Team folder in the way, and reports a mismatch — which is the
-	// loud, recoverable outcome, and is what this variable exists to skip.
+	// It seeds the flag and nothing more: once storage_settings.json records a
+	// decision, the file is authoritative and changing this variable does not
+	// move an archive that already exists.
+	//
+	// Since D-708 it is honoured only on an instance the declaration actually
+	// fits. A declared mode whose prerequisites are missing, or that meets
+	// recordings in both roots, or names that exist in both, is refused loudly
+	// and NOT written down — because the whole reason a harness declares a mode
+	// is that it knows what it built, and a declaration that disagrees with the
+	// instance is a bug in the stack rather than an instruction to follow.
 	envStorageMode = "CASSINI_STORAGE_MODE"
 
 	storageSettingsFileName = "storage_settings.json"
@@ -109,15 +149,21 @@ const (
 // access-controlled archive into an org-wide one.
 type StorageSettings struct {
 	AccessControlEnabled *bool `json:"access_control_enabled"`
-	// Source records HOW the flag got there — env, user, or default. It is
-	// written and shown, never branched on.
+	// Source records HOW the flag got there — user, env, or a build that decided
+	// on its own.
 	//
-	// That is deliberate. An earlier version used this field to decide whether a
-	// recorded mode could be RECONSIDERED against the live instance, which made
-	// the file non-authoritative: it could say `default` while the app acted
-	// access-controlled, because Nextcloud had changed underneath it. Nothing
-	// re-opens a recorded decision now, so the field's only job is to let an
-	// administrator reading the file see where the decision came from.
+	// It is read for exactly one question, and it is NOT "may this mode be
+	// reconsidered against the live instance". That is what an earlier version
+	// used it for, and it made the file non-authoritative: it could say `default`
+	// while the app acted access-controlled, because Nextcloud had changed
+	// underneath it. Nothing re-opens a recorded decision.
+	//
+	// What it decides is whether the mode was CHOSEN — see Confirmed. Until D-708
+	// the field was written and displayed and never branched on at all, and both
+	// resolvers flattened it to "configured" on the way out, so an administrator's
+	// click, a deploy option and the old fallback were indistinguishable
+	// downstream. The setup wizard's whole premise is being able to tell them
+	// apart.
 	//
 	// Absent in files written before the field existed. Values written by the
 	// removed derivation ("derived") still appear on installs from that build
@@ -191,6 +237,38 @@ func (s StorageSettings) Mode() string { return storageModeName(s.AccessControll
 // Clean reports whether the last migration finished. An absent flag is clean —
 // see MigrationClean.
 func (s StorageSettings) Clean() bool { return s.MigrationClean == nil || *s.MigrationClean }
+
+// Confirmed reports whether the recorded mode is a DECISION rather than
+// something Cassini arrived at on its own (D-708).
+//
+// This is the field the setup wizard turns on, and the reason `Source` stopped
+// being decorative. Until D-708 a recorded mode was a recorded mode: an
+// administrator's click, a deploy option and the old `default` fallback all read
+// back as `configured`, so nothing could tell an install where somebody chose
+// the open model from an install where nobody was asked.
+//
+//	"user"                an administrator chose it in the Setup tab
+//	"env"                 the deployment declared it. A deploy option is as
+//	                      explicit as a button — and since D-708 it is only
+//	                      honoured on an instance it fits.
+//	"default" / "derived" a build that decided on its own. NOT a choice.
+//	absent                unknown provenance, from a build predating the field.
+//	                      Read as unconfirmed: asking once is cheap, and
+//	                      assuming consent is what this whole change removes.
+func (s StorageSettings) Confirmed() bool {
+	return s.Configured() && storageSourceConfirmed(s.Source)
+}
+
+// storageSourceConfirmed is Confirmed's rule on its own, so the resolvers can
+// apply it to a source they are carrying rather than to a loaded file.
+func storageSourceConfirmed(source string) bool {
+	switch source {
+	case storageModeSourceUser, storageModeSourceEnv:
+		return true
+	default:
+		return false
+	}
+}
 
 func storageModeName(accessControlled bool) string {
 	if accessControlled {
@@ -280,6 +358,11 @@ type ncStorageModeState struct {
 	resolved             bool
 	accessControlEnabled bool
 	source               string
+	// confirmed is whether a PERSON (or a dev/CI deploy option) chose this mode,
+	// as opposed to it being recorded by a build that decided on its own. An
+	// unconfirmed mode still governs everything — the archive is where it says —
+	// but the Setup tab asks for a decision rather than presenting one.
+	confirmed bool
 	// clean mirrors StorageSettings.MigrationClean for the readers that must not
 	// touch the disk — /status, /storage, and the PUT that decides whether a
 	// request for the mode already in force is a no-op or a repair.
@@ -300,15 +383,40 @@ func (s *ncStorageModeState) settingsPath() string {
 	return s.path
 }
 
-// set records the mode this process is operating under, and whether the last
-// migration finished tidying up.
+// set records the mode this process is operating under, where it came from, and
+// whether the last migration finished tidying up.
+//
+// `confirmed` is derived from the source rather than passed, so there is one
+// rule for "was this chosen" and every caller cannot help but agree with it.
 func (s *ncStorageModeState) set(accessControlEnabled bool, source string, clean bool) {
 	s.mu.Lock()
 	s.resolved = true
 	s.accessControlEnabled = accessControlEnabled
 	s.source = source
+	s.confirmed = storageSourceConfirmed(source)
 	s.clean = clean
 	s.mu.Unlock()
+}
+
+// recordedSource is the provenance of the mode in force, or "" when there is
+// none. A switch reads it so that marking the instance dirty preserves what the
+// current mode's provenance was, rather than promoting it to a choice.
+func (s *ncStorageModeState) recordedSource() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.resolved {
+		return ""
+	}
+	return s.source
+}
+
+// confirmedMode reports whether the resolved mode is a decision somebody took.
+// False for an unresolved process: nothing has been decided, which is the state
+// the setup wizard exists to end.
+func (s *ncStorageModeState) confirmedMode() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.resolved && s.confirmed
 }
 
 // migrationClean reports the recorded cleanup state. It answers `true` for an
@@ -358,6 +466,7 @@ func (s *ncStorageModeState) reset() {
 	s.resolved = false
 	s.accessControlEnabled = false
 	s.source = ""
+	s.confirmed = false
 	s.clean = false
 	s.mu.Unlock()
 }
