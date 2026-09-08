@@ -64,6 +64,10 @@ describe("OperatorClient storage", () => {
       step: "",
       instructions: [],
       setup: [],
+      // Both roots are reported for both modes, always — an operator that sends
+      // neither degrades to "nobody looked", which must never render as empty.
+      root: "",
+      archive: { probed: false, present: false, meetings: 0, catalog: false },
     });
     expect(status.modes[1].available).toBe(false);
     expect(status.modes[1].instructions).toEqual([
@@ -366,5 +370,121 @@ describe("preview readability", () => {
 
     expect(status.preview?.pending_cleanup).toBe("Cassini/Recordings");
     expect(status.preview?.meetings).toBe(5);
+  });
+});
+
+// The migration policy on the wire (D-708).
+describe("OperatorClient storage migration policy", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The policy is sent only when the administrator was asked. Sending a default
+  // unconditionally would defeat the operator's refusal to pick one for a
+  // conflict nobody was shown — it takes a request that carries an answer to
+  // have been answered by a person.
+  it("omits the policy when there was nothing to decide", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(READY_STORAGE));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("/operator").putStorage(true);
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      access_control_enabled: true,
+    });
+  });
+
+  it("sends the policy the administrator chose", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(READY_STORAGE));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("/operator").putStorage(false, {
+      strategy: "overwrite",
+      on_conflict: "newest_wins",
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      access_control_enabled: false,
+      strategy: "overwrite",
+      on_conflict: "newest_wins",
+    });
+  });
+
+  it("asks the preview about the policy, so the numbers describe it", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(READY_STORAGE));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("/operator").previewStorageSwitch(true, {
+      strategy: "switch_only",
+      on_conflict: "skip",
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      action: "preview",
+      access_control_enabled: true,
+      strategy: "switch_only",
+      on_conflict: "skip",
+    });
+  });
+
+  // An operator that does not send the conflict block cannot answer the
+  // question, and silence must not read as "there are no conflicts" — that is
+  // what would hide the controls on exactly the instance that needs them.
+  it("does not invent a comparable conflict report", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(READY_STORAGE)));
+
+    const status = await new OperatorClient("/operator").getStorage();
+
+    expect(status.conflicts).toEqual({
+      comparable: false,
+      both_populated: false,
+      duplicate_names: [],
+      duplicates: 0,
+    });
+    // And an unconfirmed mode is the safe default for an operator predating the
+    // field: the wizard asks once rather than presenting a decision as made.
+    expect(status.mode_confirmed).toBe(false);
+  });
+
+  it("carries the per-policy preview counts through", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...READY_STORAGE,
+          preview: {
+            mode: "access_controlled",
+            ready: true,
+            source_root: "CassiniNoACL/Recordings",
+            destination_root: "Cassini/Recordings",
+            source_readable: true,
+            destination_readable: true,
+            meetings: 3,
+            destination_meetings: 2,
+            strategy: "merge",
+            on_conflict: "skip",
+            choice_required: true,
+            strategy_matters: true,
+            conflict_matters: true,
+            conflict_names: ["both.opus"],
+            conflicts: 1,
+            would_copy: 2,
+            would_replace: 0,
+            would_skip: 1,
+            would_keep_in_source: 1,
+            would_delete_at_destination: 0,
+            warnings: [],
+          },
+        }),
+      ),
+    );
+
+    const status = await new OperatorClient("/operator").previewStorageSwitch(true);
+
+    expect(status.preview?.choice_required).toBe(true);
+    expect(status.preview?.conflict_names).toEqual(["both.opus"]);
+    expect(status.preview?.would_skip).toBe(1);
+    expect(status.preview?.would_keep_in_source).toBe(1);
+    expect(status.preview?.would_delete_at_destination).toBe(0);
   });
 });

@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { NcSetupError, isSetupAvailable, nextcloudUrl, runSetupPlan } from "./ncSetup";
+import {
+  NcSetupError,
+  isSetupAvailable,
+  nextcloudUrl,
+  randomPassword,
+  resetServiceAccountPassword,
+  runSetupPlan,
+} from "./ncSetup";
 import type { StorageSetupStep } from "./types";
 
 // Performing the setup from the administrator's browser (D-671). The operator
@@ -207,13 +214,21 @@ describe("runSetupPlan", () => {
   it("treats an already-existing group or account as done", async () => {
     stubNextcloud();
     const { impl } = stubFetch([["/cloud/groups", () => ocsFail(400, 102, "group exists")]]);
-    await expect(runSetupPlan([GROUP_STEP], { fetchImpl: impl })).resolves.toBeUndefined();
+    await expect(runSetupPlan([GROUP_STEP], { fetchImpl: impl })).resolves.toMatchObject({
+      createdAccount: "",
+    });
 
     stubNextcloud();
     const { impl: userImpl } = stubFetch([
       ["/cloud/users", () => ocsFail(400, 102, "User already exists")],
     ]);
-    await expect(runSetupPlan([ACCOUNT_STEP], { fetchImpl: userImpl })).resolves.toBeUndefined();
+    // The password is NOT reported: the account kept whatever it had, and
+    // offering this run's generated one would hand an administrator a string
+    // that signs in nowhere.
+    await expect(runSetupPlan([ACCOUNT_STEP], { fetchImpl: userImpl })).resolves.toEqual({
+      createdAccount: "",
+      password: "",
+    });
   });
 
   // Re-running the whole plan is the ordinary way a partial failure is
@@ -245,7 +260,7 @@ describe("runSetupPlan", () => {
         ],
         { fetchImpl: impl },
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ createdAccount: "", password: "" });
   });
 
   // A 403 mid-run is almost always the 30-minute confirmation window closing.
@@ -469,5 +484,97 @@ describe("runSetupPlan", () => {
     await expect(
       runSetupPlan([GROUP_STEP, ACCOUNT_STEP], { fetchImpl: impl }),
     ).rejects.toMatchObject({ step: "account" });
+  });
+});
+
+// The service account's password (D-708).
+//
+// Cassini's operator authenticates as this account through AppAPI's act-as-user
+// header, so it needs no password of its own — but an administrator does, to
+// sign in as it. The value is minted here, in the browser, set through
+// Nextcloud's own provisioning API on the administrator's session, handed back
+// to be shown once, and never sent to the operator.
+describe("the service account's password", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports the password it set, but only when it created the account", async () => {
+    stubNextcloud();
+    const { calls, impl } = stubFetch();
+
+    const outcome = await runSetupPlan([ACCOUNT_STEP], { fetchImpl: impl });
+
+    expect(outcome.createdAccount).toBe("cassini");
+    // The value reported is the value SET, not a second one minted for display.
+    const sent = new URLSearchParams(calls[0].body).get("password");
+    expect(outcome.password).toBe(sent);
+    expect(outcome.password.length).toBeGreaterThan(40);
+  });
+
+  // The retry re-runs a denied step after re-confirming, and it used to mint a
+  // fresh password each time. Combined with an "already exists" reply reading as
+  // success, a run whose first attempt actually created the account would report
+  // a password that was never set. Invisible while nothing read the value; a lie
+  // the moment it is shown.
+  it("generates the password once, so a retried step reports the one it set", async () => {
+    stubNextcloud();
+    let attempts = 0;
+    const { calls, impl } = stubFetch([
+      [
+        "/cloud/users",
+        () => {
+          attempts += 1;
+          return attempts === 1 ? ocsFail(200, 403, "Password confirmation is required") : ocsOk();
+        },
+      ],
+    ]);
+
+    const outcome = await runSetupPlan([ACCOUNT_STEP], { fetchImpl: impl });
+
+    expect(attempts).toBe(2);
+    const passwords = calls
+      .filter((call) => call.url.includes("/cloud/users"))
+      .map((call) => new URLSearchParams(call.body).get("password"));
+    expect(new Set(passwords).size).toBe(1);
+    expect(outcome.password).toBe(passwords[0]);
+  });
+
+  it("resets an existing account's password with a PUT, and hands the new one back", async () => {
+    stubNextcloud();
+    const { calls, impl } = stubFetch([["/cloud/users/cassini", () => ocsOk()]]);
+
+    const password = await resetServiceAccountPassword("cassini", { fetchImpl: impl });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("PUT");
+    expect(calls[0].url).toContain("/ocs/v2.php/cloud/users/cassini");
+    const body = new URLSearchParams(calls[0].body);
+    expect(body.get("key")).toBe("password");
+    expect(body.get("value")).toBe(password);
+    // Nothing collected a password from the administrator; Nextcloud's own
+    // dialog confirmed their identity and this value came from the CSPRNG.
+    expect(calls.some((call) => call.url.includes("/login/confirm"))).toBe(false);
+  });
+
+  // Whether the edit route is the STRICT variant of password confirmation has
+  // not been measured anywhere in this repo. If it is, no session satisfies it —
+  // so the refusal has to arrive as one, and the caller falls back to the `occ`
+  // line the operator supplies.
+  it("surfaces a refusal as a refusal rather than as a failure", async () => {
+    stubNextcloud({ requiresConfirmation: false });
+    const { impl } = stubFetch([
+      ["/cloud/users/cassini", () => ocsFail(403, 403, "Password confirmation is required")],
+    ]);
+
+    await expect(resetServiceAccountPassword("cassini", { fetchImpl: impl })).rejects.toMatchObject({
+      reason: "denied",
+    });
+  });
+
+  it("mints a distinct credential every time", () => {
+    stubNextcloud();
+    const seen = new Set(Array.from({ length: 8 }, () => randomPassword()));
+    expect(seen.size).toBe(8);
   });
 });
