@@ -127,6 +127,29 @@ func storageConflictsFor(probe ncStorageProbe, probed bool) storageConflictRepor
 	}
 }
 
+// storageServiceAccount is the `cassini` account, and the one thing about it an
+// administrator has to be able to do (D-708).
+//
+// Cassini never sees the password. It is generated in the administrator's own
+// browser, set through Nextcloud's provisioning API on their session, and shown
+// once — which is why there is no field here for it and never will be: the
+// operator authenticates as this account through AppAPI's act-as header, signed
+// with the app secret, so a password on the operator's volume would be a
+// credential at rest for an account nothing authenticates as.
+//
+// What the operator DOES supply is the copy: whether the account is there, and
+// the `occ` line that resets it where Nextcloud refuses the browser.
+type storageServiceAccount struct {
+	User string `json:"user"`
+	// Known says the probe answered. Exists is meaningless without it.
+	Known  bool `json:"known"`
+	Exists bool `json:"exists"`
+	// ResetOcc is the equivalent command, for the administrator who would rather
+	// run it — and the fallback for the releases where Nextcloud demands the
+	// password on the request itself.
+	ResetOcc string `json:"reset_occ"`
+}
+
 // storageStatusResponse is the body of both GET and a successful PUT, so the UI
 // re-renders from one shape either way.
 type storageStatusResponse struct {
@@ -146,6 +169,9 @@ type storageStatusResponse struct {
 	// Conflicts is what makes a migration a decision rather than a copy, and it
 	// is the ONLY thing the migration-policy controls are shown for.
 	Conflicts storageConflictReport `json:"conflicts"`
+	// ServiceAccount is the account every recording is written and read as, and
+	// what an administrator can do about its password.
+	ServiceAccount storageServiceAccount `json:"service_account"`
 	// MigrationClean is false when a mode switch did not finish tidying up. The
 	// archive is still complete at Mode's own root — that is the invariant — but
 	// the OTHER root holds leftovers, and there is a button for it.
@@ -446,6 +472,12 @@ func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionRes
 		ModeConfirmed:  ncStorage.confirmedMode(),
 		AwaitingChoice: !resolved,
 		Conflicts:      storageConflictsFor(probe, probed),
+		ServiceAccount: storageServiceAccount{
+			User:     ncRecordingsOwner,
+			Known:    probed,
+			Exists:   probed && probe.ServiceAccount,
+			ResetOcc: fmt.Sprintf("occ user:resetpassword %s", ncRecordingsOwner),
+		},
 		MigrationClean: clean,
 		OK:             access.OK,
 		State:          access.State,
