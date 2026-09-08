@@ -39,14 +39,11 @@ func assembleTranscriptInputs(manifest portable.Manifest, source portableMeeting
 			return nil, "", err
 		}
 		inputs = append(inputs, portable.TranscriptInput{
-			ID:           portable.RoleRawASR,
-			Role:         portable.RoleRawASR,
+			ID:           portable.DefaultWordsTranscriptID,
 			Default:      true,
-			Language:     manifest.Meeting.Language,
 			CreatedAtUTC: manifest.Meeting.ProcessedAtUTC,
 			Body: portable.TranscriptBody{
 				Format:    "cassini.words.v1",
-				Language:  manifest.Meeting.Language,
 				WordCount: len(items),
 				Items:     items,
 			},
@@ -55,10 +52,6 @@ func assembleTranscriptInputs(manifest portable.Manifest, source portableMeeting
 	} else {
 		inputs = make([]portable.TranscriptInput, 0, len(additional)+2)
 		for _, entry := range additional {
-			role := entry.Role
-			if role == "" {
-				role = portable.RoleRawASR
-			}
 			items, err := flattenPortableTranscriptItems(entry.Transcript)
 			if err != nil {
 				return nil, "", fmt.Errorf("transcript %q: %w", entry.ID, err)
@@ -70,14 +63,12 @@ func assembleTranscriptInputs(manifest portable.Manifest, source portableMeeting
 				Items:     items,
 			}
 			inputs = append(inputs, portable.TranscriptInput{
-				ID:                 entry.ID,
-				Role:               role,
-				Default:            entry.Default,
-				Language:           entry.Language,
-				SourceTranscriptID: entry.SourceTranscriptID,
-				CreatedAtUTC:       manifest.Meeting.ProcessedAtUTC,
-				Body:               body,
-				Provenance:         entry.Provenance,
+				ID:           entry.ID,
+				Default:      entry.Default,
+				Language:     entry.Language,
+				CreatedAtUTC: manifest.Meeting.ProcessedAtUTC,
+				Body:         body,
+				Provenance:   entry.Provenance,
 			})
 		}
 	}
@@ -86,26 +77,12 @@ func assembleTranscriptInputs(manifest portable.Manifest, source portableMeeting
 	if defaultID == "" {
 		return nil, "", fmt.Errorf("portable meeting bundle has no words transcript to use as default")
 	}
-	if source.ReadableTranscript != nil {
-		inputs = append(inputs, portable.TranscriptInput{
-			ID:                 "readable",
-			Role:               portable.RoleReadableCleanup,
-			Default:            true,
-			Format:             portableDocumentFormat(source.ReadableTranscript),
-			Language:           manifest.Meeting.Language,
-			CreatedAtUTC:       manifest.Meeting.ProcessedAtUTC,
-			SourceTranscriptID: defaultID,
-			Body:               source.ReadableTranscript,
-			Provenance:         provenanceReadableCleanup(manifest),
-		})
-	}
 	if source.DisplayTranscript != nil {
 		inputs = append(inputs, portable.TranscriptInput{
 			ID:                 "display",
 			Role:               portable.RoleDisplay,
 			Default:            true,
 			Format:             portableDocumentFormat(source.DisplayTranscript),
-			Language:           manifest.Meeting.Language,
 			CreatedAtUTC:       manifest.Meeting.ProcessedAtUTC,
 			SourceTranscriptID: defaultID,
 			Body:               source.DisplayTranscript,
@@ -127,25 +104,16 @@ func portableDocumentFormat(document map[string]any) string {
 
 func pickDefaultWordsTranscriptID(inputs []portable.TranscriptInput) string {
 	for _, input := range inputs {
-		if input.Default && isWordsRole(input.Role) {
+		if input.Default && input.Role == "" {
 			return input.ID
 		}
 	}
 	for _, input := range inputs {
-		if isWordsRole(input.Role) {
+		if input.Role == "" {
 			return input.ID
 		}
 	}
 	return ""
-}
-
-func isWordsRole(role string) bool {
-	switch role {
-	case portable.RoleRawASR, portable.RoleHumanCorrected, portable.RoleTranslation, portable.RoleScripted:
-		return true
-	default:
-		return false
-	}
 }
 
 func provenanceSpeechToText(manifest portable.Manifest) *portable.ProcessingStep {
@@ -153,13 +121,6 @@ func provenanceSpeechToText(manifest portable.Manifest) *portable.ProcessingStep
 		return nil
 	}
 	return manifest.Provenance.SpeechToText
-}
-
-func provenanceReadableCleanup(manifest portable.Manifest) *portable.ProcessingStep {
-	if manifest.Provenance == nil {
-		return nil
-	}
-	return manifest.Provenance.ReadableCleanup
 }
 
 func provenanceDisplayTranscript(manifest portable.Manifest) *portable.ProcessingStep {

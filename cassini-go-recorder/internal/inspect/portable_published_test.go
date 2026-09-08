@@ -75,7 +75,7 @@ func TestDecodeTranscriptBodyTrustsPayloadRefOverTags(t *testing.T) {
 			{Speaker: "spk1", StartMS: 100, EndMS: 180, Text: "two"},
 		},
 	}
-	input := portable.TranscriptInput{ID: "raw-asr", Role: portable.RoleRawASR, Default: true, Body: body}
+	input := portable.TranscriptInput{ID: "raw-asr", Default: true, Body: body}
 	encoded, err := portable.EncodePublishedManifest(portable.NormalizePublishedManifest(portable.Manifest{
 		Integrity: portable.Integrity{OpusSHA256: strings.Repeat("a", 64)},
 		Meeting:   portable.Meeting{ID: "m", Title: "t", CreatedAtUTC: "2026-09-02T00:00:00Z"},
@@ -87,7 +87,6 @@ func TestDecodeTranscriptBodyTrustsPayloadRefOverTags(t *testing.T) {
 	named := encoded.Transcripts[0]
 	entry := portable.TranscriptEntry{
 		ID:      named.ID,
-		Role:    portable.RoleRawASR,
 		Default: true,
 		Format:  "cassini.words.v1",
 		PayloadRef: portable.PayloadRef{

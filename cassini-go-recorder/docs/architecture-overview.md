@@ -185,7 +185,7 @@ Files:
 
 Responsibilities:
 
-- take a finished `.mkv` recording and produce a meeting artifact bundle (`meeting.webm`, `transcript.words.v1.json`, optional `transcript.readable.v1.json`, `captions.vtt`, optional `summary.md`, `manifest.json`)
+- take a finished `.mkv` recording and produce a meeting artifact bundle (`meeting.webm`, `transcript.words.v1.json`, `captions.vtt`, optional `summary.md`, `manifest.json`)
 - run the local STT model (sherpa-onnx + Parakeet by default) per speaker track
 - call an OpenAI-compatible LLM for optional readable-transcript cleanup and meeting summary generation
 - write integrity-tagged artifacts (PCM SHA-256 embedded in the transcript JSON)

@@ -29,14 +29,12 @@ type multiTranscriptWire struct {
 	Transcripts         []TranscriptEntry              `json:"transcripts"`
 	ReadableTranscripts []TranscriptEntry              `json:"readableTranscripts,omitempty"`
 	Provenance          *multiTranscriptProvenanceWire `json:"provenance,omitempty"`
-	Chapters            []Chapter                      `json:"chapters,omitempty"`
 	Summary             map[string]any                 `json:"summary,omitempty"`
 	Attachments         []map[string]any               `json:"attachments,omitempty"`
 }
 
 type multiTranscriptProvenanceWire struct {
 	SpeechToText      map[string]*ProcessingStep `json:"speechToText,omitempty"`
-	ReadableCleanup   map[string]*ProcessingStep `json:"readableCleanup,omitempty"`
 	DisplayTranscript map[string]*ProcessingStep `json:"displayTranscript,omitempty"`
 	MeetingSummary    *ProcessingStep            `json:"meetingSummary,omitempty"`
 	Attribution       *AttributionProvenance     `json:"attribution,omitempty"`
@@ -48,7 +46,7 @@ type multiTranscriptProvenanceWire struct {
 // referenced by PayloadRef.Prefix.
 type TranscriptEntry struct {
 	ID                 string     `json:"id"`
-	Role               string     `json:"role"`
+	Role               string     `json:"role,omitempty"`
 	Default            bool       `json:"default,omitempty"`
 	Format             string     `json:"format"`
 	Language           string     `json:"language,omitempty"`
@@ -79,8 +77,7 @@ type TranscriptBody struct {
 }
 
 // ValidateTranscriptBody enforces the published cassini.words.v1 body shape.
-// Each timed item is one word; paragraph-sized text belongs in a readable or
-// display body instead.
+// Each timed item is one word; paragraph-sized text belongs in a display body instead.
 func ValidateTranscriptBody(body TranscriptBody) error {
 	if body.Format != "cassini.words.v1" {
 		return fmt.Errorf("unsupported words transcript format %q", body.Format)
@@ -119,16 +116,16 @@ type EncodedMultiTranscriptManifest struct {
 // optional ProcessingStep that lands in provenance.<group>.<id>.
 type TranscriptInput struct {
 	ID                 string
-	Role               string
+	Role               string // empty for words; RoleDisplay for a display document
 	Default            bool
 	Format             string
 	Language           string
 	WordCount          int
 	CreatedAtUTC       string
-	SourceTranscriptID string // required for readable-cleanup / display roles
+	SourceTranscriptID string // required for the display role
 	// Body is the JSON document stored in this transcript's independent chunk
-	// set. Raw transcripts normally use TranscriptBody; readable and display
-	// transcripts retain their native version/segments or version/blocks shape.
+	// set. Words use TranscriptBody; display documents retain their native
+	// version/blocks shape.
 	Body       any
 	Provenance *ProcessingStep
 }
@@ -139,26 +136,61 @@ type TranscriptInput struct {
 // that read a meeting do not need to understand that indexing detail.
 func DecodePublishedManifest(rawJSON []byte) (Manifest, error) {
 	var wire multiTranscriptWire
-	if err := json.Unmarshal(rawJSON, &wire); err != nil {
+	// Word origin fields are unknown metadata, even when they are not strings.
+	// Decode the two arrays separately so only display entries read those fields.
+	fields := struct {
+		*multiTranscriptWire
+		Transcripts         []json.RawMessage `json:"transcripts"`
+		ReadableTranscripts []json.RawMessage `json:"readableTranscripts"`
+	}{multiTranscriptWire: &wire}
+	if err := json.Unmarshal(rawJSON, &fields); err != nil {
 		return Manifest{}, fmt.Errorf("parse portable meeting manifest: %w", err)
+	}
+	for _, raw := range fields.Transcripts {
+		var entry TranscriptEntry
+		words := struct {
+			*TranscriptEntry
+			Role               json.RawMessage `json:"role"`
+			SourceTranscriptID json.RawMessage `json:"sourceTranscriptId"`
+		}{TranscriptEntry: &entry}
+		if err := json.Unmarshal(raw, &words); err != nil {
+			return Manifest{}, fmt.Errorf("parse word transcript entry: %w", err)
+		}
+		wire.Transcripts = append(wire.Transcripts, entry)
+	}
+	for _, raw := range fields.ReadableTranscripts {
+		var kind struct {
+			Role json.RawMessage `json:"role"`
+		}
+		if err := json.Unmarshal(raw, &kind); err != nil {
+			return Manifest{}, fmt.Errorf("parse readable transcript entry: %w", err)
+		}
+		var role string
+		if json.Unmarshal(kind.Role, &role) != nil || role != RoleDisplay {
+			continue
+		}
+		var entry TranscriptEntry
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return Manifest{}, fmt.Errorf("parse display transcript entry: %w", err)
+		}
+		wire.ReadableTranscripts = append(wire.ReadableTranscripts, entry)
 	}
 	manifest := Manifest{
 		Kind: wire.Kind, Version: wire.Version, Profile: wire.Profile,
 		Meeting: wire.Meeting, Audio: wire.Audio, Integrity: wire.Integrity,
 		Speakers: wire.Speakers, Transcripts: wire.Transcripts,
-		ReadableTranscripts: wire.ReadableTranscripts, Chapters: wire.Chapters,
-		Summary: wire.Summary, Attachments: wire.Attachments,
+		ReadableTranscripts: wire.ReadableTranscripts,
+		Summary:             wire.Summary, Attachments: wire.Attachments,
 	}
 	if wire.Provenance != nil {
 		manifest.Provenance = &Provenance{
 			SpeechToText:      defaultProcessingStep(wire.Provenance.SpeechToText, wire.Transcripts, ""),
-			ReadableCleanup:   defaultProcessingStep(wire.Provenance.ReadableCleanup, wire.ReadableTranscripts, RoleReadableCleanup),
 			DisplayTranscript: defaultProcessingStep(wire.Provenance.DisplayTranscript, wire.ReadableTranscripts, RoleDisplay),
 			MeetingSummary:    wire.Provenance.MeetingSummary,
 			Attribution:       wire.Provenance.Attribution,
 			WordTimings:       wire.Provenance.WordTimings,
 		}
-		if manifest.Provenance.SpeechToText == nil && manifest.Provenance.ReadableCleanup == nil &&
+		if manifest.Provenance.SpeechToText == nil &&
 			manifest.Provenance.DisplayTranscript == nil && manifest.Provenance.MeetingSummary == nil &&
 			manifest.Provenance.Attribution == nil && manifest.Provenance.WordTimings == nil {
 			manifest.Provenance = nil
@@ -235,7 +267,7 @@ func TranscriptIDToTagPrefix(id string) string {
 // EncodeTranscriptBody compresses and encodes one transcript body and returns
 // an EncodedPayload plus a PayloadRef ready to embed in a manifest index.
 func EncodeTranscriptBody(body any, id string, role string, chunkSize int) (EncodedPayload, PayloadRef, error) {
-	if role != RoleReadableCleanup && role != RoleDisplay {
+	if role != RoleDisplay {
 		switch typed := body.(type) {
 		case TranscriptBody:
 			if err := ValidateTranscriptBody(typed); err != nil {
@@ -270,7 +302,7 @@ func EncodeTranscriptBody(body any, id string, role string, chunkSize int) (Enco
 	chunks := ChunkString(encoded, chunkSize)
 	prefix := TranscriptIDToTagPrefix(id)
 	mime := TranscriptBodyMIMEWords
-	if role == RoleReadableCleanup || role == RoleDisplay {
+	if role == RoleDisplay {
 		mime = TranscriptBodyMIMEReadable
 	}
 	return EncodedPayload{
@@ -343,33 +375,26 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 			return EncodedMultiTranscriptManifest{}, err
 		}
 		entry := TranscriptEntry{
-			ID:                 input.ID,
-			Role:               input.Role,
-			Default:            input.Default,
-			Format:             format,
-			Language:           input.Language,
-			WordCount:          wordCount,
-			SourceTranscriptID: input.SourceTranscriptID,
-			CreatedAtUTC:       input.CreatedAtUTC,
-			PayloadRef:         ref,
+			ID:           input.ID,
+			Default:      input.Default,
+			Format:       format,
+			Language:     input.Language,
+			WordCount:    wordCount,
+			CreatedAtUTC: input.CreatedAtUTC,
+			PayloadRef:   ref,
 		}
 		named := NamedEncodedPayload{ID: input.ID, Prefix: ref.Prefix, Payload: payload}
 		switch input.Role {
-		case RoleReadableCleanup, RoleDisplay:
+		case RoleDisplay:
+			entry.Role = RoleDisplay
+			entry.SourceTranscriptID = input.SourceTranscriptID
 			readableEntries = append(readableEntries, entry)
 			readableEncoded = append(readableEncoded, named)
 			if input.Provenance != nil {
-				if input.Role == RoleDisplay {
-					if provenance.DisplayTranscript == nil {
-						provenance.DisplayTranscript = map[string]*ProcessingStep{}
-					}
-					provenance.DisplayTranscript[input.ID] = input.Provenance
-				} else {
-					if provenance.ReadableCleanup == nil {
-						provenance.ReadableCleanup = map[string]*ProcessingStep{}
-					}
-					provenance.ReadableCleanup[input.ID] = input.Provenance
+				if provenance.DisplayTranscript == nil {
+					provenance.DisplayTranscript = map[string]*ProcessingStep{}
 				}
+				provenance.DisplayTranscript[input.ID] = input.Provenance
 			}
 		default:
 			rawEntries = append(rawEntries, entry)
@@ -398,7 +423,6 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 		Transcripts:         rawEntries,
 		ReadableTranscripts: readableEntries,
 		Provenance:          provenance,
-		Chapters:            manifest.Chapters,
 		Summary:             manifest.Summary,
 		Attachments:         manifest.Attachments,
 	}
@@ -438,7 +462,7 @@ func hasAnyProvenance(p *multiTranscriptProvenanceWire) bool {
 	if p == nil {
 		return false
 	}
-	return len(p.SpeechToText) > 0 || len(p.ReadableCleanup) > 0 || len(p.DisplayTranscript) > 0 ||
+	return len(p.SpeechToText) > 0 || len(p.DisplayTranscript) > 0 ||
 		p.MeetingSummary != nil || p.Attribution != nil || p.WordTimings != nil
 }
 
@@ -446,7 +470,6 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 	seenID := map[string]struct{}{}
 	wordIDs := map[string]struct{}{}
 	wordsDefaults := 0
-	readableDefaults := 0
 	displayDefaults := 0
 	for _, input := range transcripts {
 		if input.Body == nil {
@@ -468,30 +491,10 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 		}
 
 		switch input.Role {
-		case RoleRawASR, RoleHumanCorrected, RoleTranslation, RoleScripted:
+		case "":
 			wordIDs[input.ID] = struct{}{}
 			if input.Default {
 				wordsDefaults++
-			}
-			// raw-asr came from the audio and scripted is what the audio
-			// performs; neither is derived from another transcript. The other
-			// two are, and MUST name their source.
-			switch input.Role {
-			case RoleRawASR, RoleScripted:
-				if input.SourceTranscriptID != "" {
-					return fmt.Errorf("transcript %q (role %q) must not set sourceTranscriptId", input.ID, input.Role)
-				}
-			default:
-				if strings.TrimSpace(input.SourceTranscriptID) == "" {
-					return fmt.Errorf("transcript %q (role %q) requires sourceTranscriptId", input.ID, input.Role)
-				}
-			}
-		case RoleReadableCleanup:
-			if strings.TrimSpace(input.SourceTranscriptID) == "" {
-				return fmt.Errorf("transcript %q (role readable-cleanup) requires sourceTranscriptId", input.ID)
-			}
-			if input.Default {
-				readableDefaults++
 			}
 		case RoleDisplay:
 			if strings.TrimSpace(input.SourceTranscriptID) == "" {
@@ -507,16 +510,13 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 	if wordsDefaults > 1 {
 		return fmt.Errorf("more than one default words transcript declared")
 	}
-	if readableDefaults > 1 {
-		return fmt.Errorf("more than one default readable-cleanup transcript declared")
-	}
 	if displayDefaults > 1 {
 		return fmt.Errorf("more than one default display transcript declared")
 	}
 
 	// Every derived transcript names a words transcript in this file.
 	for _, input := range transcripts {
-		if input.SourceTranscriptID == "" {
+		if input.Role != RoleDisplay {
 			continue
 		}
 		if _, ok := wordIDs[input.SourceTranscriptID]; !ok {
@@ -602,7 +602,6 @@ func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscr
 	applyProvenanceTags(tags, manifest.Meeting)
 	if manifest.Provenance != nil {
 		applyProcessingStepTags(tags, "CASSINI_STT", manifest.Provenance.SpeechToText)
-		applyProcessingStepTags(tags, "CASSINI_READABLE", manifest.Provenance.ReadableCleanup)
 		applyAttributionProvenanceTags(tags, manifest.Provenance.Attribution)
 	}
 
@@ -642,9 +641,8 @@ func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscr
 	return tags
 }
 
-// transcriptMIMEFor looks up the MIME label by walking both lists. Readable
-// and display bodies use the readable MIME; raw-ASR / human-corrected /
-// translation use the words MIME.
+// transcriptMIMEFor uses the readable MIME for display bodies and the words
+// MIME for word transcripts.
 func transcriptMIMEFor(id string, encoded EncodedMultiTranscriptManifest) string {
 	for _, named := range encoded.ReadableTranscripts {
 		if named.ID == id {

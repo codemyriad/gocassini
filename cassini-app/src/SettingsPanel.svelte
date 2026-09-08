@@ -326,7 +326,8 @@
         <div>
           <h3 class="text-sm font-semibold">Participant and project vocabulary</h3>
           <p class="text-xs text-base-content/60">
-            Preferred spellings for names and terms used during readable transcript cleanup.
+            Preferred spellings for names and terms. The transcriber is biased towards them,
+            so it can write words it would otherwise get wrong.
           </p>
         </div>
         <label class="flex w-full flex-col gap-1">
@@ -339,8 +340,10 @@
           ></textarea>
           <span class="text-xs text-base-content/60">
             Up to 100 terms and 100 characters per term. Participant display names are supplied
-            automatically. These spellings guide the optional readable-cleanup model and do not
-            alter the raw speech-recognition transcript.
+            automatically. A term is only written where the audio already supports it, so this
+            corrects spellings without putting words in anyone's mouth. It needs a transcription
+            model that ships a BPE vocabulary, which the <em>fast</em> tier never does; when a
+            vocabulary cannot be used, the build records that and says why.
           </span>
         </label>
       </section>

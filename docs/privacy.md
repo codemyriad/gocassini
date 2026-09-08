@@ -91,7 +91,7 @@ set**, and it is unset by default.
 When it is enabled, after a meeting is transcribed locally, the full local
 transcript text is sent to the configured endpoint — OpenRouter
 (`https://openrouter.ai/api/v1`) by default, or whatever `LLM_BASE_URL` points at
-— to produce the readable transcript and the summary. That third party then
+— to produce the summary. That third party then
 processes the transcript under its own terms; review them before enabling this.
 
 Call audio and the recording are **never** sent off your infrastructure for the
@@ -102,10 +102,9 @@ Controls:
 
 - **Leave `OPENROUTER_API_KEY` unset** — no external calls at all; the raw local
   transcript is still published.
-- **`LLM_BASE_URL`** — point cleanup/summaries at a self-hosted or alternative
+- **`LLM_BASE_URL`** — point summaries at a self-hosted or alternative
   OpenAI-compatible endpoint instead of OpenRouter.
-- **`CASSINI_SUMMARY_DISABLED`** — keep readable-transcript cleanup but skip the
-  summary.
+- **`CASSINI_SUMMARY_DISABLED`** — skip the summary while leaving the key set.
 
 See [Summarisation & the privacy caveat](./README.md#summarisation--the-privacy-caveat)
 and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.

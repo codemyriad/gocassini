@@ -14,7 +14,7 @@ provider, and providers compose:
 The diarizer here is sherpa-onnx's OfflineSpeakerDiarization. That matters for
 cost: sherpa-onnx is already a gocassini dependency, and
 SherpaOnnxCreateOfflineSpeakerDiarization is already present in the C API of the
-exact version the recorder links (v1.13.1, c-api.h:3839). Only the Go wrapper is
+exact version the recorder links (v1.13.7). Only the Go wrapper is
 missing. No new runtime dependency - two extra ONNX files on the existing
 EnsureModel download path.
 """

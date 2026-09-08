@@ -1,0 +1,30 @@
+name: PR conflict impact
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, closed]
+  push:
+    branches: ['**']
+  workflow_dispatch:
+  schedule:
+    - cron: '23 * * * *'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Every run scans fresh repository state. Serialize comment reconciliation;
+# replacing a pending event is safe because each run refreshes all open PRs.
+concurrency:
+  group: pr-conflict-impact
+  cancel-in-progress: false
+
+jobs:
+  impact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Trusted action only: never check out or execute code from a PR here.
+      - uses: codemyriad/pr-conflict-impact-action@v1
+        with:
+          merge-method: merge

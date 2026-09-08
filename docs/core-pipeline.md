@@ -102,7 +102,7 @@ In the current pipeline, build:
 4. computes decoded-audio integrity hashes
 5. runs speech-to-text
 6. writes the canonical word-timed transcript
-7. optionally runs readable-text cleanup
+7. writes `captions.vtt`
 8. optionally generates `summary.md`
 9. writes `manifest.json`
 10. finalizes either a `.meeting` bundle or a portable `.opus`
@@ -114,12 +114,11 @@ Core outputs normally include:
 - `cassini.json`
 - `meeting.webm`
 - `transcript.words.v1.json`
+- `captions.vtt`
 - `manifest.json`
 
 Optional outputs may include:
 
-- `transcript.readable.v1.json`
-- `captions.vtt`
 - `summary.md`
 
 ### Optional layers inside build
@@ -127,9 +126,9 @@ Optional outputs may include:
 Two useful distinctions:
 
 - speech-to-text is part of the normal build path
-- readable cleanup and summary generation are capability layers that depend on configuration
+- summary generation is a capability layer that depends on configuration
 
-So a successful build may produce a perfectly useful `.meeting` even when readable cleanup or summary generation is absent.
+So a successful build may produce a perfectly useful `.meeting` even when summary generation is absent.
 
 ### Important distinction: raw `.meeting` vs published viewer artifact
 

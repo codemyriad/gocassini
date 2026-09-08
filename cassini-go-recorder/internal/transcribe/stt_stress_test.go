@@ -67,7 +67,7 @@ func TestStressNonVADFallback(t *testing.T) {
 		refWords = normalizeWords(string(raw))
 	}
 
-	rec, err := NewRecognizer(paths, vadPath, "cpu", 4)
+	rec, err := NewRecognizer(paths, vadPath, "cpu", 4, nil)
 	if err != nil {
 		t.Fatalf("new recognizer: %v", err)
 	}

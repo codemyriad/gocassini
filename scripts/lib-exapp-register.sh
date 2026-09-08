@@ -5,7 +5,7 @@
 # One implementation, two callers (D-458 / D-565):
 #
 #   * harness/bin/lib/stack.sh   — HaRP daemon, install phase of the e2e stack
-#   * ops/deploy/deploy-exapp.sh — production, registers into an existing
+#   * deploy-exapp.sh (systems)  — production, registers into an existing
 #                                  Nextcloud, never brings a stack up
 #
 # (The AIO sandbox — sandbox/wire-cassini.sh — registers inline against AIO's
@@ -118,9 +118,44 @@ exapp_render_manifest() {
 # dropping CASSINI_TALK_RECORDING_SECRET looks fine until the first recording.
 exapp_assert_manifest_declares() {
   local file="$1"; shift
-  local var missing=0
+  local declared var missing=0
+
+  # Read only <name> nodes beneath <environment-variables>. A plain grep over
+  # the document also accepts the app's top-level <name>, or a declaration
+  # inside an XML comment, and AppAPI then silently drops the supplied value.
+  declared="$(awk '
+    BEGIN { RS = "\034" }
+    {
+      xml = $0
+      while ((comment_start = index(xml, "<!--")) > 0) {
+        prefix = substr(xml, 1, comment_start - 1)
+        tail = substr(xml, comment_start + 4)
+        comment_end = index(tail, "-->")
+        if (comment_end == 0) {
+          xml = prefix
+          break
+        }
+        xml = prefix substr(tail, comment_end + 3)
+      }
+
+      if (!match(xml, /<environment-variables([[:space:]][^>]*)?>/)) next
+      block = substr(xml, RSTART + RLENGTH)
+      block_end = index(block, "</environment-variables>")
+      if (block_end == 0) next
+      block = substr(block, 1, block_end - 1)
+
+      while (match(block, /<name>[[:space:]]*[^<]+<\/name>/)) {
+        name = substr(block, RSTART, RLENGTH)
+        sub(/^<name>[[:space:]]*/, "", name)
+        sub(/[[:space:]]*<\/name>$/, "", name)
+        print name
+        block = substr(block, RSTART + RLENGTH)
+      }
+    }
+  ' "$file")"
+
   for var in "$@"; do
-    grep -q "<name>${var}</name>" "$file" || {
+    grep -Fqx -- "$var" <<<"$declared" || {
       echo "error: $file does not declare <environment-variables> entry $var" >&2
       missing=1
     }
@@ -146,27 +181,29 @@ exapp_assert_immutable_tag() {
   local tag="$1"
   [[ -n "$tag" ]] || { exapp_die "no image tag given"; return 1; }
   case "$tag" in
-    latest|latest-*|cuda|rocm|branch-*|dispatch-*|main|stable)
-      echo "error: '$tag' is a moving tag and must never be deployed." >&2
-      echo "       A moving tag is not a rollback target and not reproducible:" >&2
-      echo "       the same registration resolves to different bytes tomorrow." >&2
-      echo "       Deploy a released tag (X.Y.Z[-pre]) instead." >&2
-      return 1
-      ;;
-    sha-*)
-      if [[ "${EXAPP_ALLOW_UNRELEASED_TAG:-0}" != "1" ]]; then
-        echo "error: '$tag' is a raw commit pin, not a released tag." >&2
-        echo "       It is immutable, but the app <version> label will lag the" >&2
-        echo "       code and no App Store release matches it. Cut a release, or" >&2
-        echo "       pass --allow-unreleased if this is a deliberate hotfix." >&2
-        return 1
-      fi
-      ;;
     *[!0-9.a-zA-Z_-]*)
       exapp_die "image tag contains characters a Docker tag cannot hold: $tag"
       return 1
       ;;
   esac
+
+  if [[ "$tag" =~ ^sha-[0-9a-fA-F]+$ ]]; then
+    if [[ "${EXAPP_ALLOW_UNRELEASED_TAG:-0}" != "1" ]]; then
+      echo "error: '$tag' is a raw commit pin, not a released tag." >&2
+      echo "       It is immutable, but the app <version> label will lag the" >&2
+      echo "       code and no App Store release matches it. Cut a release, or" >&2
+      echo "       pass --allow-unreleased if this is a deliberate hotfix." >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if [[ ! "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+    echo "error: '$tag' is not a released tag and must never be deployed." >&2
+    echo "       A moving or non-release tag is not reproducible and not a rollback target." >&2
+    echo "       Deploy a released tag (X.Y.Z[-pre]) instead, or pass --allow-unreleased for sha-* pins." >&2
+    return 1
+  fi
 }
 
 # exapp_image_tag_for_device TAG DEVICE
@@ -193,12 +230,17 @@ exapp_assert_pullable() {
   local ref="$1" raw kids digest failed=0
   command -v docker >/dev/null 2>&1 \
     || { exapp_die "docker is required to verify $ref is pullable"; return 1; }
+  command -v jq >/dev/null 2>&1 \
+    || { exapp_die "jq is required to verify image manifests for $ref"; return 1; }
 
   if ! raw="$(docker buildx imagetools inspect --raw "$ref" 2>/dev/null)"; then
     echo "error: $ref does not resolve in the registry." >&2
     return 1
   fi
-  kids="$(printf '%s' "$raw" | jq -r '.manifests[]?.digest' 2>/dev/null || true)"
+  if ! kids="$(printf '%s' "$raw" | jq -r '.manifests[]?.digest // empty' 2>/dev/null)"; then
+    echo "error: failed to parse manifest index for $ref." >&2
+    return 1
+  fi
   if [[ -z "$kids" ]]; then
     return 0   # single manifest, already proven by the successful inspect
   fi
@@ -346,10 +388,11 @@ exapp_register_app() {
     || { exapp_die "exapp_register_app needs --app-id, --daemon and --info-xml"; return 2; }
 
   if (( replace )) && exapp_app_is_registered "$app_id"; then
-    if (( force_unregister )); then
-      exapp_unregister_app "$app_id" --force || true
-    else
-      exapp_unregister_app "$app_id" || true
+    local -a unregister_args=("$app_id")
+    (( force_unregister )) && unregister_args+=(--force)
+    if ! exapp_unregister_app "${unregister_args[@]}"; then
+      exapp_die "app_api:app:unregister failed for $app_id prior to re-registration"
+      return 1
     fi
   fi
 
@@ -363,10 +406,12 @@ exapp_register_app() {
 
   exapp_log "Registering $app_id on daemon '$daemon'"
   if [[ -n "$log_file" ]]; then
+    local occ_rc=0
     if ! occ "${args[@]}" >"$log_file" 2>&1; then
+      occ_rc=$?
       tail -200 "$log_file" >&2 || true
       exapp_die "app_api:app:register failed; see $log_file"
-      return 1
+      return "$occ_rc"
     fi
     if grep -q 'heartbeat check failed' "$log_file"; then
       tail -200 "$log_file" >&2 || true
@@ -374,12 +419,23 @@ exapp_register_app() {
       return 1
     fi
   else
-    occ "${args[@]}" || return 1
+    occ "${args[@]}" || return $?
   fi
 
   if (( enable_cycle )); then
     exapp_log "Cycling enable state to force PUT /enabled on the container"
-    occ app_api:app:disable "$app_id" >/dev/null 2>&1 || true
+    local disable_rc=0
+    if ! occ app_api:app:disable "$app_id" >/dev/null 2>&1; then
+      disable_rc=$?
+      if (( disable_rc == 124 || disable_rc == 255 )); then
+        exapp_die "app_api:app:disable did not complete (exit $disable_rc)"
+        return "$disable_rc"
+      fi
+      if occ app_api:app:list 2>/dev/null | grep -qE "^[[:space:]]*${app_id}[[:space:](:].*\[enabled\]"; then
+        exapp_die "app_api:app:disable failed to disable $app_id (exit $disable_rc)"
+        return "$disable_rc"
+      fi
+    fi
     occ app_api:app:enable "$app_id" >/dev/null
   fi
 }
