@@ -359,6 +359,32 @@ body {
   scrollbar-gutter: stable;
 }
 
+/* Shared by standalone, embedded and exported meeting views (D-734). Instant
+ * word changes track the audio without animating thousands of paint effects. */
+.cassini-word {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 0.15rem;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.cassini-word:hover {
+  background: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  box-shadow: 0 1px 0 var(--color-primary);
+}
+.cassini-word[data-active="true"] {
+  color: var(--color-base-100);
+  background: color-mix(in srgb, var(--color-primary) 70%, var(--color-base-content));
+}
+.cassini-word-interpolated {
+  text-decoration: underline dashed var(--color-warning);
+  text-underline-offset: 0.2em;
+}
+
 /* GPU-composited loading spinner. DaisyUI's loading-spinner uses a mask
  * animation that runs on the main thread, so it visibly stalls when the
  * meeting view performs the heavy synchronous transcript mount right
