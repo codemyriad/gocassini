@@ -224,7 +224,9 @@ jobs:
           # ffmpeg supplies ffprobe, which cassini-viewer's export-static-meetings
           # invokes per .opus to read its tags. ubuntu-latest doesn't ship it on
           # PATH by default for this action context.
-          sudo apt-get update -y >/dev/null
+          # ci-apt-update.sh, not a bare update: a vendor apt source we never
+          # install from can fail it (exit 100) and take this step with it.
+          sudo ./scripts/ci-apt-update.sh >/dev/null
           sudo apt-get install -y --no-install-recommends ffmpeg >/dev/null
           curl -fsSL https://rclone.org/install.sh | sudo bash
 

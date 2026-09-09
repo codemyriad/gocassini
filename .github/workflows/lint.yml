@@ -63,7 +63,11 @@ jobs:
       - name: Install tools
         run: |
           set -euo pipefail
-          sudo apt-get update
+          # Not a bare `apt-get update`: a vendor apt source we never install
+          # from can fail it (exit 100) and take this step with it, which is how
+          # dl.google.com turned all of main red on 2026-09-09. See the note in
+          # ci-apt-update.sh.
+          sudo ./scripts/ci-apt-update.sh
           # ripgrep: the packet-guard control drives the real
           # verify-session-artifact.sh, which hard-requires rg (and jq/python3,
           # already on the image). Pinned here so the control fails on the
@@ -209,6 +213,13 @@ jobs:
       - name: Run script test suites
         run: |
           set -euo pipefail
+          # The apt-source pruner every workflow's install step now runs. Its
+          # fixtures are temp dirs, so no root and no apt. The case that earns
+          # its place is Ubuntu 24.04's ubuntu.sources: the MAIN ARCHIVE lives
+          # in the same directory as the vendor repos being dropped, so a
+          # pruner that empties that directory leaves the runner unable to
+          # install anything at all.
+          ./scripts/test-ci-apt-update.sh
           ./scripts/test-release-tooling.sh
           # The NC-Files backfill runner: stubs `docker`, so no daemon and no
           # Nextcloud. It pins that the guard's refusal (exit 3) is relayed as
