@@ -45,7 +45,8 @@ From the repo root:
 This one command:
 
 - starts local Nextcloud + AppAPI/HaRP + the full Talk signaling stack;
-- installs the native Team folders and Everyone Group prerequisites;
+- installs the native Team folders and Everyone Group apps — the prerequisites
+  of the access-controlled storage mode;
 - builds and tags the Cassini ExApp image from `appinfo/info.xml`;
 - installs/reinstalls Cassini via AppAPI;
 - passes both Talk secrets as deploy env, and points Talk's `recording_servers`
@@ -55,9 +56,31 @@ The first run is slow — it builds the ExApp image. Later runs without `--build
 reuse the existing image. Keep `--build` when validating changes in the current
 checkout; otherwise the harness deliberately runs the previously built image,
 which may be an older release even though Git is on your feature branch.
-Recordings are access-controlled — there is no other mode. The harness enables
-the Team folders and Everyone Group apps and the ExApp provisions the recordings
-folder and its permissions on enable — see
+
+The harness plays the administrator, and how much of one depends on
+`--storage-mode`. The command above takes its default, `default`: the harness
+creates the `cassini` service account and its group, builds **no Team folder**,
+and registers the ExApp with `CASSINI_STORAGE_MODE=default`. Recordings land in
+that account's own `CassiniNoACL/Recordings`, and everyone who can open the app
+can read all of them. (The two native apps above are installed either way — in
+this mode nothing uses them.)
+
+Add `--storage-mode acl-enabled` and the harness also builds a mapped,
+ACL-enabled `Cassini` Team folder and starts the ExApp **access-controlled**:
+recordings go to `Cassini/Recordings` inside that folder, each readable only by
+the people who were in the meeting. Each mode has its own root, so neither can
+shadow the other.
+
+The harness declares the mode because Cassini decides nothing: on a Nextcloud
+where nobody has said, it publishes nothing and records nothing until an
+administrator chooses in the app's **Setup** tab. `--storage-mode undecided` is
+how you deliberately reach that state — it builds the access-controlled
+substrate and tells the ExApp nothing, which is the only way to see the setup
+wizard the way a real administrator meets it.
+
+Either way it is only the *initial* value: the app records it on its first
+enable, and the **Setup** tab is what changes it afterwards — which mode is in
+force, what the other one still needs, and the switch itself. See
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:

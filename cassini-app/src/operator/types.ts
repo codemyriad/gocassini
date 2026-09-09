@@ -194,6 +194,178 @@ export interface LLMModel {
   context_length?: number;
 }
 
+// StorageMode mirrors the operator's storage_settings.json vocabulary (D-616).
+// "" is a third answer, not a missing one: it means no preflight has resolved a
+// mode yet, which the Setup tab has to be able to tell apart from "default".
+export type StorageMode = "" | "default" | "access_controlled";
+
+// StorageModeOption is one of the two models as GET <basePath>/storage
+// describes it. The copy — summary, consequence, blocker, instructions — comes
+// from the operator rather than from this app, because that is the layer that
+// knows the Team folder's id, the group names and which prerequisite is
+// actually absent. The panel renders it and decides nothing.
+export interface StorageModeOption {
+  mode: Exclude<StorageMode, "">;
+  label: string;
+  active: boolean;
+  available: boolean;
+  summary: string;
+  consequence: string;
+  blocker: string;
+  step: string;
+  instructions: string[];
+  // setup is the same recipe as something to EXECUTE (D-671). Empty for a mode
+  // that is already available.
+  setup: StorageSetupStep[];
+  // root is where this model keeps recordings, and archive is what is in it
+  // right now. Both are reported for BOTH models, always — the question the
+  // setup wizard is built around is answered by what is already in each of them
+  // (D-708).
+  root: string;
+  archive: StorageArchiveFacts;
+}
+
+// StorageArchiveFacts is one recordings root as the operator's last probe saw
+// it. `probed` is load-bearing: false means nobody could look, and it must never
+// render as "empty".
+export interface StorageArchiveFacts {
+  probed: boolean;
+  present: boolean;
+  meetings: number;
+  catalog: boolean;
+}
+
+// StorageServiceAccount is the account every recording is written and read as.
+// There is no password field and never will be: it is generated in the browser,
+// shown once, and never reaches the operator.
+export interface StorageServiceAccount {
+  user: string;
+  known: boolean;
+  exists: boolean;
+  reset_occ: string;
+}
+
+// StorageSetupStep is one missing prerequisite and how to make it exist.
+// `browser` is the load-bearing field: false means Nextcloud requires the
+// administrator's password on the request itself (a `strict` password
+// confirmation), which no session can satisfy and Cassini will not do — those
+// steps are attempted by the operator instead, and handed off if it is refused.
+export interface StorageSetupStep {
+  id: string;
+  action: string;
+  title: string;
+  args: Record<string, string>;
+  browser: boolean;
+  occ: string;
+  app_url: string;
+}
+
+// AppInstallOutcome is what the operator's own attempt at a `strict` app
+// install produced. The reason is what the UI branches on: `enabled` is done,
+// `password_confirmation_required` needs Nextcloud's Apps page, and
+// `app_store_unavailable` must not be retried for five minutes.
+export interface AppInstallOutcome {
+  app: string;
+  ok: boolean;
+  reason: string;
+  detail: string;
+}
+
+// StorageTransition is what a switch actually did, present only on the PUT that
+// performed one.
+export interface StorageTransition {
+  mode: string;
+  // confirmed marks the one outcome that moves nothing and still changes
+  // something: an administrator agreeing to the mode already in force, which is
+  // what turns an unconfirmed install into a settled one.
+  confirmed: boolean;
+  // meetings_moved is how many recordings were copied from the source archive.
+  meetings_moved: number;
+  // meetings_deleted_at_destination is what was removed from the confirmed
+  // destination before the source archive was copied.
+  meetings_deleted_at_destination: number;
+  catalog_moved: boolean;
+  source_root: string;
+  destination_root: string;
+  // source_cleared is false when the archive arrived but the tidy-up did not
+  // finish. The switch worked; there is a leftover copy and a button for it.
+  source_cleared: boolean;
+  leftover_source: string;
+}
+
+export interface StorageStatus {
+  mode: StorageMode;
+  mode_source: string;
+  // mode_confirmed says a person (or a dev/CI deploy option) chose this mode,
+  // as opposed to a build recording one on its own. False is what puts the
+  // Setup tab into its wizard rather than its settled panel (D-708).
+  mode_confirmed: boolean;
+  // awaiting_choice says nothing is recorded at all. Not the same as
+  // `mode === ""`, which also happens before any preflight has run.
+  awaiting_choice: boolean;
+  service_account: StorageServiceAccount;
+  // migration_clean is false when a mode switch stopped before it finished
+  // tidying up. The archive is complete at the mode's own root — that is the
+  // invariant the operator keeps — and pending_cleanup names the root holding
+  // the leftovers.
+  migration_clean: boolean;
+  pending_cleanup: string;
+  // stranded_root / stranded_recordings report an archive sitting in the mode
+  // that is NOT in force. Not an error: publishing and reading both work. It is
+  // the thing an administrator most needs told, because the symptom is "my
+  // recordings are gone" and the cause is a mode nobody switched.
+  stranded_root: string;
+  stranded_recordings: number;
+  ok: boolean;
+  state: string;
+  step: string;
+  detail: string;
+  checked_at: string;
+  modes: StorageModeOption[];
+  transition: StorageTransition | null;
+  installs: AppInstallOutcome[];
+  // preview is present only on the response to a preview request. Nothing has
+  // happened when it is set.
+  preview: StorageTransitionPreview | null;
+}
+
+// StorageTransitionPreview is what a mode switch WOULD do, before it does any
+// of it — including the destination artefacts that require confirmation.
+export interface StorageTransitionPreview {
+  // mode is the mode being previewed, not the one in force.
+  mode: StorageMode;
+  // ready is whether the switch could run at all; step/detail say why not.
+  ready: boolean;
+  step: string;
+  detail: string;
+  source_root: string;
+  destination_root: string;
+  // source_readable says the source tree was actually listed. Without it a
+  // failed PROPFIND and an empty archive are the same zero, and the dialog says
+  // "there are no published recordings to move" on the strength of a question
+  // nobody managed to ask — which is exactly what QA saw.
+  source_readable: boolean;
+  meetings: number;
+  catalog_present: boolean;
+  // destination_meetings is what is already where this would write.
+  destination_meetings: number;
+  // destination_readable is the same distinction source_readable draws, for the
+  // other tree.
+  destination_readable: boolean;
+  overwrite_names: string[];
+  overwrite_required: boolean;
+  // adopting_destination means an unconfigured installation already has an
+  // archive in the selected root. Selecting it records the choice only; no
+  // archive is overwritten, copied, or removed.
+  adopting_destination: boolean;
+  nothing_to_move: boolean;
+  // pending_cleanup is set when an earlier switch did not finish, so the
+  // administrator is told the stale root is cleared before this one starts.
+  pending_cleanup: string;
+  // warnings are one sentence each, most-surprising first.
+  warnings: string[];
+}
+
 // --- Insight templates (D-718): mirror GET <basePath>/settings/workflows.
 // Read-only. The workflows are prompts compiled into the recorder image, so
 // there is nothing to write back and no PUT to write it with.

@@ -348,6 +348,10 @@ func isPlainMeetingID(id string) bool {
 // indistinguishable from a denial, which is the same thing every other read of
 // this archive says. See followups: telling a scan failure apart needs the
 // resolveCatalogForCaller extraction D-701 makes.
+//
+// Which model this instance runs is resolved inside that same resolution, so
+// this reads the caller's slice under access control and the whole archive under
+// the default model, without a mode branch of its own (D-616).
 func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (map[string]string, []byte, bool) {
 	captured := &capturedResponse{header: http.Header{}}
 	c.serveFilteredCatalog(ctx, captured, client, caller, logger)
@@ -373,6 +377,10 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 		return nil, nil, false
 	}
 
+	// The root is taken with the identity the staging download will use, from
+	// the one place that pairs them: a path under the wrong model's root is a
+	// 404 at best and the other model's archive at worst.
+	_, root := ncArchiveReadIdentity(caller)
 	readable := make(map[string]string, len(document.Meetings))
 	for _, entry := range document.Meetings {
 		id := strings.TrimSpace(entry.ID)
@@ -389,25 +397,29 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 			continue
 		}
 		if _, taken := readable[id]; !taken {
-			readable[id] = ncRecordingsRoot + "/meetings/" + base
+			readable[id] = root + "/meetings/" + base
 		}
 	}
 	return readable, body, true
 }
 
-// stageMeetingForContext downloads one recording AS THE CALLER into destPath,
-// so Nextcloud enforces the per-file ACL a second time and the catalog
-// intersect is not the only thing standing between a caller and a recording.
+// stageMeetingForContext downloads one recording into destPath under the same
+// identity the read proxy would use: AS THE CALLER under access control, so
+// Nextcloud enforces the per-file ACL a second time and the catalog intersect is
+// not the only thing standing between a caller and a recording; as the owner
+// under the default model, where there is no mount in anybody's home and reading
+// as the caller would find nothing at all.
 //
 // It returns the upstream status so the caller can keep denied and absent
 // indistinguishable, and draws down a shared byte budget so one request cannot
 // stage the archive.
 func (c ExAppConfig) stageMeetingForContext(ctx context.Context, client *http.Client, caller, relPath, destPath string, budget *int64) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(caller, relPath), nil)
+	readAs, _ := ncArchiveReadIdentity(caller)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(readAs, relPath), nil)
 	if err != nil {
 		return 0, err
 	}
-	c.setAppAPIDAVHeadersForUser(req, caller)
+	c.setAppAPIDAVHeadersForUser(req, readAs)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err

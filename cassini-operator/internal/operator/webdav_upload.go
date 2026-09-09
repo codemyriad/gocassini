@@ -74,9 +74,9 @@ const (
 	// acts as, not a home directory — the recordings are in shared group-folder
 	// storage either way. That is why changing it needs no data migration.
 	ncRecordingsOwner = "cassini"
-	// ncRecordingsRoot is the canonical recordings root inside the owner's
-	// Files (relative to the user's WebDAV home). Hard-coded for now (D-529).
-	ncRecordingsRoot = "Cassini/Recordings"
+	// The archive root is no longer one constant: each storage model has its own,
+	// and they are in nc_storage_paths.go. See recordingsRootFor.
+	//
 	// ncRecordingsEveryoneGroup is the virtual all-users group supplied by the
 	// Nextcloud Everyone Group app. It gives every account a read-only Team-folder
 	// mount from account creation; per-file ACLs deny it for private meetings and
@@ -216,6 +216,10 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 	if err != nil {
 		return 0, err
 	}
+	digest, err := fileSHA256(localPath)
+	if err != nil {
+		return 0, err
+	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
@@ -227,6 +231,7 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("OC-Checksum", "SHA256:"+digest)
 	req.ContentLength = info.Size()
 	resp, err := client.Do(req)
 	if err != nil {
@@ -241,6 +246,23 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
 // absent (dev/standalone serve straight from local disk as before).
+//
+// Constructed on AppAPI presence alone, NOT on the resolved publish sink — a
+// deliberate deferral, recorded here because it looks like an oversight.
+//
+// Under CASSINI_PUBLISH_SINK=local the proxy is still installed and still claims
+// catalog.json and meetings/*, against a Nextcloud tree nothing ever writes to.
+// Scoping its construction properly means threading the sink through
+// exapp.go:297 and every test around it, for a configuration that is an escape
+// hatch nobody runs with AppAPI active.
+//
+// What makes the deferral safe is not the sink but the substrate: reading as the
+// owner additionally requires ncAccessSubstrate.usable(), and under a `local`
+// sink the substrate is never marked applicable, so it never reaches
+// `provisioned`. The owner-identity path is therefore unreachable there.
+// TestNCFilesProxyCannotServeAsOwnerUnderALocalSink is what turns that from
+// safe-by-accident into safe-by-test — which matters, because "it should hold"
+// is the sentence that preceded the disclosure the D-616 review reproduced.
 func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 	if !c.appAPIActive() {
 		return nil
@@ -260,11 +282,11 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 		if relPath == meetingsListPath && c.PublishSink != publishSinkNextcloudFiles {
 			return false
 		}
-		// Per-user access control (D-534, unconditional since D-554): serve each
-		// caller only what they may read. The caller identity comes from the
-		// AppAPI-verified request; these routes are USER-gated, so it is always
-		// present. There is no owner-identity path left — serving the archive as
-		// the owner is precisely the org-wide behaviour D-521 retired.
+		// The caller identity comes from the AppAPI-verified request; these
+		// routes are USER-gated, so it is always present. An absent one is a
+		// bug, not an anonymous reader, and it fails closed in BOTH modes —
+		// USER-level authentication is the entire access control in the default
+		// model, so an unidentified caller must get nothing there too.
 		caller := appapi.UserID(r.Context())
 		if caller == "" {
 			if logger != nil {
@@ -286,21 +308,59 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			}
 			return true
 		}
+
+		// Which identity the bytes are fetched as is the whole access model
+		// (D-616):
+		//
+		//	access controlled   read AS THE CALLER. Nextcloud's own advanced
+		//	                    ACLs decide; a meeting they may not read 404s.
+		//	default             read AS THE OWNER. There is no Team folder and
+		//	                    therefore no mount in anybody's home, so reading
+		//	                    as the caller does not restrict the archive — it
+		//	                    hides all of it, from everyone.
+		//
+		// ncStorageServesAsOwner is where the condition lives, because it is not
+		// just "which mode": it also requires the last probe to have AGREED that
+		// nothing is mounted over the canonical path. Everything else here
+		// treats the per-caller path as the default, which is the direction that
+		// fails closed.
+		// Since D-616's followups this decides the ROOT as well, because the two
+		// are one question. The default model's archive is the service account's
+		// own CassiniNoACL/Recordings, which no Team folder can shadow; the
+		// access-controlled one is inside the Cassini Team folder, where reading
+		// as the caller is what makes Nextcloud enforce the per-file ACL. Pairing
+		// the wrong identity with the wrong root is the disclosure this guard
+		// exists to prevent, so neither is chosen without the other.
+		servesAsOwner := ncStorageServesAsOwner()
+		readAs, root := ncArchiveReadIdentity(caller)
+
 		if relPath == "catalog.json" {
+			if servesAsOwner {
+				// Default model: every account that may open the Cassini app may
+				// read every recording, so the authoritative catalog IS the
+				// caller's catalog. Nothing is filtered because nothing is
+				// restricted — filtering it against a per-caller scan that can
+				// only 404 would serve an empty archive to the whole instance.
+				c.serveOwnerCatalog(r.Context(), w, client, logger)
+				return true
+			}
 			// The list is built per caller (authoritative catalog filtered
 			// by the caller's own PROPFIND scan), not streamed as-is.
 			c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
 			return true
 		}
 		if relPath == meetingsListPath {
-			// Same visible set as catalog.json, narrowed by the query and with
-			// substrate failures reported loudly. See serveMeetingsList.
+			// Same visible set as catalog.json — resolved through the same
+			// mode-aware resolution, so it narrows what THIS model says the
+			// caller may read — narrowed by the query, and with substrate
+			// failures reported loudly. See serveMeetingsList.
 			c.serveMeetingsList(r.Context(), w, r, client, caller, logger)
 			return true
 		}
-		// meetings/<id>.opus: fetch AS the caller so Nextcloud enforces the
-		// per-file ACL — a non-readable meeting 404s and never leaks.
-		davURL := c.davFileURL(caller, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
+		// meetings/<id>.opus: under access control this fetches AS the caller so
+		// Nextcloud enforces the per-file ACL — a non-readable meeting 404s and
+		// never leaks.
+		davURL := c.davFileURL(readAs, root+"/"+strings.TrimPrefix(relPath, "/"))
 		req, err := http.NewRequestWithContext(r.Context(), r.Method, davURL, nil)
 		if err != nil {
 			if logger != nil {
@@ -309,7 +369,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			http.Error(w, "Nextcloud Files request failed", http.StatusInternalServerError)
 			return true
 		}
-		c.setAppAPIDAVHeadersForUser(req, caller)
+		c.setAppAPIDAVHeadersForUser(req, readAs)
 		if rng := r.Header.Get("Range"); rng != "" {
 			req.Header.Set("Range", rng)
 		}

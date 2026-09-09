@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createEventDispatcher } from "svelte";
   import { TriangleAlert } from "@lucide/svelte";
   import type { SetupNotice } from "./operator/setupHealth";
 
@@ -16,6 +17,14 @@
   //              a strip. The instructions are there, behind a disclosure, so
   //              the band stays one line tall until someone wants them.
   export let notice: SetupNotice;
+
+  // A step carrying `action: "setup"` is something to PRESS, not something to
+  // find. Since D-708 the Setup tab is the only sanctioned route to a storage
+  // decision, and "open the Setup tab" as prose is a navigation the reader has
+  // to perform on the app's behalf.
+  //
+  // The shell owns which surface is showing, so this asks rather than acts.
+  const dispatch = createEventDispatcher<{ navigate: "setup" }>();
 </script>
 
 {#if notice.blocking}
@@ -46,6 +55,15 @@
                   <span class="text-base-content/50">{index + 1}.</span>
                   {step.label}
                 </p>
+                {#if step.action === "setup"}
+                  <button
+                    class="btn btn-sm btn-primary w-fit"
+                    type="button"
+                    on:click={() => dispatch("navigate", "setup")}
+                  >
+                    Open the Setup tab
+                  </button>
+                {/if}
                 {#if step.commands.length > 0}
                   <pre
                     class="m-0 overflow-x-auto rounded-box bg-base-200 p-3 font-mono text-xs leading-relaxed">{step.commands.join(
@@ -99,6 +117,15 @@
                     <span class="opacity-60">{index + 1}.</span>
                     {step.label}
                   </p>
+                  {#if step.action === "setup"}
+                    <button
+                      class="btn btn-xs btn-primary w-fit"
+                      type="button"
+                      on:click={() => dispatch("navigate", "setup")}
+                    >
+                      Open the Setup tab
+                    </button>
+                  {/if}
                   {#if step.commands.length > 0}
                     <pre
                       class="m-0 overflow-x-auto rounded-box bg-base-200 p-2 font-mono text-xs leading-relaxed text-base-content">{step.commands.join(

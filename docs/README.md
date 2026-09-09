@@ -109,7 +109,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   env is creation-time only, so a release adding a _required_ env var is a
   breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
-- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — how per-participant access control works: what the ExApp provisions automatically on enable, the Team folders + Everyone Group prerequisites, and how to manage who can see each recording.
+- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — the two storage modes, each with its own recordings root (`CassiniNoACL/Recordings` for the default one, `Cassini/Recordings` in the Team folder for access control), how switching copies an archive between them, what per-participant access control needs (Team folders + Everyone Group, a `cassini` service account, a mapped Team folder — none of which Cassini creates for you), and how to manage who can see each recording.
 - **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the one optional step that sends data off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
@@ -205,9 +205,10 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 Flagged so readers do not mistake intent for current behavior:
 
 - **Group folders ACL inheritance is version-sensitive.** Per-recording access
-  control is unconditional and provisioned automatically, but it still requires
-  the Team folders and Everyone Group apps, and it is worth validating traversal
-  on your own instance — the runbook has a checklist.
+  control is one of two storage modes, and the one that requires the Team
+  folders and Everyone Group apps plus a Team folder an administrator sets up.
+  It is worth validating traversal on your own instance — the runbook has a
+  checklist.
 
 ## Fast paths
 

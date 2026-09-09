@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -92,21 +93,6 @@ var provisionMu sync.Mutex
 // resolvedProvisioningUser caches the administrator selected for privileged
 // setup. An instance's administrator does not change during one container run.
 var resolvedProvisioningUser atomic.Pointer[any]
-
-// firstPathSegment returns the first path component of a slash path, e.g.
-// "Cassini/Recordings" -> "Cassini". It names the group folder mount point,
-// which is the root the recordings tree lives under.
-func firstPathSegment(p string) string {
-	p = strings.Trim(p, "/")
-	if i := strings.IndexByte(p, '/'); i >= 0 {
-		return p[:i]
-	}
-	return p
-}
-
-// ncRecordingsMount is the group folder mount point ("Cassini"): the first
-// segment of the canonical recordings root.
-var ncRecordingsMount = firstPathSegment(ncRecordingsRoot)
 
 // provisioningUser is the administrator used only for privileged setup. The
 // explicit environment override wins; otherwise a discovered administrator is
@@ -213,19 +199,73 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 		if !enabled {
 			return
 		}
-		// Ensure the dedicated recordings owner, then provision the Team-folder
-		// + ACL topology, so the first delivery acts as an existing, mounted
-		// owner. Deferred to this edge because during AppAPI registration
-		// outbound act-as-user calls are rejected: running at process start
-		// deterministically gets 401.
-		c.provisionNCFilesAccess(ctx, logger)
+		// Find out which storage model this instance is set up for, resolve the
+		// mode, and arrange the tree inside it (D-616). Deferred to this edge
+		// because during AppAPI registration outbound act-as-user calls are
+		// rejected: running at process start deterministically gets 401.
+		c.preflightNCStorage(ctx, logger)
 	}
+}
+
+// preflightOnRestart closes the restart-convergence gap (D-541/D-669): the
+// substrate record is a process-wide singleton written only by the enabled edge,
+// so a bare container restart left it at `unknown` and publishing refused until
+// an administrator disabled and re-enabled the app.
+//
+//	before                          after
+//	------                          -----
+//	start ──▶ mode loaded           start ──▶ mode loaded
+//	          substrate = unknown             │
+//	          publish REFUSED                 └─▶ preflight
+//	               ▲                                   │
+//	               │  the only writer            substrate proven
+//	         enabled edge                        publish WORKS
+//
+// It runs ONLY when a mode is already recorded, and that condition is doing two
+// jobs. It is the signal that this install has completed a preflight before —
+// so this is a restart rather than a first registration, which matters because
+// AppAPI rejects act-as-user calls during registration and a startup run would
+// deterministically 401 and log a failure for every new install. And it means
+// nothing here can decide a mode: the file already did, and this run only
+// re-proves it against Nextcloud.
+//
+// This is cheap now in a way it was not when D-669 was written. The enabled edge
+// used to CREATE the substrate; since D-616 it probes, sanity-checks, and MKCOLs
+// the app's own collections. Re-running that is a handful of reads and
+// idempotent creates, with no partial-build risk.
+//
+// Asynchronous, because an unreachable Nextcloud must not stop the operator from
+// serving /status — which is how an administrator finds out it is unreachable.
+// Both paths take provisionMu, so a startup run and an enable cannot interleave.
+func (c ExAppConfig) preflightOnRestart(ctx context.Context, logger *log.Logger) {
+	if !c.appAPIActive() {
+		return
+	}
+	settings, err := LoadStorageSettings(ncStorage.settingsPath())
+	if err != nil || !settings.Configured() {
+		// No recorded mode: either a first registration, or an install whose
+		// fallback has not survived a sanity gate yet. Either way the enabled
+		// edge is the right place, and it is about to fire.
+		return
+	}
+	go func() {
+		logger.Printf("nc storage: re-proving the recorded %q mode at startup (the enabled edge is not the only writer any more)", settings.Mode())
+		c.preflightNCStorage(ctx, logger)
+	}()
 }
 
 // provisionNCFilesAccess first establishes the ownership/provisioning
 // identities, then creates (idempotently) the group folder + ACL topology the
-// access-control model needs. No-op only outside AppAPI. Runs on the enabled
-// edge, in the EnabledCallback goroutine.
+// access-control model needs. No-op only outside AppAPI.
+//
+// Since D-616 it is no longer the enabled-edge entry point: preflightNCStorage
+// is, and it reaches this only for an instance whose access-controlled
+// prerequisites are ALREADY satisfied. Every step here reads before it writes,
+// so under that gate nothing is left to create and what runs is the
+// arrangement — the container ACL, the leaf self-heal, the canonical
+// collections. Left whole rather than split apart because the D-534/D-594
+// ordering it encodes (narrow the root, repair every leaf, widen the root last)
+// is the archive's safety property, not an implementation detail.
 //
 // Every step used to be best-effort in the strict sense that nothing recorded
 // whether it worked: failures were logged and forgotten. They are still
@@ -240,6 +280,13 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	}
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
+	c.provisionNCFilesAccessLocked(ctx, logger)
+}
+
+// provisionNCFilesAccessLocked is the body, with provisionMu already held. The
+// preflight takes that lock for the whole probe/resolve/arrange sequence, and
+// sync.Mutex is not reentrant.
+func (c ExAppConfig) provisionNCFilesAccessLocked(ctx context.Context, logger *log.Logger) {
 	client := &http.Client{Timeout: ncProvisionTimeout}
 
 	// P1. Resolve the administrator BEFORE anything acts as one. Proceeding as
@@ -428,7 +475,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	// 8. Materialize the canonical collections so the directory exists right after
 	//    install, before any recording. MKCOL of the mount root is a harmless 405.
 	mkcolFailed := false
-	for _, dir := range []string{ncRecordingsRoot, ncRecordingsRoot + "/meetings"} {
+	for _, dir := range []string{ncACLRecordingsRoot, ncACLRecordingsRoot + "/meetings"} {
 		if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
 			logger.Printf("nc provision: mkcol %s: %v", dir, err)
 			ncAccessSubstrate.degraded("mkcol:"+dir, fmt.Errorf("the canonical collection %q could not be created: %w", dir, err))
@@ -440,7 +487,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	}
 
 	ncAccessSubstrate.succeed()
-	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s audience_group=%s", folderID, ncRecordingsMount, ncRecordingsRoot, ncRecordingsOwner, ncRecordingsEveryoneGroup)
+	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s audience_group=%s", folderID, ncRecordingsMount, ncACLRecordingsRoot, ncRecordingsOwner, ncRecordingsEveryoneGroup)
 }
 
 // containerACLRules grants the owner full control and the virtual all-users
@@ -528,6 +575,24 @@ func (f gfFolder) groupPerms(group string) (int, bool) {
 		return 0, false
 	}
 	return int(perms), true
+}
+
+// anyGroupMapped reports whether ANY group maps to this folder, which is what
+// decides whether it is mounted into anybody's Files — and therefore whether it
+// shadows a same-named home directory (D-660, D-616).
+//
+// Deliberately not "are Cassini's own two mappings there": an administrator can
+// map any group they like, and a folder mounted through some third group wins
+// the canonical path exactly as hard. The question the default model needs
+// answered is physical, not about Cassini's topology.
+func (f gfFolder) anyGroupMapped() bool {
+	var groups map[string]json.RawMessage
+	if err := json.Unmarshal(f.Groups, &groups); err != nil {
+		// No mappings serializes as `[]`, which fails this decode. Any other
+		// unparseable shape is not evidence of a mapping either.
+		return false
+	}
+	return len(groups) > 0
 }
 
 func (f gfFolder) hasGroup(group string) bool {
@@ -654,12 +719,32 @@ func (c ExAppConfig) ensureRecordingsFolder(ctx context.Context, client *http.Cl
 // ocs.data as an object keyed by folder id (or an empty array when there are
 // none), so both shapes are tolerated.
 func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount string) (gfFolder, bool, error) {
-	status, body, err := c.apiGet(ctx, client, c.gfURL("/folders"))
+	folders, err := c.listFolders(ctx, client, mount)
 	if err != nil {
 		return gfFolder{}, false, err
 	}
+	if f, ok := lowestIDMatch(folders, mount); ok {
+		return f, true, nil
+	}
+	return gfFolder{}, false, nil
+}
+
+// listFolders reads every Team folder on the instance, once.
+//
+// It exists so a caller that has to ask about TWO mount points — the probe,
+// which checks both the access-controlled model's `Cassini` and whether anything
+// has been mounted over the default model's own root — pays for one round trip
+// rather than two, and gets one answer rather than two that could disagree.
+//
+// `subject` names the folder the caller is really asking about, and appears only
+// in error messages.
+func (c ExAppConfig) listFolders(ctx context.Context, client *http.Client, subject string) ([]gfFolder, error) {
+	status, body, err := c.apiGet(ctx, client, c.gfURL("/folders"))
+	if err != nil {
+		return nil, err
+	}
 	if refusal := ocsRefusal(status, body); refusal != "" {
-		return gfFolder{}, false, fmt.Errorf("list folders -> %s", refusal)
+		return nil, fmt.Errorf("list folders -> %s", refusal)
 	}
 	var env struct {
 		OCS struct {
@@ -667,7 +752,15 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 		} `json:"ocs"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
-		return gfFolder{}, false, fmt.Errorf("decode folders list: %w", err)
+		return nil, fmt.Errorf("decode folders list: %w", err)
+	}
+	// `null` is not "no folders". An empty instance answers `[]`, and a JSON null
+	// unmarshals into a map without error and leaves it nil — which would read as
+	// an authoritative "there is no Cassini Team folder here". Reject it for the
+	// same reason as the undecodable shapes below: on an instance that really is
+	// access-controlled, that answer is a disclosure.
+	if bytes.Equal(bytes.TrimSpace(env.OCS.Data), []byte("null")) {
+		return nil, fmt.Errorf("decode folders list: ocs.data is null, which is not an answer about whether a %q folder exists", subject)
 	}
 	// The list is an object keyed by folder id, or an empty array. Collect all
 	// folders and pick the lowest-id match deterministically: if a duplicate
@@ -679,18 +772,27 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 		for _, f := range asMap {
 			folders = append(folders, f)
 		}
-		if f, ok := lowestIDMatch(folders, mount); ok {
-			return f, true, nil
-		}
-		return gfFolder{}, false, nil
+		return folders, nil
 	}
 	var asArr []gfFolder
 	if err := json.Unmarshal(env.OCS.Data, &asArr); err == nil {
-		if f, ok := lowestIDMatch(asArr, mount); ok {
-			return f, true, nil
-		}
+		return asArr, nil
 	}
-	return gfFolder{}, false, nil
+	// Neither shape decoded. This must be an ERROR, not "there is no such
+	// folder", and the difference is a disclosure.
+	//
+	// Group Folders returns every folder on the instance in one list, and Go
+	// fails the WHOLE decode if any single record does not fit gfFolder — one
+	// unrelated folder whose `acl` comes back as 0 rather than false is enough.
+	// Swallowed as "absent", that answer passes the default mode's sanity check
+	// on an instance that really does have a mapped, ACL-enabled Cassini Team
+	// folder: the substrate records `provisioned`, and the read proxy then
+	// serves the entire archive as the ACL manager to every authenticated
+	// account.
+	//
+	// An unanswered question is not a negative answer. Returning an error makes
+	// the probe record FolderProbed=false, which fails closed.
+	return nil, fmt.Errorf("decode folders list: ocs.data is neither an object keyed by folder id nor an array (%d bytes)", len(env.OCS.Data))
 }
 
 // lowestIDMatch returns the folder with the given mount point that has the
@@ -999,7 +1101,7 @@ func parseOCSGroupList(body []byte) ([]string, error) {
 // switches to `everyone`. A missing catalog is the normal fresh-install state;
 // startup sync will create and protect it later.
 func (c ExAppConfig) protectExistingCatalog(ctx context.Context, client *http.Client) error {
-	_, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	_, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/catalog.json")
 	if err != nil {
 		return err
 	}
@@ -1009,7 +1111,7 @@ func (c ExAppConfig) protectExistingCatalog(ctx context.Context, client *http.Cl
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("inspect catalog -> %d", status)
 	}
-	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json", catalogProtectionACLRules()); err != nil {
+	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/catalog.json", catalogProtectionACLRules()); err != nil {
 		return err
 	}
 	return nil

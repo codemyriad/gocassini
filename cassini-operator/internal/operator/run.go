@@ -307,9 +307,56 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncAccessSubstrate.markApplicable()
 	}
 
-	// Provisioning remains tied to the AppAPI enabled edge, but not to the eager
-	// whole-archive uploader removed by D-613.
+	// The storage mode (D-616) is read here, at startup, and not only on the
+	// enabled edge. The edge is what PROVES the mode against Nextcloud; this is
+	// what makes a plain container restart keep serving the archive the way the
+	// administrator chose, instead of falling back to the access-controlled read
+	// path for an instance that has no Team folder to read through. The file is
+	// local, so it costs no round-trip and cannot fail for want of Nextcloud.
+	//
+	// It deliberately does NOT make the substrate usable: publishing still waits
+	// for the edge (nc_access_status.go), because a recorded mode is a decision,
+	// not evidence that the storage behind it is still there.
+	ncStorage.setPath(storageSettingsPath(cfg))
+	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
+		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
+		// Clean: an unreadable file is not evidence of a half-done migration.
+		// Unconfirmed: writing a mode is how an administrator gets out of this.
+		ncStorage.set(true, storageModeSourceConfigured, true)
+	} else if settings.Configured() {
+		// The RECORDED source, carried through rather than flattened to
+		// "configured". It is what tells an administrator's click apart from a
+		// deploy option, and both apart from a mode a previous build wrote down
+		// on its own — which is the question the Setup tab now has to answer
+		// before it presents a decision as made (D-708).
+		source := settings.Source
+		if source == "" {
+			source = storageModeSourceConfigured
+		}
+		ncStorage.set(settings.AccessControlled(), source, settings.Clean())
+		logger.Printf("storage_mode -> %s (recorded, source=%s, confirmed=%t)", settings.Mode(), source, settings.Confirmed())
+	} else if declared, ok, raw := storageModeFromEnv(os.Getenv); ok {
+		// Declared but not yet recorded: the first enabled edge checks it against
+		// the instance and persists it only if it fits. Logged here so a
+		// deployment can see its own setting arrived, without waiting for that
+		// edge — and warned about, because this is a development and CI option.
+		logger.Printf("WARNING: storage_mode -> %s (declared by %s=%s, a development/CI deploy option; recorded on first enable if this instance matches it)", storageModeName(declared), envStorageMode, raw)
+	} else if raw != "" {
+		// Refused at startup rather than only on the enabled edge, because this
+		// is where a deploy option's typo is cheapest to notice.
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and no storage mode will be chosen for this install", envStorageMode, raw, storageModeEnvValues)
+	} else {
+		// Nothing recorded, nothing declared. Say so here rather than leaving an
+		// administrator to infer it from silence: this is the line that precedes
+		// every refusal to publish on a fresh install, and the Setup tab is what
+		// ends it.
+		logger.Printf("storage_mode -> undecided (nothing recorded, nothing declared by %s). Cassini does not choose a storage model on its own; publishing and recording are refused until an administrator picks one in the Setup tab", envStorageMode)
+	}
+
+	// The preflight remains tied to the AppAPI enabled edge, but not to the
+	// eager whole-archive uploader removed by D-613.
 	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
+	exappCfg.preflightOnRestart(runtime.ctx, logger)
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -451,10 +498,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	// deploy (APP_PERSISTENT_STORAGE set) paths left unset or still at their
 	// baked image defaults land on the AppAPI volume instead of overlayfs.
 	persistRoot := persistentStorageRoot()
-	fs.StringVar(&cfg.DBPath, "db", exAppDataPathDefault(persistRoot,
-		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
-		imageDefaultDBPath, "operator/jobs.sqlite3",
-		filepath.Join(defaultDataRoot, "jobs.sqlite3")), "SQLite database path")
+	fs.StringVar(&cfg.DBPath, "db", defaultDBPath(persistRoot, defaultDataRoot), "SQLite database path")
 	fs.StringVar(&cfg.WorkRoot, "work-root", exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, ""),
 		imageDefaultWorkRoot, "operator/jobs",
@@ -548,6 +592,19 @@ func defaultSiteRoot(persistRoot, dataRoot string) string {
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
 		imageDefaultSiteRoot, "site/published",
 		filepath.Join(dataRoot, "site"))
+}
+
+// defaultDBPath is where the job database lands when nothing overrides it.
+//
+// Factored out because the one-shot commands need it too: storage_settings.json
+// lives beside the database, and a command that has to know which storage model
+// this installation runs cannot ask the running operator — it is a separate
+// process with its own empty ncStorage.
+func defaultDBPath(persistRoot, dataRoot string) string {
+	return exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
+		imageDefaultDBPath, "operator/jobs.sqlite3",
+		filepath.Join(dataRoot, "jobs.sqlite3"))
 }
 
 func parsePositiveIntEnvAny(names []string, fallback int) (int, error) {
@@ -746,6 +803,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// the recorder ships, and an exact pattern wins over the prefix (D-718).
 	api.HandleFunc("/settings/workflows", rt.settingsWorkflowsHandler)
 	api.HandleFunc("/settings/", rt.llmSettingsHandler)
+	api.Handle("/storage", exappCfg.storageHandler(rt))
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
@@ -797,6 +855,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/setup", api)
 		root.Handle("/settings", api)
 		root.Handle("/settings/", api)
+		root.Handle("/storage", api)
 		root.Handle("/talk/provisioning", api)
 		return
 	}

@@ -249,8 +249,9 @@ register_cassini() {
   local int_secret; int_secret="$(aio_talk_internal_secret)"
 
   # Two prerequisites the Cassini ExApp cannot install for itself (it reaches
-  # Nextcloud over HTTP, never occ), and since D-554 neither is optional:
-  # recordings are access-controlled or they are not served. For a dogfood
+  # Nextcloud over HTTP, never occ). Since D-616 they are prerequisites of the
+  # ACCESS-CONTROLLED storage model rather than of Cassini, and this box runs
+  # that model deliberately — see CASSINI_STORAGE_MODE below. For a dogfood
   # instance that people actually keep recordings in, a silent miss means
   # nobody can see anything, so enable is hard here on purpose.
   #
@@ -278,6 +279,7 @@ register_cassini() {
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$int_secret" \
     --env "CASSINI_TALK_BACKEND_URL=$PUBLIC_URL" \
     --env "CASSINI_PUBLISH_SINK=${CASSINI_PUBLISH_SINK:-nextcloud-files}" \
+    --env "CASSINI_STORAGE_MODE=${CASSINI_STORAGE_MODE:-access_controlled}" \
     --wait-finish || true
   # --wait-finish can outlive its window on first deploy; ensure enabled.
   occ app_api:app:enable "$CASSINI_APPSTORE_ID" || true
