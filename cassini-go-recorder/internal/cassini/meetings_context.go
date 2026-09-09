@@ -168,7 +168,12 @@ func remoteMeetingContexts(ctx context.Context, fs *flag.FlagSet, cfg *meetingsC
 	// against a single view of what this caller may read, so it cannot be
 	// assembled half out of one catalog and half out of a later one.
 	client := newMeetingsClient(*cfg)
-	listing, err := client.fetchCatalog(ctx)
+	// The loud path `list`, `rooms` and `fetch` use (D-701/D-703). It matters
+	// here for the same reason it matters in `fetch`: an unreachable archive
+	// yields an empty listing, resolveMeetingIn then reports every id as absent,
+	// and reportMeetingsError phrases that as "no recording you can read at that
+	// id" with a permissions hint — an outage described as a denial.
+	listing, _, err := client.fetchMeetings(ctx, meetingsFilter{})
 	warnAboutMeetingsSource(stderr, listing)
 	if err != nil {
 		return meetingcontext.Bundle{}, reportMeetingsError(stderr, "context", *cfg, err)
