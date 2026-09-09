@@ -189,7 +189,22 @@ jobs:
     # viewer, and publishes. Runs on github-hosted (free, parallel) so a GPU
     # run on george cannot block a UI-only preview from another branch.
     needs: detect
+    # DISABLED — D-739. Not a normal skip condition, and not permanent.
+    #
+    # This job rebuilds a preview from main's published archive, and every one
+    # of the 39 meetings in that archive carries the exact-pcm audio integrity
+    # policy that 218c3f6b retired. So it fails for every branch, on every push,
+    # over data that no branch can fix. A check that is guaranteed red teaches
+    # people to ignore red, which costs more than the preview is worth while it
+    # is broken.
+    #
+    # `false &&` rather than deleting the job: the real condition below stays
+    # visible and correct, so re-enabling is deleting one line. Do that as part
+    # of D-739 — docs/runbooks/repair-published-archive.md, section 6 — and not
+    # before, because until the archive is repaired this goes straight back to
+    # failing.
     if: >-
+      false &&
       needs.detect.outputs.should_run == 'true' &&
       needs.detect.outputs.should_process != 'true'
     runs-on: ubuntu-latest

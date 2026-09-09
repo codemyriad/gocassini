@@ -196,6 +196,7 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 ### Proposals & operations notes
 
 - [Branch previews](./branch-previews.md) — per-branch viewer deployments.
+- [Repair the published archive](./runbooks/repair-published-archive.md) — the published meetings predate a retired format, so branch previews cannot be built from them (D-739).
 
 ---
 
