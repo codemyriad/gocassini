@@ -1,0 +1,18 @@
+# Domain-only update layered on the deployed CUDA image.
+FROM golang:1.24-bookworm AS go-builder
+WORKDIR /src
+COPY cassini-go-recorder ./cassini-go-recorder
+RUN go -C cassini-go-recorder build -o /out/cassini ./cmd/cassini
+FROM node:22-bookworm AS web-builder
+WORKDIR /src
+COPY package.json package-lock.json ./
+COPY cassini-viewer ./cassini-viewer
+COPY cassini-app ./cassini-app
+RUN npm ci
+ENV VITE_BASE=./
+RUN npm run build:all -w cassini-viewer && npm run build:all -w cassini-app
+FROM ghcr.io/codemyriad/gocassini:sha-8f1c50cb0119-cuda
+COPY --from=go-builder /out/cassini /usr/local/bin/cassini
+COPY --from=web-builder /src/cassini-viewer/dist /opt/cassini/cassini-viewer/dist
+COPY --from=web-builder /src/cassini-app/dist /opt/cassini/cassini-app/dist
+COPY cassini-viewer/scripts/export-static-meetings.mjs /opt/cassini/cassini-viewer/scripts/export-static-meetings.mjs

@@ -110,7 +110,7 @@ export async function extractPortableManifestFromArrayBuffer(
     CASSINI_PAYLOAD_MIME: "application/vnd.cassini.portable-meeting+json",
     CASSINI_PAYLOAD_ENCODING: "base64url+gzip+utf8json",
     CASSINI_PAYLOAD_SCHEMA:
-      "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+      "https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json",
     CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
   })) {
     if (String(tags[name] ?? "").trim() !== expected) {
