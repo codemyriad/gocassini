@@ -320,6 +320,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	exappCfg.PublishedDir = cfg.SiteRoot
 	exappCfg.PublishSink = sink.Name()
+	// The CLI the published routes shell out to is the one loadConfig already
+	// resolved and checked is executable (D-717). LoadExAppConfig only seeds it
+	// from CASSINI_BIN, because it runs before that value exists; leaving the
+	// seed in place would mean a deployment configured with --cassini-bin
+	// silently does not serve published/meetings-context, and one configured
+	// with a relative CASSINI_BIN serves it via a path nothing validated.
+	exappCfg.CassiniBin = cfg.CassiniBin
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{
@@ -731,7 +738,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/setup", rt.setupHandler)
+	api.HandleFunc("/ai/providers", rt.aiProvidersHandler)
+	api.HandleFunc("/ai/providers/", rt.aiProviderModelsHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
+	// A sibling of the /settings/ prefix rather than another branch inside the
+	// LLM settings handler: the workflow registry is not LLM policy, it is what
+	// the recorder ships, and an exact pattern wins over the prefix (D-718).
+	api.HandleFunc("/settings/workflows", rt.settingsWorkflowsHandler)
 	api.HandleFunc("/settings/", rt.llmSettingsHandler)
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
@@ -747,6 +760,15 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
 	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
+	// beside /published/ rather than under BasePath, because that is where
+	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
+	// mutating routes at that level. Nil, and therefore unmounted, wherever a run
+	// could not be performed at all (no AppAPI identity, no Nextcloud sink, no
+	// CLI): a route that always fails is worse than a route that is not there.
+	if insights := newInsightService(rt, exappCfg, logger); insights != nil {
+		insights.register(root)
+	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
 

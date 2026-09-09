@@ -14,6 +14,7 @@ Cassini records a Nextcloud Talk meeting and turns it into a portable, self-desc
 ./bin/cassini serve     # serve a published site or inspect an artifact
 ./bin/cassini inspect   # look inside any primary Cassini artifact
 ./bin/cassini meetings  # read published recordings back out of Nextcloud as a user
+./bin/cassini insight   # list or run workflows over meeting context
 ```
 
 The CLI is implemented in `cassini-go-recorder/cmd/cassini` and dispatches into the in-tree subsystems described below. From the user's perspective the inputs are a Talk URL or an existing recording; the outputs are a portable `.opus` file and/or a published static site.
@@ -57,8 +58,8 @@ These are the artifact contracts that components share. Treat them as the stable
 |---|---|---|
 | Multitrack meeting MKV (Cassini MKV-v1) | recorder | [cassini-go-recorder/docs/mkv-format.md](../cassini-go-recorder/docs/mkv-format.md) |
 | `.rtplog` packet log + session artifact | recorder | [cassini-go-recorder/docs/formats.md](../cassini-go-recorder/docs/formats.md) |
-| Meeting artifact bundle (`meeting.webm`, `transcript.words.v1.json`, `captions.vtt`, optional `summary.md`, `manifest.json`) | recorder (`internal/transcribe`) | [core pipeline](./core-pipeline.md) |
-| V0 summary template (Markdown sections the summary generator must fill) | recorder (`internal/transcribe/templates/summary.v0.md`) | the file itself |
+| Meeting artifact bundle (`meeting.webm`, `transcript.words.v1.json`, optional `transcript.readable.v1.json`, `captions.vtt`, optional `summary.md`, `manifest.json`) | recorder (`internal/transcribe`) | [cassini-go-recorder/docs/transcription-pipeline.md](../cassini-go-recorder/docs/transcription-pipeline.md) |
+| V0 summary template (Markdown sections the summary generator must fill) | recorder (`internal/insight/workflows/prompts/summarise-template.v0.md`) | the file itself |
 | Portable `.opus` meeting file | recorder (`internal/portable`) | [docs/portable-meeting-format.md](portable-meeting-format.md) |
 | Viewer-loaded transcript JSON (`transcript.words.v1`) | recorder (produced) / viewer (validated) | [cassini-viewer/schema/](../cassini-viewer/schema/) |
 

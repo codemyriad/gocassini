@@ -48,6 +48,23 @@ gocassini-*.log
 /cassini-go-recorder/gocassini
 /cassini-go-recorder/*.out
 /cassini-go-recorder/tmp
+# A hand-built CLI lands here: `go build -o bin/cassini ./cmd/cassini` from
+# inside the module. The sanctioned wrapper (repo-root bin/cassini) builds into
+# $XDG_CACHE_HOME instead, so nothing in normal use writes this path — which is
+# exactly why it was never ignored, and how a 14 MB binary reached PR #261.
+/cassini-go-recorder/bin/
+
+# Scratch output from manual runs.
+#
+# The other half of the same PR #261 accident: months-old output of by-hand
+# `cassini` runs, sitting untracked in a working tree until a broad `git add`
+# during a merge swept it in. `scratch/` anywhere is the convention — put
+# throwaway output there and it can never be committed by accident.
+#
+# scripts/check-added-blobs.sh is the backstop for everything these two rules
+# cannot name in advance.
+scratch/
+/cassini-go-recorder/smoke/
 
 # Python cache
 __pycache__/

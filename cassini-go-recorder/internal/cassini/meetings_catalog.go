@@ -75,6 +75,21 @@ type meetingsCatalogEntry struct {
 	// thing that makes the convention checkable.
 	JobID         string `json:"jobId,omitempty"`
 	AttemptNumber int    `json:"attemptNumber,omitempty"`
+	// HasSummary and WordCount say what a meeting holds without fetching it
+	// (D-716): whether the producer sealed a summary into the .opus, and how
+	// many words its default transcript carries — the same count
+	// `meetings context` reports for that meeting. They exist so a caller can
+	// size and gap-check a selection of meetings from the index alone, instead
+	// of downloading every file to ask two yes/no-sized questions.
+	//
+	// Pointers, unlike SpeakerCount above, because absence is its own answer.
+	// An entry published before these fields existed asserts nothing about
+	// either, and a plain bool would report that silence as "no summary" while
+	// a plain int reported it as "no words" — both facts nobody stated. nil
+	// means unknown and must be rendered as such; false and 0 are claims the
+	// producer actually made.
+	HasSummary *bool `json:"hasSummary,omitempty"`
+	WordCount  *int  `json:"wordCount,omitempty"`
 }
 
 // roomSelector is the value `meetings rooms` prints and `meetings list --room`

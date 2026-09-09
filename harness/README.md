@@ -379,8 +379,19 @@ shell that also contains `CASSINI_HARNESS_PUBLIC_URL` or other remote exports.
 | `./harness/bin/ci-e2e-mute.sh` | same as baseline | Mute-aware three-player flow; validates multi-player capture via session artifacts and player mute logs. |
 | `./harness/bin/ci-e2e-rejoin.sh` | same as baseline | Leave/rejoin flow with two player phases; validates player phases and recorder subscription evidence. |
 | `IMAGE_REF=... ./harness/bin/ci-e2e-install-exapp.sh` | `local-http` + `core` + `cassini none` + `recording none` | Real Nextcloud + AppAPI install handshake against a provided ExApp image. The script manually starts/registers the image so it can test AppAPI route patterns. |
+| `IMAGE_REF=... ./harness/bin/check-route-refresh.sh` | `local-http` + `core` + `cassini none` + `recording none` | Whether `app_api:app:update` applies a **changed** `<routes>` block to an app that is already installed. Registers with one real route withheld, proves the proxy refuses it, then reads AppAPI's own route rows in Postgres after each update form. |
 | `IMAGE_REF=... ./harness/bin/ci-e2e-talk-record-roundtrip.sh` | `local-http` + `full` + `cassini none` + `recording legacy`, then custom operator container | Full Talk record-button roundtrip: Talk recording-backend HMAC -> operator -> recorder -> transcribe -> publish -> transcript check. |
 | `./harness/bin/d263-nextcloud-lifecycle.sh` | run after a stack is up | Native Talk recording-backend lifecycle against local Nextcloud/Talk with a fake media worker. Not a full media acceptance test. |
+
+`check-route-refresh.sh` is a measurement rather than a regression test: it
+answers one question about AppAPI's behaviour and writes a transcript of every
+reading to `$LOG_DIR/verdict.txt`. The answer it produced, with its evidence, is
+written up in [`docs/exapp-update-constraints.md`](../docs/exapp-update-constraints.md)
+§5a — routes DO refresh on an in-place update, but only when the manifest carries
+a new `<version>`. Re-run it when AppAPI's own version moves or when you doubt the
+write-up, not on every branch: it wants a Nextcloud stack (on host port `28090`, so
+it does not collide with a running one) and a built ExApp image, and it tears its
+own stack down on exit.
 
 Baseline local CI run:
 

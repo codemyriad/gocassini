@@ -138,6 +138,3 @@ Single self-hosted Linux/X64 GPU runner:
 - **D-453**: Closed the install-path gap by adding full HaRP and reverse-proxy e2e coverage (`ci-e2e-installed-exapp-talk.sh`).
 - **D-505**: Synchronized doc deny-lists between `ci.yml` and `scripts/classify-image-relevance.sh` to prevent false-green CI skips.
 - **D-578**: Pinned root npm workspace lockfile for reproducible UI installs.
-
-
-

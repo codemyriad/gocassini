@@ -31,6 +31,16 @@ func summaryLLMEnv(t *testing.T, baseURL string) {
 	t.Setenv("CASSINI_SUMMARY_DISABLED", "")
 	t.Setenv("CASSINI_LLM_TIMEOUT_SEC", "")
 	t.Setenv("CASSINI_LLM_MAX_TOKENS", "")
+	// The insight step's own layer, and the per-step bounds, are read by
+	// `cassini insight run` (D-719). A developer with either exported would
+	// otherwise silently redirect these tests at their own endpoint.
+	t.Setenv("INSIGHT_BASE_URL", "")
+	t.Setenv("INSIGHT_API_KEY", "")
+	t.Setenv("INSIGHT_MODEL", "")
+	t.Setenv("SUMMARY_TIMEOUT_SEC", "")
+	t.Setenv("SUMMARY_MAX_TOKENS", "")
+	t.Setenv("INSIGHT_TIMEOUT_SEC", "")
+	t.Setenv("INSIGHT_MAX_TOKENS", "")
 }
 
 // stubSummaryLLM is an OpenAI-compatible /chat/completions stub. It counts

@@ -121,6 +121,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runBuild(ctx, args[1:], stdout, stderr)
 	case "dev":
 		return runDev(ctx, args[1:], stdout, stderr)
+	case "insight":
+		return runInsight(ctx, args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
 	case "meetings":
@@ -392,6 +394,7 @@ Usage:
   cassini doctor
   cassini build <run-or-mkv> --out "./Meeting.opus"
   cassini dev ...
+  cassini insight run --context ./ctx.json --out ./Insight.md
   cassini inspect <path>
   cassini meetings list
   cassini meetings rooms
@@ -410,6 +413,7 @@ Commands:
   build    Build a browser-ready meeting artifact from a recording
   dev      Access the local harness namespace
   doctor   Validate the local environment before expensive work starts
+  insight  Ask one question of several meetings and keep the answer
   inspect  Inspect a run, meeting, site, or lower-level Cassini artifact
   meetings Read the meeting recordings your Nextcloud account may access
   operator Launch the separate cassini-operator binary
