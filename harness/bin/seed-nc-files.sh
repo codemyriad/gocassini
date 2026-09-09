@@ -248,14 +248,44 @@ occ groupfolders:scan "$FOLDER_ID" >/dev/null
 # Match production's floor: the authoritative catalog is owner-only, and the app
 # filters it per caller. Without this the harness would be readable in a way
 # production is not, exactly where the read proxy's whole job is that it is not.
-if occ groupfolders:permissions "$FOLDER_ID" \
-     "$SEED_RECORDINGS_SUBPATH/catalog.json" -g everyone -- -read >/dev/null 2>&1; then
-  seed_log "catalog.json protected (everyone: deny)"
+#
+# TWO RULES, NOT ONE, and the second is what makes the first survivable. The
+# owner is an ordinary account and therefore a member of the virtual `everyone`
+# group, so a leaf-level deny for `everyone` denies the owner too — the Team
+# folder's root grant does not save it, because the more specific leaf rule wins.
+# Deny on its own produces a catalog nobody can read, including the app, which
+# reads it as the owner and answers every caller with an empty archive. The
+# meetings are all still there and perfectly readable in Files; they simply stop
+# reaching the viewer, with nothing to say why. The app writes both rules
+# together for this reason (catalogProtectionACLRules in webdav_acl.go).
+
+CATALOG_LEAF="$SEED_RECORDINGS_SUBPATH/catalog.json"
+catalog_protected=1
+occ groupfolders:permissions "$FOLDER_ID" "$CATALOG_LEAF" \
+  -g everyone -- -read >/dev/null 2>&1 || catalog_protected=0
+occ groupfolders:permissions "$FOLDER_ID" "$CATALOG_LEAF" \
+  -u "$SEED_OWNER" -- +read +write +delete +share >/dev/null 2>&1 || catalog_protected=0
+
+# Then check it, rather than assume it. This is the one failure in the whole
+# script that is otherwise completely silent: every log line above still says
+# success, the files are on disk and readable, and the only symptom is a viewer
+# that shows nothing.
+owner_access="$(occ groupfolders:permissions "$FOLDER_ID" "$CATALOG_LEAF" \
+  -t --user "$SEED_OWNER" 2>/dev/null | tr -d '\r')"
+case "$owner_access" in
+  *"+read"*) ;;
+  *) catalog_protected=0 ;;
+esac
+
+if (( catalog_protected )); then
+  seed_log "catalog.json protected (everyone: deny, $SEED_OWNER: read)"
 else
-  seed_log "WARNING: could not deny 'everyone' on catalog.json."
-  seed_log "WARNING: the meetings are seeded, but this stack lets any account read the"
-  seed_log "WARNING: raw catalog, which production does not. Do not test the read proxy's"
-  seed_log "WARNING: catalog filtering against it."
+  seed_log "ERROR: catalog.json is not readable by '$SEED_OWNER' ($owner_access)."
+  seed_log "ERROR: the app reads the catalog as that account, so it will serve an empty"
+  seed_log "ERROR: archive and the viewer will show no meetings — even though the files"
+  seed_log "ERROR: are seeded and readable in Files. Restore it with:"
+  seed_log "ERROR:   occ groupfolders:permissions $FOLDER_ID $CATALOG_LEAF -u $SEED_OWNER -- +read +write +delete +share"
+  exit 1
 fi
 
 # --- state each seeded meeting's visibility ----------------------------------
