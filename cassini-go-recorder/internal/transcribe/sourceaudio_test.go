@@ -322,6 +322,24 @@ func inWindowSidecar(owner string, startMS int64) SourceSidecar {
 	}
 }
 
+// writeCaptureAtCall is writeCapture with the call directory named, for the
+// tests that need one participant to have more than one call session.
+func writeCaptureAtCall(t *testing.T, root, room, owner, call string, sidecar SourceSidecar) string {
+	t.Helper()
+	dir := filepath.Join(root, room, owner, call)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	raw, err := json.Marshal(sidecar)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+	return dir
+}
+
 func TestDiscoverSourceCaptures(t *testing.T) {
 	root := t.TempDir()
 	writeCapture(t, root, "room1", "alice", inWindowSidecar("alice", testWindowStartMS))
@@ -336,7 +354,7 @@ func TestDiscoverSourceCaptures(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	found, _, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
@@ -370,7 +388,7 @@ func TestDiscoverSourceCapturesIsScopedToThisRecording(t *testing.T) {
 	other.RoomToken = "room2"
 	writeCapture(t, root, "room2", "alice", other)
 
-	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	found, _, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
@@ -389,7 +407,7 @@ func TestDiscoverSourceCapturesWithoutARoomTokenStillFiltersByWindow(t *testing.
 	far.RoomToken = "room9"
 	writeCapture(t, root, "room9", "bob", far)
 
-	found, err := DiscoverSourceCaptures(root, "", testWindowStartMS, testWindowEndMS)
+	found, _, err := DiscoverSourceCaptures(root, "", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
@@ -449,11 +467,14 @@ func TestTranscribableStreamsDropsSuppressed(t *testing.T) {
 	}
 }
 
-func TestWriteWAV16RoundTrips(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "out.wav")
+func TestFloorWriterRoundTripsAtTheDecoderScale(t *testing.T) {
+	dir := t.TempDir()
 	samples := []float32{0, 0.5, -0.5, 1, -1, 2, -2} // last two clamp
-	if err := writeWAV16(path, samples, 16000); err != nil {
-		t.Fatalf("writeWAV16: %v", err)
+	track := filepath.Join(dir, "track.wav")
+	writeFloorWAV(t, track, samples, 16000)
+	path := filepath.Join(dir, "out.wav")
+	if err := writeParticipantFloor([]string{track}, len(samples), 16000, path); err != nil {
+		t.Fatalf("writeParticipantFloor: %v", err)
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -497,18 +518,14 @@ func TestSplicedWAVLeavesTheRecordedFloorBitExact(t *testing.T) {
 		recorded[i] = float32(int16(1+(i%7)*2341)) / 32768
 	}
 
-	path := filepath.Join(t.TempDir(), "spliced.wav")
-	if err := writeWAV16(path, recorded, sampleRate); err != nil {
-		t.Fatalf("writeWAV16: %v", err)
+	dir := t.TempDir()
+	track := filepath.Join(dir, "track.wav")
+	writeFloorWAV(t, track, recorded, sampleRate)
+	path := filepath.Join(dir, "spliced.wav")
+	if err := writeParticipantFloor([]string{track}, outSamples, sampleRate, path); err != nil {
+		t.Fatalf("writeParticipantFloor: %v", err)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	back, err := readPCM16LEFloats(bytes.NewReader(raw[44:]), outSamples)
-	if err != nil {
-		t.Fatalf("readPCM16LEFloats: %v", err)
-	}
+	back := readWAVFloats(t, path)
 	if len(back) != outSamples {
 		t.Fatalf("read back %d samples, want %d", len(back), outSamples)
 	}
@@ -557,25 +574,197 @@ func TestPlausibleOffset(t *testing.T) {
 // their recorded streams silently dropped the first half of what they said.
 func TestDiscoverSourceCapturesKeepsEveryMatchingCapture(t *testing.T) {
 	root := t.TempDir()
+	// A rejoin: two call sessions of one participant, one after the other. Both
+	// belong to this recording, and keeping only the later one while
+	// suppressing their recorded streams silently dropped the first half of
+	// what they said. They do NOT overlap each other — nobody is in two call
+	// sessions at once — which is what tells this apart from the ambiguity the
+	// next test refuses.
 	first := inWindowSidecar("alice", testWindowStartMS)
+	first.CallEndWallMS = testWindowStartMS + 120_000
 	writeCapture(t, root, "room1", "alice", first)
 
-	second := inWindowSidecar("alice", testWindowStartMS+120_000)
-	dir := filepath.Join(root, "room1", "alice", "rejoin")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	raw, _ := json.Marshal(second)
-	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	second := inWindowSidecar("alice", testWindowStartMS+130_000)
+	writeCaptureAtCall(t, root, "room1", "alice", "rejoin", second)
 
-	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	found, refused, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
+	if len(refused) != 0 {
+		t.Fatalf("a plain rejoin was refused: %v", refused)
+	}
 	if len(found["alice"]) != 2 {
 		t.Fatalf("kept %d of alice's captures, want both sessions: %v", len(found["alice"]), found["alice"])
+	}
+}
+
+// The restart: a moderator stops a recording and starts another in the same
+// room, and each participant's browser files one capture per call session
+// either side of the seam. Room plus "overlaps within a minute of slack" cannot
+// tell the two apart, so the capture that ended just before this recording
+// competed with the one that covers it — and whichever the ordering happened to
+// favour laid its audio over the other's floor, or took the whole speaker down
+// with an unreadable sidecar.
+func TestDiscoverSourceCapturesPrefersTheCaptureThatCoversThisRecording(t *testing.T) {
+	root := t.TempDir()
+	// The first recording of the afternoon ran from testWindowStartMS for ten
+	// minutes; this is the SECOND one, starting a minute after it stopped.
+	const secondStartMS = testWindowEndMS + 60_000
+	const secondEndMS = secondStartMS + 600_000
+
+	// Alice's call session for the first recording. It ended thirty seconds
+	// before this recording began, so it does not reach it — except through
+	// the matching slack, which is exactly how it used to be selected.
+	earlier := inWindowSidecar("alice", testWindowStartMS)
+	earlier.CallEndWallMS = secondStartMS - 30_000
+	writeCaptureAtCall(t, root, "room1", "alice", "earlier", earlier)
+
+	// The session that actually covers this recording.
+	current := inWindowSidecar("alice", secondStartMS-5_000)
+	current.CallEndWallMS = secondEndMS + 5_000
+	writeCaptureAtCall(t, root, "room1", "alice", "current", current)
+
+	found, refused, err := DiscoverSourceCaptures(root, "room1", secondStartMS, secondEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if len(refused) != 0 {
+		t.Fatalf("selection refused a case it can decide: %v", refused)
+	}
+	if len(found["alice"]) != 1 {
+		t.Fatalf("selected %d of alice's captures, want only the one covering this recording: %v",
+			len(found["alice"]), found["alice"])
+	}
+	if !strings.HasSuffix(found["alice"][0], "current") {
+		t.Fatalf("selected the neighbouring capture: %v", found["alice"])
+	}
+
+	// And the first recording still gets the earlier capture, not this one.
+	found, _, err = DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if len(found["alice"]) != 1 || !strings.HasSuffix(found["alice"][0], "earlier") {
+		t.Fatalf("the first recording got %v, want only the earlier capture", found["alice"])
+	}
+}
+
+// Two captures that cover this recording AND each other. One participant was
+// not in two call sessions at once, so one of them describes another recording
+// of this room and nothing on disk says which. Splicing either would be a
+// guess, and the guess costs another meeting's speech inside this transcript.
+func TestDiscoverSourceCapturesRefusesTwoCapturesThatOverlapEachOther(t *testing.T) {
+	root := t.TempDir()
+	first := inWindowSidecar("alice", testWindowStartMS)
+	writeCaptureAtCall(t, root, "room1", "alice", "first", first)
+	second := inWindowSidecar("alice", testWindowStartMS+120_000)
+	writeCaptureAtCall(t, root, "room1", "alice", "second", second)
+	// Bob's single capture is unaffected: one participant's ambiguity is not
+	// everybody's.
+	writeCapture(t, root, "room1", "bob", inWindowSidecar("bob", testWindowStartMS))
+
+	found, refused, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if _, ok := found["alice"]; ok {
+		t.Fatalf("an ambiguous pair was resolved rather than refused: %v", found["alice"])
+	}
+	reason := refused["alice"]
+	if !strings.Contains(reason, "overlap each other") {
+		t.Fatalf("the refusal does not say what it could not decide: %q", reason)
+	}
+	// Named, so an administrator can go and look at the two directories.
+	if !strings.Contains(reason, "first") || !strings.Contains(reason, "second") {
+		t.Fatalf("the refusal does not name both captures: %q", reason)
+	}
+	if len(found["bob"]) != 1 {
+		t.Fatalf("bob lost his capture to alice's ambiguity: %v", found["bob"])
+	}
+}
+
+// Neither capture reaches this recording on its own; both are close enough for
+// the slack to pull in. The slack is there to rescue a capture that just
+// misses, not to choose between two that just miss from opposite sides.
+func TestDiscoverSourceCapturesRefusesTwoCapturesThatOnlyTheSlackReaches(t *testing.T) {
+	root := t.TempDir()
+	before := inWindowSidecar("alice", testWindowStartMS-400_000)
+	before.CallEndWallMS = testWindowStartMS - 30_000
+	writeCaptureAtCall(t, root, "room1", "alice", "before", before)
+	after := inWindowSidecar("alice", testWindowEndMS+30_000)
+	after.CallEndWallMS = testWindowEndMS + 400_000
+	writeCaptureAtCall(t, root, "room1", "alice", "after", after)
+
+	found, refused, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if _, ok := found["alice"]; ok {
+		t.Fatalf("two slack-only captures were both selected: %v", found["alice"])
+	}
+	if !strings.Contains(refused["alice"], "matching slack") {
+		t.Fatalf("the refusal does not say the slack was all that reached: %q", refused["alice"])
+	}
+}
+
+// The slack still does its job when there is only one candidate: a client whose
+// clock is a few seconds off, or that stopped recording just before the
+// recorder detached, is still selected.
+func TestDiscoverSourceCapturesStillUsesTheSlackForASingleCapture(t *testing.T) {
+	root := t.TempDir()
+	near := inWindowSidecar("alice", testWindowEndMS+30_000)
+	near.CallEndWallMS = testWindowEndMS + 200_000
+	writeCapture(t, root, "room1", "alice", near)
+
+	found, refused, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if len(refused) != 0 {
+		t.Fatalf("a single slack-reached capture was refused: %v", refused)
+	}
+	if len(found["alice"]) != 1 {
+		t.Fatalf("the slack no longer rescues a single capture: %v", found)
+	}
+}
+
+func TestCaptureWindowFitPrefersARealIntersection(t *testing.T) {
+	const start, end = int64(1_000_000), int64(1_600_000)
+	cases := []struct {
+		name         string
+		aStart, aEnd int64
+		want         int
+	}{
+		{"covers the recording", start - 5_000, end + 5_000, captureWindowIntersects},
+		{"inside it", start + 1_000, end - 1_000, captureWindowIntersects},
+		// Touching is not covering. A capture that ended at the instant this
+		// recording began holds no audio inside it, and that is the shape a
+		// restart's neighbouring capture has.
+		{"touching the start", start - 5_000, start, captureWindowWithinSlack},
+		{"a second past the start", start - 5_000, start + 1_000, captureWindowIntersects},
+		{"touching the end", end, end + 5_000, captureWindowWithinSlack},
+		{"a second before the end", end - 1_000, end + 5_000, captureWindowIntersects},
+		{"ends thirty seconds before it", start - 400_000, start - 30_000, captureWindowWithinSlack},
+		{"starts thirty seconds after it", end + 30_000, end + 400_000, captureWindowWithinSlack},
+		{"well before", start - 900_000, start - 600_000, captureWindowApart},
+		{"well after", end + 600_000, end + 900_000, captureWindowApart},
+		{"unset", 0, 0, captureWindowApart},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := captureWindowFit(tc.aStart, tc.aEnd, start, end)
+			if got != tc.want {
+				t.Fatalf("captureWindowFit(%d,%d,%d,%d) = %d, want %d",
+					tc.aStart, tc.aEnd, start, end, got, tc.want)
+			}
+			// Every fit above captureWindowApart is still an overlap by the
+			// rule the operator shares, so nothing that used to be a candidate
+			// has stopped being one.
+			if (got != captureWindowApart) != windowsOverlap(tc.aStart, tc.aEnd, start, end) {
+				t.Fatalf("captureWindowFit disagrees with windowsOverlap for %d-%d", tc.aStart, tc.aEnd)
+			}
+		})
 	}
 }
 
@@ -628,7 +817,7 @@ func TestDiscoverSourceCapturesIgnoresSupersededDirectories(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	found, _, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
@@ -665,19 +854,25 @@ func TestSourceDecodeTimeoutIsBounded(t *testing.T) {
 	}
 }
 
-// A WAV that cannot be written must say so. Reporting success on a truncated
-// file hands it to the transcription pass as if it were whole, and that
-// failure is fatal to a build that would otherwise have published.
-func TestWriteWAV16ReportsAFailedWrite(t *testing.T) {
+// A render that cannot be written must say so. Reporting success on a truncated
+// file hands it to the mix and to the transcription pass as if it were whole,
+// and that failure is fatal to a build that would otherwise have published.
+func TestFloorWriterReportsAFailedWrite(t *testing.T) {
 	dir := t.TempDir()
+	track := filepath.Join(dir, "track.wav")
+	writeFloorWAV(t, track, []float32{0.5, -0.5, 0}, 16000)
 	// A directory is not a file: Create fails, and the error must surface.
-	if err := writeWAV16(dir, []float32{0.1, -0.1}, 16000); err == nil {
+	if err := writeParticipantFloor([]string{track}, 3, 16000, dir); err == nil {
 		t.Fatal("writing over a directory reported success")
+	}
+	// And a floor with no track behind it is refused rather than written empty.
+	if err := writeParticipantFloor(nil, 3, 16000, filepath.Join(dir, "empty.wav")); err == nil {
+		t.Fatal("a floor with no recorded track reported success")
 	}
 
 	good := filepath.Join(dir, "ok.wav")
-	if err := writeWAV16(good, []float32{0.5, -0.5, 0}, 16000); err != nil {
-		t.Fatalf("writeWAV16: %v", err)
+	if err := writeParticipantFloor([]string{track}, 3, 16000, good); err != nil {
+		t.Fatalf("writeParticipantFloor: %v", err)
 	}
 	info, err := os.Stat(good)
 	if err != nil {
@@ -761,18 +956,96 @@ func TestDecodeSourceSegmentEnforcesTheCeiling(t *testing.T) {
 		t.Skipf("could not synthesise input: %v: %s", err, out)
 	}
 
+	out := filepath.Join(dir, "decoded.wav")
 	// A ceiling below the real length must be refused, through the real path.
-	if _, err := decodeSourceSegment(context.Background(), src, 16000, 30*time.Second, 16000); err == nil {
-		t.Fatal("decode past the ceiling was accepted through decodeSourceSegment")
+	if _, err := decodeSourceSegmentToFile(context.Background(), src, out, 16000, 30*time.Second, 16000); err == nil {
+		t.Fatal("decode past the ceiling was accepted through decodeSourceSegmentToFile")
 	}
-	// A ceiling above it decodes normally.
-	samples, err := decodeSourceSegment(context.Background(), src, 16000, 30*time.Second, 16000*60)
+	// A ceiling above it decodes normally, into a WAV the renderer can open.
+	samples, err := decodeSourceSegmentToFile(context.Background(), src, out, 16000, 30*time.Second, 16000*60)
 	if err != nil {
-		t.Fatalf("decodeSourceSegment: %v", err)
+		t.Fatalf("decodeSourceSegmentToFile: %v", err)
 	}
-	if len(samples) < 16000*9 {
-		t.Fatalf("decoded %d samples, want about ten seconds", len(samples))
+	if samples < 16000*9 {
+		t.Fatalf("decoded %d samples, want about ten seconds", samples)
 	}
+	decoded, err := openWAV(out)
+	if err != nil {
+		t.Fatalf("the decoded segment is not a readable WAV: %v", err)
+	}
+	defer decoded.Close()
+	if decoded.samples != samples {
+		t.Fatalf("the decoded WAV declares %d samples, want the %d that were written", decoded.samples, samples)
+	}
+}
+
+// A decode that never reaches ffmpeg must not leak the pipe it would have read
+// it through.
+//
+// os/exec closes both ends of a StdoutPipe inside Start — and only there. A
+// return between opening the pipe and starting the command therefore leaked two
+// descriptors every time, and both of the returns that sat in that gap are disk
+// failures: the file that cannot be created, the header that cannot be written.
+// A build that hits one of those hits it for every segment of every upload, and
+// a build worker holds its descriptors for as long as it runs.
+func TestDecodeSourceSegmentToFileClosesItsPipeWhenItNeverStarts(t *testing.T) {
+	openFDs := func(t *testing.T) int {
+		t.Helper()
+		entries, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Skip("no /proc/self/fd to count open descriptors with")
+		}
+		return len(entries)
+	}
+	// Enough attempts that two descriptors each is unmistakable next to the
+	// noise of the runtime opening and closing its own files.
+	const attempts = 32
+	dir := t.TempDir()
+	input := filepath.Join(dir, "segment.webm")
+	if err := os.WriteFile(input, []byte("not media"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	t.Run("the output file cannot be created", func(t *testing.T) {
+		before := openFDs(t)
+		outPath := filepath.Join(dir, "no-such-directory", "decoded.wav")
+		for i := 0; i < attempts; i++ {
+			_, err := decodeSourceSegmentToFile(context.Background(), input, outPath, 48000, time.Second, 48000)
+			if err == nil {
+				t.Fatal("a decode into a directory that does not exist succeeded")
+			}
+			if !strings.Contains(err.Error(), "create decoded segment") {
+				t.Fatalf("the decode failed somewhere else: %v", err)
+			}
+		}
+		if after := openFDs(t); after > before+2 {
+			t.Fatalf("%d failed decodes left %d descriptors open, from %d", attempts, after-before, before)
+		}
+	})
+
+	t.Run("the header cannot be written", func(t *testing.T) {
+		// /dev/full opens and then refuses every write with ENOSPC, which is
+		// the failure this path exists for: a disk that filled between the
+		// create and the header.
+		full, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+		if err != nil {
+			t.Skip("no writable /dev/full to fail a header write against")
+		}
+		_ = full.Close()
+		before := openFDs(t)
+		for i := 0; i < attempts; i++ {
+			_, err := decodeSourceSegmentToFile(context.Background(), input, "/dev/full", 48000, time.Second, 48000)
+			if err == nil {
+				t.Fatal("a decode whose header could not be written succeeded")
+			}
+			if !strings.Contains(err.Error(), "decoded segment header") {
+				t.Fatalf("the decode failed somewhere else: %v", err)
+			}
+		}
+		if after := openFDs(t); after > before+2 {
+			t.Fatalf("%d failed decodes left %d descriptors open, from %d", attempts, after-before, before)
+		}
+	})
 }
 
 // --- the splice --------------------------------------------------------------
@@ -791,6 +1064,79 @@ func recordedMarker(n int, value float32) []float32 {
 		out[i] = value
 	}
 	return out
+}
+
+// --- the splice, rendered to a file ------------------------------------------
+//
+// The renderer works on a meeting-length WAV in place, because at the mix's
+// 48 kHz a two-hour timeline is 1.4 GB and the splice needs several of them.
+// These helpers put the file-based renderer back into the shape the properties
+// below are stated in: a floor in, a rendered timeline out. The assertions are
+// stronger for it — "outside the window the recorded track survives" is checked
+// on the bytes the mix and the recogniser actually read, not on a slice that
+// still has a quantisation step ahead of it.
+
+// writeFloorWAV writes a mono 16-bit floor for the renderer to work on.
+func writeFloorWAV(t *testing.T, path string, samples []float32, sampleRate int) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create floor: %v", err)
+	}
+	defer f.Close()
+	if err := writeWAVHeader(f, len(samples), sampleRate); err != nil {
+		t.Fatalf("write floor header: %v", err)
+	}
+	raw := make([]byte, len(samples)*2)
+	for i, sample := range samples {
+		s := uint16(s16FromFloat32(sample))
+		raw[i*2] = byte(s)
+		raw[i*2+1] = byte(s >> 8)
+	}
+	if _, err := f.Write(raw); err != nil {
+		t.Fatalf("write floor: %v", err)
+	}
+}
+
+// readWAVFloats reads a whole mono WAV back as floats.
+func readWAVFloats(t *testing.T, path string) []float32 {
+	t.Helper()
+	wav, err := openWAV(path)
+	if err != nil {
+		t.Fatalf("openWAV: %v", err)
+	}
+	defer wav.Close()
+	out := make([]float32, wav.samples)
+	if err := wav.readSamples(0, out); err != nil {
+		t.Fatalf("readSamples: %v", err)
+	}
+	return out
+}
+
+// spliceOnFloor renders a capture over a floor by way of the real file-based
+// path, and hands back what the file holds afterwards.
+func spliceOnFloor(t *testing.T, recorded []float32, dirs []string, base SourceTimeBase, sampleRate, outSamples int) ([]float32, SourceRenderReport, error) {
+	t.Helper()
+	return spliceOnFloorFading(t, recorded, dirs, base, sampleRate, outSamples, 0)
+}
+
+// spliceOnFloorFading is spliceOnFloor with the crossfade the published mix
+// uses. Hard edges by default, because that is what the boundary properties
+// below are about.
+func spliceOnFloorFading(t *testing.T, recorded []float32, dirs []string, base SourceTimeBase, sampleRate, outSamples, fadeSamples int) ([]float32, SourceRenderReport, error) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "render.wav")
+	writeFloorWAV(t, path, recorded, sampleRate)
+	floor, err := openWAV(path)
+	if err != nil {
+		t.Fatalf("openWAV: %v", err)
+	}
+	report, renderErr := renderSourceTrack(context.Background(), floor, dirs, base, "", dir, sampleRate, outSamples, fadeSamples)
+	if err := floor.Close(); err != nil {
+		t.Fatalf("close floor: %v", err)
+	}
+	return readWAVFloats(t, path), report, renderErr
 }
 
 // The boundary property, stated as narrowly as it can be: a segment overlaid in
@@ -913,7 +1259,7 @@ func TestSpliceUsesBothSidesOfAReloadAndKeepsTheRecordedAudioInTheGap(t *testing
 	recorded := recordedMarker(outSamples, 0.25)
 	original := append([]float32(nil), recorded...)
 
-	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	out, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err != nil {
 		t.Fatalf("a reloader's capture was refused: %v", err)
 	}
@@ -941,13 +1287,6 @@ func TestSpliceUsesBothSidesOfAReloadAndKeepsTheRecordedAudioInTheGap(t *testing
 	}
 	if report.SplicedMS < 38_000 || report.SplicedMS > 42_000 {
 		t.Fatalf("report claims %d ms spliced, want about 40000", report.SplicedMS)
-	}
-	// The caller's own slice is never mutated: it is the fallback if the WAV
-	// write fails, and the evidence that a splice changed only what it says.
-	for i := range recorded {
-		if math.Float32bits(recorded[i]) != math.Float32bits(original[i]) {
-			t.Fatalf("SpliceSourceTrack mutated the caller's recorded track at sample %d", i)
-		}
 	}
 }
 
@@ -979,7 +1318,7 @@ func TestSpliceSkipsAnUnplaceableSegmentAndKeepsTheRest(t *testing.T) {
 
 	recorded := recordedMarker(outSamples, 0.25)
 	original := append([]float32(nil), recorded...)
-	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	out, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err != nil {
 		t.Fatalf("one unplaceable segment refused the whole speaker: %v", err)
 	}
@@ -1022,7 +1361,7 @@ func TestSpliceSkipsASegmentWhoseAudioDoesNotMatchItsSidecar(t *testing.T) {
 	})
 
 	recorded := recordedMarker(outSamples, 0.25)
-	_, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	_, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err == nil {
 		t.Fatal("a segment whose audio contradicts its sidecar was used")
 	}
@@ -1031,6 +1370,69 @@ func TestSpliceSkipsASegmentWhoseAudioDoesNotMatchItsSidecar(t *testing.T) {
 	}
 	if len(report.Rejections) != 1 || !strings.Contains(report.Rejections[0], "does not match the sidecar") {
 		t.Fatalf("the skip does not say why: %v", report.Rejections)
+	}
+}
+
+// Where "far less" stops, from both sides.
+//
+// minSegmentDecodedFraction is the only thing standing between a file that
+// disagrees with its own manifest and a splice that trusts its timing claims
+// anyway, and no test held it to a number: the case above uses five seconds of
+// a declared sixty, which would pass at any threshold worth having. The
+// browser-capture CI leg cannot hold it either — it sees the segments the
+// splice REFUSED and their figures, never the ones it accepted — so lowering
+// the constant is invisible everywhere else. One point either side of it here.
+func TestSpliceHoldsTheDecodedFractionToNinetyPercent(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	const sampleRate = 16000
+	const outSamples = sampleRate * 120
+
+	// Twenty seconds declared, so a percentage point is 200 ms — far wider than
+	// anything the decode can round away, since the segment is written as WAV
+	// and resampled sample for sample.
+	for _, tc := range []struct {
+		name    string
+		seconds float64
+		placed  int
+	}{
+		{name: "89% of the declared window is not enough", seconds: 17.8, placed: 0},
+		{name: "91% of it is", seconds: 18.2, placed: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			segment := syntheticSegmentDelayed(0, 20, 1000, 0, 0)
+			segment.AudioName = "segment-0.webm"
+			writeToneSegment(t, dir, segment.AudioName, tc.seconds, 440)
+			writeSidecar(t, dir, SourceSidecar{
+				Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+				CallStartWallMS: segment.StartWallMS, CallEndWallMS: segment.StopWallMS,
+				Segments: []SourceSegment{segment},
+			})
+
+			recorded := recordedMarker(outSamples, 0.25)
+			_, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
+			if report.Placed != tc.placed {
+				t.Fatalf("%.1f s under a 20 s window placed %d segment(s), want %d: %v (err %v)",
+					tc.seconds, report.Placed, tc.placed, report.Rejections, err)
+			}
+			if tc.placed == 0 {
+				if err == nil {
+					t.Fatal("a segment under the threshold was used")
+				}
+				if len(report.Rejections) != 1 || !strings.Contains(report.Rejections[0], "does not match the sidecar") {
+					t.Fatalf("the skip does not say why: %v", report.Rejections)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a segment over the threshold was refused: %v (%v)", err, report.Rejections)
+			}
+			if report.Skipped != 0 {
+				t.Fatalf("a segment over the threshold was skipped: %v", report.Rejections)
+			}
+		})
 	}
 }
 
@@ -1059,9 +1461,9 @@ func TestSpliceOverlaysOnlyTheWindowASegmentDeclares(t *testing.T) {
 
 	recorded := recordedMarker(outSamples, 0.25)
 	original := append([]float32(nil), recorded...)
-	out, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	out, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err != nil {
-		t.Fatalf("SpliceSourceTrack: %v", err)
+		t.Fatalf("renderSourceTrack: %v", err)
 	}
 	if report.Placed != 1 {
 		t.Fatalf("placed %d segments, want 1", report.Placed)
@@ -1080,16 +1482,24 @@ func TestSpliceOverlaysOnlyTheWindowASegmentDeclares(t *testing.T) {
 
 // A degenerate call is an error, not a division by zero.
 func TestSpliceRefusesADegenerateTimeline(t *testing.T) {
-	if _, _, err := SpliceSourceTrack(context.Background(), nil, nil, testBase(), 0, 100); err == nil {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "render.wav")
+	writeFloorWAV(t, path, make([]float32, 100), 16000)
+	floor, err := openWAV(path)
+	if err != nil {
+		t.Fatalf("openWAV: %v", err)
+	}
+	defer floor.Close()
+	if _, err := renderSourceTrack(context.Background(), floor, nil, testBase(), "", dir, 0, 100, 0); err == nil {
 		t.Fatal("a zero sample rate was accepted")
 	}
-	if _, _, err := SpliceSourceTrack(context.Background(), nil, nil, testBase(), 16000, 0); err == nil {
+	if _, err := renderSourceTrack(context.Background(), floor, nil, testBase(), "", dir, 16000, 0, 0); err == nil {
 		t.Fatal("a zero-length timeline was accepted")
 	}
 }
 
-// A capture that contributes nothing is an error rather than a WAV identical to
-// the recorded track, so the caller leaves the stream alone.
+// A capture that contributes nothing is an error, and leaves the render exactly
+// as it found it, so the caller can throw it away and keep the recorded track.
 func TestSpliceRefusesWhenNoSegmentCanBePlaced(t *testing.T) {
 	const sampleRate = 16000
 	const outSamples = sampleRate * 120
@@ -1104,12 +1514,14 @@ func TestSpliceRefusesWhenNoSegmentCanBePlaced(t *testing.T) {
 	})
 
 	recorded := recordedMarker(outSamples, 0.25)
-	samples, report, err := SpliceSourceTrack(context.Background(), recorded, []string{dir}, testBase(), sampleRate, outSamples)
+	samples, report, err := spliceOnFloor(t, recorded, []string{dir}, testBase(), sampleRate, outSamples)
 	if err == nil {
 		t.Fatal("a capture with nothing placeable produced a track")
 	}
-	if samples != nil {
-		t.Fatal("a refused splice still returned audio")
+	for i := range samples {
+		if math.Float32bits(samples[i]) != math.Float32bits(recorded[i]) {
+			t.Fatalf("sample %d of the render changed although nothing could be placed", i)
+		}
 	}
 	if report.Segments != 1 || report.Placed != 0 {
 		t.Fatalf("report claims %d segments and %d placed", report.Segments, report.Placed)
@@ -1147,11 +1559,11 @@ func TestSpliceUsesEveryCaptureDirectory(t *testing.T) {
 
 	recorded := recordedMarker(outSamples, 0.25)
 	original := append([]float32(nil), recorded...)
-	out, report, err := SpliceSourceTrack(context.Background(), recorded,
+	out, report, err := spliceOnFloor(t, recorded,
 		[]string{write("session-1", first, 20, 440), write("session-2", second, 20, 660)},
 		testBase(), sampleRate, outSamples)
 	if err != nil {
-		t.Fatalf("SpliceSourceTrack: %v", err)
+		t.Fatalf("renderSourceTrack: %v", err)
 	}
 	if report.Placed != 2 {
 		t.Fatalf("placed %d segments across two captures, want 2", report.Placed)
@@ -1160,5 +1572,50 @@ func TestSpliceUsesEveryCaptureDirectory(t *testing.T) {
 		if math.Float32bits(out[at]) == math.Float32bits(original[at]) {
 			t.Fatalf("sample %d still holds the recorded value; one capture was ignored", at)
 		}
+	}
+}
+
+// The operator has already shifted every wall timestamp. Loading must not
+// apply the raw diagnostic offset a second time or alter the RTP drift fit.
+func TestSourceClockCorrectionPlacementAndFallback(t *testing.T) {
+	dir := t.TempDir()
+	segment := syntheticSegment(5000, 120, 1000, 80)
+	sidecar := map[string]any{
+		"format": SourceCaptureFormat, "ownerUserId": "alice", "roomToken": "room",
+		"clockStatus": "corrected", "clockCorrectionMs": 300000,
+		"callStartWallMs": segment.StartWallMS, "callEndWallMs": segment.StopWallMS,
+		"segments": []SourceSegment{segment},
+	}
+	write := func() {
+		raw, err := json.Marshal(sidecar)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	loaded, err := LoadSourceSidecar(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	placement, err := FitPlacement(loaded.Segments[0], testBase())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(placement.OffsetMS-5000) > 2 || math.Abs(placement.RatePPMDeviation()+80) > 5 {
+		t.Fatalf("corrected placement: %+v", placement)
+	}
+	sidecar["clockStatus"] = "unreliable"
+	write()
+	if _, err := LoadSourceSidecar(dir); err == nil || !strings.Contains(err.Error(), "clock") {
+		t.Fatalf("unreliable clock accepted: %v", err)
+	}
+	delete(sidecar, "clockStatus")
+	delete(sidecar, "clockCorrectionMs")
+	write()
+	if _, err := LoadSourceSidecar(dir); err != nil {
+		t.Fatalf("legacy sidecar refused: %v", err)
 	}
 }

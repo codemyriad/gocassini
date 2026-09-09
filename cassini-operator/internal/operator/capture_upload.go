@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cassini-operator/internal/operator/appapi"
+	"github.com/oklog/ulid/v2"
 )
 
 // Source-capture upload intake.
@@ -107,13 +108,23 @@ type captureSegment struct {
 }
 
 type captureSidecar struct {
-	Format          string           `json:"format"`
-	RoomToken       string           `json:"roomToken"`
-	ParticipantID   string           `json:"participantId"`
-	CallStartWallMS int64            `json:"callStartWallMs"`
-	CallEndWallMS   int64            `json:"callEndWallMs"`
-	UserAgent       string           `json:"userAgent"`
-	Segments        []captureSegment `json:"segments"`
+	ClockSamples []captureClockSample `json:"clockSamples,omitempty"`
+	// Server-owned: timestamps on disk have already had ClockCorrectionMS subtracted.
+	ClockStatus        string           `json:"clockStatus,omitempty"`
+	ClockCorrectionMS  int64            `json:"clockCorrectionMs,omitempty"`
+	ClockUncertaintyMS float64          `json:"clockUncertaintyMs,omitempty"`
+	ClockVariationMS   float64          `json:"clockVariationMs,omitempty"`
+	RecordingID        string           `json:"recordingId,omitempty"`
+	SessionID          string           `json:"sessionId,omitempty"`
+	InputDigest        string           `json:"inputDigest,omitempty"`
+	ReceiptID          string           `json:"receiptId,omitempty"`
+	Format             string           `json:"format"`
+	RoomToken          string           `json:"roomToken"`
+	ParticipantID      string           `json:"participantId"`
+	CallStartWallMS    int64            `json:"callStartWallMs"`
+	CallEndWallMS      int64            `json:"callEndWallMs"`
+	UserAgent          string           `json:"userAgent"`
+	Segments           []captureSegment `json:"segments"`
 	// OwnerUserID is stamped by the server from the authenticated caller. It is
 	// never read from the client's payload.
 	OwnerUserID string `json:"ownerUserId"`
@@ -130,6 +141,9 @@ func validateSidecar(sidecar *captureSidecar) error {
 	}
 	if !captureSafeName.MatchString(sidecar.RoomToken) {
 		return fmt.Errorf("invalid room token")
+	}
+	if len(sidecar.ClockSamples) > 128 {
+		return fmt.Errorf("too many clock samples")
 	}
 	if len(sidecar.Segments) == 0 {
 		return fmt.Errorf("no segments")
@@ -589,7 +603,7 @@ func (rt *Runtime) captureEnabledHandler(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]bool{"enabled": sourceCaptureEnabled()})
+	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": sourceCaptureEnabled(), "uploadProtocol": 2})
 }
 
 // refuseCaptureUpload answers one refusal and leaves a server-side trace of it.
@@ -756,6 +770,10 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 					return
 				}
 				sidecar = &parsed
+				// The legacy route has no server recording/session binding.
+				sidecar.RecordingID, sidecar.SessionID, sidecar.InputDigest = "", "", ""
+				sidecar.ClockSamples = nil
+				sidecar.ClockStatus, sidecar.ClockCorrectionMS, sidecar.ClockUncertaintyMS, sidecar.ClockVariationMS = "", 0, 0, 0
 				// A re-upload replaces a capture that is still on disk, and
 				// until this point the quota was charged as if both would
 				// coexist. They never do: promotion sets the old one aside and
@@ -859,6 +877,9 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 		}
 		sidecar.OwnerUserID = owner
 		sidecar.ReceivedAt = time.Now().UTC().Format(time.RFC3339)
+		// Persist notification intent with the files. Recovery can retry the
+		// database transaction even if this request never reaches it.
+		sidecar.ReceiptID = ulid.Make().String()
 
 		// Complete the directory in staging, THEN swap it in. Writing the
 		// sidecar after promotion left a window where a crash or a disk error

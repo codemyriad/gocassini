@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -56,21 +57,15 @@ import (
 //	and the first arrives after the encoder spins up, so anchoring on it placed
 //	every speaker late by up to a second.
 //
-// # What that costs, stated plainly
+// # Clock correction and remaining error
 //
-// The offset is only as good as the agreement between the participant's clock
-// and the recorder's, plus the encoder's roughly-constant latency. With both
-// machines NTP-disciplined that is tens of milliseconds, comfortably inside a
-// word. With a badly-synchronised client it is seconds, and the transcript
-// would carry that speaker's words at the wrong time.
-//
-// PlausibleOffset below is a guard, not a fix: it rejects placements that fall
-// outside the recording, which catches a clock that is wrong by hours but not
-// one that is wrong by seconds. The real fix is a single cross-correlation
-// against any stretch where the recorded track has intact audio — one constant,
-// needing a few good seconds anywhere in the call rather than a good reference
-// throughout. That is not implemented yet, and until it is, ingestion should be
-// treated as trustworthy only where clients are known to be time-synchronised.
+// New immutable captures reach this reader with their wall timestamps already
+// normalized to the operator's clock. Intake preserves the raw four-timestamp
+// observations, applied offset and uncertainty, and marks unreliable clocks so
+// this reader retains the recorded audio. See docs/source-capture-transfer.md.
+// Operator and recorder must share synchronized server time. Legacy captures
+// without observations still depend on client clock agreement; encoder latency
+// and clock movement between observations remain residual placement errors.
 
 // SourceCaptureFormat is the sidecar schema this ingester accepts. It must
 // match SOURCE_CAPTURE_FORMAT in cassini-app/src/capture/protocol.ts and
@@ -121,6 +116,8 @@ type SourceSegment struct {
 
 // SourceSidecar is the manifest uploaded alongside the audio.
 type SourceSidecar struct {
+	ClockStatus     string          `json:"clockStatus,omitempty"`
+	RecordingID     string          `json:"recordingId,omitempty"`
 	Format          string          `json:"format"`
 	RoomToken       string          `json:"roomToken"`
 	CallStartWallMS int64           `json:"callStartWallMs"`
@@ -310,35 +307,30 @@ func PlausibleOffset(placement Placement, timelineMS int64) bool {
 	return placement.OffsetMS > -slack && placement.OffsetMS < float64(timelineMS)+slack
 }
 
-// overlayOntoTimeline writes one segment's resampled PCM over `dst`, in place,
-// and reports the half-open output window [start, stop) it wrote.
+// overlayWindow is where a segment's audio lands on the output timeline: the
+// half-open window [start, stop) of output samples the placement covers.
 //
-// Overlay, not sum. `dst` starts as the participant's RECORDED track, so adding
-// would play both copies of the same words at once; writing over it means the
-// upload replaces the recorded audio exactly where it has audio, and nowhere
-// else. That is the whole safety property of the splice: outside the window the
-// recorded track is left byte-identical, so the result can never be worse than
-// not ingesting at all.
+// The two boundaries are decided here and nowhere else, for every renderer.
+// The window opens at the first output sample whose position inside the segment
+// is non-negative, and closes at the first one that would need a sample past
+// the end of the segment. So each output sample is written by at most one
+// segment, no instant is represented twice, and none is skipped between the
+// recorded track and the upload.
 //
-// The two boundaries are decided here and nowhere else. The window opens at the
-// first output sample whose position inside the segment is non-negative, and
-// closes at the first one that would need a sample past the end of the segment.
-// So each output sample is written by at most one segment, no instant is
-// represented twice, and none is skipped between the recorded track and the
-// upload. What a seam can still carry is a discontinuity — a click where the
-// two sources disagree about the participant's clock by a few milliseconds —
-// which is the placement error the anchors and the wall-clock offset already
-// determine, not something the overlay adds.
-//
-// Pure arithmetic, deliberately not delegated to ffmpeg: the rate correction is
-// a handful of parts per million, fiddly to express as a filter graph and
-// trivial to state directly. Linear interpolation is more than enough at that
-// ratio — the correction moves a sample by a small fraction of a sample.
-func overlayOntoTimeline(dst, src []float32, sampleRate int, placement Placement) (int, int) {
-	if len(dst) == 0 || len(src) < 2 || sampleRate <= 0 || placement.Rate <= 0 {
+// The closed form is inverted algebra, but the boundary is then walked against
+// the very expression the renderer evaluates per sample. Trusting the ceil
+// alone would let a rounding difference between the two put one sample inside
+// the window for the mix and outside it for the transcript, which is exactly
+// the disagreement this function exists to prevent.
+func overlayWindow(placement Placement, sampleRate, srcSamples, dstSamples int) (int, int) {
+	if dstSamples <= 0 || srcSamples < 2 || sampleRate <= 0 || placement.Rate <= 0 {
 		return 0, 0
 	}
 	msPerSample := 1000.0 / float64(sampleRate)
+	// The source position the renderer will ask for at output sample j.
+	pos := func(j int) float64 {
+		return ((float64(j)*msPerSample - placement.OffsetMS) / placement.Rate) / msPerSample
+	}
 	// The first output sample at or after the segment's own start. Ceil rather
 	// than round: rounding down would ask for a source position just before
 	// sample zero, which is audio the segment does not have.
@@ -346,11 +338,110 @@ func overlayOntoTimeline(dst, src []float32, sampleRate int, placement Placement
 	if start < 0 {
 		start = 0
 	}
-	if start >= len(dst) {
+	if start >= dstSamples {
 		return 0, 0
 	}
-	stop := start
-	for j := start; j < len(dst); j++ {
+	stop := int(math.Ceil((placement.OffsetMS + placement.Rate*float64(srcSamples)*msPerSample) / msPerSample))
+	if stop > dstSamples {
+		stop = dstSamples
+	}
+	if stop < start {
+		stop = start
+	}
+	for stop > start && pos(stop-1) >= float64(srcSamples) {
+		stop--
+	}
+	for stop < dstSamples && pos(stop) < float64(srcSamples) {
+		stop++
+	}
+	if stop <= start {
+		return 0, 0
+	}
+	return start, stop
+}
+
+// minFadeSamples is the shortest ramp that is a fade rather than a step.
+//
+// The head weight is (head+1)/fadeSamples, so a one-sample fade puts its very
+// first sample at full weight: the "crossfade" is then a full-amplitude jump
+// from the recorded track to the upload, which is precisely the click the fade
+// exists to remove. Two samples is the shortest ramp that starts below full
+// weight, and with the fade at both ends that makes four output samples the
+// shortest window a crossfade can be applied to at all.
+const minFadeSamples = 2
+
+// effectiveFade is how long a fade can be inside a window of `length` output
+// samples: the requested length, or half the window when the window is too
+// short to carry two of them.
+//
+// It returns less than minFadeSamples for a window that cannot be faded, and
+// the callers then leave that window alone. Skipping rather than scaling
+// further down, because there is nothing left to scale to: at three output
+// samples or fewer, every weight the formula can produce is 1, so "fading" is
+// a full-amplitude step and the honest choice between a step and no splice is
+// no splice. What is given up is at most three samples — 62 microseconds at
+// 48 kHz — of a participant's upload, and what stands there instead is their
+// recorded audio, which is where every other refusal in this file lands.
+func effectiveFade(fadeSamples, length int) int {
+	if fadeSamples <= 0 {
+		return 0
+	}
+	if fadeSamples*2 > length {
+		// Too short to fade both ends at full length. Half the window each way
+		// still removes the discontinuity, which is the point.
+		fadeSamples = length / 2
+	}
+	return fadeSamples
+}
+
+// overlayInto renders the part of [start, stop) that falls inside one chunk of
+// the output timeline.
+//
+// Overlay, not sum. The destination is the participant's RECORDED track, so
+// adding would play both copies of the same words at once; writing over it
+// means the upload replaces the recorded audio exactly where it has audio, and
+// nowhere else. That is the whole safety property of the splice: outside the
+// window the recorded track is left byte-identical, so the result can never be
+// worse than not ingesting at all.
+//
+// Pure arithmetic, deliberately not delegated to ffmpeg: the rate correction is
+// a handful of parts per million, fiddly to express as a filter graph and
+// trivial to state directly. Linear interpolation is more than enough at that
+// ratio — the correction moves a sample by a small fraction of a sample.
+//
+// dst holds output samples [dstBase, dstBase+len(dst)); src holds source
+// samples [srcBase, srcBase+len(src)) of a segment that is srcSamples long in
+// total. Callers that hold the whole timeline pass zero for both bases.
+//
+// fadeSamples, when non-zero, ramps the upload in over the first fadeSamples of
+// the window and back out over the last. What a seam otherwise carries is a
+// discontinuity — a click where the two sources disagree about the
+// participant's clock by a few milliseconds — which is the placement error the
+// anchors and the wall-clock offset already determine, not something the
+// overlay adds. The transcript never minded; a listener would.
+func overlayInto(dst []float32, dstBase int, src []float32, srcBase int, start, stop int, placement Placement, sampleRate, srcSamples, fadeSamples int) {
+	if len(dst) == 0 || len(src) == 0 || stop <= start || sampleRate <= 0 || placement.Rate <= 0 {
+		return
+	}
+	if fadeSamples > 0 {
+		fadeSamples = effectiveFade(fadeSamples, stop-start)
+		if fadeSamples < minFadeSamples {
+			// Nothing to overlay here: see effectiveFade. The caller asked for a
+			// crossfade and this window cannot carry one, so the recorded floor
+			// stands rather than being stepped over.
+			return
+		}
+	}
+	msPerSample := 1000.0 / float64(sampleRate)
+	from := start
+	if from < dstBase {
+		from = dstBase
+	}
+	to := stop
+	if to > dstBase+len(dst) {
+		to = dstBase + len(dst)
+	}
+	for j := from; j < to; j++ {
 		localMS := (float64(j)*msPerSample - placement.OffsetMS) / placement.Rate
 		pos := localMS / msPerSample
 		if pos < 0 {
@@ -358,27 +449,129 @@ func overlayOntoTimeline(dst, src []float32, sampleRate int, placement Placement
 			// those samples belong to audio outside the recording.
 			continue
 		}
-		if pos >= float64(len(src)) {
+		if pos >= float64(srcSamples) {
 			break
 		}
 		i := int(pos)
-		if i >= len(src)-1 {
+		var value float32
+		if i >= srcSamples-1 {
 			// The last sample has no partner to interpolate towards. Taking it
 			// as it is rather than stopping one short: the window is supposed
 			// to hold every sample the segment decoded, and leaving the final
 			// one to the recorded track underneath is both a dropped sample and
 			// a discontinuity at the seam.
-			dst[j] = src[len(src)-1]
+			idx := srcSamples - 1 - srcBase
+			if idx < 0 || idx >= len(src) {
+				continue
+			}
+			value = src[idx]
 		} else {
+			lo := i - srcBase
+			if lo < 0 || lo+1 >= len(src) {
+				continue
+			}
 			frac := float32(pos - float64(i))
-			dst[j] = src[i]*(1-frac) + src[i+1]*frac
+			value = src[lo]*(1-frac) + src[lo+1]*frac
 		}
-		stop = j + 1
+		if fadeSamples > 0 {
+			weight := float32(1)
+			if head := j - start; head < fadeSamples {
+				weight = float32(head+1) / float32(fadeSamples)
+			}
+			if tail := stop - j; tail <= fadeSamples {
+				if w := float32(tail) / float32(fadeSamples); w < weight {
+					weight = w
+				}
+			}
+			value = dst[j-dstBase]*(1-weight) + value*weight
+		}
+		dst[j-dstBase] = value
 	}
+}
+
+// overlayOntoTimeline writes one segment's resampled PCM over `dst`, in place,
+// and reports the half-open output window [start, stop) it wrote. The
+// whole-timeline form of overlayInto, with hard edges: it is what the placement
+// tests and RenderOntoTimeline ask about, and the oracle the chunked file
+// renderer is checked against.
+func overlayOntoTimeline(dst, src []float32, sampleRate int, placement Placement) (int, int) {
+	start, stop := overlayWindow(placement, sampleRate, len(src), len(dst))
 	if stop <= start {
 		return 0, 0
 	}
+	overlayInto(dst, 0, src, 0, start, stop, placement, sampleRate, len(src), 0)
 	return start, stop
+}
+
+// overlayChunkSamples is how much of either timeline the file renderer holds at
+// once. Four thousand samples is 85 ms at 48 kHz: small enough that the whole
+// render is bounded by a few tens of kilobytes however long the meeting is,
+// large enough that the per-chunk read and write costs disappear.
+const overlayChunkSamples = 4096
+
+// overlayFileWindow is overlayInto against a meeting-length WAV on disk,
+// applied a chunk at a time.
+//
+// Same arithmetic, same boundaries, no timeline in memory. It reads and writes
+// only inside [start, stop), so "the recorded floor is byte-identical outside
+// the window" holds by construction rather than by argument: the bytes were
+// never opened.
+func overlayFileWindow(dst *wavFile, src *wavFile, srcSamples int, placement Placement, sampleRate, fadeSamples int) (int, int, error) {
+	start, stop := overlayWindow(placement, sampleRate, srcSamples, dst.samples)
+	if stop <= start {
+		return 0, 0, nil
+	}
+	if fadeSamples > 0 && effectiveFade(fadeSamples, stop-start) < minFadeSamples {
+		// The same refusal overlayInto makes, made here as well so the window
+		// this reports is the window it wrote. A caller that was told [start,
+		// stop) while the file was left untouched would put a splice in the
+		// manifest, and in the published windows, that nobody can hear.
+		return 0, 0, nil
+	}
+	msPerSample := 1000.0 / float64(sampleRate)
+	pos := func(j int) float64 {
+		return ((float64(j)*msPerSample - placement.OffsetMS) / placement.Rate) / msPerSample
+	}
+	dstBuf := make([]float32, overlayChunkSamples)
+	srcBuf := make([]float32, 0, overlayChunkSamples*2)
+	for j0 := start; j0 < stop; j0 += overlayChunkSamples {
+		j1 := j0 + overlayChunkSamples
+		if j1 > stop {
+			j1 = stop
+		}
+		lo := int(math.Floor(pos(j0)))
+		if lo < 0 {
+			lo = 0
+		}
+		// One past the last source sample the interpolation can reach in this
+		// chunk, plus its partner.
+		hi := int(pos(j1-1)) + 2
+		if hi > srcSamples {
+			hi = srcSamples
+		}
+		if hi <= lo {
+			hi = lo + 1
+			if hi > srcSamples {
+				break
+			}
+		}
+		if cap(srcBuf) < hi-lo {
+			srcBuf = make([]float32, hi-lo)
+		}
+		srcBuf = srcBuf[:hi-lo]
+		if err := src.readSamples(lo, srcBuf); err != nil {
+			return 0, 0, err
+		}
+		chunk := dstBuf[:j1-j0]
+		if err := dst.readSamples(j0, chunk); err != nil {
+			return 0, 0, err
+		}
+		overlayInto(chunk, j0, srcBuf, lo, start, stop, placement, sampleRate, srcSamples, fadeSamples)
+		if err := dst.writeSamples(j0, chunk); err != nil {
+			return 0, 0, err
+		}
+	}
+	return start, stop, nil
 }
 
 // RenderOntoTimeline places one segment's PCM on an otherwise silent meeting
@@ -399,6 +592,9 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 	var sidecar SourceSidecar
 	if err := json.Unmarshal(raw, &sidecar); err != nil {
 		return SourceSidecar{}, fmt.Errorf("parse capture sidecar: %w", err)
+	}
+	if sidecar.ClockStatus == "unreliable" {
+		return SourceSidecar{}, fmt.Errorf("capture clock measurements are unreliable; retaining recorded audio")
 	}
 	if sidecar.Format != SourceCaptureFormat {
 		return SourceSidecar{}, fmt.Errorf("unsupported capture format %q", sidecar.Format)
@@ -423,6 +619,21 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 // the (deliberately generous) placement check. A capture has to be from this
 // room and from a call overlapping this recording before it is a candidate.
 //
+// Being a candidate is no longer enough to be selected. Room plus "overlaps
+// within a minute of slack" still cannot separate two recordings of one room
+// from each other, so a moderator who stops and restarts had the capture that
+// ended just before this recording competing with the one that covers it. The
+// slack is now a fallback rather than a widening (captureWindowFit), and a
+// participant whose captures still cannot be told apart is REFUSED with a
+// reason rather than resolved by ordering — see selectOwnerCaptures. The second
+// return value carries those reasons, keyed by owner, for the build log.
+//
+// The operator makes the same distinction from the other side, resolving one
+// upload to one recording (ResolveJobForCapture, capture_rebuild_store.go). The
+// two must agree: a capture this splices but the operator cannot attribute is
+// stored and never rebuilt for, and one the operator attributes but this
+// refuses schedules a rebuild that changes nothing.
+//
 // roomToken may be empty when the caller does not know it — building a bare MKV
 // outside the operator, say. The window check still applies; the room check is
 // skipped, and the caller is trusting the window alone.
@@ -431,9 +642,9 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 // discovered as a capture in its own right; see the loop below.
 const supersededSuffix = ".superseded"
 
-func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64) (map[string][]string, error) {
+func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64, recordingIDs ...string) (map[string][]string, map[string]string, error) {
 	if strings.TrimSpace(root) == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	roomGlob := "*"
 	if token := strings.TrimSpace(roomToken); token != "" {
@@ -441,10 +652,10 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 	}
 	matches, err := filepath.Glob(filepath.Join(root, roomGlob, "*", "*", "capture.json"))
 	if err != nil {
-		return nil, fmt.Errorf("scan capture root: %w", err)
+		return nil, nil, fmt.Errorf("scan capture root: %w", err)
 	}
 	sort.Strings(matches)
-	found := map[string][]string{}
+	byOwner := map[string][]captureCandidate{}
 	for _, match := range matches {
 		dir := filepath.Dir(match)
 		// The upload handler promotes a re-upload by renaming the previous one
@@ -459,6 +670,7 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 		}
 		sidecar, err := LoadSourceSidecar(dir)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "source audio: skip %s: %v\n", dir, err)
 			// A malformed upload must not fail the build: the recorded track is
 			// still there and the meeting still publishes.
 			continue
@@ -466,16 +678,193 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 		if roomToken != "" && sidecar.RoomToken != roomToken {
 			continue
 		}
-		if !windowsOverlap(sidecar.CallStartWallMS, sidecar.CallEndWallMS, windowStartMS, windowEndMS) {
+		fit := captureWindowFit(sidecar.CallStartWallMS, sidecar.CallEndWallMS, windowStartMS, windowEndMS)
+		if sidecar.RecordingID != "" {
+			if len(recordingIDs) == 0 || sidecar.RecordingID != recordingIDs[0] {
+				continue
+			}
+			fit = captureWindowIntersects
+		}
+		if fit == captureWindowApart {
 			continue
 		}
 		// EVERY matching capture, not just the newest. A participant who left
 		// and rejoined uploads one per session, and both belong to this
 		// recording; keeping only the later one while suppressing their
 		// recorded streams silently dropped the first half of what they said.
-		found[sidecar.OwnerUserID] = append(found[sidecar.OwnerUserID], dir)
+		byOwner[sidecar.OwnerUserID] = append(byOwner[sidecar.OwnerUserID], captureCandidate{
+			dir:     dir,
+			startMS: sidecar.CallStartWallMS,
+			endMS:   sidecar.CallEndWallMS,
+			fit:     fit,
+		})
 	}
-	return found, nil
+	found := map[string][]string{}
+	refused := map[string]string{}
+	for owner, candidates := range byOwner {
+		dirs, reason := selectOwnerCaptures(candidates)
+		if reason != "" {
+			refused[owner] = reason
+			continue
+		}
+		if len(dirs) > 0 {
+			found[owner] = dirs
+		}
+	}
+	return found, refused, nil
+}
+
+// captureCandidate is one upload that got past the room and window filters,
+// with what those filters learned about it.
+type captureCandidate struct {
+	dir     string
+	startMS int64
+	endMS   int64
+	fit     int
+}
+
+// How a capture's call window sits against this recording's, in the order
+// selection prefers them.
+//
+// The grades are what stop a neighbouring capture from winning. "Overlaps, with
+// a minute of slack on each side" cannot tell the capture that covers this
+// recording from the one that ended just before it — and a moderator who stops
+// a recording and starts another in the same room produces exactly that pair,
+// with the participant's browser filing one capture per call session either
+// side of the seam. The slack exists for clock skew at that seam, not to admit
+// a neighbour while the right capture is sitting next to it, so it is a
+// fallback and not a widening.
+const (
+	captureWindowApart = iota
+	captureWindowWithinSlack
+	captureWindowIntersects
+)
+
+// captureWindowFit grades one capture against one recording. windowsOverlap
+// stays the slack tier, unchanged and still shared with the operator's copy, so
+// nothing that used to be a candidate stops being one; what changed is that a
+// capture which genuinely intersects now beats one that only reaches through
+// the slack.
+func captureWindowFit(aStart, aEnd, bStart, bEnd int64) int {
+	if aStart <= 0 || bStart <= 0 {
+		return captureWindowApart
+	}
+	// Strictly positive shared time, not a touch. A capture that ends at the
+	// instant a recording begins holds no audio inside it, and grading that as
+	// a real intersection is exactly how a restart's neighbour would win again:
+	// the moderator's stop and start are adjacent, so touching is the shape the
+	// wrong capture has.
+	if windowOverlapMS(aStart, aEnd, bStart, bEnd) > 0 {
+		return captureWindowIntersects
+	}
+	if windowsOverlap(aStart, aEnd, bStart, bEnd) {
+		return captureWindowWithinSlack
+	}
+	return captureWindowApart
+}
+
+// captureSessionOverlapSlackMS is how far two of one participant's captures may
+// overlap each other and still be read as consecutive sessions.
+//
+// A capture is one call session of one browser page. A reload or a rejoin files
+// a second one that begins where the first ended — they are separate
+// directories precisely because their call starts differ, since the same call
+// start is a re-upload the operator supersedes in place — so sessions MEET, and
+// the seam is stamped by two page loads of one clock a moment apart. Overlap
+// past that is not a rejoin: nobody was in two call sessions at once, so one of
+// the two describes a different recording of this room, and nothing on disk
+// says which.
+const captureSessionOverlapSlackMS = 5_000
+
+// selectOwnerCaptures picks the captures of ONE participant that belong to this
+// recording, or refuses with the reason it cannot tell.
+//
+// Refusing costs this participant their splice and nothing else: their recorded
+// track stands for the whole meeting, which is where it started. Guessing costs
+// another meeting's speech appearing inside this one's transcript, which is not
+// recoverable by hand.
+//
+// One case is refused that is not a mistake by anybody: the same person joined
+// from two devices, so two genuine captures of one owner cover this recording
+// and each other. There is no tie-break worth having there either. The render
+// replaces ALL of that participant's recorded streams at once, so two
+// overlapping captures would be laid over one floor with the later one winning
+// per sample — an outcome nobody could read back from the manifest — and
+// picking "the longer" is a guess wearing a rule. They keep their recorded
+// track, and the build log names both directories.
+func selectOwnerCaptures(candidates []captureCandidate) ([]string, string) {
+	best := captureWindowApart
+	for _, candidate := range candidates {
+		if candidate.fit > best {
+			best = candidate.fit
+		}
+	}
+	if best == captureWindowApart {
+		return nil, ""
+	}
+	kept := make([]captureCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.fit == best {
+			kept = append(kept, candidate)
+		}
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].startMS < kept[j].startMS })
+	if best == captureWindowWithinSlack && len(kept) > 1 {
+		// Nothing this participant uploaded actually covers this recording, and
+		// more than one thing is close enough to be reached through the slack.
+		// The slack can rescue a capture that just misses; it cannot choose
+		// between two that just miss from opposite sides.
+		return nil, fmt.Sprintf(
+			"%d of their captures reach this recording only through the matching slack and none of them covers it (call windows %s), so which one belongs would be a guess",
+			len(kept), describeCaptureWindows(kept))
+	}
+	for i := 0; i < len(kept); i++ {
+		for j := i + 1; j < len(kept); j++ {
+			overlap := windowOverlapMS(kept[i].startMS, kept[i].endMS, kept[j].startMS, kept[j].endMS)
+			if overlap > captureSessionOverlapSlackMS {
+				// Deliberately does not say which of the two shapes this is.
+				// Consecutive sessions cannot overlap, so either one of these
+				// belongs to another recording of this room, or the same person
+				// was in the call twice at once from two devices — and both are
+				// unspliceable for the same reason, since the render replaces
+				// all of this participant's recorded streams with one file.
+				return nil, fmt.Sprintf(
+					"two of their captures overlap each other by %d ms (call windows %s); one call session cannot overlap another, so either one of them belongs to a different recording of this room or the same person was in this call from two devices, and neither can be spliced over one track",
+					overlap, describeCaptureWindows(kept))
+			}
+		}
+	}
+	dirs := make([]string, 0, len(kept))
+	for _, candidate := range kept {
+		dirs = append(dirs, candidate.dir)
+	}
+	sort.Strings(dirs)
+	return dirs, ""
+}
+
+// windowOverlapMS is how much two wall-clock spans genuinely share, with no
+// slack at all. Zero or negative means they do not meet.
+func windowOverlapMS(aStart, aEnd, bStart, bEnd int64) int64 {
+	start := aStart
+	if bStart > start {
+		start = bStart
+	}
+	end := aEnd
+	if bEnd < end {
+		end = bEnd
+	}
+	return end - start
+}
+
+// describeCaptureWindows names the windows a refusal could not choose between,
+// so the build log says which directories an administrator has to look at
+// rather than only that there were two of them.
+func describeCaptureWindows(candidates []captureCandidate) string {
+	parts := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		parts = append(parts, fmt.Sprintf("%s %d-%d", filepath.Base(candidate.dir), candidate.startMS, candidate.endMS))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // windowsOverlap reports whether two wall-clock spans intersect, with a minute
@@ -520,11 +909,68 @@ type SourceRenderReport struct {
 	// nothing but the recorded audio staying where it was.
 	Skipped int `json:"skipped"`
 	// Rejections says what the splice declined to do and why. Every skipped
-	// segment has an entry; so does a segment that was used only across the
-	// window it declared, which is not a skip but is still the splice refusing
-	// part of what arrived.
+	// segment has an entry, reading "segment N not spliced: ..."; so does a
+	// segment that was used only across the window it declared, reading
+	// "segment N partly used: ...", which is not a skip but is still the splice
+	// refusing part of what arrived. The two openings are load-bearing: these
+	// lines are printed into the build log beside the splice counts, and a
+	// reader has to be able to pair one with a skip and not the other.
 	Rejections []string `json:"rejections,omitempty"`
+	// MixSpliced says whether the PUBLISHED audio carries this splice too, so
+	// that every word in the transcript can be heard in playback. False means
+	// the mix kept the recorded track, and MixSkipReason says why.
+	MixSpliced bool `json:"mix_spliced"`
+	// MixSkipReason is set only when the transcript was spliced and the mix was
+	// not — today, only the CASSINI_SOURCE_AUDIO_MIX=0 off switch. A speaker
+	// whose upload was refused outright has neither, and their Rejections say
+	// what happened.
+	MixSkipReason string `json:"mix_skip_reason,omitempty"`
+	// Windows is where on the meeting timeline each placed segment landed. One
+	// entry per placed segment, not the merged union, because the question a
+	// reader has is which part of what they are hearing came from an upload.
+	Windows []SpliceWindow `json:"windows,omitempty"`
+	// CrossfadeMS is how long the render takes to hand over at each window
+	// edge, and RenderHz the rate it was made at. Both are here so that "the
+	// published audio and the transcript are the same samples" is a claim the
+	// manifest states rather than one a reader has to take on trust.
+	CrossfadeMS int `json:"crossfade_ms"`
+	RenderHz    int `json:"render_hz"`
+	// TranscriptSource names the transcription pass whose words this splice is
+	// answerable for. Every other field here describes AUDIO; this one is the
+	// only field that says anything about the transcript, and the two can come
+	// apart.
+	//
+	//   "per-participant" — this speaker's spliced audio was decoded under
+	//   their own speaker id, so the words carrying that id came from the audio
+	//   described above.
+	//
+	//   "merged-mix" — the per-participant pass came back too thin and the
+	//   whole transcript was re-decoded from the mixed track under the
+	//   synthetic "merged" speaker (ensureMergedFallback). Everything above is
+	//   still true of the published audio, and of the mix that was decoded,
+	//   which carries this splice too. What is NOT true is any per-speaker
+	//   reading of it: no word in the transcript carries this speaker's id at
+	//   all, so this report cannot be saying where their words came from.
+	//
+	// Empty when the splice went unused altogether — the recorded track was
+	// transcribed and the rejections say why.
+	//
+	// It describes the PRIMARY transcript (transcript.words.v1.json), as every
+	// other key under provenance does; a sibling transcript from an additional
+	// model carries its own record under files.transcripts[].
+	//
+	// It says nothing about the published mix, which is mix_spliced's job: with
+	// CASSINI_SOURCE_AUDIO_MIX=0 a splice can feed the transcript and not the
+	// mix, and after a merged-mix fallback in that configuration it fed
+	// neither.
+	TranscriptSource string `json:"transcript_source,omitempty"`
 }
+
+// The two values TranscriptSource takes. See the field.
+const (
+	transcriptSourcePerParticipant = "per-participant"
+	transcriptSourceMergedMix      = "merged-mix"
+)
 
 // minSegmentDecodedFraction is how much of the audio a segment DECLARES it must
 // actually decode to before its audio is used.
@@ -551,8 +997,75 @@ const minSegmentDecodedFraction = 0.9
 // because the audio inside the window is still the audio the manifest promised.
 const segmentOverrunSlackMS = 10_000
 
-// SpliceSourceTrack builds one speaker's transcription input by laying every
-// placeable segment they uploaded over their own RECORDED track.
+// mixRenderHz is the rate the splice renders at, and it is not a free choice:
+// it is the rate the published mix is encoded from, so that the transcript's
+// audio and the published audio can be the same samples rather than two
+// renders that agree only approximately. The transcription input is a 16 kHz
+// resample of this file, made after the mix is encoded.
+const mixRenderHz = 48000
+
+// mixSpliceCrossfadeMS is how long the upload takes to replace, and give back,
+// the recorded track at each end of a window.
+//
+// Fifteen milliseconds. The transcript never cared about a hard edge — a
+// decoder does not click — but a listener does, and the two sources differ at
+// the seam by whatever the placement got wrong (about a millisecond and a half
+// of anchor residual, plus however far the participant's clock sits from the
+// recorder's). Linear rather than equal-power: the two sides are the same voice
+// a few milliseconds apart, so they are correlated, and an equal-power curve
+// would bump the level in the middle of the fade instead of holding it.
+const mixSpliceCrossfadeMS = 15
+
+// SpliceWindow is one stretch of the meeting timeline a segment replaced, in
+// milliseconds. Reported per placed segment rather than merged, because the
+// question a reader has is "which part of what I am hearing came from whose
+// upload"; SplicedMS is the union of these, which is the different question of
+// how much of the timeline the capture is answerable for.
+type SpliceWindow struct {
+	FromMS int64 `json:"from_ms"`
+	ToMS   int64 `json:"to_ms"`
+	// Capture and Segment name which upload this came from. Both, because
+	// segment indexes restart at zero in every capture: a participant who
+	// rejoined uploads one capture per session, and "segment 0" alone would
+	// name two different stretches of audio.
+	Capture int `json:"capture"`
+	Segment int `json:"segment"`
+}
+
+// markUnused says the splice was not used after all: neither the published mix
+// nor the transcript carries it, and the recorded track stands.
+//
+// The counters go with it. A report that still claimed placed segments and
+// spliced milliseconds would tell a reader that some of what they are hearing
+// came from an upload, when the render it came from was deleted and nothing
+// downstream ever saw it. What survives is the diagnosis — how many segments
+// arrived, what the capture declared, and why it went unused.
+func (r *SourceRenderReport) markUnused(reason string) {
+	r.MixSpliced = false
+	r.MixSkipReason = ""
+	// Nothing was transcribed from this splice either, so it is answerable for
+	// no pass at all. Leaving "per-participant" here would name the recorded
+	// track's own words as having come from an upload that was thrown away.
+	r.TranscriptSource = ""
+	// Every segment that arrived went unused, however far the render got before
+	// it was thrown away. Leaving Skipped where it was would leave the placed
+	// ones unaccounted for: two segments, none placed, none skipped.
+	r.Skipped = r.Segments
+	r.Placed = 0
+	r.SplicedMS = 0
+	r.CoverageMS = 0
+	r.Anchors = 0
+	r.ResidualMS = 0
+	r.RatePPM = 0
+	r.CrossfadeMS = 0
+	r.Windows = nil
+	if reason != "" {
+		r.Rejections = append(r.Rejections, reason)
+	}
+}
+
+// renderSourceTrack lays every placeable segment a speaker uploaded over their
+// own RECORDED track, in place, in the file the mix will encode from.
 //
 // The recorded track is the floor, and that is the whole design. Substitution
 // used to be whole-track — the render replaced the participant for the entire
@@ -568,41 +1081,38 @@ const segmentOverrunSlackMS = 10_000
 // the window it actually holds audio for, and nowhere else. A reload gap, a
 // late start, a worker that died mid-call, a segment that cannot be placed:
 // all of them simply leave the recorded track standing there, which is exactly
-// what would have been transcribed without any upload. The result can never be
-// worse than not ingesting, so there is nothing left to refuse.
+// what would have been transcribed — and played — without any upload. The
+// result can never be worse than not ingesting, so there is nothing left to
+// refuse.
 //
 // A segment that cannot be placed, cannot be decoded, or holds far less audio
 // than it declares is skipped with its reason recorded, not fatal. Only a
-// capture that contributes nothing at all is an error, so the caller can keep
-// the recorded track untouched rather than write a WAV identical to it.
+// capture that contributes nothing at all is an error, so the caller can throw
+// the render away and leave the recorded track exactly where it was.
 //
 // Several directories because one participant can legitimately have more than
 // one capture for a single recording — they left and rejoined, or a reload was
 // not adopted into the capture that followed it.
-func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
-	report := SourceRenderReport{}
-	if sampleRate <= 0 || outSamples <= 0 {
-		// An error rather than a division by zero. Production passes 16 kHz and
+//
+// This is the ONE placement decision in the pipeline. The published mix and the
+// transcription input are both this file: the mix encodes it, and the 16 kHz
+// track handed to the recogniser is a resample of it. There is no second
+// placement to disagree with the first.
+func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base SourceTimeBase, owner, scratchDir string, sampleRate, timelineSamples, fadeSamples int) (SourceRenderReport, error) {
+	report := SourceRenderReport{Owner: owner, RenderHz: sampleRate}
+	if sampleRate <= 0 || timelineSamples <= 0 {
+		// An error rather than a division by zero. Production passes 48 kHz and
 		// a measured timeline, but a caller that gets this wrong should be told
 		// so rather than take the build down with a panic.
-		return nil, report, fmt.Errorf("splice needs a positive sample rate and timeline, got %d Hz and %d samples", sampleRate, outSamples)
+		return report, fmt.Errorf("splice needs a positive sample rate and timeline, got %d Hz and %d samples", sampleRate, timelineSamples)
 	}
-	// A copy, always. The caller's recorded PCM is the fallback for this
-	// speaker and for the assertion that a splice changed only what it claims
-	// to have changed; mutating it in place would destroy both.
-	out := make([]float32, outSamples)
-	copy(out, recorded)
-	timelineMS := int64(outSamples) * 1000 / int64(sampleRate)
+	if fadeSamples > 0 {
+		report.CrossfadeMS = fadeSamples * 1000 / sampleRate
+	}
+	timelineMS := int64(timelineSamples) * 1000 / int64(sampleRate)
 	var totalAnchors int
 	var worstResidual float64
 	var rateSum float64
-	// The output windows each overlaid segment wrote, for the report. Collected
-	// rather than summed: two captures for one recording can overlap (a rejoin
-	// whose windows meet, a page that filed its reload separately), and a later
-	// overlay merely overwrites an earlier one — so adding the lengths would
-	// claim more of the timeline was spliced than exists.
-	type window struct{ from, to int }
-	var windows []window
 
 	// Load every sidecar first, so a capture that cannot even be read costs no
 	// ffmpeg. This IS fatal: an unreadable manifest says nothing about which
@@ -611,7 +1121,7 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 	for _, dir := range dirs {
 		sidecar, err := LoadSourceSidecar(dir)
 		if err != nil {
-			return nil, report, fmt.Errorf("%s: %w", filepath.Base(dir), err)
+			return report, fmt.Errorf("%s: %w", filepath.Base(dir), err)
 		}
 		report.Owner = sidecar.OwnerUserID
 		report.Segments += len(sidecar.Segments)
@@ -624,12 +1134,21 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 		loaded = append(loaded, sidecar)
 	}
 
+	// "not spliced" rather than the bare index, and deliberately not the words
+	// the whole-speaker refusal uses ("keeping the recorded audio"): these lines
+	// are printed next to the splice counts now, and a reader — the
+	// browser-capture CI leg included — has to be able to tell one segment left
+	// out of a splice that happened from a speaker whose upload went unused
+	// entirely. The two are as far apart as a report can put them.
 	skip := func(segment SourceSegment, format string, args ...any) {
 		report.Skipped++
 		report.Rejections = append(report.Rejections,
-			fmt.Sprintf("segment %d: %s; keeping the recorded audio there", segment.Index,
+			fmt.Sprintf("segment %d not spliced: %s; the recorded track stands there", segment.Index,
 				fmt.Sprintf(format, args...)))
 	}
+
+	segmentPath := filepath.Join(scratchDir, "segment.wav")
+	defer os.Remove(segmentPath)
 
 	for i, dir := range dirs {
 		sidecar := loaded[i]
@@ -655,13 +1174,13 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 				skip(segment, "declares no window, so there is nothing its audio can be said to cover")
 				continue
 			}
-			samples, err := decodeSourceSegment(ctx, filepath.Join(dir, segment.AudioName), sampleRate,
-				sourceDecodeTimeout(segmentMS), maxSourceSegmentSamples(segmentMS, sampleRate, outSamples))
+			decoded, err := decodeSourceSegmentToFile(ctx, filepath.Join(dir, segment.AudioName), segmentPath, sampleRate,
+				sourceDecodeTimeout(segmentMS), maxSourceSegmentSamples(segmentMS, sampleRate, timelineSamples))
 			if err != nil {
 				skip(segment, "decode: %v", err)
 				continue
 			}
-			decodedMS := int64(float64(len(samples)) * 1000 / float64(sampleRate))
+			decodedMS := int64(float64(decoded) * 1000 / float64(sampleRate))
 			// The audio against the sidecar, kept from the whole-track design.
 			// Intake validates that a declared file ARRIVED, never that it holds
 			// what was claimed, and a file this far short of its own manifest is
@@ -680,23 +1199,58 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 			// second of codec-tail allowance to a CAPACITY hint, which is right
 			// for an allocation and wrong for a clamp that says how much
 			// recorded audio may be replaced.
-			if limit := int((segmentMS + segmentOverrunSlackMS) * int64(sampleRate) / 1000); limit > 0 && len(samples) > limit {
+			if limit := int((segmentMS + segmentOverrunSlackMS) * int64(sampleRate) / 1000); limit > 0 && decoded > limit {
+				// "partly used", against the skips' "not spliced": both are
+				// rejections and only one of them left a segment out, so the
+				// two shapes have to be distinguishable by something better
+				// than counting.
 				report.Rejections = append(report.Rejections, fmt.Sprintf(
-					"segment %d holds %d ms under a %d ms window; only the first %d ms of it was used",
+					"segment %d partly used: holds %d ms under a %d ms window; only the first %d ms of it was used",
 					segment.Index, decodedMS, segmentMS, segmentMS+segmentOverrunSlackMS))
-				samples = samples[:limit]
+				decoded = limit
 			}
 			// Recomputed after any clamp above, so the report counts the audio
 			// that was actually laid over the recorded track rather than
 			// everything the file decoded to.
-			decodedMS = int64(float64(len(samples)) * 1000 / float64(sampleRate))
-			from, to := overlayOntoTimeline(out, samples, sampleRate, placement)
+			decodedMS = int64(float64(decoded) * 1000 / float64(sampleRate))
+			source, err := openWAVForRead(segmentPath)
+			if err != nil {
+				skip(segment, "decoded audio: %v", err)
+				continue
+			}
+			from, to, err := overlayFileWindow(floor, source, decoded, placement, sampleRate, fadeSamples)
+			closeErr := source.Close()
+			if err != nil {
+				// A read or write failure against the render is not a property
+				// of this segment, and continuing would leave the file half
+				// spliced with nobody the wiser. Give up on the speaker.
+				return report, fmt.Errorf("segment %d: %w", segment.Index, err)
+			}
+			if closeErr != nil {
+				return report, fmt.Errorf("segment %d: close decoded audio: %w", segment.Index, closeErr)
+			}
 			if to <= from {
-				skip(segment, "places entirely outside the %d ms recording", timelineMS)
+				// Two different refusals reach here, and a reader of the
+				// manifest needs them apart: a segment that lands nowhere on
+				// this timeline, and one that lands on so few samples that the
+				// crossfade would be a step. Asking overlayWindow again rather
+				// than guessing from the geometry, so the two answers can never
+				// drift from each other.
+				if geomFrom, geomTo := overlayWindow(placement, sampleRate, decoded, floor.samples); geomTo > geomFrom {
+					skip(segment, "lands on %d output sample(s), too few to hand over without a click",
+						geomTo-geomFrom)
+				} else {
+					skip(segment, "places entirely outside the %d ms recording", timelineMS)
+				}
 				continue
 			}
 			report.Placed++
-			windows = append(windows, window{from, to})
+			report.Windows = append(report.Windows, SpliceWindow{
+				FromMS:  int64(from) * 1000 / int64(sampleRate),
+				ToMS:    int64(to) * 1000 / int64(sampleRate),
+				Capture: i,
+				Segment: segment.Index,
+			})
 			report.CoverageMS += decodedMS
 			totalAnchors += placement.Anchors
 			rateSum += placement.Rate
@@ -707,25 +1261,43 @@ func SpliceSourceTrack(ctx context.Context, recorded []float32, dirs []string, b
 	}
 
 	if report.Placed == 0 {
-		return nil, report, fmt.Errorf("no segment could be placed")
+		return report, fmt.Errorf("no segment could be placed")
 	}
-	sort.Slice(windows, func(i, j int) bool { return windows[i].from < windows[j].from })
-	var splicedSamples, cursor int
-	for _, w := range windows {
-		if w.to <= cursor {
-			continue
-		}
-		if w.from > cursor {
-			cursor = w.from
-		}
-		splicedSamples += w.to - cursor
-		cursor = w.to
-	}
-	report.SplicedMS = int64(splicedSamples) * 1000 / int64(sampleRate)
+	report.SplicedMS = splicedUnionMS(report.Windows)
 	report.Anchors = totalAnchors
 	report.ResidualMS = worstResidual
 	report.RatePPM = Placement{Rate: rateSum / float64(report.Placed)}.RatePPMDeviation()
-	return out, report, nil
+	return report, nil
+}
+
+// splicedUnionMS is how much of the timeline the upload actually replaced.
+//
+// A union rather than a sum: two captures for one recording can overlap (a
+// rejoin whose windows meet, a page that filed its reload separately), and a
+// later overlay merely overwrites an earlier one — so adding the lengths would
+// claim more of the timeline was spliced than exists.
+func splicedUnionMS(windows []SpliceWindow) int64 {
+	if len(windows) == 0 {
+		return 0
+	}
+	sorted := append([]SpliceWindow(nil), windows...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].FromMS < sorted[j].FromMS })
+	var total, cursor int64
+	for i, w := range sorted {
+		if i > 0 && w.ToMS <= cursor {
+			continue
+		}
+		from := w.FromMS
+		if i > 0 && from < cursor {
+			from = cursor
+		}
+		if w.ToMS <= from {
+			continue
+		}
+		total += w.ToMS - from
+		cursor = w.ToMS
+	}
+	return total
 }
 
 // decodeSourceSegment decodes one uploaded segment to mono float PCM.
@@ -767,7 +1339,7 @@ func sourceDecodeTimeout(segmentMS int64) time.Duration {
 // The deadline alone does not bound this. ffmpeg decodes far faster than real
 // time, so a small compressed file that expands to hours of audio — or loops —
 // emits gigabytes of PCM well inside any wall-clock budget, and the build dies
-// on memory rather than on the timeout. The declared window is the only size
+// on disk rather than on the timeout. The declared window is the only size
 // the client committed to; anything past it plus generous slack is the file
 // contradicting its own sidecar.
 func maxSourceSegmentSamples(segmentMS int64, sampleRate int, timelineSamples int) int {
@@ -792,23 +1364,127 @@ func maxSourceSegmentSamples(segmentMS int64, sampleRate int, timelineSamples in
 	return limit
 }
 
-func decodeSourceSegment(ctx context.Context, path string, sampleRate int, timeout time.Duration, maxSamples int) ([]float32, error) {
+// decodeSegmentCopyChunkBytes is the staging buffer between ffmpeg's stdout and
+// the decoded segment on disk. Nothing else in the render scales with the
+// meeting, so this and the overlay chunks are the whole memory footprint.
+const decodeSegmentCopyChunkBytes = 64 * 1024
+
+// decodeSourceSegmentToFile decodes one uploaded segment to a mono WAV beside
+// the render, and reports how many samples it holds.
+//
+// To a file rather than to memory, and that is the point. A segment can
+// legitimately be as long as the meeting, and at the mix's rate a two-hour one
+// is 1.4 GB of float32 — so the old in-memory decode, which was affordable at
+// 16 kHz and merely wasteful, becomes the largest allocation in the build. The
+// ceiling still applies, and still says the same thing when a file contradicts
+// the window its own sidecar declared.
+func decodeSourceSegmentToFile(ctx context.Context, path, outPath string, sampleRate int, timeout time.Duration, maxSamples int) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	args := []string{
 		"-v", "error",
 		"-i", path,
 		"-vn", "-sn", "-dn",
 		"-ac", "1",
 		"-ar", strconv.Itoa(sampleRate),
-		"-f", "s16le",
-		"-",
-	)
-	samples, err := runPCM16LECommandBounded(cmd, 0, maxSamples)
-	if err != nil && ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("decode exceeded its %s budget; treating the upload as unusable", timeout)
 	}
-	return samples, err
+	if maxSamples > 0 {
+		// A second PAST the byte ceiling below, deliberately, so that the
+		// ceiling is what a file exceeding its declared window meets: it is
+		// refused with a reason rather than silently truncated to whatever
+		// ffmpeg felt like emitting. This is the outer bound behind it — a
+		// second line against an input an outsider chose, for the case where
+		// the byte accounting is ever wrong.
+		args = append(args, "-t", strconv.FormatFloat(float64(maxSamples)/float64(sampleRate)+1, 'f', 3, 64))
+	}
+	args = append(args, "-f", "s16le", "-")
+	// The output file first, the pipe second, and that order is the fix rather
+	// than a preference. StdoutPipe opens a pipe whose two ends os/exec closes
+	// only inside Start; a return between the two — the create that fails on a
+	// full disk, the header write that fails with it — leaked both descriptors,
+	// once per segment, for as long as the build ran. Nothing can fail between
+	// the pipe and Start now, and Start closes both ends itself when it fails.
+	out, err := os.Create(outPath)
+	if err != nil {
+		return 0, fmt.Errorf("create decoded segment: %w", err)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = out.Close()
+		}
+	}()
+	if err := writeWAVHeader(out, 0, sampleRate); err != nil {
+		return 0, fmt.Errorf("write decoded segment header: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	var stderr boundedBuffer
+	stderr.limit = 8192
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return 0, fmt.Errorf("open PCM pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("start ffmpeg: %w", err)
+	}
+	var written int64
+	buf := make([]byte, decodeSegmentCopyChunkBytes)
+	var copyErr error
+	for {
+		n, readErr := stdout.Read(buf)
+		if n > 0 {
+			if maxSamples > 0 && (written+int64(n))/2 > int64(maxSamples) {
+				copyErr = fmt.Errorf(
+					"decoded audio exceeds the %d samples this input declared; refusing to buffer more",
+					maxSamples)
+				break
+			}
+			if _, err := out.Write(buf[:n]); err != nil {
+				copyErr = fmt.Errorf("write decoded segment: %w", err)
+				break
+			}
+			written += int64(n)
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				copyErr = fmt.Errorf("read decoded PCM: %w", readErr)
+			}
+			break
+		}
+	}
+	if copyErr != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if copyErr != nil {
+		return 0, copyErr
+	}
+	if waitErr != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return 0, fmt.Errorf("decode exceeded its %s budget; treating the upload as unusable", timeout)
+		}
+		return 0, fmt.Errorf("ffmpeg: %w\n%s", waitErr, truncate(stderr.String(), 800))
+	}
+	if written%2 != 0 {
+		return 0, fmt.Errorf("decoded PCM has odd byte count")
+	}
+	samples := int(written / 2)
+	// The header was written before the length was known; correct it now so the
+	// file is a WAV anything can open, this reader included.
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("rewind decoded segment: %w", err)
+	}
+	if err := writeWAVHeader(out, samples, sampleRate); err != nil {
+		return 0, fmt.Errorf("finish decoded segment header: %w", err)
+	}
+	closed = true
+	if err := out.Close(); err != nil {
+		return 0, fmt.Errorf("close decoded segment: %w", err)
+	}
+	return samples, nil
 }
 
 // recordingWallWindow is the wall-clock span this recording covers.
@@ -835,245 +1511,532 @@ func recordingWallWindow(streams []AudioStream, timelineMS int64) (int64, int64)
 	return zero, zero + timelineMS
 }
 
-// writeWAV16 writes mono 16-bit PCM. Hand-rolled rather than piped through
-// ffmpeg because the render is already in memory as float32 and a subprocess
-// buys nothing: the header is 44 fixed bytes and the conversion is a clamp.
-func writeWAV16(path string, samples []float32, sampleRate int) error {
-	dataBytes := len(samples) * 2
-	header := make([]byte, 0, 44)
-	le32 := func(v uint32) []byte { return []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)} }
-	le16 := func(v uint16) []byte { return []byte{byte(v), byte(v >> 8)} }
-	header = append(header, "RIFF"...)
-	header = append(header, le32(uint32(36+dataBytes))...)
-	header = append(header, "WAVEfmt "...)
-	header = append(header, le32(16)...)
-	header = append(header, le16(1)...) // PCM
-	header = append(header, le16(1)...) // mono
-	header = append(header, le32(uint32(sampleRate))...)
-	header = append(header, le32(uint32(sampleRate*2))...) // byte rate
-	header = append(header, le16(2)...)                    // block align
-	header = append(header, le16(16)...)                   // bits per sample
-	header = append(header, "data"...)
-	header = append(header, le32(uint32(dataBytes))...)
-
-	body := make([]byte, dataBytes)
-	for i, sample := range samples {
-		// 32768, matching the decoder, and rounded rather than truncated.
-		//
-		// This file is now a SPLICE: most of it is the participant's recorded
-		// track, decoded by readPCM16LEFloatsBounded as s16/32768 and expected
-		// to survive untouched wherever no upload was laid over it. Scaling
-		// back by 32767 and truncating turned every one of those samples into a
-		// slightly different one — 16384 came back as 16383, and ±1 came back
-		// as zero — so "the recorded audio is unchanged outside the overlaid
-		// windows" was true in memory and false in the file the transcription
-		// pass actually reads. The pair is exact in both directions now, and
-		// only the single value +1.0 has to be clamped because int16 has no
-		// positive counterpart to -32768.
-		v := float64(sample)
-		if v > 1 {
-			v = 1
-		} else if v < -1 {
-			v = -1
-		}
-		scaled := math.Round(v * 32768)
-		if scaled > 32767 {
-			scaled = 32767
-		}
-		s := int16(scaled)
-		body[i*2] = byte(uint16(s))
-		body[i*2+1] = byte(uint16(s) >> 8)
+// writeParticipantFloor writes everything this participant contributed to the
+// recording, onto the meeting timeline, as the floor the splice lays audio
+// over.
+//
+// EVERY one of their tracks, summed, because the splice replaces all of them
+// with one render. Taking only the chosen track would make a rejoin's second
+// one vanish from both the transcript and the published mix in every window the
+// upload does not cover — which is precisely the loss the splice exists to
+// stop. Their tracks are disjoint in time (a rejoin is a new RTP identity for a
+// span the previous one had ended), so summing places rather than mixes.
+//
+// Zero-padded to the full timeline. A participant who left before the meeting
+// ended has a shorter track, and an upload covering the time after that still
+// has somewhere to land.
+//
+// Streamed a chunk at a time: this is a full-length 48 kHz timeline, and the
+// whole point of the file-based render is that no such thing is ever a Go
+// slice.
+func writeParticipantFloor(trackPaths []string, timelineSamples, sampleRate int, outPath string) error {
+	if len(trackPaths) == 0 {
+		return fmt.Errorf("no recorded track to build a floor from")
 	}
-	f, err := os.Create(path)
+	tracks := make([]*wavFile, 0, len(trackPaths))
+	defer func() {
+		for _, track := range tracks {
+			_ = track.Close()
+		}
+	}()
+	for _, path := range trackPaths {
+		track, err := openWAVForRead(path)
+		if err != nil {
+			return err
+		}
+		tracks = append(tracks, track)
+	}
+
+	out, err := os.Create(outPath)
 	if err != nil {
-		return fmt.Errorf("create wav: %w", err)
+		return fmt.Errorf("create render: %w", err)
 	}
 	// Sync and check the close. Everything else in this file treats a failure
-	// as a skip that leaves the recorded track in place, but a WAV that was
-	// truncated by a full disk and never reported would be handed to the
-	// transcription pass as if it were whole, and that failure is fatal to the
-	// build. A meeting must not be lost to a feature that is only ever meant
-	// to improve one.
+	// as a skip that leaves the recorded track in place, but a render that was
+	// truncated by a full disk and never reported would be handed to the mix
+	// and to the transcription pass as if it were whole, and that failure is
+	// fatal to the build. A meeting must not be lost to a feature that is only
+	// ever meant to improve one.
 	closed := false
 	defer func() {
 		if !closed {
-			_ = f.Close()
+			_ = out.Close()
 		}
 	}()
-	if _, err := f.Write(header); err != nil {
-		return fmt.Errorf("write wav header: %w", err)
+	writer := bufio.NewWriterSize(out, decodeSegmentCopyChunkBytes)
+	if err := writeWAVHeader(writer, timelineSamples, sampleRate); err != nil {
+		return fmt.Errorf("write render header: %w", err)
 	}
-	if _, err := f.Write(body); err != nil {
-		return fmt.Errorf("write wav body: %w", err)
+	sum := make([]float32, overlayChunkSamples)
+	one := make([]float32, overlayChunkSamples)
+	raw := make([]byte, overlayChunkSamples*2)
+	for at := 0; at < timelineSamples; at += overlayChunkSamples {
+		n := overlayChunkSamples
+		if at+n > timelineSamples {
+			n = timelineSamples - at
+		}
+		for i := 0; i < n; i++ {
+			sum[i] = 0
+		}
+		for _, track := range tracks {
+			if err := track.readSamples(at, one[:n]); err != nil {
+				return err
+			}
+			for i := 0; i < n; i++ {
+				sum[i] += one[i]
+			}
+		}
+		if len(tracks) > 1 {
+			// The disjointness above, checked instead of assumed.
+			//
+			// Summing several tracks into one file means the sum meets s16
+			// before the mix's alimiter=limit=0.95 ever sees it, and s16 has no
+			// room past full scale: what a limiter would have ridden down, this
+			// file would hard-clip. On the recorded tracks the participant's
+			// stints do not overlap, so the sum never leaves [-1, 1] and this
+			// costs nothing; a sum that does leave it says the tracks overlap
+			// after all, which is the one case where summing them here is not
+			// what amix would have done. Refusing sends the participant back to
+			// exactly that path — their separate tracks, into amix, under the
+			// limiter — rather than publishing distortion the recording never
+			// had. A single track cannot reach here: its own samples are
+			// already inside the range.
+			for i := 0; i < n; i++ {
+				if sum[i] > 1 || sum[i] < -1 {
+					return fmt.Errorf(
+						"this participant's %d recorded tracks overlap: their sum reaches %.3f at %d ms, past what one track can hold, and summing them would clip where the mix would have limited",
+						len(tracks), sum[i], int64(at+i)*1000/int64(sampleRate))
+				}
+			}
+		}
+		for i := 0; i < n; i++ {
+			s := uint16(s16FromFloat32(sum[i]))
+			raw[i*2] = byte(s)
+			raw[i*2+1] = byte(s >> 8)
+		}
+		if _, err := writer.Write(raw[:n*2]); err != nil {
+			return fmt.Errorf("write render: %w", err)
+		}
 	}
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("sync wav: %w", err)
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("flush render: %w", err)
+	}
+	if err := out.Sync(); err != nil {
+		return fmt.Errorf("sync render: %w", err)
 	}
 	closed = true
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close wav: %w", err)
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close render: %w", err)
 	}
 	return nil
 }
 
-// recordedParticipantFloats decodes everything this participant contributed to
-// the recording, onto the meeting timeline, as the floor the splice lays audio
-// over.
+// resampleForTranscription writes the 16 kHz mono track the recogniser reads,
+// from the very file the mix encodes.
 //
-// EVERY one of their streams, summed, because the splice goes to exactly one of
-// them and the rest are dropped from transcription. Taking only the chosen
-// stream would make a rejoin's second track vanish from the transcript in every
-// window the upload does not cover — which is precisely the loss the splice
-// exists to stop. Their streams are disjoint in time (a rejoin is a new RTP
-// identity for a span the previous one had ended), so summing places rather
-// than mixes.
-func recordedParticipantFloats(mkvPath string, streams []AudioStream, participantID string, sampleRate, outSamples int) ([]float32, error) {
-	out := make([]float32, outSamples)
-	var decoded bool
-	for i := range streams {
-		if streams[i].ParticipantID != participantID {
-			continue
-		}
-		samples, err := ExtractStreamFloatsAt(mkvPath, streams[i], sampleRate)
-		if err != nil {
-			return nil, fmt.Errorf("decode recorded track for %s: %w", streams[i].SpeakerLabel, err)
-		}
-		decoded = true
-		for j := 0; j < len(samples) && j < outSamples; j++ {
-			out[j] += samples[j]
-		}
-	}
-	if !decoded {
-		return nil, fmt.Errorf("no recorded track for %s", participantID)
-	}
-	return out, nil
+// A resample rather than a second render, and this is what makes the published
+// audio and the transcript the same splice rather than two that agree
+// approximately. There is one placement decision, one set of windows, one
+// crossfade; the recogniser simply hears it at a lower rate.
+//
+// Sixteen kilohertz in the bundle rather than forty-eight because this copy
+// lives in the meeting bundle, which is kept, while the 48 kHz render dies with
+// the mix's temporary directory. Three times the bytes, forever, to hand the
+// recogniser samples it immediately downsamples would be a poor trade.
+func resampleForTranscription(renderPath, outPath string) error {
+	return runFFmpegQuiet(
+		"-y",
+		"-v", "error",
+		"-i", renderPath,
+		"-vn", "-sn", "-dn",
+		"-ac", "1",
+		"-ar", "16000",
+		"-c:a", "pcm_s16le",
+		outPath,
+	)
 }
 
-// ApplySourceAudio splices each speaker's own browser-captured audio over their
-// recorded track, wherever a segment was uploaded and can be placed.
+// noteMergedFallbackTranscript records that the words in this build's
+// transcript came from the merged-mix fallback pass, not from each speaker's
+// own spliced audio — in the manifest, and in the build log, in the same words.
 //
-// It mutates streams in place and returns what it did, for the manifest. Every
-// failure is a skip, never an error: the recorded track is always still there,
-// and a meeting must publish whether or not anybody's upload arrived, decoded
-// or fitted.
+// The splice itself stands: the mix the fallback decoded carries the uploads,
+// and so does the audio people play back, so this is not a report of something
+// that did not happen. What cannot stand is the per-speaker reading of it.
+// After the fallback replaces the transcript, every word belongs to the
+// synthetic "merged" speaker; there is no word carrying Alice's id for her
+// report to be describing the origin of. Observed on the demo: a job that
+// spliced 52,542 ms, logged "per-participant transcription thin (0 words)",
+// recovered five words from the mix — and named the upload as the source of
+// Alice's words, of which there were none.
+//
+// A report whose splice went unused is left alone: it already says so, and its
+// TranscriptSource is empty because it is answerable for no pass at all.
+func noteMergedFallbackTranscript(reports []SourceRenderReport, streams []AudioStream, stdout io.Writer) {
+	labels := make(map[string]string, len(streams))
+	for _, stream := range streams {
+		if _, seen := labels[stream.SpeakerID]; !seen {
+			labels[stream.SpeakerID] = stream.SpeakerLabel
+		}
+	}
+	for i := range reports {
+		if reports[i].TranscriptSource != transcriptSourcePerParticipant {
+			continue
+		}
+		reports[i].TranscriptSource = transcriptSourceMergedMix
+		label := labels[reports[i].SpeakerID]
+		if label == "" {
+			label = reports[i].SpeakerID
+		}
+		// What the splice is still true of depends on whether the published mix
+		// took it. With CASSINI_SOURCE_AUDIO_MIX=0 it did not, and the mix the
+		// fallback transcribed is the recorded one, so this render reached
+		// neither — saying it describes the published audio would be the same
+		// kind of false claim this function exists to remove.
+		reached := "the splice above describes the published audio, and the mix this transcript was decoded from"
+		if !reports[i].MixSpliced {
+			reached = "the splice above reached neither the published mix (see mix_skip_reason) nor this transcript"
+		}
+		fmt.Fprintf(stdout, "  source audio: %s: the merged-mix fallback replaced the per-participant transcript, so no word in it carries their speaker id; %s, not where any speaker's words came from (transcript_source=%s)\n",
+			label, reached, transcriptSourceMergedMix)
+	}
+}
+
+// revertSourceAudio undoes ingestion for the whole build: every stream goes
+// back to its recorded track, and every report says the upload went unused.
+//
+// It exists for one case — the spliced mix failed to encode — and it has to be
+// all or nothing. Reverting the published audio alone would leave the
+// transcript built from uploads that are not in the file people play back,
+// which is the exact defect this branch was written to remove; and it would
+// leave a rejoined participant's sibling streams suppressed while their
+// recorded audio is back in the mix, so words audible in the meeting would be
+// missing from the transcript entirely.
+func revertSourceAudio(streams []AudioStream, reports []SourceRenderReport, bundleDir, reason string) {
+	for i := range streams {
+		// The rendered transcription input goes with it. A bundle that used no
+		// upload must hold no upload: leaving a couple of hundred megabytes of
+		// audio nothing references is both a surprise to whoever finds it and a
+		// copy of a participant's recording living past its purpose.
+		if streams[i].SourceAudioPath != "" {
+			_ = os.Remove(streams[i].SourceAudioPath)
+		}
+		streams[i].SourceAudioPath = ""
+		streams[i].SuppressTranscription = false
+	}
+	for i := range reports {
+		if reports[i].Placed == 0 {
+			// Already refused, for its own reason, before the mix was even
+			// encoded. Adding the encode failure to it would claim this upload
+			// had been in the spliced mix when it never was.
+			continue
+		}
+		reports[i].markUnused(reason)
+	}
+	pruneSourceAudioWorkDir(bundleDir)
+}
+
+// pruneSourceAudioWorkDir removes the bundle's ingestion work directory when
+// nothing was left in it, so a build that used no upload leaves the bundle a
+// build with ingestion switched off would leave. os.Remove refuses a directory
+// that still holds something, which is exactly the test wanted here.
+func pruneSourceAudioWorkDir(bundleDir string) {
+	if strings.TrimSpace(bundleDir) == "" {
+		return
+	}
+	work := filepath.Join(bundleDir, "_work")
+	_ = os.Remove(filepath.Join(work, "sourceaudio"))
+	_ = os.Remove(work)
+}
+
+// mixSpliceEnabled reports whether the published mix carries the splice.
+//
+// An off switch for the published audio alone: with CASSINI_SOURCE_AUDIO_MIX=0
+// the transcript is still built from the spliced render, and the mix is exactly
+// what it would have been without ingestion. It exists so that a deployment
+// that dislikes what the published audio sounds like can go back without
+// turning off ingestion, which is the larger and more useful half of the
+// feature.
+func mixSpliceEnabled() (bool, string) {
+	raw := strings.TrimSpace(os.Getenv(envMixSpliceEnabled))
+	if raw == "" {
+		return true, ""
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		// The convention the other two ingestion switches already follow: a
+		// value that is neither true nor false lands OFF and says so, rather
+		// than being read as "not exactly 0, so on" and quietly doing the thing
+		// the administrator was trying to stop.
+		return false, fmt.Sprintf("%s=%q is not a boolean, so it is read as off", envMixSpliceEnabled, raw)
+	}
+	if enabled {
+		return true, ""
+	}
+	return false, fmt.Sprintf("disabled by configuration (%s=%s)", envMixSpliceEnabled, raw)
+}
+
+const envMixSpliceEnabled = "CASSINI_SOURCE_AUDIO_MIX"
+
+// ApplySourceAudio splices each speaker's own browser-captured audio over their
+// recorded track, wherever a segment was uploaded and can be placed, and feeds
+// the result to both the published mix and the transcription pass.
+//
+// It mutates streams and the mix in place and returns what it did, for the
+// manifest. Every failure is a skip, never an error: the recorded track is
+// always still there, and a meeting must publish whether or not anybody's
+// upload arrived, decoded or fitted.
 //
 // A participant with no track in this recording is ignored even if they
 // uploaded. Being a member of the room is what the upload endpoint can check;
 // having actually been in THIS call is what a matching track proves, and that
 // is the check that belongs here — and with a splice it is load-bearing twice
 // over, because a participant with no recorded track has no floor to splice on.
-func ApplySourceAudio(ctx context.Context, mkvPath string, streams []AudioStream, captureRoot, roomToken, bundleDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
+func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStream, captureRoot, roomToken, bundleDir string, stdout io.Writer, recordingIDs ...string) []SourceRenderReport {
+	timelineSamples := mix.TimelineSamples
+	timelineMS := int64(timelineSamples) * 1000 / int64(mixRenderHz)
 	windowStartMS, windowEndMS := recordingWallWindow(streams, timelineMS)
-	captures, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS)
+	captures, refused, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS, recordingIDs...)
 	if err != nil {
 		fmt.Fprintf(stdout, "  source audio: cannot scan %s: %v\n", captureRoot, err)
 		return nil
 	}
+	// Before the early returns below: a participant refused by selection has to
+	// be said out loud whether or not anybody else was selected. Silence here
+	// reads exactly like "they never uploaded", and the difference between the
+	// two is the difference between a missing feature and audio on disk that
+	// nobody could attribute.
+	refusedOwners := make([]string, 0, len(refused))
+	for owner := range refused {
+		refusedOwners = append(refusedOwners, owner)
+	}
+	sort.Strings(refusedOwners)
+	for _, owner := range refusedOwners {
+		fmt.Fprintf(stdout, "  source audio: %s uploaded, but %s; keeping the recorded audio\n", owner, refused[owner])
+	}
 	if len(captures) == 0 {
 		return nil
 	}
-	outSamples := int(timelineMS * int64(sampleRate) / 1000)
-	if outSamples <= 0 {
+	if timelineSamples <= 0 {
 		return nil
 	}
-	// After the early returns, never before them. A build for a room nobody
-	// uploaded for must touch the bundle exactly as much as a build with
-	// ingestion switched off does, which is not at all.
-	workDir, err := WorkPath(bundleDir, "sourceaudio")
-	if err == nil {
-		err = os.MkdirAll(workDir, 0o755)
+	// What discovery actually selected, before anything is done with it.
+	//
+	// Every later line is per speaker, so a participant whose upload was never
+	// found at all produced no output whatsoever — and "no line for Alice" then
+	// looked exactly like a splice that failed silently, when the upload had
+	// simply not been selected for this recording. One line here separates the
+	// two without having to reason backwards from a build log.
+	owners := make([]string, 0, len(captures))
+	for owner, dirs := range captures {
+		owners = append(owners, fmt.Sprintf("%s(%d)", owner, len(dirs)))
 	}
-	if err != nil {
-		fmt.Fprintf(stdout, "  source audio: no work directory: %v\n", err)
-		return nil
+	sort.Strings(owners)
+	fmt.Fprintf(stdout, "  source audio: %d capture(s) selected for this recording over %d ms: %s\n",
+		len(captures), timelineMS, strings.Join(owners, " "))
+	spliceMix, mixSkipReason := mixSpliceEnabled()
+
+	// The bundle's work directory is created on first use, never before it. A
+	// build that finds no upload it can use — because nobody who uploaded was
+	// in this call, or because every capture was refused — must leave the
+	// bundle exactly as a build with ingestion switched off would, and an empty
+	// _work/sourceaudio to explain to whoever finds it is not that.
+	workDir := ""
+	ensureWorkDir := func() (string, error) {
+		if workDir != "" {
+			return workDir, nil
+		}
+		path, err := WorkPath(bundleDir, "sourceaudio")
+		if err == nil {
+			err = os.MkdirAll(path, 0o755)
+		}
+		if err != nil {
+			return "", fmt.Errorf("no work directory: %w", err)
+		}
+		workDir = path
+		return workDir, nil
 	}
-	var reports []SourceRenderReport
+
 	// One participant can own several MKV streams: a rejoin, or a rotation
-	// where the RTP identity changed mid-call. The spliced track spans the
-	// WHOLE meeting timeline and already contains all of their recorded audio,
-	// so handing the same file to each of those streams would transcribe that
-	// participant once per stream and put every word in the transcript two or
-	// three times. It goes to exactly one stream, and that participant's other
-	// streams are dropped from transcription.
-	used := map[string]bool{}
-	// A participant whose splice already failed is not retried per stream: the
-	// failure is a property of their capture, not of the stream we happened to
-	// try it on, and re-decoding a meeting's audio to fail identically is pure
-	// cost.
-	failed := map[string]bool{}
+	// where the RTP identity changed mid-call. The render spans the WHOLE
+	// meeting timeline and already contains all of their recorded audio, so it
+	// replaces every one of those streams at once — in the mix, where feeding
+	// the siblings to amix as well would play their words twice, and in the
+	// transcription pass, where transcribing both would write every word twice.
+	participantStreams := map[string][]int{}
+	for i := range streams {
+		if streams[i].ParticipantID == "" {
+			continue
+		}
+		participantStreams[streams[i].ParticipantID] = append(participantStreams[streams[i].ParticipantID], i)
+	}
 	// A participant with ANY stream lacking a wall-clock base is refused up
 	// front. Deciding inside the loop made the outcome depend on which of their
 	// streams came first: an anchorless stream seen last was harmless, the same
 	// stream seen first abandoned the splice.
-	for i := range streams {
-		if streams[i].ParticipantID != "" && !streams[i].TimeBase.Known {
-			failed[streams[i].ParticipantID] = true
-		}
-	}
+	var reports []SourceRenderReport
+	done := map[string]bool{}
+	// Owners whose upload found a track in this recording. The rest uploaded
+	// for a call they were not recorded in, which is a legitimate outcome and
+	// silent today; saying so is what tells it apart from a splice that failed.
+	matched := map[string]bool{}
 	for i := range streams {
 		stream := &streams[i]
 		dirs, ok := captures[stream.ParticipantID]
-		if !ok || stream.ParticipantID == "" {
+		if !ok || stream.ParticipantID == "" || done[stream.ParticipantID] {
 			continue
 		}
-		if failed[stream.ParticipantID] {
-			continue
+		matched[stream.ParticipantID] = true
+		done[stream.ParticipantID] = true
+		idxs := participantStreams[stream.ParticipantID]
+		anchorless := false
+		for _, idx := range idxs {
+			if !streams[idx].TimeBase.Known {
+				anchorless = true
+			}
 		}
-		if used[stream.ParticipantID] {
-			stream.SuppressTranscription = true
-			fmt.Fprintf(stdout, "  source audio: %s has another stream already covered by their spliced track; not transcribing it twice\n", stream.SpeakerLabel)
-			continue
-		}
-		if !stream.TimeBase.Known {
-			// Marked failed, not merely skipped, and decided the same way
-			// whichever order the streams arrive in: the loop above computed it
-			// over all of them before this one began.
-			//
+		if anchorless {
 			// Without it the participant's OTHER stream could still splice —
-			// the spliced track spans the whole timeline, including this
-			// stream's span — while this one keeps its recorded audio and is
-			// transcribed alongside it, putting every word said here into the
-			// transcript twice.
-			failed[stream.ParticipantID] = true
+			// the render spans the whole timeline, including this stream's span
+			// — while this one keeps its recorded audio and is transcribed
+			// alongside it, putting every word said here into the transcript
+			// twice.
 			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no wall-clock base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
 			continue
 		}
-		recorded, err := recordedParticipantFloats(mkvPath, streams, stream.ParticipantID, sampleRate, outSamples)
-		if err != nil {
-			// No floor, no splice. The recorded track is what the transcription
-			// pass would decode for itself anyway, so this costs the upload and
+
+		renderPath := mix.RenderPath(stream.SpeakerID)
+		report := SourceRenderReport{
+			SpeakerID: stream.SpeakerID,
+			// The join key, so a failure before any sidecar was read still says
+			// whose upload went unused.
+			Owner:    stream.ParticipantID,
+			RenderHz: mixRenderHz,
+		}
+		transcriptPath := ""
+		// Every failure below ends here: the render and any half-written
+		// transcription input are removed, the report is stripped of the
+		// splice it did not deliver, and the speaker keeps their recorded audio
+		// in the published mix and in the transcript alike. A report still
+		// claiming placed segments would tell a reader that part of what they
+		// are hearing came from an upload, when nothing downstream ever saw it.
+		keepRecorded := func(err error) {
+			report.markUnused(err.Error())
+			_ = os.Remove(renderPath)
+			if transcriptPath != "" {
+				_ = os.Remove(transcriptPath)
+			}
+			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
+			reports = append(reports, report)
+		}
+
+		if err := writeParticipantFloor(mix.TrackPaths(idxs), timelineSamples, mixRenderHz, renderPath); err != nil {
+			// No floor, no splice. The recorded track is what the mix and the
+			// transcription pass would use anyway, so this costs the upload and
 			// nothing else.
-			failed[stream.ParticipantID] = true
-			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
+			keepRecorded(err)
 			continue
 		}
-		samples, report, err := SpliceSourceTrack(ctx, recorded, dirs, stream.TimeBase, sampleRate, outSamples)
-		report.SpeakerID = stream.SpeakerID
+		floor, err := openWAV(renderPath)
 		if err != nil {
-			// Nothing could be placed, so the splice would be a byte-for-byte
-			// copy of the recorded track. Leave the stream alone rather than
-			// write one, and let the reason travel into the manifest: a
-			// transcript that quietly declined to use somebody's upload should
-			// say why.
-			report.Rejections = append(report.Rejections, err.Error())
-			failed[stream.ParticipantID] = true
-			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
-			reports = append(reports, report)
+			keepRecorded(err)
 			continue
 		}
-		path := filepath.Join(workDir, "source-"+stream.SpeakerID+".wav")
-		if err := writeWAV16(path, samples, sampleRate); err != nil {
-			report.Rejections = append(report.Rejections, err.Error())
-			failed[stream.ParticipantID] = true
-			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
-			reports = append(reports, report)
+		// The decoded segment is scratch that belongs with the render, not with
+		// the bundle: putting it beside the tracks keeps the bundle's work
+		// directory for the one file that has to survive the build.
+		rendered, err := renderSourceTrack(ctx, floor, dirs, stream.TimeBase, stream.ParticipantID, mix.dir,
+			mixRenderHz, timelineSamples, mixSpliceCrossfadeMS*mixRenderHz/1000)
+		syncErr := floor.f.Sync()
+		closeErr := floor.Close()
+		rendered.SpeakerID = stream.SpeakerID
+		report = rendered
+		if err == nil && syncErr != nil {
+			err = fmt.Errorf("sync render: %w", syncErr)
+		}
+		if err == nil && closeErr != nil {
+			err = fmt.Errorf("close render: %w", closeErr)
+		}
+		if err != nil {
+			// Nothing could be placed, or the render failed part way through.
+			// Either way the recorded track is untouched, so throw the render
+			// away and let the reason travel into the manifest: a transcript
+			// that quietly declined to use somebody's upload should say why.
+			keepRecorded(err)
 			continue
 		}
-		stream.SourceAudioPath = path
-		used[stream.ParticipantID] = true
+
+		dir, err := ensureWorkDir()
+		if err != nil {
+			keepRecorded(err)
+			continue
+		}
+		transcriptPath = filepath.Join(dir, "source-"+stream.SpeakerID+".wav")
+		if err := resampleForTranscription(renderPath, transcriptPath); err != nil {
+			keepRecorded(err)
+			continue
+		}
+		for _, idx := range idxs {
+			streams[idx].SuppressTranscription = true
+		}
+		stream.SourceAudioPath = transcriptPath
+		stream.SuppressTranscription = false
+		// The per-participant pass is about to be handed this render under this
+		// speaker's id. If the merged-mix fallback later replaces the whole
+		// transcript, noteMergedFallbackTranscript revises this.
+		report.TranscriptSource = transcriptSourcePerParticipant
+		if spliceMix {
+			mix.Substitute(idxs, renderPath)
+			report.MixSpliced = true
+		} else {
+			report.MixSkipReason = mixSkipReason
+			// Nothing will read the 48 kHz render again: the encoder is not
+			// taking it, and the recogniser's copy of it has just been written.
+			// Substitute is what frees a render on the spliced path — it hands
+			// the file to the mix and deletes the tracks it stood in for — so
+			// with the mix splice off the render has to be freed here instead,
+			// or every speaker who uploaded leaves a full-timeline WAV behind
+			// and the build's temporary disk grows with the number of
+			// uploaders: 690 MB each for a two-hour meeting.
+			//
+			// Only the render. The decoded tracks it was built from stay,
+			// because in this configuration they are still what the mix
+			// encodes; deleting them the way Substitute does would leave Encode
+			// with no inputs at all.
+			_ = os.Remove(renderPath)
+		}
+		if len(idxs) > 1 {
+			fmt.Fprintf(stdout, "  source audio: %s has %d streams in this recording; one render covers them all\n",
+				stream.SpeakerLabel, len(idxs))
+		}
+		// This line's prefix is matched verbatim by the browser-capture CI leg.
 		fmt.Fprintf(stdout, "  source audio: %s transcribing from participant capture spliced over %d ms of their recorded track (%d/%d segments, %d skipped, %d anchors, %.1f ms residual, %.0f ppm drift)\n",
 			stream.SpeakerLabel, report.SplicedMS, report.Placed, report.Segments, report.Skipped, report.Anchors, report.ResidualMS, report.RatePPM)
+		// Why, next to how many. Until now "1 skipped" reached the log and the
+		// reason for it reached only the manifest, so diagnosing a segment the
+		// splice declined meant opening the artifact — or, in CI, inferring the
+		// segment from its bytes-per-millisecond. One line per rejection, in
+		// the same words the manifest carries, so that the count above is never
+		// the whole story a reader gets.
+		for _, rejection := range report.Rejections {
+			fmt.Fprintf(stdout, "  source audio: %s: %s\n", stream.SpeakerLabel, rejection)
+		}
+		if report.MixSpliced {
+			fmt.Fprintf(stdout, "  source audio: %s: the published mix carries the same splice (%d window(s), %d ms crossfade)\n",
+				stream.SpeakerLabel, len(report.Windows), report.CrossfadeMS)
+		} else {
+			fmt.Fprintf(stdout, "  source audio: %s: the published mix keeps the recorded track (%s)\n",
+				stream.SpeakerLabel, report.MixSkipReason)
+		}
 		reports = append(reports, report)
 	}
+	for owner := range captures {
+		if !matched[owner] {
+			fmt.Fprintf(stdout, "  source audio: %s uploaded for this call but has no track in the recording; nothing to splice onto\n", owner)
+		}
+	}
+	// A run that created the work directory and then had every render fail must
+	// still leave the bundle as a build with ingestion off would.
+	pruneSourceAudioWorkDir(bundleDir)
 	return reports
 }

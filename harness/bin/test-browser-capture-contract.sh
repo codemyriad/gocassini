@@ -78,7 +78,7 @@ cat >"$TMP_DIR/passing.json" <<'JSON'
     ],
     "reload": {
       "capturesBefore": ["capture-room-1"],
-      "capturesAfter": ["capture-room-1"],
+      "capturesAfter": ["capture-room-1", "capture-room-3"],
       "segmentsBefore": 2,
       "segmentsAfter": 3,
       "preservedPreReloadBytes": true
@@ -102,8 +102,8 @@ cat >"$TMP_DIR/passing.json" <<'JSON'
       "after": { "deviceId": "device-b", "trackId": "track-b" }
     },
     "upload": { "status": 202, "body": "{\"status\":\"accepted\",\"room\":\"r\",\"segments\":3,\"bytes\":101000}" },
-    "observedUploadRequestCount": 1,
-    "observedUploadResponseCount": 1
+    "observedUploadRequestCount": 2,
+    "observedUploadResponseCount": 2
   },
   "bob": {
     "preRecordingOPFS": [],
@@ -166,8 +166,8 @@ reject "the browser process itself failed"       '.result = "failed"'
 # came back filed a second capture, or never got its own audio into the one it
 # inherited — which is the reload's audio lost, exactly what this leg exists to
 # catch.
-reject "the reload filed a second capture" \
-  '.alice.reload.capturesAfter = ["capture-room-1", "capture-room-9"]'
+reject "the reload reused the previous session" \
+  '.alice.reload.capturesAfter = ["capture-room-1"]'
 reject "the rejoined page abandoned the pre-reload buffer" \
   '.alice.reload.capturesAfter = ["capture-room-9"]'
 reject "the rejoined page added no segment of its own" \

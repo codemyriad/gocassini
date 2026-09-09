@@ -368,7 +368,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// Probe free VRAM only after any RAM wait, immediately before launch. That
 	// reading is an admission snapshot; taking it before a long memory wait
 	// would let another workload consume the GPU in between.
-	env := settings.ChildEnv(os.Environ())
+	env := rt.childEnv()
 	if root := strings.TrimSpace(rt.cfg.ModelCacheRoot); root != "" {
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			return meetingPath, fmt.Errorf("create model cache root %s: %w", root, err)
@@ -411,7 +411,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		// ends up in another's transcript. A job whose room cannot be resolved
 		// simply does not get source audio.
 		if root != "" && roomToken != "" {
-			buildArgs = append(buildArgs, "--source-audio", root, "--source-audio-room", roomToken)
+			buildArgs = append(buildArgs, "--source-audio", root, "--source-audio-room", roomToken, "--source-audio-recording", task.JobID)
 		} else if root != "" {
 			rt.logger.Printf("build %s: source-audio ingestion enabled but no room token is known for this job; skipping", task.JobID)
 		}

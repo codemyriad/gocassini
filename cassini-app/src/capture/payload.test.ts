@@ -8,6 +8,7 @@ import {
   serverCheckIntervalMS,
   pickAudioSender,
   rotateSegment,
+  startSegment,
   stopSegment,
   stopWithoutRestart,
   talkRecordingStatusFromSignalingData,
@@ -277,6 +278,143 @@ describe("stopSegment", () => {
     await stopSegment(session);
 
     expect(posted).toEqual([]);
+  });
+});
+
+// The departure tail: a segment stamped from the clock either side of its
+// recording declares a window wider than the audio it holds, and the server
+// refuses a segment holding under 90% of what it declares. Measured on the
+// browser-capture CI leg, the stopping alone ran 0.4-1.7 s, which on an
+// eleven-second segment is more than that tenth — so the seconds around
+// somebody leaving a call were the ones least likely to be spliced from their
+// own microphone. Both stamps now come from the recording.
+describe("the window a segment declares", () => {
+  // A recorder whose stop takes real time to settle: the final chunk hand-off
+  // and onstop both land well after stop() was called, which is exactly the
+  // interval that used to be declared as if it were audio.
+  function slowStoppingSession(posted: Array<Record<string, unknown>>, latencyMs: number) {
+    let now = 10_000;
+    const clock = { now: () => now, advance: (ms: number) => (now += ms) };
+    let onstop: (() => void) | null = null;
+    const session = {
+      segmentIndex: 0,
+      muteIntervals: [] as Array<[number, number]>,
+      pendingChunks: Promise.resolve(),
+      worker: { postMessage: (message: Record<string, unknown>) => posted.push(message) },
+      recorder: {
+        stop() {
+          // Time passes between the request and onstop, and more of it while
+          // the outstanding chunk is converted and handed to the worker.
+          setTimeout(() => {
+            clock.advance(latencyMs);
+            onstop?.();
+          }, 0);
+        },
+        set onstop(handler: () => void) {
+          onstop = handler;
+        },
+      },
+    } as unknown as import("./payload").CaptureState;
+    return { session, clock };
+  }
+
+  it("stops a segment where the recorder was asked to, not where the waiting ended", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const { session, clock } = slowStoppingSession(posted, 1_400);
+    const savedNow = Date.now;
+    Date.now = () => clock.now();
+    try {
+      await stopSegment(session);
+    } finally {
+      Date.now = savedNow;
+    }
+
+    const stop = posted.find((message) => message.type === "segment-stop") as {
+      stopWallMs: number;
+    };
+    // The stop request, not the 1.4 s of stopping that followed it. Declaring
+    // that interval is what cost a healthy final segment its splice.
+    expect(stop.stopWallMs).toBe(10_000);
+    expect(clock.now()).toBe(11_400);
+  });
+
+  it("waits for the final chunk even though it no longer stamps from that moment", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const { session, clock } = slowStoppingSession(posted, 1_400);
+    // An outstanding chunk hand-off, the thing the awaits exist for.
+    (session as unknown as { pendingChunks: Promise<void> }).pendingChunks = Promise.resolve().then(
+      () => {
+        posted.push({ type: "chunk", index: 0 });
+      },
+    );
+    const savedNow = Date.now;
+    Date.now = () => clock.now();
+    try {
+      await stopSegment(session);
+    } finally {
+      Date.now = savedNow;
+    }
+
+    expect(posted.map((message) => message.type)).toEqual(["chunk", "segment-stop"]);
+  });
+
+  it("starts a segment where the recorder started, not where the page began asking", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    let now = 5_000;
+    class FakeRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+      onstop: (() => void) | null = null;
+      ondataavailable: unknown = null;
+      constructor() {
+        // Constructing a MediaRecorder is not free, and neither is start().
+        now += 40;
+      }
+      start() {
+        now += 60;
+      }
+      stop() {
+        setTimeout(() => this.onstop?.(), 0);
+      }
+    }
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const savedRecorder = globals.MediaRecorder;
+    const savedStream = globals.MediaStream;
+    const savedNow = Date.now;
+    globals.MediaRecorder = FakeRecorder;
+    globals.MediaStream = class {
+      constructor(_tracks: unknown) {}
+    };
+    Date.now = () => now;
+    try {
+      const session = {
+        segmentIndex: 0,
+        muteIntervals: [] as Array<[number, number]>,
+        pendingChunks: Promise.resolve(),
+        rotation: Promise.resolve(),
+        dirName: "capture-x-1",
+        segmentStartWallMs: 0,
+        worker: { postMessage: (message: Record<string, unknown>) => posted.push(message) },
+        recorder: null,
+      } as unknown as import("./payload").CaptureState;
+      const sender = {
+        track: { kind: "audio", readyState: "live", enabled: true, getSettings: () => ({}) },
+      } as unknown as RTCRtpSender;
+
+      startSegment(session, sender);
+
+      const start = posted.find((message) => message.type === "segment-start") as {
+        meta: { startWallMs: number };
+      };
+      // 5_000 + 40 (construction) + 60 (start): the file holds nothing from
+      // before the recorder was running, so the window must not claim it.
+      expect(start.meta.startWallMs).toBe(5_100);
+    } finally {
+      globals.MediaRecorder = savedRecorder;
+      globals.MediaStream = savedStream;
+      Date.now = savedNow;
+    }
   });
 });
 

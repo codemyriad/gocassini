@@ -223,6 +223,11 @@ type Runtime struct {
 	settingsMu   sync.RWMutex
 	settings     STTSettings
 	settingsPath string
+	// LLM policy (D-696): persisted beside the STT policy, guarded the same way
+	// for job-spawn reads against PUT /settings/llm writes.
+	llmMu           sync.RWMutex
+	llm             LLMSettings
+	llmSettingsPath string
 }
 
 type TriggerRequest struct {
@@ -735,6 +740,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		publishJobTimeout:         defaultPublishJobTimeout,
 		recordHealthTimeout:       recordHealthProbeTimeout,
 		settingsPath:              settingsPath(cfg),
+		llmSettingsPath:           llmSettingsPath(cfg),
 	}
 	// The search index is disposable and nothing depends on it, so a failure to
 	// open it must not take the operator down — it degrades search, and the
@@ -756,6 +762,14 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		rt.settings = detectSettings()
 	} else {
 		rt.settings = settings
+	}
+	// Same for the LLM policy: seed from the deploy env on first start; on a
+	// load failure keep running on the deploy env rather than refusing to start.
+	if llm, err := LoadOrInitLLMSettings(rt.llmSettingsPath, os.Getenv); err != nil {
+		logger.Printf("llm_settings load failed (%v); using the deploy environment", err)
+		rt.llm = SeedLLMSettings(os.Getenv)
+	} else {
+		rt.llm = llm
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
@@ -841,6 +855,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/setup", rt.setupHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
+	api.HandleFunc("/settings/", rt.llmSettingsHandler)
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 	// Source-audio intake (capture_upload.go). USER-level in appinfo/info.xml:
 	// every logged-in account may upload its OWN audio, and the handler binds
@@ -849,6 +864,8 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// Polled by a running capture so that turning the administrator gate off
 	// reaches calls already in progress, not only the next one.
 	api.HandleFunc("/capture/enabled", rt.captureEnabledHandler)
+	api.Handle("/capture/recording", rt.captureRecordingHandler(exappCfg.talkRoomMembershipChecker()))
+	api.Handle("/capture/transfer/", rt.captureTransferHandler(exappCfg.talkRoomMembershipChecker(), logger))
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are
@@ -889,6 +906,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/status", api)
 		root.Handle("/setup", api)
 		root.Handle("/settings", api)
+		root.Handle("/settings/", api)
 		root.Handle("/talk/provisioning", api)
 		return
 	}
@@ -1269,6 +1287,17 @@ type Job struct {
 	// owed (D-698). Present on every job so a reader never has to tell
 	// "nothing owed" from "this operator does not know about rebuilds".
 	SourceAudioRebuild SourceAudioRebuildState `json:"source_audio_rebuild"`
+	// RoomToken is the Talk conversation token, promoted out of talk_binding so
+	// a room-scoped query is an ordinary column read instead of a JSON parse in
+	// whatever language happens to be asking (D-646). It is withheld from the
+	// API for the same reason the binding is: for a public conversation the
+	// token is also the link that joins it, so what leaves the operator is a
+	// one-way derivation of it and never the token itself (D-622).
+	RoomToken *string `json:"-"`
+	// RoomName is the conversation's display name as it was when this job ran.
+	// Null for a non-Talk job, and for a Talk job whose name lookup never
+	// completed.
+	RoomName *string `json:"room_name"`
 }
 
 func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
@@ -1547,7 +1576,8 @@ SELECT id, provider, request_json, stage, state,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
        source_audio_upload_seq, source_audio_built_seq,
-       source_audio_rebuild_count, source_audio_upload_at
+       source_audio_rebuild_count, source_audio_upload_at,
+       room_token, room_name
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -1586,7 +1616,8 @@ SELECT id, provider, request_json, stage, state,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
        source_audio_upload_seq, source_audio_built_seq,
-       source_audio_rebuild_count, source_audio_upload_at
+       source_audio_rebuild_count, source_audio_upload_at,
+       room_token, room_name
 FROM jobs
 WHERE id = ?`, id)
 	job, err := scanJob(row)
@@ -1634,6 +1665,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var sourceAudioBuiltSeq int64
 	var sourceAudioRebuildCount int
 	var sourceAudioUploadAt sql.NullString
+	var roomToken sql.NullString
+	var roomName sql.NullString
 
 	err := scanner.Scan(
 		&job.ID,
@@ -1678,6 +1711,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&sourceAudioBuiltSeq,
 		&sourceAudioRebuildCount,
 		&sourceAudioUploadAt,
+		&roomToken,
+		&roomName,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1717,6 +1752,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.CompletedAt = nullableStringPtr(completedAt)
 	job.TalkBinding = nullableStringPtr(talkBinding)
 	job.TalkStoppedAt = nullableStringPtr(talkStoppedAt)
+	job.RoomToken = nullableStringPtr(roomToken)
+	job.RoomName = nullableStringPtr(roomName)
 	return job, nil
 }
 
