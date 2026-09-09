@@ -1,0 +1,12 @@
+# Paths exempt from scripts/check-added-blobs.sh.
+#
+# One repo-relative path per line; `#` starts a comment. An entry here says a
+# reviewer agreed that this specific large or binary file belongs in git rather
+# than in git-lfs or a release artifact. Prefer git-lfs for media; prefer not
+# committing build output at all.
+#
+# Empty on purpose. `harness/go-talk-rotator/three-song-rotator` is a 15 MB
+# compiled binary already on main and is deliberately NOT listed: the gate only
+# judges what a diff adds, so it stays green today, and the day somebody
+# rebuilds that file the gate will ask the question that was never asked when it
+# first landed.

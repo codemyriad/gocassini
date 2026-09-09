@@ -169,6 +169,36 @@ jobs:
           cd cassini-go-recorder
           go test ./internal/insight/...
 
+      # No large or compiled blobs, judged on what the diff ADDS.
+      #
+      # PR #261 landed a 14 MB Linux `cassini` binary, a 7 MB webm and a 7 MB
+      # opus — scratch output that a `git add -A` during a conflict-resolution
+      # merge swept out of a working tree it had been sitting in for months.
+      # `harness/go-talk-rotator/three-song-rotator` on main is the same
+      # accident, never caught. .gitignore is the first line and cannot be the
+      # only one: it names paths we already know about, and the next scratch
+      # directory will be called something nobody predicted.
+      #
+      # Here rather than in ci.yml for the same reason as the prompt gate above:
+      # ci.yml is path-filtered, and the whole point is to catch a file whose
+      # path nobody anticipated. This job is required and runs on every PR.
+      #
+      # The base is the PR's own base sha, not origin/main: a branch is judged on
+      # what it adds, never on what main has moved on to since it forked.
+      - name: no large or compiled blobs added
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          # A push whose `before` is the null sha (a new branch, or the first
+          # push after a force) has no usable base. Fall back to the merge base
+          # with main rather than skipping: skipping is how a gate goes quiet
+          # for exactly the pushes most likely to carry a surprise.
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="$(git merge-base origin/main HEAD)"
+          fi
+          ./scripts/check-added-blobs.sh "$BASE_SHA" HEAD
+
       - name: actionlint (all workflows)
         run: |
           set -euo pipefail
