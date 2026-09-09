@@ -220,7 +220,7 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
-| `--storage-mode default|acl-enabled|undecided` | `CASSINI_HARNESS_STORAGE_MODE` | `default` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). `undecided` builds the access-controlled substrate and tells the ExApp nothing, which is the only way to reach the setup wizard. See §2.8.1. |
+| `--storage-mode default|acl-enabled|undecided|""` | `CASSINI_HARNESS_STORAGE_MODE` | `default` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). `undecided` (or an explicitly empty value) builds the access-controlled substrate and tells the ExApp nothing, which is the only way to reach the setup wizard. See §2.8.1. |
 | `--debug-skip-storage-scaffold` | `CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1` | off | Build no recordings storage at all. Debug only. See §2.8.1. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |
@@ -235,7 +235,7 @@ is built for has to be decided rather than inferred. The ExApp does not infer,
 and since D-708 it does not fall back either: with nothing recorded and nothing
 declared it is UNDECIDED, publishes nothing, records nothing, and waits for the
 Setup tab. The harness declares the mode so a stack comes up usable — and
-`--storage-mode undecided` is how you deliberately do not, which is the only way
+`--storage-mode undecided` (or `--storage-mode ""`) is how you deliberately do not, which is the only way
 to reach the wizard.
 
 The two models keep their archives in different places, on purpose — neither can
@@ -268,6 +268,9 @@ shadow the other:
                the app logs as an error rather than as "nobody told me".
     note:      publishing and recording are refused until the Setup tab is used.
                This is the state every real install starts in.
+
+  --storage-mode ""
+    alias for undecided. CASSINI_STORAGE_MODE is likewise omitted.
 
   --debug-skip-storage-scaffold       (composes with any mode)
     bootstrap: no account, no group, neither app, no folder

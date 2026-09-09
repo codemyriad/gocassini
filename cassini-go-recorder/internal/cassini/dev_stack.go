@@ -134,7 +134,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	recordingBackend := stringFlag("recording-backend", "Talk recording backend: legacy, direct-operator, installed-exapp, none")
 	exAppImageMode := stringFlag("exapp-image-mode", "ExApp image mode: build, reuse-local, pull")
 	patchMode := stringFlag("patch", "patch mode: auto, none, force")
-	storageMode := stringFlag("storage-mode", "recording storage mode the stack is built in and the ExApp starts in: default, acl-enabled, undecided (build the access-controlled substrate and let the app's Setup tab choose)")
+	storageMode := stringFlag("storage-mode", "recording storage mode the stack is built in and the ExApp starts in: default, acl-enabled, undecided, or empty (build the access-controlled substrate and let the app's Setup tab choose)")
 	skipStorageScaffold := fs.Bool("debug-skip-storage-scaffold", false,
 		"debug: build no recordings storage at all — no cassini service account, no Team folder, and neither native app")
 	build := fs.Bool("build", false, "build the Cassini ExApp image before registration")
@@ -235,6 +235,12 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	// unless a caller explicitly asks for the access-controlled substrate. Tests
 	// that exercise Team-folder permissions declare acl-enabled in their topology.
 	plan.StorageMode = pick("storage-mode", opts.storageMode, "CASSINI_HARNESS_STORAGE_MODE", devStackStorageDefault)
+	// An explicitly empty flag is the convenient CLI spelling of "do not choose
+	// an initial mode". Keep an absent flag distinct: it still selects the
+	// default model for ordinary harness use.
+	if opts.set["storage-mode"] && plan.StorageMode == "" {
+		plan.StorageMode = devStackStorageUndecided
+	}
 	plan.SkipStorageScaffold = opts.skipStorageScaffold ||
 		(!opts.set["debug-skip-storage-scaffold"] && get("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD") == "1")
 	plan.DownSuspend = opts.suspend
@@ -586,7 +592,7 @@ func (plan devStackPlan) env() []string {
 	// Remote inputs are always emitted, even when empty: the resolved plan is
 	// the single source of truth for child scripts, and an empty assignment
 	// masks ambient shell values (harness common.sh treats empty as unset).
-	return []string{
+	env := []string{
 		"CASSINI_HARNESS_PUBLIC_MODE=" + plan.PublicMode,
 		"CASSINI_HARNESS_SERVICE_MODE=" + plan.ServiceMode,
 		"CASSINI_HARNESS_CASSINI_MODE=" + plan.CassiniMode,
@@ -596,10 +602,6 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_EXISTING=" + plan.ExistingResourceMode,
 		"CASSINI_HARNESS_STORAGE_MODE=" + plan.StorageMode,
 		"CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=" + boolEnv(plan.SkipStorageScaffold),
-		// What the ExApp itself is told. The harness speaks `acl-enabled`; the
-		// app's own vocabulary — its config file, its API, its UI — says
-		// `access_controlled`, and that is what crosses the boundary.
-		"CASSINI_STORAGE_MODE=" + devStackExAppStorageMode(plan.StorageMode),
 		"SPREED_PROFILE=" + plan.SpreedProfile,
 		"CASSINI_HARNESS_PUBLIC_URL=" + plan.PublicURL,
 		"CASSINI_HARNESS_PUBLIC_HOST=" + plan.PublicHost,
@@ -607,6 +609,15 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL=" + plan.SignalingPublicURL,
 		"CASSINI_TALK_BACKEND_URL=" + plan.TalkBackendURL,
 	}
+	// What the ExApp itself is told. The harness speaks `acl-enabled`; the
+	// app's own vocabulary — its config file, its API, its UI — says
+	// `access_controlled`, and that is what crosses the boundary. For an
+	// undecided install, omit the variable rather than passing an invalid empty
+	// value.
+	if exappStorageMode := devStackExAppStorageMode(plan.StorageMode); exappStorageMode != "" {
+		env = append(env, "CASSINI_STORAGE_MODE="+exappStorageMode)
+	}
+	return env
 }
 
 func printDevStackPlan(w io.Writer, plan devStackPlan) {

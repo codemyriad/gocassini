@@ -845,6 +845,14 @@ func TestResolveDevStackPlanStorageModeFromFlagAndEnv(t *testing.T) {
 	if plan.StorageMode != devStackStorageACL {
 		t.Fatalf("flag did not beat env: StorageMode = %q", plan.StorageMode)
 	}
+
+	plan, _, err = resolveDevStackPlan("plan", []string{"--storage-mode", ""}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("explicit empty storage mode: %v", err)
+	}
+	if plan.StorageMode != devStackStorageUndecided {
+		t.Fatalf("empty storage mode = %q, want %q", plan.StorageMode, devStackStorageUndecided)
+	}
 }
 
 // A typo must not quietly build the other model.
@@ -878,7 +886,11 @@ func TestDevStackExportsTheExAppsOwnVocabulary(t *testing.T) {
 		if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE="+tc.harness) {
 			t.Errorf("harness env missing CASSINI_HARNESS_STORAGE_MODE=%s: %v", tc.harness, env)
 		}
-		if !containsEnv(env, "CASSINI_STORAGE_MODE="+tc.exapp) {
+		if tc.exapp == "" {
+			if containsEnv(env, "CASSINI_STORAGE_MODE=") {
+				t.Errorf("undecided ExApp env must omit CASSINI_STORAGE_MODE: %v", env)
+			}
+		} else if !containsEnv(env, "CASSINI_STORAGE_MODE="+tc.exapp) {
 			t.Errorf("ExApp env missing CASSINI_STORAGE_MODE=%s: %v", tc.exapp, env)
 		}
 	}
@@ -966,15 +978,25 @@ func TestDevStackUndecidedBuildsTheSubstrateAndDeclaresNothing(t *testing.T) {
 	if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE="+devStackStorageUndecided) {
 		t.Fatalf("harness env did not carry the mode: %v", env)
 	}
-	// Empty, not absent, in the plan's env: the harness scripts read the whole
-	// plan as their source of truth and an omitted key would let an ambient
-	// value through. The OMISSION happens at registration, in lib/stack.sh.
-	if !containsEnv(env, "CASSINI_STORAGE_MODE=") {
-		t.Fatalf("ExApp env did not declare an empty mode: %v", env)
+	if containsEnv(env, "CASSINI_STORAGE_MODE=") {
+		t.Fatalf("undecided plan must omit CASSINI_STORAGE_MODE: %v", env)
 	}
 	for _, declared := range []string{"CASSINI_STORAGE_MODE=default", "CASSINI_STORAGE_MODE=access_controlled"} {
 		if containsEnv(env, declared) {
 			t.Fatalf("undecided declared %q to the ExApp: %v", declared, env)
 		}
+	}
+}
+
+func TestDevStackUndecidedScrubsAmbientExAppMode(t *testing.T) {
+	env := devScriptEnvironment(
+		[]string{"PATH=/bin", "CASSINI_STORAGE_MODE=default", "OTHER=value"},
+		[]string{"CASSINI_HARNESS_STORAGE_MODE=undecided"},
+	)
+	if containsEnv(env, "CASSINI_STORAGE_MODE=default") {
+		t.Fatalf("undecided child retained an ambient ExApp mode: %v", env)
+	}
+	if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE=undecided") {
+		t.Fatalf("undecided child lost its harness mode: %v", env)
 	}
 }

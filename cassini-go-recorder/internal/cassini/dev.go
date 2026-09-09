@@ -235,7 +235,7 @@ func runDevScriptExecDefault(ctx context.Context, repoRoot string, relativeScrip
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Env = devScriptEnvironment(os.Environ(), extraEnv)
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
@@ -244,6 +244,31 @@ func runDevScriptExecDefault(ctx context.Context, repoRoot string, relativeScrip
 		return 1
 	}
 	return 0
+}
+
+// devScriptEnvironment merges a resolved stack plan into the caller's
+// environment. An undecided plan deliberately has no CASSINI_STORAGE_MODE;
+// remove any ambient override too, otherwise it would silently choose the mode
+// the caller explicitly left unselected.
+func devScriptEnvironment(baseEnv, extraEnv []string) []string {
+	undecided := false
+	for _, entry := range extraEnv {
+		if entry == "CASSINI_HARNESS_STORAGE_MODE=undecided" {
+			undecided = true
+			break
+		}
+	}
+	if !undecided {
+		return append(baseEnv, extraEnv...)
+	}
+
+	env := make([]string, 0, len(baseEnv)+len(extraEnv))
+	for _, entry := range baseEnv {
+		if !strings.HasPrefix(entry, "CASSINI_STORAGE_MODE=") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, extraEnv...)
 }
 
 func printDevUsage(w io.Writer) {
