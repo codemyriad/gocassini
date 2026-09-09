@@ -923,6 +923,31 @@ export function searchSegments(
   return segments.filter((segment) => tokens.every((token) => segment.searchText.includes(token)));
 }
 
+/**
+ * Narrow a meeting's rendered blocks to the ones matching a query.
+ *
+ * The two-step exists because the page does not render what search matches on.
+ * searchSegments matches the CANONICAL words — what was actually said — while a
+ * display block may merge several of those segments into one turn, so a block
+ * survives when any segment it was built from matched. Matching a block's own
+ * rendered text instead would miss a word the display projection reworded away.
+ *
+ * A blank query returns everything rather than nothing: this filters a
+ * transcript somebody is reading, and an empty box means "no filter". That is
+ * the opposite of searchSegments, whose empty query means "no matches" — it
+ * answers a different question, and the difference is why this wrapper exists
+ * rather than callers each deciding.
+ */
+export function filterDisplaySegmentsByQuery<
+  B extends { readonly sourceSegmentIds: readonly string[] },
+>(index: TranscriptIndex | null, blocks: readonly B[], query: string): B[] {
+  if (!index || !query.trim()) {
+    return [...blocks];
+  }
+  const matched = new Set(searchSegments(index, query, []).map((segment) => segment.id));
+  return blocks.filter((block) => block.sourceSegmentIds.some((id) => matched.has(id)));
+}
+
 export function formatClockTime(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(totalSeconds / 3600);
