@@ -23,9 +23,10 @@ import (
 // is not something an operator restart should silently begin doing.
 //
 // It is safe to re-run and safe to interrupt. A meeting already indexed from
-// the same delivered artifact is skipped, so a second run costs one query and
-// nothing else; a meeting it could not index is recorded with a reason rather
-// than left to look searched.
+// the same delivered artifact is skipped — one PROPFIND when the delivery
+// stamped a checksum, a re-download to learn the digest when it did not
+// (uploads from before OC-Checksum) — and a meeting it could not index is
+// recorded with a reason rather than left to look searched.
 const backfillSearchCommand = "backfill-search"
 
 // backfillSearchTimeout bounds the whole run. Like the NC backfill this is
@@ -57,16 +58,14 @@ func runBackfillSearch(ctx context.Context, args []string, stdout, stderr io.Wri
 
 Reads the archive's catalog to learn which meetings exist and what each one's
 recording is called, then indexes each from its promoted bundle on this
-volume. A meeting is indexed only when the bundle matches the recording that
-was actually delivered; anything else is recorded as not searchable, with a
-reason, and never guessed at.
+volume. A bundle is used only when its digest matches the checksum the
+archive records for the delivered recording; otherwise the recording itself
+is downloaded and indexed, so what search cites is always what a caller can
+play. A read that fails is counted failed and changes nothing — re-running
+is the fix. The job database is not touched.
 
 Safe to re-run and safe to interrupt. Normal publishing indexes new meetings
 on its own and needs nothing from this command.
-
-Run it while the pipeline is idle: it reads the job database, which the
-running operator holds open with no busy timeout, so a publish in flight can
-make this fail with a database-is-locked error. Re-running is the fix.
 
 Usage:
   cassini-operator `+backfillSearchCommand+` [--dry-run]
@@ -150,13 +149,6 @@ Flags:
 		return backfillSearchExitOK
 	}
 
-	store, err := OpenStore(cfg.DBPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "open job database: %v\nnothing was written; if the operator is publishing, retry when it is idle\n", err)
-		return backfillSearchExitNotStarted
-	}
-	defer store.Close()
-
 	index, err := openSearchStore(searchStorePath(cfg.DBPath), logger)
 	if err != nil {
 		fmt.Fprintf(stderr, "open search index: %v\nnothing was written\n", err)
@@ -164,11 +156,14 @@ Flags:
 	}
 	defer index.Close()
 
-	rt := &Runtime{cfg: cfg, logger: logger, store: store, searchStore: index}
-	// The archive reader is the fallback for meetings this operator has no local
-	// copy of — which, after a volume rebuild, can be most of them.
+	rt := &Runtime{cfg: cfg, logger: logger, searchStore: index}
+	// What was delivered is the archive's record to give — one PROPFIND per
+	// meeting — and the archive reader is the fallback for meetings this
+	// operator has no local copy of, which after a volume rebuild can be most
+	// of them.
+	delivered := exapp.archiveDeliveredState()
 	archive := exapp.archiveOpusReader(cfg.CassiniBin, cfg.WorkRoot)
-	report, err := rt.backfillSearchIndex(runCtx, targets, archive)
+	report, err := rt.backfillSearchIndex(runCtx, targets, delivered, archive)
 	if err != nil {
 		fmt.Fprintf(stderr, "backfill failed: %v\n", err)
 		return backfillSearchExitFailed

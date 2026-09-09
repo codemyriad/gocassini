@@ -55,6 +55,38 @@ import (
 // Nextcloud, and so a deployment with no archive access simply passes nil.
 type searchArchiveReader func(ctx context.Context, opusName string) ([]searchTranscriptWord, string, error)
 
+// searchDeliveredStateReader reports what the archive itself holds for one
+// recording: whether the published leaf exists, and the sha256 the delivery
+// stamped onto it. An empty digest with exists=true is a recording uploaded
+// before deliveries carried checksums — present, but with no recorded digest
+// to verify a local copy against.
+type searchDeliveredStateReader func(ctx context.Context, opusName string) (digest string, exists bool, err error)
+
+// archiveDeliveredState reads the published leaf's own checksum in one Depth-0
+// PROPFIND, as the recordings owner.
+//
+// The archive's record, and deliberately NOT the job database's: the job's
+// artifact_opus_sha256 is written by the seal stage in the same step that
+// promotes current/, so the two sides could only ever agree — a rerun that
+// sealed and then failed to publish moves the file and the digest to the new
+// attempt together, and comparing them would "verify" the exact divergence
+// the check exists to catch. The upload path stamps OC-Checksum onto every
+// delivered file (publish_sink_nextcloud.go), and Nextcloud serves it back
+// here, so this digest describes the bytes callers can actually play.
+func (c ExAppConfig) archiveDeliveredState() searchDeliveredStateReader {
+	client := &http.Client{Timeout: ncFilesUploadTimeout}
+	return func(ctx context.Context, opusName string) (string, bool, error) {
+		state, err := c.davPropfindLeafState(ctx, client, ncRecordingsOwner, ncArchiveRoot()+"/meetings/"+opusName)
+		if err != nil {
+			return "", false, err
+		}
+		if !state.Exists {
+			return "", false, nil
+		}
+		return strings.ToLower(strings.TrimSpace(state.Checksum)), true, nil
+	}
+}
+
 // archiveOpusReader reads a recording out of Nextcloud Files as the recordings
 // owner and asks the cassini CLI for its transcript.
 //

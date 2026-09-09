@@ -12,22 +12,17 @@ import (
 	"testing"
 )
 
-// backfillFixture stands up a runtime with a job store, a promoted bundle in
-// current/, and a search index — the three things backfill reads.
+// backfillFixture stands up a runtime with a promoted bundle in current/ and a
+// search index. The job database is deliberately absent: backfill no longer
+// reads it — what was delivered is the archive's record to give.
 type backfillFixture struct {
 	rt       *Runtime
 	workRoot string
-	store    *Store
 }
 
 func newBackfillFixture(t *testing.T) *backfillFixture {
 	t.Helper()
 	dir := t.TempDir()
-	store, err := OpenStore(filepath.Join(dir, "jobs.sqlite3"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
 	index, err := openSearchStore(filepath.Join(dir, searchStoreFilename), nil)
 	if err != nil {
 		t.Fatalf("open index: %v", err)
@@ -39,26 +34,37 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 		rt: &Runtime{
 			cfg:         Config{WorkRoot: workRoot},
 			logger:      log.New(io.Discard, "", 0),
-			store:       store,
 			searchStore: index,
 		},
 		workRoot: workRoot,
-		store:    store,
 	}
 }
 
-// publishedJob writes a job whose delivered artifact has the digest of the
-// bytes given, plus the promoted bundle in current/.
-func (f *backfillFixture) publishedJob(t *testing.T, jobID, opusBytes, transcript string) {
-	t.Helper()
-	ctx := context.Background()
-	if _, err := f.store.db.ExecContext(ctx,
-		`INSERT INTO jobs (id, provider, request_json, stage, state, created_at, updated_at, artifact_opus_sha256)
-		 VALUES (?, 'test', '{}', 'publish', 'succeeded', ?, ?, ?)`,
-		jobID, nowUTCString(), nowUTCString(), digestOf(opusBytes)); err != nil {
-		t.Fatalf("insert job: %v", err)
+// deliveredState stands in for the archive's own record of one delivery: the
+// leaf exists and carries the checksum of the given bytes.
+func deliveredState(opusBytes string) searchDeliveredStateReader {
+	return func(context.Context, string) (string, bool, error) {
+		return digestOf(opusBytes), true, nil
 	}
-	f.writeCurrent(t, jobID, opusBytes, transcript)
+}
+
+// deliveredNoChecksum is a recording uploaded before deliveries carried
+// checksums: present, digest unknown.
+func deliveredNoChecksum() searchDeliveredStateReader {
+	return func(context.Context, string) (string, bool, error) {
+		return "", true, nil
+	}
+}
+
+// deliveredStates records one delivery per opus name; anything else is absent.
+func deliveredStates(byName map[string]string) searchDeliveredStateReader {
+	return func(_ context.Context, opusName string) (string, bool, error) {
+		opusBytes, ok := byName[opusName]
+		if !ok {
+			return "", false, nil
+		}
+		return digestOf(opusBytes), true, nil
+	}
 }
 
 // writeCurrent lays down current/<job>.opus and current/<job>.meeting.
@@ -101,10 +107,11 @@ func reasonFor(t *testing.T, index *searchStore, opusName string) string {
 
 func TestBackfillIndexesAPublishedMeeting(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
+	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, nil)
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
+		deliveredState("sealed-audio-bytes"), nil)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -117,18 +124,22 @@ func TestBackfillIndexesAPublishedMeeting(t *testing.T) {
 	}
 }
 
-// THE check. current/ tracks the last attempt that BUILT; a rerun that built
-// and then failed to publish leaves a transcript there that does not match the
-// delivered .opus. Indexing it would have search cite words nobody can play.
+// THE check (review B1). current/ tracks the last attempt that BUILT; a rerun
+// that built and then failed to publish leaves a transcript there that does
+// not match the delivered .opus. The delivered digest comes from the ARCHIVE'S
+// own record — the job database would report the rebuilt attempt's digest,
+// because seal writes it in the same step that promotes current/, and the
+// comparison would pass on exactly this divergence.
 func TestBackfillRefusesABundleNewerThanWhatWasDelivered(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "delivered-audio", ingestTranscript)
-	// A later build promoted a different artifact and its transcript.
+	// A later build promoted a different artifact and its transcript — locally
+	// self-consistent, which is what makes it undetectable to any local check.
 	f.writeCurrent(t, "JOB1", "rebuilt-audio-never-published", `{"version":"transcript.words.v1","segments":[
 	  {"id":"seg_9999","speaker":"S1","startMs":1000,"endMs":2000,"text":"undelivered rewording","words":[]}]}`)
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, nil)
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
+		deliveredState("delivered-audio"), nil)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -148,15 +159,10 @@ func TestBackfillRefusesABundleNewerThanWhatWasDelivered(t *testing.T) {
 // coverage still counting it is a false one.
 func TestBackfillRecordsAMissingBundle(t *testing.T) {
 	f := newBackfillFixture(t)
-	if _, err := f.store.db.ExecContext(context.Background(),
-		`INSERT INTO jobs (id, provider, request_json, stage, state, created_at, updated_at, artifact_opus_sha256)
-		 VALUES ('JOB1','test','{}','publish','succeeded',?,?,?)`,
-		nowUTCString(), nowUTCString(), digestOf("gone")); err != nil {
-		t.Fatalf("insert job: %v", err)
-	}
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, nil)
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
+		deliveredState("gone"), nil)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -168,20 +174,16 @@ func TestBackfillRecordsAMissingBundle(t *testing.T) {
 	}
 }
 
-// Without the delivered digest there is no way to tell whether the local bundle
-// is the published one, and guessing is the failure the check exists to stop.
+// A recording uploaded before deliveries carried checksums: there is no way to
+// tell whether the local bundle is the published one without the delivered
+// bytes in hand, and guessing is the failure the check exists to stop.
 func TestBackfillRefusesWhenTheDeliveredDigestIsUnknown(t *testing.T) {
 	f := newBackfillFixture(t)
-	if _, err := f.store.db.ExecContext(context.Background(),
-		`INSERT INTO jobs (id, provider, request_json, stage, state, created_at, updated_at)
-		 VALUES ('JOB1','test','{}','publish','succeeded',?,?)`,
-		nowUTCString(), nowUTCString()); err != nil {
-		t.Fatalf("insert job: %v", err)
-	}
 	f.writeCurrent(t, "JOB1", "some-audio", ingestTranscript)
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, nil)
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
+		deliveredNoChecksum(), nil)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -197,13 +199,14 @@ func TestBackfillRefusesWhenTheDeliveredDigestIsUnknown(t *testing.T) {
 // same delivered artifact is left alone rather than re-read and rewritten.
 func TestBackfillSkipsWhatIsAlreadyCurrent(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
+	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
 	targets := []searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}
+	delivered := deliveredState("sealed-audio-bytes")
 
-	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, nil); err != nil {
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, delivered, nil); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	report, err := f.rt.backfillSearchIndex(context.Background(), targets, nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets, delivered, nil)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -215,21 +218,19 @@ func TestBackfillSkipsWhatIsAlreadyCurrent(t *testing.T) {
 // A re-publish with a different artifact re-indexes rather than being skipped.
 func TestBackfillReindexesWhenTheDeliveredArtifactChanged(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "first-audio", ingestTranscript)
+	f.writeCurrent(t, "JOB1", "first-audio", ingestTranscript)
 	targets := []searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}
-	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, nil); err != nil {
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets,
+		deliveredState("first-audio"), nil); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 
 	corrected := `{"version":"transcript.words.v1","segments":[
 	  {"id":"seg_0001","speaker":"S1","startMs":1000,"endMs":4200,"text":"we discussed the merger","words":[]}]}`
 	f.writeCurrent(t, "JOB1", "second-audio", corrected)
-	if _, err := f.store.db.ExecContext(context.Background(),
-		`UPDATE jobs SET artifact_opus_sha256 = ? WHERE id = 'JOB1'`, digestOf("second-audio")); err != nil {
-		t.Fatalf("update digest: %v", err)
-	}
 
-	report, err := f.rt.backfillSearchIndex(context.Background(), targets, nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets,
+		deliveredState("second-audio"), nil)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -247,16 +248,19 @@ func TestBackfillReindexesWhenTheDeliveredArtifactChanged(t *testing.T) {
 // One bad meeting must not stop the rest of an archive being indexed.
 func TestBackfillContinuesPastOneFailure(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "audio-one", ingestTranscript)
-	f.publishedJob(t, "JOB2", "audio-two", "{not json")
-	f.publishedJob(t, "JOB3", "audio-three", ingestTranscript)
+	f.writeCurrent(t, "JOB1", "audio-one", ingestTranscript)
+	f.writeCurrent(t, "JOB2", "audio-two", "{not json")
+	f.writeCurrent(t, "JOB3", "audio-three", ingestTranscript)
+	delivered := deliveredStates(map[string]string{
+		"JOB1.opus": "audio-one", "JOB2.opus": "audio-two", "JOB3.opus": "audio-three",
+	})
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
 		[]searchBackfillTarget{
 			{JobID: "JOB1", OpusName: "JOB1.opus"},
 			{JobID: "JOB2", OpusName: "JOB2.opus"},
 			{JobID: "JOB3", OpusName: "JOB3.opus"},
-		}, nil)
+		}, delivered, nil)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -273,7 +277,7 @@ func TestBackfillContinuesPastOneFailure(t *testing.T) {
 func TestBackfillCountsATargetWithNoJoinKeyAsFailed(t *testing.T) {
 	f := newBackfillFixture(t)
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "  "}}, nil)
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "  "}}, deliveredNoChecksum(), nil)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -297,16 +301,16 @@ var archiveWords = []searchTranscriptWord{
 	{SpeakerID: "S1", StartMS: 1_900, EndMS: 2_100, Text: "acquisition"},
 }
 
-// THE case this exists for. On the demo archive 25 of 30 meetings had no job
-// row: the archive outlives the operator's volume. Those must be indexed from
-// the recording rather than left unsearchable.
-func TestBackfillFallsBackToTheArchiveWhenTheJobRecordIsGone(t *testing.T) {
+// THE case this exists for. On the demo archive 25 of 30 meetings had no local
+// copy at all: the archive outlives the operator's volume. Those must be
+// indexed from the recording rather than left unsearchable.
+func TestBackfillFallsBackToTheArchiveWithoutALocalCopy(t *testing.T) {
 	f := newBackfillFixture(t)
-	// No job row and no bundle — only the published recording exists.
+	// No bundle — only the published recording exists, from before checksums.
 	archive, calls := stubArchive(archiveWords, "archive-digest", nil)
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}, archive)
+		[]searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}, deliveredNoChecksum(), archive)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -328,7 +332,7 @@ func TestBackfillFallsBackToTheArchiveWhenTheJobRecordIsGone(t *testing.T) {
 	if source != searchRowSourceWords {
 		t.Errorf("row_source = %q, want %q", source, searchRowSourceWords)
 	}
-	// The digest recorded is the archive bytes actually read, not a job record.
+	// The digest recorded is the archive bytes actually read.
 	if digest != "archive-digest" {
 		t.Errorf("digest = %q, want the archive's", digest)
 	}
@@ -338,11 +342,12 @@ func TestBackfillFallsBackToTheArchiveWhenTheJobRecordIsGone(t *testing.T) {
 // own segments, and no download is needed.
 func TestBackfillPrefersTheLocalBundleOverTheArchive(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
+	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
 	archive, calls := stubArchive(archiveWords, "archive-digest", nil)
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, archive)
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
+		deliveredState("sealed-audio-bytes"), archive)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -367,13 +372,13 @@ func TestBackfillPrefersTheLocalBundleOverTheArchive(t *testing.T) {
 // mismatch rather than working around it.
 func TestBackfillResolvesAStaleBundleFromTheArchive(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "delivered-audio", ingestTranscript)
 	f.writeCurrent(t, "JOB1", "rebuilt-audio-never-published", `{"version":"transcript.words.v1","segments":[
 	  {"id":"seg_9999","speaker":"S1","startMs":1000,"endMs":2000,"text":"undelivered rewording","words":[]}]}`)
 	archive, _ := stubArchive(archiveWords, "delivered-digest", nil)
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, archive)
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
+		deliveredState("delivered-audio"), archive)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -393,15 +398,10 @@ func TestBackfillResolvesAStaleBundleFromTheArchive(t *testing.T) {
 // of plausible-but-wrong reason an operator would chase.
 func TestBackfillKeepsTheSpecificReasonWithoutAnArchive(t *testing.T) {
 	f := newBackfillFixture(t)
-	if _, err := f.store.db.ExecContext(context.Background(),
-		`INSERT INTO jobs (id, provider, request_json, stage, state, created_at, updated_at, artifact_opus_sha256)
-		 VALUES ('JOB1','test','{}','publish','succeeded',?,?,?)`,
-		nowUTCString(), nowUTCString(), digestOf("gone")); err != nil {
-		t.Fatalf("insert job: %v", err)
-	}
 
 	if _, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, nil); err != nil {
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
+		deliveredState("gone"), nil); err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
 	if got := reasonFor(t, f.rt.searchStore, "JOB1.opus"); got != searchBackfillReasonNoBundle {
@@ -416,7 +416,7 @@ func TestBackfillCountsAnUnreadableArchiveRecordingAsFailed(t *testing.T) {
 	archive, _ := stubArchive(nil, "", errors.New("504 from Nextcloud"))
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}, archive)
+		[]searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}, deliveredNoChecksum(), archive)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestBackfillKeepsRowsWhenTheArchiveReadFails(t *testing.T) {
 	f := newBackfillFixture(t)
 	targets := []searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}
 	good, _ := stubArchive(archiveWords, "archive-digest", nil)
-	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, good); err != nil {
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredNoChecksum(), good); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 	if got := matches(t, f.rt.searchStore, "acquisition"); len(got) != 1 {
@@ -448,7 +448,7 @@ func TestBackfillKeepsRowsWhenTheArchiveReadFails(t *testing.T) {
 	}
 
 	failing, _ := stubArchive(nil, "", errors.New("timeout"))
-	report, err := f.rt.backfillSearchIndex(context.Background(), targets, failing)
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredNoChecksum(), failing)
 	if err != nil {
 		t.Fatalf("re-run: %v", err)
 	}
@@ -469,11 +469,11 @@ func TestBackfillKeepsRowsWithoutArchiveAccess(t *testing.T) {
 	f := newBackfillFixture(t)
 	targets := []searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}
 	good, _ := stubArchive(archiveWords, "archive-digest", nil)
-	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, good); err != nil {
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredNoChecksum(), good); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 
-	report, err := f.rt.backfillSearchIndex(context.Background(), targets, nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredNoChecksum(), nil)
 	if err != nil {
 		t.Fatalf("re-run: %v", err)
 	}
@@ -492,20 +492,44 @@ func TestBackfillSkipsAnArchiveMeetingAlreadyIndexed(t *testing.T) {
 	archive, calls := stubArchive(archiveWords, "archive-digest", nil)
 	targets := []searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}
 
-	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, archive); err != nil {
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredNoChecksum(), archive); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	report, err := f.rt.backfillSearchIndex(context.Background(), targets, archive)
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredNoChecksum(), archive)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	if report.Unchanged != 1 || report.Indexed != 0 {
 		t.Fatalf("report = %+v, want unchanged=1", report)
 	}
-	// It still has to read the recording to learn the digest — but it must not
-	// rewrite rows it already holds.
+	// With no recorded checksum it still has to read the recording to learn
+	// the digest — but it must not rewrite rows it already holds.
 	if *calls != 2 {
 		t.Errorf("archive read %d times, want 2", *calls)
+	}
+}
+
+// Once the delivery records a checksum, a re-run learns "unchanged" from one
+// PROPFIND and downloads nothing.
+func TestBackfillSkipsWithoutDownloadWhenTheDeliveryRecordsAChecksum(t *testing.T) {
+	f := newBackfillFixture(t)
+	targets := []searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}
+	first, _ := stubArchive(archiveWords, digestOf("delivered-bytes"), nil)
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredNoChecksum(), first); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+
+	second, calls := stubArchive(archiveWords, digestOf("delivered-bytes"), nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets,
+		deliveredState("delivered-bytes"), second)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if report.Unchanged != 1 || report.Indexed != 0 {
+		t.Fatalf("report = %+v, want unchanged=1", report)
+	}
+	if *calls != 0 {
+		t.Errorf("archive read %d times when the checksum already answered", *calls)
 	}
 }
 
@@ -513,17 +537,20 @@ func TestBackfillSkipsAnArchiveMeetingAlreadyIndexed(t *testing.T) {
 // stay forever and its words stay readable to anyone who can run SQL on the file.
 func TestBackfillForgetsMeetingsTheArchiveNoLongerHolds(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "audio-one", ingestTranscript)
-	f.publishedJob(t, "JOB2", "audio-two", ingestTranscript)
+	f.writeCurrent(t, "JOB1", "audio-one", ingestTranscript)
+	f.writeCurrent(t, "JOB2", "audio-two", ingestTranscript)
+	delivered := deliveredStates(map[string]string{
+		"JOB1.opus": "audio-one", "JOB2.opus": "audio-two",
+	})
 	both := []searchBackfillTarget{
 		{JobID: "JOB1", OpusName: "JOB1.opus"},
 		{JobID: "JOB2", OpusName: "JOB2.opus"},
 	}
-	if _, err := f.rt.backfillSearchIndex(context.Background(), both, nil); err != nil {
+	if _, err := f.rt.backfillSearchIndex(context.Background(), both, delivered, nil); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 
-	report, err := f.rt.backfillSearchIndex(context.Background(), both[:1], nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), both[:1], delivered, nil)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -541,12 +568,12 @@ func TestBackfillForgetsMeetingsTheArchiveNoLongerHolds(t *testing.T) {
 // archive, so convergence must not erase the index on a transient failure.
 func TestBackfillDoesNotForgetEverythingOnAnEmptyTargetList(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "audio-one", ingestTranscript)
+	f.writeCurrent(t, "JOB1", "audio-one", ingestTranscript)
 	targets := []searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}
-	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, nil); err != nil {
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredState("audio-one"), nil); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	report, err := f.rt.backfillSearchIndex(context.Background(), nil, nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), nil, deliveredState("audio-one"), nil)
 	if err != nil {
 		t.Fatalf("empty run: %v", err)
 	}
@@ -555,27 +582,48 @@ func TestBackfillDoesNotForgetEverythingOnAnEmptyTargetList(t *testing.T) {
 	}
 }
 
-// A locked job database must not look like a missing job row: that would send a
-// backfill against a busy operator down the archive path for every meeting,
-// overwriting good segment rows with coarse word rows.
-func TestBackfillTreatsAnUnreadableJobStoreAsRetryable(t *testing.T) {
+// A delivered-state read that fails is retryable, writes nothing, and keeps
+// whatever rows an earlier run wrote — and it does not fall through to a
+// download, because nothing downstream could be verified against anything.
+func TestBackfillTreatsADeliveredStateFailureAsRetryable(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "audio-one", ingestTranscript)
-	if err := f.store.Close(); err != nil {
-		t.Fatalf("close store: %v", err)
+	targets := []searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}
+	good, _ := stubArchive(archiveWords, "archive-digest", nil)
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredNoChecksum(), good); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	failing := func(context.Context, string) (string, bool, error) {
+		return "", false, errors.New("propfind timeout")
 	}
 	archive, calls := stubArchive(archiveWords, "archive-digest", nil)
-
-	report, err := f.rt.backfillSearchIndex(context.Background(),
-		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, archive)
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets, failing, archive)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	if report.Failed != 1 || report.Indexed != 0 {
+	if report.Failed != 1 || report.Indexed != 0 || report.Unavailable != 0 {
 		t.Fatalf("report = %+v, want failed=1", report)
 	}
 	if *calls != 0 {
-		t.Errorf("archive was read %d times for a job-store outage", *calls)
+		t.Errorf("archive was read %d times for a delivered-state outage", *calls)
+	}
+	if got := matches(t, f.rt.searchStore, "acquisition"); len(got) != 1 {
+		t.Fatalf("hits = %+v — a delivered-state outage deleted good rows", got)
+	}
+}
+
+// A leaf the catalog names but the archive does not hold is a failure to
+// verify, not a verdict: deletion in flight, or drift convergence will settle.
+func TestBackfillCountsAMissingArchiveLeafAsFailed(t *testing.T) {
+	f := newBackfillFixture(t)
+	report, err := f.rt.backfillSearchIndex(context.Background(),
+		[]searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}},
+		deliveredStates(nil), nil)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if report.Failed != 1 || report.Unavailable != 0 {
+		t.Fatalf("report = %+v, want failed=1", report)
 	}
 }
 
@@ -584,7 +632,7 @@ func TestBackfillTreatsAnUnreadableJobStoreAsRetryable(t *testing.T) {
 // compared too or it keeps the coarse rows forever.
 func TestBackfillUpgradesArchiveRowsWhenTheBundleReturns(t *testing.T) {
 	f := newBackfillFixture(t)
-	f.publishedJob(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
+	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
 	targets := []searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}
 
 	// Pretend an earlier run indexed it from the archive, at the same digest.
@@ -594,7 +642,8 @@ func TestBackfillUpgradesArchiveRowsWhenTheBundleReturns(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	report, err := f.rt.backfillSearchIndex(context.Background(), targets, nil)
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets,
+		deliveredState("sealed-audio-bytes"), nil)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}

@@ -2,8 +2,6 @@ package operator
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -34,29 +32,25 @@ import (
 // have search cite words that are not in the recording anyone can play.
 //
 // So every meeting is checked before it is indexed: the digest of
-// current/<job>.opus must equal the digest the job recorded for the artifact it
-// delivered. A mismatch is recorded as unavailable with a reason, never
-// indexed and never silently skipped — a meeting missing from the covered count
-// is a partial answer, while a meeting indexed from the wrong attempt is a
-// confident wrong one.
-//
-// This is also why backfill does not fall back to the `.opus` on a mismatch:
-// the correct fix is to re-run the job, not to quietly index a coarser and
-// differently-worded transcript under the same name.
+// current/<job>.opus must equal the digest of what was DELIVERED — which only
+// the archive can say. The delivered digest is read off the published leaf
+// itself (OC-Checksum, stamped at upload), or failing that computed from the
+// downloaded bytes; see archiveDeliveredState for why the job database's
+// digest can never serve here (an earlier revision compared against it, which
+// verifies the seal against itself and misses the one divergence that
+// matters — the review's B1). A mismatch falls through to the archive, which
+// holds the delivered artifact and therefore RESOLVES it.
 
 const (
-	searchBackfillReasonNoBundle    = "bundle-missing"
-	searchBackfillReasonNoDigest    = "delivered-digest-unknown"
-	searchBackfillReasonStaleBundle = "bundle-newer-than-delivered"
-	searchBackfillReasonUnreadable  = "transcript-unreadable"
-	searchBackfillReasonNoSegments  = "transcript-has-no-segments"
-	// The archive outlives the operator's volume, so a published recording whose
-	// job row is gone is ordinary rather than exceptional.
-	searchBackfillReasonNoJobRecord   = "job-record-missing"
+	searchBackfillReasonNoBundle = "bundle-missing"
+	// The archive holds the recording but records no checksum for it — an
+	// upload from before deliveries carried one — so a local bundle cannot be
+	// verified against it without the delivered bytes in hand.
+	searchBackfillReasonNoDigest      = "delivered-digest-unknown"
+	searchBackfillReasonStaleBundle   = "bundle-newer-than-delivered"
+	searchBackfillReasonUnreadable    = "transcript-unreadable"
+	searchBackfillReasonNoSegments    = "transcript-has-no-segments"
 	searchBackfillReasonArchiveUnread = "archive-recording-unreadable"
-	// The job database could not be read at all — distinct from a row that is
-	// genuinely absent, because only the second justifies the archive fallback.
-	searchBackfillReasonJobStoreUnavailable = "job-store-unavailable"
 )
 
 // searchBackfillTarget is one published meeting to consider.
@@ -89,10 +83,15 @@ type searchBackfillReport struct {
 //
 // It never stops on one meeting's failure: an archive with a single unreadable
 // bundle should still end up with every other meeting searchable.
-func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBackfillTarget, archive searchArchiveReader) (searchBackfillReport, error) {
+func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBackfillTarget, delivered searchDeliveredStateReader, archive searchArchiveReader) (searchBackfillReport, error) {
 	var report searchBackfillReport
 	if rt.searchStore == nil {
 		return report, fmt.Errorf("search index is not open")
+	}
+	if delivered == nil {
+		// Without the archive's own record there is no way to know what was
+		// delivered, and guessing is the failure the whole check exists to stop.
+		return report, fmt.Errorf("backfill needs the archive's delivered state")
 	}
 	indexed, err := rt.searchStore.indexedState(ctx)
 	if err != nil {
@@ -107,7 +106,7 @@ func (rt *Runtime) backfillSearchIndex(ctx context.Context, targets []searchBack
 			report.Failed++
 			continue
 		}
-		outcome, reason := rt.backfillOneMeeting(ctx, target, name, indexed, archive)
+		outcome, reason := rt.backfillOneMeeting(ctx, target, name, indexed, delivered, archive)
 		switch outcome {
 		case searchBackfillIndexed:
 			report.Indexed++
@@ -202,43 +201,65 @@ const (
 
 func (rt *Runtime) backfillOneMeeting(
 	ctx context.Context, target searchBackfillTarget, opusName string,
-	indexed map[string]searchIndexedState, archive searchArchiveReader,
+	indexed map[string]searchIndexedState, delivered searchDeliveredStateReader, archive searchArchiveReader,
 ) (searchBackfillOutcome, string) {
-	// The local bundle is preferred wherever it can be trusted: it carries the
-	// producer's own segments and costs nothing to read. Anything that cannot be
-	// trusted falls through to the archive rather than giving up, because the
-	// recording is the one artifact that is definitely there.
-	delivered, localReason := rt.deliveredDigestFor(ctx, target)
-	if localReason == "" {
-		if existing, ok := indexed[opusName]; ok && existing.digest != "" &&
-			existing.digest == delivered && existing.source == searchRowSourceSegments {
-			// Re-runnable by design: identical rows are not rewritten.
-			//
-			// The source is compared as well as the digest. Without it, a
-			// meeting once indexed from the archive would report `unchanged`
-			// forever and keep its coarse word rows even after the bundle came
-			// back — the digest matches either way.
+	// What was DELIVERED is the archive's record to give. The job database
+	// cannot answer it — its digest is written at seal time, in the same step
+	// that promotes current/, so the two move together across attempts and
+	// comparing them proves nothing about delivery (archiveDeliveredState).
+	deliveredDigest, exists, err := delivered(ctx, opusName)
+	if err != nil {
+		// A failure to ask, not a verdict: nothing is written, existing rows
+		// stay, re-running is the fix.
+		return searchBackfillFailed, fmt.Sprintf("read delivered state: %v", err)
+	}
+	if !exists {
+		// The catalog names it but the leaf is gone — a deletion in flight, or
+		// drift this run cannot judge. Convergence prunes it once the catalog
+		// stops naming it; until then this too is a failure to verify.
+		return searchBackfillFailed, "the catalog names it but the archive does not hold it"
+	}
+	existing, wasIndexed := indexed[opusName]
+
+	if deliveredDigest != "" {
+		if sameIndexedArtifact(existing, wasIndexed, deliveredDigest, searchRowSourceSegments) {
+			// Re-runnable by design: identical rows are not rewritten. The
+			// source is compared as well as the digest — without it, a meeting
+			// once indexed from the archive would report `unchanged` forever
+			// and keep its coarse word rows even after the bundle came back.
 			return searchBackfillUnchanged, ""
 		}
-		outcome, reason, settled := rt.indexFromLocalBundle(ctx, target, opusName, delivered)
+		// The local bundle is preferred wherever it can be trusted: it carries
+		// the producer's own segments and costs nothing to read.
+		outcome, reason, settled := rt.indexFromLocalBundle(ctx, target, opusName, deliveredDigest)
 		if settled {
 			return outcome, reason
 		}
-		// Carry the SPECIFIC reason the local copy could not be used. Collapsing
-		// them here would record "bundle-newer-than-delivered" for a bundle that
-		// is simply absent, which is the kind of plausible-but-wrong reason an
-		// operator would chase.
-		localReason = reason
+		if sameIndexedArtifact(existing, wasIndexed, deliveredDigest, searchRowSourceWords) {
+			// Already built from this very artifact, and no better source has
+			// appeared: nothing to download.
+			return searchBackfillUnchanged, ""
+		}
+		// Carry the SPECIFIC reason the local copy could not be used.
+		// Collapsing them would record "bundle-newer-than-delivered" for a
+		// bundle that is simply absent, which is the kind of plausible-but-
+		// wrong reason an operator would chase.
+		return rt.indexFromArchive(ctx, target, opusName, existing, wasIndexed, archive, reason)
 	}
+	// A recording delivered before uploads carried checksums: present, but with
+	// no recorded digest to verify the local bundle against. The delivered
+	// bytes themselves are the only ground truth left.
+	return rt.indexFromArchive(ctx, target, opusName, existing, wasIndexed, archive, searchBackfillReasonNoDigest)
+}
 
-	if localReason == searchBackfillReasonJobStoreUnavailable {
-		// Retryable, and not something to paper over by rebuilding from the
-		// archive: the local bundle may be perfectly good and simply unreadable
-		// right now.
-		return searchBackfillFailed, localReason
-	}
+// indexFromArchive settles a meeting from the published recording itself: the
+// one artifact that is definitely there, and definitely what was delivered.
+func (rt *Runtime) indexFromArchive(
+	ctx context.Context, target searchBackfillTarget, opusName string,
+	existing searchIndexedState, wasIndexed bool, archive searchArchiveReader, localReason string,
+) (searchBackfillOutcome, string) {
 	if archive == nil {
-		if _, wasIndexed := indexed[opusName]; wasIndexed {
+		if wasIndexed {
 			// No archive access, and the meeting holds rows from an earlier run.
 			// Absence of the recording is not evidence those rows are wrong, and
 			// recording it unavailable would DELETE them — so this is a failure
@@ -259,7 +280,16 @@ func (rt *Runtime) backfillOneMeeting(
 		// rows and tells the operator to re-run.
 		return searchBackfillFailed, fmt.Sprintf("%s: %v", searchBackfillReasonArchiveUnread, err)
 	}
-	if existing, ok := indexed[opusName]; ok && existing.digest != "" && existing.digest == digest {
+	if sameIndexedArtifact(existing, wasIndexed, digest, searchRowSourceSegments) {
+		return searchBackfillUnchanged, ""
+	}
+	// The delivered bytes are in hand, which makes the local bundle verifiable
+	// after all — and preferred, because it carries the producer's segments. A
+	// legacy recording whose bundle survives gets segment rows, not coarse ones.
+	if outcome, reason, settled := rt.indexFromLocalBundle(ctx, target, opusName, digest); settled {
+		return outcome, reason
+	}
+	if sameIndexedArtifact(existing, wasIndexed, digest, searchRowSourceWords) {
 		return searchBackfillUnchanged, ""
 	}
 	rows := deriveSearchRowsFromWords(words)
@@ -274,29 +304,10 @@ func (rt *Runtime) backfillOneMeeting(
 	return searchBackfillIndexed, ""
 }
 
-// deliveredDigestFor reports the digest of the artifact this job delivered, or
-// the reason the local record cannot say.
-func (rt *Runtime) deliveredDigestFor(ctx context.Context, target searchBackfillTarget) (string, string) {
-	job, err := rt.store.GetJob(ctx, target.JobID)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The archive outlives the operator's volume, so a published recording
-		// with no job row is ordinary rather than exceptional. Named, not
-		// counted as a failure.
-		return "", searchBackfillReasonNoJobRecord
-	}
-	if err != nil {
-		// Anything else is the job database being unavailable, and it must NOT
-		// look like an absent row. The command's own usage warns that a publish
-		// in flight fails this read with "database is locked" — and treating
-		// that as "no job record" would send every meeting down the archive
-		// fallback, re-indexing a whole archive at the coarser granularity and
-		// overwriting good segment rows on the way.
-		return "", searchBackfillReasonJobStoreUnavailable
-	}
-	if job.ArtifactOpusSHA256 == nil || strings.TrimSpace(*job.ArtifactOpusSHA256) == "" {
-		return "", searchBackfillReasonNoDigest
-	}
-	return strings.TrimSpace(*job.ArtifactOpusSHA256), ""
+// sameIndexedArtifact reports whether the meeting's existing rows were built
+// from this very artifact, at this granularity.
+func sameIndexedArtifact(existing searchIndexedState, wasIndexed bool, digest, source string) bool {
+	return wasIndexed && digest != "" && strings.EqualFold(existing.digest, digest) && existing.source == source
 }
 
 // indexFromLocalBundle indexes from current/, or reports that it could not.
