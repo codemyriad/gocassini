@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -988,6 +987,35 @@ func TestTransitionPreviewDoesNotOfferToOverwriteTheModeBeingConfirmed(t *testin
 	}
 }
 
+func TestTransitionPreviewAdoptsAnExistingFirstChoiceArchive(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
+	mock.dirs = map[string][]string{
+		ncACLRecordingsRoot:                   {"meetings", "catalog.json"},
+		ncACLRecordingsRoot + "/meetings":     {"old-1.opus", "old-2.opus"},
+		ncDefaultRecordingsRoot:               {"meetings"},
+		ncDefaultRecordingsRoot + "/meetings": {},
+	}
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	got, err := cfg.previewStorageModeSwitch(context.Background(), true, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("previewStorageModeSwitch() error = %v", err)
+	}
+	if !got.AdoptingDestination || got.OverwriteRequired || len(got.OverwriteNames) != 0 {
+		t.Fatalf("preview = %+v, want selected archive adoption without overwrite", got)
+	}
+	if !got.NothingToMove || got.Meetings != 0 || got.DestinationMeetings != 2 {
+		t.Fatalf("preview = %+v, want no migration and two preserved destination meetings", got)
+	}
+	if !strings.Contains(strings.Join(got.Warnings, "\n"), "Nothing there") {
+		t.Fatalf("preview warning does not promise preservation: %v", got.Warnings)
+	}
+}
+
 // A target the instance cannot support is reported as not-ready with the reason,
 // rather than as a diff the administrator could confirm.
 func TestTransitionPreviewReportsAnUnsupportedTarget(t *testing.T) {
@@ -1213,11 +1241,9 @@ func TestSwitchStaysInTheOldModeWhenTheFlipCannotBeWritten(t *testing.T) {
 // so it did not catch this, and it was the one call site in the package that
 // discarded that second return value.
 //
-// The first pass closed it by refusing the whole operation on an unresolved
-// mode. Since D-708 that refusal would close the ONLY route out of an undecided
-// install, so it is closed differently: the source is derived from the TARGET
-// (the other root), which makes source == destination impossible to express
-// rather than something to check for.
+// An unresolved selection whose target already holds an archive is an adoption,
+// not a copy. That both prevents a root being migrated onto itself and preserves
+// an archive from an installation that predates storage_settings.json.
 func TestSwitchFromNoModeDecidesWithoutMigratingARootOntoItself(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
@@ -1230,18 +1256,17 @@ func TestSwitchFromNoModeDecidesWithoutMigratingARootOntoItself(t *testing.T) {
 	mock.addFile(ncDefaultRecordingsRoot+"/catalog.json", catalogWith("m1"))
 
 	cfg := testExAppConfig(mock.server(t).URL)
-	if _, err := cfg.switchStorageMode(context.Background(), false, false, log.New(io.Discard, "", 0)); !errors.Is(err, errOverwriteConfirmationRequired) {
-		t.Fatalf("switchStorageMode(false) error = %v, want overwrite confirmation", err)
+	result, err := cfg.switchStorageMode(context.Background(), false, false, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("switchStorageMode(false) error = %v", err)
 	}
-	// The archive that was already at the chosen mode's root is untouched: the
-	// source was the OTHER root, which is empty.
+	if !result.Confirmed || result.MeetingsMoved != 0 || result.SourceCleared {
+		t.Fatalf("first choice result = %+v, want a confirmed adoption without migration", result)
+	}
+	// The archive that was already at the chosen mode's root is untouched.
 	if !mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
 		t.Fatal("choosing the default mode deleted the archive already at its root")
 	}
-	// The tidy-up runs against the OTHER root, which is empty — so nothing under
-	// the chosen mode's own root may be touched. (A DELETE of an absent
-	// catalog.json at the empty source is expected and harmless; davDelete
-	// tolerates a 404 so a re-run is idempotent.)
 	mock.mu.Lock()
 	deleted := append([]string(nil), mock.deleted...)
 	mock.mu.Unlock()
@@ -1250,8 +1275,59 @@ func TestSwitchFromNoModeDecidesWithoutMigratingARootOntoItself(t *testing.T) {
 			t.Fatalf("choosing the default mode deleted %q under its own root; deletes were %v", path, deleted)
 		}
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("settings were written after a refused overwrite: %v", err)
+	if persisted := readPersistedMode(t, path); persisted.Source != storageModeSourceUser || !persisted.Clean() {
+		t.Fatalf("persisted settings = %+v, want a clean user selection", persisted)
+	}
+}
+
+// An upgrade from before storage_settings.json has no recorded mode, but may
+// already hold the production archive in the access-controlled Team folder. The
+// first administrator choice must adopt that root rather than treating the
+// other root as a source and replacing the live archive after confirmation.
+func TestFirstChoiceAdoptsAnExistingAccessControlledArchive(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	settings := filepath.Join(t.TempDir(), storageSettingsFileName)
+	ncStorage.setPath(settings)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addFile(ncACLRecordingsRoot+"/meetings/live.opus", "live")
+	mock.addFile(ncACLRecordingsRoot+"/catalog.json", catalogWith("live"))
+	// Preserve an unexpected other-root archive too: without a prior mode record
+	// no automatic choice can safely decide which data is disposable.
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/other.opus", "other")
+
+	cfg := testExAppConfig(mock.server(t).URL)
+	result, err := cfg.switchStorageMode(context.Background(), true, true, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("switchStorageMode(true) error = %v", err)
+	}
+	if !result.Confirmed || result.MeetingsMoved != 0 || result.SourceCleared {
+		t.Fatalf("first choice result = %+v, want a confirmed adoption without migration", result)
+	}
+	if accessControlled, resolved := ncStorage.mode(); !resolved || !accessControlled {
+		t.Fatalf("mode = %t, resolved = %t; want confirmed access-controlled mode", accessControlled, resolved)
+	}
+	if got := readPersistedMode(t, settings); got.Source != storageModeSourceUser || !got.Clean() {
+		t.Fatalf("persisted settings = %+v, want a clean user selection", got)
+	}
+	for _, want := range []string{
+		ncACLRecordingsRoot + "/meetings/live.opus",
+		ncACLRecordingsRoot + "/catalog.json",
+		ncDefaultRecordingsRoot + "/meetings/other.opus",
+	} {
+		if !mock.has(want) {
+			t.Errorf("first choice removed %s", want)
+		}
+	}
+	mock.mu.Lock()
+	copies, deletes := len(mock.copies), len(mock.deleted)
+	mock.mu.Unlock()
+	if copies != 0 || deletes != 0 {
+		t.Fatalf("first choice made %d copy/copies and %d delete(s), want none", copies, deletes)
 	}
 }
 

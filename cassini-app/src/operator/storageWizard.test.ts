@@ -45,6 +45,7 @@ function preview(partial: Partial<StorageTransitionPreview> = {}): StorageTransi
     destination_meetings: 0,
     overwrite_names: [],
     overwrite_required: false,
+    adopting_destination: false,
     nothing_to_move: false,
     pending_cleanup: "",
     warnings: [],
@@ -118,6 +119,12 @@ describe("migrationFacts", () => {
 
   it("says plainly when no archive moves", () => {
     expect(migrationFacts(preview())).toEqual(["Nothing moves. Only the storage mode changes."]);
+  });
+
+  it("says an existing first-choice archive is preserved", () => {
+    expect(migrationFacts(preview({ adopting_destination: true, destination_meetings: 2 }))).toEqual([
+      "The existing archive will be kept. Nothing will be overwritten, copied, or removed.",
+    ]);
   });
 
   it("says nothing before a preview has arrived", () => {

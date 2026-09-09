@@ -343,6 +343,10 @@ export interface StorageTransitionPreview {
   destination_readable: boolean;
   overwrite_names: string[];
   overwrite_required: boolean;
+  // adopting_destination means an unconfigured installation already has an
+  // archive in the selected root. Selecting it records the choice only; no
+  // archive is overwritten, copied, or removed.
+  adopting_destination: boolean;
   nothing_to_move: boolean;
   // pending_cleanup is set when an earlier switch did not finish, so the
   // administrator is told the stale root is cleared before this one starts.

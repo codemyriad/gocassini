@@ -489,6 +489,7 @@ function normalizeStoragePreview(value: unknown): StorageTransitionPreview | nul
     destination_readable: row.destination_readable === true,
     overwrite_names: asStringList(row.overwrite_names),
     overwrite_required: row.overwrite_required === true,
+    adopting_destination: row.adopting_destination === true,
     nothing_to_move: row.nothing_to_move === true,
     pending_cleanup: asString(row.pending_cleanup),
     warnings: Array.isArray(row.warnings)

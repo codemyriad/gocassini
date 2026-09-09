@@ -209,10 +209,40 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl,
 	if !destinationFacts.Probed {
 		return storageTransitionResult{}, fmt.Errorf("%w: could not inspect %s before migrating", errTransitionNotReady, recordingsRootFor(enableAccessControl))
 	}
+	// A first choice is not a migration from a guessed source. In particular,
+	// installations from before storage_settings.json already have their
+	// access-controlled archive at the root the administrator is selecting. A
+	// generic migration would treat the other root as the source and, with
+	// confirm_overwrite set, clear this live destination before copying an empty
+	// archive over it.
+	//
+	// Adopt the selected root instead. Nothing is copied or removed, including
+	// anything at the other root: without a recorded mode there is no safe basis
+	// for choosing which existing archive should win. The status endpoint will
+	// continue to report any other-root contents as stranded for an administrator
+	// to inspect.
+	if !resolved && archiveHasContents(destinationFacts) {
+		result := storageTransitionResult{Mode: storageModeName(enableAccessControl), Confirmed: true}
+		if err := c.recordStorageMode(enableAccessControl, storageModeSourceUser, true, logger); err != nil {
+			return result, fmt.Errorf("could not record the administrator's initial storage-mode choice: %w", err)
+		}
+		logger.Printf("nc storage: administrator selected %s mode and adopted the existing archive at %s; no recordings were moved or removed", storageModeName(enableAccessControl), recordingsRootFor(enableAccessControl))
+		// Keep the direct switch API consistent with a copied migration: once a
+		// choice is durable, refresh the in-process status under the same lock.
+		c.preflightNCStorageLocked(ctx, client, logger)
+		return result, nil
+	}
 	if (len(destinationFacts.Entries) > 0 || destinationFacts.Catalog) && !confirmOverwrite {
 		return storageTransitionResult{}, overwriteConfirmationRequiredError(destinationFacts, recordingsRootFor(enableAccessControl))
 	}
 	return c.migrateStorageLocked(ctx, client, resolved, enableAccessControl, logger)
+}
+
+// archiveHasContents includes the catalog because it is part of the archive:
+// adopting a root must never later make its index look disposable simply
+// because it currently has no recording leaves.
+func archiveHasContents(archive ncArchiveFacts) bool {
+	return len(archive.Entries) > 0 || archive.Catalog
 }
 
 func overwriteConfirmationRequiredError(destination ncArchiveFacts, root string) error {
@@ -1032,6 +1062,10 @@ type storageTransitionPreview struct {
 	// before confirming a destructive migration.
 	OverwriteNames    []string `json:"overwrite_names,omitempty"`
 	OverwriteRequired bool     `json:"overwrite_required"`
+	// AdoptingDestination means this is the first choice for an install with no
+	// recorded mode and the selected root already holds an archive. The switch
+	// records that choice but does not copy, replace, or clean either root.
+	AdoptingDestination bool `json:"adopting_destination"`
 
 	// NothingToMove distinguishes "this is a no-op" from "this will move 41
 	// meetings", which the confirmation copy has to say differently. It is false
@@ -1099,6 +1133,23 @@ func (c ExAppConfig) previewStorageModeSwitch(ctx context.Context, enableAccessC
 
 	sourceFacts := probe.archiveFor(!enableAccessControl)
 	destinationFacts := probe.archiveFor(enableAccessControl)
+	if !resolved && archiveHasContents(destinationFacts) {
+		// Match switchStorageMode's first-choice adoption exactly. In particular,
+		// do not expose the selected archive as overwrite evidence: the dialog
+		// must never ask an upgrader to approve deleting recordings that this
+		// operation preserves.
+		out.SourceRoot = destinationFacts.Root
+		out.DestinationRoot = destinationFacts.Root
+		out.SourceReadable = destinationFacts.Probed
+		out.DestinationReadable = destinationFacts.Probed
+		out.DestinationMeetings = destinationFacts.Meetings()
+		out.AdoptingDestination = true
+		out.NothingToMove = true
+		out.Warnings = []string{fmt.Sprintf(
+			"Cassini will adopt the existing archive in %s. Nothing there, or in the other recordings root, will be overwritten or removed.",
+			destinationFacts.Root)}
+		return out, nil
+	}
 	out.SourceReadable = sourceFacts.Probed
 	out.Meetings = sourceFacts.Meetings()
 	out.CatalogPresent = sourceFacts.Catalog

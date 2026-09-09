@@ -115,6 +115,9 @@ export function migrationFacts(preview: StorageTransitionPreview | null): string
   if (!preview) {
     return [];
   }
+  if (preview.adopting_destination) {
+    return ["The existing archive will be kept. Nothing will be overwritten, copied, or removed."];
+  }
   const out: string[] = [];
   if (preview.overwrite_required) {
     out.push(
