@@ -981,16 +981,142 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
 		t.Fatalf("decode setup response: %v", err)
 	}
-	// ok + state + awaiting_choice. The third is a bit, not a detail: it says
-	// whether the thing standing between this instance and working recordings is
-	// a DECISION rather than a fault, which is what a non-administrator needs in
-	// order to be told the right thing (D-708). It names no account, no path and
-	// no folder id.
-	if len(fields) != 3 {
-		t.Fatalf("setup must answer with ok+state+awaiting_choice only, got %#v", fields)
+	// ok + state + awaiting_choice + features. The third is a bit, not a detail:
+	// it says whether the thing standing between this instance and working
+	// recordings is a DECISION rather than a fault, which is what a
+	// non-administrator needs in order to be told the right thing (D-708). It
+	// names no account, no path and no folder id.
+	if len(fields) != 4 {
+		t.Fatalf("setup must answer with ok+state+awaiting_choice+features only, got %#v", fields)
 	}
-	if _, ok := fields["awaiting_choice"]; !ok {
-		t.Fatalf("setup did not carry awaiting_choice: %#v", fields)
+	if _, isBool := fields["awaiting_choice"].(bool); !isBool {
+		t.Fatalf("setup did not carry awaiting_choice as a boolean: %#v", fields)
+	}
+	features, ok := fields["features"].(map[string]any)
+	if !ok {
+		t.Fatalf("setup features = %#v, want an object", fields["features"])
+	}
+	// One bit each, by name. An endpoint, a model or a key reaching a non-admin
+	// through the readiness signal would undo the whole reason it is a boolean.
+	if len(features) != 2 {
+		t.Fatalf("setup features must be two booleans, got %#v", features)
+	}
+	for _, name := range []string{"summaries", "insights"} {
+		if _, isBool := features[name].(bool); !isBool {
+			t.Fatalf("setup features[%q] = %#v, want a boolean", name, features[name])
+		}
+	}
+}
+
+// The readiness signal (D-722). Every "not configured yet" state in the app
+// reduces to these two bits, and this is the only route that answers them for
+// somebody who is not an administrator.
+func TestSetupReportsWhichAICapabilitiesAreConfigured(t *testing.T) {
+	provider := LLMProvider{ID: "p-1", Name: "local", BaseURL: "http://127.0.0.1:11434/v1"}
+	for _, tc := range []struct {
+		name          string
+		llm           LLMSettings
+		wantSummaries bool
+		wantInsights  bool
+	}{
+		{
+			// The out-of-the-box deployment: the transcript is complete and
+			// nothing is summarised, which the app has to be able to say.
+			name: "no endpoint at all",
+		},
+		{
+			// Registering a provider IS the setup an insight needs: it is the
+			// one thing an administrator says that means "this deployment may
+			// talk to that endpoint", and insightEndpoint hands it to the
+			// child, so the question somebody types has somewhere to go.
+			// Summarising is the separate opt-in and stays off.
+			name:         "an endpoint, but no step points at it",
+			llm:          LLMSettings{Providers: []LLMProvider{provider}},
+			wantInsights: true,
+		},
+		{
+			// Insight creation needs less than summarising does — an endpoint
+			// it can reach, and nothing else — so it is available here while
+			// summaries are not.
+			name:         "an endpoint the insight step alone uses",
+			llm:          LLMSettings{Providers: []LLMProvider{provider}, Insight: LLMStep{Enabled: true, Provider: provider.ID}},
+			wantInsights: true,
+		},
+		{
+			// The insight step has no endpoint of its own and inherits the
+			// summary one, which is a configuration an insight will reach.
+			name:          "an endpoint, summarising on",
+			llm:           LLMSettings{Providers: []LLMProvider{provider}, Summary: LLMStep{Enabled: true, Provider: provider.ID}},
+			wantSummaries: true,
+			wantInsights:  true,
+		},
+		{
+			// Disabling publish-time summaries leaves the selected provider in
+			// place for an insight somebody explicitly requests.
+			name:         "an endpoint selected, summarising off",
+			llm:          LLMSettings{Providers: []LLMProvider{provider}, Summary: LLMStep{Enabled: false, Provider: provider.ID}},
+			wantInsights: true,
+		},
+		{
+			// A step enabled against an endpoint that has since been deleted
+			// will not run. Reporting it as on would have the app promise a
+			// summary that never arrives. An insight is unaffected: a provider
+			// row still exists, and that is all one needs.
+			name:         "summarising on, its endpoint gone",
+			llm:          LLMSettings{Providers: []LLMProvider{provider}, Summary: LLMStep{Enabled: true, Provider: "p-deleted"}},
+			wantInsights: true,
+		},
+		{
+			// No provider at all is the one state in which an insight has
+			// nothing to ask, and the only one the locked card belongs in.
+			name: "no endpoint at all",
+			llm:  LLMSettings{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, cleanup := newTestRuntime(t)
+			defer cleanup()
+			rt.setLLMSettings(tc.llm)
+
+			rec := httptest.NewRecorder()
+			rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+
+			var resp setupResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode setup response: %v", err)
+			}
+			if resp.Features.Summaries != tc.wantSummaries || resp.Features.Insights != tc.wantInsights {
+				t.Fatalf("setup features = %#v, want summaries=%v insights=%v",
+					resp.Features, tc.wantSummaries, tc.wantInsights)
+			}
+		})
+	}
+}
+
+// The readiness signal must survive a deployment that cannot serve recordings
+// at all: the two facts are independent, and an unset-up install is exactly
+// where somebody is trying to work out what is missing.
+func TestSetupReportsFeaturesEvenWhenNotSetUp(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.setLLMSettings(LLMSettings{
+		Providers: []LLMProvider{{ID: "p-1", Name: "local", BaseURL: "http://127.0.0.1:11434/v1"}},
+		Summary:   LLMStep{Enabled: true, Provider: "p-1"},
+	})
+
+	rec := httptest.NewRecorder()
+	rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+
+	var resp setupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode setup response: %v", err)
+	}
+	if resp.OK || !resp.Features.Insights {
+		t.Fatalf("setup = %#v, want ok=false with insights still reported", resp)
 	}
 }
 

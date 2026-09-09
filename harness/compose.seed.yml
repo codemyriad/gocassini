@@ -1,0 +1,16 @@
+# Compose overlay applied only when a stack is asked to seed itself.
+#
+# `cassini dev stack up --seed <dir>` exports CASSINI_HARNESS_SEED_DIR and the
+# harness adds this file as a second -f. A stack that asks for no seed never
+# loads it, so its compose invocation is byte-for-byte the one it has always
+# been — which is what keeps CI and every existing e2e leg outside the blast
+# radius of this feature.
+#
+# The mount is read-only and is the pack itself. Nothing is bound over
+# Nextcloud's data directory: the seeder copies out of here after provisioning
+# has created the recordings tree on empty disk, so Nextcloud never meets a
+# directory it did not make.
+services:
+  nextcloud:
+    volumes:
+      - ${CASSINI_HARNESS_SEED_DIR:?compose.seed.yml requires CASSINI_HARNESS_SEED_DIR}:/cassini-seed:ro

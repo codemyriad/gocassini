@@ -144,6 +144,9 @@ export interface LLMStep {
   enabled: boolean;
   provider: string;
   model: string;
+  // The workflow this step runs, by id. Empty means the shipped default,
+  // which is what a settings file written before D-719 reads as.
+  template: string;
 }
 
 export interface LLMEffectiveStep {
@@ -151,13 +154,20 @@ export interface LLMEffectiveStep {
   base_url: string;
   model: string;
   api_key_configured: boolean;
+  // True when this step has no endpoint of its own and is running on another
+  // step's — so it moves when that one moves (D-719).
+  inherited: boolean;
 }
 
 export interface LLMSettings {
   providers: LLMProviderView[];
   summary: LLMStep;
+  // The endpoint an insight runs on. Off means it inherits the summary's,
+  // never that insights are unavailable (D-719).
+  insight: LLMStep;
   effective: {
     summary: LLMEffectiveStep | null;
+    insight: LLMEffectiveStep | null;
   };
 }
 
@@ -175,6 +185,7 @@ export interface LLMProviderUpdate {
 export interface LLMSettingsUpdate {
   providers?: LLMProviderUpdate[];
   summary?: LLMStep;
+  insight?: LLMStep;
 }
 
 export interface LLMModel {
@@ -353,4 +364,31 @@ export interface StorageTransitionPreview {
   pending_cleanup: string;
   // warnings are one sentence each, most-surprising first.
   warnings: string[];
+}
+
+// --- Insight templates (D-718): mirror GET <basePath>/settings/workflows.
+// Read-only. The workflows are prompts compiled into the recorder image, so
+// there is nothing to write back and no PUT to write it with.
+
+export interface InsightWorkflow {
+  id: string;
+  // The immutable version of the prompt. A change is a new version, never an
+  // edit in place, so (id, version) names one set of bytes forever.
+  version: string;
+  // SHA-256 of those bytes. An insight document records it, which is how a
+  // document a month old can be traced to the prompt that made it.
+  sha256: string;
+  name: string;
+  // What this workflow asks of a set of meetings, in a person's words. The
+  // name says nothing about what the model is asked to do, so this is what a
+  // row discloses under it.
+  question: string;
+  description: string;
+  // Where the bytes came from — "Built in" for everything shipped in the
+  // image. Derived by the recorder, so a second resolver would say something
+  // else here without any row being edited to admit it.
+  origin: string;
+  // The system prompt with its template already spliced in: the exact bytes
+  // sent to the model, not a description of them.
+  instruction: string;
 }

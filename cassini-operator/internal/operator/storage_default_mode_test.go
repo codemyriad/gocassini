@@ -356,3 +356,55 @@ func TestNCFilesProxyOwnerReadIsBoundedByTheDefaultRoot(t *testing.T) {
 		t.Fatalf("served as the owner with a Team folder mounted at %q — that tree is not private", ncDefaultRecordingsMount)
 	}
 }
+
+// The meetings-list endpoint under the default model (D-701 x D-616).
+//
+// The two features met in a merge and neither side had this path: D-701 built
+// the endpoint on the per-caller intersect, and D-616 gave the default model a
+// private root that no per-caller scan can see into. Resolving the model inside
+// resolveCatalogForCaller is what joins them, and this pins the join — without
+// it the endpoint answers "you may read no meetings" on every default-model
+// install, which is precisely the false negative D-701 exists to prevent.
+func TestMeetingsListInTheDefaultModelServesTheWholeArchive(t *testing.T) {
+	setUsableStorageMode(t, false)
+	catalog := `{"version":"cassini.viewer.catalog.v1","meetings":[` +
+		`{"id":"a","dateLabel":"2026-08-01 09:00","audioPath":"./meetings/JOB1.opus","roomId":"rm_aaaaaaaaaaaaaaaa"},` +
+		`{"id":"b","dateLabel":"2026-08-15","audioPath":"./meetings/JOB2.opus","roomId":"rm_bbbbbbbbbbbbbbbb"}]}`
+	var catalogPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PROPFIND":
+			t.Errorf("the default model must not run a per-caller scan; got PROPFIND %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		case strings.HasSuffix(r.URL.Path, "/catalog.json"):
+			catalogPath = r.URL.Path
+			_, _ = w.Write([]byte(catalog))
+		default:
+			t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	rec := getMeetingsList(t, meetingsListConfig(srv.URL), "", "alice")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("meetings list = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	// Identity and root are one question: the private root read as its owner.
+	if davUserOf(catalogPath) != ncRecordingsOwner {
+		t.Fatalf("catalog fetched as %q, want %q", davUserOf(catalogPath), ncRecordingsOwner)
+	}
+	if !strings.Contains(catalogPath, ncDefaultRecordingsRoot) {
+		t.Fatalf("catalog fetched from %q, want it under %q", catalogPath, ncDefaultRecordingsRoot)
+	}
+	if got := listedIDs(t, decodeMeetingsList(t, rec)); len(got) != 2 {
+		t.Fatalf("listed %v, want the whole archive — the default model restricts nothing", got)
+	}
+
+	// The query surface is the endpoint's reason to exist, and it must narrow
+	// the same set in either model.
+	rec = getMeetingsList(t, meetingsListConfig(srv.URL), "room=rm_bbbbbbbbbbbbbbbb", "alice")
+	if got := listedIDs(t, decodeMeetingsList(t, rec)); len(got) != 1 || got[0] != "b" {
+		t.Fatalf("room filter listed %v, want [b]", got)
+	}
+}

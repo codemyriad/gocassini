@@ -89,6 +89,21 @@ func recordingsRootFor(accessControlled bool) string {
 	return ncDefaultRecordingsRoot
 }
 
+// ncArchiveReadIdentity pairs the identity an archive read is made with and the
+// root it reads, because the two are one question (webdav_upload.go).
+//
+// Splitting them is the disclosure this exists to prevent: reading the private
+// root as the caller hides the whole archive from everybody, and reading the
+// Team folder as the owner hands every recording in it past its per-recording
+// ACLs. Every reader of the published archive resolves both here, in one call,
+// so neither can be chosen without the other.
+func ncArchiveReadIdentity(caller string) (readAs, root string) {
+	if ncStorageServesAsOwner() {
+		return ncRecordingsOwner, ncDefaultRecordingsRoot
+	}
+	return caller, ncACLRecordingsRoot
+}
+
 // ncArchiveRoot is the root for callers that have no mode in hand.
 //
 // It resolves through ncStorage.accessControlled(), which answers `true` when

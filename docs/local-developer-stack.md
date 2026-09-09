@@ -183,6 +183,56 @@ The published-site volume holds:
 
 If you want host-visible storage, set bind-mount paths in `deployment/.env`.
 
+## Seeding the harness with real recordings
+
+A harness starts with no meetings, and the only way to get one has been to
+record it. That is the right shape for testing the recorder and the wrong one
+for everything downstream of it: a meeting list, cross-meeting search or an
+insight over several meetings is only interesting against a corpus.
+
+`cassini dev meetings pull` copies an archive off a deployed instance into a
+*seed pack* — a directory holding `catalog.json` and `meetings/<id>.opus`, which
+is the same shape the published site has always had — and the harness loads one
+on request.
+
+```text
+   deployed Nextcloud                seed pack                harness Nextcloud
+   ─────────────────                 ─────────                ─────────────────
+   the recordings YOUR      ──pull──▶  a directory  ──seed──▶  Cassini/Recordings
+   account may read           GET      on your disk   copy       + occ …:scan
+                                                     + scan
+```
+
+```bash
+export CASSINI_NC_URL="https://cloud.example.com"
+export CASSINI_NC_USER="you"
+export CASSINI_NC_APP_PASSWORD="…"           # Settings → Security → app password
+
+./bin/cassini dev meetings pull --out harness/runtime/seed/prod --limit 20
+./bin/cassini dev stack up --seed harness/runtime/seed/prod
+```
+
+The pull is read-only and sees exactly what that account may read. The seed is a
+filesystem copy plus `occ groupfolders:scan`, not a WebDAV upload, because the
+recordings tree is ordinary files inside a Team folder; 2 GB is copied and
+scanned in about four seconds, then read is granted on each recording at roughly
+half a second apiece. `harness/bin/seed-nc-files.sh --pack <dir>` does the same
+against a stack that is already running.
+
+Three things to hold onto:
+
+- **Seeded meetings are readable by every account on the stack.** Production's
+  per-meeting permissions name production accounts and cannot travel with the
+  data, so nothing about who-may-read-what should be judged on a seeded archive.
+- **They have no operator job history**, so the admin jobs list will not show
+  them. Every published surface behaves normally.
+- **A pack is confidential** — real audio, transcripts and summaries.
+  `harness/runtime/` is gitignored for that reason.
+
+The harness README has the full guide, including the filters and what a partial
+pull leaves behind:
+[`harness/README.md`](../harness/README.md#95-seeding-the-stack-from-a-production-archive).
+
 ## Typical startup sequence
 
 A normal local startup looks like this:

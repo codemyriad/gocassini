@@ -260,6 +260,19 @@ EOF_CONF
   log "Rendered full-profile harness config (public: ${CASSINI_HARNESS_PUBLIC_URL:-local}, media: $media_host, signaling allowall: $allowall)"
 }
 
+# harness_seed_compose_file echoes the seed overlay's -f arguments when this
+# stack was asked to seed itself, and nothing otherwise.
+#
+# Nothing otherwise is the point: a stack with no --seed produces exactly the
+# compose invocation it always has, so CI and every existing e2e leg are
+# untouched by the seeding feature.
+harness_seed_compose_args() {
+  [[ -n "${CASSINI_HARNESS_SEED_DIR:-}" ]] || return 0
+  local overlay="${COMPOSE_FILE%/*}/compose.seed.yml"
+  [[ -f "$overlay" ]] || return 0
+  printf '%s\n%s\n' "-f" "$overlay"
+}
+
 compose() {
   local profile_args=()
   if [[ "$SPREED_PROFILE" == "full" ]]; then
@@ -268,8 +281,13 @@ compose() {
   if harness_remote_config_requested; then
     profile_args+=(--profile remote)
   fi
-  if ((${#profile_args[@]} > 0)); then
-    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
+  local overlay_args=()
+  while IFS= read -r arg; do
+    [[ -n "$arg" ]] && overlay_args+=("$arg")
+  done < <(harness_seed_compose_args)
+  if ((${#profile_args[@]} > 0 || ${#overlay_args[@]} > 0)); then
+    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" \
+      ${overlay_args[@]+"${overlay_args[@]}"} ${profile_args[@]+"${profile_args[@]}"} "$@"
   else
     # Avoid expanding an empty array under macOS Bash 3.2 + `set -u`.
     docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"

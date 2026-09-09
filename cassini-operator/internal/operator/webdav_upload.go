@@ -271,6 +271,17 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 	// bounded by the request context; a hung upstream is bounded on headers.
 	client := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}}
 	return func(w http.ResponseWriter, r *http.Request, relPath string) bool {
+		// The list endpoint is gated on the resolved SINK, before anything else.
+		// ncFilesProxy is non-nil whenever the AppAPI env is present, regardless
+		// of where publishing actually goes — so on an ExApp running the local
+		// sink this route would otherwise answer from a Nextcloud archive that
+		// is not the one being written. Declining falls through to the local
+		// file server, which has no such file and 404s. Checked ahead of the
+		// caller guard so a deployment that does not serve this route at all
+		// answers the same way for every caller.
+		if relPath == meetingsListPath && c.PublishSink != publishSinkNextcloudFiles {
+			return false
+		}
 		// The caller identity comes from the AppAPI-verified request; these
 		// routes are USER-gated, so it is always present. An absent one is a
 		// bug, not an anonymous reader, and it fails closed in BOTH modes —
@@ -281,9 +292,18 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			if logger != nil {
 				logger.Printf("nc files read: missing caller identity path=%s — failing closed", relPath)
 			}
-			if relPath == "catalog.json" {
+			switch relPath {
+			case "catalog.json":
 				writeCatalogJSON(w, []byte(emptyCatalogJSON))
-			} else {
+			case meetingsListPath:
+				// The list endpoint must NOT reuse either arm above. An empty
+				// catalog would claim the caller may read nothing, and the 404
+				// would be phrased by the CLI as "no recording you can read"
+				// plus a permissions hint — both report a broken AppAPI
+				// identity as a denial. It is plumbing, so say so.
+				writeJSONError(w, http.StatusBadGateway,
+					"your Nextcloud identity did not reach Cassini; this is not an empty result")
+			default:
 				http.NotFound(w, r)
 			}
 			return true
@@ -312,10 +332,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 		// the wrong identity with the wrong root is the disclosure this guard
 		// exists to prevent, so neither is chosen without the other.
 		servesAsOwner := ncStorageServesAsOwner()
-		readAs, root := caller, ncACLRecordingsRoot
-		if servesAsOwner {
-			readAs, root = ncRecordingsOwner, ncDefaultRecordingsRoot
-		}
+		readAs, root := ncArchiveReadIdentity(caller)
 
 		if relPath == "catalog.json" {
 			if servesAsOwner {
@@ -330,6 +347,14 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			// The list is built per caller (authoritative catalog filtered
 			// by the caller's own PROPFIND scan), not streamed as-is.
 			c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
+			return true
+		}
+		if relPath == meetingsListPath {
+			// Same visible set as catalog.json — resolved through the same
+			// mode-aware resolution, so it narrows what THIS model says the
+			// caller may read — narrowed by the query, and with substrate
+			// failures reported loudly. See serveMeetingsList.
+			c.serveMeetingsList(r.Context(), w, r, client, caller, logger)
 			return true
 		}
 		// meetings/<id>.opus: under access control this fetches AS the caller so
