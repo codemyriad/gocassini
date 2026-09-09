@@ -1,0 +1,25 @@
+-- The endpoint an insight was ASKED for, as distinct from the one that answered.
+--
+-- 0009 stored only the latter and said so: "a retry re-resolves provider and
+-- model from current settings, so a stored provider is a record, not an input
+-- (D-720 §4)". That was right while the endpoint was purely deployment policy
+-- and nobody chose it per run. It stopped being right when the Prepare panel
+-- began letting the asker pick one: a choice somebody made is an input, and a
+-- retry that quietly re-resolved it would run something other than what they
+-- asked for.
+--
+-- So the two facts are now two columns, because they answer different
+-- questions and either can be true without the other:
+--
+--   requested_*  what the asker chose. Empty means they chose nothing and the
+--                deployment's configured endpoint answers, which is every run
+--                made before this migration and every run by a caller with no
+--                picker.
+--   provider/model  what the last attempt actually reached. Still a receipt,
+--                still never read back as an input, and still the thing an
+--                artifact record and the insight card report.
+--
+-- Nullable-by-default TEXT rather than a rebuild: SQLite ADD COLUMN is O(1) and
+-- every existing row means "nothing was chosen", which is exactly ''.
+ALTER TABLE insight_runs ADD COLUMN requested_provider TEXT NOT NULL DEFAULT '';
+ALTER TABLE insight_runs ADD COLUMN requested_model TEXT NOT NULL DEFAULT '';

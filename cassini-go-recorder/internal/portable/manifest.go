@@ -24,7 +24,7 @@ const (
 	// PayloadSchema is the published JSON Schema for a version 1 manifest. It
 	// resolves: a reader that fetches it gets the schema the file was written
 	// against.
-	PayloadSchema           = "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json"
+	PayloadSchema           = "https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json"
 	AudioMatchPolicy        = "exact-opus-audio-v1"
 	DefaultPayloadChunkSize = 4096
 	Description             = "Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON."

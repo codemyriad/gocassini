@@ -120,7 +120,7 @@ func TestPackEmitsThePublishedWireVersionAndSchema(t *testing.T) {
 	if got, want := readOpusTag(t, outPath, "CASSINI_FORMAT"), "org.cassini.portable-meeting/1"; got != want {
 		t.Errorf("CASSINI_FORMAT = %q, want %q", got, want)
 	}
-	wantSchema := "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json"
+	wantSchema := "https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json"
 	if got := readOpusTag(t, outPath, "CASSINI_PAYLOAD_SCHEMA"); got != wantSchema {
 		t.Errorf("CASSINI_PAYLOAD_SCHEMA = %q, want %q", got, wantSchema)
 	}

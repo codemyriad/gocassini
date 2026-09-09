@@ -145,6 +145,60 @@ jobs:
           done
           exit "$rc"
 
+      # The prompt gate (D-718). These are the bytes Cassini sends to a model,
+      # and they are markdown — which means ci.yml never sees a change to them:
+      # its paths-ignore denies '**/*.md', so a pull request editing only a
+      # prompt runs zero Go tests there while changing what the product does,
+      # through go:embed. This job is not path-filtered and is required, so the
+      # gate belongs here.
+      #
+      # What it asserts: each shipped workflow's content hash is the pinned one
+      # (a prompt is immutable — a change is a new version, never an edit in
+      # place), every embedded prompt file is claimed by exactly one workflow,
+      # and — once skills/ exists — the copy under skills/ that
+      # `npx skills add codemyriad/gocassini` installs is byte-identical to the
+      # copy the binary runs.
+      #
+      # internal/insight and its workflows package depend on the standard
+      # library alone, which is what makes this affordable here: no cgo, no
+      # speech toolchain, no model endpoint. Keep it that way, or this step
+      # turns into the full unit-test job.
+      - name: prompt registry (hashes, and skills/ mirror drift)
+        run: |
+          set -euo pipefail
+          cd cassini-go-recorder
+          go test ./internal/insight/...
+
+      # No large or compiled blobs, judged on what the diff ADDS.
+      #
+      # PR #261 landed a 14 MB Linux `cassini` binary, a 7 MB webm and a 7 MB
+      # opus — scratch output that a `git add -A` during a conflict-resolution
+      # merge swept out of a working tree it had been sitting in for months.
+      # `harness/go-talk-rotator/three-song-rotator` on main is the same
+      # accident, never caught. .gitignore is the first line and cannot be the
+      # only one: it names paths we already know about, and the next scratch
+      # directory will be called something nobody predicted.
+      #
+      # Here rather than in ci.yml for the same reason as the prompt gate above:
+      # ci.yml is path-filtered, and the whole point is to catch a file whose
+      # path nobody anticipated. This job is required and runs on every PR.
+      #
+      # The base is the PR's own base sha, not origin/main: a branch is judged on
+      # what it adds, never on what main has moved on to since it forked.
+      - name: no large or compiled blobs added
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          # A push whose `before` is the null sha (a new branch, or the first
+          # push after a force) has no usable base. Fall back to the merge base
+          # with main rather than skipping: skipping is how a gate goes quiet
+          # for exactly the pushes most likely to carry a surprise.
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="$(git merge-base origin/main HEAD)"
+          fi
+          ./scripts/check-added-blobs.sh "$BASE_SHA" HEAD
+
       - name: actionlint (all workflows)
         run: |
           set -euo pipefail
@@ -189,6 +243,10 @@ jobs:
           ./harness/bin/test-av-drift-pair-requirement.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-stack-resume.sh
+          # The storage-mode dimension: which substrate a stack is built with,
+          # and which mode the ExApp is told to start in. Pure predicates plus
+          # greps over tracked files -- no Docker, no stack, no network.
+          ./harness/bin/test-storage-mode-scaffold.sh
           # The synthetic-meeting generator's self-overlap slide: a slid
           # turn is recorded at its slid start, the declared duration is
           # recomputed after sliding, and every track shares that extent.

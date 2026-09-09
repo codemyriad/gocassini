@@ -108,6 +108,27 @@ Flags:
 		return backfillSearchExitNotStarted
 	}
 
+	// The archive root depends on the recorded storage mode (D-616), and this
+	// is its own process: resolve the mode the way operator startup does. An
+	// install with no recorded mode is refused rather than guessed at — the
+	// unresolved fallback addresses the Team-folder root, and on a default-mode
+	// install that would report a healthy archive as empty.
+	ncStorage.setPath(storageSettingsPath(cfg))
+	storage, err := LoadStorageSettings(ncStorage.settingsPath())
+	if err != nil {
+		fmt.Fprintf(stderr, "read storage settings: %v\nnothing was read or written\n", err)
+		return backfillSearchExitNotStarted
+	}
+	if !storage.Configured() {
+		fmt.Fprintf(stderr, "no storage mode is recorded for this install; finish the Setup tab first\nnothing was read or written\n")
+		return backfillSearchExitNotStarted
+	}
+	storageSource := storage.Source
+	if storageSource == "" {
+		storageSource = storageModeSourceConfigured
+	}
+	ncStorage.set(storage.AccessControlled(), storageSource, storage.Clean())
+
 	runCtx, cancel := context.WithTimeout(ctx, backfillSearchTimeout)
 	defer cancel()
 
@@ -172,7 +193,7 @@ Flags:
 // catalog id, the job id and the packed filename coincide by convention only.
 func (c ExAppConfig) archiveBackfillTargets(ctx context.Context) ([]searchBackfillTarget, error) {
 	client := &http.Client{Timeout: ncFilesUploadTimeout}
-	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncArchiveRoot()+"/catalog.json")
 	if err != nil {
 		return nil, err
 	}

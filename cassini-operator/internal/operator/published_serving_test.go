@@ -39,7 +39,7 @@ func TestPublishedHandlerServesArchiveFromNextcloudAndNothingFromDisk(t *testing
 	proxy, seen := stubProxy(t, `{"version":"cassini.viewer.catalog.v1","meetings":[]}`)
 
 	// dir == "" is what installRoutes passes under the nextcloud-files sink.
-	h := publishedHandler("", "/published", log.New(&bytes.Buffer{}, "", 0), proxy)
+	h := publishedHandler("", "/published", log.New(&bytes.Buffer{}, "", 0), proxy, nil)
 
 	r := httptest.NewRequest(http.MethodGet, "/published/catalog.json", nil)
 	w := httptest.NewRecorder()
@@ -69,7 +69,7 @@ func TestPublishedHandlerStillServesLocallyUnderTheLocalSink(t *testing.T) {
 	// No regression for standalone/dev, where the on-disk site is the source.
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "catalog.json"), `{"version":"cassini.viewer.catalog.v1","meetings":[]}`)
-	h := publishedHandler(dir, "/published", log.New(&bytes.Buffer{}, "", 0), nil)
+	h := publishedHandler(dir, "/published", log.New(&bytes.Buffer{}, "", 0), nil, nil)
 
 	r := httptest.NewRequest(http.MethodGet, "/published/catalog.json", nil)
 	w := httptest.NewRecorder()

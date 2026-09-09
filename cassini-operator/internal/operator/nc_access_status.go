@@ -89,7 +89,19 @@ type ncAccessSubstrateStatus struct {
 	// "administrator".
 	adminUser string
 	prereqs   []ncPrerequisiteStatus
-	// checkedAtUTC is when provisioning last ran to completion or gave up.
+	// mode and modeSource are the resolved storage model and where it came
+	// from (D-616). Empty until the preflight has resolved one, which is a
+	// different thing from `default` and must stay distinguishable: the UI
+	// branches on it, and "nobody has decided yet" is not a decision.
+	mode       string
+	modeSource string
+	// probe is the last read-only look at Nextcloud. It is kept whole rather
+	// than reduced to a verdict, because /storage has to answer "is the OTHER
+	// mode available" — the mode you are not in, whose readiness no single
+	// state field could carry.
+	probe    ncStorageProbe
+	hasProbe bool
+	// checkedAtUTC is when the preflight last ran to completion or gave up.
 	// Empty means it has not run yet.
 	checkedAtUTC string
 }
@@ -148,6 +160,28 @@ func (s *ncAccessSubstrateStatus) record(state ncSubstrateState, step string, ca
 	s.checkedAtUTC = nowUTCString()
 }
 
+// beginRun clears the previous run's verdict so this run reports its own.
+//
+// It exists because succeed() deliberately refuses to overwrite a recorded
+// degradation — which is right WITHIN one run, where a non-fatal step must
+// survive the steps after it, and wrong ACROSS runs, where it made a failure
+// permanent for the life of the process. An administrator who installs the
+// missing app and re-enables Cassini, or who fixes a mode mismatch from the
+// Setup tab, gets a run in which everything works and a status that still says
+// what was wrong before it. Publishing and recording stay refused, and the
+// documented remedy appears to do nothing.
+//
+// Applicability, the resolved administrator, the mode and the probe are NOT
+// cleared: they are either properties of the deployment or values this run is
+// about to overwrite anyway.
+func (s *ncAccessSubstrateStatus) beginRun() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = ""
+	s.step = ""
+	s.detail = ""
+}
+
 // succeed records a provisioning run that got all the way through.
 // succeed records that provisioning ran to completion.
 //
@@ -187,6 +221,35 @@ func (s *ncAccessSubstrateStatus) setPrerequisites(prereqs []ncPrerequisiteStatu
 	s.prereqs = append(s.prereqs[:0:0], prereqs...)
 }
 
+// setMode records the resolved storage model. Like setAdminUser it deliberately
+// does not touch the state: the mode is context for whatever outcome follows,
+// and a mode that is resolved says nothing about whether the storage under it
+// is usable.
+func (s *ncAccessSubstrateStatus) setMode(mode, source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mode = mode
+	s.modeSource = source
+}
+
+// setProbe records the last read-only look at Nextcloud.
+func (s *ncAccessSubstrateStatus) setProbe(probe ncStorageProbe) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.probe = probe
+	s.hasProbe = true
+}
+
+// lastProbe returns the recorded probe, and whether there has been one. The
+// /storage endpoint reads it rather than re-probing, for the same reason
+// /status does not: every check it promises is cheap, and this one is a
+// handful of round-trips to Nextcloud.
+func (s *ncAccessSubstrateStatus) lastProbe() (ncStorageProbe, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.probe, s.hasProbe
+}
+
 // usable reports whether the substrate is proven enough to write recordings
 // into. The publish sink asks this because WebDAV cannot: MKCOL into the
 // service account's own home returns the same 201 as MKCOL into a mounted group
@@ -195,6 +258,83 @@ func (s *ncAccessSubstrateStatus) usable() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state == ncSubstrateProvisioned
+}
+
+// ncStorageServesAsOwner reports whether the read proxy may fetch the archive
+// as the owning service account instead of as the caller — which also decides
+// WHICH root it reads, because the two are one question (webdav_upload.go).
+//
+// This is D-668's guard against the default model's read path failing open, and
+// the split roots changed what it has to check rather than whether it has to.
+//
+// The first pass required the recorded mode AND `usable()`, because both models
+// addressed `Cassini/Recordings`: a recorded `default` on an instance whose
+// `Cassini` Team folder was still mapped would have served every authenticated
+// account every recording in that folder, past its per-recording ACLs, as the
+// ACL manager. That was reproduced end to end, and it is why the probe's
+// agreement was made load-bearing.
+//
+// That state no longer exists. The default model reads
+// `CassiniNoACL/Recordings`, which the `Cassini` Team folder cannot shadow, so a
+// mapped Team folder is no longer evidence of anything about the private tree —
+// and after an opt-out it is the ORDINARY state, since the emptied folder is
+// left in place. What remains is one narrower question: has a Team folder been
+// mounted over the default root itself?
+//
+//	no probe yet       serve. A restarted container has no probe, and the claim
+//	                   being made is about a path nothing Cassini does could have
+//	                   mounted anything over. This is what stops a reboot serving
+//	                   an empty archive to everybody until somebody re-enables
+//	                   the app (D-669's window, for reads).
+//	probe, unanswered  serve. DefaultRootShadowed is only ever assigned when the
+//	                   folder list was actually read, so a `false` here can mean
+//	                   "we could not look" — which is why the probe carries
+//	                   DefaultRootProbed. READS are deliberately permissive about
+//	                   it; sanity(default) is NOT, so publishing into a tree
+//	                   nobody could confirm is private is refused. That
+//	                   asymmetry is the whole point: an unconfirmed WRITE puts
+//	                   recordings somewhere they may not belong, an unconfirmed
+//	                   READ serves a tree that in this mode is open by design.
+//	probe says yes     fail closed. Something IS mounted at CassiniNoACL, so the
+//	                   tree is not private and owner-identity reads would hand it
+//	                   to whoever that folder is mapped to.
+func ncStorageServesAsOwner() bool {
+	accessControlled, resolved := ncStorage.mode()
+	if !resolved || accessControlled {
+		return false
+	}
+	probe, probed := ncAccessSubstrate.lastProbe()
+	return !probed || !probe.DefaultRootShadowed
+}
+
+// recordingRefusal reports why a recording must not be started at all, or ""
+// when it may go ahead.
+//
+// It is deliberately NARROWER than usable(). The publish gate refuses anything
+// short of `provisioned`, which is right for a write that is about to happen;
+// refusing to RECORD is a bigger claim, because the meeting is happening now
+// and there is no second chance at it. So only `unavailable` refuses — a named
+// prerequisite is absent, no amount of waiting fixes it, and capturing an hour
+// of audio that provably cannot be published wastes the call rather than
+// saving it.
+//
+//	unavailable  refuse. Something is missing and the step names it.
+//	degraded     record. A call failed; it may not fail again by publish time.
+//	unknown      record. The preflight runs on the AppAPI enabled edge, never on
+//	             start (D-541), so a container that restarted an hour ago is
+//	             here — and it is very probably fine. Refusing every recording
+//	             until somebody re-enables the app would turn a reboot into an
+//	             outage.
+func (s *ncAccessSubstrateStatus) recordingRefusal() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.applicable || s.state != ncSubstrateUnavailable {
+		return ""
+	}
+	if s.detail != "" {
+		return s.detail
+	}
+	return s.step
 }
 
 // reset returns the record to its zero state. Only tests need it; provisioning
@@ -209,6 +349,10 @@ func (s *ncAccessSubstrateStatus) reset() {
 	s.detail = ""
 	s.adminUser = ""
 	s.prereqs = nil
+	s.mode = ""
+	s.modeSource = ""
+	s.probe = ncStorageProbe{}
+	s.hasProbe = false
 	s.checkedAtUTC = ""
 }
 
@@ -223,7 +367,15 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		Step:        s.step,
 		Detail:      s.detail,
 		AdminUser:   s.adminUser,
+		Mode:        s.mode,
+		ModeSource:  s.modeSource,
 		CheckedAt:   s.checkedAtUTC,
+	}
+	out.ModeConfirmed = ncStorage.confirmedMode()
+	if s.mode != "" {
+		out.Root = recordingsRootFor(s.mode == storageModeAccessControlled)
+		clean := ncStorage.migrationClean()
+		out.MigrationClean = &clean
 	}
 	for _, p := range s.prereqs {
 		out.Prerequisites = append(out.Prerequisites, statusPrerequisite(p))

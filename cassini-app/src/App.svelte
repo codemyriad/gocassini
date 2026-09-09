@@ -1,24 +1,38 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import ViewerApp from "cassini-viewer/App.svelte";
-  import { StaticCatalogProvider } from "cassini-viewer/dataProvider";
+  import { AppDataProvider } from "./appDataProvider";
+  import GenerateCard from "./GenerateCard.svelte";
+  import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
+  import Setup from "./Setup.svelte";
   import SetupNotice from "./SetupNotice.svelte";
+  import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
   import {
+    buildFeatureNotice,
     buildSetupNotice,
     fetchSetupHealth,
     readRecordingsAccess,
     shareableAppUrl,
+    type SetupFeatures,
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
-  import { applySurface, readSurface, type Surface } from "./surfaceRouting";
+  import { onSetupChanged } from "./operator/setupSignal";
+  import { applySurface, readSurface, type OperatorPanel, type Surface } from "./surfaceRouting";
 
   // The Cassini in-Nextcloud shell (D-420). It hosts role-gated surfaces fed
   // through the DataProvider seam: everyone gets "browse" (cassini-viewer's App
   // = MeetingList + MeetingView); admins additionally get the "operator"
-  // surface (recording control). V3 adds the top nav + the operator surface.
+  // surface (recording control) and "setup" (the storage model). V3 adds the top
+  // nav + the operator surface.
+  //
+  // Pipeline and endpoint configuration is not a surface of its own (D-723): it
+  // is a left nav inside Operator, so there is one admin boundary to probe and
+  // one place an administrator looks for a knob. `setup` (D-616) is the one
+  // admin surface beside it, because it does not configure the pipeline — it
+  // decides where the whole archive lives, and moves it.
   //
   // The operator JSON API stays ADMIN in info.xml (the REAL boundary). The
   // shell only decides whether to *show* the operator by probing that boundary
@@ -31,12 +45,20 @@
   // here to drift from the first.
   export let ncMode: boolean = false;
 
-  const dataProvider = new StaticCatalogProvider();
+  // The shell's provider is the static one plus the context bundle (D-626):
+  // here, and only here, there is an operator behind the published archive that
+  // can assemble one. A standalone export gets StaticCatalogProvider, which
+  // cannot, and its browse surface offers no Prepare at all.
+  const dataProvider = new AppDataProvider();
 
-  // Browse is always available; operator is added only when the boundary probe
-  // confirms admin access. The tab bar renders only when the operator surface
-  // is available, so a non-admin sees exactly today's browse-only experience —
-  // no shell chrome, byte-identical output.
+  // Browse is always available; the admin surfaces (operator, and setup since
+  // D-616) are added only when the boundary probe confirms admin access. The
+  // tab bar renders only when they are available, so a non-admin sees exactly
+  // today's browse-only experience — no shell chrome, byte-identical output.
+  //
+  // One flag governs both, deliberately: the probe asks whether the ADMIN-gated
+  // operator API answers, and both surfaces are that same API. A second notion
+  // of admin here would be a second thing to drift.
   let operatorAvailable = false;
   let surface: Surface = "browse";
 
@@ -56,6 +78,50 @@
   // place they can still act. Null (the normal case, and every case where the
   // check itself could not be made) leaves the shell exactly as it was.
   let setupNotice: SetupNoticeContent | null = null;
+
+  // What this deployment's AI configuration allows (D-722), from the same
+  // USER-level /setup call. Null until it answers, and null forever on an
+  // operator too old to say — a third state, not a default: the app says
+  // nothing at all rather than telling a working deployment it is unconfigured.
+  //
+  // It is fetched HERE, once, because it is a fact about the deployment rather
+  // than about anything the browse surface is showing, and because the only
+  // route that carries it is the one the shell already calls at mount.
+  let setupFeatures: SetupFeatures | null = null;
+
+  // The unconfigured state the browse surface can meet: a selection of meetings
+  // on a deployment with no endpoint to ask. It rides into the viewing layer
+  // through a slot rather than a prop because the sentence, the admin/non-admin
+  // split and the deep link are all shell knowledge — the viewer has no idea
+  // there is an operator surface, and a standalone export has no operator at
+  // all.
+  $: insightsNotice = buildFeatureNotice({
+    features: setupFeatures,
+    feature: "insights",
+    // The same probe that decides whether there is an operator surface at all.
+    // There is no second notion of admin here to drift from the first.
+    isAdmin: operatorAvailable,
+  });
+
+  // The configured state, from the SAME field (D-700). insightsNotice is
+  // non-null exactly when `insights` is false, so these two are mutually
+  // exclusive by construction rather than by two conditions kept in step: the
+  // readiness card OR the Generate card, and — while /setup has not answered,
+  // or on a build with no operator to ask — neither. A standalone export must
+  // not read absence as "not configured", the same three-state rule the
+  // catalog's hasSummary follows.
+  $: insightsReady = setupFeatures?.insights === true;
+
+  // The operator API client the Generate card lists templates with, or null for
+  // anyone the probe denied. `operator/settings/workflows` is ADMIN at the
+  // proxy, so a non-admin's request for the template registry would 403 —
+  // null is that fact, and the card offers the deployment's configured template
+  // instead of a picker that fails when opened.
+  //
+  // Built from the probe RESULT and never from the optimistic admin hint: the
+  // hint exists to avoid a tab flashing in, and the cost of being wrong here is
+  // a control that 403s.
+  let operatorClient: OperatorClient | null = null;
 
   // The daisyUI theme tokens (colors AND --radius-box/--border etc.) are emitted
   // on [data-theme=…], not on :host — so any surface NOT inside a data-theme'd
@@ -84,9 +150,11 @@
 
   function applySurfaceFromLocation(): void {
     const next = readSurface(window.location.hash);
-    // A non-admin deep-linking #surface=operator falls back to browse (the
-    // operator API would 403 anyway).
-    surface = next === "operator" && !operatorAvailable ? "browse" : next;
+    // A non-admin deep-linking an admin surface (#surface=operator or
+    // #surface=setup) falls back to browse — the operator API would 403 anyway.
+    // The operator's settings panels are gated by the same probe: everything
+    // they touch is an ADMIN route.
+    surface = next !== "browse" && !operatorAvailable ? "browse" : next;
   }
 
   function locationWithHash(hash: string): string {
@@ -99,29 +167,87 @@
     if (next === surface) {
       return;
     }
+    const previous = surface;
     surface = next;
     // Fragment-only pushState — same mechanism the viewer uses; gives history /
     // back-forward + deep links without a pathname router (see surfaceRouting).
     // applySurface preserves the viewer's meeting/tx/t so switching surfaces
     // doesn't drop a meeting deep-link.
     window.history.pushState({}, "", locationWithHash(applySurface(window.location.hash, next)));
+    refreshFeaturesOnLeavingOperator(previous);
   }
 
   function handlePopState(): void {
+    const previous = surface;
     applySurfaceFromLocation();
+    refreshFeaturesOnLeavingOperator(previous);
   }
 
-  onMount(async () => {
-    themeMode = resolveThemeMode();
-
-    // Optimistic anti-flash hint: if Nextcloud already tells us the user is an
-    // admin, show the operator tab immediately instead of waiting a round-trip.
-    if (isLikelyAdminHint(window) === true) {
-      operatorAvailable = true;
+  // Coming back from the operator surface is the return leg of the trip
+  // NeedsSetupCard's own link sends an administrator on: browse -> "Open AI
+  // providers" -> configure an endpoint -> Back. setupFeatures is otherwise
+  // read once at mount and never again, so without this the card that sent them
+  // still says "No AI endpoint is available" and still offers the link to the
+  // panel they have just fixed — only a full page reload clears it. That is the
+  // same staleness `cache: "no-store"` keeps out of the HTTP layer
+  // (setupHealth.ts), one level up in app state (D-722).
+  //
+  // Deliberately only the features: setupNotice is derived from the ADMIN probe
+  // as well, and re-running that on every surface switch would be a second,
+  // heavier question asked for a fact that cannot change without a restart.
+  function refreshFeaturesOnLeavingOperator(previous: Surface): void {
+    if (previous !== "operator" || surface === "operator") {
+      return;
     }
-    applySurfaceFromLocation();
-    window.addEventListener("popstate", handlePopState);
+    void refreshSetupFeatures();
+  }
 
+  async function refreshSetupFeatures(): Promise<void> {
+    try {
+      const { operatorBasePath } = loadConfig();
+      const health = await fetchSetupHealth(operatorBasePath);
+      // Only an answer that arrived may change what the app claims: null is
+      // "nobody said" — a failed re-check, or an operator too old to say — and
+      // letting it through would retract what the mount-time call established
+      // and accuse a working deployment of being unconfigured.
+      if (health) {
+        setupFeatures = health.features;
+      }
+    } catch (error) {
+      // Degrade, but not silently — the same rule the mount path follows.
+      console.warn("Cassini: the setup re-check failed.", error);
+    }
+  }
+
+  // Following an unconfigured state's link to the panel that fixes it. The card
+  // built the address from the CURRENT fragment, so the viewer's meeting/tx/t
+  // survive the trip and the back button returns to exactly the meeting that
+  // was open.
+  function handleOpenPanel(event: CustomEvent<{ panel: OperatorPanel; href: string }>): void {
+    // The card only offers the link to an administrator; this is the second
+    // guard, because the cost of being wrong is a surface whose every request
+    // 403s at the proxy.
+    if (!operatorAvailable) {
+      return;
+    }
+    window.history.pushState({}, "", event.detail.href);
+    // pushState notifies nobody, and the surface, the operator's panel nav and
+    // the viewer each read the fragment through popstate. Announcing it once
+    // makes a deep link behave like a navigation, instead of three independent
+    // updates that can disagree about where we are.
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
+  // readInstanceState asks the operator what this deployment is, and is the ONLY
+  // writer of operatorAvailable and setupNotice.
+  //
+  // It used to be inline in onMount, which made the verdict a snapshot of the
+  // moment the page opened: an administrator who fixed their instance on the
+  // Setup tab came back to Browse and was still told Cassini was not configured,
+  // until they reloaded the browser by hand. It is a function now so the Setup
+  // tab can ask for it again (setupSignal.ts) — the notice goes away in the same
+  // session, with no reload and nothing else on the page thrown away.
+  async function readInstanceState(): Promise<void> {
     // Authoritative: probe the ADMIN-gated operator boundary (an operator that
     // answered -> show). Alongside it, ask the USER-level setup endpoint whether
     // this deployment can serve recordings at all — the two are independent, so
@@ -133,6 +259,8 @@
         fetchSetupHealth(operatorBasePath),
       ]);
       operatorAvailable = probe.available;
+      operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;
+      setupFeatures = health?.features ?? null;
       // Which setup message you get is decided by the SAME probe that decides
       // whether the operator surface exists — being able to read the ADMIN-gated
       // /status IS being an administrator, so there is no second notion of admin
@@ -159,15 +287,45 @@
       // surface with zero trace, which is exactly what hid the embedded-page
       // base bug (D-420 V3).
       operatorAvailable = false;
+      operatorClient = null;
       setupNotice = null;
+      setupFeatures = null;
       console.error("Cassini: operator availability check failed.", error);
     }
     // Reconcile the active surface with the probe result (e.g. an optimistic
     // hint the probe denied, or a stale #surface=operator we can't honour).
     applySurfaceFromLocation();
+  }
+
+  // stopListeningForSetupChanges is assigned in onMount and called in onDestroy.
+  // A component that mounts twice would otherwise leave the first instance's
+  // listener behind, writing into state nothing renders.
+  let stopListeningForSetupChanges: (() => void) | null = null;
+
+  onMount(async () => {
+    themeMode = resolveThemeMode();
+
+    // Optimistic anti-flash hint: if Nextcloud already tells us the user is an
+    // admin, show the operator tab immediately instead of waiting a round-trip.
+    if (isLikelyAdminHint(window) === true) {
+      operatorAvailable = true;
+    }
+    applySurfaceFromLocation();
+    window.addEventListener("popstate", handlePopState);
+
+    // Subscribed BEFORE the first read, not after: the Setup tab cannot act
+    // before this component has mounted, but registering afterwards would make
+    // that ordering a thing to keep true rather than a thing that cannot fail.
+    stopListeningForSetupChanges = onSetupChanged(() => {
+      void readInstanceState();
+    });
+
+    await readInstanceState();
   });
 
   onDestroy(() => {
+    stopListeningForSetupChanges?.();
+    stopListeningForSetupChanges = null;
     if (typeof window !== "undefined") {
       window.removeEventListener("popstate", handlePopState);
     }
@@ -193,6 +351,14 @@
       >
         Operator
       </button>
+      <button
+        type="button"
+        class="cassini-shell-tab"
+        aria-current={surface === "setup" ? "page" : undefined}
+        on:click={() => selectSurface("setup")}
+      >
+        Setup
+      </button>
     </nav>
 
     {#if setupNotice && !setupNotice.blocking}
@@ -203,7 +369,7 @@
            there too. -->
       <div class="cassini-shell-banner" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice notice={setupNotice} />
+          <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
         </div>
       </div>
     {/if}
@@ -213,19 +379,40 @@
            substrate stops them starting a recording or reading job history. -->
       <div
         class="cassini-shell-surface cassini-shell-scroll scroll-stable"
-        class:cassini-shell-hidden={surface === "operator"}
+        class:cassini-shell-hidden={surface !== "browse"}
         data-theme={themeMode}
       >
         <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice notice={setupNotice} />
+          <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
         </div>
       </div>
     {:else}
       <!-- Browse stays mounted (preserves list/meeting/playback state) and is
-           hidden while the operator surface is active; the operator mounts only
-           when active so its SSE stream + polling don't run in the background. -->
-      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface === "operator"}>
-        <ViewerApp {ncMode} {dataProvider} />
+           hidden while an admin surface is active; those mount only when active
+           so the operator's SSE stream + polling don't run in the background. -->
+      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
+        <ViewerApp {ncMode} {dataProvider}>
+          <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+          <!-- Its opposite, driven by the same bit (D-700): the readiness card
+               says a question cannot be asked here, this one asks it. The Prepare
+               panel hands down the meetings it is describing; whether there is an
+               endpoint to ask, and whether this reader may pick a template, are
+               the shell's to know and neither is a fact the viewing layer has. -->
+          <svelte:fragment slot="prepare-generate" let:entries>
+            {#if insightsReady}
+              <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+            {/if}
+          </svelte:fragment>
+        </ViewerApp>
+      </div>
+    {/if}
+    {#if surface === "setup"}
+      <!-- Same bounded-scroller + themed .cassini-root wrapper as the operator
+           surface below, and for the same reasons. -->
+      <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
+        <div class="cassini-root" data-theme={themeMode}>
+          <Setup />
+        </div>
       </div>
     {/if}
     {#if surface === "operator"}
@@ -251,7 +438,7 @@
        in the standalone build), both of which are height:100%. -->
   <div class="cassini-setup-surface" data-theme={themeMode}>
     <div class="cassini-root" data-theme={themeMode}>
-      <SetupNotice notice={setupNotice} />
+      <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
     </div>
   </div>
 {:else if setupNotice}
@@ -261,15 +448,29 @@
   <div class="cassini-shell">
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
-        <SetupNotice notice={setupNotice} />
+        <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
       </div>
     </div>
     <div class="cassini-shell-surface">
-      <ViewerApp {ncMode} {dataProvider} />
+      <ViewerApp {ncMode} {dataProvider}>
+        <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+        <svelte:fragment slot="prepare-generate" let:entries>
+          {#if insightsReady}
+            <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+          {/if}
+        </svelte:fragment>
+      </ViewerApp>
     </div>
   </div>
 {:else}
-  <ViewerApp {ncMode} {dataProvider} />
+  <ViewerApp {ncMode} {dataProvider}>
+    <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
+    <svelte:fragment slot="prepare-generate" let:entries>
+      {#if insightsReady}
+        <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+      {/if}
+    </svelte:fragment>
+  </ViewerApp>
 {/if}
 
 <style>

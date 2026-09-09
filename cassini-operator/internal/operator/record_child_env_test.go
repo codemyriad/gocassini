@@ -18,6 +18,40 @@ func TestRecordChildEnvCarriesTheResolvedTalkSecret(t *testing.T) {
 	}
 }
 
+// Recording needs all three independently-owned policies at once: STT and LLM
+// settings from the operator, plus the Talk secret resolved during startup.
+// This guards the composition point where those branches were merged.
+func TestRecordChildEnvCombinesSTTLLMAndTalkPolicies(t *testing.T) {
+	rt := &Runtime{
+		cfg: Config{TalkSharedSecret: "generated-secret"},
+		settings: STTSettings{
+			Quality:            sttQualityBest,
+			TranscriptionTerms: []string{"Gocassini", "Nextcloud Talk"},
+		},
+		llm: LLMSettings{
+			Providers: []LLMProvider{{ID: "local", BaseURL: "http://qwen.internal:8000/v1"}},
+			Summary:   LLMStep{Enabled: true, Provider: "local", Model: "qwen"},
+		},
+	}
+	env := rt.recordChildEnv()
+
+	want := map[string]string{
+		talkRecordingSecretEnv: "generated-secret",
+		envSTTQuality:          sttQualityBest,
+		envTranscriptionTerms:  `["Gocassini","Nextcloud Talk"]`,
+		"SUMMARY_BASE_URL":     "http://qwen.internal:8000/v1",
+		"SUMMARY_MODEL":        "qwen",
+	}
+	for key, value := range want {
+		if got := lookupEnv(env, key); got != value {
+			t.Fatalf("recorder env %s = %q, want %q", key, got, value)
+		}
+	}
+	if got := lookupEnv(env, "SUMMARY_API_KEY"); got != "" {
+		t.Fatalf("keyless summary endpoint received API key %q", got)
+	}
+}
+
 // An explicit secret in the environment is the same value the operator
 // resolved; the child sees it exactly once, from the operator.
 func TestRecordChildEnvKeepsOneCopyOfAnExplicitSecret(t *testing.T) {

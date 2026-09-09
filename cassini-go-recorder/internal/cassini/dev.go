@@ -36,6 +36,8 @@ func runDev(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "ci-e2e.sh"), args[1:], stdout, stderr)
 	case "fixture":
 		return runDevFixture(ctx, repoRoot, args[1:], stdout, stderr)
+	case "meetings":
+		return runDevMeetings(ctx, args[1:], stdout, stderr)
 	case "play":
 		return runDevPlay(ctx, repoRoot, args[1:], stdout, stderr)
 	case "play-private":
@@ -140,12 +142,21 @@ Common options:
   --cassini none|installed-exapp
   --recording-backend legacy|direct-operator|installed-exapp|none
   --exapp-image-mode build|reuse-local|pull
+  --storage-mode default|acl-enabled
   --build
   --patch=auto|none|force
+  --debug-skip-storage-scaffold
+             build no recordings storage at all: no cassini service account,
+             no Team folder, neither native app. The state a real Nextcloud is
+             in before anybody has set Cassini up, for exercising the app's own
+             setup flow.
 
 up options:
   --resume   reuse matching stopped containers or retained harness volumes
   --reset    remove and recreate containers and volumes
+  --seed DIR load a seed pack into the recordings tree once the stack is up,
+             as written by 'cassini dev meetings pull --out DIR'. Seeded
+             meetings are readable by every account on the stack.
 
 down options (canonical teardown; containers are ephemeral, volumes persist):
   (none)      remove containers, keep volumes (persistence)
@@ -229,7 +240,7 @@ func runDevScriptExecDefault(ctx context.Context, repoRoot string, relativeScrip
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Env = devScriptEnvironment(os.Environ(), extraEnv)
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
@@ -238,6 +249,31 @@ func runDevScriptExecDefault(ctx context.Context, repoRoot string, relativeScrip
 		return 1
 	}
 	return 0
+}
+
+// devScriptEnvironment merges a resolved stack plan into the caller's
+// environment. An undecided plan deliberately has no CASSINI_STORAGE_MODE;
+// remove any ambient override too, otherwise it would silently choose the mode
+// the caller explicitly left unselected.
+func devScriptEnvironment(baseEnv, extraEnv []string) []string {
+	undecided := false
+	for _, entry := range extraEnv {
+		if entry == "CASSINI_HARNESS_STORAGE_MODE=undecided" {
+			undecided = true
+			break
+		}
+	}
+	if !undecided {
+		return append(baseEnv, extraEnv...)
+	}
+
+	env := make([]string, 0, len(baseEnv)+len(extraEnv))
+	for _, entry := range baseEnv {
+		if !strings.HasPrefix(entry, "CASSINI_STORAGE_MODE=") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, extraEnv...)
 }
 
 func printDevUsage(w io.Writer) {
@@ -249,6 +285,7 @@ Usage:
   cassini dev smoke
   cassini dev ci-e2e
   cassini dev fixture <prepare-showcase|stream-showcase>
+  cassini dev meetings pull --out <dir>
   cassini dev play --room <name> [--nextcloud-host <host-or-url>] [--mode single|full] [--duration <seconds>]
   cassini dev play-private --scaffold-only [--nextcloud-host <host-or-url>]
   cassini dev player <video|showcase|three-songs>

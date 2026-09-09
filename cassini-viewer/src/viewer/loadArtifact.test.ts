@@ -637,6 +637,65 @@ describe("loadArtifactFromDirectory", () => {
       digestDurationMs: 4200,
     });
   });
+
+  it("surfaces the summary.md the producer sealed into the portable meeting", async () => {
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/",
+        protocol: "http:",
+      },
+    } as Window;
+    const summaryMarkdown = "# Meeting summary\n\n- Shipped the thing\n";
+    const manifest = {
+      kind: "cassini-portable-meeting",
+      version: 1,
+      profile: "ogg-opus",
+      meeting: { durationMs: 2000 },
+      audio: {
+        container: "ogg",
+        codec: "opus",
+        sampleRate: 48_000,
+        channels: 1,
+        sampleCount: 96_000,
+        durationMs: 2000,
+      },
+      integrity: { opusAudioSha256: OPUS_AUDIO_SHA256 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      attachments: [
+        {
+          name: "summary.md",
+          mime: "text/markdown",
+          contentBase64: Buffer.from(summaryMarkdown, "utf8").toString("base64"),
+        },
+      ],
+    };
+    const rawTranscript = {
+      format: "cassini.words.v1",
+      wordCount: 1,
+      items: [{ id: "seg_1", speaker: "spk_1", startMs: 0, endMs: 1000, text: "hello" }],
+    };
+    const portableBytes = buildPortableOpusFixture({ manifest, rawTranscript });
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith(".opus")) {
+        return {
+          ok: true,
+          status: 206,
+          headers: new Headers({ "content-range": "bytes 0-1999/2000" }),
+          arrayBuffer: async () =>
+            portableBytes.buffer.slice(
+              portableBytes.byteOffset,
+              portableBytes.byteOffset + portableBytes.byteLength,
+            ),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadPortableArtifactFromAudioPath("./summary-meeting.opus");
+
+    expect(artifact.summary).toBe(summaryMarkdown);
+  });
 });
 
 describe("switchPortableTranscript", () => {
@@ -1851,7 +1910,7 @@ function buildPortableOpusFixture({
     CASSINI_PAYLOAD_MIME: "application/vnd.cassini.portable-meeting+json",
     CASSINI_PAYLOAD_ENCODING: "base64url+gzip+utf8json",
     CASSINI_PAYLOAD_SCHEMA:
-      "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+      "https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json",
     CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
     CASSINI_AUDIO_OPUS_SHA256: String(
       (wire.integrity as { opusAudioSha256?: string }).opusAudioSha256,

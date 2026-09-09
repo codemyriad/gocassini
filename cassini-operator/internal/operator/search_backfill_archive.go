@@ -96,7 +96,7 @@ const archiveOpusReadTimeout = 10 * time.Minute
 // bytes that are written, so what gets recorded is the artifact that was
 // actually indexed rather than one the caller was told about.
 func (c ExAppConfig) downloadArchiveOpus(ctx context.Context, client *http.Client, opusName, destPath string) (string, error) {
-	url := c.davFileURL(ncRecordingsOwner, ncRecordingsRoot+"/meetings/"+opusName)
+	url := c.davFileURL(ncRecordingsOwner, ncArchiveRoot()+"/meetings/"+opusName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err

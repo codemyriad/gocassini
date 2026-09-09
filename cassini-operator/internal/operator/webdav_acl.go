@@ -62,7 +62,7 @@ func (c ExAppConfig) ncFilesAccessApplier(_ *log.Logger) ncFilesAccessApplier {
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}
 	return func(ctx context.Context, jobID string, mappings []aclMapping, public bool) error {
-		opusRel := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
+		opusRel := ncACLRecordingsRoot + "/meetings/" + jobID + ".opus"
 		if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, opusRel, mappings, public); err != nil {
 			return fmt.Errorf("acl opus: %w", err)
 		}
@@ -286,7 +286,7 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 	if err := rt.applyNCFilesAccessFn(ctx, jobID, mappings, binding.Public); err != nil {
 		return err
 	}
-	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s public=%t root=%s", jobID, len(mappings), source, binding.Public, ncRecordingsRoot)
+	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s public=%t root=%s", jobID, len(mappings), source, binding.Public, ncACLRecordingsRoot)
 	return nil
 }
 
@@ -337,7 +337,58 @@ type resolvedCatalog struct {
 	body []byte
 }
 
-// resolveCatalogForCaller fetches the authoritative catalog as the owner
+// resolveCatalogForCaller answers, for one caller, which meetings of the
+// archive they may read — in whichever storage model this instance runs
+// (D-616, D-708).
+//
+// The model is resolved HERE rather than by each reader, for the same reason
+// the resolution itself is shared: a second reader must not mean a second
+// access-control path, and it would be one if every reader re-derived which
+// tree to read and whose identity to read it with. The models answer the
+// question differently, but it is the same question.
+//
+//	access-controlled  intersect the owner's catalog with a per-caller PROPFIND
+//	                   of the Team folder, so advanced-ACL deny-read decides.
+//	default            serve the owner's catalog whole, out of the private root
+//	                   no Team folder can shadow. Nothing is filtered because
+//	                   nothing is restricted: being able to open the app IS the
+//	                   permission, and a per-caller scan of a tree only the
+//	                   service account has could answer nothing but 404.
+func (c ExAppConfig) resolveCatalogForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
+	if ncStorageServesAsOwner() {
+		return c.resolveOwnerCatalog(ctx, client, logger)
+	}
+	return c.resolveACLCatalogForCaller(ctx, client, caller, logger)
+}
+
+// resolveOwnerCatalog reads the default model's archive as its owner.
+//
+// It reports the same outcomes as the access-controlled resolution, so both
+// reach their readers through one vocabulary — but only three of them can
+// arise here: there is no per-caller scan to fail and no mount to be missing.
+func (c ExAppConfig) resolveOwnerCatalog(ctx context.Context, client *http.Client, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
+	empty := resolvedCatalog{raw: []byte(emptyCatalogJSON), body: []byte(emptyCatalogJSON)}
+
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncDefaultRecordingsRoot+"/"+ncSiteCatalogName)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("nc files read: catalog fetch failed: %v", err)
+		}
+		return empty, catalogResolveUnavailable
+	}
+	if status == http.StatusNotFound {
+		return empty, catalogResolveNoArchive
+	}
+	if status < 200 || status >= 300 {
+		if logger != nil {
+			logger.Printf("nc files read: catalog -> %d", status)
+		}
+		return empty, catalogResolveUnavailable
+	}
+	return resolvedCatalog{raw: raw, body: raw}, catalogResolveOK
+}
+
+// resolveACLCatalogForCaller fetches the authoritative catalog as the owner
 // (metadata source) and intersects it with the meetings the caller can actually
 // see, enumerated by a per-caller PROPFIND scan of meetings/ (advanced-ACL
 // deny-read hides the rest).
@@ -346,10 +397,10 @@ type resolvedCatalog struct {
 // revocation, group changes, publicness and deletion propagate with no index
 // maintenance anywhere — and it is why a cache here would be unsound in the
 // permissive direction: Nextcloud gives Cassini no permission-change signal.
-func (c ExAppConfig) resolveCatalogForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
+func (c ExAppConfig) resolveACLCatalogForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
 	empty := resolvedCatalog{raw: []byte(emptyCatalogJSON), body: []byte(emptyCatalogJSON)}
 
-	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/"+ncSiteCatalogName)
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files read: authoritative catalog fetch failed: %v", err)
@@ -371,7 +422,7 @@ func (c ExAppConfig) resolveCatalogForCaller(ctx context.Context, client *http.C
 	// From here the archive shape is known, so an empty answer can mirror it.
 	resolved := resolvedCatalog{raw: raw, body: emptyLike(raw)}
 
-	names, mounted, perr := c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
+	names, mounted, perr := c.davPropfindNames(ctx, client, caller, ncACLRecordingsRoot+"/meetings")
 	if perr != nil {
 		if logger != nil {
 			logger.Printf("nc files read: per-caller scan failed caller=%s: %v — serving empty (fail closed)", caller, perr)
@@ -412,6 +463,30 @@ func (c ExAppConfig) resolveCatalogForCaller(ctx context.Context, client *http.C
 // `published/meetings` is where the loud version lives.
 func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger) {
 	resolved, outcome := c.resolveCatalogForCaller(ctx, client, caller, logger)
+	if outcome == catalogResolveUnavailable {
+		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+		return
+	}
+	writeCatalogJSON(w, resolved.body)
+}
+
+// serveOwnerCatalog writes the caller the authoritative catalog verbatim — the
+// default model's read path (D-616).
+//
+// It is deliberately the plain sibling of serveFilteredCatalog rather than a
+// flag on it, because the two answer different questions. Filtering exists to
+// hide meetings a caller may not read; in the default model there are none, and
+// the machinery that would do the hiding — a per-caller PROPFIND of a tree only
+// the service account has — cannot answer at all. Reusing it here would not be
+// conservative, it would serve an empty archive to every account on the
+// instance.
+//
+// What it does keep is the failure shape: an unreadable or missing catalog
+// yields the empty one, never an error page the viewer would render as
+// "HTTP 502" — the same mapping serveFilteredCatalog applies to its own
+// resolution.
+func (c ExAppConfig) serveOwnerCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, logger *log.Logger) {
+	resolved, outcome := c.resolveOwnerCatalog(ctx, client, logger)
 	if outcome == catalogResolveUnavailable {
 		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
 		return
@@ -483,7 +558,7 @@ func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) 
 // error is returned so callers never expose a partially migrated tree through
 // the broad root grant.
 func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) error {
-	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings")
+	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/meetings")
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files access: self-heal scan failed: %v", err)
@@ -507,7 +582,7 @@ func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Cl
 				next = ensureProtectedRules(rules)
 			}
 		}
-		relPath := ncRecordingsRoot + "/meetings/" + base
+		relPath := ncACLRecordingsRoot + "/meetings/" + base
 		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, next); err != nil {
 			if logger != nil {
 				logger.Printf("nc files access: self-heal %s failed: %v", base, err)
@@ -611,9 +686,10 @@ func audienceApplied(rules []aclRule) bool {
 // it is there at all, how many bytes Nextcloud thinks it holds, and the ACL rows
 // bound to it.
 type ncLeafState struct {
-	Exists bool
-	Size   int64
-	Rules  []aclRule
+	Exists   bool
+	Size     int64
+	Checksum string
+	Rules    []aclRule
 }
 
 // davPropfindLeafState reads one leaf's length and ACL rules in a single Depth-0
@@ -624,8 +700,8 @@ type ncLeafState struct {
 // of a first publish, and the caller distinguishes it via Exists.
 func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Client, userID, relPath string) (ncLeafState, error) {
 	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
-		`<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">` +
-		`<d:prop><d:getcontentlength/><nc:acl-list/></d:prop></d:propfind>`)
+		`<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">` +
+		`<d:prop><d:getcontentlength/><oc:checksums/><nc:acl-list/></d:prop></d:propfind>`)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relPath), bytes.NewReader(reqBody))
 	if err != nil {
 		return ncLeafState{}, err
@@ -652,8 +728,9 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 	var ms struct {
 		Responses []struct {
 			Propstat []struct {
-				Length string `xml:"prop>getcontentlength"`
-				ACLs   []struct {
+				Length    string   `xml:"prop>getcontentlength"`
+				Checksums []string `xml:"prop>checksums>checksum"`
+				ACLs      []struct {
 					Type        string `xml:"acl-mapping-type"`
 					ID          string `xml:"acl-mapping-id"`
 					Mask        int    `xml:"acl-mask"`
@@ -676,6 +753,11 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 		if trimmed := strings.TrimSpace(ps.Length); trimmed != "" {
 			if n, convErr := strconv.ParseInt(trimmed, 10, 64); convErr == nil {
 				state.Size = n
+			}
+		}
+		for _, checksum := range ps.Checksums {
+			if checksum = strings.TrimSpace(checksum); strings.HasPrefix(strings.ToLower(checksum), "sha256:") {
+				state.Checksum = checksum[len("sha256:"):]
 			}
 		}
 		for _, a := range ps.ACLs {

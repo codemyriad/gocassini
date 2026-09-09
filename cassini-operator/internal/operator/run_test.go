@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -38,9 +39,7 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 7 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 || versions[6] != 7 {
-		t.Fatalf("expected migration versions [1 2 3 4 5 6 7], got %v", versions)
-	}
+	assertAllMigrationsApplied(t, store.db)
 	if !sqliteTableExists(t, store.db, "job_attempts") {
 		t.Fatalf("expected job_attempts table to exist")
 	}
@@ -58,9 +57,7 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 7 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 || versions[6] != 7 {
-		t.Fatalf("expected migration versions [1 2 3 4 5 6 7], got %v", versions)
-	}
+	assertAllMigrationsApplied(t, store.db)
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
 		t.Fatalf("unexpected legacy job after baseline = %#v", job)
@@ -361,6 +358,55 @@ func TestRunStartupReportsResolvedExAppPublishSink(t *testing.T) {
 	}
 	if strings.Contains(logs, "publish_sink -> "+publishSinkLocal) {
 		t.Fatalf("startup summary reports standalone sink for an unset ExApp config\nlogs:\n%s", logs)
+	}
+}
+
+// The published read surface shells out to the CLI, and ExAppConfig is loaded
+// before --cassini-bin is resolved, so the binary reaches it by assignment in
+// Run. Without that assignment a deployment configured only by flag serves no
+// published/meetings-context at all — and does so quietly, since the route is
+// simply not mounted rather than mounted and broken (D-717).
+func TestRunMountsMeetingsContextWithTheFlagResolvedCassiniBin(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	dataRoot := t.TempDir()
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv(envAppID, "gocassini")
+	t.Setenv(envAppVersion, "test")
+	t.Setenv(envAppSecret, "test-app-secret")
+	t.Setenv(envNextcloudURL, "https://cloud.example.test")
+	t.Setenv(envAppHost, "")
+	t.Setenv(envAppPort, "")
+	t.Setenv(envAppPersistentStorage, "")
+	t.Setenv(envAppAPIRequired, "false")
+	t.Setenv(envViewerDist, "")
+	t.Setenv(envPublishSinkName, "")
+	t.Setenv(envSTTCUDACapable, "0")
+	t.Setenv("CASSINI_TALK_RECORDING_SECRET", "test-recording-secret")
+	t.Setenv(envTalkSignalingInternalSecret, "test-signaling-secret")
+	// The point of the test: the image env the ExApp images bake is absent, so
+	// the flag is the only source of the path.
+	t.Setenv(envCassiniBin, "")
+
+	cassiniBin := filepath.Join(repoRoot, "bin", "cassini")
+	args := []string{
+		"--bind", "127.0.0.1:0",
+		"--db", filepath.Join(dataRoot, "jobs.sqlite3"),
+		"--work-root", filepath.Join(dataRoot, "jobs"),
+		"--site-root", filepath.Join(dataRoot, "site"),
+		"--cassini-bin", cassiniBin,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	if code := Run(ctx, args, &stdout, &stderr); code != 0 {
+		t.Fatalf("Run() = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if logs := stderr.String(); strings.Contains(logs, "no cassini binary configured") {
+		t.Fatalf("published/meetings-context was not mounted even though --cassini-bin was given\nlogs:\n%s", logs)
 	}
 }
 
@@ -2768,6 +2814,25 @@ func readFileString(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(body)
+}
+
+// assertAllMigrationsApplied checks that every embedded migration is recorded,
+// contiguously from 1. Asserting against the embedded set rather than a
+// hand-written list is what the tests actually mean, and it does not have to be
+// edited each time a migration is added.
+func assertAllMigrationsApplied(t *testing.T, db *sql.DB) {
+	t.Helper()
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	want := make([]int, 0, len(migrations))
+	for i := range migrations {
+		want = append(want, i+1)
+	}
+	if got := migrationVersions(t, db); !slices.Equal(got, want) {
+		t.Fatalf("expected migration versions %v, got %v", want, got)
+	}
 }
 
 func migrationVersions(t *testing.T, db *sql.DB) []int {
