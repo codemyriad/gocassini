@@ -4,7 +4,7 @@ Date: 2026-09-02
 
 Status: published, version 1
 
-The published specification at <https://cassini-format.codemyriad.io/> is the
+The published specification at <https://format.gocassini.com/> is the
 portable meeting contract. A portable meeting is one normal `.opus` file that
 plays in ordinary audio software and also carries the meeting transcript,
 speaker roster, provenance, summary metadata, and attachments.
@@ -54,7 +54,7 @@ CASSINI_FORMAT=org.cassini.portable-meeting/1
 CASSINI_PROFILE=ogg-opus
 CASSINI_PAYLOAD_MIME=application/vnd.cassini.portable-meeting+json
 CASSINI_PAYLOAD_ENCODING=base64url+gzip+utf8json
-CASSINI_PAYLOAD_SCHEMA=https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json
+CASSINI_PAYLOAD_SCHEMA=https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json
 CASSINI_PAYLOAD_CHUNK_COUNT=<N>
 CASSINI_PAYLOAD_SHA256=<sha256 of decompressed JSON bytes>
 CASSINI_PAYLOAD_RAW_BYTES=<decompressed byte count>
