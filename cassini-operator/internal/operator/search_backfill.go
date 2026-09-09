@@ -238,14 +238,26 @@ func (rt *Runtime) backfillOneMeeting(
 		return searchBackfillFailed, localReason
 	}
 	if archive == nil {
+		if _, wasIndexed := indexed[opusName]; wasIndexed {
+			// No archive access, and the meeting holds rows from an earlier run.
+			// Absence of the recording is not evidence those rows are wrong, and
+			// recording it unavailable would DELETE them — so this is a failure
+			// to verify, not a verdict.
+			return searchBackfillFailed, localReason
+		}
 		// No archive access: record why the local copy could not be used, so the
 		// meeting is known-unsearchable rather than merely absent.
 		return rt.recordUnavailable(ctx, opusName, localReason)
 	}
 	words, digest, err := archive(ctx, opusName)
 	if err != nil {
-		rt.logger.Printf("search backfill: %s archive read failed (%v)", opusName, err)
-		return rt.recordUnavailable(ctx, opusName, searchBackfillReasonArchiveUnread)
+		// A failed READ is not a verdict on the meeting, and it must not become
+		// one: recordUnavailable drops whatever rows the meeting already has, so
+		// one timeout during a routine re-run would silently un-index a meeting
+		// that was searchable a minute earlier — the destructive convergence
+		// forgetVanishedMeetings refuses, arriving per meeting. Failed keeps the
+		// rows and tells the operator to re-run.
+		return searchBackfillFailed, fmt.Sprintf("%s: %v", searchBackfillReasonArchiveUnread, err)
 	}
 	if existing, ok := indexed[opusName]; ok && existing.digest != "" && existing.digest == digest {
 		return searchBackfillUnchanged, ""

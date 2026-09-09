@@ -409,21 +409,79 @@ func TestBackfillKeepsTheSpecificReasonWithoutAnArchive(t *testing.T) {
 	}
 }
 
-// A recording the archive cannot return is recorded, not silently skipped.
-func TestBackfillRecordsAnUnreadableArchiveRecording(t *testing.T) {
+// A failed archive READ is a failure to verify, not a verdict on the meeting:
+// it is counted failed and writes nothing, so re-running is always the fix.
+func TestBackfillCountsAnUnreadableArchiveRecordingAsFailed(t *testing.T) {
 	f := newBackfillFixture(t)
-	archive, _ := stubArchive(nil, "", errors.New("404 from Nextcloud"))
+	archive, _ := stubArchive(nil, "", errors.New("504 from Nextcloud"))
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
 		[]searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}, archive)
 	if err != nil {
 		t.Fatalf("backfill: %v", err)
 	}
-	if report.Unavailable != 1 {
-		t.Fatalf("report = %+v, want unavailable=1", report)
+	if report.Failed != 1 || report.Unavailable != 0 {
+		t.Fatalf("report = %+v, want failed=1", report)
 	}
-	if got := reasonFor(t, f.rt.searchStore, "GONE.opus"); got != searchBackfillReasonArchiveUnread {
-		t.Errorf("reason = %q, want %q", got, searchBackfillReasonArchiveUnread)
+	var rows int
+	if err := f.rt.searchStore.db.QueryRow(
+		`SELECT COUNT(*) FROM meeting_index WHERE opus_name = 'GONE.opus'`).Scan(&rows); err != nil {
+		t.Fatalf("count meeting_index: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("a transient read failure was persisted as a verdict")
+	}
+}
+
+// THE destructive case (review B2): a meeting that was searchable a minute ago
+// must not lose its rows because one re-run hit one timeout. A read failure
+// keeps the previous rows; only evidence about the content may replace them.
+func TestBackfillKeepsRowsWhenTheArchiveReadFails(t *testing.T) {
+	f := newBackfillFixture(t)
+	targets := []searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}
+	good, _ := stubArchive(archiveWords, "archive-digest", nil)
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, good); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	if got := matches(t, f.rt.searchStore, "acquisition"); len(got) != 1 {
+		t.Fatalf("seed run did not index: %+v", got)
+	}
+
+	failing, _ := stubArchive(nil, "", errors.New("timeout"))
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets, failing)
+	if err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if report.Failed != 1 || report.Unavailable != 0 {
+		t.Fatalf("report = %+v, want failed=1 and nothing recorded", report)
+	}
+	if got := matches(t, f.rt.searchStore, "acquisition"); len(got) != 1 {
+		t.Fatalf("hits = %+v — a transient failure deleted good rows", got)
+	}
+	if got := reasonFor(t, f.rt.searchStore, "GONE.opus"); got != "" {
+		t.Errorf("reason = %q, want the indexed row left untouched", got)
+	}
+}
+
+// The same protection without archive access: rows from an earlier run are not
+// evidence of anything wrong, so they survive a run that cannot verify them.
+func TestBackfillKeepsRowsWithoutArchiveAccess(t *testing.T) {
+	f := newBackfillFixture(t)
+	targets := []searchBackfillTarget{{JobID: "GONE", OpusName: "GONE.opus"}}
+	good, _ := stubArchive(archiveWords, "archive-digest", nil)
+	if _, err := f.rt.backfillSearchIndex(context.Background(), targets, good); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	report, err := f.rt.backfillSearchIndex(context.Background(), targets, nil)
+	if err != nil {
+		t.Fatalf("re-run: %v", err)
+	}
+	if report.Failed != 1 || report.Unavailable != 0 {
+		t.Fatalf("report = %+v, want failed=1", report)
+	}
+	if got := matches(t, f.rt.searchStore, "acquisition"); len(got) != 1 {
+		t.Fatalf("hits = %+v — verification absence deleted good rows", got)
 	}
 }
 
