@@ -20,13 +20,14 @@
 # anyway, that caution buys nothing and costs the whole runtime. Measured on a
 # 2 GB, 128-meeting archive: three seconds to copy, one to scan.
 #
-# WHAT THE SEEDED MEETINGS ARE VISIBLE TO. Every account on the stack. A leaf
-# carrying no ACL rules of its own inherits the Team folder's `everyone: read`,
-# and this script writes no per-meeting rules — production's do not survive the
-# trip, because they name production accounts that do not exist here and are not
-# readable to a non-admin caller in the first place. So the archive is real and
-# its access control is not. Anything testing who may read what must not use a
-# seeded meeting as evidence.
+# WHAT THE SEEDED MEETINGS ARE VISIBLE TO. Every account on the stack. Each
+# seeded leaf is given an explicit `everyone: read` rule — explicit because the
+# app denies any recording that states no rule of its own, treating it as an
+# interrupted delivery. Production's per-meeting permissions are not reproduced:
+# they name production accounts that do not exist here and are not readable to a
+# non-admin caller in the first place. So the archive is real and its access
+# control is not. Anything testing who may read what must not use a seeded
+# meeting as evidence.
 #
 # ORDERING. This needs the Cassini Team folder to exist, which the ExApp creates
 # when it is installed and provisioned. Run it after `dev stack up` has finished,
@@ -45,6 +46,8 @@ source "$SCRIPT_DIR/common.sh"
 # them and fails loudly rather than guessing if the mount point moves.
 SEED_MOUNT_POINT="Cassini"
 SEED_RECORDINGS_SUBPATH="Recordings"
+# The service account that owns the recordings tree (ncRecordingsOwner).
+SEED_OWNER="cassini"
 # Where compose.seed.yml binds a pack inside the Nextcloud container.
 SEED_MOUNT_PATH="/cassini-seed"
 
@@ -253,6 +256,45 @@ else
   seed_log "WARNING: the meetings are seeded, but this stack lets any account read the"
   seed_log "WARNING: raw catalog, which production does not. Do not test the read proxy's"
   seed_log "WARNING: catalog filtering against it."
+fi
+
+# --- state each seeded meeting's visibility ----------------------------------
+#
+# Not optional, and not merely tidiness. The ExApp treats a recording carrying no
+# explicit `everyone` rule as an interrupted delivery and denies it, on every
+# enabled edge (selfHealLeafProtection in webdav_acl.go) — which is right, because
+# an unruled leaf would otherwise inherit the container's read grant for however
+# long an upload takes. A seeded recording is finished, so it must say so.
+#
+# Relying on the inherited grant instead looks like it works and then quietly
+# stops: the meetings are readable until the next `dev stack up` re-enables the
+# app, and invisible afterwards, with nothing in the harness to explain it.
+#
+# `everyone: read` is the whole visibility story for a seeded meeting — see the
+# header. The owner rule is written too, so the leaf carries the pair the app
+# writes for a public recording. occ cannot express the app's exact owner mask
+# (it has no name for the "create" bit), so the self-heal pass widens that one
+# rule the first time it runs and then leaves the leaf alone; it never touches
+# the `everyone` rule, so visibility is unaffected. Verified against a live
+# stack by cycling the app's enabled state.
+#
+# One occ invocation per rule per meeting, about a quarter of a second each. On a
+# 128-meeting pack that is roughly a minute, and it is the slowest part of
+# seeding by far; the copy and the scan are seconds. It is spent on the supported
+# CLI rather than saved by writing Group Folders' ACL table directly.
+
+seed_log "granting read on ${#PACK_ASSETS[@]} meeting(s)"
+acl_failures=0
+for asset in "${PACK_ASSETS[@]}"; do
+  leaf="$SEED_RECORDINGS_SUBPATH/${asset#./}"
+  occ groupfolders:permissions "$FOLDER_ID" "$leaf" -g everyone -- +read >/dev/null 2>&1 \
+    && occ groupfolders:permissions "$FOLDER_ID" "$leaf" -u "$SEED_OWNER" -- +read +write +delete +share >/dev/null 2>&1 \
+    || acl_failures=$((acl_failures + 1))
+done
+if (( acl_failures > 0 )); then
+  seed_log "WARNING: could not set permissions on $acl_failures meeting(s). Those will be"
+  seed_log "WARNING: denied to everyone the next time the app is enabled, because a"
+  seed_log "WARNING: recording with no rule of its own reads as an unfinished delivery."
 fi
 
 held="$(nc_root sh -c "ls -1 '$RECORDINGS_DIR/meetings' 2>/dev/null | wc -l" | tr -d ' \r')"

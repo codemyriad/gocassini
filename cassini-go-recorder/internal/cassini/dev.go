@@ -148,6 +148,9 @@ Common options:
 up options:
   --resume   reuse matching stopped containers or retained harness volumes
   --reset    remove and recreate containers and volumes
+  --seed DIR load a seed pack into the recordings tree once the stack is up,
+             as written by 'cassini dev meetings pull --out DIR'. Seeded
+             meetings are readable by every account on the stack.
 
 down options (canonical teardown; containers are ephemeral, volumes persist):
   (none)      remove containers, keep volumes (persistence)
