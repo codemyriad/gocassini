@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,6 +34,7 @@ func clearDevStackAmbient(t *testing.T) {
 		"CASSINI_HARNESS_EXAPP_IMAGE_MODE",
 		"CASSINI_HARNESS_PATCH_MODE",
 		"CASSINI_HARNESS_EXISTING",
+		"CASSINI_HARNESS_SEED_DIR",
 		"SPREED_PROFILE",
 	} {
 		t.Setenv(key, "")
@@ -797,5 +800,92 @@ func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 	if !strings.Contains(joined, "CASSINI_HARNESS_SERVICE_MODE=core") ||
 		!strings.Contains(joined, "SPREED_PROFILE=default") {
 		t.Fatalf("missing resolved env in %v", gotEnv)
+	}
+}
+
+// --seed carries a pack through to the harness, and is checked before a stack
+// is built: a mistyped path is a usage error, and hearing it after a five-minute
+// bring-up is the expensive way to learn it.
+func TestResolveDevStackPlanSeedPack(t *testing.T) {
+	clearDevStackAmbient(t)
+	pack := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pack, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[]}`), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+
+	plan, _, err := resolveDevStackPlan("up", []string{"--seed", pack}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !filepath.IsAbs(plan.SeedDir) {
+		t.Errorf("SeedDir = %q, want an absolute path: compose binds it as a host path", plan.SeedDir)
+	}
+	var found bool
+	for _, kv := range plan.env() {
+		if kv == "CASSINI_HARNESS_SEED_DIR="+plan.SeedDir {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("CASSINI_HARNESS_SEED_DIR is not in the plan's environment: %v", plan.env())
+	}
+}
+
+// A stack that asks for no seed must carry an empty value, not an inherited
+// one: an ambient variable silently seeding a CI run would change what every
+// existing e2e leg is testing.
+func TestResolveDevStackPlanWithoutSeedCarriesNoPack(t *testing.T) {
+	clearDevStackAmbient(t)
+	plan, _, err := resolveDevStackPlan("up", nil, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.SeedDir != "" {
+		t.Errorf("SeedDir = %q, want empty", plan.SeedDir)
+	}
+	for _, kv := range plan.env() {
+		if strings.HasPrefix(kv, "CASSINI_HARNESS_SEED_DIR=") && kv != "CASSINI_HARNESS_SEED_DIR=" {
+			t.Errorf("unseeded plan exports %q", kv)
+		}
+	}
+}
+
+func TestResolveDevStackPlanRejectsAnUnusableSeedPack(t *testing.T) {
+	clearDevStackAmbient(t)
+	notADir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	emptyDir := t.TempDir()
+
+	for name, tc := range map[string]struct{ arg, want string }{
+		"absent":     {filepath.Join(t.TempDir(), "nope"), "no such file"},
+		"not a dir":  {notADir, "is not a directory"},
+		"no catalog": {emptyDir, "holds no catalog.json"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := resolveDevStackPlan("up", []string{"--seed", tc.arg}, testEnv(nil))
+			if err == nil {
+				t.Fatalf("accepted --seed %q", tc.arg)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// Seeding is a property of bringing a stack up. Accepting it on down or status
+// would silently do nothing, which is worse than saying so.
+func TestResolveDevStackPlanScopesSeedToUp(t *testing.T) {
+	clearDevStackAmbient(t)
+	pack := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pack, "catalog.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+	for _, command := range []string{"down", "status"} {
+		if _, _, err := resolveDevStackPlan(command, []string{"--seed", pack}, testEnv(nil)); err == nil {
+			t.Errorf("%s accepted --seed", command)
+		}
 	}
 }

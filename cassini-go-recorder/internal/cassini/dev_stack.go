@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -45,20 +46,25 @@ const (
 )
 
 type devStackPlan struct {
-	Command               string
-	PublicMode            string
-	PublicURL             string
-	PublicHost            string
-	MediaHost             string
-	SignalingPublicURL    string
-	TalkBackendURL        string
-	ServiceMode           string
-	SpreedProfile         string
-	CassiniMode           string
-	RecordingBackend      string
-	ExAppImageMode        string
-	PatchMode             string
-	ExistingResourceMode  string
+	Command              string
+	PublicMode           string
+	PublicURL            string
+	PublicHost           string
+	MediaHost            string
+	SignalingPublicURL   string
+	TalkBackendURL       string
+	ServiceMode          string
+	SpreedProfile        string
+	CassiniMode          string
+	RecordingBackend     string
+	ExAppImageMode       string
+	PatchMode            string
+	ExistingResourceMode string
+	// SeedDir is a seed pack to load into the recordings tree once the stack
+	// is up, or "" for an ordinary stack. Absolute, because compose binds it
+	// as a host path and the harness scripts do not share this process's
+	// working directory.
+	SeedDir               string
 	DownSuspend           bool
 	DownVolumes           bool
 	DownFull              bool
@@ -79,6 +85,7 @@ type devStackFlagOptions struct {
 	recordingBackend   string
 	exAppImageMode     string
 	patchMode          string
+	seedDir            string
 	build              bool
 	resume             bool
 	reset              bool
@@ -113,6 +120,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	recordingBackend := stringFlag("recording-backend", "Talk recording backend: legacy, direct-operator, installed-exapp, none")
 	exAppImageMode := stringFlag("exapp-image-mode", "ExApp image mode: build, reuse-local, pull")
 	patchMode := stringFlag("patch", "patch mode: auto, none, force")
+	seedDir := stringFlag("seed", "seed pack to load into the recordings tree after the stack is up")
 	build := fs.Bool("build", false, "build the Cassini ExApp image before registration")
 	resume := fs.Bool("resume", false, "reuse matching stopped containers or retained harness volumes")
 	reset := fs.Bool("reset", false, "stop/remove/recreate resources for the resolved stack")
@@ -135,6 +143,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 		opts.set["services"] = true
 	}
 
+	opts.seedDir = *seedDir
 	opts.publicMode = *publicMode
 	opts.publicURL = *publicURL
 	opts.publicHost = *publicHost
@@ -205,6 +214,7 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	plan.RecordingBackend = pick("recording-backend", opts.recordingBackend, "CASSINI_HARNESS_RECORDING_BACKEND", devStackRecordingLegacy)
 	plan.ExAppImageMode = pick("exapp-image-mode", opts.exAppImageMode, "CASSINI_HARNESS_EXAPP_IMAGE_MODE", devStackImageReuseLocal)
 	plan.PatchMode = pick("patch", opts.patchMode, "CASSINI_HARNESS_PATCH_MODE", devStackPatchAuto)
+	plan.SeedDir = pick("seed", opts.seedDir, "CASSINI_HARNESS_SEED_DIR", "")
 	plan.DownSuspend = opts.suspend
 	plan.DownVolumes = opts.downVolumes
 	plan.DownFull = opts.downFull
@@ -218,6 +228,21 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	}
 	if command != "down" && (opts.suspend || opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend, --volumes, and --full apply only to stack down")
+	}
+	if opts.set["seed"] && command != "up" && command != "plan" {
+		return plan, rest, errors.New("--seed applies only to stack up")
+	}
+	if plan.SeedDir != "" {
+		// Resolved and checked here rather than in the harness script, because
+		// a typo in a path is a usage error and the caller should hear it before
+		// a stack is built. Compose also needs an absolute host path: it binds
+		// this directory, and it does not resolve relative paths against this
+		// process's working directory.
+		resolved, err := resolveDevStackSeedDir(plan.SeedDir)
+		if err != nil {
+			return plan, rest, err
+		}
+		plan.SeedDir = resolved
 	}
 	if opts.suspend && (opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend keeps containers and cannot be combined with --volumes or --full")
@@ -540,7 +565,33 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_MEDIA_HOST=" + plan.MediaHost,
 		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL=" + plan.SignalingPublicURL,
 		"CASSINI_TALK_BACKEND_URL=" + plan.TalkBackendURL,
+		"CASSINI_HARNESS_SEED_DIR=" + plan.SeedDir,
 	}
+}
+
+// resolveDevStackSeedDir turns a --seed value into an absolute directory that
+// looks like a seed pack, or explains why it is not one.
+//
+// Only the shape is checked here — the directory, and the catalog that makes it
+// a pack. The contents are validated in full by the seeder itself, which runs
+// against the built stack and is also the entry point for a pack that arrives
+// any other way.
+func resolveDevStackSeedDir(value string) (string, error) {
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("--seed %q: %w", value, err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return "", fmt.Errorf("--seed %q: %w", value, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("--seed %q is not a directory; it should be a seed pack, as written by `cassini dev meetings pull --out`", value)
+	}
+	if _, err := os.Stat(filepath.Join(absolute, "catalog.json")); err != nil {
+		return "", fmt.Errorf("--seed %q holds no catalog.json, so it is not a seed pack; create one with `cassini dev meetings pull --out %s`", value, value)
+	}
+	return absolute, nil
 }
 
 func printDevStackPlan(w io.Writer, plan devStackPlan) {
@@ -563,6 +614,8 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "  talk_backend_url: %s\n", yamlValueOrNull(plan.TalkBackendURL))
 	fmt.Fprintln(w, "patch:")
 	fmt.Fprintf(w, "  mode: %s\n", plan.PatchMode)
+	fmt.Fprintln(w, "seed:")
+	fmt.Fprintf(w, "  pack: %s\n", yamlValueOrNull(plan.SeedDir))
 	fmt.Fprintln(w, "lifecycle:")
 	fmt.Fprintf(w, "  existing_resources: %s\n", plan.ExistingResourceMode)
 	fmt.Fprintf(w, "  down_suspend: %t\n", plan.DownSuspend)
