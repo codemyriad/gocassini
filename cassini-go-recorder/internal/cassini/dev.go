@@ -36,6 +36,8 @@ func runDev(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "ci-e2e.sh"), args[1:], stdout, stderr)
 	case "fixture":
 		return runDevFixture(ctx, repoRoot, args[1:], stdout, stderr)
+	case "meetings":
+		return runDevMeetings(ctx, args[1:], stdout, stderr)
 	case "play":
 		return runDevPlay(ctx, repoRoot, args[1:], stdout, stderr)
 	case "play-private":
@@ -146,6 +148,9 @@ Common options:
 up options:
   --resume   reuse matching stopped containers or retained harness volumes
   --reset    remove and recreate containers and volumes
+  --seed DIR load a seed pack into the recordings tree once the stack is up,
+             as written by 'cassini dev meetings pull --out DIR'. Seeded
+             meetings are readable by every account on the stack.
 
 down options (canonical teardown; containers are ephemeral, volumes persist):
   (none)      remove containers, keep volumes (persistence)
@@ -249,6 +254,7 @@ Usage:
   cassini dev smoke
   cassini dev ci-e2e
   cassini dev fixture <prepare-showcase|stream-showcase>
+  cassini dev meetings pull --out <dir>
   cassini dev play --room <name> [--nextcloud-host <host-or-url>] [--mode single|full] [--duration <seconds>]
   cassini dev play-private --scaffold-only [--nextcloud-host <host-or-url>]
   cassini dev player <video|showcase|three-songs>

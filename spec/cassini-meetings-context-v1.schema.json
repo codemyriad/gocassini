@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cassini-format.codemyriad.io/schema/cassini-meetings-context-v1.schema.json",
+  "title": "Cassini meetings context v1",
+  "description": "One or more recorded meetings rendered as context an agent can read: what the meeting was, who spoke, the transcript as speaker-attributed prose, and the generated summary when there is one. Produced by `cassini meetings context [--json]`. A document carrying one meeting is the bare meeting object; a document carrying several is a container whose every element is itself a complete, valid document of the first kind. That is the whole of the multi-meeting design: a reader written against a single meeting keeps working, because what it knows how to read is exactly what each element is. The markdown rendering of the same bundle is the same information for a human or a model to read directly, and is not described here.",
+  "oneOf": [
+    { "$ref": "#/$defs/meetingContext" },
+    { "$ref": "#/$defs/multiMeetingDocument" }
+  ],
+  "$defs": {
+    "multiMeetingDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "meetings"],
+      "properties": {
+        "version": { "const": "cassini.meetings.context.v1" },
+        "meetings": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The meetings, in the order the caller asked for them. Order is never reassigned by the producer: a caller that named three meetings gets them back in that order, which is what makes a bundle reproducible from its command line. A meeting the caller cannot read fails the whole run rather than shrinking this array — a bundle that quietly dropped one would answer a question asked of every meeting using only some of them. The producer collapses a one-meeting bundle to the bare meetingContext form instead of writing a one-element array here.",
+          "items": { "$ref": "#/$defs/meetingContext" }
+        }
+      }
+    },
+    "meetingContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "meeting", "transcriptSource", "wordCount", "segments", "summary"],
+      "properties": {
+        "version": { "const": "cassini.meetings.context.v1" },
+        "meeting": { "$ref": "#/$defs/meeting" },
+        "speakers": {
+          "type": "array",
+          "description": "The roster declared by the recording, absent when it declares none.",
+          "items": { "$ref": "#/$defs/speaker" }
+        },
+        "transcriptSource": {
+          "const": "derived-from-words",
+          "description": "How the prose was produced, and load-bearing rather than decoration. An operator-published .opus carries raw-ASR word timings and nothing else — no readable transcript, no display transcript — so the prose in every bundle was assembled from those timings by the producer. A consumer must not present it as editorially cleaned-up text."
+        },
+        "sourceTranscriptId": {
+          "type": "string",
+          "description": "Id of the transcript inside the recording that the prose was derived from, so a claim can be traced back to the file."
+        },
+        "sourceTranscriptFormat": { "type": "string" },
+        "language": { "type": "string" },
+        "wordCount": { "type": "integer", "minimum": 0 },
+        "segments": {
+          "type": "array",
+          "description": "The transcript as speaker-attributed paragraphs, in chronological order. Always present: a meeting with no transcribed speech carries an empty array, which is a different fact from the field being absent.",
+          "items": { "$ref": "#/$defs/segment" }
+        },
+        "summary": { "$ref": "#/$defs/summary" }
+      }
+    },
+    "meeting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The id the caller asked for, which is the id the published catalog indexes by. It is deliberately not the recording manifest's own meeting id: that one is content-derived, a hash of the audio, and cannot be used to correlate the bundle with the catalog entry it came from."
+        },
+        "title": { "type": "string" },
+        "createdAtUtc": { "type": "string", "format": "date-time" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "roomId": {
+          "type": "string",
+          "description": "Id of the conversation this meeting was recorded in, shaped rm_<16 lowercase hex>. Absent when the room is unknown, which is an ordinary state for an import or a simulated run. Read from the catalog entry, falling back to the recording's own tag: the catalog is what a backfill and a reattribution keep current."
+        },
+        "roomName": {
+          "type": "string",
+          "description": "Display name of that conversation. Catalog-only, because a display name is editable and a sealed recording is not. Absent when the room is unknown, and absent for a meeting resolved without a catalog entry."
+        }
+      }
+    },
+    "speaker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": {
+          "type": "string",
+          "description": "The speaker's display label, falling back to the raw id so an unlabelled speaker is still attributed rather than dropped."
+        }
+      }
+    },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startMs", "endMs", "text"],
+      "properties": {
+        "speaker": { "type": "string" },
+        "speakerLabel": { "type": "string" },
+        "startMs": { "type": "integer", "minimum": 0 },
+        "endMs": { "type": "integer", "minimum": 0 },
+        "text": { "type": "string" }
+      },
+      "description": "One paragraph of derived prose. The offsets are milliseconds from the start of the recording; the markdown rendering can cite startMs as MM:SS, or H:MM:SS past an hour. Both speaker fields are absent when the recording attributed nothing, which is not the same as one speaker who was never named."
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["present"],
+      "properties": {
+        "present": {
+          "type": "boolean",
+          "description": "Whether a summary was generated at all. Explicit so a consumer can tell \"no summary was generated\" from \"the summary was empty\": summaries are LLM-gated, and a deployment with no summariser configured publishes transcripts without them."
+        },
+        "format": { "type": "string" },
+        "model": { "type": "string" },
+        "markdown": {
+          "type": "string",
+          "description": "The summary exactly as it was authored, headings and all. The markdown rendering demotes those headings so they nest under its own \"## Summary\"; this field is never rewritten."
+        }
+      }
+    }
+  }
+}

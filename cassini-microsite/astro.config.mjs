@@ -27,7 +27,7 @@ const stripTrailingBlankLine = {
 };
 
 export default defineConfig({
-  site: "https://gocassini.codemyriad.io",
+  site: "https://gocassini.com",
   base: process.env.BASE_PATH,
   integrations: [mdx(), sitemap()],
   markdown: {

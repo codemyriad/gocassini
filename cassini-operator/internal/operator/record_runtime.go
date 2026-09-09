@@ -329,7 +329,7 @@ const talkRecordingSecretEnv = "CASSINI_TALK_RECORDING_SECRET"
 // resolved secret therefore overrides whatever the environment carries; when
 // it came from the environment the two are the same value.
 func (rt *Runtime) recordChildEnv() []string {
-	env := rt.currentSettings().ChildEnv(os.Environ())
+	env := rt.childEnv()
 	secret := strings.TrimSpace(rt.cfg.TalkSharedSecret)
 	if secret == "" {
 		return env
@@ -347,7 +347,7 @@ func (rt *Runtime) runRecordDoctorContext(ctx context.Context) error {
 	cmd.Stderr = writerOrDiscard(rt.stderr)
 	// The doctor checks disk and directories only; it has no use for the
 	// Talk secret, so it does not get one.
-	cmd.Env = rt.currentSettings().ChildEnv(os.Environ())
+	cmd.Env = rt.childEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {

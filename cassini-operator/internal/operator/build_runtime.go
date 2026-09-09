@@ -283,7 +283,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// Probe free VRAM only after any RAM wait, immediately before launch. That
 	// reading is an admission snapshot; taking it before a long memory wait
 	// would let another workload consume the GPU in between.
-	env := settings.ChildEnv(os.Environ())
+	env := rt.childEnv()
 	if root := strings.TrimSpace(rt.cfg.ModelCacheRoot); root != "" {
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			return meetingPath, fmt.Errorf("create model cache root %s: %w", root, err)

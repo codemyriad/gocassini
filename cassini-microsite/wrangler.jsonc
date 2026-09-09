@@ -7,6 +7,10 @@
   // Cloudflare dashboard, otherwise wrangler deploys to a *different* Worker.
   "name": "gocassini",
   "compatibility_date": "2025-07-01",
+  "routes": [
+    { "pattern": "gocassini.codemyriad.io", "custom_domain": true },
+    { "pattern": "gocassini.com", "custom_domain": true }
+  ],
   "assets": {
     "directory": "./dist",
     // Serve /docs/ -> docs/index.html. (No custom 404 page in the build yet,

@@ -379,8 +379,19 @@ shell that also contains `CASSINI_HARNESS_PUBLIC_URL` or other remote exports.
 | `./harness/bin/ci-e2e-mute.sh` | same as baseline | Mute-aware three-player flow; validates multi-player capture via session artifacts and player mute logs. |
 | `./harness/bin/ci-e2e-rejoin.sh` | same as baseline | Leave/rejoin flow with two player phases; validates player phases and recorder subscription evidence. |
 | `IMAGE_REF=... ./harness/bin/ci-e2e-install-exapp.sh` | `local-http` + `core` + `cassini none` + `recording none` | Real Nextcloud + AppAPI install handshake against a provided ExApp image. The script manually starts/registers the image so it can test AppAPI route patterns. |
+| `IMAGE_REF=... ./harness/bin/check-route-refresh.sh` | `local-http` + `core` + `cassini none` + `recording none` | Whether `app_api:app:update` applies a **changed** `<routes>` block to an app that is already installed. Registers with one real route withheld, proves the proxy refuses it, then reads AppAPI's own route rows in Postgres after each update form. |
 | `IMAGE_REF=... ./harness/bin/ci-e2e-talk-record-roundtrip.sh` | `local-http` + `full` + `cassini none` + `recording legacy`, then custom operator container | Full Talk record-button roundtrip: Talk recording-backend HMAC -> operator -> recorder -> transcribe -> publish -> transcript check. |
 | `./harness/bin/d263-nextcloud-lifecycle.sh` | run after a stack is up | Native Talk recording-backend lifecycle against local Nextcloud/Talk with a fake media worker. Not a full media acceptance test. |
+
+`check-route-refresh.sh` is a measurement rather than a regression test: it
+answers one question about AppAPI's behaviour and writes a transcript of every
+reading to `$LOG_DIR/verdict.txt`. The answer it produced, with its evidence, is
+written up in [`docs/exapp-update-constraints.md`](../docs/exapp-update-constraints.md)
+§5a — routes DO refresh on an in-place update, but only when the manifest carries
+a new `<version>`. Re-run it when AppAPI's own version moves or when you doubt the
+write-up, not on every branch: it wants a Nextcloud stack (on host port `28090`, so
+it does not collide with a running one) and a built ExApp image, and it tears its
+own stack down on exit.
 
 Baseline local CI run:
 
@@ -1342,6 +1353,79 @@ CALL_URL="$(./bin/cassini dev room create --name "Basic video room" | tail -n1)"
 ```
 
 ---
+
+### 9.5 Seeding the stack from a production archive
+
+A synthetic fixture is a three-minute meeting with two speakers. Some work needs
+a corpus instead: the meeting list, cross-meeting search, insights, and any
+question about how a surface behaves with hours of real transcript in it. Those
+meetings already exist on a deployed instance, and a seed pack brings them here.
+
+```text
+   PRODUCTION NC                SEED PACK (a directory)        HARNESS
+   ─────────────                ──────────────────────        ───────
+   Cassini/Recordings/  ──pull──▶  catalog.json      ──bind ro──▶ /cassini-seed
+     catalog.json                  meetings/*.opus                    │ copy
+     meetings/*.opus               seed-manifest.json                 ▼
+                                                            Cassini/Recordings/
+        GET only, as you           gitignored, confidential    then occ …:scan
+```
+
+**Pull an archive.** Reads as your own Nextcloud account, over the same route
+`cassini meetings list` uses, so you get exactly the recordings that account may
+read. Set `CASSINI_NC_URL`, `CASSINI_NC_USER` and `CASSINI_NC_APP_PASSWORD`
+first — create the app password under Settings, Security, Devices & sessions.
+
+```bash
+./bin/cassini dev meetings pull --out harness/runtime/seed/prod --dry-run
+./bin/cassini dev meetings pull --out harness/runtime/seed/prod --limit 20
+```
+
+`--dry-run` reports the total size before you commit to the transfer; a full
+archive is easily gigabytes. `--limit` keeps the newest N, and `--room`,
+`--from` and `--to` narrow the same way `meetings list` does. Re-running skips
+what is already on disk, so an interrupted pull is resumed by repeating the
+command.
+
+**Seed a stack with it**, either as part of bringing one up:
+
+```bash
+./bin/cassini dev stack up --seed harness/runtime/seed/prod
+```
+
+or against a stack that is already running:
+
+```bash
+./harness/bin/seed-nc-files.sh --pack harness/runtime/seed/prod
+```
+
+Both copy the pack into the Cassini Team folder, run `occ groupfolders:scan`,
+and then grant read on each seeded recording. Nothing is uploaded over WebDAV:
+the Team folder is ordinary files under `__groupfolders/<id>/files`, so seeding
+is a copy and a rescan. A 2 GB, 128-meeting archive takes about three seconds to
+copy and one to scan; the permissions pass is the slow part, at roughly half a
+second per meeting.
+
+That pass is not optional. The app treats a recording carrying no permission
+rule of its own as an interrupted delivery and denies it on every enabled edge,
+so a seeded meeting has to state its visibility rather than inherit it. Without
+it the meetings are readable until the next `dev stack up` and invisible after.
+
+Seeding is additive and idempotent. The catalog is merged rather than replaced,
+so meetings a stack recorded itself survive, and re-seeding the same pack is a
+no-op. `--replace` clears the tree first when you want the stack to hold the
+pack and nothing else.
+
+**Two things a seeded stack is not.** Seeded meetings are readable by *every*
+account on it: production's per-meeting permissions name production accounts and
+do not come with the data, so an access-control change must not be tested
+against them. And they carry no operator job history, so the admin jobs list
+shows nothing for them while every published surface — the viewer, insights,
+`meetings context` — works normally.
+
+**A pack is confidential.** It holds real audio, transcripts and summaries.
+`harness/runtime/` is gitignored, which is why the examples above write there;
+treat a pack the way you would treat the recordings themselves.
 
 ## 10. Repository structure and operational reference
 
