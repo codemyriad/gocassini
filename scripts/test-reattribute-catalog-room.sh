@@ -701,14 +701,16 @@ mkdir -p "$PERSIST/operator"
 printf '%s\n' '{"access_control_enabled": false, "source": "user", "migration_clean": true}' \
   >"$PERSIST/operator/storage_settings.json"
 printf '%s\n' '{"access_control_enabled": true}' >"$PERSIST/storage_settings.json"
-CASSINI_STORAGE_SETTINGS_PATH= APP_PERSISTENT_STORAGE="$PERSIST" \
+CASSINI_STORAGE_SETTINGS_PATH='' APP_PERSISTENT_STORAGE="$PERSIST" \
   run_payload_without_jobs_db --from "$FROM_ID" --to "$TO_ID" --apply --no-retag \
   || fail "default-mode apply through the persistent DB path should succeed: $(cat "$WORK/stderr")"
 check "persistent storage resolves settings beside operator/jobs.sqlite3" "$WORK/stdout" \
   "storage mode from $PERSIST/operator/storage_settings.json: archive root is CassiniNoACL/Recordings"
-[[ -f "$WORK/put-body.json" ]] \
-  && ok "default-mode apply writes the catalog" \
-  || fail "default-mode apply did not write the catalog"
+if [[ -f "$WORK/put-body.json" ]]; then
+  ok "default-mode apply writes the catalog"
+else
+  fail "default-mode apply did not write the catalog"
+fi
 if [[ -f "$WORK/proppatch-body.xml" ]]; then
   fail "default-mode apply must not issue nc:acl-list: $(cat "$WORK/proppatch-body.xml")"
 else
@@ -721,7 +723,7 @@ DB_OVERRIDE="$WORK/db-override/jobs.sqlite3"
 mkdir -p "${DB_OVERRIDE%/*}"
 printf '%s\n' '{"access_control_enabled": false, "source": "user", "migration_clean": true}' \
   >"${DB_OVERRIDE%/*}/storage_settings.json"
-CASSINI_STORAGE_SETTINGS_PATH= APP_PERSISTENT_STORAGE="$PERSIST" \
+CASSINI_STORAGE_SETTINGS_PATH='' APP_PERSISTENT_STORAGE="$PERSIST" \
   run_payload --jobs-db "$DB_OVERRIDE" --from "$FROM_ID" --to "$TO_ID" --no-retag \
   || fail "an explicit database override should resolve its sibling settings: $(cat "$WORK/stderr")"
 check "an explicit DB override selects its sibling settings" "$WORK/stdout" \

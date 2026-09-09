@@ -173,10 +173,13 @@ grep -qF 'CASSINI_STORAGE_MODE=${CASSINI_STORAGE_MODE:-access_controlled}' "$SAN
 # stack bootstrap constructs the topology and the manually started container
 # records it. It runs the default leg independently so the access-controlled
 # probes cannot pass while the private-root model quietly regresses.
+# shellcheck disable=SC2016 # Match the literal variable expression in the script.
 grep -qF 'STORAGE_MODE="${CASSINI_E2E_STORAGE_MODE:-access_controlled}"' "$INSTALL_E2E" \
   || fail "ci-e2e-install-exapp.sh does not make its storage-model leg explicit"
+# shellcheck disable=SC2016 # Match the literal variable expression in the script.
 grep -qF -- '--storage-mode "$HARNESS_STORAGE_MODE"' "$INSTALL_E2E" \
   || fail "ci-e2e-install-exapp.sh does not pass its model to stack bootstrap"
+# shellcheck disable=SC2016 # Match the literal variable expression in the script.
 grep -qF -- '-e "CASSINI_STORAGE_MODE=$STORAGE_MODE"' "$INSTALL_E2E" \
   || fail "ci-e2e-install-exapp.sh does not pass its model to the manually started ExApp"
 grep -qF 'CASSINI_E2E_STORAGE_MODE: default' "$PUBLISH_WORKFLOW" \
