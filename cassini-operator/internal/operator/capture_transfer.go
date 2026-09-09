@@ -56,7 +56,7 @@ func syncCaptureParents(dir string) error {
 
 func (s *Store) captureRecordingRoom(ctx context.Context, id string) (string, error) {
 	var room string
-	err := s.db.QueryRowContext(ctx, `SELECT json_extract(talk_binding, '$.room_token') FROM jobs WHERE id = ? AND record_started_at IS NOT NULL`, id).Scan(&room)
+	err := s.db.QueryRowContext(ctx, `SELECT room_token FROM jobs WHERE id = ? AND record_started_at IS NOT NULL`, id).Scan(&room)
 	return room, err
 }
 
@@ -92,7 +92,7 @@ func (rt *Runtime) captureRecordingHandler(isMember roomMembershipChecker) http.
 				return
 			}
 		}
-		rows, err := rt.store.db.QueryContext(r.Context(), `SELECT id,stage,state FROM jobs WHERE json_extract(talk_binding,'$.room_token') = ? AND record_started_at IS NOT NULL AND record_finished_at IS NULL`, room)
+		rows, err := rt.store.db.QueryContext(r.Context(), `SELECT id,stage,state FROM jobs WHERE room_token = ? AND record_started_at IS NOT NULL AND record_finished_at IS NULL`, room)
 		if err != nil {
 			http.Error(w, "recording unavailable", 503)
 			return

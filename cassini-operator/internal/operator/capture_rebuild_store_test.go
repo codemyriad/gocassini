@@ -56,13 +56,16 @@ func seedRecording(t *testing.T, store *Store, id, room, startedAt, finishedAt s
 		t.Fatalf("InsertQueuedJob: %v", err)
 	}
 	binding := `{"backend_url":"https://nc.example","room_token":"` + room + `","owner":"alice"}`
+	if err := store.SetJobTalkBinding(ctx, id, binding); err != nil {
+		t.Fatalf("SetJobTalkBinding: %v", err)
+	}
 	finished := any(nil)
 	if finishedAt != "" {
 		finished = finishedAt
 	}
 	if _, err := store.db.Exec(
-		`UPDATE jobs SET talk_binding = ?, record_started_at = ?, record_finished_at = ? WHERE id = ?`,
-		binding, startedAt, finished, id); err != nil {
+		`UPDATE jobs SET record_started_at = ?, record_finished_at = ? WHERE id = ?`,
+		startedAt, finished, id); err != nil {
 		t.Fatalf("seed recording: %v", err)
 	}
 }
@@ -97,6 +100,11 @@ func TestResolveJobForCaptureMatchesRoomAndWindow(t *testing.T) {
 	seedRecording(t, store, "morning", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
 	seedRecording(t, store, "afternoon", "room-a", stamp(t, "2026-09-02T14:00:00Z"), stamp(t, "2026-09-02T15:00:00Z"))
 	seedRecording(t, store, "elsewhere", "room-b", stamp(t, "2026-09-02T10:30:00Z"), stamp(t, "2026-09-02T10:45:00Z"))
+	// A later unreadable binding preserves the promoted room token. Capture
+	// matching must keep working without parsing that binding again.
+	if err := store.SetJobTalkBinding(ctx, "morning", "not json at all"); err != nil {
+		t.Fatalf("persist unreadable binding: %v", err)
+	}
 
 	got, err := store.ResolveJobForCapture(ctx, "room-a", ms(t, "2026-09-02T10:15:00Z"), ms(t, "2026-09-02T10:40:00Z"))
 	if err != nil {

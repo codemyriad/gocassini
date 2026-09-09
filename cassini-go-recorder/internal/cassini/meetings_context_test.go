@@ -35,8 +35,7 @@ func extractedMeetingFixture(words []inspectpkg.TranscriptWord, summary string) 
 			Summary: map[string]any{"format": "markdown", "model": "summary-model"},
 		},
 		Transcript: inspectpkg.ExtractedTranscript{
-			TranscriptID: portable.RoleRawASR,
-			Role:         portable.RoleRawASR,
+			TranscriptID: portable.DefaultWordsTranscriptID,
 			Format:       "cassini.words.v1",
 			Language:     "en",
 			WordCount:    len(words),
@@ -132,8 +131,8 @@ func TestBuildMeetingContextMarksTheTranscriptAsDerived(t *testing.T) {
 	if bundle.TranscriptSource != "derived-from-words" {
 		t.Errorf("TranscriptSource = %q, want derived-from-words", bundle.TranscriptSource)
 	}
-	if bundle.SourceTranscriptID != portable.RoleRawASR {
-		t.Errorf("SourceTranscriptID = %q, want %q", bundle.SourceTranscriptID, portable.RoleRawASR)
+	if bundle.SourceTranscriptID != portable.DefaultWordsTranscriptID {
+		t.Errorf("SourceTranscriptID = %q, want %q", bundle.SourceTranscriptID, portable.DefaultWordsTranscriptID)
 	}
 	if bundle.SourceTranscriptFormat != "cassini.words.v1" {
 		t.Errorf("SourceTranscriptFormat = %q, want cassini.words.v1", bundle.SourceTranscriptFormat)

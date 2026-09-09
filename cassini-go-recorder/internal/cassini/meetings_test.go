@@ -322,11 +322,11 @@ func TestMeetingsUsageAndDispatch(t *testing.T) {
 
 	t.Run("unknown subcommand exits 2", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		code := Run(context.Background(), []string{"meetings", "summarise"}, &stdout, &stderr)
+		code := Run(context.Background(), []string{"meetings", "bogus"}, &stdout, &stderr)
 		if code != 2 {
 			t.Fatalf("exit=%d, want 2", code)
 		}
-		if !strings.Contains(stderr.String(), `unknown meetings command "summarise"`) {
+		if !strings.Contains(stderr.String(), `unknown meetings command "bogus"`) {
 			t.Errorf("stderr=%q", stderr.String())
 		}
 	})

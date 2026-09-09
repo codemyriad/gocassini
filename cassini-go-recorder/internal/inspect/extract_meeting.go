@@ -87,7 +87,6 @@ func ExtractMeeting(path string) (ExtractedMeeting, error) {
 		return ExtractedMeeting{}, fmt.Errorf("decode transcript %q body: %w", entry.ID, err)
 	}
 	transcript := extractedFromTranscriptBody(entry.ID, body.Format, body.Language, body.WordCount, body.Items)
-	transcript.Role = entry.Role
 	if transcript.Language == "" {
 		transcript.Language = entry.Language
 	}

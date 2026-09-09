@@ -1,6 +1,6 @@
 // Shell-level surface routing for the Cassini app (D-420 V3, slice B5).
 //
-// The shell hosts N role-gated surfaces (today: browse + operator). Which one
+// The shell hosts N role-gated surfaces (today: browse + operator + settings). Which one
 // is active is encoded in location.hash as `surface=operator`, layered on top
 // of the viewing layer's own hash params (meeting/tx/t — see
 // cassini-viewer/src/viewer/hashRouting.ts). We deliberately reuse the SAME
@@ -14,20 +14,21 @@
 // The viewer's readViewerHash() ignores the surface param; readSurface() here
 // ignores everything else.
 
-export type Surface = "browse" | "operator";
+export type Surface = "browse" | "operator" | "settings";
 
 const SURFACE_PARAM = "surface";
 const JOB_PARAM = "job";
 
 export function readSurface(hash: string): Surface {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
-  return params.get(SURFACE_PARAM) === "operator" ? "operator" : "browse";
+  const value = params.get(SURFACE_PARAM);
+  return value === "operator" || value === "settings" ? value : "browse";
 }
 
-// surfaceHash returns the fragment for a surface: "#surface=operator" for the
-// operator surface, "" for browse (the default — no marker).
+// surfaceHash returns the fragment for a surface: "#surface=<name>" for the
+// admin surfaces, "" for browse (the default — no marker).
 export function surfaceHash(surface: Surface): string {
-  return surface === "operator" ? `#${SURFACE_PARAM}=operator` : "";
+  return surface === "browse" ? "" : `#${SURFACE_PARAM}=${surface}`;
 }
 
 // applySurface sets/clears the surface param on an EXISTING hash while
@@ -39,7 +40,7 @@ export function applySurface(hash: string, surface: Surface): string {
     .replace(/^#/, "")
     .split("&")
     .filter((part) => part !== "" && !part.startsWith(`${SURFACE_PARAM}=`));
-  const parts = surface === "operator" ? [`${SURFACE_PARAM}=operator`, ...rest] : rest;
+  const parts = surface === "browse" ? rest : [`${SURFACE_PARAM}=${surface}`, ...rest];
   return parts.length > 0 ? `#${parts.join("&")}` : "";
 }
 

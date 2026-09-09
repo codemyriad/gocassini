@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -38,7 +39,7 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	assertMigrationsContiguous(t, migrationVersions(t, store.db))
+	assertAllMigrationsApplied(t, store.db)
 	if !sqliteTableExists(t, store.db, "job_attempts") {
 		t.Fatalf("expected job_attempts table to exist")
 	}
@@ -56,7 +57,7 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	assertMigrationsContiguous(t, migrationVersions(t, store.db))
+	assertAllMigrationsApplied(t, store.db)
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
 		t.Fatalf("unexpected legacy job after baseline = %#v", job)
@@ -2578,12 +2579,12 @@ esac
 	return rt, func() { cleanupTestRuntime(t, rt, store) }, logPath, startedPath
 }
 
-func newTestRuntime(t *testing.T) (*Runtime, func()) {
+func newTestRuntime(t *testing.T, configure ...func(*Config)) (*Runtime, func()) {
 	t.Helper()
-	return newTestRuntimeWithLogger(t, log.New(ioDiscard{}, "", 0))
+	return newTestRuntimeWithLogger(t, log.New(ioDiscard{}, "", 0), configure...)
 }
 
-func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func()) {
+func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger, configure ...func(*Config)) (*Runtime, func()) {
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
@@ -2597,7 +2598,7 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
-	rt := NewRuntime(context.Background(), store, Config{
+	cfg := Config{
 		RepoRoot:         repoRoot,
 		BindAddr:         "127.0.0.1:0",
 		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
@@ -2606,7 +2607,11 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 		CassiniBin:       filepath.Join(repoRoot, "bin", "cassini"),
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
-	}, logger, ioDiscard{}, ioDiscard{})
+	}
+	for _, apply := range configure {
+		apply(&cfg)
+	}
+	rt := NewRuntime(context.Background(), store, cfg, logger, ioDiscard{}, ioDiscard{})
 	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
 		runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)
 		bundle, err := PrepareRunBundle(runPath, false)
@@ -2764,6 +2769,25 @@ func readFileString(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(body)
+}
+
+// assertAllMigrationsApplied checks that every embedded migration is recorded,
+// contiguously from 1. Asserting against the embedded set rather than a
+// hand-written list is what the tests actually mean, and it does not have to be
+// edited each time a migration is added.
+func assertAllMigrationsApplied(t *testing.T, db *sql.DB) {
+	t.Helper()
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
+	want := make([]int, 0, len(migrations))
+	for i := range migrations {
+		want = append(want, i+1)
+	}
+	if got := migrationVersions(t, db); !slices.Equal(got, want) {
+		t.Fatalf("expected migration versions %v, got %v", want, got)
+	}
 }
 
 func migrationVersions(t *testing.T, db *sql.DB) []int {
@@ -2995,20 +3019,3 @@ func mustGetJob(t *testing.T, store *Store, id string) Job {
 func strPtr(v string) *string { return &v }
 
 func intPtr(v int) *int { return &v }
-
-// assertMigrationsContiguous checks what the loader actually guarantees — every
-// migration applied, numbered from one with no gaps — rather than a
-// hand-written list. The list version had to be edited by every migration that
-// ever landed, which is churn that tests nothing: a wrong count fails it, and so
-// does a correct one.
-func assertMigrationsContiguous(t *testing.T, versions []int) {
-	t.Helper()
-	if len(versions) == 0 {
-		t.Fatal("no migrations applied")
-	}
-	for i, got := range versions {
-		if want := i + 1; got != want {
-			t.Fatalf("migration versions are not contiguous from 1: got %v, first break at index %d (%d, want %d)", versions, i, got, want)
-		}
-	}
-}

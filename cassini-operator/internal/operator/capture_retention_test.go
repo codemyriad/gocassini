@@ -456,9 +456,10 @@ func TestSweepCaptureRootWithNoAgeLimitRemovesNoCaptures(t *testing.T) {
 }
 
 func TestStatusReportsWhatSourceCaptureIsHolding(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
+	rt, cleanup := newTestRuntime(t, func(cfg *Config) {
+		cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	})
 	defer cleanup()
-	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
 	t.Setenv(envSourceCaptureEnabled, "1")
 	t.Setenv(envSourceAudioIngestEnabled, "0")
 	stubCaptureFreeBytes(t, 12<<30)
@@ -503,9 +504,10 @@ func TestStatusReportsWhatSourceCaptureIsHolding(t *testing.T) {
 }
 
 func TestStatusReportsSourceCaptureWithCollectionOffWithoutCreatingTheRoot(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
+	rt, cleanup := newTestRuntime(t, func(cfg *Config) {
+		cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	})
 	defer cleanup()
-	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
 	t.Setenv(envSourceCaptureEnabled, "0")
 	stubCaptureFreeBytes(t, 12<<30)
 

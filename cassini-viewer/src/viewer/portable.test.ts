@@ -11,7 +11,8 @@ import {
   getDefaultTranscriptId,
   listAvailableTranscripts,
   loadPortableTranscriptBody,
-  pickReadableForTranscript,
+  pickDisplayForTranscript,
+  readPortableSummaryMarkdown,
   sha256HexFallback,
   type PortableMeetingManifest,
   type PortablePayloadRef,
@@ -553,7 +554,6 @@ function makeTranscriptEntry(
   overrides: Partial<PortableTranscriptEntry> & { id: string },
 ): PortableTranscriptEntry {
   return {
-    role: "raw-asr",
     format: "cassini.words.v1",
     payloadRef: {
       prefix: `CASSINI_TX_${overrides.id.toUpperCase()}_PAYLOAD_`,
@@ -641,21 +641,76 @@ describe("listAvailableTranscripts / describeTranscript", () => {
   });
 });
 
-describe("pickReadableForTranscript", () => {
+describe("readPortableSummaryMarkdown", () => {
+  // The producer writes base64.StdEncoding (padded), so mirror that exactly.
+  const summaryMarkdown = "# Summary\n\n- Décidé: ship it\n";
+  const summaryAttachment = {
+    name: "summary.md",
+    mime: "text/markdown",
+    contentBase64: Buffer.from(summaryMarkdown, "utf8").toString("base64"),
+  };
+
+  it("decodes the summary.md attachment as UTF-8 markdown", () => {
+    expect(readPortableSummaryMarkdown({ attachments: [summaryAttachment] })).toBe(summaryMarkdown);
+  });
+
+  it("matches by name only, tolerating case and mime", () => {
+    const manifest = {
+      attachments: [
+        { name: "notes.txt", mime: "text/plain", contentBase64: Buffer.from("no").toString("base64") },
+        { ...summaryAttachment, name: " SUMMARY.MD ", mime: "application/octet-stream" },
+      ],
+    };
+    expect(readPortableSummaryMarkdown(manifest)).toBe(summaryMarkdown);
+  });
+
+  it("returns null when the file carries no summary", () => {
+    expect(readPortableSummaryMarkdown({})).toBeNull();
+    expect(readPortableSummaryMarkdown({ attachments: [] })).toBeNull();
+    expect(
+      readPortableSummaryMarkdown({
+        attachments: [{ name: "notes.txt", contentBase64: Buffer.from("no").toString("base64") }],
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for an empty or undecodable attachment instead of throwing", () => {
+    expect(
+      readPortableSummaryMarkdown({ attachments: [{ name: "summary.md", contentBase64: "" }] }),
+    ).toBeNull();
+    expect(
+      readPortableSummaryMarkdown({
+        attachments: [{ name: "summary.md", contentBase64: Buffer.from("   \n").toString("base64") }],
+      }),
+    ).toBeNull();
+    expect(
+      readPortableSummaryMarkdown({ attachments: [{ name: "summary.md", contentBase64: "%%% not base64 %%%" }] }),
+    ).toBeNull();
+    // Valid base64 of bytes that are not UTF-8.
+    expect(
+      readPortableSummaryMarkdown({
+        attachments: [{ name: "summary.md", contentBase64: Buffer.from([0xff, 0xfe, 0xc0]).toString("base64") }],
+      }),
+    ).toBeNull();
+    expect(readPortableSummaryMarkdown({ attachments: [{ name: "summary.md" }] })).toBeNull();
+  });
+});
+
+describe("pickDisplayForTranscript", () => {
   const manifest: PortableMeetingManifest = {
     version: 1,
     readableTranscripts: [
       {
         id: "readable-paired-canary",
-        role: "readable-cleanup",
-        format: "cassini.readable.v1",
+        role: "display",
+        format: "transcript.display.v1",
         sourceTranscriptId: "canary",
         payloadRef: { prefix: "X_", chunkCount: 1, sha256: "0".repeat(64) },
       },
       {
         id: "readable-default",
-        role: "readable-cleanup",
-        format: "cassini.readable.v1",
+        role: "display",
+        format: "transcript.display.v1",
         default: true,
         sourceTranscriptId: "parakeet",
         payloadRef: { prefix: "Y_", chunkCount: 1, sha256: "0".repeat(64) },
@@ -664,19 +719,32 @@ describe("pickReadableForTranscript", () => {
   };
 
   it("matches sourceTranscriptId", () => {
-    expect(pickReadableForTranscript(manifest, "canary")?.id).toBe("readable-paired-canary");
+    expect(pickDisplayForTranscript(manifest, "canary")?.id).toBe("readable-paired-canary");
   });
 
   it("matches another transcript to its own readable body", () => {
-    expect(pickReadableForTranscript(manifest, "parakeet")?.id).toBe("readable-default");
+    expect(pickDisplayForTranscript(manifest, "parakeet")?.id).toBe("readable-default");
   });
 
   it("does not substitute a body derived from another transcript", () => {
-    expect(pickReadableForTranscript(manifest, "whisper")).toBeNull();
+    expect(pickDisplayForTranscript(manifest, "whisper")).toBeNull();
+  });
+
+  it("prefers the flagged default after filtering by role and source", () => {
+    const paired = manifest.readableTranscripts![0]!;
+    const withVariants = {
+      ...manifest,
+      readableTranscripts: [
+        { ...paired, id: "cleanup", role: "readable-cleanup", default: true },
+        paired,
+        { ...paired, id: "display-later", default: true },
+      ],
+    };
+    expect(pickDisplayForTranscript(withVariants, "canary")?.id).toBe("display-later");
   });
 
   it("returns null when no readable transcripts are present", () => {
-    expect(pickReadableForTranscript({} as PortableMeetingManifest, "anything")).toBeNull();
+    expect(pickDisplayForTranscript({} as PortableMeetingManifest, "anything")).toBeNull();
   });
 });
 

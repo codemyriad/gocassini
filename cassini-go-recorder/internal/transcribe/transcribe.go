@@ -748,14 +748,14 @@ func DefaultBuildConfig() BuildConfig {
 	if model := os.Getenv("LLM_MODEL"); model != "" {
 		summaryLLM.Model = model
 	}
-	if model := os.Getenv("SUMMARY_MODEL"); model != "" {
-		summaryLLM.Model = model
+	if sec := envInt("CASSINI_LLM_TIMEOUT_SEC"); sec > 0 {
+		summaryLLM.TimeoutSec = sec
 	}
-	if envBool("CASSINI_SUMMARY_DISABLED") {
-		// IsConfigured() requires both APIKey and BaseURL, so blanking the key
-		// is sufficient to turn the step off.
-		summaryLLM.APIKey = ""
+	if n := envInt("CASSINI_LLM_MAX_TOKENS"); n > 0 {
+		summaryLLM.MaxTokens = n
 	}
+	applyStepEndpoint(&summaryLLM, "SUMMARY")
+	summaryLLM.Disabled = envBool("CASSINI_SUMMARY_DISABLED")
 
 	// Leave an unset model empty: BuildMeetingArtifact derives it from the
 	// quality tier and the resolved device (GPU -> fp32, CPU -> int8). An
@@ -784,6 +784,21 @@ func DefaultBuildConfig() BuildConfig {
 		SkipAttribution:  envBool("CASSINI_ATTRIBUTION_DISABLED"),
 		DropCrosstalk:    envBool("CASSINI_ATTRIBUTION_DROP"),
 		Vocabulary:       ParseVocabulary(os.Getenv("CASSINI_TRANSCRIPTION_TERMS")),
+	}
+}
+
+// applyStepEndpoint layers a step's own endpoint over the shared LLM config:
+// {STEP}_BASE_URL, {STEP}_API_KEY and {STEP}_MODEL. An endpoint override brings
+// its own key — the shared key is never sent to a different host — while a
+// model override alone keeps the shared endpoint. The operator emits these from
+// its persisted settings.
+func applyStepEndpoint(cfg *LLMConfig, step string) {
+	if base := strings.TrimSpace(os.Getenv(step + "_BASE_URL")); base != "" {
+		cfg.BaseURL = base
+		cfg.APIKey = os.Getenv(step + "_API_KEY")
+	}
+	if model := strings.TrimSpace(os.Getenv(step + "_MODEL")); model != "" {
+		cfg.Model = model
 	}
 }
 

@@ -228,7 +228,7 @@ func (s *Store) ResolveJobForCapture(ctx context.Context, roomToken string, call
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, stage, state, record_started_at, record_finished_at
 FROM jobs
-WHERE json_extract(talk_binding, '$.room_token') = ?
+WHERE room_token = ?
   AND record_started_at IS NOT NULL`, token)
 	if err != nil {
 		return captureJobMatch{}, fmt.Errorf("query jobs for capture: %w", err)
@@ -464,7 +464,7 @@ func (s *Store) ListJobsAwaitingSourceAudioRebuild(ctx context.Context, limit in
 		limit = 16
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, json_extract(talk_binding, '$.room_token'),
+SELECT id, room_token,
        stage, state,
        source_audio_upload_seq, source_audio_built_seq,
        source_audio_built_digest, source_audio_rebuild_count,

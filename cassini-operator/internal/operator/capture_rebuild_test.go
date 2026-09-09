@@ -250,8 +250,9 @@ func TestSourceAudioWriteIsRetriedNotDropped(t *testing.T) {
 // plus a recording that has already been built and published once.
 func rebuildRuntime(t *testing.T) (*Runtime, func()) {
 	t.Helper()
-	rt, cleanup := newTestRuntime(t)
-	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	rt, cleanup := newTestRuntime(t, func(cfg *Config) {
+		cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	})
 	rt.sourceAudioRebuildQuiet.Store(int64(time.Nanosecond))
 	return rt, cleanup
 }
@@ -537,9 +538,10 @@ func TestARebuildPastTheRetentionWindowIsRefused(t *testing.T) {
 // hold one of the scan's slots against every meeting that could be rebuilt.
 func TestARecordingWithNoRunBundleSettlesRatherThanLooping(t *testing.T) {
 	logs := &syncBuffer{}
-	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0))
+	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0), func(cfg *Config) {
+		cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	})
 	defer cleanup()
-	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
 	rt.sourceAudioRebuildQuiet.Store(int64(time.Nanosecond))
 	ctx := context.Background()
 
@@ -577,9 +579,10 @@ func TestARecordingWithNoRunBundleSettlesRatherThanLooping(t *testing.T) {
 // say why nothing will happen.
 func TestAFinishedRecordingWithNoBundleAlsoSettles(t *testing.T) {
 	logs := &syncBuffer{}
-	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0))
+	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0), func(cfg *Config) {
+		cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	})
 	defer cleanup()
-	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
 	rt.sourceAudioRebuildQuiet.Store(int64(time.Nanosecond))
 	ctx := context.Background()
 
@@ -781,9 +784,10 @@ func TestNoRebuildWhileIngestionIsOff(t *testing.T) {
 // meeting's transcript, and no later correction undoes that.
 func TestAnAmbiguousUploadSchedulesNothingAndSaysSo(t *testing.T) {
 	logs := &syncBuffer{}
-	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0))
+	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0), func(cfg *Config) {
+		cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	})
 	defer cleanup()
-	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
 	ctx := context.Background()
 
 	seedRecording(t, rt.store, "first", "room-a", stamp(t, "2026-09-02T10:00:00Z"), stamp(t, "2026-09-02T11:00:00Z"))
@@ -816,9 +820,10 @@ func TestAnAmbiguousUploadSchedulesNothingAndSaysSo(t *testing.T) {
 // not a failure.
 func TestAnUnmatchedUploadIsStoredWithoutARebuild(t *testing.T) {
 	logs := &syncBuffer{}
-	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0))
+	rt, cleanup := newTestRuntimeWithLogger(t, log.New(logs, "", 0), func(cfg *Config) {
+		cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
+	})
 	defer cleanup()
-	rt.cfg.CaptureRoot = filepath.Join(t.TempDir(), "capture")
 
 	sidecar := captureSidecar{
 		Format: captureSourceFormat, RoomToken: "room-nobody-recorded", OwnerUserID: "alice",

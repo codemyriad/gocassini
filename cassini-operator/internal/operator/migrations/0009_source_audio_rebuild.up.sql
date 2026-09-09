@@ -55,13 +55,10 @@ ALTER TABLE jobs ADD COLUMN source_audio_built_digest TEXT;
 -- scheduled.
 ALTER TABLE jobs ADD COLUMN source_audio_rebuild_count INTEGER NOT NULL DEFAULT 0;
 
--- Resolving an upload to its recording needs a lookup by Talk room token, which
--- lives only inside the talk_binding blob. An expression index rather than a
--- new column: a column would store the same value twice and need a backfill,
--- and a row with no binding is simply absent from this index rather than an
--- error, which is what a job that never had a room should be.
-CREATE INDEX jobs_talk_room_token
-  ON jobs(json_extract(talk_binding, '$.room_token'));
+-- Resolving an upload to its recording uses the room token promoted and
+-- backfilled by migration 0008. Index the column so an unreadable binding can
+-- still be persisted without evaluating malformed JSON during the write.
+CREATE INDEX jobs_talk_room_token ON jobs(room_token);
 
 -- The dispatcher's scan runs every fifteen seconds against a table that holds
 -- every job this installation ever ran, while the rows it wants are almost

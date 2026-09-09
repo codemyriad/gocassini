@@ -52,6 +52,20 @@ Returns newest-first logical job summaries.
 
 This is the summary read model, not the full attempt history view.
 
+### Room fields
+
+On `job`:
+
+- `room_name` — the Talk conversation's display name as it was when the job ran
+
+It is `null` for a non-Talk job, for a job whose room-name lookup never
+completed, and for any job recorded before this field existed.
+
+The conversation's **token** is stored alongside it but is deliberately not
+returned. For a public conversation the token is also the link that joins it, so
+what leaves the operator is a one-way derivation of it — the `roomId` in a
+published catalog — and never the token itself.
+
 ## Get one job
 
 ```http

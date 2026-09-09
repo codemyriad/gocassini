@@ -1,0 +1,2 @@
+### Changed
+- Skip standalone recorder integration jobs on PRs confined to the operator, frontend, microsite, or PR-conflict automation. Shared and unknown inputs still run the scenarios, and main pushes retain full coverage.
