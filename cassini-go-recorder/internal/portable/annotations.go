@@ -150,9 +150,19 @@ func (a *Annotations) Resolved(audioOpusSHA256 string) bool {
 // id; meeting targets first, then items by start, end and id — so successive
 // revisions diff readably and two writers producing the same marks produce the
 // same bytes.
+//
+// It also makes empty lists empty arrays. The published schema requires tags
+// and items to be arrays, and a nil slice encodes as null, so a document whose
+// last mark was removed would otherwise fail the schema every reader checks.
 func (a *Annotations) Canonicalize() {
 	if a == nil {
 		return
+	}
+	if a.Tags == nil {
+		a.Tags = []AnnotationTag{}
+	}
+	if a.Items == nil {
+		a.Items = []AnnotationItem{}
 	}
 	sort.SliceStable(a.Tags, func(i, j int) bool {
 		li, lj := strings.ToLower(a.Tags[i].Label), strings.ToLower(a.Tags[j].Label)

@@ -153,3 +153,16 @@ func TestAnnotationIDsAreRandomAndWellFormed(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalizeWritesEmptyListsAsArrays(t *testing.T) {
+	a := validAnnotations()
+	a.Tags, a.Items = nil, nil
+	a.Canonicalize()
+	raw, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"tags":[]`) || !strings.Contains(string(raw), `"items":[]`) {
+		t.Fatalf("the schema requires arrays, never null: %s", raw)
+	}
+}
