@@ -405,49 +405,36 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 
 // stageMeetingForContext downloads one recording into destPath under the same
 // identity the read proxy would use: AS THE CALLER under access control, so
-// Nextcloud enforces the per-file ACL a second time and the catalog intersect is
-// not the only thing standing between a caller and a recording; as the owner
-// under the default model, where there is no mount in anybody's home and reading
-// as the caller would find nothing at all.
-//
-// It returns the upstream status so the caller can keep denied and absent
-// indistinguishable, and draws down a shared byte budget so one request cannot
-// stage the archive.
+// Nextcloud enforces the per-file ACL a second time; as the owner under the
+// default model, where reading as the caller would find nothing at all. It draws
+// down a shared byte budget so one request cannot stage the archive.
 func (c ExAppConfig) stageMeetingForContext(ctx context.Context, client *http.Client, caller, relPath, destPath string, budget *int64) (int, error) {
 	readAs, _ := ncArchiveReadIdentity(caller)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(readAs, relPath), nil)
+	written, status, err := c.stageRecording(ctx, client, readAs, relPath, destPath, *budget)
 	if err != nil {
-		return 0, err
-	}
-	c.setAppAPIDAVHeadersForUser(req, readAs)
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer drainClose(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("GET %s -> %d", relPath, resp.StatusCode)
-	}
-
-	file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return resp.StatusCode, err
-	}
-	defer file.Close()
-	// One past the budget, so exhausting it is detectable rather than a silently
-	// truncated recording that fails to parse and blames the file.
-	written, err := io.Copy(file, io.LimitReader(resp.Body, *budget+1))
-	if err != nil {
-		return resp.StatusCode, err
-	}
-	if written > *budget {
-		return resp.StatusCode, fmt.Errorf("the requested meetings exceed the %d MiB a single bundle may stage", maxContextStagedBytes>>20)
-	}
-	if written == 0 {
-		return resp.StatusCode, fmt.Errorf("GET %s returned an empty recording", relPath)
+		return status, err
 	}
 	*budget -= written
-	return resp.StatusCode, file.Close()
+	return status, nil
+}
+
+// stageRecording downloads relPath, read as readAs, for the CLI to read. It
+// refuses more than limit bytes, and an empty body, because no recording the
+// CLI can read is empty. status is upstream's, so a caller can keep denied and
+// absent indistinguishable.
+func (c ExAppConfig) stageRecording(ctx context.Context, client *http.Client, readAs, relPath, destPath string, limit int64) (written int64, status int, err error) {
+	if limit <= 0 {
+		// davDownloadFile reads zero as "no limit".
+		return 0, 0, fmt.Errorf("GET %s: no staging budget left", relPath)
+	}
+	_, written, status, err = c.davDownloadFile(ctx, client, readAs, relPath, destPath, limit)
+	if err != nil {
+		return written, status, err
+	}
+	if written == 0 {
+		return 0, status, fmt.Errorf("GET %s returned an empty recording", relPath)
+	}
+	return written, status, nil
 }
 
 // renderMeetingsContext runs the CLI over the staged recordings and returns the

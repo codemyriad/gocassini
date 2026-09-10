@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"gocassini/internal/inspect"
 )
 
 // meetingsFilter is the optional narrowing `cassini meetings list` applies to a
@@ -22,10 +24,14 @@ type meetingsFilter struct {
 	hasTo   bool
 	// room is a room id, as printed by `meetings rooms`.
 	room string
+	// tag is a tag label or id (D-737). Only the app can apply it — the catalog
+	// carries no marks — so fetchMeetings refuses the catalog fallback when it
+	// is set, rather than answering with every meeting unnarrowed.
+	tag string
 }
 
 func (f meetingsFilter) active() bool {
-	return f.hasFrom || f.hasTo || f.room != ""
+	return f.hasFrom || f.hasTo || f.room != "" || f.tag != ""
 }
 
 // describe renders the filter for the summary line and the JSON echo, so a
@@ -40,6 +46,9 @@ func (f meetingsFilter) describe() string {
 	}
 	if f.room != "" {
 		parts = append(parts, "room:"+oneLineField(f.room))
+	}
+	if f.tag != "" {
+		parts = append(parts, "tag:"+inspect.Token(f.tag))
 	}
 	return strings.Join(parts, " ")
 }

@@ -1,20 +1,23 @@
 # Agent access to meeting recordings
 
 How an agent — or any script — running **outside** Nextcloud reads the meetings a
-Nextcloud account is allowed to read, with no interactive browser login and no
-new server route.
+Nextcloud account is allowed to read, and tags them, with no interactive
+browser login.
 
 ## Goal
 
-Give an agent the three things it needs to reason about your meetings:
+Give an agent what it needs to reason about your meetings:
 
 | Command | What it answers |
 |---------|-----------------|
 | `cassini meetings rooms` | Which conversations does this account have recordings from? |
 | `cassini meetings search "<words>"` | Where was this said, across the meetings I may read? |
-| `cassini meetings list` | Which meetings may this account read — optionally only a room's, or a date range's? |
+| `cassini meetings list` | Which meetings may this account read — optionally only a room's, a date range's, or a tag's? |
 | `cassini meetings fetch <id>` | Give me that meeting's single portable file. |
 | `cassini meetings context <id> [<id> ...]` | Give me those meetings as one document I can read. |
+| `cassini meetings tags` | Which tags are on the meetings I may read? |
+| `cassini meetings annotations <id>` | What is marked in that meeting, and by whom? |
+| `cassini meetings annotate <id> --ops <file>` | Mark that meeting, or remove marks, in one batch. |
 
 ## How it works
 
@@ -71,9 +74,10 @@ Three consequences worth internalising before you build on this:
   in it — so an agent can act on the difference. Against an older app reached
   through the `catalog.json` fallback the two are still indistinguishable, and
   the CLI says so rather than guessing.
-- **The surface is read-only.** Only `GET` and `HEAD` reach it. Starting,
-  stopping and re-running jobs stays on the operator's admin routes, off the
-  agent path entirely.
+- **One command writes, and it writes only marks.** `meetings annotate` POSTs
+  a batch of tags for one meeting (see [Tags and marks](#6-tags-and-marks)).
+  Everything else is `GET` and `HEAD`. Starting, stopping and re-running jobs
+  stays on the operator's admin routes, off the agent path entirely.
 
 ## Before you begin
 
@@ -372,6 +376,127 @@ The file is created **readable by you only**. It holds a private meeting's audio
 and transcript, and Nextcloud decided who may see it — so it is not published to
 every account on a shared host. `chmod` it yourself if you need it wider.
 
+## 6. Tags and marks
+
+A **tag** is a label such as `hiring`. A **mark** puts a tag on a whole meeting,
+or on a stretch of it. Marks are stored inside the recording's `.opus` file (see
+[Annotations](./portable-meeting-format.md#annotations-tags-and-marks)), so
+everyone who can read a meeting sees its marks, and a downloaded copy keeps
+them.
+
+### See what is tagged
+
+```bash
+./bin/cassini meetings tags
+```
+
+```text
+tags=2 caller=alice indexed=12 of 12 meeting(s) you can read
+tag=tag_k3v9q2m7x4d8w1pz meetings=4 marks=9 label=hiring
+tag=tag_p8r2w5n1c7e4t9aq meetings=1 marks=1 label=budget review
+```
+
+Only tags on meetings you can read appear. When `indexed` is lower than the
+number of meetings you can read, a note says so: the app's tag index has not
+read those meetings yet, so these counts, and `--tag`, do not cover them.
+
+```bash
+./bin/cassini meetings annotations 01JZ8K3M4N5P6Q7R8S9T0VWXYZ
+```
+
+```text
+meeting=01JZ8K3M4N5P6Q7R8S9T0VWXYZ revision=4 tags=1 marks=2 resolved=yes caller=alice
+mark=mk_… target=meeting actor=person:alice created=2026-09-10T11:23:54Z operation=op_… tag_id=tag_k3v9q2m7x4d8w1pz tag=hiring
+mark=mk_… target=14:29-14:44 actor=agent:alice created=2026-09-10T11:24:10Z operation=op_… tag_id=tag_k3v9q2m7x4d8w1pz tag=hiring
+```
+
+The app reads the marks out of the recording **as you**, so Nextcloud checks
+that you may read it, exactly as it does for `context`. `target=` is `meeting`,
+or the stretch of the recording to listen to. A value with a space in it is
+quoted. `--json` prints the app's answer unchanged, including each range's
+exact `startMs` and `endMs`.
+
+`resolved=no` means the marks were made against different audio, for example
+before the recording was processed again. Their times do not point into this
+recording, and the app will not add new marks to it.
+
+### Add and remove marks
+
+Write the batch as an `{"ops": [...]}` document:
+
+```json
+{"ops": [
+  {"op": "mark", "tag": {"label": "hiring"}, "target": {"kind": "meeting"}},
+  {"op": "mark", "tag": {"label": "hiring"},
+   "target": {"kind": "time-range", "startMs": 869000, "endMs": 884000}}
+]}
+```
+
+```bash
+./bin/cassini meetings annotate 01JZ8K3M4N5P6Q7R8S9T0VWXYZ --ops ./ops.json
+./bin/cassini meetings annotate 01JZ8K3M4N5P6Q7R8S9T0VWXYZ --ops - < ./ops.json
+```
+
+```text
+annotated=01JZ8K3M4N5P6Q7R8S9T0VWXYZ revision=5 operation=op_… added=2 removed=0 not_found=0 resolved=yes caller=alice
+change=added mark=mk_…
+change=added mark=mk_…
+hint=undo this batch's marks with {"op": "undo-operation", "operationId": "op_…"}
+```
+
+| Op | Effect |
+|---|---|
+| `mark` | Adds a mark. `tag` is `{"label": …}`, or `{"id": …}` for an existing tag. A label already used anywhere in the archive reuses that tag, ignoring case. `target` is `{"kind": "meeting"}`, or `{"kind": "time-range", "startMs": …, "endMs": …}` in milliseconds from the start of the recording |
+| `unmark` | Removes one mark, by its `itemId` (the `mark=` value) |
+| `unmark-tag` | Removes every mark of one `tagId` on this meeting, or only those with a given `target` |
+| `undo-operation` | Removes every mark one batch added, by its `operationId` |
+| `relabel` | Renames a tag on this meeting only |
+
+Before an agent writes marks, know that:
+
+- **Every mark carries your account.** The app stamps each new mark with the
+  Nextcloud user you authenticate as. The command never sends a user id, so it
+  cannot claim to be anyone else. `--actor-kind` says whether a person or an
+  agent made the marks, and defaults to `agent` because this CLI is what agents
+  drive. It is a label for display and undo, not a permission.
+- **Tags are shared.** Anyone who can read a meeting can mark it, and everyone
+  who can read it sees the marks.
+- **Marks travel with the file.** A downloaded or shared recording carries its
+  marks and the user id of whoever made each one.
+- **Retrying is safe.** A mark identical to an existing one is not added again,
+  and an `itemId` that does not exist is reported as `not_found` rather than
+  failing the batch.
+- **Undo is one op.** Every batch has an operation id (choose it with
+  `--operation-id`), and `undo-operation` removes everything that batch added.
+  The success output prints the op to send.
+- **`--expect-revision N` guards against someone else's edit.** The batch is
+  refused (exit `3`) unless the meeting's marks are still at revision `N`; `0`
+  means "only if it has no marks yet". Without the flag, two batches sent at
+  once both apply, one after the other, and neither is silently dropped.
+
+A batch is at most 64 KiB and 200 ops. The CLI refuses a file that is not one
+`{"ops": [...]}` document with at least one op before sending anything. The app
+validates the ops themselves, and says what is wrong (exit `4`).
+
+### Narrow a search or a list to a tag
+
+```bash
+./bin/cassini meetings search "offer" --tag hiring
+./bin/cassini meetings list --tag hiring --from 2026-08-01
+```
+
+`--tag` takes a label or a `tag=` id. The app keeps only the meetings with a
+mark of that tag **before** it searches, so a match is never hidden by
+filtering a page of results. A search moment inside a marked stretch lists the
+marks it falls in, as `marks=hiring`.
+
+Before narrowing, the CLI asks the app for its tags. An app that does not offer
+tags would ignore `--tag` and answer with every meeting as though it had
+narrowed them, so against such an app the command fails instead. The same
+answer adds a note when no meeting you can read carries the tag, or when some
+of your meetings are not in the tag index yet. With `--json`, those notes go to
+stderr as `warning=` lines.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -379,6 +504,12 @@ every account on a shared host. `chmod` it yourself if you need it wider.
 | `0` | Success — including a `list` that found no readable meetings |
 | `1` | Runtime failure: credentials rejected, nothing readable at that id, Nextcloud Files unavailable, unreadable meeting file |
 | `2` | Usage or configuration error: a missing flag, a bad argument, an unparseable `--from`/`--to`, or a date range whose ends are backwards |
+| `3` | `annotate` only: `--expect-revision` did not match, because someone else changed the marks |
+| `4` | `annotate` only: the app refused the ops, or the batch is malformed or too large |
+| `5` | `annotate` only: the meeting's marks were made against different audio, so none can be added |
+
+Codes `3` to `5` mean the same as they do for `cassini annotate`, which works on
+a local file.
 
 ## Troubleshooting
 
@@ -436,6 +567,27 @@ inspect elsewhere.
 — one id of several could not be read, so no document was produced. It is absent
 or it belongs to someone else; these are answered identically on purpose. Drop
 it, or run `meetings list` to see what this account can read.
+
+**`this Cassini app does not offer tags and marks`** — the app is older than
+tags, or it runs where a mark cannot be attributed to a Nextcloud user
+(outside AppAPI, or publishing to a local folder). `--tag` fails for the same
+reason instead of returning every meeting. Ask an administrator to update the
+app.
+
+**`the app is still building its tag index`** — the app is reading the tags out
+of the recordings, after an upgrade or a reset. Wait and retry.
+
+**`no longer at the revision you expected`** (exit `3`) — someone changed the
+meeting's marks after you read them. Run `meetings annotations <id>` again and
+decide whether your batch still makes sense.
+
+**`the batch may or may not have been committed`** — the connection failed
+before the app answered. Check with `meetings annotations <id>`. Re-running the
+same ops is safe, because a mark that already exists is not added twice.
+
+**`route declarations may predate tags`** — Nextcloud refused the write on the
+annotations route. It applies an app's new routes only when the app's version
+changes, so the app needs updating.
 
 ## Related
 

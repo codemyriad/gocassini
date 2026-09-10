@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -278,6 +279,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	}
 	printSummaryMetadata(out, manifest.Summary)
 	printAttachments(out, manifest.Attachments)
+	printPortableAnnotations(out, manifest)
 	for _, warning := range bodies.Warnings {
 		fmt.Fprintf(out, "warning=%s\n", warning)
 	}
@@ -365,6 +367,60 @@ func printAttachments(out io.Writer, attachments []map[string]any) {
 		fmt.Fprintf(out, "attachment name=%s mime=%s bytes=%s\n",
 			blankDash(name), blankDash(mime), bytesField)
 	}
+}
+
+// printPortableAnnotations prints one line about a file's tags and marks and
+// never fails: marks a reader cannot use cost the marks, not the recording.
+// status is the writer's check; the time ranges of unresolved marks were made
+// against other audio, so for those only the structure is checked.
+func printPortableAnnotations(out io.Writer, manifest portable.Manifest) {
+	doc, err := portable.ParseAnnotations(manifest.Annotations)
+	switch {
+	case errors.Is(err, portable.ErrAnnotationsFormatUnsupported):
+		fmt.Fprintf(out, "annotations format=%s status=unsupported-format\n", Token(doc.Format))
+		return
+	case err != nil:
+		fmt.Fprintf(out, "annotations format=%s status=unreadable\n", portable.AnnotationsFormatV1)
+		fmt.Fprintf(out, "warning=the annotations could not be read, so this file shows no marks: %v\n", err)
+		return
+	case doc == nil:
+		return
+	}
+
+	resolved, bound := "no", int64(math.MaxInt64)
+	if doc.Resolved(manifest.Integrity.OpusSHA256) {
+		resolved, bound = "yes", manifest.Audio.DurationMS
+	}
+	status := "ok"
+	problem := portable.ValidateAnnotations(doc, bound)
+	if problem != nil {
+		status = "invalid"
+	}
+	fmt.Fprintf(out, "annotations format=%s revision=%d tags=%d marks=%d resolved=%s status=%s\n",
+		doc.Format, doc.Revision, len(doc.Tags), len(doc.Items), resolved, status)
+	// An empty binding is a validation failure, not a claim about other audio.
+	if resolved == "no" && doc.AudioOpusSHA256 != "" {
+		fmt.Fprintf(out, "warning=the marks were made against other audio (annotations.audioOpusSha256=%s), so their time ranges do not point into this recording\n",
+			Token(doc.AudioOpusSHA256))
+	}
+	if problem != nil {
+		fmt.Fprintf(out, "warning=the annotations do not validate: %v\n", problem)
+	}
+}
+
+// Token renders a file- or server-supplied value for a key=value line: one
+// plain token passes through, anything else is Go-quoted, so a value cannot
+// add fields or forge lines that a caller parsing the output would read as facts.
+func Token(value string) string {
+	if value == "" {
+		return "-"
+	}
+	for _, r := range value {
+		if unicode.IsSpace(r) || !unicode.IsPrint(r) || r == '"' || r == '=' || r == ',' {
+			return strconv.Quote(value)
+		}
+	}
+	return value
 }
 
 func printProcessingStep(out io.Writer, label string, step *portable.ProcessingStep) {

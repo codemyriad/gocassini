@@ -116,6 +116,10 @@ The main payload is an index. Its required top-level fields are:
 }
 ```
 
+The optional top-level members are `readableTranscripts`, `provenance`,
+`summary`, `attachments`, and `annotations` (see
+[Annotations](#annotations-tags-and-marks)).
+
 Transcript bodies are not stored inline. `transcripts` indexes word transcripts;
 `readableTranscripts` optionally indexes display bodies. Word entries have no
 origin role or derivation link. Older `role` and `sourceTranscriptId` members
@@ -242,6 +246,120 @@ a different identity.
 Readers must fail closed on a missing digest, unknown policy, manifest/tag
 disagreement, malformed Ogg stream, digest mismatch, or audio-shape mismatch.
 
+## Annotations: tags and marks
+
+A manifest may carry an optional top-level `annotations` member: the tags people
+and agents have put on the meeting, and on stretches of it. A **tag** is a label
+such as `hiring`. A **mark** is one use of a tag, on the whole meeting or on a
+time range. Marks live inside the file so that a recording stays complete when
+it leaves the app: downloaded, shared, or handed to someone with no Nextcloud.
+
+```json
+"annotations": {
+  "format": "cassini.annotations.v1",
+  "revision": 4,
+  "audioOpusSha256": "8e1f7499c6d5fba88c3bd9b69ecd3de1b07ae0cff65152c942c5e99062d01cbc",
+  "tagNamespace": "urn:uuid:07e4eab6-4f5f-4cc4-8913-46432c5cd726",
+  "tags": [
+    { "id": "tag_k3v9q2m7x4d8w1pz", "label": "hiring" }
+  ],
+  "items": [
+    { "id": "mk_01J9ZB6Q4H7T2N8K3M5P0R1S2V", "tagId": "tag_k3v9q2m7x4d8w1pz",
+      "target": { "kind": "meeting" },
+      "createdAtUtc": "2026-09-10T11:23:54Z",
+      "actor": { "kind": "person", "id": "alice" },
+      "operationId": "op_01J9ZB6Q4H7T2N8K3M5P0R1S2W" },
+    { "id": "mk_01J9ZB6Q4H7T2N8K3M5P0R1S2X", "tagId": "tag_k3v9q2m7x4d8w1pz",
+      "target": { "kind": "time-range", "startMs": 869000, "endMs": 884000 },
+      "createdAtUtc": "2026-09-10T11:24:10Z",
+      "actor": { "kind": "agent", "id": "alice" },
+      "operationId": "op_01J9ZB6Q4H7T2N8K3M5P0R1S2Y" }
+  ]
+}
+```
+
+### Reader tolerance
+
+The member is optional, and absent means no marks. It carries its own
+`format`. A reader that does not recognise the format ignores the whole member.
+A reader that recognises it but cannot read it shows no marks. In both cases
+the audio and transcripts stay usable: no reader refuses a recording because of
+its annotations. A tool that rewrites other metadata carries the member through
+unchanged, including a format it cannot read.
+
+### Rules
+
+- **`revision`** is at least 1 and goes up by one for each committed batch. It
+  is informational only. Concurrent writers are serialised by a conditional
+  write on the file, not by this counter.
+- **`tagNamespace`** is `urn:uuid:<lowercase uuid>`. It is set on a file's first
+  write and never changed. The same tag across recordings is the same
+  `(tagNamespace, id)` pair, and one installation uses one namespace.
+- **Ids** are unique within the document and match
+  `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`. Every `items[].tagId` names a tag in the
+  same document. Tag ids are random rather than time-ordered, so an id reused
+  across recordings reveals nothing about when, or whether, someone else used
+  that label.
+- **Labels** are 1–64 characters, already trimmed, with no control characters.
+  A writer matching a label to an existing tag trims it and ignores case.
+- **`actor.id`** is the authenticated Nextcloud user who made the mark. It is
+  never a value taken from a request. **`actor.kind`** is `person` or `agent`
+  today, and the caller declares it: it is attribution for display and undo,
+  not an access control. Readers tolerate kinds they do not know.
+- **`operationId`** groups the marks one batch added, so a whole run (usually an
+  agent's) can be undone in one step.
+- **`createdAtUtc`** is an RFC 3339 time in UTC, ending in `Z`.
+
+### Targets
+
+| `target.kind` | Shape | Means |
+|---|---|---|
+| `meeting` | `{"kind": "meeting"}`, with no times | The whole meeting |
+| `time-range` | `{"kind": "time-range", "startMs": …, "endMs": …}` | The half-open range `[startMs, endMs)` |
+
+Time ranges are integers in elapsed playback milliseconds after Opus pre-skip,
+which is the clock the word timings use. They must satisfy
+`0 ≤ startMs < endMs ≤ audio.durationMs`. Negative, empty and out-of-bounds
+ranges are invalid. A range covers all speech in it: marking one speaker's turn
+does not exclude someone talking over them. Marks are anchored to time, never to
+a segment id or a text offset, so they survive re-transcription.
+
+A whole-meeting mark is its own kind rather than `[0, durationMs)`. "This
+meeting is about hiring" and "this range, which happens to span the whole
+recording, is about hiring" are different claims.
+
+### Binding: resolved and unresolved marks
+
+`audioOpusSha256` is the `integrity.opusAudioSha256` of the audio the marks were
+made against. That digest excludes OpusTags (see [Audio identity](#audio-identity)),
+so adding a mark rewrites the file without changing the audio digest.
+
+- When `annotations.audioOpusSha256` equals `integrity.opusAudioSha256`, the
+  marks are **resolved**.
+- When the two differ, the marks are **unresolved**: they were made against
+  different audio, for example before a re-run changed it. A reader must not
+  draw their time ranges against this audio. Unresolved marks are kept, not
+  moved, and a writer refuses to add new marks beside them.
+
+### Limits
+
+A recording carries at most 200 tags and 2,000 marks. A thousand marks measure
+about 52.6 KiB, so the document stays inline in the main payload.
+
+### Canonical order
+
+Writers emit tags ordered by label (ignoring case), then id. Marks with meeting
+targets come first, then the rest ordered by `startMs`, `endMs` and id. Two
+writers producing the same marks therefore produce the same bytes, and
+successive revisions diff readably. Readers must not depend on the order.
+
+### Privacy
+
+Marks travel with the file. A recording shared outside Nextcloud carries who
+marked what and when, as the Nextcloud user id of each mark's author, and the
+tag labels people chose. The file already carries speaker names. Before sharing
+a marked recording, treat it as carrying the ids of the people who marked it.
+
 ## Producer and reader commands
 
 Pack a meeting bundle:
@@ -272,6 +390,85 @@ cassini retag ./meeting.opus --out ./meeting-retagged.opus \
 Retagging must validate the input contract, preserve every transcript chunk
 set and extension field, rebuild the main-payload digest and descriptors, copy
 the Opus stream, and verify the staged output before replacing anything.
+
+`cassini inspect` prints one `annotations` line when a file carries marks: the
+revision, tag and mark counts, and whether the marks are resolved against this
+audio. A format it does not read is reported as `status=unsupported-format`.
+
+### Tags and marks
+
+`cassini annotate` reads and writes the [annotations](#annotations-tags-and-marks)
+member without re-encoding the audio:
+
+```bash
+cassini annotate show  ./meeting.opus [--json]
+cassini annotate apply ./meeting.opus --ops ./ops.json --actor-id alice \
+  [--actor-kind person|agent] [--operation-id <id>] [--expect-revision N] \
+  [--tag-namespace urn:uuid:<uuid>] [--out ./marked.opus] [--json]
+cassini annotate carry ./delivered.opus ./sealed.opus --out ./staged.opus [--json]
+```
+
+`apply` reads a `{"ops": […]}` document from the file named by `--ops`, or from
+stdin with `--ops -`. It applies the ops in order, as one batch and one rewrite:
+
+| Op | Shape | Effect |
+|---|---|---|
+| `mark` | `{"op": "mark", "tag": {"id"?, "label"}, "target": {…}}` | Finds the tag by id if one is given, otherwise by label (trimmed, ignoring case) within the file, otherwise mints one. Then adds the mark. A mark identical to an existing one (same tag, same target) is a no-op, so a retry cannot duplicate it |
+| `unmark` | `{"op": "unmark", "itemId"}` | Removes one mark. An unknown id is a no-op and is reported in `notFound` |
+| `unmark-tag` | `{"op": "unmark-tag", "tagId", "target"?}` | Removes every mark of that tag in this file, or only those with that target |
+| `undo-operation` | `{"op": "undo-operation", "operationId"}` | Removes every mark stamped with that operation id: the bulk undo of an agent run |
+| `relabel` | `{"op": "relabel", "tagId", "label"}` | Renames the tag in this file only |
+
+After the ops run, tags left with no marks are dropped. New marks are stamped
+with `createdAtUtc`, the actor (`--actor-id`, with `--actor-kind`), and the
+operation id: `--operation-id` if given, otherwise a minted one. A file's first
+write sets its binding to the file's own audio digest and its namespace to
+`--tag-namespace`. `--expect-revision` refuses the batch unless the document is
+at that revision.
+
+Nothing is written unless all of these hold:
+
+- the output's audio digest equals the input's;
+- the manifest without `annotations` is unchanged;
+- the written `annotations` equal the intended document in canonical order;
+- the document validates.
+
+`carry` is for republishing. It reads the marks off the delivered copy and
+writes them into a copy of the sealed file at `--out`. The sealed file itself is
+never modified. If both files have the same audio digest, the marks carry over
+resolved. If the audio differs, they carry over with their original binding and
+are reported `resolved: false`. Annotations already in the sealed file are
+replaced.
+
+| Exit | Means |
+|---|---|
+| `0` | Done |
+| `1` | Runtime failure |
+| `2` | Usage error |
+| `3` | `--expect-revision` did not match |
+| `4` | The ops are invalid, or the document they would produce fails validation |
+| `5` | The document is unresolved; `apply` will not add marks against audio they were not made for |
+
+With `--json`, all three subcommands print one result document:
+
+```json
+{
+  "format": "cassini.annotate.result.v1",
+  "annotations": { … },
+  "revision": 5,
+  "operationId": "op_…",
+  "added": ["mk_…"], "removed": ["mk_…"], "notFound": [],
+  "carried": 0,
+  "resolved": true,
+  "audioOpusSha256": "…",
+  "containerSha256": "…"
+}
+```
+
+`annotations` is the document the file now carries, or `null`.
+`containerSha256` is the digest of the file as written. It identifies these
+exact bytes and changes with every mark. It is never the recording's identity,
+which is the audio digest.
 
 ## Build bundles are not portable contracts
 

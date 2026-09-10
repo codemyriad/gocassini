@@ -3,7 +3,10 @@ package operator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -211,37 +214,109 @@ func (c ExAppConfig) davDelete(ctx context.Context, client *http.Client, userID,
 	return fmt.Errorf("DELETE %s -> %d", relPath, resp.StatusCode)
 }
 
+// errDAVPreconditionFailed is a conditional PUT Nextcloud refused because the
+// file changed after its ETag was read (412). The caller re-reads and retries;
+// it is contention, not a failure of the request (D-737).
+var errDAVPreconditionFailed = errors.New("the file changed since it was read")
+
 func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, error) {
+	status, _, err := c.davPutFileIfMatch(ctx, client, userID, relPath, localPath, contentType, "")
+	return status, err
+}
+
+// davPutFileIfMatch uploads localPath as davPutFileStatus does — stamping
+// OC-Checksum, which search's backfill reads back as the delivered digest — and,
+// when ifMatch is non-empty, only if the stored file still carries that ETag. A
+// refusal wraps errDAVPreconditionFailed. On success it answers the new ETag
+// when Nextcloud reports one.
+func (c ExAppConfig) davPutFileIfMatch(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType, ifMatch string) (int, string, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	digest, err := fileSHA256(localPath)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.davFileURL(userID, relPath), f)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("OC-Checksum", "SHA256:"+digest)
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
 	req.ContentLength = info.Size()
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer drainClose(resp.Body)
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return resp.StatusCode, nil
+	if resp.StatusCode == http.StatusPreconditionFailed && ifMatch != "" {
+		return resp.StatusCode, "", fmt.Errorf("PUT %s: %w", relPath, errDAVPreconditionFailed)
 	}
-	return resp.StatusCode, fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return resp.StatusCode, strings.TrimSpace(resp.Header.Get("ETag")), nil
+	}
+	return resp.StatusCode, "", fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
+}
+
+// davDownloadFile streams relPath, read as userID, into destPath, and answers
+// the sha256 and the length of what it wrote. Any non-2xx is an error; status
+// says which, so a caller can tell absence (404) from failure without parsing a
+// message.
+//
+// Streamed rather than read into memory: a long meeting is tens of megabytes.
+// When limit is positive it reads one byte past it, so an oversized recording is
+// refused rather than silently truncated; zero means no limit. destPath is
+// created 0600 and truncated, so a retry into the same path starts clean.
+//
+// An empty body is NOT refused here. The publish path has to be able to fetch
+// the empty leaf an interrupted first publish leaves, in order to replace it;
+// callers for whom an empty recording is an error say so themselves
+// (stageRecording).
+func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, userID, relPath, destPath string, limit int64) (digest string, written int64, status int, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	defer drainClose(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", 0, resp.StatusCode, fmt.Errorf("GET %s -> %d", relPath, resp.StatusCode)
+	}
+	file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", 0, resp.StatusCode, err
+	}
+	defer file.Close()
+	var body io.Reader = resp.Body
+	if limit > 0 {
+		body = io.LimitReader(resp.Body, limit+1)
+	}
+	sum := sha256.New()
+	written, err = io.Copy(io.MultiWriter(file, sum), body)
+	if err != nil {
+		return "", written, resp.StatusCode, fmt.Errorf("read %s: %w", relPath, err)
+	}
+	if limit > 0 && written > limit {
+		return "", written, resp.StatusCode, fmt.Errorf("GET %s: the recording is larger than the %d MiB limit", relPath, limit>>20)
+	}
+	if err := file.Sync(); err != nil {
+		return "", written, resp.StatusCode, err
+	}
+	return hex.EncodeToString(sum.Sum(nil)), written, resp.StatusCode, file.Close()
 }
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
@@ -354,7 +429,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			// mode-aware resolution, so it narrows what THIS model says the
 			// caller may read — narrowed by the query, and with substrate
 			// failures reported loudly. See serveMeetingsList.
-			c.serveMeetingsList(r.Context(), w, r, client, caller, logger)
+			c.serveMeetingsList(r.Context(), w, r, client, caller, search.annotations, logger)
 			return true
 		}
 		if relPath == searchURLPath {

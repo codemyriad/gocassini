@@ -31,6 +31,7 @@ type multiTranscriptWire struct {
 	Provenance          *multiTranscriptProvenanceWire `json:"provenance,omitempty"`
 	Summary             map[string]any                 `json:"summary,omitempty"`
 	Attachments         []map[string]any               `json:"attachments,omitempty"`
+	Annotations         json.RawMessage                `json:"annotations,omitempty"`
 }
 
 type multiTranscriptProvenanceWire struct {
@@ -181,6 +182,7 @@ func DecodePublishedManifest(rawJSON []byte) (Manifest, error) {
 		Speakers: wire.Speakers, Transcripts: wire.Transcripts,
 		ReadableTranscripts: wire.ReadableTranscripts,
 		Summary:             wire.Summary, Attachments: wire.Attachments,
+		Annotations: wire.Annotations,
 	}
 	if wire.Provenance != nil {
 		manifest.Provenance = &Provenance{
@@ -425,6 +427,7 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 		Provenance:          provenance,
 		Summary:             manifest.Summary,
 		Attachments:         manifest.Attachments,
+		Annotations:         manifest.Annotations,
 	}
 
 	rawJSON, err := json.Marshal(wire)

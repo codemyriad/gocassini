@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"gocassini/internal/inspect"
 )
 
 // `cassini meetings search` — find the moments where something was said.
@@ -37,10 +39,12 @@ func runMeetingsSearch(ctx context.Context, args []string, stdout, stderr io.Wri
 	limit := fs.Int("limit", 0, "how many moments to return (default 20, max 100)")
 	noAliases := fs.Bool("no-aliases", false,
 		"do not also search the spellings transcription produces for a name\n(by default, searching for a project name finds it however it was misheard)")
+	tag := fs.String("tag", "",
+		"only meetings carrying this tag: a label, or the tag= id `cassini meetings\ntags` prints")
 	asJSON := fs.Bool("json", false, "emit the server's answer as JSON")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
-  cassini meetings search "<words>" [--speaker ID] [--limit N] [--json]
+  cassini meetings search "<words>" [--speaker ID] [--tag TAG] [--limit N] [--json]
 
 Find where something was said across the meetings you may read. Prints one
 line per moment: which meeting, when in it, and who was speaking.
@@ -48,6 +52,10 @@ line per moment: which meeting, when in it, and who was speaking.
 It reports where to look, never what was said. Use `+"`cassini meetings context <id>`"+`
 to read a meeting, which fetches it as you and so stays inside Nextcloud's
 permissions.
+
+--tag narrows the search to meetings carrying that tag before anything is
+matched, so it never hides a match by filtering a page of results. A moment
+inside a marked stretch of a meeting lists the marks it falls in.
 
 `+"\n")
 		fs.PrintDefaults()
@@ -91,8 +99,19 @@ permissions.
 	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
+	tagValue := strings.TrimSpace(*tag)
+	var narrowing meetingsTagNarrowing
+	if tagValue != "" {
+		// Before the search, not after: an app without tags ignores the
+		// parameter, and its answer would pass for a narrowed one.
+		checked, err := client.checkTagNarrowing(ctx, tagValue)
+		if err != nil {
+			return reportMeetingsError(stderr, "search", cfg, err)
+		}
+		narrowing = checked
+	}
 	results, err := client.search(ctx, meetingsSearchRequest{
-		Query: query, Speaker: strings.TrimSpace(*speaker), Limit: *limit, NoAliases: *noAliases,
+		Query: query, Speaker: strings.TrimSpace(*speaker), Limit: *limit, NoAliases: *noAliases, Tag: tagValue,
 	})
 	if err != nil {
 		if errors.Is(err, errMeetingsSearchRateLimited) {
@@ -113,6 +132,7 @@ permissions.
 	}
 
 	if *asJSON {
+		narrowing.report(stderr, "warning")
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(results); err != nil {
@@ -138,6 +158,7 @@ permissions.
 		fmt.Fprintf(stdout, "note=%d meeting(s) you can read are not in the search index, so this answer does not cover them; an administrator can run `cassini-operator backfill-search`\n",
 			results.Coverage.Visible-results.Coverage.Searched)
 	}
+	narrowing.report(stdout, "note")
 	if len(results.Hits) == 0 {
 		if results.Coverage.Visible == 0 {
 			fmt.Fprintln(stdout, "note=no recordings are visible to this account; this is also what a mis-provisioned recordings folder looks like")
@@ -147,13 +168,14 @@ permissions.
 		return 0
 	}
 	for _, hit := range results.Hits {
-		fmt.Fprintf(stdout, "moment=%s at=%s speaker=%s matched=%s room=%s date=%s title=%s\n",
+		fmt.Fprintf(stdout, "moment=%s at=%s speaker=%s matched=%s room=%s date=%s%s title=%s\n",
 			blankMeetingsDash(hit.MeetingID),
 			formatMeetingsSpan(hit.StartMS, hit.EndMS),
 			blankMeetingsDash(hit.SpeakerID),
 			blankMeetingsDash(hit.Matched),
 			blankMeetingsDash(firstNonBlank(hit.RoomName, hit.RoomID)),
 			blankMeetingsDash(hit.DateLabel),
+			formatMeetingsSearchMarks(hit.Marks),
 			blankMeetingsDash(hit.Title))
 	}
 	fmt.Fprintf(stdout, "hint=read one with `cassini meetings context <meeting-id>`; narrow to one voice with --speaker <the speaker= value above>\n")
@@ -166,6 +188,8 @@ type meetingsSearchRequest struct {
 	Speaker   string
 	Limit     int
 	NoAliases bool
+	// Tag narrows to meetings carrying a tag, by label or id (D-737).
+	Tag string
 }
 
 // meetingsSearchResults mirrors the endpoint's answer. Note the absence of any
@@ -192,6 +216,28 @@ type meetingsSearchHit struct {
 	EndMS     int64  `json:"endMs"`
 	SpeakerID string `json:"speakerId,omitempty"`
 	Matched   string `json:"matched"`
+	// Marks are the time-range marks this moment overlaps (D-737). A label is
+	// a tag's name, not transcript text.
+	Marks []meetingsSearchMark `json:"marks,omitempty"`
+}
+
+type meetingsSearchMark struct {
+	TagID string `json:"tagId"`
+	Label string `json:"label"`
+}
+
+// formatMeetingsSearchMarks renders a moment's marks as a " marks=a,b" field,
+// or nothing when it has none. Each label is quoted when it is not one plain
+// token, so a label cannot run into the title that follows it or add a field.
+func formatMeetingsSearchMarks(marks []meetingsSearchMark) string {
+	if len(marks) == 0 {
+		return ""
+	}
+	labels := make([]string, 0, len(marks))
+	for _, mark := range marks {
+		labels = append(labels, inspect.Token(firstNonBlank(mark.Label, mark.TagID)))
+	}
+	return " marks=" + strings.Join(labels, ",")
 }
 
 // errMeetingsSearchUnavailable means the app does not serve the search route:
@@ -223,6 +269,9 @@ func (c *meetingsClient) search(ctx context.Context, req meetingsSearchRequest) 
 	}
 	if req.NoAliases {
 		query.Set("aliases", "off")
+	}
+	if req.Tag != "" {
+		query.Set("tag", req.Tag)
 	}
 	target.RawQuery = query.Encode()
 

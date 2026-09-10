@@ -1,6 +1,7 @@
 package cassini
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -30,8 +31,12 @@ import (
 //	                       ▼
 //	   catalog.json filtered to the caller  ·  meetings/<id>.opus or 404
 //
-// Nothing here is privileged and nothing here mutates: the whole surface is
-// GET/HEAD, and job control stays on the operator's ADMIN routes.
+// Nothing here is privileged, and one command mutates: `meetings annotate`
+// POSTs a batch of marks (D-737). The app checks the caller may read that
+// meeting exactly as every read does, rewrites the recording as its own service
+// account, and stamps each new mark with the caller's Nextcloud user id — never
+// a value this CLI sends. Everything else is GET/HEAD, and job control stays on
+// the operator's ADMIN routes.
 const (
 	// appAPIProxyPath is where Nextcloud's AppAPI exposes an ExApp's own
 	// routes to an authenticated caller.
@@ -125,6 +130,12 @@ func runMeetings(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return runMeetingsContext(ctx, args[1:], stdout, stderr)
 	case "summarize":
 		return runMeetingsSummarize(ctx, args[1:], stdout, stderr)
+	case "tags":
+		return runMeetingsTags(ctx, args[1:], stdout, stderr)
+	case "annotations":
+		return runMeetingsAnnotations(ctx, args[1:], stdout, stderr)
+	case "annotate":
+		return runMeetingsAnnotate(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown meetings command %q\n\n", args[0])
 		printMeetingsUsage(stderr)
@@ -142,22 +153,30 @@ Usage:
   cassini meetings list
   cassini meetings list --json
   cassini meetings list --from 2026-08-01 --to 2026-08-31 --room <room>
+  cassini meetings list --tag hiring
   cassini meetings rooms
   cassini meetings search "acquisition"
   cassini meetings search "deployment" --speaker S2 --json
+  cassini meetings search "offer" --tag hiring
   cassini meetings fetch <meeting-id> --out "./Meeting.opus"
   cassini meetings context <meeting-id>
   cassini meetings context <meeting-id> --json --out ./context.json
+  cassini meetings tags
+  cassini meetings annotations <meeting-id>
+  cassini meetings annotate <meeting-id> --ops ./ops.json
   cassini meetings summarize ./Meeting.opus
 
 Commands:
-  list       List the meetings your account may read, optionally filtered
-  rooms      List the conversations your account has readable recordings from
-  search     Find where something was said, across the meetings you may read
-  fetch      Download one meeting's portable .opus
-  context    Print one meeting as agent-readable context (transcript + summary)
-  summarize  Add a summary to already-sealed portable .opus files (reads local
-             files and the LLM environment, not Nextcloud)
+  list         List the meetings your account may read, optionally filtered
+  rooms        List the conversations your account has readable recordings from
+  search       Find where something was said, across the meetings you may read
+  fetch        Download one meeting's portable .opus
+  context      Print one meeting as agent-readable context (transcript + summary)
+  tags         List the tags on the meetings you may read
+  annotations  Print one meeting's tags and marks
+  annotate     Add or remove marks on one meeting, as one batch of ops
+  summarize    Add a summary to already-sealed portable .opus files (reads local
+               files and the LLM environment, not Nextcloud)
 
 Connection:
   --nextcloud-url URL   Nextcloud base URL           (env CASSINI_NC_URL)
@@ -406,6 +425,23 @@ func (c *meetingsClient) get(ctx context.Context, target *url.URL, client *http.
 	if err != nil {
 		return nil, err
 	}
+	return c.do(req, target, client)
+}
+
+// post issues an authenticated JSON POST: get's sibling for the one write this
+// surface has (`meetings annotate`), with the same guarantees — Basic auth to
+// the host the caller named, no redirect followed, and a non-2xx answer
+// returned as a *meetingsHTTPError for the command to phrase.
+func (c *meetingsClient) post(ctx context.Context, target *url.URL, body []byte, client *http.Client) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.do(req, target, client)
+}
+
+func (c *meetingsClient) do(req *http.Request, target *url.URL, client *http.Client) (*http.Response, error) {
 	req.SetBasicAuth(c.cfg.user, c.cfg.appPassword)
 	// No OCS-APIRequest header: these are the app's own HTTP routes, not OCS.
 	// No AUTHORIZATION-APP-API either — the AppAPI proxy mints that from the
@@ -414,12 +450,22 @@ func (c *meetingsClient) get(ctx context.Context, target *url.URL, client *http.
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", meetingsTargetLabel(target), err)
+		// client.Do wraps its failure in a *url.Error, whose message quotes the
+		// whole request URL — query string included. That put a search term, or
+		// a --tag, into the one error path meetingsTargetLabel did not cover: a
+		// connection refused or a timeout. Keep the cause and say which request
+		// failed in the redacted form.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return nil, fmt.Errorf("%s %s: %w", req.Method, meetingsTargetLabel(target), err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		defer resp.Body.Close()
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, &meetingsHTTPError{
+			Method:  req.Method,
 			URL:     meetingsTargetLabel(target),
 			Status:  resp.StatusCode,
 			Snippet: strings.TrimSpace(string(snippet)),
@@ -430,16 +476,23 @@ func (c *meetingsClient) get(ctx context.Context, target *url.URL, client *http.
 
 // meetingsHTTPError is a non-2xx reply from the proxied app routes.
 type meetingsHTTPError struct {
+	// Method is the request's verb. Empty reads as GET, which is every route
+	// but annotate's.
+	Method  string
 	URL     string
 	Status  int
 	Snippet string
 }
 
 func (e *meetingsHTTPError) Error() string {
-	if e.Snippet != "" {
-		return fmt.Sprintf("GET %s -> HTTP %d: %s", e.URL, e.Status, e.Snippet)
+	method := e.Method
+	if method == "" {
+		method = http.MethodGet
 	}
-	return fmt.Sprintf("GET %s -> HTTP %d", e.URL, e.Status)
+	if e.Snippet != "" {
+		return fmt.Sprintf("%s %s -> HTTP %d: %s", method, e.URL, e.Status, e.Snippet)
+	}
+	return fmt.Sprintf("%s %s -> HTTP %d", method, e.URL, e.Status)
 }
 
 // meetingsHTTPStatus returns the HTTP status an error carries, or 0.

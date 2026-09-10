@@ -2,11 +2,8 @@ package operator
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,43 +14,28 @@ import (
 
 // Backfilling from the published archive, when the operator's own copy is gone.
 //
-// WHY THIS EXISTS, MEASURED RATHER THAN ANTICIPATED
-//
-// Backfill's first source is current/<job>.meeting, which carries the
-// producer's segments and needs no download. On the demo archive that indexed
-// 4 meetings out of 30: the volume held 5 bundles while Nextcloud held 30
-// recordings, and 25 meetings had no job row at all
-// ("read job: sql: no rows in result set").
-//
-// That is not a bug, it is the durability asymmetry the D-631 assessment
-// documented: Nextcloud Files is the store of record and the operator's volume
-// is not. Re-registering the ExApp against a different daemon gives it a new
-// empty volume while the archive stays exactly where it was. Any backfill that
-// reads only local state therefore covers whatever survived the last such
-// event, which on a real deployment can be a small minority.
-//
-// So when the local copy cannot be used, the recording itself is read. It is
-// the one artifact that is definitely there — the caller can play it.
-//
-// WHAT IS LOST, AND WHY THAT IS THE RIGHT TRADE
-//
-// The published .opus carries the raw word transcript and no segmentation, so
-// rows come from the wall-clock windowing rather than the producer's own
-// utterances. Coarser references, recorded as row_source='words' so an answer
-// never implies a precision it does not have.
-//
-// The earlier reasoning — "gigabytes of transfer to recover a worse index than
-// the one already on local disk" — had the comparison wrong. It is not a worse
-// index versus a better one. For 25 of 30 meetings it is a worse index versus
-// NO index, and a coarse reference to a real moment beats a meeting that
-// search silently cannot see.
+// Nextcloud Files is the store of record and the operator's volume is not
+// (D-631): re-registering the ExApp gives it a new empty volume while the
+// archive stays put. On the demo archive, local bundles alone indexed 4
+// meetings of 30. So when the local copy cannot be used, the recording itself
+// is read. It carries only the raw word transcript, so its rows are coarser,
+// recorded as row_source='words' — and a coarse reference beats a meeting search
+// silently cannot see.
 
-// searchArchiveReader returns the words of one published recording, and the
-// digest of the bytes it read them from.
-//
-// A function rather than a concrete type so backfill stays testable without a
-// Nextcloud, and so a deployment with no archive access simply passes nil.
-type searchArchiveReader func(ctx context.Context, opusName string) ([]searchTranscriptWord, string, error)
+// searchArchiveCopy is what reading one published recording yields.
+type searchArchiveCopy struct {
+	Words []searchTranscriptWord
+	// Digest is the sha256 of the container as it stands in the archive, which
+	// every mark commit changes.
+	Digest string
+	// Path is the downloaded copy, there until the reader's release runs.
+	Path string
+}
+
+// searchArchiveReader reads one published recording; release removes the copy.
+// A function so backfill is testable without a Nextcloud, and nil where there is
+// no archive access.
+type searchArchiveReader func(ctx context.Context, opusName string) (read searchArchiveCopy, release func(), err error)
 
 // searchDeliveredStateReader reports what the archive itself holds for one
 // recording: whether the published leaf exists, and the sha256 the delivery
@@ -96,23 +78,25 @@ func (c ExAppConfig) archiveDeliveredState() searchDeliveredStateReader {
 // index it fills grants nobody anything.
 func (c ExAppConfig) archiveOpusReader(cassiniBin, workDir string) searchArchiveReader {
 	client := &http.Client{Timeout: archiveOpusReadTimeout}
-	return func(ctx context.Context, opusName string) ([]searchTranscriptWord, string, error) {
+	return func(ctx context.Context, opusName string) (searchArchiveCopy, func(), error) {
 		tmp, err := os.MkdirTemp(workDir, "search-backfill-")
 		if err != nil {
-			return nil, "", fmt.Errorf("temp dir: %w", err)
+			return searchArchiveCopy{}, nil, fmt.Errorf("temp dir: %w", err)
 		}
-		defer os.RemoveAll(tmp)
+		release := func() { _ = os.RemoveAll(tmp) }
 
 		local := filepath.Join(tmp, opusName)
 		digest, err := c.downloadArchiveOpus(ctx, client, opusName, local)
 		if err != nil {
-			return nil, "", err
+			release()
+			return searchArchiveCopy{}, nil, err
 		}
 		words, err := transcriptWordsFromOpus(ctx, cassiniBin, local)
 		if err != nil {
-			return nil, "", err
+			release()
+			return searchArchiveCopy{}, nil, err
 		}
-		return words, digest, nil
+		return searchArchiveCopy{Words: words, Digest: digest, Path: local}, release, nil
 	}
 }
 
@@ -128,40 +112,17 @@ const archiveOpusReadTimeout = 10 * time.Minute
 // bytes that are written, so what gets recorded is the artifact that was
 // actually indexed rather than one the caller was told about.
 func (c ExAppConfig) downloadArchiveOpus(ctx context.Context, client *http.Client, opusName, destPath string) (string, error) {
-	url := c.davFileURL(ncRecordingsOwner, ncArchiveRoot()+"/meetings/"+opusName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
+	digest, _, status, err := c.davDownloadFile(ctx, client, ncRecordingsOwner, ncArchiveRoot()+"/meetings/"+opusName, destPath, 0)
+	// Branch on STATUS first: absence is a statement about the archive, and
+	// reading it off the error text would report a missing recording as a
+	// transport failure the operator would retry forever.
+	if status == http.StatusNotFound {
+		return "", fmt.Errorf("%s is not in the archive", opusName)
 	}
-	c.setAppAPIDAVHeadersForUser(req, ncRecordingsOwner)
-	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", opusName, err)
 	}
-	defer drainClose(resp.Body)
-	// Branch on STATUS, never on err: a 404 comes back with a nil error, and
-	// reading absence off err would report a missing recording as a transport
-	// failure the operator would retry forever.
-	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("%s is not in the archive", opusName)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("fetch %s -> HTTP %d", opusName, resp.StatusCode)
-	}
-
-	file, err := os.Create(destPath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	digest := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(file, digest), resp.Body); err != nil {
-		return "", fmt.Errorf("read %s: %w", opusName, err)
-	}
-	if err := file.Sync(); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
+	return digest, nil
 }
 
 // transcriptWordsFromOpus asks the cassini CLI to read the transcript back out
