@@ -229,3 +229,30 @@ describe("the transcript pane's markup", () => {
     expect(template).toContain("likelyCrosstalkTitle(member.speakerLabel)");
   });
 });
+
+describe("finding words in the open meeting", () => {
+  const source = readFileSync(
+    new URL("./MeetingView.svelte", import.meta.url).pathname,
+    "utf8",
+  );
+
+  it("builds the rendered rows from the filtered set, not the whole transcript", () => {
+    // The filter is worthless if the rows are still built from everything: the
+    // box would accept input, the count would change, and the page would not.
+    expect(source).toContain("buildTranscriptRows(visibleSegments)");
+    expect(source).toContain("filterDisplaySegmentsByQuery(");
+  });
+
+  it("tells an empty search apart from an empty transcript", () => {
+    // "No transcript loaded yet" as the answer to a search would say the
+    // meeting has no words in it, which is a different and alarming claim.
+    expect(source).toContain("No transcript loaded yet.");
+    expect(source).toContain("Nothing in this transcript matches");
+  });
+
+  it("shows how much of the transcript survived the filter", () => {
+    // Without the count a filtered transcript is indistinguishable from a short
+    // meeting, and there is no cue that anything is hidden.
+    expect(source).toContain("{visibleSegments.length} of {displaySegments.length}");
+  });
+});

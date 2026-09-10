@@ -1,0 +1,2 @@
+### Fixed
+- CI no longer fails when a third-party apt repository preinstalled on GitHub's runner image serves a bad package index. Every workflow install step now runs `scripts/ci-apt-update.sh`, which drops apt sources that are not the Ubuntu archive before updating, so a vendor we never install from cannot take a build down. On 2026-09-09 a corrupt Google Chrome index turned nine jobs across four workflows red on `main` with `apt-get update` exit 100; the previous remedy named `packages.microsoft.com` at three of the nine call sites, and this replaces it at all of them.

@@ -1,0 +1,2 @@
+### Changed
+- The UI-only branch preview job is temporarily disabled (D-739). Every meeting in the published archive uses the `exact-pcm` audio integrity policy retired on 2026-09-02, so the export can read none of them and the preview failed for every branch on every push, over data no branch can fix. `docs/runbooks/repair-published-archive.md` is the repair procedure, and re-enabling the job is one line and part of closing D-739. Opt-in processing previews are unaffected: they build their meetings from raw recordings.

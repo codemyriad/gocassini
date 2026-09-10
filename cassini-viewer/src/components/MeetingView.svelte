@@ -20,6 +20,7 @@
   import {
     formatClockTime,
     isLikelyCrosstalkAcrossBlocks,
+    filterDisplaySegmentsByQuery,
     judgedDisplaySegments,
     normalizeSpeakerLabel,
     parseTimeHash,
@@ -842,6 +843,8 @@
   // (D-690). repairTurnFinalWordInflation copies rather than mutates, so the
   // loaded artifact keeps its canonical times and every word keeps its original
   // START — seek targets never move.
+  let transcriptQuery = "";
+
   $: displaySegments = transcriptIndex
     ? sortBlocksInReadingOrder(
         repairTurnFinalWordInflation(
@@ -850,11 +853,22 @@
         ),
       )
     : [];
-  $: visibleSegments = displaySegments;
+  // The seam this was always for. The filter lives in core/transcript.ts
+  // because the interesting half is the mapping from matched canonical segments
+  // to rendered blocks, and that deserves a test that does not need a DOM.
+  $: visibleSegments = filterDisplaySegmentsByQuery(
+    transcriptIndex,
+    displaySegments,
+    transcriptQuery,
+  );
+  $: isFiltering = Boolean(transcriptIndex) && transcriptQuery.trim().length > 0;
   // Rows are TURNS, not blocks: the producer flushes a segment at every speaker
   // change, so one sentence spoken over somebody else arrives as a dozen
   // fragments and only the turn they came from is worth reading (D-693).
-  $: transcriptRows = buildTranscriptRows(displaySegments);
+  $: transcriptRows = buildTranscriptRows(visibleSegments);
+  // Keyed by block id and built from EVERY block, not the filtered ones: it is
+  // a lookup, so covering blocks that are currently hidden costs a few map
+  // entries, while missing one a row still renders would drop its words (D-734).
   $: wordPartsByBlock = new Map(displaySegments.map((block) => [block.id, transcriptWordParts(block)]));
   $: activeFollowRowKey = followRowKeyForBlocks(transcriptRows, activeSegments);
   $: continuationKeys = continuationRowKeys(transcriptRows);
@@ -1119,8 +1133,32 @@
       </div>
     </div>
 
-    {#if visibleSegments.length === 0}
+    {#if displaySegments.length > 0}
+      <label class="flex items-center gap-2">
+        <span class="sr-only">Find in this transcript</span>
+        <input
+          bind:value={transcriptQuery}
+          class="input input-sm w-full border-base-300 shadow-none"
+          placeholder="Find in this transcript"
+          type="search"
+        />
+        {#if isFiltering}
+          <span class="whitespace-nowrap text-xs text-base-content/70">
+            {visibleSegments.length} of {displaySegments.length}
+          </span>
+        {/if}
+      </label>
+    {/if}
+
+    {#if displaySegments.length === 0}
       <p class="text-base-content/70 text-sm leading-normal">No transcript loaded yet.</p>
+    {:else if visibleSegments.length === 0}
+      <!-- Distinct from the line above on purpose: "no transcript" and "nothing
+           matched what you typed" are different facts, and the first one read as
+           an answer to a search would say the meeting has no words in it. -->
+      <p class="text-base-content/70 text-sm leading-normal">
+        Nothing in this transcript matches “{transcriptQuery.trim()}”.
+      </p>
     {:else}
       <div
         bind:this={transcriptPane}

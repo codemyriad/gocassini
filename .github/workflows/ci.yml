@@ -71,7 +71,7 @@ jobs:
           echo "Standalone recorder integration relevant: $relevant" >> "$GITHUB_STEP_SUMMARY"
       - name: Install contract tools
         run: |
-          sudo apt-get update
+          sudo ./scripts/ci-apt-update.sh
           sudo apt-get install -y --no-install-recommends jq libxml2-utils xsltproc shellcheck
       - name: Validate App Store manifest schema
         run: ./scripts/test-info-schema.sh
@@ -186,11 +186,10 @@ jobs:
       - name: Install media tools
         if: matrix.module == 'cassini-go-recorder'
         run: |
-          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
-          # which fails `apt-get update` (exit 100) even though nothing here
-          # needs it. Drop any apt source referencing it before updating.
-          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
-          sudo apt-get update
+          # A vendor apt source we never install from can fail `apt-get update`
+          # (exit 100) and take this step with it. ci-apt-update.sh drops every
+          # source that is not the Ubuntu archive first — see the note there.
+          sudo ./scripts/ci-apt-update.sh
           sudo apt-get install -y ffmpeg
       # gofmt lives in lint.yml, with shellcheck and actionlint — see the note
       # there. It was here only while Lint was advisory.
@@ -245,11 +244,10 @@ jobs:
             harness/go-talk-rotator/go.sum
       - name: Install runtime tools
         run: |
-          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
-          # which fails `apt-get update` (exit 100) even though nothing here
-          # needs it. Drop any apt source referencing it before updating.
-          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
-          sudo apt-get update
+          # A vendor apt source we never install from can fail `apt-get update`
+          # (exit 100) and take this step with it. ci-apt-update.sh drops every
+          # source that is not the Ubuntu archive first — see the note there.
+          sudo ./scripts/ci-apt-update.sh
           sudo apt-get install -y ffmpeg jq ripgrep
       - name: Run recorder integration test against local Nextcloud
         env:
@@ -286,11 +284,10 @@ jobs:
             harness/go-talk-rotator/go.sum
       - name: Install runtime tools
         run: |
-          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
-          # which fails `apt-get update` (exit 100) even though nothing here
-          # needs it. Drop any apt source referencing it before updating.
-          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
-          sudo apt-get update
+          # A vendor apt source we never install from can fail `apt-get update`
+          # (exit 100) and take this step with it. ci-apt-update.sh drops every
+          # source that is not the Ubuntu archive first — see the note there.
+          sudo ./scripts/ci-apt-update.sh
           sudo apt-get install -y ffmpeg jq ripgrep
       - name: Run mute integration test against local Nextcloud
         env:

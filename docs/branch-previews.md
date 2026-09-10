@@ -15,6 +15,14 @@ publish paths:
   publishes per-branch meeting artifacts alongside the viewer. **Opt-in
   only.** Serialized on the single GPU.
 
+> **The UI-only path is currently disabled (D-739).** Every meeting in main's
+> published archive uses an audio integrity policy that was retired on
+> 2026-09-02, so the export cannot read any of them and the preview fails for
+> every branch. The job is switched off in `deploy-preview.yml` until the
+> archive is repaired — see
+> [the runbook](./runbooks/repair-published-archive.md). Processing previews
+> still work: they build their meetings from raw recordings.
+
 ## Opting into a processing preview
 
 Push or merge a commit whose HEAD message contains a `[preview]` marker:
