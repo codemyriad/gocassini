@@ -179,6 +179,11 @@ func backfillAnnotationIndex(
 		logger.Printf("annotations backfill: could not adopt the archive's tag namespace (%v)", err)
 	}
 	report.Namespace = adoption
+	if err := store.markBuilt(ctx); err != nil {
+		// The rows are in; only the marker is missing, so the next start rebuilds
+		// again — wasted work, never a wrong answer.
+		logger.Printf("annotations backfill: %v", err)
+	}
 	return report, nil
 }
 

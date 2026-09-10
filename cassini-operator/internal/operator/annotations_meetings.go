@@ -189,6 +189,10 @@ func (s *annotationService) commitMeeting(ctx context.Context, caller, meetingID
 		return annotateResult{}, "", err
 	}
 	ops, namespace, err := s.resolveVocabulary(ctx, request.Ops)
+	if errors.Is(err, errAnnotationIndexBuilding) {
+		return annotateResult{}, relPath, &annotateFailure{status: http.StatusServiceUnavailable,
+			public: "the tag index is being rebuilt after a restart — try again in a few minutes", cause: err}
+	}
 	if err != nil {
 		return annotateResult{}, relPath, &annotateFailure{status: http.StatusBadGateway, public: "the tag vocabulary is unavailable", cause: err}
 	}

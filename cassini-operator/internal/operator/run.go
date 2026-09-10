@@ -898,6 +898,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// unmounted, wherever a mark could not be served (see newAnnotationService).
 	if annotations := newAnnotationService(rt, exappCfg, logger); annotations != nil {
 		annotations.register(root)
+		rt.startInitialAnnotationBuild(exappCfg, logger)
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)

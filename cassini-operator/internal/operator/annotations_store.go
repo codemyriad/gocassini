@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 // The marks projection (D-737): annotations.sqlite3, a SIDECAR beside
@@ -166,8 +168,11 @@ CREATE INDEX IF NOT EXISTS annotation_tag_by_label ON annotation_tag(label_folde
 // the write endpoint and the publish path record through — and also serves the
 // read routes: the vocabulary, tag narrowing, and the marks a search hit cites.
 type annotationStore struct {
-	db   *sql.DB
-	path string
+	// rebuildPending is set while the runtime's first rebuild of a never-built
+	// index runs; Namespace refuses meanwhile (errAnnotationIndexBuilding).
+	rebuildPending atomic.Bool
+	db             *sql.DB
+	path           string
 }
 
 var _ annotationIndex = (*annotationStore)(nil)
@@ -626,6 +631,12 @@ SELECT t.tag_id
 // The store is insert-if-absent and re-read, so two concurrent first calls
 // agree on one value rather than each minting their own.
 func (s *annotationStore) Namespace(ctx context.Context) (string, error) {
+	// Checked first, stored namespace or not: while the index does not yet know
+	// the archive, a label lookup would miss and mint a second id for a word the
+	// archive already tags.
+	if s.rebuildPending.Load() {
+		return "", errAnnotationIndexBuilding
+	}
 	stored, err := s.storedNamespace(ctx)
 	if err != nil || stored != "" {
 		return stored, err
@@ -1100,4 +1111,36 @@ func boolInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// annotationsMetaBuilt is the annotations_meta key a completed rebuild sets.
+const annotationsMetaBuilt = "built"
+
+// errAnnotationIndexBuilding is Namespace refusing while the first rebuild of a
+// never-built index runs. On a new install, a wiped volume or a schema change,
+// the projection starts empty; resolving a label or minting a namespace against
+// it is how one tag would become two. Writes wait for the rebuild instead.
+var errAnnotationIndexBuilding = errors.New("the tag index has not finished its first rebuild")
+
+// builtOnce reports whether a rebuild has ever completed on this index.
+func (s *annotationStore) builtOnce(ctx context.Context) (bool, error) {
+	var value string
+	switch err := s.db.QueryRowContext(ctx,
+		`SELECT value FROM annotations_meta WHERE key = ?`, annotationsMetaBuilt).Scan(&value); {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("read the index's build marker: %w", err)
+	}
+	return true, nil
+}
+
+// markBuilt records that a rebuild has completed, with when.
+func (s *annotationStore) markBuilt(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO annotations_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		annotationsMetaBuilt, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("record the index's build marker: %w", err)
+	}
+	return nil
 }
