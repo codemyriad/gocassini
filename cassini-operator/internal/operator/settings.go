@@ -22,13 +22,27 @@ import (
 // CASSINI_STT_MODEL=int8, which would otherwise shadow the chosen tier) so the
 // recorder's auto-detect + tier resolution (D-434) actually runs (D-435).
 type STTSettings struct {
-	Quality             string   `json:"quality"`
-	DeviceOverride      string   `json:"device_override,omitempty"`
-	TranscriptionTerms  []string `json:"transcription_terms,omitempty"`
-	Source              string   `json:"source"` // "auto" | "user"
-	HardwareFingerprint string   `json:"hardware_fingerprint"`
-	DetectedGPU         bool     `json:"detected_gpu"`
-	Cores               int      `json:"cores"`
+	Quality            string   `json:"quality"`
+	DeviceOverride     string   `json:"device_override,omitempty"`
+	TranscriptionTerms []string `json:"transcription_terms,omitempty"`
+	// SearchAliases are the spellings the speech recogniser produces for names
+	// an operator cares about, so a search for the name finds them (D-623).
+	//
+	// One group per name: the first entry is what someone would type, the rest
+	// are what the transcript actually says. Configurable because the variants
+	// are specific to a deployment's own vocabulary and its own model — the
+	// built-in list cannot know that this team calls something "Eisbuk" and
+	// that Parakeet writes it "ice book".
+	//
+	// Sibling of TranscriptionTerms rather than derived from it: those bias the
+	// recogniser so it gets the name RIGHT next time (D-726), while these find
+	// the recordings where it already got it wrong. An operator needs both, and
+	// only ever learns the variants by reading a transcript.
+	SearchAliases       [][]string `json:"search_aliases,omitempty"`
+	Source              string     `json:"source"` // "auto" | "user"
+	HardwareFingerprint string     `json:"hardware_fingerprint"`
+	DetectedGPU         bool       `json:"detected_gpu"`
+	Cores               int        `json:"cores"`
 }
 
 const (
@@ -55,6 +69,11 @@ const (
 
 	maxTranscriptionTerms     = 100
 	maxTranscriptionTermRunes = 100
+
+	// Bounds on the alias table. Every query expands through it, so an
+	// unbounded one is a way to make every search slow.
+	maxSearchAliasGroups   = 100
+	maxSearchAliasVariants = 25
 )
 
 // SettingsMigration describes a persisted STT policy that names a device or
@@ -114,6 +133,49 @@ func normalizeTranscriptionTerms(terms []string) ([]string, error) {
 		}
 		seen[key] = struct{}{}
 		out = append(out, term)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// normalizeSearchAliases bounds and tidies the configured alias groups.
+//
+// A group of one is dropped rather than rejected: it expands to nothing, so
+// keeping it would only make the settings look like they do something. That
+// happens naturally when an operator starts a row and has not yet added the
+// misspelling they saw.
+func normalizeSearchAliases(groups [][]string) ([][]string, error) {
+	out := make([][]string, 0, len(groups))
+	for _, group := range groups {
+		variants := make([]string, 0, len(group))
+		seen := make(map[string]struct{}, len(group))
+		for _, variant := range group {
+			variant = strings.Join(strings.Fields(variant), " ")
+			if variant == "" {
+				continue
+			}
+			if utf8.RuneCountInString(variant) > maxTranscriptionTermRunes {
+				return nil, fmt.Errorf("alias %q exceeds %d characters", variant, maxTranscriptionTermRunes)
+			}
+			key := strings.ToLower(variant)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			if len(variants) == maxSearchAliasVariants {
+				return nil, fmt.Errorf("at most %d spellings are allowed per name", maxSearchAliasVariants)
+			}
+			seen[key] = struct{}{}
+			variants = append(variants, variant)
+		}
+		if len(variants) < 2 {
+			continue
+		}
+		if len(out) == maxSearchAliasGroups {
+			return nil, fmt.Errorf("at most %d names are allowed", maxSearchAliasGroups)
+		}
+		out = append(out, variants)
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -226,6 +288,11 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return STTSettings{}, fmt.Errorf("parse settings %s: %w", path, err)
 	}
+	aliases, err := normalizeSearchAliases(s.SearchAliases)
+	if err != nil {
+		return STTSettings{}, fmt.Errorf("parse settings %s search_aliases: %w", path, err)
+	}
+	s.SearchAliases = aliases
 	s.TranscriptionTerms, err = normalizeTranscriptionTerms(s.TranscriptionTerms)
 	if err != nil {
 		return STTSettings{}, fmt.Errorf("parse settings %s transcription_terms: %w", path, err)
@@ -339,6 +406,11 @@ func Save(path string, s STTSettings) error {
 		return fmt.Errorf("normalize transcription_terms: %w", err)
 	}
 	s.TranscriptionTerms = terms
+	aliases, err := normalizeSearchAliases(s.SearchAliases)
+	if err != nil {
+		return fmt.Errorf("normalize search_aliases: %w", err)
+	}
+	s.SearchAliases = aliases
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
@@ -525,6 +597,10 @@ type settingsUpdate struct {
 	Quality            string    `json:"quality"`
 	DeviceOverride     *string   `json:"device_override"`
 	TranscriptionTerms *[]string `json:"transcription_terms"`
+	// SearchAliases is a pointer for the same reason as the fields above: nil
+	// means "leave it alone", so a client that does not know about aliases
+	// cannot erase them by omitting the field.
+	SearchAliases *[][]string `json:"search_aliases"`
 }
 
 // currentSettings returns a copy of the in-memory STT policy, safe for
@@ -623,6 +699,14 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			device = ""
 		}
 		updated.DeviceOverride = device
+	}
+	if in.SearchAliases != nil {
+		aliases, err := normalizeSearchAliases(*in.SearchAliases)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid search_aliases: %v", err))
+			return
+		}
+		updated.SearchAliases = aliases
 	}
 	if in.TranscriptionTerms != nil {
 		terms, err := normalizeTranscriptionTerms(*in.TranscriptionTerms)

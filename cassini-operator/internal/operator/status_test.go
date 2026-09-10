@@ -981,8 +981,16 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
 		t.Fatalf("decode setup response: %v", err)
 	}
-	if len(fields) != 3 {
-		t.Fatalf("setup must answer with ok+state+features only, got %#v", fields)
+	// ok + state + awaiting_choice + features. The third is a bit, not a detail:
+	// it says whether the thing standing between this instance and working
+	// recordings is a DECISION rather than a fault, which is what a
+	// non-administrator needs in order to be told the right thing (D-708). It
+	// names no account, no path and no folder id.
+	if len(fields) != 4 {
+		t.Fatalf("setup must answer with ok+state+awaiting_choice+features only, got %#v", fields)
+	}
+	if _, isBool := fields["awaiting_choice"].(bool); !isBool {
+		t.Fatalf("setup did not carry awaiting_choice as a boolean: %#v", fields)
 	}
 	features, ok := fields["features"].(map[string]any)
 	if !ok {

@@ -1,7 +1,7 @@
 // Shell-level surface routing for the Cassini app (D-420 V3, slice B5).
 //
-// The shell hosts N role-gated surfaces (today: browse + operator). Which one
-// is active is encoded in location.hash as `surface=operator`, layered on top
+// The shell hosts N role-gated surfaces (today: browse + operator + setup). Which
+// one is active is encoded in location.hash as `surface=operator`, layered on top
 // of the viewing layer's own hash params (meeting/tx/t — see
 // cassini-viewer/src/viewer/hashRouting.ts). We deliberately reuse the SAME
 // hash-only, fragment-only pushState mechanism the viewer uses — never a
@@ -10,16 +10,23 @@
 //
 // The two param spaces never collide: `browse` is the default and writes NO
 // marker (so standalone/share URLs stay clean and the viewer owns meeting/tx/t
-// unshadowed), and the `operator` surface carries no meeting/tx/t of its own.
+// unshadowed), and the admin surfaces carry no meeting/tx/t of their own.
 // The viewer's readViewerHash() ignores the surface param; readSurface() here
 // ignores everything else.
+//
+// `setup` (D-616) is the third surface: instance-level configuration, today the
+// storage-mode switch. It is deliberately not a panel inside the operator
+// surface — the operator surface is about runs, and a control that moves every
+// recording in the instance does not belong beside a run list.
 
-export type Surface = "browse" | "operator";
+export type Surface = "browse" | "operator" | "setup";
 
-// The panels inside the operator surface (D-723). Configuration is NOT a third
-// top-level surface: it is a left nav inside Operator, a Console group above a
-// Settings group, so there is one admin surface to gate and one place to look
-// for a knob. Naming a panel in the hash is what lets an "unconfigured" notice
+// The panels inside the operator surface (D-723). Pipeline and endpoint
+// configuration is NOT a surface of its own: it is a left nav inside Operator,
+// a Console group above a Settings group, so there is one admin surface to gate
+// and one place to look for a knob. `setup` above stays separate because it is
+// not a knob on the pipeline — it decides where the whole archive lives, and
+// moves it. Naming a panel in the hash is what lets an "unconfigured" notice
 // elsewhere in the app link straight at the panel that fixes it (D-722).
 //
 // The ids are the design prototype's own `OP_PANELS`, kept verbatim so a deep
@@ -53,14 +60,23 @@ const PANEL_PARAM = "panel";
 // it. See appendKeepingTimeLast.
 const TIME_PARAM = "t";
 
+// ADMIN_SURFACES are the ones the shell shows only when the operator boundary
+// probe succeeds. Keeping them in one list is what stops readSurface and the
+// tab bar drifting apart when a fourth is added.
+export const ADMIN_SURFACES: readonly Surface[] = ["operator", "setup"];
+
+function isAdminSurface(value: string | null): value is Surface {
+  return value !== null && (ADMIN_SURFACES as readonly string[]).includes(value);
+}
+
 export function readSurface(hash: string): Surface {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const value = params.get(SURFACE_PARAM);
-  return value === "operator" ? "operator" : "browse";
+  return isAdminSurface(value) ? value : "browse";
 }
 
-// surfaceHash returns the fragment for a surface: "#surface=<name>" for the
-// admin surfaces, "" for browse (the default — no marker).
+// surfaceHash returns the fragment for a surface: "#surface=operator" for an
+// admin surface, "" for browse (the default — no marker).
 export function surfaceHash(surface: Surface): string {
   return surface === "browse" ? "" : `#${SURFACE_PARAM}=${surface}`;
 }

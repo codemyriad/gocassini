@@ -59,7 +59,7 @@ func TestNCFilesProxyServesPerCallerCatalog(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil)
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
 	rec := httptest.NewRecorder()
 	if !proxy(rec, callerReq(http.MethodGet, "/published/catalog.json", "alice"), "catalog.json") {
 		t.Fatal("proxy should serve the per-caller catalog")
@@ -101,7 +101,7 @@ func TestNCFilesProxyPlaybackActsAsCaller(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound) // alice cannot read this one
 	}))
 	defer srv.Close()
-	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil)
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
 
 	rec := httptest.NewRecorder()
 	if !proxy(rec, callerReq(http.MethodGet, "/published/meetings/GRANTED.opus", "alice"), "meetings/GRANTED.opus") {
@@ -123,7 +123,7 @@ func TestNCFilesProxyFailsClosedWithoutCaller(t *testing.T) {
 		t.Errorf("upstream must not be called without a caller: %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
-	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil)
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
 
 	rec := httptest.NewRecorder()
 	proxy(rec, callerReq(http.MethodGet, "/published/catalog.json", ""), "catalog.json")
@@ -155,7 +155,7 @@ func TestNCFilesProxyFailsClosedOnScanError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil)
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
 	rec := httptest.NewRecorder()
 	proxy(rec, callerReq(http.MethodGet, "/published/catalog.json", "alice"), "catalog.json")
 	if rec.Code != http.StatusOK {
@@ -175,7 +175,7 @@ func TestNCFilesProxyBadGatewayOnCatalogFetchError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError) // authoritative catalog fetch fails
 	}))
 	defer srv.Close()
-	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil)
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
 	rec := httptest.NewRecorder()
 	proxy(rec, callerReq(http.MethodGet, "/published/catalog.json", "alice"), "catalog.json")
 	if rec.Code != http.StatusBadGateway {

@@ -97,6 +97,29 @@ type statusRecordingsAccess struct {
 	// AdminUser is the account provisioning resolved and acted as. Its absence
 	// is itself the diagnosis when Step is "administrator".
 	AdminUser string `json:"admin_user,omitempty"`
+	// Mode is the resolved storage model — "default" or "access_controlled"
+	// (D-616) — and ModeSource is where that came from: "user" (chosen in the
+	// Setup tab), "env" (a development/CI deploy option), "migrating" (an
+	// interrupted first decision), "default"/"derived" (a build that decided on
+	// its own, which nothing does any more) or "configured" (a settings file of
+	// unknown provenance). Both are empty until a preflight has resolved one,
+	// which is not the same as "default": nobody has decided yet.
+	Mode       string `json:"mode,omitempty"`
+	ModeSource string `json:"mode_source,omitempty"`
+	// ModeConfirmed says the mode was CHOSEN. An unconfirmed mode governs — the
+	// archive is at its root and reads work — but publishing and recording are
+	// refused until somebody confirms it, because the two models differ in who
+	// can read a recording (D-708).
+	ModeConfirmed bool `json:"mode_confirmed"`
+	// Root is where THIS mode keeps recordings, so a monitor or an administrator
+	// reading /status does not have to know which constant goes with which mode.
+	Root string `json:"root,omitempty"`
+	// MigrationClean is false when a mode switch stopped before it finished
+	// tidying up. It is deliberately NOT a health failure: the archive is
+	// complete at Root, publishing and recording are unaffected, and the only
+	// consequence is a stale copy at the other root. The Setup tab has a button
+	// for it; /status is where a monitor would notice it.
+	MigrationClean *bool `json:"migration_clean,omitempty"`
 	// Prerequisites reports the native Nextcloud apps an ExApp cannot install
 	// for itself, so a missing one is named rather than inferred.
 	Prerequisites []statusPrerequisite `json:"prerequisites,omitempty"`
@@ -241,6 +264,17 @@ type setupResponse struct {
 	// unavailable / not_applicable / unknown) so the UI branches on the same
 	// vocabulary the admin-facing report and the docs already use.
 	State string `json:"state"`
+	// AwaitingChoice says the one thing that is missing is a DECISION: nobody
+	// has told Cassini which storage model this Nextcloud should use, or a mode
+	// is in force that nobody chose (D-708).
+	//
+	// It is here, on the user-readable half, because it changes what a
+	// non-administrator should be told. Every other reason recordings cannot be
+	// served reads as "something is broken"; this one reads as "somebody has to
+	// decide", and pointing the wrong one of those at an administrator wastes
+	// their time in a different way. It names no account, no path and no folder
+	// id — it is a bit, and it is the same bit an administrator sees.
+	AwaitingChoice bool `json:"awaiting_choice"`
 	// Features is the readiness signal behind every "not configured yet" state
 	// in the app (D-722). It rides here rather than on a route of its own
 	// because a NEW route only reaches AppAPI at registration time, and whether
@@ -280,6 +314,17 @@ type setupFeatures struct {
 	Insights bool `json:"insights"`
 }
 
+// storageAwaitingChoice reports whether the reason recordings cannot be served
+// is that nobody has chosen a storage model.
+//
+// Keyed on the STEP rather than on the mode record, because /setup is answered
+// from the same snapshot /status is and must not reach past it into
+// process-wide state that could have moved in between — the two would then
+// disagree about the same instant.
+func storageAwaitingChoice(step string) bool {
+	return step == storageStepModeUndecided || step == storageStepModeUnconfirmed
+}
+
 // setupHandler answers GET <base>/setup for any logged-in Nextcloud user.
 //
 // Deliberately 200 even when OK is false. /status answers 503 because a monitor
@@ -302,8 +347,9 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// and "the step is on" is not the same fact as "the step will run".
 	llm := rt.currentLLMSettings().view()
 	writeJSON(w, http.StatusOK, setupResponse{
-		OK:    access.OK,
-		State: access.State,
+		OK:             access.OK,
+		State:          access.State,
+		AwaitingChoice: storageAwaitingChoice(access.Step),
 		Features: setupFeatures{
 			Summaries: llm.Effective.Summary != nil,
 			Insights:  llm.Effective.Insight != nil,

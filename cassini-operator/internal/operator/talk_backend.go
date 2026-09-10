@@ -239,6 +239,17 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 	publicBaseURL := strings.TrimRight(auth.BackendURL, "/")
 	operatorBaseURL := rt.operatorTalkBackendURL(publicBaseURL)
 	roomKey := talkRoomKey(publicBaseURL, token)
+
+	// Refuse before the room is reserved (D-616). A recording that provably
+	// cannot be stored is worse than no recording: the call is spent, the
+	// moderator believes it is being captured, and the failure only surfaces
+	// after everyone has hung up. Placed above reserveTalkRoom so there is no
+	// claim to release on the way out.
+	if refusal := ncAccessSubstrate.recordingRefusal(); refusal != "" {
+		rt.refuseTalkRecording(w, operatorBaseURL, token, refusal)
+		return
+	}
+
 	state := &talkRoomState{
 		RoomKey:    roomKey,
 		BackendURL: operatorBaseURL,
@@ -524,6 +535,52 @@ func (rt *Runtime) notifyTalkStopped(state talkRoomState) error {
 		"type":    "stopped",
 		"stopped": stopped,
 	})
+}
+
+// talkRefusalNotifyGrace delays the `failed` callback that refuses a recording
+// in the Talk UI. See refuseTalkRecording for why it exists.
+const talkRefusalNotifyGrace = 2 * time.Second
+
+// refuseTalkRecording turns down a start so the moderator SEES it turned down.
+//
+// Talk gives an operator no way to say why. Its recording backend never reads
+// our response body: spreed's BackendNotifier reacts to Guzzle exceptions
+// alone, a 5xx is retried three times before it gives up, and a 4xx escapes as
+// a bare HTTP 500 from index.php. Either way the Talk web client swallows it —
+// `startCallRecording` catches, logs to the console, and shows the optimistic
+// "Call recording is starting." toast regardless. So the honest-looking answer,
+// refusing with a 4xx that names the problem, is the one that shows the user
+// nothing at all and leaves them waiting for a recording that will never exist.
+//
+// The one message Talk WILL render is the room reaching RECORDING_FAILED, which
+// an operator can cause directly: `backendFailed` needs only the room to exist.
+// So the start is accepted at the protocol level, no job is created, and the
+// room is failed a moment later — the moderator gets Talk's own "The recording
+// failed. Please contact your administrator." while /status, the container log
+// and the Cassini app's Setup tab carry the actual reason.
+//
+// The delay is the race, not politeness. RecordingService::start calls the
+// backend BEFORE it writes the room's STARTING status, so a `failed` that
+// arrives first is overwritten by that write and the room is left recording
+// forever in the UI. Two seconds is far longer than that window and far shorter
+// than a moderator's patience.
+func (rt *Runtime) refuseTalkRecording(w http.ResponseWriter, backendURL, token, reason string) {
+	rt.logger.Printf("talk start refused room=%s: %s", token, reason)
+	writeJSON(w, http.StatusOK, map[string]any{})
+
+	state := talkRoomState{BackendURL: backendURL, RoomToken: token}
+	go func() {
+		timer := time.NewTimer(talkRefusalNotifyGrace)
+		defer timer.Stop()
+		select {
+		case <-rt.ctx.Done():
+			return
+		case <-timer.C:
+		}
+		if err := rt.notifyTalkFailed(state); err != nil {
+			rt.logger.Printf("talk start refused room=%s: could not report the failure to Talk: %v", token, err)
+		}
+	}()
 }
 
 func (rt *Runtime) notifyTalkFailed(state talkRoomState) error {

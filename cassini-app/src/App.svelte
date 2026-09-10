@@ -5,6 +5,7 @@
   import GenerateCard from "./GenerateCard.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import Operator from "./Operator.svelte";
+  import Setup from "./Setup.svelte";
   import SetupNotice from "./SetupNotice.svelte";
   import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
@@ -18,16 +19,20 @@
     type SetupFeatures,
     type SetupNotice as SetupNoticeContent,
   } from "./operator/setupHealth";
+  import { onSetupChanged } from "./operator/setupSignal";
   import { applySurface, readSurface, type OperatorPanel, type Surface } from "./surfaceRouting";
 
   // The Cassini in-Nextcloud shell (D-420). It hosts role-gated surfaces fed
   // through the DataProvider seam: everyone gets "browse" (cassini-viewer's App
   // = MeetingList + MeetingView); admins additionally get the "operator"
-  // surface (recording control). V3 adds the top nav + the operator surface.
+  // surface (recording control) and "setup" (the storage model). V3 adds the top
+  // nav + the operator surface.
   //
-  // There are exactly TWO surfaces, and configuration is not one of them
-  // (D-723): it is a left nav inside Operator, so there is one admin boundary
-  // to probe and one place an administrator looks for a knob.
+  // Pipeline and endpoint configuration is not a surface of its own (D-723): it
+  // is a left nav inside Operator, so there is one admin boundary to probe and
+  // one place an administrator looks for a knob. `setup` (D-616) is the one
+  // admin surface beside it, because it does not configure the pipeline — it
+  // decides where the whole archive lives, and moves it.
   //
   // The operator JSON API stays ADMIN in info.xml (the REAL boundary). The
   // shell only decides whether to *show* the operator by probing that boundary
@@ -46,10 +51,14 @@
   // cannot, and its browse surface offers no Prepare at all.
   const dataProvider = new AppDataProvider();
 
-  // Browse is always available; operator is added only when the boundary probe
-  // confirms admin access. The tab bar renders only when the operator surface
-  // is available, so a non-admin sees exactly today's browse-only experience —
-  // no shell chrome, byte-identical output.
+  // Browse is always available; the admin surfaces (operator, and setup since
+  // D-616) are added only when the boundary probe confirms admin access. The
+  // tab bar renders only when they are available, so a non-admin sees exactly
+  // today's browse-only experience — no shell chrome, byte-identical output.
+  //
+  // One flag governs both, deliberately: the probe asks whether the ADMIN-gated
+  // operator API answers, and both surfaces are that same API. A second notion
+  // of admin here would be a second thing to drift.
   let operatorAvailable = false;
   let surface: Surface = "browse";
 
@@ -141,9 +150,10 @@
 
   function applySurfaceFromLocation(): void {
     const next = readSurface(window.location.hash);
-    // A non-admin deep-linking the operator surface falls back to browse (the
-    // operator API would 403 anyway). Its settings panels are gated by the same
-    // probe: everything they touch is an ADMIN route.
+    // A non-admin deep-linking an admin surface (#surface=operator or
+    // #surface=setup) falls back to browse — the operator API would 403 anyway.
+    // The operator's settings panels are gated by the same probe: everything
+    // they touch is an ADMIN route.
     surface = next !== "browse" && !operatorAvailable ? "browse" : next;
   }
 
@@ -228,17 +238,16 @@
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
-  onMount(async () => {
-    themeMode = resolveThemeMode();
-
-    // Optimistic anti-flash hint: if Nextcloud already tells us the user is an
-    // admin, show the operator tab immediately instead of waiting a round-trip.
-    if (isLikelyAdminHint(window) === true) {
-      operatorAvailable = true;
-    }
-    applySurfaceFromLocation();
-    window.addEventListener("popstate", handlePopState);
-
+  // readInstanceState asks the operator what this deployment is, and is the ONLY
+  // writer of operatorAvailable and setupNotice.
+  //
+  // It used to be inline in onMount, which made the verdict a snapshot of the
+  // moment the page opened: an administrator who fixed their instance on the
+  // Setup tab came back to Browse and was still told Cassini was not configured,
+  // until they reloaded the browser by hand. It is a function now so the Setup
+  // tab can ask for it again (setupSignal.ts) — the notice goes away in the same
+  // session, with no reload and nothing else on the page thrown away.
+  async function readInstanceState(): Promise<void> {
     // Authoritative: probe the ADMIN-gated operator boundary (an operator that
     // answered -> show). Alongside it, ask the USER-level setup endpoint whether
     // this deployment can serve recordings at all — the two are independent, so
@@ -286,9 +295,37 @@
     // Reconcile the active surface with the probe result (e.g. an optimistic
     // hint the probe denied, or a stale #surface=operator we can't honour).
     applySurfaceFromLocation();
+  }
+
+  // stopListeningForSetupChanges is assigned in onMount and called in onDestroy.
+  // A component that mounts twice would otherwise leave the first instance's
+  // listener behind, writing into state nothing renders.
+  let stopListeningForSetupChanges: (() => void) | null = null;
+
+  onMount(async () => {
+    themeMode = resolveThemeMode();
+
+    // Optimistic anti-flash hint: if Nextcloud already tells us the user is an
+    // admin, show the operator tab immediately instead of waiting a round-trip.
+    if (isLikelyAdminHint(window) === true) {
+      operatorAvailable = true;
+    }
+    applySurfaceFromLocation();
+    window.addEventListener("popstate", handlePopState);
+
+    // Subscribed BEFORE the first read, not after: the Setup tab cannot act
+    // before this component has mounted, but registering afterwards would make
+    // that ordering a thing to keep true rather than a thing that cannot fail.
+    stopListeningForSetupChanges = onSetupChanged(() => {
+      void readInstanceState();
+    });
+
+    await readInstanceState();
   });
 
   onDestroy(() => {
+    stopListeningForSetupChanges?.();
+    stopListeningForSetupChanges = null;
     if (typeof window !== "undefined") {
       window.removeEventListener("popstate", handlePopState);
     }
@@ -314,6 +351,14 @@
       >
         Operator
       </button>
+      <button
+        type="button"
+        class="cassini-shell-tab"
+        aria-current={surface === "setup" ? "page" : undefined}
+        on:click={() => selectSurface("setup")}
+      >
+        Setup
+      </button>
     </nav>
 
     {#if setupNotice && !setupNotice.blocking}
@@ -324,7 +369,7 @@
            there too. -->
       <div class="cassini-shell-banner" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice notice={setupNotice} />
+          <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
         </div>
       </div>
     {/if}
@@ -338,13 +383,13 @@
         data-theme={themeMode}
       >
         <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice notice={setupNotice} />
+          <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
         </div>
       </div>
     {:else}
       <!-- Browse stays mounted (preserves list/meeting/playback state) and is
-           hidden while the operator surface is active; the operator mounts only
-           when active so its SSE stream + polling don't run in the background. -->
+           hidden while an admin surface is active; those mount only when active
+           so the operator's SSE stream + polling don't run in the background. -->
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
         <ViewerApp {ncMode} {dataProvider}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
@@ -359,6 +404,15 @@
             {/if}
           </svelte:fragment>
         </ViewerApp>
+      </div>
+    {/if}
+    {#if surface === "setup"}
+      <!-- Same bounded-scroller + themed .cassini-root wrapper as the operator
+           surface below, and for the same reasons. -->
+      <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
+        <div class="cassini-root" data-theme={themeMode}>
+          <Setup />
+        </div>
       </div>
     {/if}
     {#if surface === "operator"}
@@ -384,7 +438,7 @@
        in the standalone build), both of which are height:100%. -->
   <div class="cassini-setup-surface" data-theme={themeMode}>
     <div class="cassini-root" data-theme={themeMode}>
-      <SetupNotice notice={setupNotice} />
+      <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
     </div>
   </div>
 {:else if setupNotice}
@@ -394,7 +448,7 @@
   <div class="cassini-shell">
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
-        <SetupNotice notice={setupNotice} />
+        <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />
       </div>
     </div>
     <div class="cassini-shell-surface">

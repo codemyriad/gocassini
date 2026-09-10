@@ -513,7 +513,7 @@ func TestMeetingsContextBytesMatchTheCLIOverTheSameIDs(t *testing.T) {
 	srv, _ := stubRecordingsDAV(t, contextCatalog, opus, "MEETING1.opus", "MEETING2.opus")
 	cfg := contextTestConfig(srv.URL, cassiniBin)
 	logger := log.New(&bytes.Buffer{}, "", 0)
-	published := publishedHandler("", "/published", logger, cfg.ncFilesProxy(logger), cfg.meetingsContextHandler(logger))
+	published := publishedHandler("", "/published", logger, cfg.ncFilesProxy(logger, searchDeps{}), cfg.meetingsContextHandler(logger))
 
 	// The CLI talks to the app through Nextcloud's AppAPI proxy, which mints the
 	// caller identity. This mux is that proxy: it strips the proxied prefix and

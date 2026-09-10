@@ -91,21 +91,27 @@ type Runtime struct {
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
-	cancel       context.CancelFunc
-	workerWG     sync.WaitGroup
-	store        *Store
-	cfg          Config
-	logger       *log.Logger
-	stdout       io.Writer
-	stderr       io.Writer
-	recordSlots  chan struct{}
-	buildQueue   chan buildTask
-	sealQueue    chan sealTask
-	publishQueue chan publishTask
-	events       *eventHub
-	recordMu     sync.Mutex
-	recordJobs   map[string]*recordProcessState
-	recordWG     sync.WaitGroup
+	cancel   context.CancelFunc
+	workerWG sync.WaitGroup
+	store    *Store
+	// searchStore is the disposable full-text index (D-623). Nil when it could
+	// not be opened: search degrades, the pipeline does not.
+	searchStore *searchStore
+	// searchLimiter bounds searches per caller, because each one makes this app
+	// talk to Nextcloud on the caller's behalf.
+	searchLimiter *searchRateLimiter
+	cfg           Config
+	logger        *log.Logger
+	stdout        io.Writer
+	stderr        io.Writer
+	recordSlots   chan struct{}
+	buildQueue    chan buildTask
+	sealQueue     chan sealTask
+	publishQueue  chan publishTask
+	events        *eventHub
+	recordMu      sync.Mutex
+	recordJobs    map[string]*recordProcessState
+	recordWG      sync.WaitGroup
 	// buildExecutionMu is the final admission gate around the whole build. The
 	// configured worker count may exceed one, but CUDA recognizers and the RAM/
 	// VRAM headroom probe are not safely reservable between concurrent workers.
@@ -223,10 +229,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// server. Everything else is the server with flags, as it has always been —
 	// the binary's job is to be the operator, and a subcommand is the exception.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		if args[0] == backfillNCFilesCommand {
+		switch args[0] {
+		case backfillNCFilesCommand:
 			return runBackfillNCFiles(ctx, args[1:], stdout, stderr)
+		case backfillSearchCommand:
+			return runBackfillSearch(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: %s)\n", args[0], backfillNCFilesCommand)
+		fmt.Fprintf(stderr, "unknown command %q (known commands: %s, %s)\n",
+			args[0], backfillNCFilesCommand, backfillSearchCommand)
 		return 2
 	}
 
@@ -307,9 +317,56 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncAccessSubstrate.markApplicable()
 	}
 
-	// Provisioning remains tied to the AppAPI enabled edge, but not to the eager
-	// whole-archive uploader removed by D-613.
+	// The storage mode (D-616) is read here, at startup, and not only on the
+	// enabled edge. The edge is what PROVES the mode against Nextcloud; this is
+	// what makes a plain container restart keep serving the archive the way the
+	// administrator chose, instead of falling back to the access-controlled read
+	// path for an instance that has no Team folder to read through. The file is
+	// local, so it costs no round-trip and cannot fail for want of Nextcloud.
+	//
+	// It deliberately does NOT make the substrate usable: publishing still waits
+	// for the edge (nc_access_status.go), because a recorded mode is a decision,
+	// not evidence that the storage behind it is still there.
+	ncStorage.setPath(storageSettingsPath(cfg))
+	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
+		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
+		// Clean: an unreadable file is not evidence of a half-done migration.
+		// Unconfirmed: writing a mode is how an administrator gets out of this.
+		ncStorage.set(true, storageModeSourceConfigured, true)
+	} else if settings.Configured() {
+		// The RECORDED source, carried through rather than flattened to
+		// "configured". It is what tells an administrator's click apart from a
+		// deploy option, and both apart from a mode a previous build wrote down
+		// on its own — which is the question the Setup tab now has to answer
+		// before it presents a decision as made (D-708).
+		source := settings.Source
+		if source == "" {
+			source = storageModeSourceConfigured
+		}
+		ncStorage.set(settings.AccessControlled(), source, settings.Clean())
+		logger.Printf("storage_mode -> %s (recorded, source=%s, confirmed=%t)", settings.Mode(), source, settings.Confirmed())
+	} else if declared, ok, raw := storageModeFromEnv(os.Getenv); ok {
+		// Declared but not yet recorded: the first enabled edge checks it against
+		// the instance and persists it only if it fits. Logged here so a
+		// deployment can see its own setting arrived, without waiting for that
+		// edge — and warned about, because this is a development and CI option.
+		logger.Printf("WARNING: storage_mode -> %s (declared by %s=%s, a development/CI deploy option; recorded on first enable if this instance matches it)", storageModeName(declared), envStorageMode, raw)
+	} else if raw != "" {
+		// Refused at startup rather than only on the enabled edge, because this
+		// is where a deploy option's typo is cheapest to notice.
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and no storage mode will be chosen for this install", envStorageMode, raw, storageModeEnvValues)
+	} else {
+		// Nothing recorded, nothing declared. Say so here rather than leaving an
+		// administrator to infer it from silence: this is the line that precedes
+		// every refusal to publish on a fresh install, and the Setup tab is what
+		// ends it.
+		logger.Printf("storage_mode -> undecided (nothing recorded, nothing declared by %s). Cassini does not choose a storage model on its own; publishing and recording are refused until an administrator picks one in the Setup tab", envStorageMode)
+	}
+
+	// The preflight remains tied to the AppAPI enabled edge, but not to the
+	// eager whole-archive uploader removed by D-613.
 	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
+	exappCfg.preflightOnRestart(runtime.ctx, logger)
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -451,10 +508,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	// deploy (APP_PERSISTENT_STORAGE set) paths left unset or still at their
 	// baked image defaults land on the AppAPI volume instead of overlayfs.
 	persistRoot := persistentStorageRoot()
-	fs.StringVar(&cfg.DBPath, "db", exAppDataPathDefault(persistRoot,
-		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
-		imageDefaultDBPath, "operator/jobs.sqlite3",
-		filepath.Join(defaultDataRoot, "jobs.sqlite3")), "SQLite database path")
+	fs.StringVar(&cfg.DBPath, "db", defaultDBPath(persistRoot, defaultDataRoot), "SQLite database path")
 	fs.StringVar(&cfg.WorkRoot, "work-root", exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, ""),
 		imageDefaultWorkRoot, "operator/jobs",
@@ -481,6 +535,7 @@ Usage:
 
 Commands:
   `+backfillNCFilesCommand+`   one-shot migration of a legacy in-container archive
+  `+backfillSearchCommand+`      index meetings published before the search index existed
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
 
@@ -548,6 +603,19 @@ func defaultSiteRoot(persistRoot, dataRoot string) string {
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
 		imageDefaultSiteRoot, "site/published",
 		filepath.Join(dataRoot, "site"))
+}
+
+// defaultDBPath is where the job database lands when nothing overrides it.
+//
+// Factored out because the one-shot commands need it too: storage_settings.json
+// lives beside the database, and a command that has to know which storage model
+// this installation runs cannot ask the running operator — it is a separate
+// process with its own empty ncStorage.
+func defaultDBPath(persistRoot, dataRoot string) string {
+	return exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
+		imageDefaultDBPath, "operator/jobs.sqlite3",
+		filepath.Join(dataRoot, "jobs.sqlite3"))
 }
 
 func parsePositiveIntEnvAny(names []string, fallback int) (int, error) {
@@ -662,6 +730,18 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		settingsPath:              settingsPath(cfg),
 		llmSettingsPath:           llmSettingsPath(cfg),
 	}
+	// The search index is disposable and nothing depends on it, so a failure to
+	// open it must not take the operator down — it degrades search, and the
+	// pipeline keeps publishing. Logged rather than swallowed, because a
+	// permanently unopenable index would otherwise look like an archive that
+	// simply never matches anything.
+	rt.searchLimiter = newSearchRateLimiter()
+	if searchIndex, err := openSearchStore(searchStorePath(cfg.DBPath), logger); err != nil {
+		logger.Printf("search index unavailable (%v); meetings will publish but not be indexed", err)
+	} else {
+		rt.searchStore = searchIndex
+	}
+
 	// Detect hardware on first start (or track it under an auto default) and
 	// load the persisted STT policy. A failure here must not take the operator
 	// down: fall back to an in-memory auto default so jobs still run (D-435).
@@ -726,9 +806,30 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 // the publish worker and the requeue dispatcher — the four that write under
 // WorkRoot. D-583 removed the detached `cassini pack` goroutine this used to
 // wait on separately; sealing is now one of those registered workers.
+// searchDeps hands the search route the index and a live view of the operator's
+// configured aliases. Reading them under the same lock every other settings
+// consumer uses, so an edit is picked up without a restart.
+func (rt *Runtime) searchDeps() searchDeps {
+	return searchDeps{
+		index:   rt.searchStore,
+		limiter: rt.searchLimiter,
+		aliases: func() [][]string {
+			rt.settingsMu.RLock()
+			defer rt.settingsMu.RUnlock()
+			return rt.settings.SearchAliases
+		},
+	}
+}
+
 func (rt *Runtime) Shutdown() {
 	rt.cancel()
 	rt.workerWG.Wait()
+	// After the workers, so nothing is still writing rows when the handle goes.
+	if rt.searchStore != nil {
+		if err := rt.searchStore.Close(); err != nil {
+			rt.logger.Printf("search index close failed: %v", err)
+		}
+	}
 }
 
 func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.Handler {
@@ -746,6 +847,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// the recorder ships, and an exact pattern wins over the prefix (D-718).
 	api.HandleFunc("/settings/workflows", rt.settingsWorkflowsHandler)
 	api.HandleFunc("/settings/", rt.llmSettingsHandler)
+	api.Handle("/storage", exappCfg.storageHandler(rt))
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
@@ -759,7 +861,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, rt.searchDeps())
 	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
 	// beside /published/ rather than under BasePath, because that is where
 	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
@@ -797,6 +899,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/setup", api)
 		root.Handle("/settings", api)
 		root.Handle("/settings/", api)
+		root.Handle("/storage", api)
 		root.Handle("/talk/provisioning", api)
 		return
 	}
@@ -1688,9 +1791,27 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Printf("%s %s", r.Method, r.URL.RequestURI())
+		logger.Printf("%s %s", r.Method, loggableRequestURI(r))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loggableRequestURI is the request line as it may safely be written to the
+// operator's stderr — which is the container log, and which the artifact
+// retention policy does not govern at all.
+//
+// A meeting list's filter values are innocuous there. A search query is not:
+// `?q=severance package for Bob` would sit in that log indefinitely, and in CI
+// output, for anyone with container access. The path still identifies the
+// route, which is all a request log needs.
+func loggableRequestURI(r *http.Request) string {
+	if r.URL == nil {
+		return ""
+	}
+	if r.URL.RawQuery != "" && strings.HasSuffix(r.URL.Path, "/"+searchURLPath) {
+		return r.URL.Path + "?<redacted>"
+	}
+	return r.URL.RequestURI()
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter, allow string) {

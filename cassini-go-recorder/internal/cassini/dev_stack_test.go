@@ -803,6 +803,207 @@ func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 	}
 }
 
+// A fresh harness stack matches a fresh production install: the dependency-free
+// storage model is the default, while tests that exercise Team-folder ACLs ask
+// for that substrate explicitly.
+func TestResolveDevStackPlanStorageModeDefaultsToDefault(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", nil, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.StorageMode != devStackStorageDefault {
+		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
+	}
+	if plan.SkipStorageScaffold {
+		t.Fatal("SkipStorageScaffold defaulted on")
+	}
+}
+
+func TestResolveDevStackPlanStorageModeFromFlagAndEnv(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageDefault}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.StorageMode != devStackStorageDefault {
+		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
+	}
+
+	plan, _, err = resolveDevStackPlan("plan", nil, testEnv(map[string]string{
+		"CASSINI_HARNESS_STORAGE_MODE": devStackStorageDefault,
+	}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.StorageMode != devStackStorageDefault {
+		t.Fatalf("env-sourced StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
+	}
+
+	// Flag beats env, like every other input here.
+	plan, _, err = resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageACL}, testEnv(map[string]string{
+		"CASSINI_HARNESS_STORAGE_MODE": devStackStorageDefault,
+	}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.StorageMode != devStackStorageACL {
+		t.Fatalf("flag did not beat env: StorageMode = %q", plan.StorageMode)
+	}
+
+	plan, _, err = resolveDevStackPlan("plan", []string{"--storage-mode", ""}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("explicit empty storage mode: %v", err)
+	}
+	if plan.StorageMode != devStackStorageUndecided {
+		t.Fatalf("empty storage mode = %q, want %q", plan.StorageMode, devStackStorageUndecided)
+	}
+}
+
+// A typo must not quietly build the other model.
+func TestResolveDevStackPlanRejectsAnUnknownStorageMode(t *testing.T) {
+	_, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", "acl"}, testEnv(nil))
+	if err == nil {
+		t.Fatal("an unknown storage mode was accepted")
+	}
+	if !strings.Contains(err.Error(), devStackStorageACL) {
+		t.Fatalf("error %q does not offer the spellings that work", err)
+	}
+}
+
+// The harness speaks `acl-enabled` because it reads well on a command line; the
+// app's config file, API and UI all say `access_controlled`. Only one of those
+// crosses the boundary into the ExApp.
+func TestDevStackExportsTheExAppsOwnVocabulary(t *testing.T) {
+	for _, tc := range []struct{ harness, exapp string }{
+		{devStackStorageACL, "access_controlled"},
+		{devStackStorageDefault, "default"},
+		// `undecided` declares NOTHING. The empty value is what makes the
+		// harness omit the deploy option entirely, which is the only way to
+		// reach the state the app's setup wizard exists for (D-708).
+		{devStackStorageUndecided, ""},
+	} {
+		plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", tc.harness}, testEnv(nil))
+		if err != nil {
+			t.Fatalf("resolveDevStackPlan(%s): %v", tc.harness, err)
+		}
+		env := plan.env()
+		if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE="+tc.harness) {
+			t.Errorf("harness env missing CASSINI_HARNESS_STORAGE_MODE=%s: %v", tc.harness, env)
+		}
+		if tc.exapp == "" {
+			if containsEnv(env, "CASSINI_STORAGE_MODE=") {
+				t.Errorf("undecided ExApp env must omit CASSINI_STORAGE_MODE: %v", env)
+			}
+		} else if !containsEnv(env, "CASSINI_STORAGE_MODE="+tc.exapp) {
+			t.Errorf("ExApp env missing CASSINI_STORAGE_MODE=%s: %v", tc.exapp, env)
+		}
+	}
+}
+
+func TestResolveDevStackPlanSkipStorageScaffold(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{"--debug-skip-storage-scaffold"}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !plan.SkipStorageScaffold {
+		t.Fatal("--debug-skip-storage-scaffold did not take")
+	}
+	if !containsEnv(plan.env(), "CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1") {
+		t.Fatalf("skip flag did not reach the scripts: %v", plan.env())
+	}
+
+	// It composes with the mode: skipping the scaffold does not change which
+	// mode the ExApp is told to start in, which is what makes
+	// "access control selected, nothing built" reachable — the state the app's
+	// own setup flow exists to fix.
+	plan, _, err = resolveDevStackPlan("plan", []string{
+		"--storage-mode", devStackStorageACL,
+		"--debug-skip-storage-scaffold",
+	}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !containsEnv(plan.env(), "CASSINI_STORAGE_MODE=access_controlled") {
+		t.Fatalf("skipping the scaffold changed the declared mode: %v", plan.env())
+	}
+}
+
+// Off by default, and only "1" turns it on: an ambient empty or "0" must not
+// silently strip a stack of its storage.
+func TestSkipStorageScaffoldIsOffUnlessExplicitlyOne(t *testing.T) {
+	for _, value := range []string{"", "0", "false", "yes"} {
+		plan, _, err := resolveDevStackPlan("plan", nil, testEnv(map[string]string{
+			"CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD": value,
+		}))
+		if err != nil {
+			t.Fatalf("resolveDevStackPlan(%q): %v", value, err)
+		}
+		if plan.SkipStorageScaffold {
+			t.Errorf("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=%q turned the scaffold off", value)
+		}
+	}
+	plan, _, err := resolveDevStackPlan("plan", nil, testEnv(map[string]string{
+		"CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD": "1",
+	}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !plan.SkipStorageScaffold {
+		t.Fatal("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1 did not take")
+	}
+}
+
+func containsEnv(env []string, want string) bool {
+	for _, entry := range env {
+		if entry == want {
+			return true
+		}
+	}
+	return false
+}
+
+// `undecided` builds the access-controlled substrate and tells the ExApp
+// nothing (D-708).
+//
+// It is about what the app is TOLD, not about what exists: since nothing falls
+// back any more, an app that has not been told does not publish, and every other
+// harness shape declares a mode precisely to skip that state. A wizard with only
+// one usable mode would not be offering a choice, so the substrate is the full
+// one.
+func TestDevStackUndecidedBuildsTheSubstrateAndDeclaresNothing(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageUndecided}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan(undecided): %v", err)
+	}
+	if plan.StorageMode != devStackStorageUndecided {
+		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageUndecided)
+	}
+	env := plan.env()
+	if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE="+devStackStorageUndecided) {
+		t.Fatalf("harness env did not carry the mode: %v", env)
+	}
+	if containsEnv(env, "CASSINI_STORAGE_MODE=") {
+		t.Fatalf("undecided plan must omit CASSINI_STORAGE_MODE: %v", env)
+	}
+	for _, declared := range []string{"CASSINI_STORAGE_MODE=default", "CASSINI_STORAGE_MODE=access_controlled"} {
+		if containsEnv(env, declared) {
+			t.Fatalf("undecided declared %q to the ExApp: %v", declared, env)
+		}
+	}
+}
+
+func TestDevStackUndecidedScrubsAmbientExAppMode(t *testing.T) {
+	env := devScriptEnvironment(
+		[]string{"PATH=/bin", "CASSINI_STORAGE_MODE=default", "OTHER=value"},
+		[]string{"CASSINI_HARNESS_STORAGE_MODE=undecided"},
+	)
+	if containsEnv(env, "CASSINI_STORAGE_MODE=default") {
+		t.Fatalf("undecided child retained an ambient ExApp mode: %v", env)
+	}
+	if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE=undecided") {
+		t.Fatalf("undecided child lost its harness mode: %v", env)
+	}
+}
+
 // --seed carries a pack through to the harness, and is checked before a stack
 // is built: a mistyped path is a usage error, and hearing it after a five-minute
 // bring-up is the expensive way to learn it.

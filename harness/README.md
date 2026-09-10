@@ -220,11 +220,88 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
+| `--storage-mode default|acl-enabled|undecided|""` | `CASSINI_HARNESS_STORAGE_MODE` | `default` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). `undecided` (or an explicitly empty value) builds the access-controlled substrate and tells the ExApp nothing, which is the only way to reach the setup wizard. See §2.8.1. |
+| `--debug-skip-storage-scaffold` | `CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1` | off | Build no recordings storage at all. Debug only. See §2.8.1. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |
 | `stack down --suspend` | n/a | false | Down-only; stop containers but keep them. |
 | `stack down --volumes` | n/a | false | Down-only; remove project volumes too. |
 | `stack down --full` | n/a | false | Down-only; remove all known harness resources. |
+
+#### 2.8.1 Recording storage mode
+
+Cassini stores published recordings in one of two models, and which one a stack
+is built for has to be decided rather than inferred. The ExApp does not infer,
+and since D-708 it does not fall back either: with nothing recorded and nothing
+declared it is UNDECIDED, publishes nothing, records nothing, and waits for the
+Setup tab. The harness declares the mode so a stack comes up usable — and
+`--storage-mode undecided` (or `--storage-mode ""`) is how you deliberately do not, which is the only way
+to reach the wizard.
+
+The two models keep their archives in different places, on purpose — neither can
+shadow the other:
+
+```text
+  --storage-mode default              (default)
+    bootstrap: cassini account + group, and nothing else
+    archive:   CassiniNoACL/Recordings — the cassini account's OWN directory,
+               created by the app on its first enabled edge
+    ExApp:     CASSINI_STORAGE_MODE=default
+    note:      no Team folder, because a stack should be the thing it says it
+               is. It is no longer harmful to have one — the two roots cannot
+               collide — but an unused folder is still a lie about the stack.
+
+  --storage-mode acl-enabled
+    bootstrap: cassini account + group, groupfolders + group_everyone,
+               a mapped ACL-enabled Cassini Team folder
+    archive:   Cassini/Recordings — inside that Team folder, under per-recording
+               advanced ACLs
+    ExApp:     CASSINI_STORAGE_MODE=access_controlled
+    note:      privacy-focused e2e suites select this explicitly
+
+  --storage-mode undecided
+    bootstrap: the same as acl-enabled — account, group, both apps, a mapped
+               ACL-enabled Team folder. A wizard with only one usable mode is
+               not offering a choice.
+    ExApp:     nothing. CASSINI_STORAGE_MODE is OMITTED from the registration,
+               not passed empty — an empty value is an unrecognised one, which
+               the app logs as an error rather than as "nobody told me".
+    note:      publishing and recording are refused until the Setup tab is used.
+               This is the state every real install starts in.
+
+  --storage-mode ""
+    alias for undecided. CASSINI_STORAGE_MODE is likewise omitted.
+
+  --debug-skip-storage-scaffold       (composes with any mode)
+    bootstrap: no account, no group, neither app, no folder
+    ExApp:     started in whichever mode was selected
+```
+
+The two together — `--storage-mode acl-enabled --debug-skip-storage-scaffold` —
+give you access control selected with none of it built, which is what the app's
+own setup flow exists to fix.
+
+`--storage-mode undecided --debug-skip-storage-scaffold` is the fuller version
+of that: nothing built AND nothing chosen, which is exactly what an
+administrator meets on the day they install Cassini. The Setup tab then has to
+scaffold a mode before it can offer to use it, which is the rule the wizard
+enforces.
+
+The mode is only the ExApp's *initial* value. It is recorded in the app's
+`storage_settings.json` on the first enable and the Setup tab is what changes it
+afterwards, so re-registering with a different `--storage-mode` over an existing
+app volume changes nothing.
+
+Switching modes from the Setup tab COPIES the archive from one root to the other,
+verifies it arrived, records the new mode, and only then empties the old root.
+`storage_settings.json` carries a third field, `migration_clean`, which is false
+between the first of those steps and the last — so a stack killed mid-switch
+comes back with its recordings intact at whichever mode the file names, and the
+Setup tab offers one button to clear the leftovers. To inspect it:
+
+```bash
+docker exec nc_app_gocassini cat /nc_app_gocassini_data/operator/storage_settings.json
+```
 
 ### 2.9 Supporting environment variables without stack flags
 
@@ -378,7 +455,7 @@ shell that also contains `CASSINI_HARNESS_PUBLIC_URL` or other remote exports.
 | `./bin/cassini dev ci-e2e` or `./harness/bin/ci-e2e.sh` | `local-http` + `full` + `cassini none` + `recording legacy` | Baseline full Nextcloud + recorder + player run used by CI. Uses `--reset` and tears down with `--volumes`. |
 | `./harness/bin/ci-e2e-mute.sh` | same as baseline | Mute-aware three-player flow; validates multi-player capture via session artifacts and player mute logs. |
 | `./harness/bin/ci-e2e-rejoin.sh` | same as baseline | Leave/rejoin flow with two player phases; validates player phases and recorder subscription evidence. |
-| `IMAGE_REF=... ./harness/bin/ci-e2e-install-exapp.sh` | `local-http` + `core` + `cassini none` + `recording none` | Real Nextcloud + AppAPI install handshake against a provided ExApp image. The script manually starts/registers the image so it can test AppAPI route patterns. |
+| `IMAGE_REF=... ./harness/bin/ci-e2e-install-exapp.sh` | `local-http` + `core` + `cassini none` + `recording none` | Real Nextcloud + AppAPI install handshake against a provided ExApp image. The script manually starts/registers the image so it can test AppAPI route patterns. It checks access-controlled storage by default; set `CASSINI_E2E_STORAGE_MODE=default` for the separate private-root leg. |
 | `IMAGE_REF=... ./harness/bin/check-route-refresh.sh` | `local-http` + `core` + `cassini none` + `recording none` | Whether `app_api:app:update` applies a **changed** `<routes>` block to an app that is already installed. Registers with one real route withheld, proves the proxy refuses it, then reads AppAPI's own route rows in Postgres after each update form. |
 | `IMAGE_REF=... ./harness/bin/ci-e2e-talk-record-roundtrip.sh` | `local-http` + `full` + `cassini none` + `recording legacy`, then custom operator container | Full Talk record-button roundtrip: Talk recording-backend HMAC -> operator -> recorder -> transcribe -> publish -> transcript check. |
 | `./harness/bin/d263-nextcloud-lifecycle.sh` | run after a stack is up | Native Talk recording-backend lifecycle against local Nextcloud/Talk with a fake media worker. Not a full media acceptance test. |

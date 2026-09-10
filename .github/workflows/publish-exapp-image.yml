@@ -967,7 +967,7 @@ jobs:
     name: E2E manual-install proxy + lifecycle (Nextcloud / AppAPI)
     runs-on: ubuntu-latest
     needs: build-image
-    timeout-minutes: 30
+    timeout-minutes: 50
     # Heavy tier: push/dispatch, or a PR labeled `full-ci` (spins up a full
     # Nextcloud + AppAPI install — minutes-expensive).
     if: >-
@@ -987,6 +987,13 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
+        run: ./harness/bin/ci-e2e-install-exapp.sh
+
+      - name: Run manual-install default-storage e2e against a fresh Nextcloud + AppAPI
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
+          CASSINI_E2E_STORAGE_MODE: default
         run: ./harness/bin/ci-e2e-install-exapp.sh
 
   # D-684 removed the hosted-CPU Talk/ASR roundtrip. This CUDA job owns the
