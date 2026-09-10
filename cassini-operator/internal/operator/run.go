@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -24,6 +25,14 @@ import (
 
 	"cassini-operator/internal/operator/appapi"
 )
+
+// lifecycleShutdownWait bounds how long shutdown waits for an AppAPI
+// enabled/disabled callback. AppAPI stops the container right after the
+// lifecycle response, and a container stop kills the process shortly after
+// SIGTERM, so this has to stay well inside that grace period — while still
+// exceeding the callback's own deadline, or shutdown would give up on a write
+// that was about to succeed and the wait would be theatre.
+const lifecycleShutdownWait = captureConfigSyncTimeout + time.Second
 
 const (
 	defaultBind                  = "0.0.0.0:4000"
@@ -36,12 +45,17 @@ const (
 )
 
 type Config struct {
-	RepoRoot         string
-	BindAddr         string
-	BasePath         string
-	DBPath           string
-	WorkRoot         string
-	SiteRoot         string
+	RepoRoot string
+	BindAddr string
+	BasePath string
+	DBPath   string
+	WorkRoot string
+	SiteRoot string
+	// CaptureRoot stores participant-uploaded source audio (capture_upload.go)
+	// until a later stage places it on the meeting timeline. Separate from
+	// WorkRoot because its contents arrive from browsers rather than from the
+	// recorder, and its lifetime is tied to the upload rather than to a job.
+	CaptureRoot      string
 	CassiniBin       string
 	TalkSharedSecret string
 	TalkBackendURL   string
@@ -91,7 +105,12 @@ type Runtime struct {
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
-	cancel       context.CancelFunc
+	cancel context.CancelFunc
+	// lifecycle is retained so shutdown can wait for an AppAPI enabled/disabled
+	// callback still in flight. The disable edge writes back into Nextcloud and
+	// cannot run before the response (single-worker PHP deadlocks), so waiting
+	// here is the only point at which it can be given a chance to finish.
+	lifecycle    *LifecycleHandlers
 	workerWG     sync.WaitGroup
 	store        *Store
 	cfg          Config
@@ -122,6 +141,12 @@ type Runtime struct {
 	// maxBuildResourceDeferrals bounds transient retry churn. Permanent
 	// conditions block immediately; repeated pressure blocks at this ceiling.
 	maxBuildResourceDeferrals int
+	// sourceAudioRebuildQuiet is how long the newest late capture upload must
+	// have been settled before the meeting is rebuilt for it (D-698). Zero
+	// means the package default; tests shrink it so a wave can be observed
+	// coalescing without waiting a minute. Atomic because the requeue
+	// dispatcher reads it on its own goroutine while a test is changing it.
+	sourceAudioRebuildQuiet atomic.Int64
 	// sealJobFn packs one attempt's `.meeting` into its immutable `.opus`
 	// (D-583). It is a seam for the same reason buildJobFn and publishJobFn
 	// are: tests drive the pipeline without an ffmpeg subprocess.
@@ -180,6 +205,11 @@ type Runtime struct {
 	// health endpoint cannot fan out doctor subprocesses (D-376).
 	recordHealth        *ttlProbe
 	recordHealthTimeout time.Duration
+	// captureUsage caches the capture root's figures for /status. Measuring it
+	// is a filesystem walk, and /status is polled, so it gets the same
+	// singleflight-plus-TTL treatment as the nvidia-smi probe. Nil in a Config
+	// built directly (as tests do), which falls back to measuring inline.
+	captureUsage *captureUsageProbe
 	// settings is the operator-owned STT policy, injected into every
 	// record/build/doctor subprocess. settingsMu guards in-memory reads (at job
 	// spawn time) against PUT /settings writes; settingsPath is where it
@@ -393,11 +423,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
+	logger.Printf("capture_root -> %s", cfg.CaptureRoot)
 	// Report the destination we actually constructed. cfg.PublishSink stays raw
 	// (and is commonly empty in an ExApp), so applying the standalone default to
 	// it here would misreport the resolved nextcloud-files sink as local.
 	logger.Printf("publish_sink -> %s", sink.Name())
 	logger.Printf("artifact_retention -> %s", artifactRetentionOrDefault(cfg.ArtifactRetention))
+	captureStorage := captureLimitsFromEnv()
+	logger.Printf("source_capture -> collection=%t ingest=%t owner_quota=%dMiB total_quota=%dMiB min_free_disk=%dMiB max_age=%s",
+		sourceCaptureEnabled(), sourceAudioIngestEnabled(),
+		captureStorage.ownerQuota>>20, captureStorage.totalQuota>>20,
+		captureStorage.minFreeDisk>>20, captureStorage.maxAge)
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
@@ -443,13 +479,38 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			fmt.Fprintf(stderr, "shutdown server: %v\n", err)
-			return 1
+		shutdownErr := server.Shutdown(shutdownCtx)
+		if shutdownErr != nil {
+			// Report it, but do NOT return yet: the lifecycle wait below is the
+			// only chance an in-flight disable-edge write gets, and skipping it
+			// because the HTTP shutdown timed out would lose exactly the case
+			// this exists for.
+			fmt.Fprintf(stderr, "shutdown server: %v\n", shutdownErr)
 		}
-		if err := <-serveErrCh; err != nil {
-			fmt.Fprintf(stderr, "serve: %v\n", err)
-			return 1
+		serveErr := <-serveErrCh
+		if serveErr != nil {
+			fmt.Fprintf(stderr, "serve: %v\n", serveErr)
+		}
+		// Give an in-flight AppAPI lifecycle callback a moment to land. On the
+		// disable edge this is the write that tells Nextcloud the ExApp's
+		// settings are no longer live; losing it leaves the companion app
+		// injecting a payload for an ExApp that is gone. It runs even when the
+		// HTTP shutdown above failed, because that is precisely when an
+		// in-flight callback is most likely to still be there.
+		//
+		// After server.Shutdown, no new lifecycle request can start, so the
+		// counter cannot rise again underneath this wait.
+		if runtime.lifecycle != nil {
+			done := make(chan struct{})
+			go func() {
+				runtime.lifecycle.Background.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(lifecycleShutdownWait):
+				logger.Printf("shutdown: lifecycle callback still running after %s", lifecycleShutdownWait)
+			}
 		}
 		// The operator is the container's main process: returning while a
 		// record job is still finalizing would SIGKILL the recorder
@@ -457,6 +518,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// enforced per process, so this wait is bounded.
 		if !runtime.WaitForRecordJobs(recordShutdownWait) {
 			logger.Printf("shutdown abandoned record jobs still running after %s", recordShutdownWait)
+		}
+		if shutdownErr != nil || serveErr != nil {
+			return 1
 		}
 		return 0
 	case err := <-serveErrCh:
@@ -508,6 +572,10 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 		envOrDefaultAny([]string{"CASSINI_CACHE_ROOT"}, ""),
 		imageDefaultCacheRoot, "operator/models",
 		filepath.Join(defaultDataRoot, "models")), "writable cache for models the image does not bundle")
+	fs.StringVar(&cfg.CaptureRoot, "capture-root", exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_CAPTURE_ROOT"}, ""),
+		"", "operator/capture",
+		filepath.Join(defaultDataRoot, "capture")), "participant source-audio upload root")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
@@ -557,6 +625,7 @@ Flags:
 	cfg.DBPath = resolveConfigPath(repoRoot, cfg.DBPath)
 	cfg.WorkRoot = resolveConfigPath(repoRoot, cfg.WorkRoot)
 	cfg.SiteRoot = resolveConfigPath(repoRoot, cfg.SiteRoot)
+	cfg.CaptureRoot = resolveConfigPath(repoRoot, cfg.CaptureRoot)
 	cfg.CassiniBin = resolveConfigPath(repoRoot, cfg.CassiniBin)
 	cfg.TalkBackendURL = strings.TrimRight(strings.TrimSpace(cfg.TalkBackendURL), "/")
 	if cfg.MaxRecordWorkers < 1 {
@@ -571,6 +640,13 @@ Flags:
 	}
 	cfg.ArtifactRetention = strings.TrimSpace(cfg.ArtifactRetention)
 	if err := validateArtifactRetentionName(cfg.ArtifactRetention); err != nil {
+		return Config{}, 2, err
+	}
+	// Env-only, like the resource governor's knobs, but validated here rather
+	// than defaulted silently: an administrator who mistyped a capture quota
+	// would otherwise get the built-in one and no hint that their number was
+	// never read (capture_retention.go).
+	if err := validateCaptureLimits(); err != nil {
 		return Config{}, 2, err
 	}
 	if strings.TrimSpace(cfg.CassiniBin) == "" {
@@ -756,6 +832,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.computeReadiness = newComputeStatusProbe(computeReadinessProbeTTL, func(device string) (bool, string) {
 		return rt.computeProbe(device)
 	})
+	rt.captureUsage = newCaptureUsageProbe(captureUsageProbeTTL, func() (captureUsage, error) {
+		return measureCaptureRoot(rt.cfg.CaptureRoot)
+	})
 	rt.recordHealth = newTTLProbe(recordHealthProbeTTL, func() error {
 		probeCtx := rt.ctx
 		if timeout := rt.recordHealthTimeout; timeout > 0 {
@@ -805,6 +884,15 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/settings/", rt.llmSettingsHandler)
 	api.Handle("/storage", exappCfg.storageHandler(rt))
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
+	// Source-audio intake (capture_upload.go). USER-level in appinfo/info.xml:
+	// every logged-in account may upload its OWN audio, and the handler binds
+	// each upload to the authenticated caller and to a room they were in.
+	api.Handle("/capture/upload", rt.captureUploadHandler(exappCfg.talkRoomMembershipChecker(), logger))
+	// Polled by a running capture so that turning the administrator gate off
+	// reaches calls already in progress, not only the next one.
+	api.HandleFunc("/capture/enabled", rt.captureEnabledHandler)
+	api.Handle("/capture/recording", rt.captureRecordingHandler(exappCfg.talkRoomMembershipChecker()))
+	api.Handle("/capture/transfer/", rt.captureTransferHandler(exappCfg.talkRoomMembershipChecker(), logger))
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are
@@ -817,7 +905,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	rt.lifecycle = exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
 	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
 	// beside /published/ rather than under BasePath, because that is where
 	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
@@ -1231,6 +1319,11 @@ type Job struct {
 	// TalkStoppedAt records that spreed acknowledged the stopped callback for
 	// this recording (D-551 repointed it from the retired Talk upload).
 	TalkStoppedAt *string `json:"talk_stopped_at"`
+	// SourceAudioRebuild reports participant audio that arrived after this
+	// meeting's transcript was made, and whether a rebuild for it is still
+	// owed (D-698). Present on every job so a reader never has to tell
+	// "nothing owed" from "this operator does not know about rebuilds".
+	SourceAudioRebuild SourceAudioRebuildState `json:"source_audio_rebuild"`
 	// RoomToken is the Talk conversation token, promoted out of talk_binding so
 	// a room-scoped query is an ordinary column read instead of a JSON parse in
 	// whatever language happens to be asking (D-646). It is withheld from the
@@ -1519,6 +1612,8 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
+       source_audio_upload_seq, source_audio_built_seq,
+       source_audio_rebuild_count, source_audio_upload_at,
        room_token, room_name
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
@@ -1557,6 +1652,8 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
+       source_audio_upload_seq, source_audio_built_seq,
+       source_audio_rebuild_count, source_audio_upload_at,
        room_token, room_name
 FROM jobs
 WHERE id = ?`, id)
@@ -1601,6 +1698,10 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var completedAt sql.NullString
 	var talkBinding sql.NullString
 	var talkStoppedAt sql.NullString
+	var sourceAudioUploadSeq int64
+	var sourceAudioBuiltSeq int64
+	var sourceAudioRebuildCount int
+	var sourceAudioUploadAt sql.NullString
 	var roomToken sql.NullString
 	var roomName sql.NullString
 
@@ -1643,6 +1744,10 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&completedAt,
 		&talkBinding,
 		&talkStoppedAt,
+		&sourceAudioUploadSeq,
+		&sourceAudioBuiltSeq,
+		&sourceAudioRebuildCount,
+		&sourceAudioUploadAt,
 		&roomToken,
 		&roomName,
 	)
@@ -1652,6 +1757,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 		}
 		return Job{}, fmt.Errorf("scan job: %w", err)
 	}
+
+	job.SourceAudioRebuild = sourceAudioRebuildStateFrom(job.State,
+		sourceAudioUploadSeq, sourceAudioBuiltSeq, sourceAudioRebuildCount, sourceAudioUploadAt.String)
 
 	job.ArtifactRunPath = nullableStringPtr(artifactRunPath)
 	job.ArtifactMeetingPath = nullableStringPtr(artifactMeetingPath)

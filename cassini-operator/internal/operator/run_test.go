@@ -2628,12 +2628,12 @@ esac
 	return rt, func() { cleanupTestRuntime(t, rt, store) }, logPath, startedPath
 }
 
-func newTestRuntime(t *testing.T) (*Runtime, func()) {
+func newTestRuntime(t *testing.T, configure ...func(*Config)) (*Runtime, func()) {
 	t.Helper()
-	return newTestRuntimeWithLogger(t, log.New(ioDiscard{}, "", 0))
+	return newTestRuntimeWithLogger(t, log.New(ioDiscard{}, "", 0), configure...)
 }
 
-func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func()) {
+func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger, configure ...func(*Config)) (*Runtime, func()) {
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
@@ -2647,7 +2647,7 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
-	rt := NewRuntime(context.Background(), store, Config{
+	cfg := Config{
 		RepoRoot:         repoRoot,
 		BindAddr:         "127.0.0.1:0",
 		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
@@ -2656,7 +2656,11 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 		CassiniBin:       filepath.Join(repoRoot, "bin", "cassini"),
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
-	}, logger, ioDiscard{}, ioDiscard{})
+	}
+	for _, apply := range configure {
+		apply(&cfg)
+	}
+	rt := NewRuntime(context.Background(), store, cfg, logger, ioDiscard{}, ioDiscard{})
 	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
 		runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)
 		bundle, err := PrepareRunBundle(runPath, false)

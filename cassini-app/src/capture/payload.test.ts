@@ -1,0 +1,588 @@
+import { describe, expect, it } from "vitest";
+import {
+  captureAllowedByServer,
+  enabledURLFrom,
+  fetchTalkRecordingStatus,
+  install,
+  normalizeCaptureDeliveryConfig,
+  serverCheckIntervalMS,
+  pickAudioSender,
+  rotateSegment,
+  startSegment,
+  stopSegment,
+  stopWithoutRestart,
+  talkRecordingStatusFromSignalingData,
+  talkRoomStatusURL,
+  uploadURLFrom,
+} from "./payload";
+import { anchorsWithin } from "./worker";
+
+describe("uploadURLFrom", () => {
+  it("targets the operator endpoint behind the AppAPI proxy", () => {
+    expect(uploadURLFrom("/index.php/apps/app_api/proxy/gocassini")).toBe(
+      "/index.php/apps/app_api/proxy/gocassini/operator/capture/upload",
+    );
+    expect(uploadURLFrom("/nextcloud/index.php/apps/app_api/proxy/gocassini/")).toBe(
+      "/nextcloud/index.php/apps/app_api/proxy/gocassini/operator/capture/upload",
+    );
+  });
+});
+
+describe("normalizeCaptureDeliveryConfig", () => {
+  it("accepts only an explicit enabled state and same-origin proxy path", () => {
+    expect(
+      normalizeCaptureDeliveryConfig({
+        enabled: true,
+        proxyBase: "/nextcloud/index.php/apps/app_api/proxy/gocassini/",
+      }),
+    ).toEqual({
+      enabled: true,
+      proxyBase: "/nextcloud/index.php/apps/app_api/proxy/gocassini",
+    });
+  });
+
+  it("fails closed for absent, disabled, or cross-origin state", () => {
+    expect(normalizeCaptureDeliveryConfig(undefined).enabled).toBe(false);
+    expect(normalizeCaptureDeliveryConfig({ enabled: false, proxyBase: "/proxy" }).enabled).toBe(false);
+    expect(
+      normalizeCaptureDeliveryConfig({ enabled: true, proxyBase: "https://elsewhere.example/proxy" }).enabled,
+    ).toBe(false);
+  });
+});
+
+describe("Talk recording lifecycle", () => {
+  const frame = (roomid: string, status: number) =>
+    JSON.stringify({
+      type: "event",
+      event: {
+        target: "room",
+        type: "message",
+        message: { roomid, data: { type: "recording", recording: { status } } },
+      },
+    });
+
+  it("reads only authoritative recording events for this room", () => {
+    expect(talkRecordingStatusFromSignalingData(frame("room-a", 1), "room-a")).toBe(1);
+    expect(talkRecordingStatusFromSignalingData(frame("room-a", 0), "room-a")).toBe(0);
+    expect(talkRecordingStatusFromSignalingData(frame("room-b", 1), "room-a")).toBeNull();
+    expect(talkRecordingStatusFromSignalingData("not json", "room-a")).toBeNull();
+    expect(
+      talkRecordingStatusFromSignalingData(
+        JSON.stringify({
+          type: "event",
+          event: {
+            target: "room",
+            type: "message",
+            message: { roomid: "room-a", data: { type: "chat", recording: { status: 1 } } },
+          },
+        }),
+        "room-a",
+      ),
+    ).toBeNull();
+  });
+
+  it("reads the canonical room status for reload and internal-signaling fallback", async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ ocs: { data: { callRecording: 2 } } }), { status: 200 });
+    await expect(fetchTalkRecordingStatus("room/a", "/nextcloud", fetchImpl as never)).resolves.toBe(2);
+    expect(talkRoomStatusURL("room/a", "/nextcloud/")).toBe(
+      "/nextcloud/ocs/v2.php/apps/spreed/api/v4/room/room%2Fa?format=json",
+    );
+  });
+
+  it("does not invent a lifecycle state from a failed or malformed room request", async () => {
+    const failed = async () => new Response("no", { status: 503 });
+    const malformed = async () => new Response(JSON.stringify({ ocs: { data: {} } }), { status: 200 });
+    await expect(fetchTalkRecordingStatus("room", "", failed as never)).resolves.toBeNull();
+    await expect(fetchTalkRecordingStatus("room", "", malformed as never)).resolves.toBeNull();
+  });
+});
+
+describe("pickAudioSender", () => {
+  it("finds the publishing sender among subscriber connections", () => {
+    expect(pickAudioSender([{ track: null }, { track: { kind: "audio", readyState: "live" } }])).toBe(1);
+  });
+
+  it("ignores video senders and ended tracks", () => {
+    expect(
+      pickAudioSender([
+        { track: { kind: "video", readyState: "live" } },
+        { track: { kind: "audio", readyState: "ended" } },
+      ]),
+    ).toBe(-1);
+  });
+
+  it("returns -1 for a receive-only connection", () => {
+    expect(pickAudioSender([])).toBe(-1);
+  });
+});
+
+// fakeLocalStorage stands in for a browser profile's storage. The production
+// code reads localStorage off globalThis rather than taking it as an argument,
+// because it runs on a Talk page, a Cassini page and here, so the test has to
+// supply it the same way a browser does.
+function fakeLocalStorage(seed: Record<string, string>) {
+  const entries = new Map(Object.entries(seed));
+  return {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => void entries.set(key, value),
+    removeItem: (key: string) => void entries.delete(key),
+    keys: () => [...entries.keys()],
+  };
+}
+
+describe("install", () => {
+  // A browser profile that answered the opt-in this feature used to ask keeps
+  // that answer forever unless something deletes it: nothing reads or writes
+  // the key any more, so it would simply sit there — a recorded answer to a
+  // question this build no longer asks, on a profile whose owner may never open
+  // Cassini again, and no such answer is kept. Deleting it is the whole point,
+  // and it has to happen even where capture is switched off, which is the one
+  // case that returns early.
+  it("forgets an older build's opt-in even when capture is disabled", () => {
+    const storage = fakeLocalStorage({
+      "cassini.sourceCapture.consent": "granted",
+      "cassini.sourceCapture.uploadAttempts": '{"capture-room-1":2}',
+      "unrelated.key": "kept",
+    });
+    const globals = globalThis as { localStorage?: unknown };
+    const original = globals.localStorage;
+    globals.localStorage = storage;
+    try {
+      install({ enabled: false, proxyBase: "" });
+    } finally {
+      globals.localStorage = original;
+    }
+
+    expect(storage.getItem("cassini.sourceCapture.consent")).toBeNull();
+    // Delivery bookkeeping is still live and says nothing about a person.
+    expect(storage.getItem("cassini.sourceCapture.uploadAttempts")).toBe('{"capture-room-1":2}');
+    expect(storage.getItem("unrelated.key")).toBe("kept");
+  });
+
+  it("survives a storage that refuses to be written", () => {
+    const globals = globalThis as { localStorage?: unknown };
+    const original = globals.localStorage;
+    globals.localStorage = {
+      removeItem: () => {
+        throw new Error("storage disabled");
+      },
+    };
+    try {
+      expect(() => install({ enabled: false, proxyBase: "" })).not.toThrow();
+    } finally {
+      globals.localStorage = original;
+    }
+  });
+});
+
+describe("anchorsWithin", () => {
+  const anchors = [
+    { frameIndex: 0, rtpTimestamp: 1000, ssrc: 7, wallMs: 100 },
+    { frameIndex: 50, rtpTimestamp: 49000, ssrc: 7, wallMs: 1100 },
+    { frameIndex: 100, rtpTimestamp: 97000, ssrc: 7, wallMs: 2100 },
+  ];
+
+  it("slices the call-wide anchor stream to one segment", () => {
+    expect(anchorsWithin(anchors, 1000, 2000).map((a) => a.frameIndex)).toEqual([50]);
+  });
+
+  it("returns nothing for a segment recorded without encoded-transform support", () => {
+    expect(anchorsWithin([], 0, 10_000)).toEqual([]);
+  });
+});
+
+describe("stopSegment", () => {
+  // Regression: endCall used to clear the module-level capture state
+  // synchronously, so MediaRecorder's final dataavailable and its onstop — both
+  // of which fire AFTER stop() — found no state and silently dropped the tail of
+  // the recording along with the segment-stop the worker needs to close its file
+  // handle. The ordering asserted here is the fix.
+  function fakeSession(posted: unknown[]) {
+    let onstop: (() => void) | null = null;
+    let ondata: ((event: { data: { size: number; arrayBuffer(): Promise<ArrayBuffer> } }) => void) | null = null;
+    const session = {
+      segmentIndex: 3,
+      muteIntervals: [[10, 20]] as Array<[number, number]>,
+      pendingChunks: Promise.resolve(),
+      worker: { postMessage: (message: unknown) => posted.push(message) },
+      recorder: {
+        stop() {
+          // A real MediaRecorder emits its last chunk before onstop.
+          ondata?.({
+            data: { size: 4, arrayBuffer: async () => new ArrayBuffer(4) },
+          });
+          setTimeout(() => onstop?.(), 0);
+        },
+        set onstop(handler: () => void) {
+          onstop = handler;
+        },
+      },
+    } as unknown as import("./payload").CaptureState;
+    return {
+      session,
+      emitFinalChunk: () => {
+        const s = session as unknown as { pendingChunks: Promise<void> };
+        s.pendingChunks = s.pendingChunks.then(async () => {
+          posted.push({ type: "chunk", index: 3 });
+        });
+      },
+      setOnData: (handler: typeof ondata) => {
+        ondata = handler;
+      },
+    };
+  }
+
+  it("posts segment-stop only after the final chunk has been handed over", async () => {
+    const posted: unknown[] = [];
+    const { session, emitFinalChunk, setOnData } = fakeSession(posted);
+    setOnData(() => emitFinalChunk());
+
+    await stopSegment(session);
+
+    const kinds = posted.map((message) => (message as { type: string }).type);
+    expect(kinds).toEqual(["chunk", "segment-stop"]);
+  });
+
+  it("carries the segment's mute intervals and advances the index", async () => {
+    const posted: unknown[] = [];
+    const { session } = fakeSession(posted);
+
+    await stopSegment(session);
+
+    const stop = posted.find((m) => (m as { type: string }).type === "segment-stop") as {
+      index: number;
+      muteIntervals: Array<[number, number]>;
+    };
+    expect(stop.index).toBe(3);
+    expect(stop.muteIntervals).toEqual([[10, 20]]);
+    expect((session as unknown as { segmentIndex: number }).segmentIndex).toBe(4);
+  });
+
+  it("does not hang when the recorder was already inactive", async () => {
+    const posted: unknown[] = [];
+    const { session } = fakeSession(posted);
+    (session as unknown as { recorder: { stop(): void } }).recorder.stop = () => {
+      throw new Error("InvalidStateError");
+    };
+
+    await expect(stopSegment(session)).resolves.toBeUndefined();
+    expect(posted.map((m) => (m as { type: string }).type)).toContain("segment-stop");
+  });
+
+  it("is a no-op with no active recorder", async () => {
+    const posted: unknown[] = [];
+    const { session } = fakeSession(posted);
+    (session as unknown as { recorder: unknown }).recorder = null;
+
+    await stopSegment(session);
+
+    expect(posted).toEqual([]);
+  });
+});
+
+// The departure tail: a segment stamped from the clock either side of its
+// recording declares a window wider than the audio it holds, and the server
+// refuses a segment holding under 90% of what it declares. Measured on the
+// browser-capture CI leg, the stopping alone ran 0.4-1.7 s, which on an
+// eleven-second segment is more than that tenth — so the seconds around
+// somebody leaving a call were the ones least likely to be spliced from their
+// own microphone. Both stamps now come from the recording.
+describe("the window a segment declares", () => {
+  // A recorder whose stop takes real time to settle: the final chunk hand-off
+  // and onstop both land well after stop() was called, which is exactly the
+  // interval that used to be declared as if it were audio.
+  function slowStoppingSession(posted: Array<Record<string, unknown>>, latencyMs: number) {
+    let now = 10_000;
+    const clock = { now: () => now, advance: (ms: number) => (now += ms) };
+    let onstop: (() => void) | null = null;
+    const session = {
+      segmentIndex: 0,
+      muteIntervals: [] as Array<[number, number]>,
+      pendingChunks: Promise.resolve(),
+      worker: { postMessage: (message: Record<string, unknown>) => posted.push(message) },
+      recorder: {
+        stop() {
+          // Time passes between the request and onstop, and more of it while
+          // the outstanding chunk is converted and handed to the worker.
+          setTimeout(() => {
+            clock.advance(latencyMs);
+            onstop?.();
+          }, 0);
+        },
+        set onstop(handler: () => void) {
+          onstop = handler;
+        },
+      },
+    } as unknown as import("./payload").CaptureState;
+    return { session, clock };
+  }
+
+  it("stops a segment where the recorder was asked to, not where the waiting ended", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const { session, clock } = slowStoppingSession(posted, 1_400);
+    const savedNow = Date.now;
+    Date.now = () => clock.now();
+    try {
+      await stopSegment(session);
+    } finally {
+      Date.now = savedNow;
+    }
+
+    const stop = posted.find((message) => message.type === "segment-stop") as {
+      stopWallMs: number;
+    };
+    // The stop request, not the 1.4 s of stopping that followed it. Declaring
+    // that interval is what cost a healthy final segment its splice.
+    expect(stop.stopWallMs).toBe(10_000);
+    expect(clock.now()).toBe(11_400);
+  });
+
+  it("waits for the final chunk even though it no longer stamps from that moment", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const { session, clock } = slowStoppingSession(posted, 1_400);
+    // An outstanding chunk hand-off, the thing the awaits exist for.
+    (session as unknown as { pendingChunks: Promise<void> }).pendingChunks = Promise.resolve().then(
+      () => {
+        posted.push({ type: "chunk", index: 0 });
+      },
+    );
+    const savedNow = Date.now;
+    Date.now = () => clock.now();
+    try {
+      await stopSegment(session);
+    } finally {
+      Date.now = savedNow;
+    }
+
+    expect(posted.map((message) => message.type)).toEqual(["chunk", "segment-stop"]);
+  });
+
+  it("starts a segment where the recorder started, not where the page began asking", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    let now = 5_000;
+    class FakeRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+      onstop: (() => void) | null = null;
+      ondataavailable: unknown = null;
+      constructor() {
+        // Constructing a MediaRecorder is not free, and neither is start().
+        now += 40;
+      }
+      start() {
+        now += 60;
+      }
+      stop() {
+        setTimeout(() => this.onstop?.(), 0);
+      }
+    }
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const savedRecorder = globals.MediaRecorder;
+    const savedStream = globals.MediaStream;
+    const savedNow = Date.now;
+    globals.MediaRecorder = FakeRecorder;
+    globals.MediaStream = class {
+      constructor(_tracks: unknown) {}
+    };
+    Date.now = () => now;
+    try {
+      const session = {
+        segmentIndex: 0,
+        muteIntervals: [] as Array<[number, number]>,
+        pendingChunks: Promise.resolve(),
+        rotation: Promise.resolve(),
+        dirName: "capture-x-1",
+        segmentStartWallMs: 0,
+        worker: { postMessage: (message: Record<string, unknown>) => posted.push(message) },
+        recorder: null,
+      } as unknown as import("./payload").CaptureState;
+      const sender = {
+        track: { kind: "audio", readyState: "live", enabled: true, getSettings: () => ({}) },
+      } as unknown as RTCRtpSender;
+
+      startSegment(session, sender);
+
+      const start = posted.find((message) => message.type === "segment-start") as {
+        meta: { startWallMs: number };
+      };
+      // 5_000 + 40 (construction) + 60 (start): the file holds nothing from
+      // before the recorder was running, so the window must not claim it.
+      expect(start.meta.startWallMs).toBe(5_100);
+    } finally {
+      globals.MediaRecorder = savedRecorder;
+      globals.MediaStream = savedStream;
+      Date.now = savedNow;
+    }
+  });
+});
+
+describe("rotateSegment", () => {
+  // Regression: rotation used to be chained onto `pendingChunks`, the very
+  // field stopSegment awaits. That made the field refer to a promise containing
+  // the stopSegment call waiting on it, so one mid-call device change hung
+  // capture for the rest of the meeting and no upload ever happened.
+  it("completes rather than deadlocking against the chunk chain", async () => {
+    const posted: Array<{ type: string }> = [];
+
+    // Minimal stand-ins for the browser globals startSegment reaches for.
+    class FakeRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+      onstop: (() => void) | null = null;
+      ondataavailable: unknown = null;
+      start() {}
+      stop() {
+        setTimeout(() => this.onstop?.(), 0);
+      }
+    }
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const savedRecorder = globals.MediaRecorder;
+    const savedStream = globals.MediaStream;
+    globals.MediaRecorder = FakeRecorder;
+    globals.MediaStream = class {
+      constructor(_tracks: unknown) {}
+    };
+
+    try {
+      const session = {
+        segmentIndex: 0,
+        muteIntervals: [] as Array<[number, number]>,
+        pendingChunks: Promise.resolve(),
+        rotation: Promise.resolve(),
+        dirName: "capture-x-1",
+        segmentStartWallMs: 0,
+        worker: { postMessage: (message: { type: string }) => posted.push(message) },
+        recorder: new FakeRecorder(),
+      } as unknown as import("./payload").CaptureState;
+
+      const sender = {
+        track: { kind: "audio", readyState: "live", enabled: true, getSettings: () => ({}) },
+      } as unknown as RTCRtpSender;
+
+      rotateSegment(session, sender);
+
+      const rotation = (session as unknown as { rotation: Promise<void> }).rotation;
+      await expect(
+        Promise.race([
+          rotation.then(() => "done"),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("rotation deadlocked")), 3000)),
+        ]),
+      ).resolves.toBe("done");
+
+      // The old segment was closed and a new one opened, in that order.
+      const kinds = posted.map((message) => message.type);
+      expect(kinds).toContain("segment-stop");
+      expect(kinds).toContain("segment-start");
+      expect(kinds.indexOf("segment-stop")).toBeLessThan(kinds.lastIndexOf("segment-start"));
+    } finally {
+      globals.MediaRecorder = savedRecorder;
+      globals.MediaStream = savedStream;
+    }
+  });
+});
+
+describe("stopWithoutRestart", () => {
+  // replaceTrack(null) detaches the microphone. Continuing to record the old
+  // track kept writing whatever that detached source still produced.
+  it("closes the segment and does not open another", async () => {
+    const posted: Array<{ type: string }> = [];
+    const session = {
+      segmentIndex: 0,
+      muteIntervals: [] as Array<[number, number]>,
+      pendingChunks: Promise.resolve(),
+      rotation: Promise.resolve(),
+      worker: { postMessage: (message: { type: string }) => posted.push(message) },
+      recorder: {
+        onstop: null as null | (() => void),
+        stop() {
+          setTimeout(() => this.onstop?.(), 0);
+        },
+      },
+    } as unknown as import("./payload").CaptureState;
+
+    stopWithoutRestart(session);
+    await (session as unknown as { rotation: Promise<void> }).rotation;
+
+    const kinds = posted.map((message) => message.type);
+    expect(kinds).toContain("segment-stop");
+    expect(kinds).not.toContain("segment-start");
+  });
+});
+
+describe("captureAllowedByServer", () => {
+  // The administrator switch is the only thing standing between a recorded call
+  // and every participant's microphone, so this check fails CLOSED: the cost of
+  // a false no is a missing transcript improvement, the cost of a false yes is
+  // collecting audio an administrator switched off.
+  it("records only on an explicit yes", async () => {
+    const yes = async () => new Response(JSON.stringify({ enabled: true }), { status: 200 });
+    await expect(captureAllowedByServer("", yes as never)).resolves.toBe(true);
+  });
+
+  it("refuses on an explicit no", async () => {
+    const no = async () => new Response(JSON.stringify({ enabled: false }), { status: 200 });
+    await expect(captureAllowedByServer("", no as never)).resolves.toBe(false);
+  });
+
+  it("refuses when the server cannot be reached", async () => {
+    const boom = async () => {
+      throw new Error("network down");
+    };
+    await expect(captureAllowedByServer("", boom as never)).resolves.toBe(false);
+  });
+
+  it("refuses on an error status or an unreadable answer", async () => {
+    const err = async () => new Response("nope", { status: 503 });
+    await expect(captureAllowedByServer("", err as never)).resolves.toBe(false);
+
+    const junk = async () => new Response("not json", { status: 200 });
+    await expect(captureAllowedByServer("", junk as never)).resolves.toBe(false);
+  });
+
+  it("targets the operator endpoint behind the AppAPI proxy", () => {
+    expect(enabledURLFrom("/nextcloud/index.php/apps/app_api/proxy/gocassini")).toBe(
+      "/nextcloud/index.php/apps/app_api/proxy/gocassini/operator/capture/enabled",
+    );
+  });
+});
+
+describe("captureAllowedByServer deadlines", () => {
+  // Without a deadline a hung request never settles, so the check does not fail
+  // closed at all: recording continues past the poll interval while further
+  // polls pile up behind it.
+  it("refuses when the request never settles", async () => {
+    const hangs = () => new Promise<Response>(() => {});
+    await expect(captureAllowedByServer("", hangs as never, 50)).resolves.toBe(false);
+  });
+
+  it("aborts the request it gave up on", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const hangs = (_url: string, init?: RequestInit) => {
+      seenSignal = init?.signal ?? undefined;
+      return new Promise<Response>(() => {});
+    };
+    await captureAllowedByServer("", hangs as never, 50);
+    expect(seenSignal?.aborted, "the abandoned request was left running").toBe(true);
+  });
+});
+
+describe("serverCheckIntervalMS", () => {
+  // The override exists for tests. It must only ever make the check stricter,
+  // so a hostile value on the page cannot use it to keep a recorder alive.
+  it("accepts a shorter interval", () => {
+    expect(serverCheckIntervalMS(1000)).toBe(1000);
+  });
+
+  it("refuses to be made less frequent", () => {
+    expect(serverCheckIntervalMS(600_000)).toBe(30_000);
+  });
+
+  it("falls back to the default for anything else", () => {
+    expect(serverCheckIntervalMS(undefined)).toBe(30_000);
+    expect(serverCheckIntervalMS(-1)).toBe(30_000);
+    expect(serverCheckIntervalMS("soon")).toBe(30_000);
+  });
+});

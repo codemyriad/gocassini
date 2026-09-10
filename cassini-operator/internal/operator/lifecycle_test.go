@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -229,7 +230,7 @@ func TestEnabledFalseDoesNotTriggerUIRegistrar(t *testing.T) {
 func TestEnabledCallbackReceivesPersistedState(t *testing.T) {
 	h, _ := newTestHandlers(t)
 	called := make(chan bool, 2)
-	h.EnabledCallback = func(enabled bool) { called <- enabled }
+	h.EnabledCallback = func(enabled bool, _ uint64) { called <- enabled }
 
 	for _, want := range []bool{true, false} {
 		query := "enabled=0"
@@ -274,5 +275,131 @@ func TestInitRejectsGET(t *testing.T) {
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("got %d, want 405", w.Code)
+	}
+}
+
+// Neither edge may call back into Nextcloud before the response is written.
+//
+// The callback POSTs into Nextcloud, and doing that while Nextcloud is still
+// blocked serving this request deadlocks a single-worker PHP setup — the same
+// reason UIRegistrar is deferred (see its doc comment). An earlier attempt to
+// fix the disable-edge race by running the callback first reintroduced exactly
+// that deadlock, so this asserts the ordering in both directions.
+func TestLifecycleCallbacksNeverRunBeforeTheResponse(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		name := "disable edge"
+		query := "enabled=0"
+		if enabled {
+			name, query = "enable edge", "enabled=1"
+		}
+		t.Run(name, func(t *testing.T) {
+			h, _ := newTestHandlers(t)
+			entered := make(chan struct{}, 1)
+			release := make(chan struct{})
+			h.EnabledCallback = func(bool, uint64) {
+				entered <- struct{}{}
+				<-release
+			}
+			defer close(release)
+
+			done := make(chan int, 1)
+			go func() { done <- putEnabled(t, h, query, "").Code }()
+
+			select {
+			case code := <-done:
+				if code != http.StatusOK {
+					t.Fatalf("got %d, want 200", code)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("the response waited on the callback; that deadlocks single-worker PHP")
+			}
+
+			select {
+			case <-entered:
+			case <-time.After(2 * time.Second):
+				t.Fatal("EnabledCallback was never called")
+			}
+		})
+	}
+}
+
+// Shutdown has to be able to wait for a callback still in flight. On the
+// disable edge that callback is the write telling Nextcloud the ExApp's
+// settings are no longer live, and AppAPI stops the container as soon as the
+// response returns — so without this the write is simply lost.
+func TestBackgroundTracksAnInFlightCallback(t *testing.T) {
+	h, _ := newTestHandlers(t)
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	h.EnabledCallback = func(bool, uint64) {
+		<-release
+		close(finished)
+	}
+
+	if code := putEnabled(t, h, "enabled=0", "").Code; code != http.StatusOK {
+		t.Fatalf("got %d, want 200", code)
+	}
+
+	waited := make(chan struct{})
+	go func() { h.Background.Wait(); close(waited) }()
+
+	select {
+	case <-waited:
+		t.Fatal("Background.Wait returned while the callback was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	<-finished
+	select {
+	case <-waited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Background.Wait did not return after the callback finished")
+	}
+}
+
+// Edge numbers must reflect the order Nextcloud sent the edges in, not the
+// order the callback goroutines happened to run. Claiming the number inside
+// the goroutine would let a delayed enable out-rank a later disable and put a
+// stale "enabled" back into Nextcloud.
+func TestLifecycleEdgesAreNumberedInArrivalOrder(t *testing.T) {
+	h, _ := newTestHandlers(t)
+
+	var mu sync.Mutex
+	seen := map[bool]uint64{}
+	done := make(chan struct{}, 2)
+	// Delay the FIRST callback so its goroutine finishes last.
+	first := true
+	h.EnabledCallback = func(enabled bool, edge uint64) {
+		mu.Lock()
+		delay := first
+		first = false
+		seen[enabled] = edge
+		mu.Unlock()
+		if delay {
+			time.Sleep(30 * time.Millisecond)
+		}
+		done <- struct{}{}
+	}
+
+	if code := putEnabled(t, h, "enabled=1", "").Code; code != http.StatusOK {
+		t.Fatalf("enable: got %d, want 200", code)
+	}
+	if code := putEnabled(t, h, "enabled=0", "").Code; code != http.StatusOK {
+		t.Fatalf("disable: got %d, want 200", code)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("callbacks did not complete")
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if seen[true] >= seen[false] {
+		t.Fatalf("enable edge %d did not precede disable edge %d; a delayed enable can now overwrite a later disable",
+			seen[true], seen[false])
 	}
 }

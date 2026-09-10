@@ -4,3 +4,7 @@ node_modules
 node_modules/
 !package.json
 !package-lock.json
+
+# Playwright browser-test artefacts (e2e/, see docs/source-audio-capture.md).
+test-results/
+playwright-report/
