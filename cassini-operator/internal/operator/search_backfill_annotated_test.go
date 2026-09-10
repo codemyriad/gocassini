@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,18 +12,25 @@ import (
 // local sealed file in its container and in nothing else. Backfill must tell
 // that apart from the rerun that never published — by the audio digest.
 
-// showAudioCLI answers `cassini annotate show` with one audio digest, for the
-// local sealed copy these tests read through it.
-func showAudioCLI(t *testing.T, audio string) string {
+// showAudioCLI answers `cassini annotate show` with the file's first word as its
+// audio digest, so "<audio> +marks" is a marked copy of the same audio.
+func showAudioCLI(t *testing.T) string {
 	t.Helper()
-	return fakeCassini(t, `printf '{"format":"cassini.annotate.result.v1","annotations":null,"resolved":true,"audioOpusSha256":"`+audio+`","containerSha256":"x"}'`)
+	return fakeCassini(t, `read -r audio _ < "$3"
+printf '{"format":"cassini.annotate.result.v1","annotations":null,"resolved":true,"audioOpusSha256":"%s","containerSha256":"x"}' "$audio"`)
 }
 
-func stubArchiveCopy(read searchArchiveCopy) (searchArchiveReader, *int) {
+// stubArchiveCopy reads back an archive copy holding content.
+func stubArchiveCopy(t *testing.T, content string) (searchArchiveReader, *int) {
+	t.Helper()
+	copyPath := filepath.Join(t.TempDir(), "archive.opus")
+	if err := os.WriteFile(copyPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	calls := 0
-	return func(context.Context, string) (searchArchiveCopy, error) {
+	return func(context.Context, string) (searchArchiveCopy, func(), error) {
 		calls++
-		return read, nil
+		return searchArchiveCopy{Words: archiveWords, Digest: digestOf(content), Path: copyPath}, func() {}, nil
 	}, &calls
 }
 
@@ -39,11 +47,11 @@ func rowSourceAndDigest(t *testing.T, f *backfillFixture, opusName string) (stri
 func TestBackfillAcceptsAMarkedArchiveCopyOfTheSameAudio(t *testing.T) {
 	f := newBackfillFixture(t)
 	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
-	f.rt.cfg.CassiniBin = showAudioCLI(t, "audio-a")
+	f.rt.cfg.CassiniBin = showAudioCLI(t)
 	// Marked since delivery: the bytes, and the checksum the write stamped, are
 	// no longer the sealed file's. The audio is.
 	const marked = "sealed-audio-bytes +marks"
-	archive, calls := stubArchiveCopy(searchArchiveCopy{Words: archiveWords, Digest: digestOf(marked), AudioDigest: "audio-a"})
+	archive, calls := stubArchiveCopy(t, marked)
 	targets := []searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}
 
 	report, err := f.rt.backfillSearchIndex(context.Background(), targets, deliveredState(marked), archive)
@@ -78,8 +86,8 @@ func TestBackfillStillRefusesABundleWhoseAudioDiffers(t *testing.T) {
 	f := newBackfillFixture(t)
 	f.writeCurrent(t, "JOB1", "rebuilt-audio-never-published", `{"version":"transcript.words.v1","segments":[
 	  {"id":"seg_9999","speaker":"S1","startMs":1000,"endMs":2000,"text":"undelivered rewording","words":[]}]}`)
-	f.rt.cfg.CassiniBin = showAudioCLI(t, "audio-rebuilt")
-	archive, _ := stubArchiveCopy(searchArchiveCopy{Words: archiveWords, Digest: digestOf("delivered +marks"), AudioDigest: "audio-delivered"})
+	f.rt.cfg.CassiniBin = showAudioCLI(t)
+	archive, _ := stubArchiveCopy(t, "delivered +marks")
 
 	report, err := f.rt.backfillSearchIndex(context.Background(),
 		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, deliveredState("delivered +marks"), archive)
@@ -102,13 +110,13 @@ func TestBackfillStillRefusesABundleWhoseAudioDiffers(t *testing.T) {
 	}
 }
 
-// Unknown is not a match: with no CLI to read the local audio digest, the bundle
+// Unknown is not a match: with no CLI to read the audio digests, the bundle
 // stays unverified and the archive's words are used, as before marks existed.
 func TestBackfillDoesNotTrustAnAudioDigestItCannotRead(t *testing.T) {
 	f := newBackfillFixture(t)
 	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", ingestTranscript)
 	const marked = "sealed-audio-bytes +marks"
-	archive, _ := stubArchiveCopy(searchArchiveCopy{Words: archiveWords, Digest: digestOf(marked), AudioDigest: "audio-a"})
+	archive, _ := stubArchiveCopy(t, marked)
 
 	if _, err := f.rt.backfillSearchIndex(context.Background(),
 		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}}, deliveredState(marked), archive); err != nil {

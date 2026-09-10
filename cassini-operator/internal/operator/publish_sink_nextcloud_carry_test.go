@@ -401,12 +401,10 @@ func TestNCSinkRerunDeliversUnresolvedMarks(t *testing.T) {
 
 // With no CLI there is nothing to carry with — and nothing to carry, because the
 // routes that write marks are not mounted there. Delivery is exactly what it was
-// before D-737, and says so once.
+// before D-737.
 func TestNCSinkWithoutACLIRedeliversAsBefore(t *testing.T) {
 	w := newWiredNC(t)
 	sink, _ := newCarryingSink(t, w, nil)
-	var logs bytes.Buffer
-	sink.logger = log.New(&logs, "", 0)
 	if _, err := publishMeetingA(t, sink, "one"); err != nil {
 		t.Fatalf("first Deliver() error = %v", err)
 	}
@@ -420,12 +418,6 @@ func TestNCSinkWithoutACLIRedeliversAsBefore(t *testing.T) {
 	if got := w.content(carryOpus); got != "opus-meeting-a" {
 		t.Fatalf("the archive holds %q, want the sealed file", got)
 	}
-	if _, err := publishMeetingA(t, sink, "three"); err != nil {
-		t.Fatalf("second rerun Deliver() error = %v", err)
-	}
-	if n := strings.Count(logs.String(), "no cassini binary configured"); n != 1 {
-		t.Errorf("the no-CLI notice was logged %d times, want once:\n%s", n, logs.String())
-	}
 }
 
 // The projection hears what each delivery left in the archive, keyed by the
@@ -436,7 +428,7 @@ func TestNCSinkRecordsWhatTheDeliveredRecordingCarries(t *testing.T) {
 	cli := newFakeAnnotateCLI(t, fakeAnnotateOptions{})
 	sink, _ := newCarryingSink(t, w, cli)
 	spy := &annotationIndexSpy{}
-	sink.annotations = func() annotationIndex { return spy }
+	sink.rt = &Runtime{annotations: spy}
 
 	attempt, err := publishMeetingA(t, sink, "one")
 	if err != nil {
@@ -467,7 +459,7 @@ func TestNCSinkNeverFailsAPublishOverTheMarksIndex(t *testing.T) {
 		w := newWiredNC(t)
 		sink, _ := newCarryingSink(t, w, newFakeAnnotateCLI(t, fakeAnnotateOptions{showFails: true}))
 		spy := &annotationIndexSpy{}
-		sink.annotations = func() annotationIndex { return spy }
+		sink.rt = &Runtime{annotations: spy}
 		if _, err := publishMeetingA(t, sink, "one"); err != nil {
 			t.Fatalf("an unreadable index entry failed the publish: %v", err)
 		}
@@ -479,7 +471,7 @@ func TestNCSinkNeverFailsAPublishOverTheMarksIndex(t *testing.T) {
 		w := newWiredNC(t)
 		sink, _ := newCarryingSink(t, w, newFakeAnnotateCLI(t, fakeAnnotateOptions{}))
 		spy := &annotationIndexSpy{recordErr: errors.New("disk I/O error")}
-		sink.annotations = func() annotationIndex { return spy }
+		sink.rt = &Runtime{annotations: spy}
 		if _, err := publishMeetingA(t, sink, "one"); err != nil {
 			t.Fatalf("a failed index write failed the publish: %v", err)
 		}
@@ -491,7 +483,7 @@ func TestNCSinkNeverFailsAPublishOverTheMarksIndex(t *testing.T) {
 		w := newWiredNC(t)
 		cli := newFakeAnnotateCLI(t, fakeAnnotateOptions{})
 		sink, _ := newCarryingSink(t, w, cli)
-		sink.annotations = func() annotationIndex { return nil }
+		sink.rt = &Runtime{}
 		if _, err := publishMeetingA(t, sink, "one"); err != nil {
 			t.Fatalf("Deliver() error = %v", err)
 		}
@@ -605,4 +597,32 @@ func TestNCSinkRepairCarriesTheMarksOutBeforeDeletingTheLeaf(t *testing.T) {
 		t.Fatalf("the archive holds %q, want %q", got, want)
 	}
 	assertLeafProtected(t, w.fakeNCFiles, carryOpus)
+}
+
+// A carry that keeps refusing — marks in a format an older build does not know,
+// after a rollback — must not leave the recording readable by every account on
+// every rerun. The leaf is denied, keeps its marks, and the publish fails.
+func TestNCSinkRepairDeniesTheLeafWhenItsMarksCannotBeCarried(t *testing.T) {
+	w := newWiredNC(t)
+	sink, applied := newCarryingSink(t, w, newFakeAnnotateCLI(t, fakeAnnotateOptions{carryFails: true}))
+	w.mu.Lock()
+	w.files[carryOpus] = []byte("leaked +mark") // delivered, marked, and carrying no rule
+	w.mu.Unlock()
+
+	for _, run := range []string{"one", "two"} {
+		_, err := publishMeetingA(t, sink, run)
+		if err == nil || !strings.Contains(err.Error(), "carry the marks") {
+			t.Fatalf("publish %s: Deliver() error = %v, want the carry failure", run, err)
+		}
+		assertLeafProtected(t, w.fakeNCFiles, carryOpus)
+		if got := w.content(carryOpus); got != "leaked +mark" {
+			t.Fatalf("publish %s: the archive holds %q, want the marked copy kept", run, got)
+		}
+	}
+	// Denied on the first publish; the second finds it protected and fails at
+	// the carry again, touching nothing.
+	assertSequence(t, "reruns", w.sequenceSince(0, carryOpus), "PROPFIND", "GET", "PROPPATCH", "PROPFIND", "GET")
+	if *applied != 0 {
+		t.Errorf("audience applied %d times over a failed publish", *applied)
+	}
 }
