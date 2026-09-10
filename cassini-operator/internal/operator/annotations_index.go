@@ -19,10 +19,10 @@ type annotationIndex interface {
 	// MarkUnavailable records that opusName's marks could not be read, so the
 	// vocabulary reports partial coverage instead of a false complete one.
 	MarkUnavailable(ctx context.Context, opusName, reason string) error
-	// ResolveLabel maps a label (trimmed, case-insensitive) to the tag id this
-	// installation already uses for it anywhere in the archive. ok is false when
-	// none does, and the caller mints one.
-	ResolveLabel(ctx context.Context, label string) (tagID string, ok bool, err error)
+	// ResolveLabel maps a label (trimmed, case-insensitive) to the tag id already
+	// used for it on the meetings in visible — the caller's readable set, never
+	// the whole archive. ok is false when none does, and the caller mints one.
+	ResolveLabel(ctx context.Context, label string, visible []string) (tagID string, ok bool, err error)
 	// Namespace is this installation's tag namespace: adopted from the archive's
 	// own files on a fresh volume, minted only when the archive carries none.
 	Namespace(ctx context.Context) (string, error)

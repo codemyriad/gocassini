@@ -52,7 +52,7 @@ type buildingIndex struct{}
 
 func (buildingIndex) Record(context.Context, string, annotateResult) error  { return nil }
 func (buildingIndex) MarkUnavailable(context.Context, string, string) error { return nil }
-func (buildingIndex) ResolveLabel(context.Context, string) (string, bool, error) {
+func (buildingIndex) ResolveLabel(context.Context, string, []string) (string, bool, error) {
 	return "", false, nil
 }
 func (buildingIndex) Namespace(context.Context) (string, error) {

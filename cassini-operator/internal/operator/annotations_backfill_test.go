@@ -150,7 +150,7 @@ func TestAnnotationBackfillRecordsFailuresAndCarriesOn(t *testing.T) {
 	if report.Indexed != 1 || report.Unavailable != 1 || report.Failed != 4 {
 		t.Fatalf("report = %+v, want indexed=1 unavailable=1 failed=4", report)
 	}
-	if got, ok, _ := store.ResolveLabel(ctx, "hiring"); !ok || got != "tag_h" {
+	if got, ok, _ := store.ResolveLabel(ctx, "hiring", allRecorded(t, store)); !ok || got != "tag_h" {
 		t.Errorf("a failed download dropped JOB1's marks")
 	}
 	if row := readAnnotationRow(t, store, "JOB1.opus"); row.state != annotationsStateIndexed || row.marks != 1 {

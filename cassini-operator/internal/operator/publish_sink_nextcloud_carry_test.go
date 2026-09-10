@@ -206,7 +206,7 @@ func (s *annotationIndexSpy) MarkUnavailable(_ context.Context, opusName, reason
 	return nil
 }
 
-func (s *annotationIndexSpy) ResolveLabel(context.Context, string) (string, bool, error) {
+func (s *annotationIndexSpy) ResolveLabel(context.Context, string, []string) (string, bool, error) {
 	return "", false, nil
 }
 

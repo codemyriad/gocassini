@@ -456,14 +456,17 @@ func truncateReason(value string) string {
 // too. One transaction, so a failure leaves the previous rows intact rather than
 // a mixture of two revisions.
 func (s *annotationStore) Record(ctx context.Context, opusName string, result annotateResult) error {
-	_, err := s.record(ctx, opusName, result)
+	// Live writes race: two writers commit revisions 5 and 6, and 5's slower
+	// Record must not replace 6's rows. The rebuild passes false — it read the
+	// delivered file itself, so what it saw is the truth even if older.
+	_, err := s.record(ctx, opusName, result, true)
 	return err
 }
 
 // record is Record, reporting which state the meeting ended in — a document in
 // an unknown format records it unavailable, and a rebuild counts that
 // separately from a meeting it indexed.
-func (s *annotationStore) record(ctx context.Context, opusName string, result annotateResult) (string, error) {
+func (s *annotationStore) record(ctx context.Context, opusName string, result annotateResult, onlyIfNewer bool) (string, error) {
 	name := strings.TrimSpace(opusName)
 	if name == "" {
 		return "", errors.New("opus name must not be empty")
@@ -479,7 +482,20 @@ func (s *annotationStore) record(ctx context.Context, opusName string, result an
 	}
 	container := strings.ToLower(strings.TrimSpace(result.ContainerSHA256))
 
+	skipped := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if onlyIfNewer {
+			var current int
+			switch err := tx.QueryRowContext(ctx,
+				`SELECT revision FROM meeting_annotations WHERE opus_name = ?`, name).Scan(&current); {
+			case errors.Is(err, sql.ErrNoRows):
+			case err != nil:
+				return fmt.Errorf("read the recorded revision: %w", err)
+			case current > revision:
+				skipped = true
+				return nil
+			}
+		}
 		if err := deleteAnnotationRows(ctx, tx, name); err != nil {
 			return err
 		}
@@ -520,7 +536,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		}
 		return nil
 	})
-	if err != nil {
+	if err != nil || skipped {
 		return "", err
 	}
 	return state, nil
@@ -588,7 +604,11 @@ func deleteAnnotationRows(ctx context.Context, tx *sql.Tx, opusName string) erro
 // ids carry the same label — files tagged before the projection existed can
 // each have minted their own — the one on the most meetings wins, then the
 // smallest id, so the answer is stable from call to call.
-func (s *annotationStore) ResolveLabel(ctx context.Context, label string) (string, bool, error) {
+// Only meetings in visible — the caller's own readable set — are consulted.
+// Resolving across hidden meetings is an oracle: relabel a tag you own, mark
+// the old word again, and getting the old id back reveals that some meeting you
+// cannot open carries it. An empty set resolves nothing.
+func (s *annotationStore) ResolveLabel(ctx context.Context, label string, visible []string) (string, bool, error) {
 	folded := foldTagLabel(label)
 	if folded == "" {
 		return "", false, nil
@@ -597,14 +617,19 @@ func (s *annotationStore) ResolveLabel(ctx context.Context, label string) (strin
 	if err != nil {
 		return "", false, err
 	}
+	visibleJSON, err := json.Marshal(nonNilStrings(visible))
+	if err != nil {
+		return "", false, fmt.Errorf("encode visible set: %w", err)
+	}
 	query := `
 SELECT t.tag_id
   FROM annotation_tag t
   JOIN meeting_annotations m ON m.opus_name = t.opus_name AND m.state = ?2
+  JOIN json_each(?3) v ON v.value = t.opus_name
  WHERE t.label_folded = ?1`
-	args := []any{folded, annotationsStateIndexed}
+	args := []any{folded, annotationsStateIndexed, string(visibleJSON)}
 	if namespace != "" {
-		query += ` AND t.namespace = ?3`
+		query += ` AND t.namespace = ?4`
 		args = append(args, namespace)
 	}
 	query += `

@@ -220,7 +220,7 @@ func (f *fakeAnnotationIndex) MarkUnavailable(_ context.Context, opusName, _ str
 	return nil
 }
 
-func (f *fakeAnnotationIndex) ResolveLabel(_ context.Context, label string) (string, bool, error) {
+func (f *fakeAnnotationIndex) ResolveLabel(_ context.Context, label string, _ []string) (string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.resolveErr != nil {

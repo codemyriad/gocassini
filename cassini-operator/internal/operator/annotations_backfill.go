@@ -232,7 +232,7 @@ func backfillOneAnnotation(
 		// one) had to be downloaded to learn its digest, and it has not changed.
 		return annotationBackfillUnchanged, ""
 	}
-	state, err := store.record(ctx, opusName, result)
+	state, err := store.record(ctx, opusName, result, false) // authoritative: it read the file itself
 	if err != nil {
 		return annotationBackfillFailed, fmt.Sprintf("write rows: %v", err)
 	}

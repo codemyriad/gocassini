@@ -135,7 +135,7 @@ func TestAnnotationStoreRecordReplacesAMeetingsRows(t *testing.T) {
 	if len(vocab) != 1 || vocab[0].TagID != "tag_budget" || vocab[0].Marks != 1 || vocab[0].Meetings != 1 {
 		t.Fatalf("vocabulary = %+v, want only the file's current tag", vocab)
 	}
-	if _, ok, _ := store.ResolveLabel(ctx, "hiring"); ok {
+	if _, ok, _ := store.ResolveLabel(ctx, "hiring", allRecorded(t, store)); ok {
 		t.Error("a tag removed from the file must leave the projection")
 	}
 	if row := readAnnotationRow(t, store, "JOB1.opus"); row.container != "c2" || row.marks != 1 || row.state != annotationsStateIndexed {
@@ -160,7 +160,7 @@ func TestAnnotationStoreSkipsWhatItCannotRead(t *testing.T) {
 	if row.state != annotationsStateIndexed || row.marks != 1 {
 		t.Fatalf("row = %+v, want the meeting indexed with its one readable mark", row)
 	}
-	if _, ok, _ := store.ResolveLabel(context.Background(), "no id"); ok {
+	if _, ok, _ := store.ResolveLabel(context.Background(), "no id", allRecorded(t, store)); ok {
 		t.Error("a tag with no id was indexed")
 	}
 }
@@ -269,7 +269,7 @@ func TestAnnotationStoreResolveLabelFoldsCaseBeyondASCII(t *testing.T) {
 		{"uebergabe", ""},
 		{"", ""},
 	} {
-		got, ok, err := store.ResolveLabel(context.Background(), tc.label)
+		got, ok, err := store.ResolveLabel(context.Background(), tc.label, allRecorded(t, store))
 		if err != nil {
 			t.Fatalf("resolve %q: %v", tc.label, err)
 		}
@@ -286,7 +286,7 @@ func TestAnnotationStoreResolveLabelPrefersTheMostUsedID(t *testing.T) {
 	recordMarks(t, store, "JOB1.opus", annotatedFile(t, "c1", testTagNamespaceA, []testTag{{"tag_b", "hiring"}}, meetingMark("m", "tag_b")))
 	recordMarks(t, store, "JOB2.opus", annotatedFile(t, "c2", testTagNamespaceA, []testTag{{"tag_z", "Hiring"}}, meetingMark("m", "tag_z")))
 	recordMarks(t, store, "JOB3.opus", annotatedFile(t, "c3", testTagNamespaceA, []testTag{{"tag_z", "hiring"}}, meetingMark("m", "tag_z")))
-	got, ok, err := store.ResolveLabel(context.Background(), "hiring")
+	got, ok, err := store.ResolveLabel(context.Background(), "hiring", allRecorded(t, store))
 	if err != nil || !ok || got != "tag_z" {
 		t.Fatalf("resolve = %q/%v/%v, want tag_z (two meetings beat one)", got, ok, err)
 	}
@@ -302,7 +302,7 @@ func TestAnnotationStoreResolveLabelStaysInTheInstallationNamespace(t *testing.T
 	if _, err := store.storeNamespaceIfAbsent(ctx, testTagNamespaceA); err != nil {
 		t.Fatalf("store namespace: %v", err)
 	}
-	if got, ok, _ := store.ResolveLabel(ctx, "hiring"); !ok || got != "tag_a" {
+	if got, ok, _ := store.ResolveLabel(ctx, "hiring", allRecorded(t, store)); !ok || got != "tag_a" {
 		t.Fatalf("resolve = %q/%v, want tag_a from the installation's namespace", got, ok)
 	}
 }

@@ -115,7 +115,7 @@ func (s *annotationService) readMeeting(w http.ResponseWriter, r *http.Request, 
 
 // showMeeting reads the recording as the caller and reports what it carries.
 func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID string) (annotateResult, error) {
-	relPath, err := s.visibleRecording(ctx, caller, meetingID)
+	relPath, _, err := s.visibleRecording(ctx, caller, meetingID)
 	if err != nil {
 		return annotateResult{}, err
 	}
@@ -184,11 +184,11 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 // commitMeeting applies one batch and commits it, re-reading on every 412. It
 // returns the recording's archive-relative path whenever it got that far.
 func (s *annotationService) commitMeeting(ctx context.Context, caller, meetingID string, request annotateWriteRequest) (annotateResult, string, error) {
-	relPath, err := s.visibleRecording(ctx, caller, meetingID)
+	relPath, visible, err := s.visibleRecording(ctx, caller, meetingID)
 	if err != nil {
 		return annotateResult{}, "", err
 	}
-	ops, namespace, err := s.resolveVocabulary(ctx, request.Ops)
+	ops, namespace, err := s.resolveVocabulary(ctx, request.Ops, visible)
 	if errors.Is(err, errAnnotationIndexBuilding) {
 		return annotateResult{}, relPath, &annotateFailure{status: http.StatusServiceUnavailable,
 			public: "the tag index is being rebuilt after a restart — try again in a few minutes", cause: err}
@@ -384,16 +384,20 @@ func annotateApplyFailure(err error) *annotateFailure {
 // visibleRecording resolves meetingID to its recording's archive-relative path
 // through the caller's own catalog, or refuses with a 404 that is the same for
 // absent and unreadable.
-func (s *annotationService) visibleRecording(ctx context.Context, caller, meetingID string) (string, error) {
+func (s *annotationService) visibleRecording(ctx context.Context, caller, meetingID string) (string, []string, error) {
 	readable, _, ok := s.exapp.readableMeetingsForCaller(ctx, s.client, caller, s.logger)
 	if !ok {
-		return "", annotateUnavailable(fmt.Errorf("resolve the readable meetings of caller=%s", caller))
+		return "", nil, annotateUnavailable(fmt.Errorf("resolve the readable meetings of caller=%s", caller))
 	}
 	relPath, permitted := readable[meetingID]
 	if !permitted {
-		return "", annotateNotFound(fmt.Errorf("caller=%s asked for meeting=%s, which is not in their readable set (served as 404)", caller, meetingID))
+		return "", nil, annotateNotFound(fmt.Errorf("caller=%s asked for meeting=%s, which is not in their readable set (served as 404)", caller, meetingID))
 	}
-	return relPath, nil
+	visible := make([]string, 0, len(readable))
+	for _, rel := range readable {
+		visible = append(visible, path.Base(rel))
+	}
+	return relPath, visible, nil
 }
 
 // recordCommitted brings the projection up to date with a committed write —

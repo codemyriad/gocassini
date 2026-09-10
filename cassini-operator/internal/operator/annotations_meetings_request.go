@@ -122,9 +122,9 @@ func readAnnotateWriteRequest(w http.ResponseWriter, r *http.Request) (annotateW
 // This is what makes one word one tag across the archive (design doc §3,
 // "Vocabulary resolution"). The CLI can only resolve a label within the file it
 // is rewriting; left to that, "hiring" marked on two meetings would mint two
-// unrelated ids. The projection knows every file, so the lookup is made here,
-// across the whole projection rather than the caller's visible set. Tag ids are
-// random, so handing one back reveals nothing the caller did not supply.
+// unrelated ids. The projection knows every file, so the lookup is made here —
+// among the caller's readable meetings only, because resolving across hidden
+// ones would reveal whether a label exists on a meeting they cannot open.
 //
 // With no projection there is nothing to resolve against: labels resolve within
 // the file and the CLI keeps the file's namespace, or mints one on a first
@@ -135,7 +135,7 @@ func readAnnotateWriteRequest(w http.ResponseWriter, r *http.Request) (annotateW
 // failing one is usually transient — and proceeding would write a freshly
 // minted tag id, or a namespace that is never changed again, permanently into
 // the recording on the strength of a lookup that did not happen.
-func (s *annotationService) resolveVocabulary(ctx context.Context, ops []json.RawMessage) (document []byte, namespace string, err error) {
+func (s *annotationService) resolveVocabulary(ctx context.Context, ops []json.RawMessage, visible []string) (document []byte, namespace string, err error) {
 	index := s.index()
 	if index == nil {
 		s.logf("annotations: no projection — labels resolve within the file only, and the file keeps its own tag namespace")
@@ -154,7 +154,7 @@ func (s *annotationService) resolveVocabulary(ctx context.Context, ops []json.Ra
 			resolved[i] = op
 			continue
 		}
-		tagID, found, err := index.ResolveLabel(ctx, label)
+		tagID, found, err := index.ResolveLabel(ctx, label, visible)
 		if err != nil {
 			// The label is user content, so the error is reported by position.
 			return nil, "", fmt.Errorf("resolve the label of op %d: %w", i, err)
