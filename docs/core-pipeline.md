@@ -270,6 +270,11 @@ Think of portable `.opus` as:
 - readable by the viewer in portable mode
 - in the operator, **sealed**: produced by a stage the job must pass, verified,
   digested, and immutable once written
+- once delivered, open to tags and marks (`manifest.annotations`): writing them
+  rewrites the delivered copy's OpusTags and never its audio, so its audio digest
+  still identifies it; the sealed file itself is never touched, and a rerun
+  carries the delivered copy's marks into what it delivers
+  ([three digests, three jobs](../spec/cassini-opus-audio-integrity-v1.md#three-digests-three-jobs))
 
 The key point is that `.opus` is the durable deliverable, not a separate capture architecture; the `.meeting` bundle is just the intermediate it is packed from.
 

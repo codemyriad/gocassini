@@ -52,3 +52,30 @@ missing EOS, and invalid final granules.
 Metadata-only remuxes must preserve the digest. Re-encoding audio normally
 changes it even when the result sounds equivalent; content-derived meeting IDs
 derive from this digest for the same reason.
+
+## Three digests, three jobs
+
+Three SHA-256 digests describe a Cassini recording. They answer different
+questions, and none stands in for another.
+
+| Digest | Covers | Changes when | Used for |
+|---|---|---|---|
+| **Seal** | the whole `.opus` the pipeline produced | never, for a given attempt | proving the sealed artifact is intact before it is delivered |
+| **Audio** (`integrity.opusAudioSha256`) | the canonical byte stream above; OpusTags excluded | only when the audio itself changes | **identity** — "is this the same recording" — and the binding annotations are pinned to (`manifest.annotations.audioOpusSha256`) |
+| **Container** | the whole file as it is now | every metadata rewrite: each annotation commit, each carry | saying which bytes something was read from (the archive's `OC-Checksum`, the annotations index). **Never identity, never compared with the seal** |
+
+Writing annotations is a metadata-only rewrite: it replaces the manifest in
+OpusTags, copies every audio packet unchanged, and verifies that its output's
+audio digest equals its input's before anything is written. Annotations
+therefore preserve the audio digest and move the container digest. It follows
+that:
+
+- A delivered copy whose container digest no longer equals the seal is neither
+  corrupt nor a different recording. It has been annotated.
+- Anything that compares two copies of a recording — an archive copy with a
+  local one — compares audio digests. Equal container digests remain sufficient
+  proof of sameness, never necessary proof.
+- The seal digest is checked against the sealed file and nothing else. A
+  republish delivers the sealed audio with the delivered copy's annotations
+  carried into a copy of it (`cassini annotate carry`): the seal check proves
+  the audio half, carry's own verification the annotations half.
