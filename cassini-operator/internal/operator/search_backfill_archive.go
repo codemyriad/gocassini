@@ -14,54 +14,28 @@ import (
 
 // Backfilling from the published archive, when the operator's own copy is gone.
 //
-// WHY THIS EXISTS, MEASURED RATHER THAN ANTICIPATED
-//
-// Backfill's first source is current/<job>.meeting, which carries the
-// producer's segments and needs no download. On the demo archive that indexed
-// 4 meetings out of 30: the volume held 5 bundles while Nextcloud held 30
-// recordings, and 25 meetings had no job row at all
-// ("read job: sql: no rows in result set").
-//
-// That is not a bug, it is the durability asymmetry the D-631 assessment
-// documented: Nextcloud Files is the store of record and the operator's volume
-// is not. Re-registering the ExApp against a different daemon gives it a new
-// empty volume while the archive stays exactly where it was. Any backfill that
-// reads only local state therefore covers whatever survived the last such
-// event, which on a real deployment can be a small minority.
-//
-// So when the local copy cannot be used, the recording itself is read. It is
-// the one artifact that is definitely there — the caller can play it.
-//
-// WHAT IS LOST, AND WHY THAT IS THE RIGHT TRADE
-//
-// The published .opus carries the raw word transcript and no segmentation, so
-// rows come from the wall-clock windowing rather than the producer's own
-// utterances. Coarser references, recorded as row_source='words' so an answer
-// never implies a precision it does not have.
-//
-// The earlier reasoning — "gigabytes of transfer to recover a worse index than
-// the one already on local disk" — had the comparison wrong. It is not a worse
-// index versus a better one. For 25 of 30 meetings it is a worse index versus
-// NO index, and a coarse reference to a real moment beats a meeting that
-// search silently cannot see.
+// Nextcloud Files is the store of record and the operator's volume is not
+// (D-631): re-registering the ExApp gives it a new empty volume while the
+// archive stays put. On the demo archive, local bundles alone indexed 4
+// meetings of 30. So when the local copy cannot be used, the recording itself
+// is read. It carries only the raw word transcript, so its rows are coarser,
+// recorded as row_source='words' — and a coarse reference beats a meeting search
+// silently cannot see.
 
 // searchArchiveCopy is what reading one published recording yields.
 type searchArchiveCopy struct {
 	Words []searchTranscriptWord
-	// Digest is the sha256 of the bytes read: the container as it stands in the
-	// archive, which every mark commit changes.
+	// Digest is the sha256 of the container as it stands in the archive, which
+	// every mark commit changes.
 	Digest string
-	// AudioDigest is the copy's own integrity.opusAudioSha256 — identity, which
-	// no mark commit changes (D-737). Empty when the CLI could not report it, in
-	// which case nothing is verified by it.
-	AudioDigest string
+	// Path is the downloaded copy, there until the reader's release runs.
+	Path string
 }
 
-// searchArchiveReader reads one published recording.
-//
-// A function rather than a concrete type so backfill stays testable without a
-// Nextcloud, and so a deployment with no archive access simply passes nil.
-type searchArchiveReader func(ctx context.Context, opusName string) (searchArchiveCopy, error)
+// searchArchiveReader reads one published recording; release removes the copy.
+// A function so backfill is testable without a Nextcloud, and nil where there is
+// no archive access.
+type searchArchiveReader func(ctx context.Context, opusName string) (read searchArchiveCopy, release func(), err error)
 
 // searchDeliveredStateReader reports what the archive itself holds for one
 // recording: whether the published leaf exists, and the sha256 the delivery
@@ -104,32 +78,25 @@ func (c ExAppConfig) archiveDeliveredState() searchDeliveredStateReader {
 // index it fills grants nobody anything.
 func (c ExAppConfig) archiveOpusReader(cassiniBin, workDir string) searchArchiveReader {
 	client := &http.Client{Timeout: archiveOpusReadTimeout}
-	return func(ctx context.Context, opusName string) (searchArchiveCopy, error) {
+	return func(ctx context.Context, opusName string) (searchArchiveCopy, func(), error) {
 		tmp, err := os.MkdirTemp(workDir, "search-backfill-")
 		if err != nil {
-			return searchArchiveCopy{}, fmt.Errorf("temp dir: %w", err)
+			return searchArchiveCopy{}, nil, fmt.Errorf("temp dir: %w", err)
 		}
-		defer os.RemoveAll(tmp)
+		release := func() { _ = os.RemoveAll(tmp) }
 
 		local := filepath.Join(tmp, opusName)
 		digest, err := c.downloadArchiveOpus(ctx, client, opusName, local)
 		if err != nil {
-			return searchArchiveCopy{}, err
+			release()
+			return searchArchiveCopy{}, nil, err
 		}
 		words, err := transcriptWordsFromOpus(ctx, cassiniBin, local)
 		if err != nil {
-			return searchArchiveCopy{}, err
+			release()
+			return searchArchiveCopy{}, nil, err
 		}
-		read := searchArchiveCopy{Words: words, Digest: digest}
-		// The audio digest is what lets a local bundle be verified against an
-		// archive copy that has since been marked (D-737): the marks moved the
-		// container digest and left the audio alone. A copy whose audio digest
-		// cannot be read is simply not verified by it — the words above still
-		// index it, exactly as before marks existed.
-		if shown, err := runAnnotateShow(ctx, cassiniBin, local); err == nil {
-			read.AudioDigest = strings.ToLower(strings.TrimSpace(shown.AudioOpusSHA256))
-		}
-		return read, nil
+		return searchArchiveCopy{Words: words, Digest: digest, Path: local}, release, nil
 	}
 }
 

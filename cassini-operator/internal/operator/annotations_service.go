@@ -8,18 +8,12 @@ import (
 	"cassini-operator/internal/operator/appapi"
 )
 
-// annotationsURLPath is where the tags-and-marks routes are mounted: their own
-// top-level prefix on the ROOT mux, beside insights, because that is where
-// appinfo/info.xml declares them — `^annotations\/…`, USER (D-737).
+// annotationsURLPath is on the ROOT mux, beside insights, where
+// appinfo/info.xml declares it — `^annotations\/…`, USER (D-737).
 const annotationsURLPath = "/annotations"
 
 // annotationService serves a meeting's annotations and the tag vocabulary.
-//
-// Reads go through Nextcloud as the caller, so Nextcloud re-checks the ACL on
-// the bytes. Writes are made by the service account after the same visibility
-// check every archive read makes, because the recordings mount gives ordinary
-// users a READ ceiling. The recording file is always the record; rt.annotations
-// is only its rebuildable projection, and may be nil.
+// rt.annotations is the rebuildable projection, and may be nil.
 type annotationService struct {
 	rt     *Runtime
 	exapp  ExAppConfig
@@ -28,13 +22,9 @@ type annotationService struct {
 	logger *log.Logger
 }
 
-// newAnnotationService returns the service, or nil when this deployment cannot
-// serve a mark at all — decided exactly as newInsightService and
-// meetingsContextHandler decide. Outside an AppAPI deployment there is no
-// verified caller to attribute a mark to; under the local sink there is no
-// Nextcloud to read as the caller or to write into; with no CLI there is
-// nothing to rewrite a recording with. In each case the routes are simply not
-// mounted, which is the answer the rest of the app gives there.
+// newAnnotationService returns nil where no mark can be served, as
+// newInsightService decides: outside AppAPI there is no verified caller, under
+// the local sink no Nextcloud, and with no CLI nothing to rewrite a recording.
 func newAnnotationService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *annotationService {
 	if rt == nil || !exapp.appAPIActive() || exapp.PublishSink != publishSinkNextcloudFiles {
 		return nil
@@ -49,22 +39,18 @@ func newAnnotationService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *a
 		rt:    rt,
 		exapp: exapp,
 		bin:   rt.cfg.CassiniBin,
-		// Same client shape as the read proxy: no overall timeout, because
-		// recordings stream and the request context governs; a hung upstream is
-		// bounded on headers.
+		// As the read proxy: recordings stream, so the request context governs.
 		client: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
 		logger: logger,
 	}
 }
 
-// register mounts the routes. Every answer is per-caller, so every answer is
-// uncacheable, for the reasons insightNoStore gives.
+// register mounts the routes; every answer is per-caller, so uncacheable.
 func (s *annotationService) register(root *http.ServeMux) {
 	root.HandleFunc(annotationsURLPath+"/", insightNoStore(s.route))
 }
 
-// route dispatches the two resources. The caller is resolved here, once, so no
-// handler can forget to.
+// route resolves the caller once, so no handler can forget to.
 func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, annotationsURLPath), "/")
 	resource, id, _ := strings.Cut(rest, "/")

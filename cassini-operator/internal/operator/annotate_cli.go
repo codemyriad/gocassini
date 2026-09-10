@@ -13,18 +13,13 @@ import (
 	"syscall"
 )
 
-// The operator and the CLI are separate Go modules that cannot import each
-// other, so the operator reaches the annotations code the way it reaches every
-// other part of the CLI: by running it (D-737). These wrappers are the
-// operator's side of `cassini annotate`'s contract — flags in, one JSON document
-// out, and an exit code that means something. The contract itself is written
-// down in the design doc; change both sides together or neither.
+// The operator's side of `cassini annotate`'s contract (D-737): flags in, one
+// JSON document out, and an exit code that means something. The two are
+// separate modules, so the operator runs the CLI; change both sides together.
 
-// annotateResultFormat is the only result document these wrappers accept.
 const annotateResultFormat = "cassini.annotate.result.v1"
 
-// Exit codes `cassini annotate` answers with. Anything else non-zero is a
-// runtime failure.
+// Anything else non-zero is a runtime failure.
 const (
 	annotateExitRuntime    = 1
 	annotateExitUsage      = 2
@@ -33,14 +28,12 @@ const (
 	annotateExitUnresolved = 5 // the marks are bound to different audio; apply refuses
 )
 
-// maxAnnotateStderr bounds how much of the CLI's complaint is kept.
 const maxAnnotateStderr = 4 << 10
 
 // annotateResult is what every `cassini annotate … --json` prints.
 type annotateResult struct {
 	Format string `json:"format"`
-	// Annotations is the document the file now carries, verbatim; null when it
-	// carries none.
+	// Annotations is the document the file now carries; null when none.
 	Annotations     json.RawMessage `json:"annotations"`
 	Revision        int             `json:"revision"`
 	OperationID     string          `json:"operationId,omitempty"`
@@ -55,10 +48,9 @@ type annotateResult struct {
 	ContainerSHA256 string `json:"containerSha256"`
 }
 
-// annotateCLIError is a non-zero exit from `cassini annotate`. Message is the
-// CLI's own complaint, trimmed and bounded. It is safe to show a caller for
-// annotateExitInvalid (it describes their ops); for anything else it may name
-// local paths and belongs in the log, not in a response.
+// annotateCLIError is a non-zero exit. Message, the CLI's bounded complaint, is
+// safe to show a caller only for annotateExitInvalid; otherwise it may name
+// local paths.
 type annotateCLIError struct {
 	Code    int
 	Message string
@@ -127,12 +119,9 @@ func runAnnotate(ctx context.Context, bin string, stdin []byte, args ...string) 
 	}
 	cmd := exec.CommandContext(ctx, bin, append([]string{"annotate"}, args...)...)
 	// Not os.Environ(): any logged-in caller can make the operator run this, and
-	// a child holding APP_SECRET can act as any account on the instance. The
-	// same environment meetings-context's child gets, from the same function
-	// (D-700).
+	// a child holding APP_SECRET can act as any account (D-700).
 	cmd.Env = contextChildEnv(os.Environ())
-	// apply and carry rewrite the recording through ffmpeg; on cancel the whole
-	// group goes, so no grandchild outlives an abandoned request.
+	// So no ffmpeg grandchild outlives an abandoned request.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	var stdout, stderr bytes.Buffer

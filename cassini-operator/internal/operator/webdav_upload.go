@@ -281,7 +281,7 @@ func (c ExAppConfig) davPutFileIfMatch(ctx context.Context, client *http.Client,
 // An empty body is NOT refused here. The publish path has to be able to fetch
 // the empty leaf an interrupted first publish leaves, in order to replace it;
 // callers for whom an empty recording is an error say so themselves
-// (stageAnnotatedRecording).
+// (stageRecording).
 func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, userID, relPath, destPath string, limit int64) (digest string, written int64, status int, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
 	if err != nil {

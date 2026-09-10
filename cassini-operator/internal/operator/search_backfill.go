@@ -9,50 +9,21 @@ import (
 // Backfill: making meetings published before the index existed searchable
 // (D-623).
 //
-// WHY IT READS current/ AND NOT THE ARCHIVE
+// It reads current/<job>.meeting, which is never pruned and carries the
+// producer's segments; the published `.opus` carries only raw words (D-695).
 //
-// The obvious source is the published `.opus` itself, and it is the wrong one
-// for two reasons. It carries the RAW word transcript and nothing else — D-695
-// decoded all 128 published meetings and found every transcript role to be
-// raw-asr — so indexing from it produces the coarse word-derived rows rather
-// than the producer's segments. And reading one means downloading it and
-// shelling to ffprobe, because there is no pure-Go reader for a portable
-// `.opus` in this tree; across a whole archive that is gigabytes of transfer to
-// recover a worse index than the one already available locally.
+// But current/ tracks the last attempt that BUILT, not the last that was
+// DELIVERED, so a rerun that failed to publish leaves a transcript there that
+// does not match the recording anyone can play. Every meeting is therefore
+// checked against the archive's own record of what was delivered (see
+// archiveDeliveredState for why the job database cannot serve), and a mismatch
+// falls through to the archive, which resolves it.
 //
-// current/<job>.meeting holds the promoted bundle, is NEVER pruned
-// (retention.go), and carries segments. So backfill reads that.
-//
-// THE PRICE OF READING current/, AND HOW IT IS PAID
-//
-// current/ tracks the last attempt that BUILT, not the last that was
-// DELIVERED — promoteMeetingBundle runs in the build worker. A rerun whose
-// build succeeded and whose seal or publish then failed leaves a transcript
-// there that does not match the `.opus` Nextcloud is serving. Indexing it would
-// have search cite words that are not in the recording anyone can play.
-//
-// So every meeting is checked before it is indexed: the digest of
-// current/<job>.opus must equal the digest of what was DELIVERED — which only
-// the archive can say. The delivered digest is read off the published leaf
-// itself (OC-Checksum, stamped at upload), or failing that computed from the
-// downloaded bytes; see archiveDeliveredState for why the job database's
-// digest can never serve here (an earlier revision compared against it, which
-// verifies the seal against itself and misses the one divergence that
-// matters — the review's B1). A mismatch falls through to the archive, which
-// holds the delivered artifact and therefore RESOLVES it.
-//
-// WHEN THE DIGESTS DIFFER AND THE RECORDING DOES NOT
-//
-// A delivered recording is no longer frozen at the bytes that were sealed: every
-// mark written on it rewrites its OpusTags, and so its container digest and the
-// OC-Checksum stamped with it (D-737). Its AUDIO digest — integrity.
-// opusAudioSha256, which excludes OpusTags — does not move. So equal container
-// digests stay the cheap proof, and when they differ the question becomes the
-// one that actually matters: is it the same audio? The archive copy is read
-// anyway at that point, and the CLI reports both files' audio digests. Equal:
-// the local bundle is the delivered recording's, marks aside, and its segments
-// are used. Different: the rerun that never published, refused exactly as
-// before.
+// Every mark rewrites a delivered recording's OpusTags, and so its container
+// digest (D-737); its audio digest does not move. Equal container digests stay
+// the cheap proof; when they differ and the archive copy is in hand, the CLI
+// compares the audio. Equal: the bundle is the delivered recording's, marks
+// aside. Different: the rerun that never published, refused as before.
 
 const (
 	searchBackfillReasonNoBundle = "bundle-missing"
@@ -284,26 +255,21 @@ func (rt *Runtime) indexFromArchive(
 		// meeting is known-unsearchable rather than merely absent.
 		return rt.recordUnavailable(ctx, opusName, localReason)
 	}
-	read, err := archive(ctx, opusName)
+	read, release, err := archive(ctx, opusName)
 	if err != nil {
-		// A failed READ is not a verdict on the meeting, and it must not become
-		// one: recordUnavailable drops whatever rows the meeting already has, so
-		// one timeout during a routine re-run would silently un-index a meeting
-		// that was searchable a minute earlier — the destructive convergence
-		// forgetVanishedMeetings refuses, arriving per meeting. Failed keeps the
-		// rows and tells the operator to re-run.
+		// A failed READ is not a verdict: recordUnavailable would drop the rows
+		// the meeting already has, so one timeout would un-index a searchable
+		// meeting. Failed keeps the rows and tells the operator to re-run.
 		return searchBackfillFailed, fmt.Sprintf("%s: %v", searchBackfillReasonArchiveUnread, err)
 	}
+	defer release()
 	digest := read.Digest
 	if sameIndexedArtifact(existing, wasIndexed, digest, searchRowSourceSegments) {
 		return searchBackfillUnchanged, ""
 	}
 	// The delivered bytes are in hand, which makes the local bundle verifiable
-	// after all — and preferred, because it carries the producer's segments. A
-	// legacy recording whose bundle survives gets segment rows, not coarse ones,
-	// and so does one whose archive copy has been marked since it was delivered:
-	// its audio digest is in hand now too.
-	if outcome, reason, settled := rt.indexFromLocalBundle(ctx, target, opusName, digest, read.AudioDigest); settled {
+	// after all — by audio, if the archive copy has been marked since.
+	if outcome, reason, settled := rt.indexFromLocalBundle(ctx, target, opusName, digest, read.Path); settled {
 		return outcome, reason
 	}
 	if sameIndexedArtifact(existing, wasIndexed, digest, searchRowSourceWords) {
@@ -329,31 +295,24 @@ func sameIndexedArtifact(existing searchIndexedState, wasIndexed bool, digest, s
 
 // indexFromLocalBundle indexes from current/, or reports that it could not.
 //
-// settled is false when the caller should try the archive instead, and the
-// returned reason then says WHY the local copy was unusable — the bundle is
-// missing, unreadable, or is not the artifact that was delivered. settled is
-// true when the meeting is decided either way: indexed, or genuinely holding
-// no speech.
+// settled is false when the caller should try the archive instead, and reason
+// then says why the local copy was unusable. settled is true when the meeting
+// is decided either way: indexed, or genuinely holding no speech.
 //
-// delivered is the archive copy's container digest, and is what gets recorded:
-// it is what the next run's one PROPFIND compares against. deliveredAudio is
-// that copy's audio digest when its bytes have been read, "" before.
+// delivered is the archive copy's container digest, and is what gets recorded,
+// so the next run's one PROPFIND can compare against it. deliveredCopy is the
+// archive copy on disk once it has been downloaded, "" before.
 func (rt *Runtime) indexFromLocalBundle(
-	ctx context.Context, target searchBackfillTarget, opusName, delivered, deliveredAudio string,
+	ctx context.Context, target searchBackfillTarget, opusName, delivered, deliveredCopy string,
 ) (searchBackfillOutcome, string, bool) {
-	// The same whole-container digest the seal-to-publish chain uses, so both
-	// sides of this comparison are the same claim (digest.go). Equal is the
-	// cheap proof; it no longer has to be the only one.
 	localOpus := canonicalOpusPath(rt.cfg.WorkRoot, target.JobID)
 	localDigest, err := fileSHA256(localOpus)
 	if err != nil {
 		return 0, searchBackfillReasonNoBundle, false
 	}
-	if !strings.EqualFold(localDigest, delivered) && !rt.sameOpusAudio(ctx, localOpus, deliveredAudio) {
+	if !strings.EqualFold(localDigest, delivered) && !rt.sameOpusAudio(ctx, localOpus, deliveredCopy) {
 		// A rerun that built and then failed to publish: different audio, not
-		// merely different marks. The archive holds what was actually
-		// delivered, so falling through to it does not work around the mismatch
-		// — it resolves it.
+		// merely different marks. The archive resolves it.
 		return 0, searchBackfillReasonStaleBundle, false
 	}
 	transcript, err := readBundleTranscript(canonicalMeetingPath(rt.cfg.WorkRoot, target.JobID))
@@ -373,23 +332,25 @@ func (rt *Runtime) indexFromLocalBundle(
 	return searchBackfillIndexed, "", true
 }
 
-// sameOpusAudio reports whether the local recording at localOpus has the audio
-// digest deliveredAudio: the same recording, whatever either copy's marks
-// (D-737). Unknown is not a match — no delivered audio digest, or a local one
-// the CLI cannot read, leaves the bundle unverified, which is where it stood
-// before marks existed.
-func (rt *Runtime) sameOpusAudio(ctx context.Context, localOpus, deliveredAudio string) bool {
-	if strings.TrimSpace(deliveredAudio) == "" {
+// sameOpusAudio reports whether two recordings carry the same audio digest: the
+// same recording, whatever either copy's marks (D-737). Unknown is not a match,
+// which leaves the bundle unverified, where it stood before marks existed.
+func (rt *Runtime) sameOpusAudio(ctx context.Context, localOpus, deliveredCopy string) bool {
+	if deliveredCopy == "" {
 		return false
 	}
-	local, err := runAnnotateShow(ctx, rt.cfg.CassiniBin, localOpus)
-	if err != nil {
-		if rt.logger != nil {
-			rt.logger.Printf("search backfill: cannot read the audio digest of %s, so it stays unverified (%v)", localOpus, err)
+	var digests [2]string
+	for i, file := range []string{deliveredCopy, localOpus} {
+		shown, err := runAnnotateShow(ctx, rt.cfg.CassiniBin, file)
+		if err != nil {
+			if rt.logger != nil {
+				rt.logger.Printf("search backfill: cannot read the audio digest of %s, so the bundle stays unverified (%v)", file, err)
+			}
+			return false
 		}
-		return false
+		digests[i] = strings.TrimSpace(shown.AudioOpusSHA256)
 	}
-	return local.AudioOpusSHA256 != "" && strings.EqualFold(strings.TrimSpace(local.AudioOpusSHA256), strings.TrimSpace(deliveredAudio))
+	return digests[0] != "" && strings.EqualFold(digests[0], digests[1])
 }
 
 func (rt *Runtime) recordUnavailable(ctx context.Context, opusName, reason string) (searchBackfillOutcome, string) {

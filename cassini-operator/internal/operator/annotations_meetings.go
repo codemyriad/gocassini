@@ -9,43 +9,35 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // GET and POST annotations/meetings/<id> — one meeting's marks (D-737, design
 // doc §3).
 //
-// Both resolve the id the way meetings-context does: through the caller's own
-// filtered catalog (readableMeetingsForCaller), the one access-control path
-// every read of this archive shares. An id outside that set is a 404 identical
-// to an id that does not exist, so a recording someone may not read never
-// reveals that it exists — and a write gets exactly the same answer, so marking
-// is not a way to probe the archive either.
+// Both resolve the id through the caller's visible meetings, as annotations/tags
+// and search do. An id outside that set is a 404 identical to one that does not
+// exist, for a write as for a read, so marking is not a way to probe the archive.
 //
 // A read is made AS THE CALLER, so Nextcloud re-checks the ACL on the bytes. A
-// write cannot be: the recordings mount gives ordinary accounts a READ ceiling.
-// After the same visibility check the service account rewrites the file with
-// If-Match, so a concurrent writer is refused rather than overwritten, and a
-// refusal starts the whole read-apply-write again from a fresh ETag.
+// write cannot be: the recordings mount gives ordinary accounts a READ ceiling,
+// so the service account rewrites the file with If-Match.
 //
 // Status discipline is search's: failure is loud (502), denial is empty (404).
 
 const (
-	// annotateWriteAttempts is how many read-apply-write rounds one POST makes
-	// before giving up on a meeting other writers keep changing. Ops are
-	// idempotent — re-marking is a no-op and unmarking the absent is reported —
-	// so every round after the first is safe.
+	// annotateWriteAttempts: ops are idempotent, so every round after the first
+	// is safe.
 	annotateWriteAttempts = 3
 
-	// annotateRequestTimeout bounds one request: up to three rounds of
-	// download, rewrite and upload of a recording of tens of megabytes. Finite,
-	// because a request that never ends holds a connection, a staging directory
-	// and the meeting's write lock.
+	// annotateRequestTimeout bounds three rounds of download, rewrite and upload
+	// of a recording of tens of megabytes, while holding the meeting's lock.
 	annotateRequestTimeout = 5 * time.Minute
 
-	// annotateIndexTimeout bounds recording a committed write in the
-	// projection. That runs detached from the request, so a caller who hangs up
-	// after the PUT does not leave the projection describing the old file.
+	// annotateIndexTimeout bounds recording a committed write, which runs
+	// detached from the request so a caller who hangs up after the PUT does not
+	// leave the projection describing the old file.
 	annotateIndexTimeout = 30 * time.Second
 )
 
@@ -59,8 +51,7 @@ type annotationsReadResponse struct {
 }
 
 // annotationsWriteResponse answers a committed POST: the CLI's result without
-// its digests. The audio digest is identity and the container digest names
-// bytes; both are the projection's business, not a caller's.
+// its digests, which are the projection's business, not a caller's.
 type annotationsWriteResponse struct {
 	MeetingID   string          `json:"meetingId"`
 	Revision    int             `json:"revision"`
@@ -72,15 +63,14 @@ type annotationsWriteResponse struct {
 	Resolved    *bool           `json:"resolved"`
 }
 
-// annotateFailure is how a step says what the caller is told. public is safe to
-// return; cause is for the log. A 404 carries no public text, because it is
-// answered exactly as any other missing path is.
+// annotateFailure is what the caller is told: public is safe to return, cause
+// is for the log. A 404 carries no public text.
 type annotateFailure struct {
 	status int
 	public string
 	cause  error
-	// committed is set when the file was already rewritten before the step
-	// failed, so the projection no longer describes it.
+	// committed: the file was already rewritten, so the projection no longer
+	// describes it.
 	committed bool
 }
 
@@ -95,12 +85,15 @@ func annotateUnavailable(cause error) *annotateFailure {
 	return &annotateFailure{status: http.StatusBadGateway, public: "Nextcloud Files unavailable", cause: cause}
 }
 
-// readMeeting answers GET annotations/meetings/<id>.
 func (s *annotationService) readMeeting(w http.ResponseWriter, r *http.Request, caller, meetingID string) {
 	ctx, cancel := context.WithTimeout(r.Context(), annotateRequestTimeout)
 	defer cancel()
 
-	result, err := s.showMeeting(ctx, caller, meetingID)
+	relPath, _, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
+	if !ok {
+		return
+	}
+	result, err := s.showMeeting(ctx, caller, meetingID, relPath)
 	if err != nil {
 		s.answerFailure(w, r, "read meeting="+meetingID, err)
 		return
@@ -114,26 +107,19 @@ func (s *annotationService) readMeeting(w http.ResponseWriter, r *http.Request, 
 }
 
 // showMeeting reads the recording as the caller and reports what it carries.
-func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID string) (annotateResult, error) {
-	relPath, _, err := s.visibleRecording(ctx, caller, meetingID)
-	if err != nil {
-		return annotateResult{}, err
-	}
+func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID, relPath string) (annotateResult, error) {
 	staging, err := os.MkdirTemp("", "cassini-annotations-*")
 	if err != nil {
 		return annotateResult{}, &annotateFailure{status: http.StatusInternalServerError, public: "annotations unavailable", cause: err}
 	}
-	// Every path, a cancelled request included: the directory holds a whole
-	// recording, outside the access model.
+	// Every path: the directory holds a whole recording, outside the access model.
 	defer os.RemoveAll(staging)
 
 	local := filepath.Join(staging, "meeting.opus")
-	status, err := s.exapp.stageAnnotatedRecording(ctx, s.client, annotationReadIdentity(caller, relPath), relPath, local, maxAnnotateRecordingBytes)
+	_, status, err := s.exapp.stageRecording(ctx, s.client, annotationReadIdentity(caller, relPath), relPath, local, maxAnnotateRecordingBytes)
 	if err != nil {
 		if deniedOrAbsent(status) {
-			// The second gate disagreed with the catalog — the ACL changed between
-			// the scan and the fetch, or the recording went. Same answer as the
-			// first gate gives.
+			// The ACL changed, or the recording went, since the catalog was read.
 			return annotateResult{}, annotateNotFound(fmt.Errorf("caller=%s denied meeting=%s at fetch -> %d (served as 404)", caller, meetingID, status))
 		}
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("fetch meeting=%s as caller=%s: %w", meetingID, caller, err))
@@ -149,17 +135,20 @@ func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID s
 	return result, nil
 }
 
-// writeMeeting answers POST annotations/meetings/<id>.
 func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request, caller, meetingID string) {
 	request, refusal := readAnnotateWriteRequest(w, r)
 	if refusal != nil {
-		writeJSONError(w, refusal.status, refusal.message)
+		writeJSONError(w, refusal.status, refusal.public)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), annotateRequestTimeout)
 	defer cancel()
 
-	result, relPath, err := s.commitMeeting(ctx, caller, meetingID, request)
+	relPath, visible, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
+	if !ok {
+		return
+	}
+	result, err := s.commitMeeting(ctx, meetingID, relPath, visible, caller, request)
 	if err != nil {
 		var failure *annotateFailure
 		if errors.As(err, &failure) && failure.committed {
@@ -181,25 +170,20 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 	})
 }
 
-// commitMeeting applies one batch and commits it, re-reading on every 412. It
-// returns the recording's archive-relative path whenever it got that far.
-func (s *annotationService) commitMeeting(ctx context.Context, caller, meetingID string, request annotateWriteRequest) (annotateResult, string, error) {
-	relPath, visible, err := s.visibleRecording(ctx, caller, meetingID)
-	if err != nil {
-		return annotateResult{}, "", err
-	}
+// commitMeeting applies one batch and commits it, re-reading on every 412.
+func (s *annotationService) commitMeeting(ctx context.Context, meetingID, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
 	ops, namespace, err := s.resolveVocabulary(ctx, request.Ops, visible)
 	if errors.Is(err, errAnnotationIndexBuilding) {
-		return annotateResult{}, relPath, &annotateFailure{status: http.StatusServiceUnavailable,
+		return annotateResult{}, &annotateFailure{status: http.StatusServiceUnavailable,
 			public: "the tag index is being rebuilt after a restart — try again in a few minutes", cause: err}
 	}
 	if err != nil {
-		return annotateResult{}, relPath, &annotateFailure{status: http.StatusBadGateway, public: "the tag vocabulary is unavailable", cause: err}
+		return annotateResult{}, &annotateFailure{status: http.StatusBadGateway, public: "the tag vocabulary is unavailable", cause: err}
 	}
 
 	release, err := annotationWriteLocks.acquire(ctx, relPath)
 	if err != nil {
-		return annotateResult{}, relPath, &annotateFailure{
+		return annotateResult{}, &annotateFailure{
 			status: http.StatusConflict,
 			public: "conflict",
 			cause:  fmt.Errorf("meeting=%s: another write held it until the request ended: %w", meetingID, err),
@@ -209,7 +193,7 @@ func (s *annotationService) commitMeeting(ctx context.Context, caller, meetingID
 
 	staging, err := os.MkdirTemp("", "cassini-annotations-*")
 	if err != nil {
-		return annotateResult{}, relPath, &annotateFailure{status: http.StatusInternalServerError, public: "annotations unavailable", cause: err}
+		return annotateResult{}, &annotateFailure{status: http.StatusInternalServerError, public: "annotations unavailable", cause: err}
 	}
 	defer os.RemoveAll(staging)
 
@@ -227,9 +211,9 @@ func (s *annotationService) commitMeeting(ctx context.Context, caller, meetingID
 			s.logf("annotations: meeting=%s changed while it was being written (attempt %d of %d) — re-reading it", meetingID, attempt, annotateWriteAttempts)
 			continue
 		}
-		return result, relPath, err
+		return result, err
 	}
-	return annotateResult{}, relPath, &annotateFailure{
+	return annotateResult{}, &annotateFailure{
 		status: http.StatusConflict,
 		public: "conflict",
 		cause:  fmt.Errorf("meeting=%s changed under each of %d attempts to write it", meetingID, annotateWriteAttempts),
@@ -247,19 +231,14 @@ func (s *annotationService) applyOnce(ctx context.Context, staging string, attem
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("inspect %s: %w", relPath, err))
 	}
 	if !state.Exists {
-		// In the caller's catalog and gone from Files: removed since the catalog
-		// was read. As absent as any other absent meeting.
 		return annotateResult{}, annotateNotFound(fmt.Errorf("%s is in the catalog but not in Files (served as 404)", relPath))
 	}
 	if state.ETag == "" {
-		// Without an ETag the write could only be unconditional, which is exactly
-		// the lost update If-Match is here to prevent.
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("inspect %s: Nextcloud reported no ETag, so it cannot be written without risking a concurrent write", relPath))
 	}
 	if underACL && !everyoneRuleGovernsRead(state.Rules) {
-		// The D-594 state: a delivered recording every account can read. It is
-		// the publish path's to repair — it denies before it touches the leaf —
-		// and not this route's to refresh the content of while it stays exposed.
+		// The D-594 state is the publish path's to repair — it denies before it
+		// touches the leaf — not this route's to rewrite while it stays exposed.
 		return annotateResult{}, &annotateFailure{
 			status: http.StatusBadGateway,
 			public: "the recording's access rule could not be confirmed",
@@ -269,20 +248,17 @@ func (s *annotationService) applyOnce(ctx context.Context, staging string, attem
 
 	in := filepath.Join(staging, fmt.Sprintf("in-%d.opus", attempt))
 	out := filepath.Join(staging, fmt.Sprintf("out-%d.opus", attempt))
-	// A round that loses the race leaves nothing behind for the next one, so
-	// three rounds never hold six recordings.
+	// So three rounds never hold six recordings.
 	defer os.Remove(in)
 	defer os.Remove(out)
 
-	status, err := s.exapp.stageAnnotatedRecording(ctx, s.client, ncRecordingsOwner, relPath, in, maxAnnotateRecordingBytes)
+	_, status, err := s.exapp.stageRecording(ctx, s.client, ncRecordingsOwner, relPath, in, maxAnnotateRecordingBytes)
 	if err != nil {
 		if status == http.StatusNotFound {
 			return annotateResult{}, annotateNotFound(fmt.Errorf("%s went between its PROPFIND and its GET (served as 404)", relPath))
 		}
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("fetch %s: %w", relPath, err))
 	}
-	// What the recording holds before the batch, so that a batch which changes
-	// nothing can be recognised by its result and cost no upload.
 	inDigest, err := fileSHA256(in)
 	if err != nil {
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("digest %s: %w", in, err))
@@ -292,11 +268,8 @@ func (s *annotationService) applyOnce(ctx context.Context, staging string, attem
 	if err != nil {
 		return annotateResult{}, annotateApplyFailure(err)
 	}
-	// A batch that changed nothing — a retry of marks already there, an unmark
-	// of one already gone — leaves the bytes as they were, and `cassini annotate`
-	// says so by answering the input's own digest. Re-uploading tens of
-	// megabytes would buy nothing but a new ETag, which would make every other
-	// writer's next attempt retry.
+	// A batch that changed nothing answers the input's own digest. Re-uploading
+	// would buy only a new ETag, making every other writer retry.
 	if result.ContainerSHA256 != "" && result.ContainerSHA256 == inDigest {
 		return result, nil
 	}
@@ -315,50 +288,20 @@ func (s *annotationService) applyOnce(ctx context.Context, staging string, attem
 		}
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("put %s: %w", relPath, err))
 	}
-	if err := s.verifyCommitted(ctx, relPath, info.Size(), underACL); err != nil {
-		return annotateResult{}, err
+	if err := s.exapp.verifyUploadedLeaf(ctx, s.client, relPath, info.Size(), underACL); err != nil {
+		// The write has happened, so the only honest answer is a loud 502.
+		return annotateResult{}, &annotateFailure{status: http.StatusBadGateway, public: "the write could not be verified",
+			cause: fmt.Errorf("%w; republish the meeting to restore it", err), committed: true}
 	}
 	return result, nil
-}
-
-// verifyCommitted is putAssetBytes's post-condition, for its two reasons.
-//
-// Nextcloud commits an interrupted upload as a truncated recording with the
-// same fileid and ACL, and nothing downstream can tell. And a leaf that lost its
-// rules between the PROPFIND and the PUT — deleted in the Files UI, restored
-// from trash — became a NEW leaf when this PUT landed, with a new fileid, no
-// rules, and the whole recording in it. Either way the write has already
-// happened, so the only honest answer is a loud 502 and a log line an operator
-// can act on — never a 200.
-//
-// The rule check applies in the Team folder only: in the default model's
-// private root a leaf has no rules by design, and the check would fail every
-// write there.
-func (s *annotationService) verifyCommitted(ctx context.Context, relPath string, size int64, underACL bool) error {
-	unverified := func(cause error) error {
-		return &annotateFailure{status: http.StatusBadGateway, public: "the write could not be verified", cause: cause, committed: true}
-	}
-	state, err := s.exapp.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, relPath)
-	switch {
-	case err != nil:
-		return unverified(fmt.Errorf("verify %s after writing it: %w", relPath, err))
-	case !state.Exists:
-		return unverified(fmt.Errorf("verify %s: it is not there after a successful upload", relPath))
-	case state.Size != size:
-		return unverified(fmt.Errorf("verify %s: Nextcloud stored %d bytes of %d — the recording is truncated; republish the meeting to restore it", relPath, state.Size, size))
-	case underACL && !everyoneRuleGovernsRead(state.Rules):
-		return unverified(fmt.Errorf("verify %s: it carries no effective %q rule after the write — it is readable by every account; republish the meeting to restore its rules", relPath, ncRecordingsEveryoneGroup))
-	}
-	return nil
 }
 
 // annotateApplyFailure maps a refusal from `cassini annotate apply` to what the
 // caller is told (design doc §3).
 //
-// Only an invalid-ops refusal carries the CLI's own words back: they describe
-// the caller's ops. The same words may quote a label, which is user content, so
-// they are the one CLI message that is NOT logged. Every other message may name
-// local paths, so it is logged and not returned.
+// Only an invalid-ops refusal returns the CLI's own words: they describe the
+// caller's ops, and may quote a label, so they are the one message NOT logged.
+// Every other message may name local paths, so it is logged and not returned.
 func annotateApplyFailure(err error) *annotateFailure {
 	switch annotateExitCode(err) {
 	case annotateExitRevision:
@@ -382,29 +325,28 @@ func annotateApplyFailure(err error) *annotateFailure {
 }
 
 // visibleRecording resolves meetingID to its recording's archive-relative path
-// through the caller's own catalog, or refuses with a 404 that is the same for
-// absent and unreadable.
-func (s *annotationService) visibleRecording(ctx context.Context, caller, meetingID string) (string, []string, error) {
-	readable, _, ok := s.exapp.readableMeetingsForCaller(ctx, s.client, caller, s.logger)
+// among the caller's visible meetings, and returns those meetings' opus names,
+// the set a label may be resolved in. On false it has already answered: a
+// failed resolution loudly, an unreadable meeting as absent.
+func (s *annotationService) visibleRecording(ctx context.Context, w http.ResponseWriter, r *http.Request, caller, meetingID string) (string, []string, bool) {
+	entries, ok := s.exapp.resolveVisibleMeetings(ctx, w, s.client, caller, s.logger, "annotations meetings")
 	if !ok {
-		return "", nil, annotateUnavailable(fmt.Errorf("resolve the readable meetings of caller=%s", caller))
+		return "", nil, false
 	}
-	relPath, permitted := readable[meetingID]
-	if !permitted {
-		return "", nil, annotateNotFound(fmt.Errorf("caller=%s asked for meeting=%s, which is not in their readable set (served as 404)", caller, meetingID))
+	_, root := ncArchiveReadIdentity(caller)
+	for _, entry := range entries {
+		if entry.id == meetingID && strings.HasSuffix(entry.opusName, ".opus") {
+			return root + "/meetings/" + entry.opusName, visibleOpusNames(entries), true
+		}
 	}
-	visible := make([]string, 0, len(readable))
-	for _, rel := range readable {
-		visible = append(visible, path.Base(rel))
-	}
-	return relPath, visible, nil
+	s.answerFailure(w, r, "meeting="+meetingID, annotateNotFound(
+		fmt.Errorf("caller=%s asked for meeting=%s, which is not in their readable set (served as 404)", caller, meetingID)))
+	return "", nil, false
 }
 
-// recordCommitted brings the projection up to date with a committed write —
-// the file first, SQLite second. A failure here costs coverage and never a
-// mark, since the file already carries it, so it is logged, the meeting is
-// marked unavailable so the vocabulary reports partial coverage rather than a
-// false complete one, and the caller still gets their 200.
+// recordCommitted brings the projection up to date with a committed write. A
+// failure costs coverage, never a mark: it is logged, the meeting is marked
+// unavailable, and the caller still gets their 200.
 func (s *annotationService) recordCommitted(ctx context.Context, meetingID, relPath string, result annotateResult) {
 	index := s.index()
 	if index == nil {
@@ -420,7 +362,6 @@ func (s *annotationService) recordCommitted(ctx context.Context, meetingID, relP
 	}
 }
 
-// markUnavailable records that the projection no longer describes opusName.
 func (s *annotationService) markUnavailable(ctx context.Context, opusName, reason string) {
 	index := s.index()
 	if index == nil {
@@ -433,7 +374,6 @@ func (s *annotationService) markUnavailable(ctx context.Context, opusName, reaso
 	}
 }
 
-// index is the projection, or nil where it could not be opened.
 func (s *annotationService) index() annotationIndex {
 	if s.rt == nil {
 		return nil
@@ -441,9 +381,8 @@ func (s *annotationService) index() annotationIndex {
 	return s.rt.annotations
 }
 
-// answerFailure logs a failure's cause and answers with its status. A 404 is
-// answered exactly as any other missing path, so a recording the caller may not
-// read and one that does not exist cannot be told apart.
+// answerFailure logs a failure's cause and answers with its status; a 404 is
+// answered exactly as any other missing path.
 func (s *annotationService) answerFailure(w http.ResponseWriter, r *http.Request, what string, err error) {
 	var failure *annotateFailure
 	if !errors.As(err, &failure) {
@@ -457,8 +396,6 @@ func (s *annotationService) answerFailure(w http.ResponseWriter, r *http.Request
 	writeJSONError(w, failure.status, failure.public)
 }
 
-// deniedOrAbsent reports whether an upstream status means the caller may not
-// have the file, which is always answered as its absence.
 func deniedOrAbsent(status int) bool {
 	return status == http.StatusNotFound || status == http.StatusUnauthorized || status == http.StatusForbidden
 }
