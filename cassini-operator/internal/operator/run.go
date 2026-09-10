@@ -237,9 +237,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return runBackfillNCFiles(ctx, args[1:], stdout, stderr)
 		case backfillSearchCommand:
 			return runBackfillSearch(ctx, args[1:], stdout, stderr)
+		case backfillAnnotationsCommand:
+			return runBackfillAnnotations(ctx, args[1:], stdout, stderr)
 		}
-		fmt.Fprintf(stderr, "unknown command %q (known commands: %s, %s)\n",
-			args[0], backfillNCFilesCommand, backfillSearchCommand)
+		fmt.Fprintf(stderr, "unknown command %q (known commands: %s, %s, %s)\n",
+			args[0], backfillNCFilesCommand, backfillSearchCommand, backfillAnnotationsCommand)
 		return 2
 	}
 
@@ -539,6 +541,7 @@ Usage:
 Commands:
   `+backfillNCFilesCommand+`   one-shot migration of a legacy in-container archive
   `+backfillSearchCommand+`      index meetings published before the search index existed
+  `+backfillAnnotationsCommand+` rebuild the tag index from the recordings' own marks
                        into Nextcloud Files (run by hand after an update;
                        see --help on the command itself)
 
@@ -744,6 +747,16 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	} else {
 		rt.searchStore = searchIndex
 	}
+	// The marks projection (D-737), for the same reasons: disposable, and never
+	// the record — a mark is committed to its recording before it is indexed
+	// here, so a projection that will not open costs the vocabulary and tag
+	// narrowing, never a mark. Assigned only on success: a nil *annotationStore
+	// inside the interface would be a non-nil index that panics on first use.
+	if annotationIndex, err := openAnnotationStore(annotationStorePath(cfg.DBPath), logger); err != nil {
+		logger.Printf("annotations index unavailable (%v); marks will still be written to recordings, but the tag vocabulary and tag narrowing are not served", err)
+	} else {
+		rt.annotations = annotationIndex
+	}
 
 	// Detect hardware on first start (or track it under an auto default) and
 	// load the persisted STT policy. A failure here must not take the operator
@@ -814,8 +827,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 // consumer uses, so an edit is picked up without a restart.
 func (rt *Runtime) searchDeps() searchDeps {
 	return searchDeps{
-		index:   rt.searchStore,
-		limiter: rt.searchLimiter,
+		index:       rt.searchStore,
+		limiter:     rt.searchLimiter,
+		annotations: rt.annotationReads(),
 		aliases: func() [][]string {
 			rt.settingsMu.RLock()
 			defer rt.settingsMu.RUnlock()
@@ -831,6 +845,11 @@ func (rt *Runtime) Shutdown() {
 	if rt.searchStore != nil {
 		if err := rt.searchStore.Close(); err != nil {
 			rt.logger.Printf("search index close failed: %v", err)
+		}
+	}
+	if store := rt.annotationReads(); store != nil {
+		if err := store.Close(); err != nil {
+			rt.logger.Printf("annotations index close failed: %v", err)
 		}
 	}
 }
@@ -1813,12 +1832,23 @@ func requestLogger(logger *log.Logger, next http.Handler) http.Handler {
 // `?q=severance package for Bob` would sit in that log indefinitely, and in CI
 // output, for anyone with container access. The path still identifies the
 // route, which is all a request log needs.
+//
+// A tag label is user content too (D-737): `?tag=redundancies` says what a
+// meeting is about as plainly as a search query does. So the meeting list's
+// query is redacted whenever it mentions a tag — matched on the raw query, so a
+// malformed pair the parser would drop is still kept out — and the annotation
+// routes never log a query at all.
 func loggableRequestURI(r *http.Request) string {
 	if r.URL == nil {
 		return ""
 	}
-	if r.URL.RawQuery != "" && strings.HasSuffix(r.URL.Path, "/"+searchURLPath) {
-		return r.URL.Path + "?<redacted>"
+	if r.URL.RawQuery != "" {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/"+searchURLPath),
+			strings.HasSuffix(r.URL.Path, "/"+meetingsListPath) && strings.Contains(strings.ToLower(r.URL.RawQuery), "tag"),
+			strings.HasPrefix(r.URL.Path, annotationsURLPath+"/"):
+			return r.URL.Path + "?<redacted>"
+		}
 	}
 	return r.URL.RequestURI()
 }

@@ -376,7 +376,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			// mode-aware resolution, so it narrows what THIS model says the
 			// caller may read — narrowed by the query, and with substrate
 			// failures reported loudly. See serveMeetingsList.
-			c.serveMeetingsList(r.Context(), w, r, client, caller, logger)
+			c.serveMeetingsList(r.Context(), w, r, client, caller, search.annotations, logger)
 			return true
 		}
 		if relPath == searchURLPath {

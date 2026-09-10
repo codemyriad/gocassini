@@ -66,10 +66,17 @@ type meetingsListFilter struct {
 	// on equality only: the id is an opaque one-way derivation, so prefix or
 	// substring matching it would be meaningless.
 	room string
+	// tag keeps meetings carrying at least one mark of it (D-737): a label,
+	// matched case-insensitively, or a tag id.
+	tag string
+	// tagged is the caller's visible meetings carrying the tag, by `.opus`
+	// name. Filled in by the handler once the visible set is resolved, because
+	// it depends on who is asking — which the query string cannot say.
+	tagged map[string]bool
 }
 
 func (f meetingsListFilter) active() bool {
-	return f.hasFrom || f.hasTo || f.room != ""
+	return f.hasFrom || f.hasTo || f.room != "" || f.tag != ""
 }
 
 // meetingsListStampLayout is how the filter echoes a parsed bound back.
@@ -117,6 +124,9 @@ func parseMeetingsListFilter(query url.Values) (meetingsListFilter, error) {
 			filter.from.Format(meetingsListStampLayout), filter.to.Format(meetingsListStampLayout))}
 	}
 	filter.room = strings.TrimSpace(query.Get("room"))
+	if filter.tag, err = parseTagParam(query); err != nil {
+		return meetingsListFilter{}, err
+	}
 	return filter, nil
 }
 
@@ -175,12 +185,18 @@ type meetingsListResponse struct {
 	// Excluded counts entries the filter removed. Present only when a filter
 	// ran, so an unfiltered listing does not carry a meaningless zero.
 	Excluded *meetingsListExcluded `json:"excluded,omitempty"`
+	// TagCoverage is present only when `tag` narrowed the list (D-737): of the
+	// meetings the caller may read, how many the tag index holds marks for. A
+	// meeting whose marks could not be read cannot be known to carry the tag,
+	// so it is left out — and this says how many were.
+	TagCoverage *annotationCoverage `json:"tagCoverage,omitempty"`
 }
 
 type meetingsListFilterEcho struct {
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
 	Room string `json:"room,omitempty"`
+	Tag  string `json:"tag,omitempty"`
 }
 
 // meetingsListExcluded explains a short list.
@@ -213,8 +229,10 @@ func applyMeetingsListFilter(entries []json.RawMessage, filter meetingsListFilte
 
 	for _, entry := range entries {
 		var probe struct {
-			DateLabel string `json:"dateLabel"`
-			RoomID    string `json:"roomId"`
+			DateLabel    string `json:"dateLabel"`
+			RoomID       string `json:"roomId"`
+			AudioPath    string `json:"audioPath"`
+			ArtifactPath string `json:"artifactPath"`
 		}
 		// A malformed entry is not this endpoint's to adjudicate — the exporter
 		// owns the shape. It simply cannot be placed in time or in a room, so an
@@ -226,6 +244,12 @@ func applyMeetingsListFilter(entries []json.RawMessage, filter meetingsListFilte
 		// an undated meeting from another room would suggest re-querying without
 		// the dates, which would surface nothing extra.
 		if filter.room != "" && strings.TrimSpace(probe.RoomID) != filter.room {
+			excluded.Total++
+			continue
+		}
+		// Tag before date, for the same reason room is: the undated count must
+		// mean meetings that would otherwise have been listed.
+		if filter.tag != "" && !filter.tagged[catalogEntryOpusName(probe.AudioPath, probe.ArtifactPath)] {
 			excluded.Total++
 			continue
 		}
@@ -271,13 +295,21 @@ func parseMeetingsListDateLabel(label string) (time.Time, bool) {
 // access-control path. What differs is only how an outcome maps to a status:
 // here every substrate failure is loud, and 200 with an empty list means one
 // thing only, that the caller may genuinely read no matching meeting.
-func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWriter, r *http.Request, client *http.Client, caller string, logger *log.Logger) {
+//
+// `tag` narrows to the caller's visible meetings carrying a mark of it (D-737),
+// resolved through the tag index. tags is that index, and nil when it could not
+// be opened — a `tag` request is then 503, never an unnarrowed list.
+func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWriter, r *http.Request, client *http.Client, caller string, tags *annotationStore, logger *log.Logger) {
 	filter, err := parseMeetingsListFilter(r.URL.Query())
 	if err != nil {
 		// Validated BEFORE the network calls: a malformed date is the caller's
 		// to fix, and making them wait on two round trips to Nextcloud to hear
 		// it is pure cost.
 		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if filter.tag != "" && tags == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, tagIndexUnavailableMessage)
 		return
 	}
 
@@ -321,11 +353,40 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 	if response.Version == "" {
 		response.Version = catalogSchemaVersion
 	}
+	if filter.tag != "" {
+		// Narrowed within THIS caller's visible set, which is exactly the
+		// entries above; the tag index is asked which of them carry the tag,
+		// and nothing about any other meeting reaches the answer.
+		visible := make([]string, 0, len(envelope.Meetings))
+		for _, entry := range envelope.Meetings {
+			var probe struct {
+				AudioPath    string `json:"audioPath"`
+				ArtifactPath string `json:"artifactPath"`
+			}
+			_ = json.Unmarshal(entry, &probe)
+			if name := catalogEntryOpusName(probe.AudioPath, probe.ArtifactPath); name != "" {
+				visible = append(visible, name)
+			}
+		}
+		narrowed, coverage, err := narrowVisibleToTag(ctx, tags, filter.tag, visible)
+		if err != nil {
+			if logger != nil {
+				logger.Printf("meetings list: tag narrowing failed caller=%s: %v", caller, err)
+			}
+			writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
+			return
+		}
+		filter.tagged = make(map[string]bool, len(narrowed))
+		for _, name := range narrowed {
+			filter.tagged[name] = true
+		}
+		response.TagCoverage = &coverage
+	}
 	if filter.active() {
 		kept, excluded := applyMeetingsListFilter(envelope.Meetings, filter)
 		response.Meetings = kept
 		response.Excluded = &excluded
-		echo := meetingsListFilterEcho{Room: filter.room}
+		echo := meetingsListFilterEcho{Room: filter.room, Tag: filter.tag}
 		if filter.hasFrom {
 			echo.From = filter.from.Format(meetingsListStampLayout)
 		}
