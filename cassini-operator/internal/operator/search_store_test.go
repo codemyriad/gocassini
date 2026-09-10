@@ -310,7 +310,7 @@ func TestSearchStoreSurvivesFileDeletion(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	if err := removeSearchStoreFiles(path); err != nil {
+	if err := removeSidecarFiles(path); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -336,6 +336,12 @@ func TestSearchStorePathIsASiblingOfTheJobDatabase(t *testing.T) {
 	want := "/var/lib/cassini/state/" + searchStoreFilename
 	if got != want {
 		t.Fatalf("path = %q, want %q", got, want)
+	}
+	// A blank or relative job-database path must refuse, not land beside the source.
+	for _, bad := range []string{"", "   ", "jobs.sqlite3", "./state/jobs.sqlite3"} {
+		if got := sidecarPath(bad, annotationsStoreFilename); got != "" {
+			t.Errorf("path for %q = %q, want refusal", bad, got)
+		}
 	}
 }
 

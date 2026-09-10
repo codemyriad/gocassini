@@ -23,13 +23,16 @@ func openTestAnnotationStore(t *testing.T) *annotationStore {
 func TestNamespaceWaitsForTheFirstRebuild(t *testing.T) {
 	ctx := context.Background()
 	store := openTestAnnotationStore(t)
+	if err := store.Record(ctx, "M.opus", guardTestDoc(1, "tag_h", "hiring")); err != nil {
+		t.Fatal(err)
+	}
 	store.rebuildPending.Store(true)
 	if _, err := store.Namespace(ctx); !errors.Is(err, errAnnotationIndexBuilding) {
 		t.Fatalf("a pending first rebuild must refuse, got %v", err)
 	}
 	store.rebuildPending.Store(false)
-	if ns, err := store.Namespace(ctx); err != nil || ns == "" {
-		t.Fatalf("once built, a namespace is answered: %q %v", ns, err)
+	if ns, err := store.Namespace(ctx); err != nil || ns != testTagNamespaceA {
+		t.Fatalf("once built, the archive's namespace is answered: %q %v", ns, err)
 	}
 }
 

@@ -9,13 +9,10 @@ import (
 
 // startInitialAnnotationBuild rebuilds the tag index from the archive when it
 // has never been built — a new install, a wiped volume, a schema change — so
-// nobody has to remember to run backfill-annotations after a deploy.
-//
-// Until it finishes, writes answer 503 (errAnnotationIndexBuilding). A run that
-// cannot read the archive at all — Nextcloud not up yet — retries with backoff.
-// A run that reads it marks the index built even if some recordings could not
-// be read: those stay unavailable and count against coverage, exactly as after
-// a manual backfill.
+// nobody has to remember backfill-annotations after a deploy. Writes answer 503
+// until it finishes (errAnnotationIndexBuilding). A run that cannot read the
+// archive at all retries with backoff; a run that reads it marks the index
+// built, with any unreadable recordings left outside coverage.
 func (rt *Runtime) startInitialAnnotationBuild(exapp ExAppConfig, logger *log.Logger) {
 	store := rt.annotationReads()
 	if store == nil {

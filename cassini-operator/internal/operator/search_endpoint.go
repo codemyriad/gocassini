@@ -64,11 +64,6 @@ type searchResponse struct {
 	Searched [][]string `json:"searched,omitempty"`
 	// Coverage is what the answer can honestly claim to have covered.
 	Coverage searchResponseCoverage `json:"coverage"`
-	// TagCoverage is present only when `tag` narrowed the search (D-737): of
-	// the meetings the caller may read, how many the tag index holds marks
-	// for. A meeting whose marks could not be read cannot be known to carry the
-	// tag, so it is outside the narrowing — and this says how many are.
-	TagCoverage *annotationCoverage `json:"tagCoverage,omitempty"`
 }
 
 // searchResponseHit is one reference, hydrated with what the CALLER'S OWN
@@ -90,9 +85,8 @@ type searchResponseHit struct {
 	SpeakerID string `json:"speakerId,omitempty"`
 	Matched   string `json:"matched"`
 	// Marks are the tags whose time-range marks this hit's range overlaps
-	// (D-737), always an array when the deployment has a tag index. ABSENT —
-	// not empty — when it has none: "no marks here" and "marks unknown" are
-	// different answers.
+	// (D-737). Absent, not empty, when the meeting's marks are unknown: "no
+	// marks here" and "marks unknown" are different answers.
 	Marks *[]searchHitMark `json:"marks,omitempty"`
 }
 
@@ -150,9 +144,7 @@ func (c ExAppConfig) serveSearch(
 		return
 	}
 	if tag != "" && search.annotations == nil {
-		// Searching without the narrowing would answer a different question,
-		// and silently widening it is exactly the false answer this route
-		// exists to avoid.
+		// Silently unnarrowed would be a false answer.
 		writeJSONError(w, http.StatusServiceUnavailable, tagIndexUnavailableMessage)
 		return
 	}
@@ -172,15 +164,11 @@ func (c ExAppConfig) serveSearch(
 		byOpusName[entry.opusName] = entry
 	}
 
-	// Tag narrowing happens to the VISIBLE SET, before the statement, and the
-	// narrowed set is what gets bound — never a filter over a page of ranked
-	// hits, which is the Option 1 defect D-623 struck: with the one tagged
-	// meeting ranked below the page, a post-filter would report nothing while
-	// the caller holds a meeting that matches both.
+	// A tag narrows the VISIBLE SET before the statement, never a ranked page
+	// afterwards, which would miss a tagged meeting ranked below the page.
 	bound := visible
-	var tagCoverage *annotationCoverage
 	if tag != "" {
-		narrowed, coverage, err := narrowVisibleToTag(ctx, search.annotations, tag, visible)
+		tagged, err := search.annotations.taggedMeetings(ctx, tag, visible)
 		if err != nil {
 			if logger != nil {
 				logger.Printf("search: tag narrowing failed caller=%s: %v", caller, err)
@@ -188,7 +176,12 @@ func (c ExAppConfig) serveSearch(
 			writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
 			return
 		}
-		bound, tagCoverage = narrowed, &coverage
+		bound = make([]string, 0, len(tagged))
+		for _, name := range visible {
+			if tagged[name] {
+				bound = append(bound, name)
+			}
+		}
 	}
 
 	results, err := index.Search(ctx, searchRequest{
@@ -224,9 +217,8 @@ func (c ExAppConfig) serveSearch(
 		return
 	}
 
-	// The marks each hit's range overlaps, from the hits' own meetings only —
-	// every one of which is in the caller's visible set, because the statement
-	// was bound to it.
+	// Every hit's meeting is in the caller's visible set: the statement was
+	// bound to it.
 	var marks [][]searchHitMark
 	if search.annotations != nil {
 		spans := make([]markSpan, 0, len(results.Hits))
@@ -244,16 +236,15 @@ func (c ExAppConfig) serveSearch(
 	}
 
 	response := searchResponse{
-		Hits:        make([]searchResponseHit, 0, len(results.Hits)),
-		Widened:     results.Widened,
-		Searched:    results.Groups,
-		Coverage:    searchResponseCoverage{Visible: len(visible), Searched: coverage},
-		TagCoverage: tagCoverage,
+		Hits:     make([]searchResponseHit, 0, len(results.Hits)),
+		Widened:  results.Widened,
+		Searched: results.Groups,
+		Coverage: searchResponseCoverage{Visible: len(visible), Searched: coverage},
 	}
 	for i, hit := range results.Hits {
 		entry := byOpusName[hit.OpusName]
 		var hitMarks *[]searchHitMark
-		if marks != nil {
+		if i < len(marks) && marks[i] != nil {
 			hitMarks = &marks[i]
 		}
 		response.Hits = append(response.Hits, searchResponseHit{
@@ -427,11 +418,8 @@ type searchDeps struct {
 	// limiter bounds how often one caller can make this app talk to Nextcloud.
 	// Nil outside a running operator, which the limiter itself tolerates.
 	limiter *searchRateLimiter
-	// annotations is the tag index (D-737), for `tag=` narrowing and the marks
-	// a hit cites — on search and on the meeting list, which both reach the
-	// proxy through these deps. Nil when it could not be opened: plain search
-	// still answers, a hit then carries no `marks` field, and a `tag=` request
-	// is 503 rather than silently unnarrowed.
+	// annotations is the tag index (D-737), for search and the meeting list.
+	// Nil when it could not be opened: hits carry no `marks`, and `tag=` is 503.
 	annotations *annotationStore
 }
 

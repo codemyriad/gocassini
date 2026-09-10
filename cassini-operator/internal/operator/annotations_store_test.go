@@ -7,7 +7,6 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -99,16 +98,16 @@ func recordMarks(t *testing.T, store *annotationStore, opusName string, result a
 }
 
 type annotationRow struct {
-	state, reason, container string
-	marks                    int
+	state, container string
+	marks            int
 }
 
 func readAnnotationRow(t *testing.T, store *annotationStore, opusName string) annotationRow {
 	t.Helper()
 	var row annotationRow
 	if err := store.db.QueryRow(
-		`SELECT state, reason, container_sha256 FROM meeting_annotations WHERE opus_name = ?`, opusName,
-	).Scan(&row.state, &row.reason, &row.container); err != nil {
+		`SELECT state, container_sha256 FROM meeting_annotations WHERE opus_name = ?`, opusName,
+	).Scan(&row.state, &row.container); err != nil {
 		t.Fatalf("read %s: %v", opusName, err)
 	}
 	if err := store.db.QueryRow(
@@ -167,7 +166,7 @@ func TestAnnotationStoreSkipsWhatItCannotRead(t *testing.T) {
 
 // A document in a format this reader does not know may carry marks it cannot
 // see. Recording it as "no marks" would be a confident false zero; it is
-// outside coverage instead, with a reason.
+// outside coverage instead.
 func TestAnnotationStoreUnknownFormatIsOutsideCoverage(t *testing.T) {
 	ctx := context.Background()
 	for name, raw := range map[string]string{
@@ -181,8 +180,8 @@ func TestAnnotationStoreUnknownFormatIsOutsideCoverage(t *testing.T) {
 				t.Fatalf("record: %v", err)
 			}
 			row := readAnnotationRow(t, store, "JOB1.opus")
-			if row.state != annotationsStateUnavailable || row.marks != 0 || row.reason == "" {
-				t.Fatalf("row = %+v, want unavailable, no marks, a reason", row)
+			if row.state != annotationsStateUnavailable || row.marks != 0 {
+				t.Fatalf("row = %+v, want unavailable and no marks", row)
 			}
 			// The bytes are recorded, so a rebuild does not download a file it
 			// already knows it cannot read.
@@ -197,11 +196,6 @@ func TestAnnotationStoreUnknownFormatIsOutsideCoverage(t *testing.T) {
 				t.Errorf("coverage = %+v, want visible=1 indexed=0", coverage)
 			}
 		})
-	}
-	store := newTestAnnotationStore(t)
-	_ = store.Record(ctx, "JOB1.opus", annotateResult{Annotations: json.RawMessage(`{"format":"cassini.annotations.v2"}`)})
-	if row := readAnnotationRow(t, store, "JOB1.opus"); !strings.Contains(row.reason, annotationsReasonUnsupported) {
-		t.Errorf("reason = %q, want it to name the unsupported format", row.reason)
 	}
 }
 
@@ -234,8 +228,8 @@ func TestAnnotationStoreMarkUnavailableDropsMarksAndCoverage(t *testing.T) {
 		t.Fatalf("mark unavailable: %v", err)
 	}
 	row := readAnnotationRow(t, store, "JOB1.opus")
-	if row.state != annotationsStateUnavailable || row.marks != 0 || row.reason != "annotate show exited 1" {
-		t.Fatalf("row = %+v, want unavailable with the reason and no marks", row)
+	if row.state != annotationsStateUnavailable || row.marks != 0 {
+		t.Fatalf("row = %+v, want unavailable and no marks", row)
 	}
 	// Which bytes the marks came from is no longer known, so a rebuild must
 	// read the file again rather than skip it.
@@ -292,71 +286,25 @@ func TestAnnotationStoreResolveLabelPrefersTheMostUsedID(t *testing.T) {
 	}
 }
 
-// Once the installation has a namespace, a label resolves only within it.
-func TestAnnotationStoreResolveLabelStaysInTheInstallationNamespace(t *testing.T) {
+// A label resolves only within the namespace most of the archive carries.
+func TestAnnotationStoreResolveLabelStaysInTheArchivesNamespace(t *testing.T) {
 	store := newTestAnnotationStore(t)
-	ctx := context.Background()
 	recordMarks(t, store, "JOB1.opus", annotatedFile(t, "c1", testTagNamespaceB, []testTag{{"tag_b", "hiring"}}, meetingMark("m", "tag_b")))
 	recordMarks(t, store, "JOB2.opus", annotatedFile(t, "c2", testTagNamespaceB, []testTag{{"tag_b", "hiring"}}, meetingMark("m", "tag_b")))
 	recordMarks(t, store, "JOB3.opus", annotatedFile(t, "c3", testTagNamespaceA, []testTag{{"tag_a", "hiring"}}, meetingMark("m", "tag_a")))
-	if _, err := store.storeNamespaceIfAbsent(ctx, testTagNamespaceA); err != nil {
-		t.Fatalf("store namespace: %v", err)
-	}
-	if got, ok, _ := store.ResolveLabel(ctx, "hiring", allRecorded(t, store)); !ok || got != "tag_a" {
-		t.Fatalf("resolve = %q/%v, want tag_a from the installation's namespace", got, ok)
+	if got, ok, _ := store.ResolveLabel(context.Background(), "hiring", []string{"JOB1.opus", "JOB3.opus"}); !ok || got != "tag_b" {
+		t.Fatalf("resolve = %q/%v, want tag_b from the archive's namespace", got, ok)
 	}
 }
 
-// On an archive with no marks at all there is nothing to adopt, so the first
-// call mints — once.
-func TestAnnotationStoreNamespaceMintsOnceWhenTheArchiveCarriesNone(t *testing.T) {
+// The namespace is the one most of the archive's files carry, ignoring one that
+// is not well formed; with none, it is empty and the CLI mints one.
+func TestAnnotationStoreNamespaceIsTheArchives(t *testing.T) {
 	store := newTestAnnotationStore(t)
 	ctx := context.Background()
-	first, err := store.Namespace(ctx)
-	if err != nil {
-		t.Fatalf("namespace: %v", err)
+	if got, err := store.Namespace(ctx); err != nil || got != "" {
+		t.Fatalf("empty archive: namespace = %q (%v), want none", got, err)
 	}
-	if !annotationsNamespaceRE.MatchString(first) {
-		t.Fatalf("namespace = %q, want a lowercase urn:uuid", first)
-	}
-	if version := first[len("urn:uuid:")+14]; version != '4' {
-		t.Errorf("namespace = %q, want a random (version 4) uuid", first)
-	}
-	again, err := store.Namespace(ctx)
-	if err != nil || again != first {
-		t.Fatalf("second call = %q (%v), want %q", again, err, first)
-	}
-}
-
-// Two first calls at once must agree on one namespace, not mint two.
-func TestAnnotationStoreNamespaceIsMintedOnceUnderConcurrency(t *testing.T) {
-	store := newTestAnnotationStore(t)
-	var wg sync.WaitGroup
-	got := make([]string, 8)
-	errs := make([]error, 8)
-	for i := range got {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			got[i], errs[i] = store.Namespace(context.Background())
-		}(i)
-	}
-	wg.Wait()
-	for i := range got {
-		if errs[i] != nil {
-			t.Fatalf("call %d: %v", i, errs[i])
-		}
-		if got[i] != got[0] {
-			t.Fatalf("calls disagree: %q vs %q", got[i], got[0])
-		}
-	}
-}
-
-// A fresh projection adopts the namespace most of the archive's files carry,
-// and ignores one that is not well formed.
-func TestAnnotationStoreNamespaceAdoptsTheArchives(t *testing.T) {
-	store := newTestAnnotationStore(t)
-	ctx := context.Background()
 	for _, name := range []string{"JOB1.opus", "JOB2.opus"} {
 		recordMarks(t, store, name, annotatedFile(t, "c", testTagNamespaceA, []testTag{{"tag_a", "a"}}, meetingMark("m", "tag_a")))
 	}
@@ -364,16 +312,8 @@ func TestAnnotationStoreNamespaceAdoptsTheArchives(t *testing.T) {
 	for _, name := range []string{"BAD1.opus", "BAD2.opus", "BAD3.opus"} {
 		recordMarks(t, store, name, annotatedFile(t, "c", "urn:uuid:NOT-A-UUID", []testTag{{"tag_c", "c"}}, meetingMark("m", "tag_c")))
 	}
-	got, err := store.Namespace(ctx)
-	if err != nil || got != testTagNamespaceA {
+	if got, err := store.Namespace(ctx); err != nil || got != testTagNamespaceA {
 		t.Fatalf("namespace = %q (%v), want the archive's most common well-formed one", got, err)
-	}
-	// Stored now: more files in another namespace do not move it.
-	for _, name := range []string{"JOB4.opus", "JOB5.opus", "JOB6.opus"} {
-		recordMarks(t, store, name, annotatedFile(t, "c", testTagNamespaceB, []testTag{{"tag_b", "b"}}, meetingMark("m", "tag_b")))
-	}
-	if again, _ := store.Namespace(ctx); again != testTagNamespaceA {
-		t.Fatalf("namespace moved to %q after more files were recorded", again)
 	}
 }
 
@@ -453,7 +393,8 @@ func TestAnnotationStoreMarksOverlappingIsHalfOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marks: %v", err)
 	}
-	want := [][]string{{}, {"tag_b"}, {"tag_b"}, {}, {"tag_b", "tag_h"}, {}, {}}
+	// nil: the meeting's marks are unknown, which is not the same as none.
+	want := [][]string{{}, {"tag_b"}, {"tag_b"}, {}, {"tag_b", "tag_h"}, nil, nil}
 	for i := range spans {
 		ids := []string{}
 		for _, mark := range got[i] {
@@ -462,8 +403,8 @@ func TestAnnotationStoreMarksOverlappingIsHalfOpen(t *testing.T) {
 		if strings.Join(ids, ",") != strings.Join(want[i], ",") {
 			t.Errorf("span %+v: marks = %v, want %v", spans[i], ids, want[i])
 		}
-		if got[i] == nil {
-			t.Errorf("span %d: marks must be an empty list, not nil", i)
+		if (got[i] == nil) != (want[i] == nil) {
+			t.Errorf("span %d: marks = %#v, want known=%v", i, got[i], want[i] != nil)
 		}
 	}
 	if got[1][0].Label != "budget" {
@@ -478,9 +419,6 @@ func TestAnnotationStoreRebuildsOnSchemaVersionMismatch(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	recordMarks(t, store, "JOB1.opus", annotatedFile(t, "c1", testTagNamespaceA, []testTag{{"tag_h", "hiring"}}, meetingMark("m", "tag_h")))
-	if _, err := store.Namespace(context.Background()); err != nil {
-		t.Fatalf("namespace: %v", err)
-	}
 	// Written by another build, newer: it must rebuild rather than refuse.
 	if _, err := store.db.Exec("PRAGMA user_version = 99"); err != nil {
 		t.Fatalf("stamp: %v", err)
@@ -501,9 +439,6 @@ func TestAnnotationStoreRebuildsOnSchemaVersionMismatch(t *testing.T) {
 	if coverage, _ := reopened.Coverage(context.Background(), []string{"JOB1.opus"}); coverage.Indexed != 0 {
 		t.Errorf("the stale projection survived a version change: %+v", coverage)
 	}
-	if stored, _ := reopened.storedNamespace(context.Background()); stored != "" {
-		t.Errorf("namespace %q survived; a rebuild must adopt it back from the archive", stored)
-	}
 	if !strings.Contains(logs.String(), "deleting and rebuilding") {
 		t.Errorf("a discarded projection was not logged: %q", logs.String())
 	}
@@ -518,17 +453,6 @@ func TestAnnotationStoreFirstOpenIsSilent(t *testing.T) {
 	defer store.Close()
 	if logs.Len() != 0 {
 		t.Errorf("first open logged %q, want silence", logs.String())
-	}
-}
-
-func TestAnnotationStorePathIsASiblingOfTheJobDatabase(t *testing.T) {
-	if got, want := annotationStorePath("/var/lib/cassini/state/jobs.sqlite3"), "/var/lib/cassini/state/"+annotationsStoreFilename; got != want {
-		t.Fatalf("path = %q, want %q", got, want)
-	}
-	for _, bad := range []string{"", "   ", "jobs.sqlite3", "./state/jobs.sqlite3"} {
-		if got := annotationStorePath(bad); got != "" {
-			t.Errorf("path for %q = %q, want refusal", bad, got)
-		}
 	}
 }
 

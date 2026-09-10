@@ -225,9 +225,6 @@ func TestSearchTagNarrowingHappensBeforeTheLimit(t *testing.T) {
 			t.Fatalf("hit %q, want only MEET-MINE: untagged and hidden meetings must not appear", hit.MeetingID)
 		}
 	}
-	if got.TagCoverage == nil || *got.TagCoverage != (annotationCoverage{Visible: 51, Indexed: 51}) {
-		t.Errorf("tagCoverage = %+v, want visible=51 indexed=51", got.TagCoverage)
-	}
 }
 
 // A tag carried only by meetings the caller cannot open narrows to exactly
@@ -279,23 +276,27 @@ func TestSearchHitsCarryTheMarksTheyOverlap(t *testing.T) {
 	seedSearchable(t, index, "JOB1.opus",
 		seg("s1", "S1", 1000, 4000, "the acquisition"),
 		seg("s2", "S2", 10_000, 14_000, "the acquisition again"))
+	// JOB2's marks were never read: its hit must not claim it has none.
+	seedSearchable(t, index, "JOB2.opus", seg("s9", "S1", 1000, 4000, "the acquisition"))
 	tags := newTestAnnotationStore(t)
 	recordMarks(t, tags, "JOB1.opus", annotatedFile(t, "c1", testTagNamespaceA,
 		[]testTag{{"tag_b", "budget"}, {"tag_h", "hiring"}, {"tag_w", "strategy"}},
 		meetingMark("mk_w", "tag_w"),
 		rangeMark("mk_b", "tag_b", 3999, 4001),
 		rangeMark("mk_h", "tag_h", 4000, 10_000)))
-	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus"}}.server(t)
+	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus", "JOB2.opus"}}.server(t)
 	defer srv.Close()
 
 	rec := doSearchWithDeps(t, searchTestConfig(srv.URL), searchDeps{index: index, annotations: tags}, "q=acquisition", "alice")
 	got := decodeSearch(t, rec)
 	bySegment := map[string][]searchHitMark{}
 	for _, hit := range got.Hits {
-		if hit.Marks == nil {
-			t.Fatalf("with a tag index every hit carries marks, even none: %s", rec.Body.String())
+		if (hit.Marks == nil) != (hit.SegmentID == "s9") {
+			t.Fatalf("hit %s: marks = %v, want them only where the meeting's marks are known: %s", hit.SegmentID, hit.Marks, rec.Body.String())
 		}
-		bySegment[hit.SegmentID] = *hit.Marks
+		if hit.Marks != nil {
+			bySegment[hit.SegmentID] = *hit.Marks
+		}
 	}
 	if marks := bySegment["s1"]; len(marks) != 1 || marks[0] != (searchHitMark{TagID: "tag_b", Label: "budget"}) {
 		t.Errorf("s1 marks = %+v, want only budget (hiring only touches it)", marks)
@@ -358,7 +359,7 @@ func getMeetingsListWithTags(t *testing.T, cfg ExAppConfig, tags *annotationStor
 }
 
 // The list narrows to the caller's visible meetings carrying the tag — a
-// hidden meeting carrying it stays hidden — and says what it covered.
+// hidden meeting carrying it stays hidden.
 func TestMeetingsListNarrowsToATag(t *testing.T) {
 	tags := newTestAnnotationStore(t)
 	hiring := []testTag{{"tag_h", "hiring"}}
@@ -384,19 +385,15 @@ func TestMeetingsListNarrowsToATag(t *testing.T) {
 	if got.Filter == nil || got.Filter.Tag != "Hiring" {
 		t.Errorf("filter echo = %+v, want the tag", got.Filter)
 	}
-	if got.TagCoverage == nil || *got.TagCoverage != (annotationCoverage{Visible: 3, Indexed: 2}) {
-		t.Errorf("tagCoverage = %+v, want visible=3 indexed=2", got.TagCoverage)
-	}
 
 	// The tag composes with the other filters.
 	both := decodeMeetingsList(t, getMeetingsListWithTags(t, cfg, tags, "tag=hiring&room=rm_bbbbbbbbbbbbbbbb", "alice"))
 	if ids := listedIDs(t, both); len(ids) != 0 {
 		t.Errorf("tag+room ids = %v, want none", ids)
 	}
-	// And an unfiltered list carries no tag coverage at all.
 	plain := decodeMeetingsList(t, getMeetingsListWithTags(t, cfg, tags, "", "alice"))
-	if plain.TagCoverage != nil || len(listedIDs(t, plain)) != 3 {
-		t.Errorf("plain list = %+v, want all three and no tag coverage", plain)
+	if len(listedIDs(t, plain)) != 3 {
+		t.Errorf("plain list = %+v, want all three", plain)
 	}
 }
 

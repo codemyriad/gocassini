@@ -156,11 +156,10 @@ func TestAnnotationBackfillRecordsFailuresAndCarriesOn(t *testing.T) {
 	if row := readAnnotationRow(t, store, "JOB1.opus"); row.state != annotationsStateIndexed || row.marks != 1 {
 		t.Errorf("JOB1 = %+v, want its earlier rows kept", row)
 	}
-	if row := readAnnotationRow(t, store, "JOB2.opus"); row.state != annotationsStateUnavailable || row.reason != annotationsReasonUnreadable {
-		t.Errorf("JOB2 = %+v, want unavailable with a reason", row)
-	}
-	if row := readAnnotationRow(t, store, "JOB5.opus"); row.state != annotationsStateUnavailable || row.reason != annotationsBackfillReasonArchiveUnread {
-		t.Errorf("JOB5 = %+v, want the failure recorded against it", row)
+	for _, name := range []string{"JOB2.opus", "JOB5.opus"} {
+		if row := readAnnotationRow(t, store, name); row.state != annotationsStateUnavailable || row.container != "" {
+			t.Errorf("%s = %+v, want unavailable with no digest, so the next run reads it again", name, row)
+		}
 	}
 	coverage, _ := store.Coverage(ctx, []string{"JOB1.opus", "JOB2.opus", "JOB3.opus", "JOB4.opus", "JOB5.opus", "JOB6.opus"})
 	if coverage != (annotationCoverage{Visible: 6, Indexed: 2}) {
@@ -182,55 +181,6 @@ func TestAnnotationBackfillCountsAnUnknownFormatAsUnreadable(t *testing.T) {
 	}
 }
 
-// On a fresh volume the rebuild adopts the namespace most of the archive
-// carries, so the next mark joins the existing tags.
-func TestAnnotationBackfillAdoptsTheArchivesNamespace(t *testing.T) {
-	store := newTestAnnotationStore(t)
-	archive := newFakeAnnotationArchive()
-	archive.put("JOB1.opus", "c1", hiringFile(t, testTagNamespaceA))
-	archive.put("JOB2.opus", "c2", hiringFile(t, testTagNamespaceA))
-	archive.put("JOB3.opus", "c3", hiringFile(t, testTagNamespaceB))
-
-	report := archive.rebuild(t, store, "JOB1.opus", "JOB2.opus", "JOB3.opus")
-	if !report.Namespace.Adopted || report.Namespace.Namespace != testTagNamespaceA {
-		t.Fatalf("namespace = %+v, want %s adopted", report.Namespace, testTagNamespaceA)
-	}
-	if got, err := store.Namespace(context.Background()); err != nil || got != testTagNamespaceA {
-		t.Fatalf("Namespace() = %q (%v), want the adopted one, not a new mint", got, err)
-	}
-}
-
-// A rebuild never mints: an archive with no marks leaves that to the first
-// write, when a namespace is actually needed.
-func TestAnnotationBackfillNeverMints(t *testing.T) {
-	store := newTestAnnotationStore(t)
-	archive := newFakeAnnotationArchive()
-	archive.put("JOB1.opus", "c1", annotateResult{})
-	report := archive.rebuild(t, store, "JOB1.opus")
-	if report.Namespace != (namespaceAdoption{}) {
-		t.Fatalf("namespace = %+v, want nothing adopted or minted", report.Namespace)
-	}
-	if stored, _ := store.storedNamespace(context.Background()); stored != "" {
-		t.Fatalf("stored = %q, want none", stored)
-	}
-}
-
-// A namespace already stored is never overwritten by a rebuild; a different
-// one in the archive is reported for a person to look at.
-func TestAnnotationBackfillReportsANamespaceConflict(t *testing.T) {
-	store := newTestAnnotationStore(t)
-	minted, err := store.Namespace(context.Background())
-	if err != nil {
-		t.Fatalf("mint: %v", err)
-	}
-	archive := newFakeAnnotationArchive()
-	archive.put("JOB1.opus", "c1", hiringFile(t, testTagNamespaceA))
-	report := archive.rebuild(t, store, "JOB1.opus")
-	if report.Namespace.Adopted || report.Namespace.Namespace != minted || report.Namespace.Archive != testTagNamespaceA {
-		t.Fatalf("namespace = %+v, want %s kept and %s reported", report.Namespace, minted, testTagNamespaceA)
-	}
-}
-
 // Meetings the archive no longer names are dropped — but never on an empty
 // archive read, which is indistinguishable from an outage.
 func TestAnnotationBackfillForgetsVanishedMeetings(t *testing.T) {
@@ -245,7 +195,7 @@ func TestAnnotationBackfillForgetsVanishedMeetings(t *testing.T) {
 	if report := archive.rebuild(t, store, "JOB1.opus"); report.Forgotten != 1 {
 		t.Fatalf("report = %+v, want forgotten=1", report)
 	}
-	if recorded, _ := store.recordedState(context.Background()); len(recorded) != 1 {
+	if recorded, _ := store.recordedContainers(context.Background()); len(recorded) != 1 {
 		t.Fatalf("recorded = %v, want only JOB1", recorded)
 	}
 }
@@ -267,8 +217,8 @@ func TestBackfillAnnotationsCommandRefusesOutsideAnExApp(t *testing.T) {
 	t.Setenv("APP_SECRET", "")
 	t.Setenv("EX_APP_ID", "")
 	var stdout, stderr bytes.Buffer
-	if code := runBackfillAnnotations(context.Background(), nil, &stdout, &stderr); code != backfillAnnotationsExitNotStarted {
-		t.Fatalf("exit = %d, want %d", code, backfillAnnotationsExitNotStarted)
+	if code := runBackfillAnnotations(context.Background(), nil, &stdout, &stderr); code != backfillSearchExitNotStarted {
+		t.Fatalf("exit = %d, want %d", code, backfillSearchExitNotStarted)
 	}
 	if !strings.Contains(stderr.String(), "nothing was read") {
 		t.Errorf("stderr should say nothing was read: %q", stderr.String())
@@ -277,8 +227,8 @@ func TestBackfillAnnotationsCommandRefusesOutsideAnExApp(t *testing.T) {
 
 func TestBackfillAnnotationsCommandRejectsSurplusArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := runBackfillAnnotations(context.Background(), []string{"extra"}, &stdout, &stderr); code != backfillAnnotationsExitUsage {
-		t.Fatalf("exit = %d, want %d", code, backfillAnnotationsExitUsage)
+	if code := runBackfillAnnotations(context.Background(), []string{"extra"}, &stdout, &stderr); code != backfillSearchExitUsage {
+		t.Fatalf("exit = %d, want %d", code, backfillSearchExitUsage)
 	}
 }
 
