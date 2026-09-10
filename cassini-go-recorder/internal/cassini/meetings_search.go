@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"gocassini/internal/inspect"
 )
 
 // `cassini meetings search` — find the moments where something was said.
@@ -104,7 +106,7 @@ inside a marked stretch of a meeting lists the marks it falls in.
 		// parameter, and its answer would pass for a narrowed one.
 		checked, err := client.checkTagNarrowing(ctx, tagValue)
 		if err != nil {
-			return reportAnnotationsError(ctx, client, stderr, "search", cfg, err)
+			return reportMeetingsError(stderr, "search", cfg, err)
 		}
 		narrowing = checked
 	}
@@ -233,7 +235,7 @@ func formatMeetingsSearchMarks(marks []meetingsSearchMark) string {
 	}
 	labels := make([]string, 0, len(marks))
 	for _, mark := range marks {
-		labels = append(labels, meetingsToken(firstNonBlank(mark.Label, mark.TagID)))
+		labels = append(labels, inspect.Token(firstNonBlank(mark.Label, mark.TagID)))
 	}
 	return " marks=" + strings.Join(labels, ",")
 }

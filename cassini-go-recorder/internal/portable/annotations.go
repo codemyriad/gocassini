@@ -16,33 +16,24 @@ import (
 )
 
 // Annotations is the optional `annotations` member of a published manifest: the
-// tags people and agents put on a meeting, and on stretches of it (D-737).
-//
-// Manifest carries the member as raw JSON rather than as this type, so that no
-// reader ever fails to open a recording because of it. ParseAnnotations is the
-// reader's entry point and is tolerant; ValidateAnnotations is the writer's
-// check and is strict. Unknown fields inside a v1 document are dropped by a
-// typed round trip — v1 is ours to define, and a change that needs new fields
-// is a new format string.
+// tags on a meeting and on stretches of it. Manifest keeps the member as raw
+// JSON so no reader fails to open a recording because of it. ParseAnnotations
+// is the tolerant reader; ValidateAnnotations is the strict writer's check.
 type Annotations struct {
 	Format string `json:"format"`
-	// Revision counts committed batches. It is informational: concurrent
-	// writers are serialised by a conditional write on the file, not by this
-	// number — a counter inside the file cannot prevent a lost update.
+	// Revision is informational: concurrent writers are serialised by a
+	// conditional write on the file, not by this number.
 	Revision int `json:"revision"`
 	// AudioOpusSHA256 binds every time range to the audio it was made against.
-	// It is set from integrity.opusAudioSha256 on the first write. When the two
-	// differ the marks are unresolved: made against different audio, and not to
-	// be drawn against this one.
+	// When it differs from integrity.opusAudioSha256 the marks are unresolved
+	// and must not be drawn against this audio.
 	AudioOpusSHA256 string `json:"audioOpusSha256"`
-	// TagNamespace scopes tag ids, so the same tag across recordings is the same
-	// (namespace, id). Set on a file's first write and never changed.
+	// TagNamespace scopes tag ids across recordings. Set once, never changed.
 	TagNamespace string           `json:"tagNamespace"`
 	Tags         []AnnotationTag  `json:"tags"`
 	Items        []AnnotationItem `json:"items"`
 }
 
-// AnnotationTag defines a tag within one document.
 type AnnotationTag struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -55,27 +46,22 @@ type AnnotationItem struct {
 	Target       AnnotationTarget `json:"target"`
 	CreatedAtUTC string           `json:"createdAtUtc"`
 	Actor        AnnotationActor  `json:"actor"`
-	// OperationID groups the items one batch added, so a whole run — an
-	// agent's, typically — can be undone in one step.
+	// OperationID groups the items one batch added, so a run can be undone in
+	// one step.
 	OperationID string `json:"operationId"`
 }
 
-// AnnotationTarget is what a mark applies to. A meeting target carries no
-// times. A time-range target is half-open, [StartMS, EndMS), in elapsed
-// playback milliseconds after Opus pre-skip.
-//
-// "The whole meeting" is its own kind rather than [0, duration): a range that
-// happens to span a meeting and a tag on the meeting are different claims.
+// AnnotationTarget is what a mark applies to: the whole meeting (no times), or
+// a half-open [StartMS, EndMS) in playback milliseconds after Opus pre-skip.
 type AnnotationTarget struct {
 	Kind    string `json:"kind"`
 	StartMS *int64 `json:"startMs,omitempty"`
 	EndMS   *int64 `json:"endMs,omitempty"`
 }
 
-// AnnotationActor says who made a mark. ID is the authenticated Nextcloud user,
-// never a value a caller supplied. Kind is self-declared by the caller: it is
-// attribution for display and undo, not an access control. Readers tolerate
-// kinds they do not know (D-743 will add "pipeline").
+// AnnotationActor says who made a mark. ID is the authenticated Nextcloud user;
+// Kind is self-declared attribution, not an access control, and readers
+// tolerate kinds they do not know.
 type AnnotationActor struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id"`
@@ -90,9 +76,7 @@ const (
 	AnnotationActorPerson = "person"
 	AnnotationActorAgent  = "agent"
 
-	// Explicit limits, per the design review: start small and inline, and move
-	// the document to a chunk set of its own only if growth justifies it. A
-	// thousand marks measured at ~52.6 KiB.
+	// A thousand marks measured at ~52.6 KiB inline in the payload.
 	MaxAnnotationTags       = 200
 	MaxAnnotationItems      = 2000
 	MaxAnnotationLabelRunes = 64
@@ -103,9 +87,8 @@ const (
 	annotationIDPrefixOp    = "op"
 )
 
-// ErrAnnotationsFormatUnsupported means the member is present but in a format
-// this reader does not know. Readers treat the recording as carrying no marks
-// they can show; they must not treat it as broken.
+// ErrAnnotationsFormatUnsupported means the member is in a format this reader
+// does not know: the recording carries no marks it can show, and is not broken.
 var ErrAnnotationsFormatUnsupported = errors.New("annotations are in a format this reader does not support")
 
 var (
@@ -114,12 +97,9 @@ var (
 	annotationIDEncoding  = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 )
 
-// ParseAnnotations decodes a manifest's raw annotations member.
-//
-// Absent or null answers (nil, nil). A member in another format answers
-// ErrAnnotationsFormatUnsupported. Only a v1 member that fails to decode is an
-// ordinary error — and even then the recording itself remains readable, because
-// DecodePublishedManifest never looks inside this member.
+// ParseAnnotations decodes a manifest's raw annotations member. Absent or null
+// answers (nil, nil). A member in another format answers a document carrying
+// only its Format, with ErrAnnotationsFormatUnsupported.
 func ParseAnnotations(raw json.RawMessage) (*Annotations, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
@@ -132,7 +112,7 @@ func ParseAnnotations(raw json.RawMessage) (*Annotations, error) {
 		return nil, fmt.Errorf("parse annotations: %w", err)
 	}
 	if probe.Format != AnnotationsFormatV1 {
-		return nil, fmt.Errorf("%w: %q", ErrAnnotationsFormatUnsupported, probe.Format)
+		return &Annotations{Format: probe.Format}, fmt.Errorf("%w: %q", ErrAnnotationsFormatUnsupported, probe.Format)
 	}
 	var doc Annotations
 	if err := json.Unmarshal(trimmed, &doc); err != nil {
@@ -146,14 +126,10 @@ func (a *Annotations) Resolved(audioOpusSHA256 string) bool {
 	return a != nil && a.AudioOpusSHA256 != "" && a.AudioOpusSHA256 == strings.ToLower(strings.TrimSpace(audioOpusSHA256))
 }
 
-// Canonicalize puts the document in its canonical order — tags by label then
-// id; meeting targets first, then items by start, end and id — so successive
-// revisions diff readably and two writers producing the same marks produce the
-// same bytes.
-//
-// It also makes empty lists empty arrays. The published schema requires tags
-// and items to be arrays, and a nil slice encodes as null, so a document whose
-// last mark was removed would otherwise fail the schema every reader checks.
+// Canonicalize sorts the document — tags by label then id; meeting targets
+// first, then items by start, end and id — so two writers producing the same
+// marks produce the same bytes. It also turns nil lists into empty ones: the
+// schema requires arrays, and a nil slice encodes as null.
 func (a *Annotations) Canonicalize() {
 	if a == nil {
 		return
@@ -241,7 +217,7 @@ func ValidateAnnotations(a *Annotations, durationMS int64) error {
 		if !tagIDs[item.TagID] {
 			return fmt.Errorf("%s.tagId: %q names no tag in this document", at, item.TagID)
 		}
-		if err := validateAnnotationTarget(item.Target, durationMS); err != nil {
+		if err := ValidateAnnotationTarget(item.Target, durationMS); err != nil {
 			return fmt.Errorf("%s.target: %w", at, err)
 		}
 		if err := validateAnnotationTime(item.CreatedAtUTC); err != nil {
@@ -281,10 +257,9 @@ func ValidateAnnotationLabel(label string) error {
 	return nil
 }
 
-// NewAnnotationTagID, NewAnnotationItemID and NewAnnotationOperationID mint
-// ids. All three are random rather than time-ordered on purpose: a tag id is
-// reused across recordings, and a time-ordered one would tell a caller when —
-// and so that — someone else first used a label on a meeting they cannot read.
+// The ids are random rather than time-ordered on purpose: a tag id is reused
+// across recordings, and a time-ordered one would tell a caller when someone
+// else first used a label on a meeting they cannot read.
 func NewAnnotationTagID() (string, error)       { return newAnnotationID(annotationIDPrefixTag) }
 func NewAnnotationItemID() (string, error)      { return newAnnotationID(annotationIDPrefixItem) }
 func NewAnnotationOperationID() (string, error) { return newAnnotationID(annotationIDPrefixOp) }
@@ -297,7 +272,14 @@ func newAnnotationID(prefix string) (string, error) {
 	return prefix + "_" + annotationIDEncoding.EncodeToString(buf), nil
 }
 
-func validateAnnotationTarget(target AnnotationTarget, durationMS int64) error {
+// IsAnnotationID reports whether s is a valid tag, item or operation id.
+func IsAnnotationID(s string) bool { return annotationIDRE.MatchString(s) }
+
+// IsAnnotationTagNamespace reports whether s is urn:uuid:<lowercase uuid>.
+func IsAnnotationTagNamespace(s string) bool { return annotationNamespaceRE.MatchString(s) }
+
+// ValidateAnnotationTarget checks one target; durationMS bounds a time range.
+func ValidateAnnotationTarget(target AnnotationTarget, durationMS int64) error {
 	switch target.Kind {
 	case AnnotationTargetMeeting:
 		if target.StartMS != nil || target.EndMS != nil {

@@ -95,6 +95,15 @@ func TestPrintPortableAnnotations(t *testing.T) {
 			},
 		},
 		{
+			// Their ranges were drawn on other audio, so this file's length
+			// cannot make them invalid.
+			name:       "unresolved marks longer than this audio",
+			member:     fixtureAnnotations(t, "unresolved", annotationsTestAudioSHA),
+			durationMS: 100,
+			want:       []string{"resolved=no status=ok\n"},
+			deny:       []string{"do not validate"},
+		},
+		{
 			name:       "a format this build does not read",
 			member:     fixtureAnnotations(t, "unsupported", annotationsTestAudioSHA),
 			durationMS: 200,

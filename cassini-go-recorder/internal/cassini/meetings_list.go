@@ -87,7 +87,7 @@ listing every meeting as though it had narrowed them.
 		// would ignore the parameter and answer with every meeting.
 		checked, err := client.checkTagNarrowing(ctx, filter.tag)
 		if err != nil {
-			return reportAnnotationsError(ctx, client, stderr, "list", cfg, err)
+			return reportMeetingsError(stderr, "list", cfg, err)
 		}
 		narrowing = checked
 	}
@@ -95,9 +95,6 @@ listing every meeting as though it had narrowed them.
 	// The counts that explain a short list come from whichever side filtered.
 	listing, result, err := client.fetchMeetings(ctx, filter)
 	if err != nil {
-		if errors.Is(err, errMeetingsTagsUnavailable) {
-			return reportAnnotationsError(ctx, client, stderr, "list", cfg, err)
-		}
 		return reportMeetingsError(stderr, "list", cfg, err)
 	}
 

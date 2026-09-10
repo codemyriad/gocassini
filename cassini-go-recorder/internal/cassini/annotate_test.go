@@ -206,11 +206,11 @@ func fileDigestForTest(t *testing.T, path string) string {
 
 func sameAnnotationsJSON(t *testing.T, a, b []byte) bool {
 	t.Helper()
-	left, err := decodeAnnotateGenericJSON(a)
+	left, err := decodePortableMeetingDocument(a)
 	if err != nil {
 		t.Fatalf("decode %s: %v", a, err)
 	}
-	right, err := decodeAnnotateGenericJSON(b)
+	right, err := decodePortableMeetingDocument(b)
 	if err != nil {
 		t.Fatalf("decode %s: %v", b, err)
 	}
@@ -621,6 +621,45 @@ func TestAnnotateCarryAcrossDifferentAudioIsUnresolved(t *testing.T) {
 	}
 	if fileDigestForTest(t, out) != digest {
 		t.Error("a refused apply changed the file")
+	}
+
+	// But they can still be cleaned up: relabel and removals work, and keep the
+	// binding while marks from the other audio remain.
+	doc := annotationsIn(t, out)
+	cleaned := applyInPlace(t, out, `{"ops":[{"op":"relabel","tagId":"`+doc.Tags[0].ID+`","label":"renamed"},{"op":"unmark-tag","tagId":"`+doc.Tags[1].ID+`"}]}`)
+	if cleaned.Resolved == nil || *cleaned.Resolved || len(cleaned.Removed) != 1 {
+		t.Fatalf("relabel and unmark-tag on unresolved marks: resolved=%v removed=%v", cleaned.Resolved, cleaned.Removed)
+	}
+	if got := annotationsIn(t, out).AudioOpusSHA256; got != deliveredDigest {
+		t.Errorf("binding = %s while marks from other audio remain, want %s", got, deliveredDigest)
+	}
+	// A document with no marks left binds to this audio, and marking works again.
+	last := annotationsIn(t, out).Items[0].ID
+	if emptied := applyInPlace(t, out, `{"ops":[{"op":"unmark","itemId":"`+last+`"}]}`); emptied.Resolved == nil || !*emptied.Resolved {
+		t.Errorf("an emptied document should bind to this audio: resolved=%v", emptied.Resolved)
+	}
+	if marked := applyInPlace(t, out, annotateTwoMarks); len(marked.Added) != 2 {
+		t.Errorf("marking after the cleanup added %v", marked.Added)
+	}
+}
+
+func TestAnnotateCarryRebindsADocumentWithNoMarks(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	delivered := packAnnotateFixture(t, tmp, "delivered")
+	sealed := packAnnotateBundle(t, writeAnnotateBundle(t, tmp, "rerun", 440), filepath.Join(tmp, "sealed.opus"))
+	applyInPlace(t, delivered, annotateTwoMarks, "--operation-id", "op_gone")
+	applyInPlace(t, delivered, `{"ops":[{"op":"undo-operation","operationId":"op_gone"}]}`)
+	out := filepath.Join(tmp, "outgoing.opus")
+
+	result := annotateOK(t, "", "carry", delivered, sealed, "--out", out, "--json")
+
+	if result.Carried != 0 || result.Revision != 2 || result.Resolved == nil || !*result.Resolved {
+		t.Fatalf("carried=%d revision=%d resolved=%v, want an empty document at revision 2, bound to the sealed audio",
+			result.Carried, result.Revision, result.Resolved)
+	}
+	if got := annotationsIn(t, out).AudioOpusSHA256; got != result.AudioOpusSHA256 {
+		t.Errorf("binding = %s, want the sealed audio %s", got, result.AudioOpusSHA256)
 	}
 }
 

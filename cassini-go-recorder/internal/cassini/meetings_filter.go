@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"gocassini/internal/inspect"
 )
 
 // meetingsFilter is the optional narrowing `cassini meetings list` applies to a
@@ -46,7 +48,7 @@ func (f meetingsFilter) describe() string {
 		parts = append(parts, "room:"+oneLineField(f.room))
 	}
 	if f.tag != "" {
-		parts = append(parts, "tag:"+meetingsToken(f.tag))
+		parts = append(parts, "tag:"+inspect.Token(f.tag))
 	}
 	return strings.Join(parts, " ")
 }

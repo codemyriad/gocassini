@@ -14,10 +14,8 @@ import (
 	"gocassini/internal/portable"
 )
 
-// The ops `cassini annotate apply` takes, and the pure function that applies
-// them to a document. Nothing in this file touches a file: the batch is worked
-// out in memory first, so a batch that turns out to be invalid halfway through
-// has written nothing, and the whole of it is decided before the one rewrite.
+// The ops `cassini annotate apply` takes, and the pure function that works a
+// batch out in memory before the one rewrite.
 
 const (
 	annotateOpMark          = "mark"
@@ -27,10 +25,8 @@ const (
 	annotateOpRelabel       = "relabel"
 )
 
-// annotateOpFields is the set of members each op may carry besides "op". A
-// member that belongs to another op is refused rather than ignored: an unmark
-// sent with a tagId is a caller that meant unmark-tag, and quietly doing
-// something else is how a batch removes the wrong marks.
+// annotateOpFields is the members each op may carry besides "op". Another op's
+// member is refused, not ignored: an unmark sent with a tagId meant unmark-tag.
 var annotateOpFields = map[string][]string{
 	annotateOpMark:          {"tag", "target"},
 	annotateOpUnmark:        {"itemId"},
@@ -39,8 +35,7 @@ var annotateOpFields = map[string][]string{
 	annotateOpRelabel:       {"tagId", "label"},
 }
 
-// annotateOp is one entry of an ops document. It is the union of every op's
-// members; annotateOpFields says which ones each op may use.
+// annotateOp is the union of every op's members.
 type annotateOp struct {
 	Op          string                     `json:"op"`
 	Tag         *annotateOpTag             `json:"tag"`
@@ -49,17 +44,16 @@ type annotateOp struct {
 	TagID       string                     `json:"tagId"`
 	OperationID string                     `json:"operationId"`
 	Label       *string                    `json:"label"`
+	raw         json.RawMessage            // the op as sent, for the meetings client to forward
 }
 
-// annotateOpTag names the tag a mark applies. Label is a pointer because
-// "absent" and "empty" mean different things: absent means "use the tag with
-// this id", empty is an invalid label.
+// annotateOpTag names the tag a mark applies. An absent label means "the tag
+// with this id"; an empty one is invalid.
 type annotateOpTag struct {
 	ID    string  `json:"id"`
 	Label *string `json:"label"`
 }
 
-// annotateStamp is what every item a batch adds is stamped with.
 type annotateStamp struct {
 	ActorKind   string
 	ActorID     string
@@ -67,14 +61,10 @@ type annotateStamp struct {
 	CreatedAt   string
 }
 
-// annotateOpsOutcome is a batch, worked out.
 type annotateOpsOutcome struct {
-	// Doc holds the tags and items after the batch, with unused tags dropped
-	// and in canonical order. Its format, revision, binding and namespace are
-	// the current document's; setting them for the write is the caller's job.
-	Doc *portable.Annotations
-	// Changed is false when the batch leaves the tags and items exactly as they
-	// were — which is not a commit, and is not written.
+	// Doc is the tags and items after the batch, canonical, unused tags dropped;
+	// its format, revision, binding and namespace are the caller's to set.
+	Doc      *portable.Annotations
 	Changed  bool
 	Added    []string
 	Removed  []string
@@ -82,8 +72,8 @@ type annotateOpsOutcome struct {
 }
 
 // parseAnnotateOps decodes an ops document strictly. Unknown members are
-// refused at every level: a misspelt "tagid" silently read as absent would
-// turn a targeted removal into a removal of everything.
+// refused at every level: a misspelt "tagid" read as absent would turn a
+// targeted removal into a removal of everything.
 func parseAnnotateOps(raw []byte) ([]annotateOp, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -117,8 +107,7 @@ func parseAnnotateOps(raw []byte) ([]annotateOp, error) {
 			return nil, annotateFail(annotateExitInvalid,
 				"ops[%d]: unknown op %q (want mark, unmark, unmark-tag, undo-operation or relabel)", i, op.Op)
 		}
-		// Checked on the exact spelling: encoding/json matches member names
-		// case-insensitively, so "TagId" decoded fine above.
+		// encoding/json matches names case-insensitively; this checks the spelling.
 		names := make([]string, 0, len(members))
 		for name := range members {
 			names = append(names, name)
@@ -129,18 +118,15 @@ func parseAnnotateOps(raw []byte) ([]annotateOp, error) {
 				return nil, annotateFail(annotateExitInvalid, "ops[%d] (%s): %q is not a member of this op", i, op.Op, name)
 			}
 		}
+		op.raw = rawOp
 		ops = append(ops, op)
 	}
 	return ops, nil
 }
 
-// applyAnnotationOps works out a batch against the current document (nil when
-// the file carries none), in order, and without touching current. durationMS
-// bounds every time range an op names.
-//
-// An op the caller got wrong fails the whole batch with exit 4 and a message
-// naming the op; nothing is partially applied, because nothing is written until
-// the whole batch has been worked out.
+// applyAnnotationOps works out a batch against current (nil when the file
+// carries none) without touching it. durationMS bounds every time range an op
+// names. An op the caller got wrong fails the whole batch with exit 4.
 func applyAnnotationOps(current *portable.Annotations, ops []annotateOp, durationMS int64, stamp annotateStamp) (annotateOpsOutcome, error) {
 	before := cloneAnnotations(current)
 	before.Canonicalize()
@@ -172,9 +158,7 @@ func applyAnnotationOps(current *portable.Annotations, ops []annotateOp, duratio
 		}
 	}
 
-	// A tag with no marks left is not a tag in this file any more. Keeping the
-	// definition would list it in the vocabulary as present on a meeting it is
-	// no longer on.
+	// A tag with no marks left would otherwise stay in the vocabulary.
 	dropUnusedAnnotationTags(work)
 	work.Canonicalize()
 
@@ -184,12 +168,10 @@ func applyAnnotationOps(current *portable.Annotations, ops []annotateOp, duratio
 		Added:    []string{},
 		Removed:  []string{},
 	}
-	// Both sides are in canonical order, which is a total order (ids are
-	// unique), so equal content means equal slices.
+	// Canonical order is total (ids are unique), so equal content means equal slices.
 	outcome.Changed = !reflect.DeepEqual(before.Tags, work.Tags) || !reflect.DeepEqual(before.Items, work.Items)
 
-	// Net, from the two id sets rather than tallied per op, so an item added and
-	// removed within one batch is reported as neither.
+	// Net, from the two id sets rather than tallied per op.
 	beforeIDs := make(map[string]bool, len(before.Items))
 	for _, item := range before.Items {
 		beforeIDs[item.ID] = true
@@ -209,17 +191,10 @@ func applyAnnotationOps(current *portable.Annotations, ops []annotateOp, duratio
 	return outcome, nil
 }
 
-// applyMarkOp ensures the tag, then adds the item unless an identical one is
-// already there.
-//
-// The tag is found by id when the id is defined in this file — a differing
-// label is then ignored, since a mark is not a rename — else by label within
-// this file, else defined. Matching by label within the file is what keeps one
-// file from carrying two tags that read the same; mapping a label to one id
-// across the whole archive is the operator's job, before it calls this.
-//
-// The identical-item check is the idempotence that makes a retry safe: the
-// same request sent twice after a lost response lands once.
+// applyMarkOp finds the tag by id, else by label (a mark is not a rename), else
+// defines it, then adds the item unless an identical one is already there —
+// which is what makes a retry after a lost response safe. Mapping a label to
+// one id across the archive is the operator's job, before it calls this.
 func applyMarkOp(doc *portable.Annotations, op annotateOp, durationMS int64, stamp annotateStamp) error {
 	if op.Tag == nil {
 		return annotateFail(annotateExitInvalid, `needs a tag: {"id"?, "label"?}`)
@@ -246,7 +221,6 @@ func applyMarkOp(doc *portable.Annotations, op annotateOp, durationMS int64, sta
 		}
 		tagID = op.Tag.ID
 		if tagID == "" {
-			// Random, never time-ordered: see portable.NewAnnotationTagID.
 			if tagID, err = portable.NewAnnotationTagID(); err != nil {
 				return err
 			}
@@ -315,10 +289,8 @@ func applyUndoOperationOp(doc *portable.Annotations, op annotateOp, notFound *[]
 	return nil
 }
 
-// applyRelabelOp renames a tag in this file only; renaming across the archive
-// rewrites every file carrying the tag and is D-746's. A label another tag in
-// this file already reads as is refused: the file would then carry two tags
-// with one name, and a mark by label could no longer say which it meant.
+// applyRelabelOp renames a tag in this file only. A label another tag here
+// already has is refused, or a mark by label could not say which it meant.
 func applyRelabelOp(doc *portable.Annotations, op annotateOp, notFound *[]string) error {
 	if op.TagID == "" {
 		return annotateFail(annotateExitInvalid, "needs a tagId")
@@ -350,8 +322,7 @@ func applyRelabelOp(doc *portable.Annotations, op annotateOp, notFound *[]string
 	return nil
 }
 
-// annotateOpLabel trims a label from an op and checks it as the format stores
-// it. absent answers ("", false, nil).
+// annotateOpLabel trims and checks a label from an op; absent answers ("", false, nil).
 func annotateOpLabel(raw *string, member string) (string, bool, error) {
 	if raw == nil {
 		return "", false, nil
@@ -363,43 +334,17 @@ func annotateOpLabel(raw *string, member string) (string, bool, error) {
 	return label, true, nil
 }
 
-// checkAnnotateTarget checks a target an op names, so a bad one is refused with
-// a message pointing at the op rather than at an index in the rewritten
-// document. It restates portable's target rules; ValidateAnnotations runs on
-// the whole document before the write regardless, so this can only ever be the
-// earlier of two refusals.
+// checkAnnotateTarget refuses a bad target with a message pointing at the op
+// rather than at an index in the rewritten document.
 func checkAnnotateTarget(target portable.AnnotationTarget, durationMS int64) error {
-	switch target.Kind {
-	case portable.AnnotationTargetMeeting:
-		if target.StartMS != nil || target.EndMS != nil {
-			return annotateFail(annotateExitInvalid, "target: a meeting target carries no startMs or endMs")
-		}
-		return nil
-	case portable.AnnotationTargetTimeRange:
-		if target.StartMS == nil || target.EndMS == nil {
-			return annotateFail(annotateExitInvalid, "target: a time-range target needs both startMs and endMs")
-		}
-		start, end := *target.StartMS, *target.EndMS
-		switch {
-		case start < 0:
-			return annotateFail(annotateExitInvalid, "target: startMs %d is negative", start)
-		case end <= start:
-			return annotateFail(annotateExitInvalid, "target: [%d, %d) is empty or reversed", start, end)
-		case durationMS <= 0:
-			return annotateFail(annotateExitInvalid, "target: the recording's duration is unknown, so a time range cannot be checked")
-		case end > durationMS:
-			return annotateFail(annotateExitInvalid, "target: endMs %d is past the end of the audio (%d)", end, durationMS)
-		}
-		return nil
-	default:
-		return annotateFail(annotateExitInvalid, "target: unknown kind %q (want %s or %s)", target.Kind, portable.AnnotationTargetMeeting, portable.AnnotationTargetTimeRange)
+	if err := portable.ValidateAnnotationTarget(target, durationMS); err != nil {
+		return annotateFail(annotateExitInvalid, "target: %v", err)
 	}
+	return nil
 }
 
-// findAnnotationTag answers the id of the tag a mark applies to, or "" when it
-// must be defined: by id when that id is defined here, else by label. Labels
-// are compared as the design says — trimmed (they already are) and
-// case-insensitively, with no Unicode normalisation.
+// findAnnotationTag answers the tag a mark applies to, or "" when it must be
+// defined: by id, else by label, case-insensitively.
 func findAnnotationTag(doc *portable.Annotations, id, label string, hasLabel bool) string {
 	if id != "" {
 		for _, tag := range doc.Tags {
@@ -442,7 +387,6 @@ func copyAnnotationTarget(target portable.AnnotationTarget) portable.AnnotationT
 	return copied
 }
 
-// removeAnnotationItems removes every item match accepts and answers how many.
 func removeAnnotationItems(doc *portable.Annotations, match func(portable.AnnotationItem) bool) int {
 	kept := make([]portable.AnnotationItem, 0, len(doc.Items))
 	for _, item := range doc.Items {
@@ -469,9 +413,7 @@ func dropUnusedAnnotationTags(doc *portable.Annotations) {
 	doc.Tags = kept
 }
 
-// cloneAnnotations copies a document so it can be edited without touching the
-// original — nil answers an empty one. Slices are always non-nil, so a document
-// with nothing in it writes "tags": [] rather than "tags": null.
+// cloneAnnotations copies a document for editing; nil answers an empty one.
 func cloneAnnotations(doc *portable.Annotations) *portable.Annotations {
 	if doc == nil {
 		return &portable.Annotations{Tags: []portable.AnnotationTag{}, Items: []portable.AnnotationItem{}}
