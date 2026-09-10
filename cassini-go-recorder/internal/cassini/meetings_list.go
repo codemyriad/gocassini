@@ -19,12 +19,14 @@ func runMeetingsList(ctx context.Context, args []string, stdout, stderr io.Write
 	fromDate := fs.String("from", "", "only meetings on or after this date (e.g. 2026-08-01)")
 	toDate := fs.String("to", "", "only meetings on or before this date (a bare date includes the whole day)")
 	room := fs.String("room", "", "only meetings from this room, as printed by `cassini meetings rooms`")
+	tag := fs.String("tag", "", "only meetings carrying this tag: a label, or the tag= id `cassini meetings tags` prints")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini meetings list
   cassini meetings list --json
   cassini meetings list --from 2026-08-01 --to 2026-08-31
   cassini meetings list --room <room>
+  cassini meetings list --tag hiring
 
 List the meetings your Nextcloud account may read. Prints nothing but a count
 when the account may read none — which is also what a mis-provisioned
@@ -43,6 +45,11 @@ cannot be read is left out of any dated range and reported separately.
 derived id, shaped rm_<16 hex>. Copy it; it is not the conversation's name and
 not its Talk token, and neither of those will match. A meeting that records no
 room at all is matched by no --room value.
+
+--tag keeps the meetings with at least one mark of that tag. It takes the tag's
+label or the tag= id `+"`cassini meetings tags`"+` prints. The app does the narrowing,
+so against an app that does not offer tags the command fails rather than
+listing every meeting as though it had narrowed them.
 
 `+"\n")
 		fs.PrintDefaults()
@@ -66,6 +73,7 @@ room at all is matched by no --room value.
 		fmt.Fprintf(stderr, "list configuration error: %v\n", err)
 		return 2
 	}
+	filter.tag = strings.TrimSpace(*tag)
 	if err := resolveMeetingsConfig(fs, &cfg); err != nil {
 		fmt.Fprintf(stderr, "list configuration error: %v\n", err)
 		return 2
@@ -73,10 +81,23 @@ room at all is matched by no --room value.
 	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
+	var narrowing meetingsTagNarrowing
+	if filter.tag != "" {
+		// Checked first for the reason search checks it: an app without tags
+		// would ignore the parameter and answer with every meeting.
+		checked, err := client.checkTagNarrowing(ctx, filter.tag)
+		if err != nil {
+			return reportAnnotationsError(ctx, client, stderr, "list", cfg, err)
+		}
+		narrowing = checked
+	}
 	// Server-side where the app supports it, client-side against an older one.
 	// The counts that explain a short list come from whichever side filtered.
 	listing, result, err := client.fetchMeetings(ctx, filter)
 	if err != nil {
+		if errors.Is(err, errMeetingsTagsUnavailable) {
+			return reportAnnotationsError(ctx, client, stderr, "list", cfg, err)
+		}
 		return reportMeetingsError(stderr, "list", cfg, err)
 	}
 
@@ -87,6 +108,7 @@ room at all is matched by no --room value.
 	warnAboutMeetingsSource(stderr, listing)
 
 	if *asJSON {
+		narrowing.report(stderr, "warning")
 		if err := writeMeetingsCatalogJSON(stdout, listing, filter, result); err != nil {
 			fmt.Fprintf(stderr, "list failed: write JSON: %v\n", err)
 			return 1
@@ -102,6 +124,7 @@ room at all is matched by no --room value.
 	if filter.active() {
 		fmt.Fprintf(stdout, "filter=%s excluded=%d\n", filter.describe(), result.excluded)
 	}
+	narrowing.report(stdout, "note")
 	if result.undated > 0 {
 		// Nothing the caller typed is wrong here, so it gets its own sentence
 		// rather than being folded into the excluded count and left mysterious.
