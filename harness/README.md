@@ -26,6 +26,18 @@ are documented when a flow intentionally calls them directly.
 10. [Repository structure and operational reference](#10-repository-structure-and-operational-reference)
 11. [Teardown reference](#11-teardown-reference)
 
+## Interactive network simulation
+
+To test capture and upload under poor connections, launch a disposable Chrome
+profile with live network controls:
+
+```bash
+node harness/bin/network-lab.mjs
+```
+
+See the [network lab guide](network-lab/README.md) for packet loss, slow recording
+uploads, disconnection, profile recovery, and the demo URL option.
+
 ## Purpose
 
 `harness/` is the reproducible E2E lab for Nextcloud Talk/Spreed testing:
@@ -475,19 +487,75 @@ What happens:
    standalone signaling, and Coturn.
 3. Nextcloud is bootstrapped with Talk, Team folders, Everyone Group, trusted
    domains, signaling, TURN, and Talk recording settings.
+   The installed-ExApp mode also creates and initializes the recordings service
+   account and configures its Team folder through `occ`, because Nextcloud 34's
+   password confirmation prevents the ExApp from creating them over HTTP.
 4. AppAPI is installed/enabled.
 5. The HaRP deploy daemon is registered.
 6. Cassini is registered as `gocassini` and route checks are performed.
 
 Recordings are access-controlled — there is no other mode. `bootstrap.sh`
-installs the two prerequisites an ExApp cannot install for itself — Team folders
-and Everyone Group — and the ExApp provisions its folder, groups and ACLs on
-enable. Production installers must enable both native apps first. See
+installs Team folders and Everyone Group and prepares the recordings account and
+Team folder. The ExApp adopts them and provisions recording ACLs on enable.
+Production installers must enable both native apps and follow any manual setup
+instructions reported by `/operator/status`. See
 [`docs/exapp-nextcloud-recordings-permissions.md`](../docs/exapp-nextcloud-recordings-permissions.md).
 
 If you already have a suitable local ExApp image, omit `--build` and use the
 default `reuse-local` mode. If you want AppAPI to pull the manifest image, use
 `--exapp-image-mode pull`.
+
+### 5.1.1 Develop source capture with both Cassini apps
+
+The installed-ExApp stack above installs `gocassini`. Source capture also needs
+the native `cassini_capture` app, which delivers the payload on Talk pages.
+For a local Linux stack matching the demo's Nextcloud version:
+
+```bash
+export NEXTCLOUD_IMAGE=nextcloud:34.0.2
+export CASSINI_SOURCE_CAPTURE=1 CASSINI_SOURCE_AUDIO_INGEST=1
+./bin/cassini dev stack up --public-mode local-http --services full \
+  --cassini installed-exapp --recording-backend installed-exapp --build
+./harness/bin/install-capture-companion.sh
+./bin/cassini dev room create --name "Cassini source capture dev"
+```
+
+Open http://127.0.0.1:28080 and log in as `admin` / `admin`. Use a separate
+browser profile for `alice` / `Tn8mY3qVrJ2x!E2e` and add Alice to the room.
+Both participants must log in: guest pages do not load the companion. Join the
+call with microphones enabled, start Talk's recording from its menu, speak,
+then stop recording. Capture uploads follow the recording stopping. See
+[source capture](../docs/source-audio-capture.md) for inspection details.
+
+The browser driver `harness/bin/browser-call-capture.mjs` supports
+`CAPTURE_SAME_USER=1`: both participants log in as Alice using independent
+Chromium processes. Optional `ALICE_AUDIO_FILE` and `BOB_AUDIO_FILE` absolute WAV
+paths supply distinct microphone signals. The normal microphone-switch, reload,
+and upload checks still run. Use this driver against a provisioned stack with its
+usual room/credential environment; the outer CI script's owner-directory checks
+currently assume separate Alice/Bob accounts. See the
+[same-account validation](../docs/source-audio-sessions.md) for pipeline assertions.
+
+
+The companion installer copies the payload from the running ExApp, checks the
+capture switch, and verifies the installed bytes. Run it again after replacing
+the ExApp image, then reload Talk. Both apps must come from this checkout.
+
+Keep data between sessions with `stack down --suspend`, then repeat the `stack up`
+command with `--resume` in place of `--build` and the same exported configuration.
+Before rebuilding, unregister the old ExApp while Nextcloud is running (this
+keeps its data):
+
+```bash
+docker compose -p spreedtest -f harness/compose.yml exec -T -u www-data \
+  nextcloud php occ app_api:app:unregister gocassini
+./bin/cassini dev stack down --suspend
+# Repeat the stack up command above with both --resume and --build,
+# then rerun install-capture-companion.sh.
+```
+
+Do not use the CI scripts to start your
+persistent dev environment: they reset and delete their test stacks.
 
 ### 5.2 Docker Desktop for Mac runbook
 

@@ -78,7 +78,13 @@ func occupyBuildWorkerAndFillQueue(t *testing.T, rt *Runtime, started <-chan str
 	}
 	// Fillers have no DB row, so workers fail the claim and skip them.
 	for i := 0; i < cap(rt.buildQueue); i++ {
-		rt.buildQueue <- buildTask{JobID: fmt.Sprintf("filler-%d", i), AttemptNumber: 1}
+		// The dispatcher can have queued a duplicate blocker before its claim.
+		// The fixture needs a full queue, not cap(queue) additional slots.
+		select {
+		case rt.buildQueue <- buildTask{JobID: fmt.Sprintf("filler-%d", i), AttemptNumber: 1}:
+		default:
+			return
+		}
 	}
 }
 

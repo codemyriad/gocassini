@@ -153,6 +153,9 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	if err := SetMeetingBundleRoom(attemptMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
 		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, attemptMeetingPath, err)
 	}
+	if err := saveSourceAudioEvidence(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber, attemptMeetingPath); err != nil {
+		rt.logger.Printf("source audio evidence could not be saved id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+	}
 	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, attemptMeetingPath, task.JobID)
 	if promoteErr != nil {
 		rt.logger.Printf("build promote failed id=%s attempt=%d worker=%d meeting=%s: %v", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, promoteErr)
@@ -310,6 +313,11 @@ func (rt *Runtime) scheduleDeferredBuild(task buildTask, retryNotBefore time.Tim
 func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, jobArtifactRunPath, attemptArtifactRunPath, queuedAt string) error {
 	if err := rt.store.MarkBuildQueued(context.Background(), jobID, jobArtifactRunPath, attemptArtifactRunPath, queuedAt); err != nil {
 		return err
+	}
+	if rt.waitingForCaptureUploads(jobID) {
+		rt.logger.Printf("build waiting for registered captures id=%s (up to two minutes after recording stops)", jobID)
+		rt.kickRequeueScan()
+		return nil
 	}
 	task := buildTask{JobID: jobID, AttemptNumber: attemptNumber, ArtifactRunPath: jobArtifactRunPath}
 	select {

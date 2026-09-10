@@ -154,6 +154,9 @@ From there you can bring up the packaged operator, control panel, and viewer wit
 
 ## Harness Commands
 
+For a local Nextcloud with both `gocassini` and `cassini_capture`, follow the
+[source-capture development setup](harness/README.md#511-develop-source-capture-with-both-cassini-apps).
+
 The local stack and showcase/demo flows now live under `cassini dev`:
 
 ```bash

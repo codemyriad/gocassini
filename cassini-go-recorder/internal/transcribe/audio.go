@@ -16,12 +16,13 @@ import (
 
 // AudioStream represents one audio track in the source MKV.
 type AudioStream struct {
-	Index         int
-	ParticipantID string
-	SpeakerID     string
-	SpeakerLabel  string
-	Channels      int
-	StartTimeMS   int64
+	RemoteSessionID string
+	Index           int
+	ParticipantID   string
+	SpeakerID       string
+	SpeakerLabel    string
+	Channels        int
+	StartTimeMS     int64
 	// FirstPacketTimeMS is the first packet PTS on the shared meeting
 	// timeline. Matroska stream start_time is commonly zero for rotated or
 	// late-joining participant tracks, so it cannot represent this offset.
@@ -70,6 +71,7 @@ type ffprobeOutput struct {
 		Tags      struct {
 			Title             string `json:"title"`
 			ParticipantID     string `json:"PARTICIPANT_ID"`
+			RemoteSessionID   string `json:"REMOTE_SESSION_ID"`
 			ParticipantName   string `json:"PARTICIPANT_NAME"`
 			FirstPacketWallMS string `json:"FIRST_PACKET_WALL_MS"`
 			FirstTimelineNS   string `json:"FIRST_TIMELINE_NS"`
@@ -90,7 +92,7 @@ type ffprobeOutput struct {
 func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate,offset_seconds,source_start_seconds:format=duration",
+		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,remote_session_id,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate,offset_seconds,source_start_seconds:format=duration",
 		"-of", "json",
 		mkv,
 	)
@@ -130,6 +132,7 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 			Index:              s.Index,
 			TimeBase:           sourceTimeBaseFromTags(s.Tags.FirstPacketWallMS, s.Tags.FirstTimelineNS, s.Tags.ClockRate, s.Tags.OffsetSeconds, s.Tags.SourceStartSeconds),
 			ParticipantID:      participantID,
+			RemoteSessionID:    strings.TrimSpace(s.Tags.RemoteSessionID),
 			SpeakerID:          speakerIDFromLabel(speakerIdentity),
 			SpeakerLabel:       label,
 			Channels:           s.Channels,

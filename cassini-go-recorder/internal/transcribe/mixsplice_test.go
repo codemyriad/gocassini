@@ -26,6 +26,7 @@ import (
 
 // mkvStreamSpec is one participant track in a synthetic recording.
 type mkvStreamSpec struct {
+	sessionID     string
 	participantID string
 	frequency     int
 	offsetSeconds float64
@@ -55,6 +56,9 @@ func buildTaggedMeeting(t *testing.T, dir string, specs []mkvStreamSpec) string 
 		args = append(args, "-map", fmt.Sprintf("%d:a:0", i))
 	}
 	for i, spec := range specs {
+		if spec.sessionID != "" {
+			args = append(args, fmt.Sprintf("-metadata:s:a:%d", i), "remote_session_id="+spec.sessionID)
+		}
 		args = append(args, fmt.Sprintf("-metadata:s:a:%d", i), "participant_id="+spec.participantID)
 		args = append(args, fmt.Sprintf("-metadata:s:a:%d", i), "participant_name="+spec.participantID)
 		if spec.firstPacketWallMS > 0 {

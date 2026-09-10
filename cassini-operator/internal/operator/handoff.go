@@ -94,6 +94,10 @@ func (rt *Runtime) dispatchQueuedBuildTasks(dispatched map[string]struct{}) bool
 	for _, task := range tasks {
 		key := requeueKey(task.JobID, task.AttemptNumber)
 		queued[key] = struct{}{}
+		if rt.waitingForCaptureUploads(task.JobID) {
+			delete(dispatched, key)
+			continue
+		}
 		if _, sent := dispatched[key]; sent {
 			continue
 		}

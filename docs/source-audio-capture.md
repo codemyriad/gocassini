@@ -304,15 +304,20 @@ this recording competed with the one that covers it. So a capture whose window
 genuinely intersects this recording now beats one that only reaches it through
 the slack, and the slack is left doing what it was written for.
 
-Where that is still not enough, selection refuses rather than guesses, and the
-build log says which captures it could not choose between. Two of one
-participant's captures that cover this recording **and** each other cannot both
-be real — nobody is in two call sessions at once — so one of them describes
-another recording of this room and nothing on disk says which. Two that only the
-slack reaches, from opposite sides, are the same problem. Either way that
-participant keeps their recorded track for the whole meeting, which costs them a
-splice; guessing would cost another meeting's speech inside this transcript,
-which no rerun can undo.
+Two browsers signed in as the same account can carry different audio at the same
+time. Each browser capture has a random `captureId`, so even identical start times
+produce separate uploads and expected-upload records. Each segment also carries
+the public Talk signaling `sessionId`. The recorder preserves that same identifier
+on its tracks. Selection and splicing use **account plus signaling session**, so
+simultaneous sessions do not compete for one account-wide replacement track.
+Reloading can adopt the existing capture while starting a new signaling session;
+segments before and after the reload retain their respective session identifiers.
+
+Within one signaling session, ambiguous overlapping captures are still refused.
+Legacy captures without session identity retain the previous conservative
+selection rules. They are usable when the account has one unambiguous recorded
+session, but cannot safely replace audio across several concurrent sessions.
+Missing or mismatched session identity leaves the server-recorded audio intact.
 
 The operator makes the same distinction from the other side, resolving one
 upload to one recording so it knows which meeting to rebuild. The two must
@@ -320,11 +325,11 @@ agree: a capture the build splices but the operator cannot attribute is stored
 and never rebuilt for, and one the operator attributes but the build refuses
 schedules a rebuild that changes nothing.
 
-A participant with several tracks in one recording (a rejoin, a stream
-rotation) has their spliced track attached to exactly one of them; the others
-are dropped from transcription, because that track spans the whole timeline and
-already contains their recorded audio, so transcribing both would emit every
-word twice.
+Several tracks belonging to the same account **and signaling session** share one
+rendered replacement and transcription input. Only duplicate tracks within that
+session are suppressed. Another browser's session has its own output files and
+transcription input, while both remain attributed to the same Nextcloud user.
+See [the session identity design and validation](source-audio-sessions.md).
 
 ### The upload is spliced over the recorded track, not substituted for it
 
@@ -484,6 +489,32 @@ transport, reload, mute, and retry matrices; the server-only leg remains
 responsible for proxy refusal and replacement matrices.
 
 ## Trying it
+
+To watch the pipeline in Cassini, sign in as an administrator, open the recording
+in the operator view, and keep its **Participant audio** section open beside
+Talk. **Capture and upload** shows each registered browser session and its latest
+report while it records locally. The authenticated browser registers its room and
+capture start time, retries every 15 seconds, and announces its final audio span
+before uploading. Registrations are durable and belong to the server's matching
+recording job. After recording stops, Cassini keeps the build queued for up to
+two minutes while registered audio is missing. Complete uploads release it early;
+an absent client cannot extend the deadline, including across a server restart.
+Waiting leaves the build worker free for other meetings. Audio arriving after
+the deadline still follows the late-upload rebuild path.
+
+Stored audio appears with its arrival time even when it is excluded from use.
+Concurrent sessions under the same account are shown separately by capture and
+session identifiers. Ambiguous legacy uploads or conflicting captures within one
+session show an exclusion reason. While the operator receives a request it also shows the
+incoming byte count; Nextcloud can buffer requests first, and a fast upload may
+go straight to **Stored** between refreshes.
+
+**Use in the meeting** shows evidence from each build: seconds and segments used,
+whether the meeting audio includes them, and which transcription pass used them.
+Skipped segments include their reasons. A late upload can leave the first build
+unchanged and trigger an automatic rebuild; both builds remain visible. Upload
+acceptance alone is not evidence of incorporation. The view refreshes every two
+seconds while open, including after publishing finishes.
 
 Two things have to be true before a single byte is captured, and they are
 deliberately independent: collection is enabled on the ExApp — which on this

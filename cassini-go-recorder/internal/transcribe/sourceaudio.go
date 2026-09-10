@@ -111,6 +111,7 @@ type SourceAnchor struct {
 
 // SourceSegment is one continuous local recording of one sender track.
 type SourceSegment struct {
+	SessionID     string         `json:"sessionId,omitempty"`
 	Index         int            `json:"index"`
 	AudioName     string         `json:"audioName"`
 	MimeType      string         `json:"mimeType"`
@@ -122,6 +123,7 @@ type SourceSegment struct {
 
 // SourceSidecar is the manifest uploaded alongside the audio.
 type SourceSidecar struct {
+	CaptureID       string          `json:"captureId,omitempty"`
 	Format          string          `json:"format"`
 	RoomToken       string          `json:"roomToken"`
 	CallStartWallMS int64           `json:"callStartWallMs"`
@@ -686,12 +688,14 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 		// and rejoined uploads one per session, and both belong to this
 		// recording; keeping only the later one while suppressing their
 		// recorded streams silently dropped the first half of what they said.
-		byOwner[sidecar.OwnerUserID] = append(byOwner[sidecar.OwnerUserID], captureCandidate{
-			dir:     dir,
-			startMS: sidecar.CallStartWallMS,
-			endMS:   sidecar.CallEndWallMS,
-			fit:     fit,
-		})
+		for sessionID, span := range sourceSessionWindows(sidecar) {
+			fit := captureWindowFit(span[0], span[1], windowStartMS, windowEndMS)
+			if fit == captureWindowApart {
+				continue
+			}
+			key := sourceSessionKey(sidecar.OwnerUserID, sessionID)
+			byOwner[key] = append(byOwner[key], captureCandidate{dir: dir, startMS: span[0], endMS: span[1], fit: fit})
+		}
 	}
 	found := map[string][]string{}
 	refused := map[string]string{}
@@ -706,6 +710,39 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 		}
 	}
 	return found, refused, nil
+}
+
+// Empty session IDs keep legacy captures on the conservative owner-only path.
+// Session-bearing captures are selected independently even when their owner
+// and wall-clock windows are identical.
+func sourceSessionKey(owner, sessionID string) string {
+	if sessionID == "" {
+		return owner
+	}
+	return owner + "\x00" + sessionID
+}
+func sourceSessionWindows(sidecar SourceSidecar) map[string][2]int64 {
+	spans := map[string][2]int64{}
+	for _, segment := range sidecar.Segments {
+		if segment.SessionID == "" {
+			spans[""] = [2]int64{sidecar.CallStartWallMS, sidecar.CallEndWallMS}
+			continue
+		}
+		span, ok := spans[segment.SessionID]
+		if !ok || segment.StartWallMS < span[0] {
+			span[0] = segment.StartWallMS
+		}
+		if !ok || segment.StopWallMS > span[1] {
+			span[1] = segment.StopWallMS
+		}
+		spans[segment.SessionID] = span
+	}
+	// Legacy discovery accepted even malformed empty manifests; rendering refuses
+	// them later. Keep that selection behavior for existing recordings.
+	if len(sidecar.Segments) == 0 {
+		spans[""] = [2]int64{sidecar.CallStartWallMS, sidecar.CallEndWallMS}
+	}
+	return spans
 }
 
 // captureCandidate is one upload that got past the room and window filters,
@@ -879,6 +916,7 @@ func windowsOverlap(aStart, aEnd, bStart, bEnd int64) bool {
 // should say so, and — since ingestion is now a splice over the recorded track
 // rather than a replacement of it — should say how much of it.
 type SourceRenderReport struct {
+	SessionID  string  `json:"session_id,omitempty"`
 	SpeakerID  string  `json:"speaker_id"`
 	Owner      string  `json:"owner"`
 	Segments   int     `json:"segments"`
@@ -1093,7 +1131,11 @@ func (r *SourceRenderReport) markUnused(reason string) {
 // track handed to the recogniser is a resample of it. There is no second
 // placement to disagree with the first.
 func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base SourceTimeBase, owner, scratchDir string, sampleRate, timelineSamples, fadeSamples int) (SourceRenderReport, error) {
-	report := SourceRenderReport{Owner: owner, RenderHz: sampleRate}
+	return renderSourceTrackForSession(ctx, floor, dirs, base, owner, "", scratchDir, sampleRate, timelineSamples, fadeSamples)
+}
+
+func renderSourceTrackForSession(ctx context.Context, floor *wavFile, dirs []string, base SourceTimeBase, owner, sessionID, scratchDir string, sampleRate, timelineSamples, fadeSamples int) (SourceRenderReport, error) {
+	report := SourceRenderReport{Owner: owner, SessionID: sessionID, RenderHz: sampleRate}
 	if sampleRate <= 0 || timelineSamples <= 0 {
 		// An error rather than a division by zero. Production passes 48 kHz and
 		// a measured timeline, but a caller that gets this wrong should be told
@@ -1117,6 +1159,15 @@ func renderSourceTrack(ctx context.Context, floor *wavFile, dirs []string, base 
 		if err != nil {
 			return report, fmt.Errorf("%s: %w", filepath.Base(dir), err)
 		}
+		// A render replaces only this connection's floor, never another
+		// browser logged into the same account (including an adopted prefix).
+		selected := make([]SourceSegment, 0, len(sidecar.Segments))
+		for _, segment := range sidecar.Segments {
+			if segment.SessionID == sessionID {
+				selected = append(selected, segment)
+			}
+		}
+		sidecar.Segments = selected
 		report.Owner = sidecar.OwnerUserID
 		report.Segments += len(sidecar.Segments)
 		report.CallMS += sidecar.CallEndWallMS - sidecar.CallStartWallMS
@@ -1806,7 +1857,7 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 	}
 	sort.Strings(refusedOwners)
 	for _, owner := range refusedOwners {
-		fmt.Fprintf(stdout, "  source audio: %s uploaded, but %s; keeping the recorded audio\n", owner, refused[owner])
+		fmt.Fprintf(stdout, "  source audio: %s uploaded, but %s; keeping the recorded audio\n", strings.ReplaceAll(owner, "\x00", " / session "), refused[owner])
 	}
 	if len(captures) == 0 {
 		return nil
@@ -1823,7 +1874,7 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 	// two without having to reason backwards from a build log.
 	owners := make([]string, 0, len(captures))
 	for owner, dirs := range captures {
-		owners = append(owners, fmt.Sprintf("%s(%d)", owner, len(dirs)))
+		owners = append(owners, fmt.Sprintf("%s(%d)", strings.ReplaceAll(owner, "\x00", " / session "), len(dirs)))
 	}
 	sort.Strings(owners)
 	fmt.Fprintf(stdout, "  source audio: %d capture(s) selected for this recording over %d ms: %s\n",
@@ -1851,18 +1902,38 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 		return workDir, nil
 	}
 
-	// One participant can own several MKV streams: a rejoin, or a rotation
-	// where the RTP identity changed mid-call. The render spans the WHOLE
-	// meeting timeline and already contains all of their recorded audio, so it
-	// replaces every one of those streams at once — in the mix, where feeding
-	// the siblings to amix as well would play their words twice, and in the
-	// transcription pass, where transcribing both would write every word twice.
+	// Group stream rotations within each participant/session. Each group gets
+	// one full-timeline render and transcription input. Concurrent browsers
+	// keep separate groups even when their participant identity is identical.
 	participantStreams := map[string][]int{}
-	for i := range streams {
-		if streams[i].ParticipantID == "" {
+	ownerSessions := map[string]map[string]bool{}
+	taggedOwners := map[string]bool{}
+	for key := range captures {
+		owner, sid, _ := strings.Cut(key, "\x00")
+		if sid != "" {
+			taggedOwners[owner] = true
+		}
+	}
+	for _, stream := range streams {
+		if ownerSessions[stream.ParticipantID] == nil {
+			ownerSessions[stream.ParticipantID] = map[string]bool{}
+		}
+		ownerSessions[stream.ParticipantID][stream.RemoteSessionID] = true
+	}
+	streamKeys := make([]string, len(streams))
+	for i, stream := range streams {
+		if stream.ParticipantID == "" {
 			continue
 		}
-		participantStreams[streams[i].ParticipantID] = append(participantStreams[streams[i].ParticipantID], i)
+		key := stream.ParticipantID
+		if taggedOwners[key] || len(ownerSessions[key]) > 1 {
+			if stream.RemoteSessionID == "" {
+				continue
+			} // Cannot prove which session this track belongs to.
+			key = sourceSessionKey(key, stream.RemoteSessionID)
+		}
+		streamKeys[i] = key
+		participantStreams[key] = append(participantStreams[key], i)
 	}
 	// A participant with ANY stream lacking a wall-clock base is refused up
 	// front. Deciding inside the loop made the outcome depend on which of their
@@ -1876,13 +1947,19 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 	matched := map[string]bool{}
 	for i := range streams {
 		stream := &streams[i]
-		dirs, ok := captures[stream.ParticipantID]
-		if !ok || stream.ParticipantID == "" || done[stream.ParticipantID] {
+		key := streamKeys[i]
+		dirs, ok := captures[key]
+		if !ok || key == "" || done[key] {
 			continue
 		}
-		matched[stream.ParticipantID] = true
-		done[stream.ParticipantID] = true
-		idxs := participantStreams[stream.ParticipantID]
+		matched[key] = true
+		done[key] = true
+		idxs := participantStreams[key]
+		_, sessionID, _ := strings.Cut(key, "\x00")
+		renderID := stream.SpeakerID
+		if sessionID != "" {
+			renderID += "-" + speakerIDFromLabel(sessionID)
+		}
 		anchorless := false
 		for _, idx := range idxs {
 			if !streams[idx].TimeBase.Known {
@@ -1899,9 +1976,10 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 			continue
 		}
 
-		renderPath := mix.RenderPath(stream.SpeakerID)
+		renderPath := mix.RenderPath(renderID)
 		report := SourceRenderReport{
 			SpeakerID: stream.SpeakerID,
+			SessionID: sessionID,
 			// The join key, so a failure before any sidecar was read still says
 			// whose upload went unused.
 			Owner:    stream.ParticipantID,
@@ -1939,7 +2017,7 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 		// The decoded segment is scratch that belongs with the render, not with
 		// the bundle: putting it beside the tracks keeps the bundle's work
 		// directory for the one file that has to survive the build.
-		rendered, err := renderSourceTrack(ctx, floor, dirs, stream.TimeBase, stream.ParticipantID, mix.dir,
+		rendered, err := renderSourceTrackForSession(ctx, floor, dirs, stream.TimeBase, stream.ParticipantID, sessionID, mix.dir,
 			mixRenderHz, timelineSamples, mixSpliceCrossfadeMS*mixRenderHz/1000)
 		syncErr := floor.f.Sync()
 		closeErr := floor.Close()
@@ -1965,7 +2043,7 @@ func ApplySourceAudio(ctx context.Context, mix *meetingMix, streams []AudioStrea
 			keepRecorded(err)
 			continue
 		}
-		transcriptPath = filepath.Join(dir, "source-"+stream.SpeakerID+".wav")
+		transcriptPath = filepath.Join(dir, "source-"+renderID+".wav")
 		if err := resampleForTranscription(renderPath, transcriptPath); err != nil {
 			keepRecorded(err)
 			continue

@@ -220,6 +220,7 @@
   import { shouldShowDetailLoading } from "./operator/viewState";
   import { applyJob, readJob } from "./surfaceRouting";
   import SettingsPanel from "./SettingsPanel.svelte";
+  import SourceAudioPanel from "./SourceAudioPanel.svelte";
 
   const POLL_INTERVAL_MS = 2000;
   // If the SSE stream doesn't reach "open" within this window, assume the
@@ -247,6 +248,8 @@
   let actionError = "";
   let loadingJobs = true;
   let loadingDetail = false;
+  let detailRequestVersion = 0;
+  let destroyed = false;
   let submittingStart = false;
   let submittingStop = false;
   let submittingRerun = false;
@@ -285,6 +288,7 @@
   });
 
   onDestroy(() => {
+    destroyed = true;
     clearPolling();
     closeEventStream();
     window.removeEventListener("popstate", handleJobPopState);
@@ -337,13 +341,17 @@
       }
     }
     selectedJobId = jobId;
+    const requestVersion = ++detailRequestVersion;
     detailError = "";
     loadingDetail = true;
     try {
-      selectedJob = await operatorClient.getJobDetail(jobId);
+      const detail = await operatorClient.getJobDetail(jobId);
+      if (selectedJobId === jobId && requestVersion === detailRequestVersion) selectedJob = detail;
     } catch (error) {
-      detailError = asMessage(error);
-      selectedJob = null;
+      if (selectedJobId === jobId && requestVersion === detailRequestVersion) {
+        detailError = asMessage(error);
+        selectedJob = null;
+      }
     } finally {
       loadingDetail = false;
       updatePolling();
@@ -530,6 +538,7 @@
       return;
     }
     selectedJob = {
+      ...selectedJob,
       job: event.job,
       attempts: upsertAttempt(selectedJob.attempts, event.attempt),
     };
@@ -557,14 +566,16 @@
 
   function updatePolling() {
     clearPolling();
-    if (streamStatus === "connected") {
+    if (destroyed) return;
+    if (streamStatus === "connected" && !selectedJobId) {
       return;
     }
     // Live push isn't carrying updates — poll while anything is still in flight
     // (the selected job, or any active job in the list). refreshJobs re-arms
     // this, so it keeps polling until the work settles.
-    const hasActiveWork =
-      (selectedJob != null && isJobActive(selectedJob.job)) || jobs.some(isJobActive);
+    // Uploads can arrive after a job finishes, without an SSE stage change.
+    // Keep the open detail fresh, including while a late-upload rebuild settles.
+    const hasActiveWork = !!selectedJobId || jobs.some(isJobActive);
     if (!hasActiveWork) {
       return;
     }
@@ -1102,6 +1113,7 @@
                       </dl>
                     </div>
                   {/if}
+                  <SourceAudioPanel detail={selectedJob} />
                   <dl class="mt-2 grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
                     <div>
                       <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Provider</dt>

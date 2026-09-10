@@ -121,12 +121,16 @@ function attachEvidence(page, participant) {
         });
         return;
       }
-      let body;
+      let body, bodyTimer;
       try {
-        body = await response.body();
+        // Some streamed proxy responses never resolve through DevTools even
+        // after the page consumed them. Do not strand an otherwise finished test.
+        body = await Promise.race([response.body(), new Promise((_, reject) => {
+          bodyTimer = setTimeout(() => reject(new Error("DevTools body read timed out")), 5000);
+        })]);
       } catch (error) {
         body = Buffer.from(`response body unavailable: ${error}`);
-      }
+      } finally { clearTimeout(bodyTimer); }
       await Promise.all([
         fs.writeFile(path.join(logDir, bodyName), body),
         writeJSON(metadataName, {
@@ -207,10 +211,10 @@ async function firstVisible(locator, description) {
   throw new Error(`${description} is not visible`);
 }
 
-async function login(page, participant, password) {
+async function login(page, participant, password, username = participant) {
   await page.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded" });
   await fs.writeFile(path.join(logDir, `${participant}-login.html`), await page.content());
-  await page.locator('input[name="user"]').fill(participant);
+  await page.locator('input[name="user"]').fill(username);
   await page.locator('input[name="password"]').fill(password);
   await Promise.all([
     page.waitForURL((url) => !url.pathname.includes("/login"), { timeout }),
@@ -218,9 +222,9 @@ async function login(page, participant, password) {
   ]);
   await page.waitForFunction((expected) => (
     globalThis.OC?.getCurrentUser?.()?.uid === expected
-  ), participant, { timeout });
+  ), username, { timeout });
   const userId = await page.evaluate(() => globalThis.OC?.getCurrentUser?.()?.uid || "");
-  assert(userId === participant, `${participant}: Nextcloud session belongs to ${userId || "nobody"}`);
+  assert(userId === username, `${participant}: Nextcloud session belongs to ${userId || "nobody"}`);
   await fs.writeFile(path.join(logDir, `${participant}-after-login.html`), await page.content());
 }
 
@@ -590,6 +594,9 @@ async function leaveCall(page, participant, required = true) {
 }
 
 let browser;
+let secondBrowser;
+const sameUser = process.env.CAPTURE_SAME_USER === "1";
+result.sameUser = sameUser;
 let aliceContext;
 let bobContext;
 let alicePage;
@@ -597,15 +604,15 @@ let bobPage;
 let aliceLeft = false;
 let bobLeft = false;
 try {
-  browser = await chromium.launch({
+  const launchBrowser = audioFile => chromium.launch({
     headless: true,
-    args: [
-      "--use-fake-device-for-media-stream",
-      "--use-fake-ui-for-media-stream",
-      "--autoplay-policy=no-user-gesture-required",
-      "--mute-audio",
+    args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
+      "--autoplay-policy=no-user-gesture-required", "--mute-audio",
+      ...(audioFile ? [`--use-file-for-fake-audio-capture=${path.resolve(audioFile)}`] : []),
     ],
   });
+  browser = await launchBrowser(process.env.ALICE_AUDIO_FILE);
+  if (sameUser || process.env.BOB_AUDIO_FILE) secondBrowser = await launchBrowser(process.env.BOB_AUDIO_FILE);
   // Talk rejects Chromium's automation-only "HeadlessChrome" product token
   // before media setup. Keep the real engine version while presenting the
   // normal Linux Chrome token that this same browser uses in headed mode.
@@ -617,7 +624,7 @@ try {
     userAgent: result.contextUserAgent,
   };
   aliceContext = await browser.newContext(contextOptions);
-  bobContext = await browser.newContext(contextOptions);
+  bobContext = await (secondBrowser ?? browser).newContext(contextOptions);
   await installObservation(aliceContext);
   await installObservation(bobContext);
   alicePage = await aliceContext.newPage();
@@ -626,7 +633,7 @@ try {
   const bobUploadEvidence = attachEvidence(bobPage, "bob");
 
   await login(alicePage, "alice", process.env.ALICE_PASSWORD);
-  await login(bobPage, "bob", process.env.BOB_PASSWORD);
+  await login(bobPage, "bob", sameUser ? process.env.ALICE_PASSWORD : process.env.BOB_PASSWORD, sameUser ? "alice" : "bob");
 
   result.alice.preRecordingOPFS = await opfsSnapshot(alicePage);
   result.bob.preRecordingOPFS = await opfsSnapshot(bobPage);
@@ -789,6 +796,7 @@ try {
   if (alicePage) await alicePage.screenshot({ path: path.join(logDir, "alice-final.png"), fullPage: true }).catch(() => {});
   if (bobPage) await bobPage.screenshot({ path: path.join(logDir, "bob-final.png"), fullPage: true }).catch(() => {});
   await drainEvidence();
+  await secondBrowser?.close().catch(() => {});
   await browser?.close().catch(() => {});
   await drainEvidence();
   if (evidenceErrors.length > 0 && result.result === "passed") {

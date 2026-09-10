@@ -63,8 +63,9 @@ func (rt *Runtime) sourceAudioRebuildQuietPeriod() time.Duration {
 // sourceCaptureSet is what is on disk for one recording: how many captures, who
 // owns them, and a digest over everything a build would read.
 type sourceCaptureSet struct {
-	Count  int
-	Owners []string
+	Count   int
+	Owners  []string
+	Uploads []sourceAudioUpload
 	// Digest covers owner, call start, segment name and segment SIZE. Metadata
 	// alone is not enough: a checkpointed sidecar describes a segment that was
 	// still growing, so two uploads can agree on every declared field and carry
@@ -76,12 +77,14 @@ type sourceCaptureSet struct {
 // scannedCapture is one on-disk capture that got past the room and window
 // filters, with what those filters learned about it.
 type scannedCapture struct {
-	dir      string
-	owner    string
-	startMS  int64
-	endMS    int64
-	fit      int
-	segments []captureSegment
+	captureID string
+	dir       string
+	owner     string
+	startMS   int64
+	endMS     int64
+	fit       int
+	segments  []captureSegment
+	received  string
 }
 
 // selectOwnerScannedCaptures is selectOwnerCaptures from the recorder's
@@ -212,35 +215,124 @@ func scanSourceCapturesForRecording(root, roomToken string, window captureRecord
 				continue
 			}
 			candidates[sidecar.OwnerUserID] = append(candidates[sidecar.OwnerUserID], scannedCapture{
-				dir:      dir,
-				owner:    sidecar.OwnerUserID,
-				startMS:  sidecar.CallStartWallMS,
-				endMS:    sidecar.CallEndWallMS,
-				fit:      fit,
-				segments: sidecar.Segments,
+				dir:       dir,
+				captureID: sidecar.CaptureID,
+				owner:     sidecar.OwnerUserID,
+				startMS:   sidecar.CallStartWallMS,
+				endMS:     sidecar.CallEndWallMS,
+				fit:       fit,
+				segments:  sidecar.Segments,
+				received:  sidecar.ReceivedAt,
 			})
 		}
 	}
-	// Which of a participant's captures this recording gets, decided the way
-	// the build decides it. This scan is what says whether a rebuild would find
-	// anything new, so counting a capture the build will refuse would promise a
-	// rebuild that changes nothing — and missing one it will splice would
-	// settle a debt the audio is still owed.
+	// Apply the recorder's selection independently to each public signaling
+	// session. Keep the original upload rows visible, including partial refusals.
+	groups := map[string][]scannedCapture{}
 	for _, owner := range sortedKeys(candidates) {
-		for _, capture := range selectOwnerScannedCaptures(candidates[owner]) {
-			set.Count++
-			if _, seen := seenOwners[capture.owner]; !seen {
+		for _, capture := range candidates[owner] {
+			bySession := map[string][]captureSegment{}
+			for _, segment := range capture.segments {
+				bySession[segment.SessionID] = append(bySession[segment.SessionID], segment)
+			}
+			for sessionID, segments := range bySession {
+				candidate := capture
+				candidate.segments = segments
+				if sessionID != "" {
+					candidate.startMS = segments[0].StartWallMS
+					candidate.endMS = segments[0].StopWallMS
+					for _, segment := range segments {
+						if segment.StartWallMS < candidate.startMS {
+							candidate.startMS = segment.StartWallMS
+						}
+						if segment.StopWallMS > candidate.endMS {
+							candidate.endMS = segment.StopWallMS
+						}
+					}
+					candidate.fit = captureWindowFit(candidate.startMS, candidate.endMS, window.StartMS, window.EndMS)
+				}
+				key := owner + "\x00" + sessionID
+				groups[key] = append(groups[key], candidate)
+			}
+		}
+	}
+	selectedSegments := map[string]map[string]bool{}
+	reasons := map[string]string{}
+	for _, key := range sortedKeys(groups) {
+		selected := selectOwnerScannedCaptures(groups[key])
+		included := map[string]bool{}
+		for _, capture := range selected {
+			included[capture.dir] = true
+			if selectedSegments[capture.dir] == nil {
+				selectedSegments[capture.dir] = map[string]bool{}
+			}
+			for _, segment := range capture.segments {
+				selectedSegments[capture.dir][segment.AudioName] = true
+			}
+		}
+		for _, capture := range groups[key] {
+			if included[capture.dir] {
+				continue
+			}
+			reason := "Another capture matches this recording more closely, or these segments fall outside it."
+			if len(selected) == 0 {
+				reason = "Multiple captures cannot be distinguished within this recording window."
+				for _, other := range groups[key] {
+					if other.dir != capture.dir && other.fit == capture.fit && captureWindowOverlapMS(capture.startMS, capture.endMS, other.startMS, other.endMS) > captureSessionOverlapSlackMS {
+						reason = "Overlapping captures for the same account and session; Cassini cannot choose which capture replaces that session’s recorded track."
+					}
+				}
+			}
+			reasons[capture.dir] = reason
+		}
+	}
+	for _, owner := range sortedKeys(candidates) {
+		for _, capture := range candidates[owner] {
+			selected := selectedSegments[capture.dir]
+			included := len(selected) > 0
+			if included {
+				set.Count++
+			}
+			upload := sourceAudioUpload{Owner: capture.owner, CaptureID: capture.captureID, Segments: len(capture.segments), Complete: true, CallStartMS: capture.startMS, CallEndMS: capture.endMS}
+			upload.ExclusionReason = reasons[capture.dir]
+			if included && upload.ExclusionReason != "" {
+				upload.ExclusionReason = "Some segments are excluded: " + upload.ExclusionReason
+			}
+			if at, err := time.Parse(time.RFC3339, capture.received); err == nil {
+				upload.ReceivedAt = &at
+			} else if info, err := os.Stat(filepath.Join(capture.dir, captureSidecarName)); err == nil {
+				at := info.ModTime().UTC()
+				upload.ReceivedAt = &at
+			}
+			if _, seen := seenOwners[capture.owner]; included && !seen {
 				seenOwners[capture.owner] = struct{}{}
 				set.Owners = append(set.Owners, capture.owner)
 			}
+			sessions := map[string]bool{}
 			for _, segment := range capture.segments {
+				if segment.SessionID != "" {
+					sessions[segment.SessionID] = true
+				}
 				size := int64(-1)
 				if info, err := os.Stat(filepath.Join(capture.dir, segment.AudioName)); err == nil {
 					size = info.Size()
+					upload.Bytes += size
+				} else {
+					upload.Complete = false
 				}
-				lines = append(lines, fmt.Sprintf("%s\t%d\t%s\t%d",
-					capture.owner, capture.startMS, segment.AudioName, size))
+				if selected[segment.AudioName] {
+					line := fmt.Sprintf("%s\t%d\t%s\t%d", capture.owner, capture.startMS, segment.AudioName, size)
+					if capture.captureID != "" || segment.SessionID != "" {
+						line += "\t" + capture.captureID + "\t" + segment.SessionID
+					}
+					lines = append(lines, line)
+				}
 			}
+			for sessionID := range sessions {
+				upload.SessionIDs = append(upload.SessionIDs, sessionID)
+			}
+			sort.Strings(upload.SessionIDs)
+			set.Uploads = append(set.Uploads, upload)
 		}
 	}
 	sort.Strings(lines)

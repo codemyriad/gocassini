@@ -557,11 +557,14 @@ func TestSessionArtifactOpenStreamUsesMappedParticipantID(t *testing.T) {
 	if participants[0].Display != "Alice" {
 		t.Fatalf("unexpected participant display: got=%q", participants[0].Display)
 	}
-	if len(logicalTracks) != 1 {
-		t.Fatalf("expected one logical track, got=%d", len(logicalTracks))
+	if len(logicalTracks) != 2 {
+		t.Fatalf("expected one logical track per signaling session, got=%d", len(logicalTracks))
 	}
 	if logicalTracks[0].ParticipantID != "user-42" {
 		t.Fatalf("logical track participant_id mismatch: got=%q", logicalTracks[0].ParticipantID)
+	}
+	if logicalTracks[0].RemoteSessionID != "sid-10" || logicalTracks[1].RemoteSessionID != "sid-11" || logicalTracks[0].LTID == logicalTracks[1].LTID {
+		t.Fatalf("session identity lost: %+v", logicalTracks)
 	}
 }
 

@@ -76,6 +76,8 @@ export interface CaptureAnchor {
 // or Talk rebuilding its media pipeline), because a new track restarts the
 // recorder's media clock.
 export interface CaptureSegment {
+  // Talk signaling public session id; changes on a fresh connection/reload.
+  sessionId?: string;
   index: number;
   // audioName is the OPFS file name, and the multipart field name at upload.
   audioName: string;
@@ -95,6 +97,7 @@ export interface CaptureSegment {
 }
 
 export interface CaptureSidecar {
+  captureId?: string;
   format: typeof SOURCE_CAPTURE_FORMAT;
   roomToken: string;
   // participantId is the client's claim about who it is. The operator ignores
@@ -143,7 +146,7 @@ export function mergeMuteIntervals(
 // captureDirName is the per-call OPFS directory. Scoped by room and call start
 // so two calls in the same room do not collide and an abandoned recording
 // stays identifiable long after the tab that made it is gone.
-export function captureDirName(roomToken: string, callStartWallMs: number): string {
+export function captureDirName(roomToken: string, callStartWallMs: number, captureId?: string): string {
   const safeToken = roomToken.replace(/[^A-Za-z0-9_-]/g, "");
-  return `capture-${safeToken}-${callStartWallMs}`;
+  return `capture-${safeToken}-${callStartWallMs}${captureId ? `-${captureId}` : ""}`;
 }

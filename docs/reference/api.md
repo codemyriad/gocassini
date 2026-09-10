@@ -62,6 +62,54 @@ Returns:
 
 - `job` — the logical summary row
 - `attempts` — newest-first attempt history
+- `source_audio` — live upload and build evidence for this recording (admin-only,
+  like the existing job detail route)
+
+`source_audio.expected` lists registered sessions with authenticated `owner`,
+optional `capture_id` and latest `session_id`, `call_start_ms`, `call_end_ms`,
+`updated_at` and derived `status`: `recording`,
+`uploading`, `stored`, or `timed_out`. `wait_until`, when present, is the fixed
+two-minute deadline after recording completion. A queued build waits for these
+uploads only when collection and ingestion are enabled. Missing registrations
+from older clients do not introduce a wait; late uploads can still trigger rebuilds.
+
+Authenticated room participants POST `/capture/register` with `roomToken`,
+`callStartWallMs`, `callEndWallMs` and `status` (`recording` or `uploading`). The
+request may also include `captureId` and public Talk `sessionId`. The server
+verifies membership, resolves the recording, and returns its `job_id`.
+Repeated announcements update the same `(job, owner, callStartWallMs, captureId)`
+record; distinct browser captures remain independent even with identical start
+times. Arrival is established from
+stored audio, never from a client claiming that an upload succeeded.
+
+`source_audio.uploads` reports matched stored captures with authenticated `owner`,
+`segments`, `bytes`, `received_at`, and `complete` (false when a segment file is
+missing). Matching uses the same recording-window selection as the build.
+`receiving` reports authenticated uploads currently being received by the
+operator, with media byte counts; these are not yet accepted. Nextcloud may
+buffer the request before forwarding it, so this is not browser-side progress.
+Active transfer observations disappear when a request ends or the operator
+restarts; stored uploads remain observable until retention removes them.
+
+Uploads also include optional `capture_id` and `session_ids`,
+`call_start_ms`, `call_end_ms`, and optional
+`exclusion_reason` for the current selection. Excluded uploads remain visible;
+this current eligibility assessment is separate from historical build evidence.
+
+`source_audio.attempts` contains `attempt`, `available`, `participants`, and an
+optional `error`. A successful build saves evidence from its own meeting manifest
+beside the attempt logs, so normal artifact retention does not erase it. Older
+builds can use their retained bundle or the canonical bundle only when its lineage
+identifies that exact job and attempt. This preserves the difference between an
+earlier build and a late-upload rebuild. Each participant
+report identifies its `owner` and optional `session_id`, and contains `placed`, `segments`, `skipped`, `spliced_ms`, `mix_spliced`,
+`transcript_source`, and any rejection reasons. `merged-mix` means the combined
+audio was transcribed; it does not establish individual word attribution.
+Missing/unreadable manifests never imply successful ingestion.
+
+The Cassini recording-details view refreshes this evidence every two seconds
+while open, including after a job finishes and while SSE is connected. Late
+uploads and pending automatic rebuilds are shown using `job.source_audio_rebuild`.
 
 Useful for:
 

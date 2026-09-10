@@ -101,7 +101,8 @@ type Config struct {
 }
 
 type Runtime struct {
-	ctx context.Context
+	captureTransfers sync.Map // *captureTransfer -> struct{}; active HTTP uploads only
+	ctx              context.Context
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
@@ -239,8 +240,9 @@ type createJobResponse struct {
 }
 
 type jobDetailResponse struct {
-	Job      Job          `json:"job"`
-	Attempts []JobAttempt `json:"attempts"`
+	Job         Job            `json:"job"`
+	Attempts    []JobAttempt   `json:"attempts"`
+	SourceAudio jobSourceAudio `json:"source_audio"`
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -805,6 +807,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// Polled by a running capture so that turning the administrator gate off
 	// reaches calls already in progress, not only the next one.
 	api.HandleFunc("/capture/enabled", rt.captureEnabledHandler)
+	api.Handle("/capture/register", rt.captureRegisterHandler(exappCfg.talkRoomMembershipChecker()))
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are
@@ -1732,7 +1735,7 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("list job attempts: %v", err))
 		return
 	}
-	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts})
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts, SourceAudio: rt.sourceAudioForJob(r.Context(), job, attempts)})
 }
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {

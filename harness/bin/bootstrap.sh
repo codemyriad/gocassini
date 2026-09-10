@@ -110,6 +110,45 @@ harness_bootstrap_core_nextcloud() {
   fi
 }
 
+harness_prepare_recordings_access() {
+  [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == installed-exapp ]] || return 0
+  log "Preparing Cassini recordings account and Team folder for the installed ExApp"
+  # NC34 requires interactive password confirmation for these administrative
+  # HTTP writes. AppAPI cannot provide it; provision through occ, as an admin
+  # would, so the ExApp can adopt the existing account/folder on enable.
+  if ! occ group:info cassini >/dev/null 2>&1; then
+    occ group:add cassini
+  fi
+  if ! occ user:info cassini >/dev/null 2>&1; then
+    # Initialize the account with a real DAV login. An account created by occ
+    # but never logged in otherwise has no Team-folder mount through AppAPI,
+    # causing the operator's root ACL PROPPATCH to return 404.
+    # shellcheck disable=SC2016 # Expanded inside the Nextcloud container.
+    compose exec -T -u www-data nextcloud sh -ec '
+      export OC_PASS="$(php -r "echo bin2hex(random_bytes(32));")"
+      php occ user:add --password-from-env --group=cassini --display-name="Cassini recordings" cassini
+      curl -fsS -u "cassini:$OC_PASS" -X PROPFIND -H "Depth: 0" \
+        http://localhost/remote.php/dav/files/cassini/ -o /dev/null
+    '
+  fi
+  occ group:adduser cassini cassini
+  local folders folder_id
+  folders="$(occ groupfolders:list --output=json)"
+  folder_id="$(jq -r '.[] | select(.mountPoint == "Cassini") | .id' <<<"$folders")"
+  if [[ -z "$folder_id" ]]; then
+    folder_id="$(occ groupfolders:create Cassini)"
+  fi
+  [[ "$folder_id" =~ ^[0-9]+$ ]] || { echo "Expected one Cassini Team folder, got: $folder_id" >&2; return 1; }
+  occ groupfolders:group "$folder_id" cassini read write share delete
+  occ groupfolders:group "$folder_id" everyone read
+  occ groupfolders:permissions "$folder_id" --enable
+  if ! jq -e --arg id "$folder_id" \
+    '.[] | select((.id | tostring) == $id) | .manage[]? | select(.type == "user" and .id == "cassini")' \
+    <<<"$folders" >/dev/null; then
+    occ groupfolders:permissions "$folder_id" -m --user cassini
+  fi
+}
+
 harness_configure_talk_media() {
   if ! harness_media_selected; then
     log "Skipping signaling/TURN wiring because media mode is not selected"
@@ -202,6 +241,7 @@ harness_configure_recording_backend() {
 }
 
 harness_bootstrap_core_nextcloud
+harness_prepare_recordings_access
 harness_configure_talk_media
 harness_configure_recording_backend
 

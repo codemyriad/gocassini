@@ -1,4 +1,12 @@
 export interface Job {
+
+  source_audio_rebuild?: {
+    upload_seq: number;
+    built_seq: number;
+    pending: boolean;
+    rebuild_count: number;
+    last_upload_at?: string;
+  };
   id: string;
   provider: string;
   request_json: string;
@@ -82,6 +90,49 @@ export interface JobAttempt {
 export interface JobDetailResponse {
   job: Job;
   attempts: JobAttempt[];
+  source_audio?: SourceAudioObservation;
+}
+
+export interface SourceAudioUpload {
+  capture_id?: string;
+  session_ids?: string[];
+  call_start_ms?: number;
+  call_end_ms?: number;
+  exclusion_reason?: string;
+  owner: string;
+  segments: number;
+  bytes: number;
+  complete: boolean;
+  received_at?: string;
+}
+
+export interface SourceAudioUse {
+  session_id?: string;
+  owner: string;
+  segments: number;
+  placed: number;
+  skipped: number;
+  spliced_ms: number;
+  mix_spliced: boolean;
+  transcript_source?: string;
+  mix_skip_reason?: string;
+  rejections?: string[];
+}
+
+export interface SourceAudioObservation {
+  expected?: { capture_id?: string; session_id?: string; owner: string; call_start_ms: number; status: string; updated_at: string }[];
+  wait_until?: string;
+  collection_enabled: boolean;
+  ingest_enabled: boolean;
+  uploads: SourceAudioUpload[];
+  receiving: SourceAudioUpload[];
+  error?: string;
+  attempts: {
+    attempt: number;
+    available: boolean;
+    error?: string;
+    participants: SourceAudioUse[];
+  }[];
 }
 
 export type SettingsQuality = "fast" | "balanced" | "best";

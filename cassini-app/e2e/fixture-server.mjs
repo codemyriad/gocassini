@@ -86,6 +86,8 @@ if (window.__talkRouteToken) {
 // passive message observer and must not replace or consume Talk's handler.
 const signalingSocket = new EventTarget();
 window.signalingSocket = signalingSocket;
+window.__signalingSessionID = crypto.randomUUID();
+signalingSocket.dispatchEvent(new MessageEvent("message", {data: JSON.stringify({type:"hello",hello:{sessionid:window.__signalingSessionID,resumeid:"must-not-be-captured"}})}));
 window.__setRecordingStatus = (status, roomid = "testroom") => {
   signalingSocket.dispatchEvent(new MessageEvent("message", {
     data: JSON.stringify({

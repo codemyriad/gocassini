@@ -236,6 +236,30 @@ export function uploadURLFrom(proxyBase: string): string {
   return `${proxyBase.replace(/\/+$/, "")}/operator/capture/upload`;
 }
 
+// Best effort metadata only: a failed announcement must never lose local audio.
+// Heartbeats retry registration when the recording job was not visible yet.
+export async function announceCapture(
+  roomToken: string, callStartWallMs: number, callEndWallMs: number,
+  status: "recording" | "uploading", captureId?: string, sessionId?: string,
+): Promise<void> {
+  if (serverAllowsCapture !== true) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${deliveryConfig.proxyBase}/operator/capture/register`, {
+      method: "POST", credentials: "same-origin", signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        requesttoken: (globalThis as { OC?: { requestToken?: string } }).OC?.requestToken ?? "",
+      },
+      body: JSON.stringify({ roomToken, callStartWallMs, callEndWallMs, status, captureId, sessionId }),
+    });
+    if (!response.ok) console.info(`Cassini source capture: announcement pending (${response.status})`);
+  } catch {
+    console.info("Cassini source capture: announcement unavailable; keeping local audio");
+  } finally { clearTimeout(timer); }
+}
+
 // enabledURLFrom builds the operator's "may I still record?" endpoint.
 export function enabledURLFrom(proxyBase: string): string {
   return `${proxyBase.replace(/\/+$/, "")}/operator/capture/enabled`;
@@ -398,6 +422,7 @@ export function pickAudioSender(
 }
 
 export interface CaptureState {
+  captureId?: string;
   roomToken: string;
   dirName: string;
   // connection is the publishing peer connection this capture belongs to. It is
@@ -411,6 +436,7 @@ export interface CaptureState {
   muteIntervals: Array<[number, number]>;
   muteSince: number | null;
   mutePoll: number | null;
+  announcementPoll?: ReturnType<typeof setInterval>;
   segmentStartWallMs: number;
   finished: boolean;
   // discarded marks a session the administrator switch turned off mid-call. It
@@ -592,6 +618,7 @@ export function startSegment(session: CaptureState, sender: RTCRtpSender): void 
     type: "segment-start",
     dirName: session.dirName,
     meta: {
+      sessionId: signalingSessionID || undefined,
       index,
       audioName,
       mimeType,
@@ -882,6 +909,7 @@ function abandonCapture(worker: Worker, reason: string): void {
   if (failed) {
     state = null;
     failed.finished = true;
+    clearInterval(failed.announcementPoll);
     // The buffer outlives this page's capture and a later page has to be able
     // to settle it. A claim left behind would make it look like somebody is
     // still recording into it for as long as this page is open.
@@ -1025,6 +1053,7 @@ async function uploadCapture(
     const fileHandle = await dir.getFileHandle(segment.audioName);
     form.append(`segment_${index}`, await fileHandle.getFile(), segment.audioName);
   }
+  await announceCapture(sidecar.roomToken, sidecar.callStartWallMs, sidecar.callEndWallMs, "uploading", sidecar.captureId, sidecar.segments.at(-1)?.sessionId);
   // Last check, immediately before the bytes leave: reading the segments back
   // out of OPFS above is several awaits long, and the thirty-second poll can
   // land the administrator's off in that window.
@@ -1803,6 +1832,7 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
   // everything below works from `active` — the async tail of a recording
   // outlives the global by design.
   state = null;
+  clearInterval(active.announcementPoll);
   if (active.mutePoll !== null) {
     clearInterval(active.mutePoll);
   }
@@ -1837,6 +1867,7 @@ async function finishCapture(callEnded: boolean, disposition: "upload" | "leave-
     participantId:
       (globalThis as { OC?: { getCurrentUser?: () => { uid?: string } } }).OC?.getCurrentUser?.()?.uid ?? "",
     callStartWallMs: active.callStartWallMs,
+    captureId: active.captureId,
     callEndWallMs: Date.now(),
     userAgent: navigator.userAgent,
   };
@@ -2127,6 +2158,7 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
       .finally(() => inherited.release?.());
   }
   const callStartWallMs = adopted?.sidecar.callStartWallMs ?? Date.now();
+  const captureId = adopted ? adopted.sidecar.captureId : crypto.randomUUID();
   // An adopted capture already comes with this page's claim on its directory,
   // taken when the buffer was held. It is handed over rather than re-taken:
   // asking for the same lock again would queue behind the one this page is
@@ -2140,9 +2172,10 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   }
   const session: CaptureState = {
     releaseDirClaim,
+    captureId,
     connection,
     roomToken,
-    dirName: adopted?.dirName ?? captureDirName(roomToken, callStartWallMs),
+    dirName: adopted?.dirName ?? captureDirName(roomToken, callStartWallMs, captureId),
     callStartWallMs,
     worker,
     segmentIndex: adopted === null ? 0 : nextSegmentIndex(adopted),
@@ -2172,6 +2205,7 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
         (globalThis as { OC?: { getCurrentUser?: () => { uid?: string } } }).OC?.getCurrentUser?.()
           ?.uid ?? "",
       callStartWallMs: session.callStartWallMs,
+      captureId: session.captureId,
       userAgent: navigator.userAgent,
     },
     // The segments the previous page left in this directory. Their files are
@@ -2182,6 +2216,14 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   });
   worker.postMessage({ type: "timing-active", active: true });
   startSegment(session, sender);
+  if (session.recorder?.state === "recording") {
+    void announceCapture(session.roomToken, session.callStartWallMs, Date.now(), "recording", session.captureId, signalingSessionID);
+    session.announcementPoll = setInterval(() => {
+      if (!session.finished && !session.discarded && serverAllowsCapture === true) {
+        void announceCapture(session.roomToken, session.callStartWallMs, Date.now(), "recording", session.captureId, signalingSessionID);
+      }
+    }, 15_000);
+  }
   console.info(
     adopted === null
       ? "Cassini source capture: Talk recording active; local source recording started"
@@ -2327,6 +2369,18 @@ type SignalingSocketLike = {
   addEventListener(type: string, listener: (event: MessageEvent) => void): void;
 };
 
+let signalingSessionID = "";
+
+// Only the public hello.sessionid: hello.resumeid is a credential and must
+// never travel with an audio capture. Segment tags preserve reload boundaries.
+export function signalingSessionFromData(data: unknown): string | null {
+  try {
+    const message = typeof data === "string" ? JSON.parse(data) : data;
+    const id = message?.type === "hello" ? message.hello?.sessionid : null;
+    return typeof id === "string" && id.length > 0 && id.length <= 512 ? id : null;
+  } catch { return null; }
+}
+
 const watchedSignalingSockets = new WeakSet<object>();
 let signalingSocketObserved = false;
 
@@ -2342,6 +2396,11 @@ function watchSignalingSocket(socket: unknown): void {
   watchedSignalingSockets.add(socket);
   signalingSocketObserved = true;
   (socket as SignalingSocketLike).addEventListener("message", (event: MessageEvent) => {
+    const sessionID = signalingSessionFromData(event.data);
+    if (sessionID && sessionID !== signalingSessionID) {
+      signalingSessionID = sessionID;
+      if (state && capturingSender) rotateSegment(state, capturingSender);
+    }
     const roomToken = talkRoomToken ?? roomTokenFromPath(location.pathname);
     if (!roomToken) {
       return;

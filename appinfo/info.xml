@@ -265,7 +265,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <access_level>USER</access_level>
       </route>
       <route>
-        <url>^operator\/capture\/upload\/?$</url>
+        <url>^operator\/capture\/(upload|register)\/?$</url>
         <verb>POST</verb>
         <access_level>USER</access_level>
       </route>

@@ -187,7 +187,7 @@ func (a *sessionCaptureArtifact) openStream(
 	ridSafe := sanitizeSessionPathPart(desc.rid)
 	startMonoNS := a.monoNS(arrival)
 	pid := a.ensureParticipantLocked(remoteSessionID, participantID, participantName)
-	ltid := a.ensureLogicalTrackLocked(pid, desc.kind, desc.mid, desc.rid, startMonoNS)
+	ltid := a.ensureLogicalTrackLocked(pid, desc.kind, desc.mid, desc.rid, startMonoNS, remoteSessionID)
 	streamID := fmt.Sprintf("s_%06d", a.streamSeq+1)
 	a.streamSeq++
 
@@ -551,8 +551,12 @@ func (a *sessionCaptureArtifact) summary() sessionCaptureSummary {
 	}
 }
 
-func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(participantID, kind, mid, rid string, createdMonoNS uint64) string {
-	key := logicalTrackKey(participantID, kind, mid, rid)
+func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(participantID, kind, mid, rid string, createdMonoNS uint64, remoteSessions ...string) string {
+	sessionID := ""
+	if len(remoteSessions) > 0 {
+		sessionID = remoteSessions[0]
+	}
+	key := logicalTrackKey(participantID, kind, mid, rid) + "\x00" + sessionID
 	if ltid := a.logicalBy[key]; ltid != "" {
 		return ltid
 	}
@@ -561,15 +565,19 @@ func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(participantID, kind, m
 	if rid != "" {
 		ltid += ":" + sanitizeSessionPathPart(rid)
 	}
+	if sessionID != "" {
+		ltid += fmt.Sprintf(":session%d", len(a.logicalBy)+1)
+	}
 	a.logicalBy[key] = ltid
 	a.sessionMeta.LogicalTracks = append(a.sessionMeta.LogicalTracks, session.LogicalTrack{
-		LTID:          ltid,
-		Kind:          kind,
-		Source:        inferSource(kind),
-		ParticipantID: sanitizeSessionPathPart(participantID),
-		MID:           sanitizeSessionPathPart(mid),
-		RID:           sanitizeSessionPathPart(rid),
-		CreatedMonoNS: createdMonoNS,
+		RemoteSessionID: sessionID,
+		LTID:            ltid,
+		Kind:            kind,
+		Source:          inferSource(kind),
+		ParticipantID:   sanitizeSessionPathPart(participantID),
+		MID:             sanitizeSessionPathPart(mid),
+		RID:             sanitizeSessionPathPart(rid),
+		CreatedMonoNS:   createdMonoNS,
 	})
 	return ltid
 }

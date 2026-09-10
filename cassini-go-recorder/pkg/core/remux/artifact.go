@@ -43,6 +43,7 @@ type SkippedStream struct {
 }
 
 type StreamPlan struct {
+	RemoteSessionID  string `json:"remote_session_id,omitempty"`
 	StreamID         string `json:"stream_id"`
 	LTID             string `json:"ltid"`
 	Kind             string `json:"kind"`
@@ -493,6 +494,7 @@ func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned 
 			Kind:                   item.Kind,
 			Codec:                  item.Codec,
 			ParticipantID:          participantID,
+			RemoteSessionID:        logical.RemoteSessionID,
 			ParticipantName:        participantDisplayByID[participantID],
 			MID:                    seg.Stream.MID,
 			RID:                    seg.Stream.RID,

@@ -95,6 +95,7 @@ type captureAnchor struct {
 }
 
 type captureSegment struct {
+	SessionID     string          `json:"sessionId,omitempty"`
 	Index         int             `json:"index"`
 	AudioName     string          `json:"audioName"`
 	MimeType      string          `json:"mimeType"`
@@ -107,6 +108,7 @@ type captureSegment struct {
 }
 
 type captureSidecar struct {
+	CaptureID       string           `json:"captureId,omitempty"`
 	Format          string           `json:"format"`
 	RoomToken       string           `json:"roomToken"`
 	ParticipantID   string           `json:"participantId"`
@@ -125,6 +127,9 @@ type captureSidecar struct {
 // validateSidecar checks everything decidable without touching the filesystem.
 // Split out so the rules are unit-testable without a multipart request.
 func validateSidecar(sidecar *captureSidecar) error {
+	if sidecar.CaptureID != "" && !captureSafeName.MatchString(sidecar.CaptureID) {
+		return fmt.Errorf("invalid capture id")
+	}
 	if sidecar.Format != captureSourceFormat {
 		return fmt.Errorf("unsupported capture format %q", sidecar.Format)
 	}
@@ -149,6 +154,9 @@ func validateSidecar(sidecar *captureSidecar) error {
 	seen := make(map[string]struct{}, len(sidecar.Segments))
 	seenIndex := make(map[int]struct{}, len(sidecar.Segments))
 	for _, segment := range sidecar.Segments {
+		if len(segment.SessionID) > 512 || strings.ContainsAny(segment.SessionID, "\x00\r\n\t") || strings.TrimSpace(segment.SessionID) != segment.SessionID {
+			return fmt.Errorf("invalid signaling session id")
+		}
 		if segment.Index < 0 {
 			return fmt.Errorf("segment index %d is negative", segment.Index)
 		}
@@ -291,6 +299,16 @@ func writeFileSynced(path string, body []byte) error {
 	return f.Close()
 }
 
+// Keep the legacy timestamp path readable, but never key a new capture only
+// by a millisecond: two browsers can start under the same account at once.
+func captureSidecarDir(root, owner string, sidecar *captureSidecar) string {
+	dir := captureUploadDir(root, sidecar.RoomToken, owner, sidecar.CallStartWallMS)
+	if sidecar.CaptureID != "" {
+		dir += "_" + sidecar.CaptureID
+	}
+	return dir
+}
+
 // captureWindow is one segment's declared span.
 type captureWindow struct{ start, stop int64 }
 
@@ -303,9 +321,10 @@ func (w captureWindow) covers(other captureWindow) bool {
 // segment it names, how many bytes of it are on disk, and how far into the call
 // it reaches.
 type storedCapture struct {
-	windows map[string]captureWindow
-	bytes   map[string]int64
-	endsAt  int64
+	sessions map[string]string
+	windows  map[string]captureWindow
+	bytes    map[string]int64
+	endsAt   int64
 }
 
 // readStoredCapture reads that. A zero value means there is genuinely nothing
@@ -332,10 +351,12 @@ func readStoredCapture(dir string, roomToken string, callStartWallMS int64) (sto
 		// A different call. Nothing to compare, and nothing to protect.
 		return storedCapture{}, nil
 	}
+	sessions := map[string]string{}
 	windows := make(map[string]captureWindow, len(stored.Segments))
 	bytes := make(map[string]int64, len(stored.Segments))
 	for _, segment := range stored.Segments {
 		windows[segment.AudioName] = captureWindow{segment.StartWallMS, segment.StopWallMS}
+		sessions[segment.AudioName] = segment.SessionID
 		// The file, not just the manifest. Recovery sidecars are checkpointed,
 		// so two uploads for one call can carry the SAME manifest while their
 		// snapshots of a still-growing segment hold different amounts of it —
@@ -345,7 +366,7 @@ func readStoredCapture(dir string, roomToken string, callStartWallMS int64) (sto
 			bytes[segment.AudioName] = info.Size()
 		}
 	}
-	return storedCapture{windows: windows, bytes: bytes, endsAt: stored.CallEndWallMS}, nil
+	return storedCapture{sessions: sessions, windows: windows, bytes: bytes, endsAt: stored.CallEndWallMS}, nil
 }
 
 // captureWouldLoseStoredAudio reports whether promoting `incoming` would drop
@@ -412,9 +433,11 @@ func captureWouldLoseStoredAudio(incoming *captureSidecar, final, staging string
 	if err != nil {
 		return false, err
 	}
+	offeredSessions := map[string]string{}
 	offered := make(map[string]captureWindow, len(incoming.Segments))
 	for _, segment := range incoming.Segments {
 		offered[segment.AudioName] = captureWindow{segment.StartWallMS, segment.StopWallMS}
+		offeredSessions[segment.AudioName] = segment.SessionID
 	}
 	// Both copies are compared against, not the "bigger" of them: whichever one
 	// the incoming upload would drop something from is a reason to keep what is
@@ -428,7 +451,7 @@ func captureWouldLoseStoredAudio(incoming *captureSidecar, final, staging string
 		}
 		for name, stored := range held.windows {
 			mine, ok := offered[name]
-			if !ok || !mine.covers(stored) {
+			if !ok || !mine.covers(stored) || offeredSessions[name] != held.sessions[name] {
 				return true, nil
 			}
 			if info, err := os.Stat(filepath.Join(staging, name)); err == nil {
@@ -557,11 +580,11 @@ func captureHasAudioNotStored(incoming *captureSidecar, final string) (bool, err
 	for _, segment := range incoming.Segments {
 		mine := captureWindow{segment.StartWallMS, segment.StopWallMS}
 		liveHas := false
-		if stored, ok := live.windows[segment.AudioName]; ok && stored.covers(mine) {
+		if stored, ok := live.windows[segment.AudioName]; ok && stored.covers(mine) && live.sessions[segment.AudioName] == segment.SessionID {
 			liveHas = true
 		}
 		setAsideHas := false
-		if stored, ok := setAside.windows[segment.AudioName]; ok && stored.covers(mine) {
+		if stored, ok := setAside.windows[segment.AudioName]; ok && stored.covers(mine) && setAside.sessions[segment.AudioName] == segment.SessionID {
 			setAsideHas = true
 		}
 		if !liveHas && !setAsideHas {
@@ -694,6 +717,8 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			return
 		}
 		stagedDir = staging
+		transfer := &captureTransfer{owner: owner}
+		defer func() { rt.captureTransfers.Delete(transfer) }()
 
 		for {
 			part, err := reader.NextPart()
@@ -756,6 +781,13 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 					return
 				}
 				sidecar = &parsed
+				// Publish an immutable identity. Even a repeated sidecar cannot
+				// mutate fields concurrently with an admin's observation read.
+				rt.captureTransfers.Delete(transfer)
+				next := &captureTransfer{captureID: parsed.CaptureID, owner: owner, room: parsed.RoomToken, startMS: parsed.CallStartWallMS, endMS: parsed.CallEndWallMS}
+				next.bytes.Store(transfer.bytes.Load())
+				transfer = next
+				rt.captureTransfers.Store(transfer, struct{}{})
 				// A re-upload replaces a capture that is still on disk, and
 				// until this point the quota was charged as if both would
 				// coexist. They never do: promotion sets the old one aside and
@@ -765,7 +797,7 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				// copy. The room and call are only knowable here, because the
 				// sidecar is the first part on the wire.
 				replaced, err := captureDirBytes(
-					captureUploadDir(rt.cfg.CaptureRoot, parsed.RoomToken, owner, parsed.CallStartWallMS))
+					captureSidecarDir(rt.cfg.CaptureRoot, owner, &parsed))
 				if err == nil {
 					admission = admission.credit(replaced)
 				}
@@ -788,7 +820,7 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				// the overrun is detected; it goes out with the staging
 				// directory.
 				budget := admission.remaining()
-				n, copyErr := io.Copy(dest, io.LimitReader(part, budget+1))
+				n, copyErr := io.Copy(dest, &captureCountingReader{Reader: io.LimitReader(part, budget+1), bytes: &transfer.bytes})
 				closeErr := dest.Close()
 				if copyErr != nil || closeErr != nil {
 					if captureBodyTooLarge(copyErr) {
@@ -876,7 +908,7 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			return
 		}
 
-		final := captureUploadDir(rt.cfg.CaptureRoot, sidecar.RoomToken, owner, sidecar.CallStartWallMS)
+		final := captureSidecarDir(rt.cfg.CaptureRoot, owner, sidecar)
 		if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
 			logger.Printf("capture upload: mkdir %s: %v", final, err)
 			refuseCaptureUpload(w, logger, owner, http.StatusServiceUnavailable, "storage_unavailable", "capture storage unavailable")

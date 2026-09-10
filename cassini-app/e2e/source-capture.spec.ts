@@ -101,6 +101,34 @@ test("starting states do not capture; confirmed active starts and confirmed off 
   ).toBe("live");
 });
 
+for (const responseStatus of [200, 503]) {
+  test(`announces the capture session and preserves upload with registration HTTP ${responseStatus}`, async ({ page }) => {
+    const announcements: {roomToken: string; callStartWallMs: number; callEndWallMs: number; status: string}[] = [];
+    await page.route("**/operator/capture/register", async route => {
+      announcements.push(route.request().postDataJSON());
+      await route.fulfill({status: responseStatus, contentType: "application/json", body: "{}"});
+    });
+    await page.goto(`${server.origin}/call/testroom`);
+    await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+    expect(announcements).toHaveLength(0);
+    await setOfficialRecording(page, 2);
+    await expect.poll(() => announcements.length).toBeGreaterThan(0);
+    expect(announcements[0].status).toBe("recording");
+    expect(announcements[0].roomToken).toBe("testroom");
+    await page.waitForTimeout(1400);
+    await setOfficialRecording(page, 0);
+    await expect.poll(() => server.uploads.length, {timeout: 20_000}).toBe(1);
+    const uploadNotice = announcements.find(item => item.status === "uploading");
+    expect(uploadNotice?.callStartWallMs).toBe(announcements[0].callStartWallMs);
+    expect(uploadNotice!.callEndWallMs).toBeGreaterThan(announcements[0].callEndWallMs);
+    expect(server.uploads[0].sidecar.callStartWallMs).toBe(uploadNotice!.callStartWallMs);
+    expect(server.uploads[0].sidecar.callEndWallMs).toBe(uploadNotice!.callEndWallMs);
+    expect(server.uploads[0].sidecar.captureId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(server.uploads[0].sidecar.segments[0].sessionId).toBe(await page.evaluate(() => (window as any).__signalingSessionID));
+    expect(JSON.stringify(server.uploads[0].sidecar)).not.toContain("must-not-be-captured");
+  });
+}
+
 // captureDirs lists the OPFS directories the payload has created, with the
 // files in each. The directory NAME is what proves adoption: it carries the
 // call start the capture identifies itself by, so a reload that produced a
@@ -153,6 +181,7 @@ async function captureDirs(
 test("a reload mid-recording is adopted into one capture holding both sides", async ({ page }) => {
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  const beforeSession = await page.evaluate(() => (window as any).__signalingSessionID);
   await setOfficialRecording(page, 2);
   await page.waitForTimeout(2600);
   // A microphone change first, so the reload has to resume a capture whose
@@ -207,6 +236,10 @@ test("a reload mid-recording is adopted into one capture holding both sides", as
   // Both sides of the reload, contiguously numbered, every one of them real
   // audio the server received.
   expect(sidecar.segments.length).toBeGreaterThanOrEqual(3);
+  const afterSession = await page.evaluate(() => (window as any).__signalingSessionID);
+  expect(afterSession).not.toBe(beforeSession);
+  expect(new Set(sidecar.segments.map((segment: any) => segment.sessionId))).toEqual(new Set([beforeSession, afterSession]));
+  expect(dirName).toContain(sidecar.captureId);
   expect(sidecar.segments.map((segment: { index: number }) => segment.index)).toEqual(
     sidecar.segments.map((_: unknown, index: number) => index),
   );

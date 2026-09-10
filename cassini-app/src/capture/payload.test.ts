@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   captureAllowedByServer,
+  signalingSessionFromData,
   enabledURLFrom,
   fetchTalkRecordingStatus,
   install,
@@ -584,5 +585,14 @@ describe("serverCheckIntervalMS", () => {
     expect(serverCheckIntervalMS(undefined)).toBe(30_000);
     expect(serverCheckIntervalMS(-1)).toBe(30_000);
     expect(serverCheckIntervalMS("soon")).toBe(30_000);
+  });
+});
+
+
+describe("signaling session identity", () => {
+  it("extracts only the public session id and never the resume credential", () => {
+    expect(signalingSessionFromData(JSON.stringify({type:"hello",hello:{sessionid:"public-session",resumeid:"secret"}}))).toBe("public-session");
+    expect(signalingSessionFromData(JSON.stringify({type:"hello",hello:{resumeid:"secret"}}))).toBeNull();
+    expect(signalingSessionFromData("broken")).toBeNull();
   });
 });

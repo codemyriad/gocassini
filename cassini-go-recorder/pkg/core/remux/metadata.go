@@ -42,12 +42,13 @@ type embeddedPlatform struct {
 }
 
 type embeddedLogicalTrack struct {
-	LTID          string `json:"ltid"`
-	Kind          string `json:"kind"`
-	Source        string `json:"source"`
-	ParticipantID string `json:"participant_id"`
-	MID           string `json:"mid"`
-	RID           string `json:"rid"`
+	RemoteSessionID string `json:"remote_session_id,omitempty"`
+	LTID            string `json:"ltid"`
+	Kind            string `json:"kind"`
+	Source          string `json:"source"`
+	ParticipantID   string `json:"participant_id"`
+	MID             string `json:"mid"`
+	RID             string `json:"rid"`
 }
 
 type embeddedPacketStream struct {
@@ -82,12 +83,13 @@ func buildEmbeddedReport(sess session.Session, plans []StreamPlan, skipped []Ski
 	logicalTracks := make([]embeddedLogicalTrack, 0, len(sess.LogicalTracks))
 	for _, logical := range sess.LogicalTracks {
 		logicalTracks = append(logicalTracks, embeddedLogicalTrack{
-			LTID:          logical.LTID,
-			Kind:          logical.Kind,
-			Source:        logical.Source,
-			ParticipantID: logical.ParticipantID,
-			MID:           logical.MID,
-			RID:           logical.RID,
+			LTID:            logical.LTID,
+			Kind:            logical.Kind,
+			Source:          logical.Source,
+			ParticipantID:   logical.ParticipantID,
+			RemoteSessionID: logical.RemoteSessionID,
+			MID:             logical.MID,
+			RID:             logical.RID,
 		})
 	}
 
@@ -188,6 +190,9 @@ func streamMetadataEntries(plan StreamPlan) []string {
 		"offset_seconds=" + formatSeconds(plan.OffsetSeconds),
 		"rtp_packets=" + strconv.Itoa(plan.RTPPackets),
 		"pt=" + strconv.FormatUint(uint64(plan.PT), 10),
+	}
+	if plan.RemoteSessionID != "" {
+		entries = append(entries, "remote_session_id="+plan.RemoteSessionID)
 	}
 	if plan.ParticipantID != "" {
 		entries = append(entries, "participant_id="+plan.ParticipantID)

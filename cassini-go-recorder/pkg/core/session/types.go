@@ -46,13 +46,14 @@ type Codec struct {
 }
 
 type LogicalTrack struct {
-	LTID          string `json:"ltid"`
-	Kind          string `json:"kind"`
-	Source        string `json:"source"`
-	ParticipantID string `json:"participant_id"`
-	MID           string `json:"mid"`
-	RID           string `json:"rid"`
-	CreatedMonoNS uint64 `json:"created_mono_ns"`
+	RemoteSessionID string `json:"remote_session_id,omitempty"`
+	LTID            string `json:"ltid"`
+	Kind            string `json:"kind"`
+	Source          string `json:"source"`
+	ParticipantID   string `json:"participant_id"`
+	MID             string `json:"mid"`
+	RID             string `json:"rid"`
+	CreatedMonoNS   uint64 `json:"created_mono_ns"`
 }
 
 type PacketStream struct {
