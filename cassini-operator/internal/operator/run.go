@@ -747,12 +747,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	} else {
 		rt.searchStore = searchIndex
 	}
-	// The marks projection (D-737), for the same reasons: disposable, and never
-	// the record — a mark is committed to its recording before it is indexed
-	// here, so a projection that will not open costs the vocabulary and tag
-	// narrowing, never a mark. Assigned only on success: a nil *annotationStore
-	// inside the interface would be a non-nil index that panics on first use.
-	if annotationIndex, err := openAnnotationStore(annotationStorePath(cfg.DBPath), logger); err != nil {
+	// The tag index (D-737), for the same reasons. Assigned only on success: a
+	// nil *annotationStore inside the interface would be a non-nil index.
+	if annotationIndex, err := openAnnotationStore(sidecarPath(cfg.DBPath, annotationsStoreFilename), logger); err != nil {
 		logger.Printf("annotations index unavailable (%v); marks will still be written to recordings, but the tag vocabulary and tag narrowing are not served", err)
 	} else {
 		rt.annotations = annotationIndex

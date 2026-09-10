@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -12,40 +13,21 @@ import (
 	"strings"
 )
 
-// Rebuilding the marks projection from the archive (D-737).
+// Rebuilding the tag index from the archive (D-737).
 //
-// WHY IT READS ONLY THE DELIVERED COPY
+// Only the DELIVERED copy in Nextcloud is read: marks are written there, and
+// current/<job>.opus is the sealed artifact, which never carries one.
 //
-// Marks are written into the DELIVERED .opus — by the service account after a
-// POST, and carried forward onto it by a rerun's publish. current/<job>.opus is
-// the sealed artifact the pipeline produced and never carries one. Search's
-// backfill prefers current/ because it holds richer segments than the archive;
-// here current/ holds strictly less, and reading it would record every meeting
-// as unmarked. So this reads Nextcloud and nothing else.
+// Every delivery and conditional PUT stamps OC-Checksum with the sha256 of the
+// bytes written, so a meeting whose recorded container digest equals it is
+// skipped for one PROPFIND — which also makes the rebuild resumable.
 //
-// WHY THE SKIP COSTS ONE PROPFIND
-//
-// Every delivery and every conditional PUT stamps OC-Checksum with the sha256
-// of the bytes written (webdav_upload.go), so the leaf's checksum is its
-// container digest. A meeting whose recorded container_sha256 equals it was
-// indexed from these very bytes and is not downloaded again. That is also what
-// makes the rebuild resumable: an interrupted run's finished meetings are
-// skipped by the next one.
-//
-// A FAILED READ IS NOT A VERDICT
-//
-// Search's rule, for search's reason (search_backfill.go): a PROPFIND or
-// download that fails says nothing about the meeting, so a meeting already in
-// the projection keeps its rows and the operator re-runs. Only a file that was
-// fetched and could not be read is a verdict, recorded unavailable.
-
-const (
-	annotationsBackfillReasonArchiveUnread = "archive-recording-unreadable"
-)
+// As in search's backfill, a failed PROPFIND or download says nothing about the
+// meeting, so what was indexed before is kept; only bytes that were fetched and
+// could not be read are a verdict, recorded unavailable.
 
 // annotationArchiveReader fetches one delivered recording and reports what
 // `cassini annotate show` read out of it, plus the digest of the bytes fetched.
-// A function so the rebuild is testable without a Nextcloud.
 type annotationArchiveReader func(ctx context.Context, opusName string) (annotateResult, string, error)
 
 // annotationsUnreadableError is a recording that was fetched but could not be
@@ -55,12 +37,9 @@ type annotationsUnreadableError struct{ err error }
 func (e *annotationsUnreadableError) Error() string { return "read annotations: " + e.err.Error() }
 func (e *annotationsUnreadableError) Unwrap() error { return e.err }
 
-// archiveAnnotationReader downloads a recording as the recordings owner and asks
-// the CLI for its annotations.
-//
-// Owner rather than caller for the reason archiveOpusReader gives: this is an
-// administrative rebuild of a projection whose every answer is filtered by the
-// caller's own visibility, and it grants nobody anything.
+// archiveAnnotationReader downloads a recording as the recordings owner — an
+// administrative rebuild whose every answer is filtered by the caller's own
+// visibility — and asks the CLI for its annotations.
 func (c ExAppConfig) archiveAnnotationReader(cassiniBin, workDir string) annotationArchiveReader {
 	client := &http.Client{Timeout: archiveOpusReadTimeout}
 	return func(ctx context.Context, opusName string) (annotateResult, string, error) {
@@ -77,8 +56,7 @@ func (c ExAppConfig) archiveAnnotationReader(cassiniBin, workDir string) annotat
 		}
 		result, err := runAnnotateShow(ctx, cassiniBin, local)
 		if err != nil {
-			// Only the CLI's own refusal is about the bytes. A binary that
-			// would not start, or a run cut short, says nothing about them.
+			// Only the CLI's own refusal is about the bytes.
 			if annotateExitCode(err) != 0 && ctx.Err() == nil {
 				return annotateResult{}, digest, &annotationsUnreadableError{err: err}
 			}
@@ -88,23 +66,15 @@ func (c ExAppConfig) archiveAnnotationReader(cassiniBin, workDir string) annotat
 	}
 }
 
-// annotationBackfillReport is what a rebuild did, in the terms an operator
-// acts on.
+// annotationBackfillReport is what a rebuild did.
 type annotationBackfillReport struct {
-	// Indexed: the meeting's marks were read and recorded.
-	Indexed int
-	// Unchanged: already recorded from these very bytes; nothing downloaded.
-	Unchanged int
-	// Unavailable: the file was read and its marks could not be — an unknown
-	// format, or a document the CLI refused. Recorded with a reason.
+	Indexed   int
+	Unchanged int // already recorded from these bytes; nothing downloaded
+	// Unavailable: read, and its marks could not be — recorded as such.
 	Unavailable int
-	// Failed: could not be asked — the archive did not answer, or the
-	// projection rejected the write. Retryable; existing rows are kept.
-	Failed int
-	// Forgotten: rows dropped for meetings the archive no longer names.
-	Forgotten int
-	// Namespace is what the rebuild did about the installation's namespace.
-	Namespace namespaceAdoption
+	// Failed: could not be asked; retryable, and existing rows are kept.
+	Failed    int
+	Forgotten int // dropped because the archive no longer names them
 }
 
 type annotationBackfillOutcome int
@@ -116,11 +86,8 @@ const (
 	annotationBackfillUnavailable
 )
 
-// backfillAnnotationIndex records every delivered recording's marks, then
-// adopts the archive's namespace if none is stored yet.
-//
-// Never stopped by one meeting: an archive with a single unreadable recording
-// should still end up with every other meeting's marks indexed.
+// backfillAnnotationIndex records every delivered recording's marks, then marks
+// the index built. One meeting's failure never stops the run.
 func backfillAnnotationIndex(
 	ctx context.Context, store *annotationStore, logger *log.Logger,
 	targets []searchBackfillTarget, delivered searchDeliveredStateReader, archive annotationArchiveReader,
@@ -130,14 +97,12 @@ func backfillAnnotationIndex(
 		return report, errors.New("annotations index is not open")
 	}
 	if delivered == nil || archive == nil {
-		// Without the archive there is nothing to rebuild FROM, and current/
-		// is not a substitute (see above).
 		return report, errors.New("the rebuild needs the archive")
 	}
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	recorded, err := store.recordedState(ctx)
+	recorded, err := store.recordedContainers(ctx)
 	if err != nil {
 		return report, err
 	}
@@ -170,25 +135,16 @@ func backfillAnnotationIndex(
 		logger.Printf("annotations backfill: could not prune vanished meetings (%v)", err)
 	}
 	report.Forgotten = forgotten
-
-	// After every meeting is recorded, so "most common" is counted over the
-	// whole archive rather than whichever file happened to come first.
-	adoption, err := store.adoptNamespace(ctx)
-	if err != nil {
-		// Not fatal: Namespace() adopts the same way on first use.
-		logger.Printf("annotations backfill: could not adopt the archive's tag namespace (%v)", err)
-	}
-	report.Namespace = adoption
 	if err := store.markBuilt(ctx); err != nil {
-		// The rows are in; only the marker is missing, so the next start rebuilds
-		// again — wasted work, never a wrong answer.
+		// Only the marker is missing: the next start rebuilds again, which is
+		// wasted work, never a wrong answer.
 		logger.Printf("annotations backfill: %v", err)
 	}
 	return report, nil
 }
 
 func backfillOneAnnotation(
-	ctx context.Context, store *annotationStore, opusName string, recorded map[string]recordedAnnotations,
+	ctx context.Context, store *annotationStore, opusName string, recorded map[string]string,
 	delivered searchDeliveredStateReader, archive annotationArchiveReader,
 ) (annotationBackfillOutcome, string) {
 	checksum, exists, err := delivered(ctx, opusName)
@@ -196,12 +152,11 @@ func backfillOneAnnotation(
 		return annotationBackfillFailed, fmt.Sprintf("read delivered state: %v", err)
 	}
 	if !exists {
-		// The catalog names it but the leaf is gone: drift this run cannot
-		// judge. Convergence prunes it once the catalog stops naming it.
+		// Drift this run cannot judge; pruned once the catalog stops naming it.
 		return annotationBackfillFailed, "the catalog names it but the archive does not hold it"
 	}
 	existing, known := recorded[opusName]
-	if sameContainer(existing, known, checksum) {
+	if sameContainer(existing, checksum) {
 		return annotationBackfillUnchanged, ""
 	}
 
@@ -209,53 +164,51 @@ func backfillOneAnnotation(
 	if err != nil {
 		var unreadable *annotationsUnreadableError
 		if errors.As(err, &unreadable) {
-			if err := store.MarkUnavailable(ctx, opusName, annotationsReasonUnreadable); err != nil {
-				return annotationBackfillFailed, fmt.Sprintf("record %s: %v", annotationsReasonUnreadable, err)
+			if err := store.MarkUnavailable(ctx, opusName, ""); err != nil {
+				return annotationBackfillFailed, fmt.Sprintf("record it unreadable: %v", err)
 			}
-			return annotationBackfillUnavailable, annotationsReasonUnreadable
+			return annotationBackfillUnavailable, err.Error()
 		}
 		if !known {
-			// Nothing to protect, and the meeting should at least be known to
-			// the projection with a reason — it already counts outside coverage
-			// either way. Still a failure: re-running is the fix.
-			_ = store.MarkUnavailable(ctx, opusName, annotationsBackfillReasonArchiveUnread)
+			// Nothing to protect; at least make the meeting known, outside
+			// coverage. Still a failure: re-running is the fix.
+			_ = store.MarkUnavailable(ctx, opusName, "")
 		}
-		return annotationBackfillFailed, fmt.Sprintf("%s: %v", annotationsBackfillReasonArchiveUnread, err)
+		return annotationBackfillFailed, fmt.Sprintf("archive recording unreadable: %v", err)
 	}
-	// Record the digest of the bytes actually read. It is what OC-Checksum
-	// will be compared against next time.
+	// The digest of the bytes actually read is what OC-Checksum is compared
+	// against next time.
 	if digest = strings.ToLower(strings.TrimSpace(digest)); digest != "" {
 		result.ContainerSHA256 = digest
 	}
-	if sameContainer(existing, known, result.ContainerSHA256) {
-		// A recording with no OC-Checksum (delivered before uploads carried
-		// one) had to be downloaded to learn its digest, and it has not changed.
+	if sameContainer(existing, result.ContainerSHA256) {
+		// Delivered before uploads carried a checksum: downloaded to learn its
+		// digest, and unchanged.
 		return annotationBackfillUnchanged, ""
 	}
-	state, err := store.record(ctx, opusName, result, false) // authoritative: it read the file itself
+	state, err := store.record(ctx, opusName, result, false)
 	if err != nil {
 		return annotationBackfillFailed, fmt.Sprintf("write rows: %v", err)
 	}
 	if state == annotationsStateUnavailable {
-		return annotationBackfillUnavailable, annotationsReasonUnsupported
+		return annotationBackfillUnavailable, "annotations format unsupported"
 	}
 	return annotationBackfillIndexed, ""
 }
 
-// sameContainer reports whether the meeting was last recorded from these bytes.
-// An unknown digest on either side is never a match.
-func sameContainer(existing recordedAnnotations, known bool, digest string) bool {
-	digest = strings.ToLower(strings.TrimSpace(digest))
-	return known && digest != "" && existing.container != "" && strings.EqualFold(existing.container, digest)
+// sameContainer reports whether a meeting was last recorded from these bytes;
+// an unknown digest on either side is never a match.
+func sameContainer(existing, digest string) bool {
+	digest = strings.TrimSpace(digest)
+	return digest != "" && existing != "" && strings.EqualFold(existing, digest)
 }
 
-// forgetVanishedAnnotations drops rows for meetings the archive no longer
-// names, so a deleted recording's labels stop feeding ResolveLabel. Guarded on
-// a non-empty target list for search's reason: an archive read that came back
-// empty is indistinguishable from an empty archive.
+// forgetVanishedAnnotations drops meetings the archive no longer names, so a
+// deleted recording's labels stop feeding ResolveLabel. Never on an empty
+// target list, which is indistinguishable from an outage.
 func forgetVanishedAnnotations(
 	ctx context.Context, store *annotationStore, logger *log.Logger,
-	targets []searchBackfillTarget, recorded map[string]recordedAnnotations,
+	targets []searchBackfillTarget, recorded map[string]string,
 ) (int, error) {
 	if len(targets) == 0 {
 		return 0, nil
@@ -269,7 +222,7 @@ func forgetVanishedAnnotations(
 		if present[name] {
 			continue
 		}
-		if err := store.ForgetMeeting(ctx, name); err != nil {
+		if err := store.inTx(ctx, func(tx *sql.Tx) error { return deleteAnnotationRows(ctx, tx, name) }); err != nil {
 			return forgotten, err
 		}
 		logger.Printf("annotations backfill: %s is no longer in the archive; dropped from the index", name)

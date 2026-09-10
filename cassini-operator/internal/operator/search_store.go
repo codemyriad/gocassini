@@ -140,91 +140,93 @@ CREATE VIRTUAL TABLE IF NOT EXISTS segment_fts USING fts5(
 `
 
 // searchStore is the sidecar index.
-type searchStore struct {
+type searchStore struct{ sidecarDB }
+
+// searchStorePath is where the index lives for a given job-database path, or
+// "" when that cannot be answered (sidecarPath).
+func searchStorePath(dbPath string) string { return sidecarPath(dbPath, searchStoreFilename) }
+
+func openSearchStore(path string, logger *log.Logger) (*searchStore, error) {
+	db, err := openSidecarDB(path, "search index", searchSchemaSQL, searchSchemaVersion, logger)
+	if err != nil {
+		return nil, err
+	}
+	return &searchStore{db}, nil
+}
+
+// sidecarDB is a disposable SQLite file beside the job database: the search
+// index and the tag index share it.
+type sidecarDB struct {
 	db   *sql.DB
 	path string
 }
 
-// searchStorePath is where the index lives for a given job-database path, or
-// "" when that cannot be answered.
-//
-// The empty case is not paranoia. filepath.Dir("") is ".", so a blank or
-// relative job-database path would put the index in whatever directory the
-// process happened to start in — which is how a 40 KB index came to be
-// committed into this package: a test constructs a Runtime with a zero Config,
-// and the index landed beside the source. In production a relative --db would
-// put it somewhere other than the state volume, where nothing would ever find
-// or prune it.
-//
-// Returning "" makes openSearchStore refuse, which NewRuntime already degrades
-// gracefully: no index, search unavailable, pipeline unaffected.
-func searchStorePath(dbPath string) string {
+// sidecarPath is filename beside the job database, or "" for a blank or
+// relative job-database path. filepath.Dir("") is ".", which is how a test's
+// zero Config once committed a 40 KB index into this package; "" makes the
+// open refuse, which NewRuntime degrades gracefully.
+func sidecarPath(dbPath, filename string) string {
 	trimmed := strings.TrimSpace(dbPath)
 	if trimmed == "" || !filepath.IsAbs(trimmed) {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(trimmed), searchStoreFilename)
+	return filepath.Join(filepath.Dir(trimmed), filename)
 }
 
-// openSearchStore opens the index, rebuilding it from scratch when the file on
-// disk was written by a different schema version.
-//
-// Delete-and-rebuild is the disposability invariant with teeth. A version
-// mismatch is not an error and not something to migrate: the file is removed
-// and recreated empty, and the backfill refills it. An older binary meeting a
-// newer index therefore starts and rebuilds rather than refusing to run.
-func openSearchStore(path string, logger *log.Logger) (*searchStore, error) {
+// openSidecarDB opens a sidecar, deleting and recreating it when its
+// user_version is not version. Migrations would protect data that is
+// regenerable by definition, and an older binary meeting a newer file must
+// rebuild rather than refuse to start.
+func openSidecarDB(path, what, schema string, version int, logger *log.Logger) (sidecarDB, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("search index path must not be empty")
+		return sidecarDB{}, fmt.Errorf("%s path must not be empty", what)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir search index dir: %w", err)
+		return sidecarDB{}, fmt.Errorf("mkdir %s dir: %w", what, err)
 	}
-
-	store, err := openSearchStoreAt(path)
+	s, err := openSidecarAt(path, what)
 	if err != nil {
-		return nil, err
+		return sidecarDB{}, err
 	}
-	version, err := store.userVersion()
+	current, err := s.userVersion()
 	if err != nil {
-		_ = store.Close()
-		return nil, err
+		_ = s.Close()
+		return sidecarDB{}, err
 	}
-	if version == searchSchemaVersion {
-		return store, nil
+	if current == version {
+		return s, nil
 	}
-	// A brand-new file reads 0 and is simply stamped. Anything else is a real
-	// mismatch and is discarded — loudly, because silently dropping an index is
-	// exactly the kind of thing that should show up in an operator's logs when
-	// they wonder why the first search after an upgrade found nothing.
-	if version != 0 && logger != nil {
-		logger.Printf("search index at %s is schema v%d, this build writes v%d — deleting and rebuilding", path, version, searchSchemaVersion)
+	// A brand-new file reads 0 and is simply stamped; a real mismatch is logged,
+	// so an empty first answer after an upgrade is explicable.
+	if current != 0 && logger != nil {
+		logger.Printf("%s at %s is schema v%d, this build writes v%d — deleting and rebuilding", what, path, current, version)
 	}
-	if err := store.Close(); err != nil {
-		return nil, fmt.Errorf("close stale search index: %w", err)
+	if err := s.Close(); err != nil {
+		return sidecarDB{}, fmt.Errorf("close stale %s: %w", what, err)
 	}
-	if err := removeSearchStoreFiles(path); err != nil {
-		return nil, err
+	if err := removeSidecarFiles(path); err != nil {
+		return sidecarDB{}, err
 	}
-	store, err = openSearchStoreAt(path)
-	if err != nil {
-		return nil, err
+	if s, err = openSidecarAt(path, what); err != nil {
+		return sidecarDB{}, err
 	}
-	if err := store.applySchema(); err != nil {
-		_ = store.Close()
-		return nil, err
+	// The version goes LAST, so a crash midway leaves a file the next open
+	// treats as fresh.
+	if _, err := s.db.Exec(schema); err != nil {
+		_ = s.Close()
+		return sidecarDB{}, fmt.Errorf("create %s schema: %w", what, err)
 	}
-	return store, nil
+	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+		_ = s.Close()
+		return sidecarDB{}, fmt.Errorf("stamp %s schema version: %w", what, err)
+	}
+	return s, nil
 }
 
-// openSearchStoreAt opens the file with the pragmas the job database lacks.
-//
-// WAL so a reader never blocks the ingest writer, a real busy_timeout so a
-// concurrent open waits instead of failing instantly with SQLITE_BUSY, and
-// foreign_keys ON so segment_ref's ON DELETE CASCADE is more than decorative.
-// The pool is left at the driver default rather than pinned to one connection:
-// searches are reads, and WAL is what makes concurrent ones safe.
-func openSearchStoreAt(path string) (*searchStore, error) {
+// openSidecarAt opens the file with the pragmas the job database lacks: WAL so
+// a reader never blocks the writer, a real busy_timeout, and foreign keys on.
+// The pool stays at the driver default; WAL makes concurrent reads safe.
+func openSidecarAt(path, what string) (sidecarDB, error) {
 	dsn := "file:" + path +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=busy_timeout(5000)" +
@@ -232,53 +234,53 @@ func openSearchStoreAt(path string) (*searchStore, error) {
 		"&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open search index: %w", err)
+		return sidecarDB{}, fmt.Errorf("open %s: %w", what, err)
 	}
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("ping search index: %w", err)
+		return sidecarDB{}, fmt.Errorf("ping %s: %w", what, err)
 	}
-	return &searchStore{db: db, path: path}, nil
+	return sidecarDB{db: db, path: path}, nil
 }
 
-// removeSearchStoreFiles deletes the database and its WAL sidecars. Leaving the
-// -wal or -shm behind would let a stale journal be replayed into the new file.
-func removeSearchStoreFiles(path string) error {
+// removeSidecarFiles deletes the database and its WAL sidecars; a stale -wal
+// left behind would be replayed into the new file.
+func removeSidecarFiles(path string) error {
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		if err := os.Remove(path + suffix); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove stale search index %s: %w", path+suffix, err)
+			return fmt.Errorf("remove stale index %s: %w", path+suffix, err)
 		}
 	}
 	return nil
 }
 
-func (s *searchStore) Close() error {
-	if s == nil || s.db == nil {
+func (s sidecarDB) Close() error {
+	if s.db == nil {
 		return nil
 	}
 	return s.db.Close()
 }
 
-func (s *searchStore) userVersion() (int, error) {
+func (s sidecarDB) userVersion() (int, error) {
 	var version int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return 0, fmt.Errorf("read search index version: %w", err)
+		return 0, fmt.Errorf("read %s version: %w", s.path, err)
 	}
 	return version, nil
 }
 
-// applySchema creates the tables and stamps the version.
-//
-// The stamp goes LAST so a crash midway leaves user_version at 0, which the
-// next open treats as a fresh file and rebuilds — rather than a half-built
-// schema wearing a version that claims it is complete.
-func (s *searchStore) applySchema() error {
-	if _, err := s.db.Exec(searchSchemaSQL); err != nil {
-		return fmt.Errorf("create search schema: %w", err)
+// inTx runs fn in a transaction, rolling back on any error.
+func (s sidecarDB) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin %s transaction: %w", s.path, err)
 	}
-	// PRAGMA user_version takes no bound parameters.
-	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", searchSchemaVersion)); err != nil {
-		return fmt.Errorf("stamp search schema version: %w", err)
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit %s transaction: %w", s.path, err)
 	}
 	return nil
 }
@@ -458,20 +460,4 @@ func (s *searchStore) Coverage(ctx context.Context) (searchCoverage, error) {
 		return searchCoverage{}, fmt.Errorf("read search coverage: %w", err)
 	}
 	return coverage, nil
-}
-
-// inTx runs fn in a transaction, rolling back on any error.
-func (s *searchStore) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin search index transaction: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit search index transaction: %w", err)
-	}
-	return nil
 }
