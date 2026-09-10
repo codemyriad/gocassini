@@ -537,7 +537,7 @@ func (s *nextcloudFilesPublishSink) stageDeliveredMarks(ctx context.Context, ite
 			return upload{}, annotateResult{}, err
 		}
 	}
-	if _, _, err := s.cfg.davDownloadFile(ctx, s.client, ncRecordingsOwner, item.remote, delivered); err != nil {
+	if _, _, _, err := s.cfg.davDownloadFile(ctx, s.client, ncRecordingsOwner, item.remote, delivered, 0); err != nil {
 		return upload{}, annotateResult{}, fmt.Errorf("fetch the delivered %s to carry its marks: %w", item.remote, err)
 	}
 	result, err := runAnnotateCarry(ctx, s.cassiniBin, delivered, item.local, staged)

@@ -128,7 +128,7 @@ func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID s
 	defer os.RemoveAll(staging)
 
 	local := filepath.Join(staging, "meeting.opus")
-	status, err := s.exapp.davDownloadFile(ctx, s.client, annotationReadIdentity(caller, relPath), relPath, local, maxAnnotateRecordingBytes)
+	status, err := s.exapp.stageAnnotatedRecording(ctx, s.client, annotationReadIdentity(caller, relPath), relPath, local, maxAnnotateRecordingBytes)
 	if err != nil {
 		if deniedOrAbsent(status) {
 			// The second gate disagreed with the catalog — the ACL changed between
@@ -270,7 +270,7 @@ func (s *annotationService) applyOnce(ctx context.Context, staging string, attem
 	defer os.Remove(in)
 	defer os.Remove(out)
 
-	status, err := s.exapp.davDownloadFile(ctx, s.client, ncRecordingsOwner, relPath, in, maxAnnotateRecordingBytes)
+	status, err := s.exapp.stageAnnotatedRecording(ctx, s.client, ncRecordingsOwner, relPath, in, maxAnnotateRecordingBytes)
 	if err != nil {
 		if status == http.StatusNotFound {
 			return annotateResult{}, annotateNotFound(fmt.Errorf("%s went between its PROPFIND and its GET (served as 404)", relPath))

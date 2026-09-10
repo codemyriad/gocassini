@@ -3,9 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 )
@@ -17,44 +15,22 @@ import (
 // can write to the ExApp volume.
 const maxAnnotateRecordingBytes = maxContextStagedBytes
 
-// davDownloadFile streams relPath, read as userID, into destPath and reports
-// the upstream status so the caller can keep denied and absent alike.
+// stageAnnotatedRecording streams relPath, read as userID, into destPath for
+// `cassini annotate`, and reports the upstream status so the caller can keep
+// denied and absent alike.
 //
-// It is stageMeetingForContext's approach without its bundle budget: streamed
-// to disk because recordings are tens of megabytes, created O_EXCL so a stale
-// file is never mistaken for this download, read to one byte past the limit so
-// an oversized recording is refused rather than silently truncated, and an
-// empty body refused because no recording is empty.
-func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, userID, relPath, destPath string, limit int64) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
+// It is davDownloadFile with this path's two refusals: a limit, so one request
+// cannot fill the ExApp volume, and an empty body, because no recording that can
+// be annotated is empty.
+func (c ExAppConfig) stageAnnotatedRecording(ctx context.Context, client *http.Client, userID, relPath, destPath string, limit int64) (int, error) {
+	_, written, status, err := c.davDownloadFile(ctx, client, userID, relPath, destPath, limit)
 	if err != nil {
-		return 0, err
-	}
-	c.setAppAPIDAVHeadersForUser(req, userID)
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer drainClose(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("GET %s -> %d", relPath, resp.StatusCode)
-	}
-	file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return resp.StatusCode, err
-	}
-	defer file.Close()
-	written, err := io.Copy(file, io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return resp.StatusCode, fmt.Errorf("GET %s: %w", relPath, err)
-	}
-	if written > limit {
-		return resp.StatusCode, fmt.Errorf("GET %s: the recording is larger than the %d MiB one request may stage", relPath, limit>>20)
+		return status, err
 	}
 	if written == 0 {
-		return resp.StatusCode, fmt.Errorf("GET %s returned an empty recording", relPath)
+		return status, fmt.Errorf("GET %s returned an empty recording", relPath)
 	}
-	return resp.StatusCode, file.Close()
+	return status, nil
 }
 
 // annotationReadIdentity is the identity a recording at relPath is read as for
