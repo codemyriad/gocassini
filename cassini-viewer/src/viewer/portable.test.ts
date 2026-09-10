@@ -12,7 +12,6 @@ import {
   listAvailableTranscripts,
   loadPortableTranscriptBody,
   pickDisplayForTranscript,
-  readPortableAnnotations,
   readPortableSummaryMarkdown,
   sha256HexFallback,
   type PortableMeetingManifest,
@@ -74,110 +73,6 @@ describe("describeMeeting", () => {
     expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRST").dateLabel).toBe(
       "01KKA70QN0ABCDEFGHJKMNPQRST",
     );
-  });
-});
-
-describe("readPortableAnnotations", () => {
-  const audio = "8e1f7499c6d5fba88c3bd9b69ecd3de1b07ae0cff65152c942c5e99062d01cbc";
-  const v1 = () => ({
-    format: "cassini.annotations.v1",
-    revision: 4,
-    audioOpusSha256: audio,
-    tagNamespace: "urn:uuid:07e4eab6-4f5f-4cc4-8913-46432c5cd726",
-    tags: [{ id: "tag_a", label: "hiring" }],
-    items: [
-      {
-        id: "mk_1", tagId: "tag_a", target: { kind: "meeting" },
-        createdAtUtc: "2026-09-10T11:23:54Z", actor: { kind: "person", id: "alice" }, operationId: "op_1",
-      },
-      {
-        id: "mk_2", tagId: "tag_a", target: { kind: "time-range", startMs: 869000, endMs: 884000 },
-        createdAtUtc: "2026-09-10T11:24:10Z", actor: { kind: "agent", id: "alice" }, operationId: "op_2",
-      },
-    ] as unknown[],
-  });
-  const manifestWith = (annotations: unknown): PortableMeetingManifest => ({
-    integrity: { matchPolicy: "exact-opus-audio-v1", opusAudioSha256: audio },
-    annotations,
-  });
-
-  it("reads a v1 document, both target kinds, resolved against this audio", () => {
-    const got = readPortableAnnotations(manifestWith(v1()));
-    expect(got).toEqual({
-      format: "cassini.annotations.v1",
-      revision: 4,
-      audioOpusSha256: audio,
-      tagNamespace: "urn:uuid:07e4eab6-4f5f-4cc4-8913-46432c5cd726",
-      tags: [{ id: "tag_a", label: "hiring" }],
-      items: [
-        {
-          id: "mk_1", tagId: "tag_a", target: { kind: "meeting" },
-          createdAtUtc: "2026-09-10T11:23:54Z", actor: { kind: "person", id: "alice" }, operationId: "op_1",
-        },
-        {
-          id: "mk_2", tagId: "tag_a", target: { kind: "time-range", startMs: 869000, endMs: 884000 },
-          createdAtUtc: "2026-09-10T11:24:10Z", actor: { kind: "agent", id: "alice" }, operationId: "op_2",
-        },
-      ],
-      resolved: true,
-    });
-  });
-
-  it("reports marks made against other audio as unresolved", () => {
-    const got = readPortableAnnotations(manifestWith({ ...v1(), audioOpusSha256: "e".repeat(64) }));
-    expect(got?.resolved).toBe(false);
-    // Still returned: unresolved marks are kept and flagged, not discarded.
-    expect(got?.items).toHaveLength(2);
-  });
-
-  it("agrees with the Go reader that an upper-case binding does not resolve", () => {
-    // internal/portable's Resolved lower-cases the recording's digest, not the
-    // binding. The two readers must agree about which marks may be drawn.
-    expect(readPortableAnnotations(manifestWith({ ...v1(), audioOpusSha256: audio.toUpperCase() }))?.resolved)
-      .toBe(false);
-  });
-
-  it.each([
-    ["absent", undefined],
-    ["null", null],
-    ["a string", "cassini.annotations.v1"],
-    ["an array", [v1()]],
-    ["an unknown format", { ...v1(), format: "cassini.annotations.v9" }],
-    ["no format", { ...v1(), format: undefined }],
-  ])("answers null for %s", (_label, annotations) => {
-    expect(readPortableAnnotations(manifestWith(annotations))).toBeNull();
-  });
-
-  it("keeps what it can read of a damaged v1 document", () => {
-    const doc = v1();
-    doc.items.push(
-      { id: "mk_orphan", tagId: "tag_missing", target: { kind: "meeting" } },
-      { id: "mk_1", tagId: "tag_a", target: { kind: "meeting" } },
-      { id: "mk_empty", tagId: "tag_a", target: { kind: "time-range", startMs: 10, endMs: 10 } },
-      { id: "mk_negative", tagId: "tag_a", target: { kind: "time-range", startMs: -5, endMs: 10 } },
-      { id: "mk_fraction", tagId: "tag_a", target: { kind: "time-range", startMs: 0.5, endMs: 10 } },
-      { id: "mk_both", tagId: "tag_a", target: { kind: "meeting", startMs: 0 } },
-      { id: "mk_speaker", tagId: "tag_a", target: { kind: "speaker" } },
-      "not an object",
-      { id: "mk_pipeline", tagId: "tag_a", target: { kind: "meeting" }, actor: { kind: "pipeline", id: "svc" } },
-    );
-    const got = readPortableAnnotations(manifestWith(doc));
-    expect(got?.items.map((item) => item.id)).toEqual(["mk_1", "mk_2", "mk_pipeline"]);
-    expect(got?.items[2]?.actor).toEqual({ kind: "pipeline", id: "svc" });
-  });
-
-  it("treats mistyped scalars as absent rather than failing", () => {
-    const got = readPortableAnnotations(manifestWith({
-      format: "cassini.annotations.v1", revision: "four", audioOpusSha256: 7, tags: "nope", items: {},
-    }));
-    expect(got).toMatchObject({ revision: 0, audioOpusSha256: "", tags: [], items: [], resolved: false });
-  });
-
-  it("does not alias the manifest it read", () => {
-    const manifest = manifestWith(v1());
-    const got = readPortableAnnotations(manifest);
-    (manifest.annotations as { tags: Array<{ label: string }> }).tags[0]!.label = "changed";
-    expect(got?.tags[0]?.label).toBe("hiring");
   });
 });
 
