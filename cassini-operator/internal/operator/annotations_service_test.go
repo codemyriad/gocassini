@@ -32,7 +32,12 @@ func TestNewAnnotationServiceMountsOnlyWhereAMarkCanBeServed(t *testing.T) {
 }
 
 func TestAnnotationRoutes(t *testing.T) {
-	s := &annotationService{rt: &Runtime{}, logger: log.New(ioDiscard{}, "", 0)}
+	// Nextcloud is down, so a meeting route that gets as far as it answers 502.
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer down.Close()
+	s := &annotationService{rt: &Runtime{}, exapp: testExAppConfig(down.URL), client: down.Client(), logger: log.New(ioDiscard{}, "", 0)}
 	mux := http.NewServeMux()
 	s.register(mux)
 
@@ -45,8 +50,8 @@ func TestAnnotationRoutes(t *testing.T) {
 		{"tags", http.MethodGet, "/annotations/tags", "alice", http.StatusNotImplemented},
 		{"tags trailing slash", http.MethodGet, "/annotations/tags/", "alice", http.StatusNotImplemented},
 		{"tags are read-only", http.MethodPost, "/annotations/tags", "alice", http.StatusMethodNotAllowed},
-		{"read a meeting", http.MethodGet, "/annotations/meetings/" + id, "alice", http.StatusNotImplemented},
-		{"write a meeting", http.MethodPost, "/annotations/meetings/" + id, "alice", http.StatusNotImplemented},
+		{"read a meeting", http.MethodGet, "/annotations/meetings/" + id, "alice", http.StatusBadGateway},
+		{"write a meeting with no body", http.MethodPost, "/annotations/meetings/" + id, "alice", http.StatusBadRequest},
 		{"meeting without a caller", http.MethodPost, "/annotations/meetings/" + id, "", http.StatusBadGateway},
 		{"no PUT", http.MethodPut, "/annotations/meetings/" + id, "alice", http.StatusMethodNotAllowed},
 		{"no meeting id", http.MethodGet, "/annotations/meetings/", "alice", http.StatusNotFound},
