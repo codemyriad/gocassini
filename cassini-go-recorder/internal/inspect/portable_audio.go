@@ -278,6 +278,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	}
 	printSummaryMetadata(out, manifest.Summary)
 	printAttachments(out, manifest.Attachments)
+	printPortableAnnotations(out, manifest)
 	for _, warning := range bodies.Warnings {
 		fmt.Fprintf(out, "warning=%s\n", warning)
 	}
@@ -365,6 +366,80 @@ func printAttachments(out io.Writer, attachments []map[string]any) {
 		fmt.Fprintf(out, "attachment name=%s mime=%s bytes=%s\n",
 			blankDash(name), blankDash(mime), bytesField)
 	}
+}
+
+// printPortableAnnotations prints what a file's tags and marks amount to
+// (D-737): one line, omitted when the file carries none, as the origin line is.
+//
+// It reports and never fails. The member is optional and versioned on its own,
+// and the format's rule is that a reader which cannot use it shows no marks and
+// keeps the meeting — so a file whose marks are in a newer format, or damaged,
+// still inspects as the good recording it otherwise is. What inspect owes the
+// caller is the sentence saying which of those cases this is.
+//
+// resolved compares the binding with the manifest's own audio digest, as every
+// reader must: a mark made against other audio must not be drawn against this
+// one, and a file carrying such marks should say so where someone will look.
+// status is the writer's check (ValidateAnnotations) against this recording's
+// duration, because inspect is also how a file a tool just wrote is verified.
+func printPortableAnnotations(out io.Writer, manifest portable.Manifest) {
+	if len(bytes.TrimSpace(manifest.Annotations)) == 0 {
+		return
+	}
+	doc, err := portable.ParseAnnotations(manifest.Annotations)
+	switch {
+	case errors.Is(err, portable.ErrAnnotationsFormatUnsupported):
+		var probe struct {
+			Format string `json:"format"`
+		}
+		_ = json.Unmarshal(manifest.Annotations, &probe)
+		fmt.Fprintf(out, "annotations format=%s status=unsupported-format\n", inspectToken(probe.Format))
+		return
+	case err != nil:
+		fmt.Fprintf(out, "annotations format=%s status=unreadable\n", portable.AnnotationsFormatV1)
+		fmt.Fprintf(out, "warning=the annotations could not be read, so this file shows no marks: %v\n", err)
+		return
+	case doc == nil:
+		// A literal null: the member is present and says there is nothing.
+		return
+	}
+
+	resolved := "no"
+	if doc.Resolved(manifest.Integrity.OpusSHA256) {
+		resolved = "yes"
+	}
+	status := "ok"
+	problem := portable.ValidateAnnotations(doc, manifest.Audio.DurationMS)
+	if problem != nil {
+		status = "invalid"
+	}
+	fmt.Fprintf(out, "annotations format=%s revision=%d tags=%d marks=%d resolved=%s status=%s\n",
+		doc.Format, doc.Revision, len(doc.Tags), len(doc.Items), resolved, status)
+	// An empty or malformed binding is a validation failure, reported below;
+	// "made against other audio" would claim something the file does not say.
+	if resolved == "no" && doc.AudioOpusSHA256 != "" {
+		fmt.Fprintf(out, "warning=the marks were made against other audio (annotations.audioOpusSha256=%s), so their time ranges do not point into this recording\n",
+			inspectToken(doc.AudioOpusSHA256))
+	}
+	if problem != nil {
+		fmt.Fprintf(out, "warning=the annotations do not validate: %v\n", problem)
+	}
+}
+
+// inspectToken renders a file-supplied value that belongs in a key=value
+// field. A value made only of token characters passes through; anything else is
+// quoted, so a string carrying a space or a newline cannot append pairs, or
+// forge whole lines, that a caller parsing this output would read as facts.
+func inspectToken(value string) string {
+	if value == "" {
+		return "-"
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._:/+-", r)) {
+			return strconv.Quote(value)
+		}
+	}
+	return value
 }
 
 func printProcessingStep(out io.Writer, label string, step *portable.ProcessingStep) {

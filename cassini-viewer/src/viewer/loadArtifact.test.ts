@@ -15,6 +15,7 @@ import {
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
   extractPortableManifestFromArrayBuffer,
+  readPortableAnnotations,
 } from "./portable";
 import { canonicalWordsForBlock, isLikelyCrosstalkTurn } from "../core/transcript";
 import {
@@ -1791,6 +1792,80 @@ describe("portable word origin compatibility", () => {
       rawTranscript, extraTags: display.tags,
     });
     await expect(extractPortableManifestFromArrayBuffer(bytes)).rejects.toThrow(/unknown sourceTranscriptId/);
+  });
+});
+
+// Marks ride inside the file as manifest.annotations (D-737). Whatever that
+// member holds, the recording must open exactly as it would without it: the
+// member is optional and versioned on its own, and a reader that cannot use it
+// loses the marks and nothing else.
+describe("portable annotations load without touching the rest of the file", () => {
+  const manifest = {
+    meeting: { durationMs: 3_600_000 },
+    speakers: [{ id: "speaker", label: "Speaker" }],
+  };
+  const rawTranscript = {
+    format: "cassini.words.v1", wordCount: 1,
+    items: [{ speaker: "speaker", text: "hello", startMs: 0, endMs: 100 }],
+  };
+  const v1 = {
+    format: "cassini.annotations.v1",
+    revision: 2,
+    audioOpusSha256: OPUS_AUDIO_SHA256,
+    tagNamespace: "urn:uuid:07e4eab6-4f5f-4cc4-8913-46432c5cd726",
+    tags: [{ id: "tag_a", label: "hiring" }],
+    items: [
+      {
+        id: "mk_1", tagId: "tag_a", target: { kind: "meeting" },
+        createdAtUtc: "2026-09-10T11:23:54Z", actor: { kind: "person", id: "alice" }, operationId: "op_1",
+      },
+      {
+        id: "mk_2", tagId: "tag_a", target: { kind: "time-range", startMs: 869000, endMs: 884000 },
+        createdAtUtc: "2026-09-10T11:24:10Z", actor: { kind: "agent", id: "alice" }, operationId: "op_2",
+      },
+    ],
+  };
+  const load = (annotations?: unknown) => extractPortableManifestFromArrayBuffer(buildPortableOpusFixture({
+    manifest: annotations === undefined ? manifest : { ...manifest, annotations },
+    rawTranscript,
+  }));
+  const withoutAnnotations = (value: { annotations?: unknown }) => {
+    const { annotations: _dropped, ...rest } = value;
+    return rest;
+  };
+
+  it("reads the marks of an annotated file, resolved against its audio", async () => {
+    const { manifest: loaded } = await load(v1);
+    const annotations = readPortableAnnotations(loaded);
+    expect(annotations?.resolved).toBe(true);
+    expect(annotations?.revision).toBe(2);
+    expect(annotations?.items.map((item) => item.target)).toEqual([
+      { kind: "meeting" },
+      { kind: "time-range", startMs: 869000, endMs: 884000 },
+    ]);
+    expect(loaded.transcript?.items).toEqual(rawTranscript.items);
+  });
+
+  it("ignores a format it does not know and still opens the recording", async () => {
+    const { manifest: loaded } = await load({ format: "cassini.annotations.v9", marks: [{ anything: true }] });
+    expect(readPortableAnnotations(loaded)).toBeNull();
+    expect(loaded.transcript?.items).toEqual(rawTranscript.items);
+  });
+
+  it("still opens a recording whose v1 member is damaged", async () => {
+    const { manifest: loaded } = await load({ format: "cassini.annotations.v1", revision: "four", items: "nope" });
+    expect(readPortableAnnotations(loaded)?.items).toEqual([]);
+    expect(loaded.transcript?.items).toEqual(rawTranscript.items);
+  });
+
+  it("loads a file with no marks exactly as a marked one, less the marks", async () => {
+    const { manifest: plain } = await load();
+    expect("annotations" in plain).toBe(false);
+    expect(readPortableAnnotations(plain)).toBeNull();
+    for (const member of [v1, { format: "cassini.annotations.v9" }]) {
+      const { manifest: marked } = await load(member);
+      expect(withoutAnnotations(marked)).toEqual(withoutAnnotations(plain));
+    }
   });
 });
 
