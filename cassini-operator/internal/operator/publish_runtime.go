@@ -119,6 +119,20 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		return
 	}
 	rt.logger.Printf("publish succeeded id=%s attempt=%d sink=%s attempt_site=%s location=%s", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, location)
+
+	// Index the meeting AFTER the delivery is recorded and BEFORE the staging
+	// site is removed below — the site holds the catalog entry the join key is
+	// read from, and the attempt bundle beside it holds the transcript.
+	//
+	// Deliberately not fatal and deliberately not blocking the cleanup: the
+	// publish has already succeeded, and a meeting that is delivered but not
+	// indexed is a searchable-coverage problem, never a publishing one. A
+	// failure has already been recorded against the meeting inside, so it drops
+	// out of the covered count rather than being silently reported as searched.
+	if err := rt.indexPublishedMeeting(context.Background(), task, attemptArtifactSitePath); err != nil {
+		rt.logger.Printf("search index update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
+	}
+
 	// The attempt site is staging, not an archive. Once the sink has accepted
 	// the meeting it is a duplicate of what now lives at the destination, and
 	// keeping it means the ExApp retains a full copy of every recording it has

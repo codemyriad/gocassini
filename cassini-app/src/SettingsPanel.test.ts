@@ -26,6 +26,23 @@ describe("SettingsPanel device policy", () => {
   });
 });
 
+describe("SettingsPanel search spellings", () => {
+  it("sends the aliases and tracks them as unsaved changes", () => {
+    // Without the payload field the control would look like it worked and
+    // silently change nothing; without the dirty check Save stays disabled
+    // after editing it.
+    expect(settingsPanelSource).toContain("search_aliases: parseSearchAliases(searchAliasesText)");
+    expect(settingsPanelSource).toContain("searchAliasesText !== savedSearchAliasesText");
+  });
+
+  it("says what the setting does and does not do", () => {
+    // It widens a search; it never rewrites a recording. An admin who thought
+    // this fixed transcripts would use it for the wrong job — the vocabulary
+    // above is that one.
+    expect(settingsPanelSource).toContain("does not change any recording");
+  });
+});
+
 describe("SettingsPanel summarisation step", () => {
   it("writes the two stores behind this page separately", () => {
     // Quality and the device override are STT settings; summarisation is LLM

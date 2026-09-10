@@ -114,6 +114,12 @@ export interface Settings {
   quality: SettingsQuality;
   device_override: string;
   transcription_terms: string[];
+  /**
+   * Spellings the transcriber produces for names it gets wrong, one group per
+   * name: the first entry is what someone would type, the rest are what the
+   * transcript actually says. Searching for any of them finds all of them.
+   */
+  search_aliases: string[][];
   source: string;
   detected_gpu: boolean;
   cores: number;
@@ -125,6 +131,7 @@ export interface SettingsUpdate {
   quality: SettingsQuality;
   device_override: string;
   transcription_terms: string[];
+  search_aliases: string[][];
 }
 
 // --- LLM settings (D-696): mirror GET/PUT <basePath>/settings/llm. Keys are
