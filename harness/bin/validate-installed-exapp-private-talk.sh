@@ -96,6 +96,7 @@ BASE_URL="$(normalize_base_url "$NEXTCLOUD_HOST")"
 PROXY_URL="$BASE_URL/index.php/apps/app_api/proxy/gocassini"
 CATALOG_URL="$PROXY_URL/published/catalog.json"
 MEETINGS_LIST_URL="$PROXY_URL/published/meetings-list"
+SEARCH_URL="$PROXY_URL/published/search"
 FILES_ROOT_URL="$BASE_URL/remote.php/dav/files/$ADMIN_USER/Cassini/Recordings"
 AUTH=(-u "$ADMIN_USER:$ADMIN_PASSWORD")
 # The standard viewer user the harness creates (harness_create_standard_viewer_user).
@@ -207,6 +208,7 @@ validate_files_archive_entry() {
   grep -Eiq '^Cache-Control:.*no-store' "$LOG_DIR/${label}-catalog-source.headers" || return 1
   assert_files_source "$PROXY_URL/published/${audio_path#./}" "${label}-opus" 'bytes=0-3' || return 1
   validate_meetings_list_endpoint "$label" "$job_id" || return 1
+  validate_search_finds_the_published_meeting "$label" || return 1
 }
 
 # The publish-dependent half of the meetings-list assertions: a meeting that
@@ -235,6 +237,63 @@ validate_meetings_list_endpoint() {
 # the repo and would silently turn each filtered request into an unfiltered one,
 # which fails OPEN: the caller gets more meetings than they asked for and
 # nothing says so.
+# The search route (D-623), asserted after a real meeting has published.
+#
+# Deliberately asserted on COVERAGE rather than on hits. The harness records
+# synthetic speech, so nothing here knows which words the transcriber decoded --
+# but coverage proves the whole chain regardless: the meeting was ingested at
+# publish, the index holds rows for it, and the query resolved this caller's
+# visible set and found that meeting inside it. A hit assertion would be
+# stronger and is not available; a coverage assertion is weaker and is true.
+validate_search_finds_the_published_meeting() {
+  local label="$1"
+  local results="$LOG_DIR/search-${label}.json"
+
+  fetch_json "$SEARCH_URL?q=the" "$results" false || return 1
+  jq -e '.coverage.visible >= 1' "$results" >/dev/null || return 1
+  # searched >= 1 is the end-to-end claim: publish-time ingest wrote rows for
+  # this meeting, and the query counted it as covered.
+  jq -e '.coverage.searched >= 1' "$results" >/dev/null || return 1
+  jq -e '.hits | type == "array"' "$results" >/dev/null || return 1
+  success "✓ search covers the published meeting (visible=$(jq -r '.coverage.visible' "$results") searched=$(jq -r '.coverage.searched' "$results"))"
+}
+
+# The search route's wire contract, needing no published recording -- so it runs
+# on every PR, including the --expect-build-blocked variant where nothing is
+# ever published.
+#
+# The load-bearing assertion is the same one the meetings list makes, for the
+# same reason: nothing else Cassini serves through the proxy carried a query
+# string before D-701, and a stripped query fails OPEN. Here it is proved by a
+# query the server can only reject if it actually received it.
+validate_search_contract() {
+  local results="$LOG_DIR/search-contract.json" code
+
+  fetch_json "$SEARCH_URL?q=cassini" "$results" false || fail "cannot reach the search route"
+  jq -e 'has("hits") and has("coverage")' "$results" >/dev/null \
+    || fail "search did not answer with hits and coverage"
+  jq -e '.hits | type == "array"' "$results" >/dev/null \
+    || fail "search hits is not an array"
+  jq -e '.coverage | has("visible") and has("searched")' "$results" >/dev/null \
+    || fail "search did not report coverage"
+  # References only: a search answer must never carry transcript text.
+  jq -e '[.hits[]? | has("text")] | any | not' "$results" >/dev/null \
+    || fail "a search hit carried transcript text, which this route must never return"
+
+  # No q at all is a caller error, not an empty result.
+  code="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$SEARCH_URL")" \
+    || fail "cannot probe search without a query"
+  [[ "$code" == 400 ]] || fail "search with no query returned HTTP $code, expected 400"
+
+  # A query of pure punctuation is refused -- which the server can only do if
+  # the query string reached it through the proxy.
+  code="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$SEARCH_URL?q=%21%21%21")" \
+    || fail "cannot probe search with an unsearchable query"
+  [[ "$code" == 400 ]] || fail "an unsearchable query returned HTTP $code, expected 400; the query string may not have reached the app"
+
+  success "✓ search contract validated through the AppAPI proxy (query forwarded, unsearchable query refused, references only)"
+}
+
 validate_meetings_list_contract() {
   local listing="$LOG_DIR/meetings-list-contract.json" code
 
@@ -309,6 +368,16 @@ validate_non_participant_denied() {
   code="$(curl -sS "${outsider_auth[@]}" -o "$listing" -w '%{http_code}' "$MEETINGS_LIST_URL")" || return 1
   [[ "$code" == 200 ]] || return 1
   jq -e '.meetings | length == 0' "$listing" >/dev/null 2>&1 || return 1
+
+  # And search denies identically: no hits, and nothing searched, because the
+  # visible set it binds into the query is empty. If this ever returned a hit,
+  # the index would be answering outside Nextcloud's permissions -- the one
+  # thing the whole design exists to prevent.
+  local results="$LOG_DIR/search-${label}-outsider.json"
+  code="$(curl -sS "${outsider_auth[@]}" -o "$results" -w '%{http_code}' "$SEARCH_URL?q=the")" || return 1
+  [[ "$code" == 200 ]] || return 1
+  jq -e '.hits | length == 0' "$results" >/dev/null 2>&1 || return 1
+  jq -e '.coverage.visible == 0' "$results" >/dev/null 2>&1 || return 1
 }
 
 catalog_ids() {
@@ -527,6 +596,7 @@ log "Evidence directory: $LOG_DIR"
 ensure_nextcloud_host_trusted "$(base_url_host)"
 curl -fsS "$PROXY_URL/api/v1/welcome" | grep -q '"version":1' || fail "welcome route did not return version=1"
 validate_meetings_list_contract
+validate_search_contract
 status_code="$(curl -sS "${AUTH[@]}" -o "$LOG_DIR/operator-status.json" -w '%{http_code}' "$PROXY_URL/operator/status")"
 if (( EXPECT_BUILD_BLOCKED )); then
   [[ "$status_code" == "503" ]] || fail "GPU-less operator status returned HTTP $status_code, expected 503"
@@ -651,6 +721,7 @@ Installed ExApp private Talk validation passed.
   Jobs:      ${new_job_ids[*]}
   Catalog:   $CATALOG_URL
   List:      $MEETINGS_LIST_URL
+  Search:    $SEARCH_URL
   Evidence:  $LOG_DIR
   Summary:   $LOG_DIR/summary.json
 EOF

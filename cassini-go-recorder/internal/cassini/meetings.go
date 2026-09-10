@@ -117,6 +117,8 @@ func runMeetings(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return runMeetingsList(ctx, args[1:], stdout, stderr)
 	case "rooms":
 		return runMeetingsRooms(ctx, args[1:], stdout, stderr)
+	case "search":
+		return runMeetingsSearch(ctx, args[1:], stdout, stderr)
 	case "fetch":
 		return runMeetingsFetch(ctx, args[1:], stdout, stderr)
 	case "context":
@@ -141,6 +143,8 @@ Usage:
   cassini meetings list --json
   cassini meetings list --from 2026-08-01 --to 2026-08-31 --room <room>
   cassini meetings rooms
+  cassini meetings search "acquisition"
+  cassini meetings search "deployment" --speaker S2 --json
   cassini meetings fetch <meeting-id> --out "./Meeting.opus"
   cassini meetings context <meeting-id>
   cassini meetings context <meeting-id> --json --out ./context.json
@@ -149,6 +153,7 @@ Usage:
 Commands:
   list       List the meetings your account may read, optionally filtered
   rooms      List the conversations your account has readable recordings from
+  search     Find where something was said, across the meetings you may read
   fetch      Download one meeting's portable .opus
   context    Print one meeting as agent-readable context (transcript + summary)
   summarize  Add a summary to already-sealed portable .opus files (reads local

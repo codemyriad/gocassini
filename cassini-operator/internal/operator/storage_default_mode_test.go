@@ -110,7 +110,7 @@ func TestDefaultModeProxyReadsAsTheServiceAccount(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0))
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0), searchDeps{})
 
 	rec := httptest.NewRecorder()
 	if !proxy(rec, callerReq(http.MethodGet, "/published/catalog.json", "alice"), "catalog.json") {
@@ -156,7 +156,7 @@ func TestOwnerReadPathNeedsBothTheModeAndTheEvidence(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}))
 		defer srv.Close()
-		proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0))
+		proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0), searchDeps{})
 		proxy(httptest.NewRecorder(), callerReq(http.MethodGet, "/published/meetings/JOB1.opus", "alice"), "meetings/JOB1.opus")
 		return readAs
 	}
@@ -224,7 +224,7 @@ func TestDefaultModeProxyStillRequiresACaller(t *testing.T) {
 		t.Errorf("an anonymous request reached Nextcloud: %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
-	proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0))
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0), searchDeps{})
 
 	rec := httptest.NewRecorder()
 	proxy(rec, callerReq(http.MethodGet, "/published/meetings/JOB1.opus", ""), "meetings/JOB1.opus")

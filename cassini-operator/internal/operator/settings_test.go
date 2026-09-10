@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -679,5 +680,162 @@ func TestEffectiveReportsAPendingModelDownload(t *testing.T) {
 	}
 	if got := rt.effectiveFor(STTSettings{Quality: sttQualityBest}).ModelDownloadMB; got != 0 {
 		t.Errorf("model_download_mb = %d for a bundled model, want 0", got)
+	}
+}
+
+// Configured alias groups are bounded and tidied like the transcription terms
+// they sit beside — every query expands through this table, so an unbounded one
+// is a way to make every search slow.
+func TestNormalizeSearchAliases(t *testing.T) {
+	got, err := normalizeSearchAliases([][]string{
+		{" Cassini ", "casino", "casino", ""},
+		{"lonely"},
+		{},
+	})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("groups = %v, want only the usable one", got)
+	}
+	if got[0][0] != "Cassini" || len(got[0]) != 2 {
+		t.Errorf("group = %v, want trimmed and deduplicated", got[0])
+	}
+}
+
+// A group of one expands to nothing, so keeping it would make the settings look
+// like they do something. That is the natural state of a half-typed row.
+func TestNormalizeSearchAliasesDropsSingletons(t *testing.T) {
+	got, err := normalizeSearchAliases([][]string{{"cassini"}})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("groups = %v, want none", got)
+	}
+}
+
+func TestNormalizeSearchAliasesRejectsUnboundedInput(t *testing.T) {
+	huge := make([]string, 0, maxSearchAliasVariants+2)
+	for i := 0; i < maxSearchAliasVariants+2; i++ {
+		huge = append(huge, string(rune('a'+i%26))+string(rune('a'+i/26)))
+	}
+	if _, err := normalizeSearchAliases([][]string{huge}); err == nil {
+		t.Error("expected an error for too many spellings in one group")
+	}
+
+	many := make([][]string, 0, maxSearchAliasGroups+1)
+	for i := 0; i < maxSearchAliasGroups+1; i++ {
+		many = append(many, []string{string(rune('a'+i%26)) + "x", string(rune('a'+i%26)) + "y"})
+	}
+	if _, err := normalizeSearchAliases(many); err == nil {
+		t.Error("expected an error for too many names")
+	}
+}
+
+// The setting survives a save/load round trip, which is what makes it
+// configurable rather than merely accepted.
+func TestSearchAliasesRoundTripThroughSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	saved := STTSettings{
+		Quality:       sttQualityBalanced,
+		Source:        sttSourceUser,
+		SearchAliases: [][]string{{"eisbuk", "ice book"}},
+	}
+	if err := Save(path, saved); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	loaded, err := LoadOrInitSettings(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(loaded.SearchAliases) != 1 || loaded.SearchAliases[0][1] != "ice book" {
+		t.Fatalf("aliases = %v, want the configured group", loaded.SearchAliases)
+	}
+}
+
+// newSettingsTestRuntime is a Runtime with just enough wired for the settings
+// handlers: a settings file on disk and a search index the alias provider can
+// be read through.
+func newSettingsTestRuntime(t *testing.T) *Runtime {
+	t.Helper()
+	dir := t.TempDir()
+	rt := &Runtime{
+		logger:       log.New(io.Discard, "", 0),
+		settingsPath: filepath.Join(dir, "settings.json"),
+		settings:     STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto},
+	}
+	return rt
+}
+
+// The aliases must be settable through the API, not only by hand-editing the
+// file — the changelog promised the settings surface, and search is useless on
+// a deployment whose names transcribe badly until someone can enter them.
+func TestPutSettingsAcceptsSearchAliases(t *testing.T) {
+	rt := newSettingsTestRuntime(t)
+
+	body := `{"quality":"balanced","search_aliases":[["Eisbuk","ice book"],["lonely"]]}`
+	rec := httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	saved, err := LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	// The one-variant group expands to nothing and is dropped rather than stored.
+	if len(saved.SearchAliases) != 1 || saved.SearchAliases[0][1] != "ice book" {
+		t.Fatalf("aliases = %v, want just the usable group", saved.SearchAliases)
+	}
+	// And search picks it up without a restart.
+	if got := rt.searchDeps().aliasIndex()["ice book"]; len(got) != 2 {
+		t.Errorf("alias index = %v, want the configured group live", got)
+	}
+}
+
+// A client that does not know about aliases must not erase them by omitting
+// the field.
+func TestPutSettingsWithoutAliasesKeepsThem(t *testing.T) {
+	rt := newSettingsTestRuntime(t)
+
+	rec := httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"balanced","search_aliases":[["Eisbuk","ice book"]]}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed code = %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"best"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+	saved, err := LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(saved.SearchAliases) != 1 {
+		t.Fatalf("aliases = %v, want them preserved across an unrelated update", saved.SearchAliases)
+	}
+}
+
+func TestPutSettingsRejectsUnboundedAliases(t *testing.T) {
+	rt := newSettingsTestRuntime(t)
+	huge := make([]string, 0, maxSearchAliasVariants+2)
+	for i := 0; i < maxSearchAliasVariants+2; i++ {
+		huge = append(huge, fmt.Sprintf("variant-%d", i))
+	}
+	body, _ := json.Marshal(settingsUpdate{Quality: sttQualityBalanced, SearchAliases: &[][]string{huge}})
+
+	rec := httptest.NewRecorder()
+	rt.handlePutSettings(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(string(body))))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "search_aliases") {
+		t.Errorf("body should name the field: %s", rec.Body.String())
 	}
 }

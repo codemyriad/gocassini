@@ -263,7 +263,7 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 // TestNCFilesProxyCannotServeAsOwnerUnderALocalSink is what turns that from
 // safe-by-accident into safe-by-test — which matters, because "it should hold"
 // is the sentence that preceded the disclosure the D-616 review reproduced.
-func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
+func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFilesProxyFunc {
 	if !c.appAPIActive() {
 		return nil
 	}
@@ -279,7 +279,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 		// file server, which has no such file and 404s. Checked ahead of the
 		// caller guard so a deployment that does not serve this route at all
 		// answers the same way for every caller.
-		if relPath == meetingsListPath && c.PublishSink != publishSinkNextcloudFiles {
+		if (relPath == meetingsListPath || relPath == searchURLPath) && c.PublishSink != publishSinkNextcloudFiles {
 			return false
 		}
 		// The caller identity comes from the AppAPI-verified request; these
@@ -295,7 +295,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			switch relPath {
 			case "catalog.json":
 				writeCatalogJSON(w, []byte(emptyCatalogJSON))
-			case meetingsListPath:
+			case meetingsListPath, searchURLPath:
 				// The list endpoint must NOT reuse either arm above. An empty
 				// catalog would claim the caller may read nothing, and the 404
 				// would be phrased by the CLI as "no recording you can read"
@@ -355,6 +355,14 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			// caller may read — narrowed by the query, and with substrate
 			// failures reported loudly. See serveMeetingsList.
 			c.serveMeetingsList(r.Context(), w, r, client, caller, logger)
+			return true
+		}
+		if relPath == searchURLPath {
+			// Same visible set again, this time bound into the FTS statement —
+			// and resolved through the same mode-aware resolution, so in the
+			// default model the searchable set is the whole archive, exactly as
+			// catalog.json and the meetings list answer it. See serveSearch.
+			c.serveSearch(r.Context(), w, r, client, caller, search, logger)
 			return true
 		}
 		// meetings/<id>.opus: under access control this fetches AS the caller so
