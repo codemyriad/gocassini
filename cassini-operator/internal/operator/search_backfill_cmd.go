@@ -112,21 +112,9 @@ Flags:
 	// install with no recorded mode is refused rather than guessed at — the
 	// unresolved fallback addresses the Team-folder root, and on a default-mode
 	// install that would report a healthy archive as empty.
-	ncStorage.setPath(storageSettingsPath(cfg))
-	storage, err := LoadStorageSettings(ncStorage.settingsPath())
-	if err != nil {
-		fmt.Fprintf(stderr, "read storage settings: %v\nnothing was read or written\n", err)
+	if !resolveBackfillStorageMode(cfg, stderr) {
 		return backfillSearchExitNotStarted
 	}
-	if !storage.Configured() {
-		fmt.Fprintf(stderr, "no storage mode is recorded for this install; finish the Setup tab first\nnothing was read or written\n")
-		return backfillSearchExitNotStarted
-	}
-	storageSource := storage.Source
-	if storageSource == "" {
-		storageSource = storageModeSourceConfigured
-	}
-	ncStorage.set(storage.AccessControlled(), storageSource, storage.Clean())
 
 	runCtx, cancel := context.WithTimeout(ctx, backfillSearchTimeout)
 	defer cancel()
@@ -178,6 +166,30 @@ Flags:
 		fmt.Fprintf(stdout, "meetings that could not be indexed are recorded with a reason and reported as outside search coverage, not as having no matches\n")
 	}
 	return backfillSearchExitOK
+}
+
+// resolveBackfillStorageMode resolves the recorded storage mode the way
+// operator startup does, for a backfill running as its own process. Shared by
+// every command that reads the archive, so none of them can address a
+// different root than the running operator would. False, having said why on
+// stderr, when no mode is recorded or it cannot be read.
+func resolveBackfillStorageMode(cfg Config, stderr io.Writer) bool {
+	ncStorage.setPath(storageSettingsPath(cfg))
+	storage, err := LoadStorageSettings(ncStorage.settingsPath())
+	if err != nil {
+		fmt.Fprintf(stderr, "read storage settings: %v\nnothing was read or written\n", err)
+		return false
+	}
+	if !storage.Configured() {
+		fmt.Fprintf(stderr, "no storage mode is recorded for this install; finish the Setup tab first\nnothing was read or written\n")
+		return false
+	}
+	storageSource := storage.Source
+	if storageSource == "" {
+		storageSource = storageModeSourceConfigured
+	}
+	ncStorage.set(storage.AccessControlled(), storageSource, storage.Clean())
+	return true
 }
 
 // archiveBackfillTargets reads the authoritative catalog as the recordings

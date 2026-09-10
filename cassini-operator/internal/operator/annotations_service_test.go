@@ -47,8 +47,8 @@ func TestAnnotationRoutes(t *testing.T) {
 		want                       int
 	}{
 		{"tags without a caller is an outage", http.MethodGet, "/annotations/tags", "", http.StatusBadGateway},
-		{"tags", http.MethodGet, "/annotations/tags", "alice", http.StatusNotImplemented},
-		{"tags trailing slash", http.MethodGet, "/annotations/tags/", "alice", http.StatusNotImplemented},
+		{"tags without a projection", http.MethodGet, "/annotations/tags", "alice", http.StatusServiceUnavailable},
+		{"tags trailing slash", http.MethodGet, "/annotations/tags/", "alice", http.StatusServiceUnavailable},
 		{"tags are read-only", http.MethodPost, "/annotations/tags", "alice", http.StatusMethodNotAllowed},
 		{"read a meeting", http.MethodGet, "/annotations/meetings/" + id, "alice", http.StatusBadGateway},
 		{"write a meeting with no body", http.MethodPost, "/annotations/meetings/" + id, "alice", http.StatusBadRequest},
