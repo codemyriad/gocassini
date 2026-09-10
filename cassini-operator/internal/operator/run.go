@@ -97,6 +97,9 @@ type Runtime struct {
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
 	searchStore *searchStore
+	// annotations is the marks projection (D-737); nil when it could not be
+	// opened, in which case writes still commit and only indexing is skipped.
+	annotations annotationIndex
 	// searchLimiter bounds searches per caller, because each one makes this app
 	// talk to Nextcloud on the caller's behalf.
 	searchLimiter *searchRateLimiter
@@ -870,6 +873,12 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// CLI): a route that always fails is worse than a route that is not there.
 	if insights := newInsightService(rt, exappCfg, logger); insights != nil {
 		insights.register(root)
+	}
+	// Tags and marks (D-737): a sibling of insights on the ROOT mux, for the same
+	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and
+	// unmounted, wherever a mark could not be served (see newAnnotationService).
+	if annotations := newAnnotationService(rt, exappCfg, logger); annotations != nil {
+		annotations.register(root)
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)

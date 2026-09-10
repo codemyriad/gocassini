@@ -689,7 +689,10 @@ type ncLeafState struct {
 	Exists   bool
 	Size     int64
 	Checksum string
-	Rules    []aclRule
+	// ETag is the leaf's entity tag, verbatim (quotes included), so a later
+	// conditional PUT can send it back as If-Match (D-737).
+	ETag  string
+	Rules []aclRule
 }
 
 // davPropfindLeafState reads one leaf's length and ACL rules in a single Depth-0
@@ -701,7 +704,7 @@ type ncLeafState struct {
 func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Client, userID, relPath string) (ncLeafState, error) {
 	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
 		`<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">` +
-		`<d:prop><d:getcontentlength/><oc:checksums/><nc:acl-list/></d:prop></d:propfind>`)
+		`<d:prop><d:getcontentlength/><d:getetag/><oc:checksums/><nc:acl-list/></d:prop></d:propfind>`)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relPath), bytes.NewReader(reqBody))
 	if err != nil {
 		return ncLeafState{}, err
@@ -729,6 +732,7 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 		Responses []struct {
 			Propstat []struct {
 				Length    string   `xml:"prop>getcontentlength"`
+				ETag      string   `xml:"prop>getetag"`
 				Checksums []string `xml:"prop>checksums>checksum"`
 				ACLs      []struct {
 					Type        string `xml:"acl-mapping-type"`
@@ -754,6 +758,9 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 			if n, convErr := strconv.ParseInt(trimmed, 10, 64); convErr == nil {
 				state.Size = n
 			}
+		}
+		if etag := strings.TrimSpace(ps.ETag); etag != "" {
+			state.ETag = etag
 		}
 		for _, checksum := range ps.Checksums {
 			if checksum = strings.TrimSpace(checksum); strings.HasPrefix(strings.ToLower(checksum), "sha256:") {

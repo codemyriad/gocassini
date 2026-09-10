@@ -330,6 +330,21 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <access_level>USER</access_level>
       </route>
 
+      <!-- USER: tags and marks (D-737). A meeting's annotations are read as the
+           caller, so Nextcloud re-checks the ACL on the bytes; a write is made
+           by the service account after the same visibility check every archive
+           read makes. Anyone who can read a meeting can mark it. -->
+      <route>
+        <url>^annotations\/tags\/?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^annotations\/meetings\/[^\/]+\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+
       <!--
         PUBLIC: Talk recording-backend protocol. Lets the "Start recording"
         button in Talk reach Cassini through the AppAPI proxy when Cassini

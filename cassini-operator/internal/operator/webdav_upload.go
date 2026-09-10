@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -211,37 +212,58 @@ func (c ExAppConfig) davDelete(ctx context.Context, client *http.Client, userID,
 	return fmt.Errorf("DELETE %s -> %d", relPath, resp.StatusCode)
 }
 
+// errDAVPreconditionFailed is a conditional PUT Nextcloud refused because the
+// file changed after its ETag was read (412). The caller re-reads and retries;
+// it is contention, not a failure of the request (D-737).
+var errDAVPreconditionFailed = errors.New("the file changed since it was read")
+
 func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, error) {
+	status, _, err := c.davPutFileIfMatch(ctx, client, userID, relPath, localPath, contentType, "")
+	return status, err
+}
+
+// davPutFileIfMatch uploads localPath as davPutFileStatus does — stamping
+// OC-Checksum, which search's backfill reads back as the delivered digest — and,
+// when ifMatch is non-empty, only if the stored file still carries that ETag. A
+// refusal wraps errDAVPreconditionFailed. On success it answers the new ETag
+// when Nextcloud reports one.
+func (c ExAppConfig) davPutFileIfMatch(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType, ifMatch string) (int, string, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	digest, err := fileSHA256(localPath)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.davFileURL(userID, relPath), f)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("OC-Checksum", "SHA256:"+digest)
+	if ifMatch != "" {
+		req.Header.Set("If-Match", ifMatch)
+	}
 	req.ContentLength = info.Size()
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer drainClose(resp.Body)
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return resp.StatusCode, nil
+	if resp.StatusCode == http.StatusPreconditionFailed && ifMatch != "" {
+		return resp.StatusCode, "", fmt.Errorf("PUT %s: %w", relPath, errDAVPreconditionFailed)
 	}
-	return resp.StatusCode, fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return resp.StatusCode, strings.TrimSpace(resp.Header.Get("ETag")), nil
+	}
+	return resp.StatusCode, "", fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
 }
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
