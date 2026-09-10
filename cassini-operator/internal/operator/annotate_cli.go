@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // The operator and the CLI are separate Go modules that cannot import each
@@ -124,6 +126,15 @@ func runAnnotate(ctx context.Context, bin string, stdin []byte, args ...string) 
 		return annotateResult{}, errors.New("no cassini binary is configured")
 	}
 	cmd := exec.CommandContext(ctx, bin, append([]string{"annotate"}, args...)...)
+	// Not os.Environ(): any logged-in caller can make the operator run this, and
+	// a child holding APP_SECRET can act as any account on the instance. The
+	// same environment meetings-context's child gets, from the same function
+	// (D-700).
+	cmd.Env = contextChildEnv(os.Environ())
+	// apply and carry rewrite the recording through ffmpeg; on cancel the whole
+	// group goes, so no grandchild outlives an abandoned request.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
