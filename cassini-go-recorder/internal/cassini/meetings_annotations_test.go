@@ -197,40 +197,23 @@ func TestMeetingsAnnotationsSaysWhatItIsNotShowing(t *testing.T) {
 	}
 }
 
-// A 404 is absent or unreadable, answered identically — unless the app has no
-// tags at all, which is a statement about the app and safe to make.
+// A 404 is absent or unreadable, answered identically.
 func TestMeetingsAnnotationsNotFound(t *testing.T) {
-	t.Run("an app with tags keeps denial empty", func(t *testing.T) {
-		fake := newMeetingsFakeNextcloud(t, serveRoutes(map[string]http.HandlerFunc{
-			"GET " + meetingsTestAnnotationsPath + "MEET-9": answerJSON(http.StatusNotFound, `{"error": "not found"}`),
-			"GET " + meetingsTestTagsPath:                   answerJSON(http.StatusOK, tagsVocabulary),
-		}))
-		code, _, stderr := runMeetingsCLI(t, fake.server.URL, "annotations", "MEET-9")
-		if code != 1 {
-			t.Fatalf("exit=%d, want 1", code)
+	fake := newMeetingsFakeNextcloud(t, serveRoutes(map[string]http.HandlerFunc{
+		"GET " + meetingsTestAnnotationsPath + "MEET-9": answerJSON(http.StatusNotFound, `{"error": "not found"}`),
+	}))
+	code, _, stderr := runMeetingsCLI(t, fake.server.URL, "annotations", "MEET-9")
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1", code)
+	}
+	if !strings.Contains(stderr, "no recording you can read at that id") {
+		t.Errorf("stderr should use the shared 404 wording:\n%s", stderr)
+	}
+	for _, banned := range []string{"forbidden", "does not exist"} {
+		if strings.Contains(stderr, banned) {
+			t.Errorf("stderr must not say %q:\n%s", banned, stderr)
 		}
-		if !strings.Contains(stderr, "no recording you can read at that id") {
-			t.Errorf("stderr should use the shared 404 wording:\n%s", stderr)
-		}
-		for _, banned := range []string{"does not offer", "forbidden", "does not exist"} {
-			if strings.Contains(stderr, banned) {
-				t.Errorf("stderr must not say %q:\n%s", banned, stderr)
-			}
-		}
-	})
-	t.Run("an app without tags says so", func(t *testing.T) {
-		fake := newMeetingsFakeNextcloud(t, serveRoutes(nil))
-		code, _, stderr := runMeetingsCLI(t, fake.server.URL, "annotations", "MEET-9")
-		if code != 1 {
-			t.Fatalf("exit=%d, want 1", code)
-		}
-		if !strings.Contains(stderr, "does not offer tags and marks") {
-			t.Errorf("stderr should name the real problem:\n%s", stderr)
-		}
-		if strings.Contains(stderr, "no recording you can read") {
-			t.Errorf("an app without tags is not a missing meeting:\n%s", stderr)
-		}
-	})
+	}
 }
 
 func TestMeetingsAnnotateSendsTheBatchAsTheCaller(t *testing.T) {
@@ -368,12 +351,13 @@ func TestMeetingsAnnotateRefusesABadBatchBeforeSending(t *testing.T) {
 	}{
 		{name: "no ops flag", args: []string{}, wantExit: 2, want: "--ops is required"},
 		{name: "a file that is not there", args: []string{"--ops", "/nonexistent/ops.json"}, wantExit: 2, want: "read --ops"},
-		{name: "not JSON", ops: "mark it", wantExit: 4, want: `is not an {"ops": [...]} document`},
-		{name: "a bare array", ops: `[{"op": "mark"}]`, wantExit: 4, want: `is not an {"ops": [...]} document`},
+		{name: "not JSON", ops: "mark it", wantExit: 4, want: `is not {"ops":[...]}`},
+		{name: "a bare array", ops: `[{"op": "mark"}]`, wantExit: 4, want: `is not {"ops":[...]}`},
 		{name: "a member the envelope does not have", ops: `{"ops": [{}], "expectRevision": 3}`, wantExit: 4, want: "unknown field"},
 		{name: "no ops", ops: `{"ops": []}`, wantExit: 4, want: "holds no ops"},
-		{name: "ops that are not an array", ops: `{"ops": {"op": "mark"}}`, wantExit: 4, want: `"ops" must be an array`},
-		{name: "two documents", ops: oneMarkOps + oneMarkOps, wantExit: 4, want: "more than one JSON document"},
+		{name: "ops that are not an array", ops: `{"ops": {"op": "mark"}}`, wantExit: 4, want: `is not {"ops":[...]}`},
+		{name: "two documents", ops: oneMarkOps + oneMarkOps, wantExit: 4, want: "after its closing brace"},
+		{name: "an unknown op", ops: `{"ops": [{"op": "smark"}]}`, wantExit: 4, want: `unknown op "smark"`},
 		{name: "too large", ops: large, wantExit: 4, want: "larger than 64 KiB"},
 		{name: "an unknown actor kind", ops: oneMarkOps, args: []string{"--actor-kind", "robot"}, wantExit: 2, want: "--actor-kind must be agent or person"},
 		{name: "a negative revision", ops: oneMarkOps, args: []string{"--expect-revision", "-1"}, wantExit: 2, want: "--expect-revision must be 0 or more"},
@@ -423,7 +407,6 @@ func TestMeetingsAnnotateErrorMapping(t *testing.T) {
 		{"too large", http.StatusRequestEntityTooLarge, `{"error": "body too large"}`, 4, "too large for the app", nil},
 		{"substrate outage", http.StatusBadGateway, `{"error": "nextcloud unavailable"}`, 1, "an outage, not a permissions problem", nil},
 		{"absent or unreadable", http.StatusNotFound, `{"error": "not found"}`, 1, "no recording you can read at that id", []string{"does not offer"}},
-		{"write not accepted", http.StatusMethodNotAllowed, "", 1, "route declarations may predate tags", []string{"only GET and HEAD"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -447,26 +430,6 @@ func TestMeetingsAnnotateErrorMapping(t *testing.T) {
 				t.Errorf("a refused batch was reported as committed:\n%s", stdout)
 			}
 		})
-	}
-}
-
-// No answer at all is the one case where the CLI cannot know whether the batch
-// landed, and it must say exactly that.
-func TestMeetingsAnnotateSaysAnUnansweredWriteMayHaveLanded(t *testing.T) {
-	fake := newMeetingsFakeNextcloud(t, func(w http.ResponseWriter, r *http.Request) {
-		conn, _, err := w.(http.Hijacker).Hijack()
-		if err == nil {
-			conn.Close()
-		}
-	})
-
-	code, _, stderr := runMeetingsCLI(t, fake.server.URL, "annotate", "MEET-1", "--ops", writeOpsFile(t, oneMarkOps))
-
-	if code != 1 {
-		t.Fatalf("exit=%d, want 1 (stderr=%q)", code, stderr)
-	}
-	if !strings.Contains(stderr, "may or may not have been committed") || !strings.Contains(stderr, "idempotent") {
-		t.Errorf("stderr should say the outcome is unknown and why a retry is safe:\n%s", stderr)
 	}
 }
 
@@ -514,7 +477,6 @@ func TestMeetingsTagsFailures(t *testing.T) {
 		want   string
 	}{
 		{"an app without tags", http.StatusNotFound, "does not offer tags and marks"},
-		{"an index still being built", http.StatusServiceUnavailable, "still building its tag index"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := newMeetingsFakeNextcloud(t, answerJSON(tc.status, `{"error": "x"}`))

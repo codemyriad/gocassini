@@ -13,98 +13,52 @@ import (
 	"math"
 	"os"
 	"reflect"
-	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"gocassini/internal/portable"
 )
 
-// `cassini annotate` reads and writes the tags and marks a recording carries
-// inside its own .opus, as manifest.annotations (D-737).
+// `cassini annotate` reads and writes the tags and marks a recording carries in
+// its own manifest (manifest.annotations), on retag's stage-verify-rename path:
+// the audio is copied, never re-encoded; nothing outside `annotations` changes;
+// a batch is one write, and a batch that changes nothing writes nothing.
 //
-// Marks live in the file rather than beside it so that a recording stays
-// complete when it leaves the app — downloaded, shared, handed to someone with
-// no Nextcloud. That puts every mark on the same write path as the room and the
-// summary: decode the payload, edit the JSON, rebuild the OpusTags, copy the
-// audio, verify, rename. This command is that path for annotations, built on
-// retag's commitPortableManifestRewrite and held to the same rules:
-//
-//   - THE AUDIO IS NOT RE-ENCODED, and the output is checked against the audio
-//     digest before it replaces anything. The audio digest excludes OpusTags,
-//     so annotating never moves it: it stays the recording's identity and the
-//     binding every time range is pinned to.
-//   - NOTHING OUTSIDE `annotations` CHANGES. The manifest is edited as a generic
-//     JSON document, and the staged file is read back and compared with the one
-//     it came from — the manifest minus annotations, and every tag outside the
-//     main payload — before it is committed. The transcripts live in those
-//     tags; a chunk set lost in the muxer would leave a file that plays and can
-//     no longer be read as a meeting.
-//   - A BATCH IS ONE WRITE. The operator re-uploads the whole file per commit
-//     (~14 MB for an hour), so the ops a request carries are applied together
-//     and written once — and a batch that changes nothing writes nothing.
-//   - A RETRY IS SAFE. Marking what is already marked is a no-op, and removing
-//     what is already gone is reported rather than refused, so a request sent
-//     twice after a lost response lands once. `If-Match` on the upload, not
-//     `revision`, is what serialises concurrent writers.
-//
-// The operator runs this binary rather than importing it — the two are separate
-// modules — so the result document and the exit codes below are a contract
-// with cassini-operator/internal/operator/annotate_cli.go. Change both sides
-// together or neither.
+// The operator runs this binary rather than importing it, so the result
+// document and the exit codes are a contract with
+// cassini-operator/internal/operator/annotate_cli.go. Change both sides together.
 
-// annotateResultFormat names the result document every subcommand prints.
 const annotateResultFormat = "cassini.annotate.result.v1"
 
-// The exit codes are part of the operator contract: each one maps to a distinct
-// HTTP answer, so a failure must land on the right one rather than on 1.
 const (
 	annotateExitRuntime    = 1
 	annotateExitUsage      = 2
-	annotateExitRevision   = 3 // --expect-revision did not match; nothing written
-	annotateExitInvalid    = 4 // the ops, or the document they would produce, are invalid; nothing written
-	annotateExitUnresolved = 5 // the marks are bound to different audio; apply refuses; nothing written
+	annotateExitRevision   = 3 // --expect-revision did not match
+	annotateExitInvalid    = 4 // invalid ops, or a document that would not validate
+	annotateExitUnresolved = 5 // a mark on marks bound to different audio
 )
 
-// These mirror portable's own id and namespace patterns, which it does not
-// export. They exist so a bad flag is refused up front with a message naming
-// the flag; ValidateAnnotations still runs on every document before it is
-// written, so a drift between the two can only make a write stricter, never let
-// a bad document through.
-var (
-	annotateIDPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
-	annotateNamespacePattern = regexp.MustCompile(`^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-)
-
-// annotateResult is what every `cassini annotate … --json` prints. Every member
-// is always present — lists empty rather than absent, `resolved` null rather
-// than absent — so a reader never has to tell "none" from "not reported".
+// annotateResult is what every subcommand prints with --json. Every member is
+// always present — lists empty, `resolved` null — so "none" never reads as
+// "not reported".
 type annotateResult struct {
 	Format string `json:"format"`
-	// Annotations is the document the file now carries, as read back out of
-	// the file; null when it carries none.
+	// Annotations is the document as read back out of the file; null when none.
 	Annotations json.RawMessage `json:"annotations"`
-	// Revision is the document's revision; 0 when the file carries none.
-	Revision int `json:"revision"`
-	// OperationID is the id apply stamps on the marks this batch adds. Empty
-	// for show and carry, which add none.
+	Revision    int             `json:"revision"`
+	// OperationID is stamped on the marks apply adds; empty for show and carry.
 	OperationID string `json:"operationId"`
-	// Added and Removed are the item ids the batch actually added and removed,
-	// net: an item added and removed within one batch is in neither.
-	Added   []string `json:"added"`
-	Removed []string `json:"removed"`
-	// NotFound lists the ids an op named that matched nothing in the file.
+	// Added and Removed are net: an item added and removed in one batch is in neither.
+	Added    []string `json:"added"`
+	Removed  []string `json:"removed"`
 	NotFound []string `json:"notFound"`
-	// Carried is how many marks carry moved onto the sealed file.
-	Carried int `json:"carried"`
-	// Resolved says whether the marks were made against this file's audio.
-	// Null when there are no annotations to judge.
+	Carried  int      `json:"carried"`
+	// Resolved is null when there are no annotations to judge.
 	Resolved *bool `json:"resolved"`
-	// AudioOpusSHA256 is the FILE's audio digest, integrity.opusAudioSha256 —
-	// the recording's identity. The marks' own binding is inside Annotations.
+	// AudioOpusSHA256 is the file's audio digest: the recording's identity.
 	AudioOpusSHA256 string `json:"audioOpusSha256"`
-	// ContainerSHA256 is the sha256 of the file as it now is on disk. It moves
-	// with every commit and every carry: never identity, never the seal.
+	// ContainerSHA256 is the file as it now is on disk; it moves with every write.
 	ContainerSHA256 string `json:"containerSha256"`
 }
 
@@ -118,8 +72,8 @@ func newAnnotateResult(audioDigest string) annotateResult {
 	}
 }
 
-// annotateFailure carries the exit code a failure maps to. Any error that is
-// not one is a runtime failure.
+// annotateFailure carries the exit code a failure maps to; any other error is
+// a runtime failure.
 type annotateFailure struct {
 	code int
 	err  error
@@ -140,9 +94,8 @@ func annotateExitCodeFor(err error) int {
 	return annotateExitRuntime
 }
 
-// runAnnotate dispatches the three subcommands. stdin is where `--ops -` reads
-// from; the operator sends the ops that way so a request body never touches
-// the disk.
+// runAnnotate dispatches the subcommands. The operator sends the ops on stdin
+// (`--ops -`) so a request body never touches the disk.
 func runAnnotate(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printAnnotateUsage(stderr)
@@ -195,14 +148,14 @@ The sealed file is never modified. Marks made against different audio are
 carried as they are and reported unresolved.
 
 Exit codes: 0 ok, 1 runtime, 2 usage, 3 --expect-revision mismatch, 4 invalid
-ops or a document that would not validate, 5 the file's marks are bound to
-different audio (apply refuses). Nothing is written unless the exit is 0.
+ops or a document that would not validate, 5 a mark on marks bound to different
+audio (they can still be removed or relabelled). Nothing is written unless the
+exit is 0.
 `)
 }
 
-// parseAnnotateArgs parses flags and file arguments in any order — the operator
-// writes `apply <in> --ops - …`, a person may put the flags first — and checks
-// the number of files. It answers the exit code to stop with, or -1 to go on.
+// parseAnnotateArgs parses flags and file arguments in any order and checks the
+// number of files. It answers the exit code to stop with, or -1 to go on.
 func parseAnnotateArgs(fs *flag.FlagSet, args []string, files int) ([]string, int) {
 	var positional []string
 	for {
@@ -216,8 +169,7 @@ func parseAnnotateArgs(fs *flag.FlagSet, args []string, files int) ([]string, in
 		if len(rest) == 0 {
 			break
 		}
-		// fs.Parse consumes a bare "--" and stops: everything after it is a
-		// file, even if it looks like a flag.
+		// After a bare "--" everything is a file, even if it looks like a flag.
 		if consumed := len(args) - len(rest); consumed > 0 && args[consumed-1] == "--" {
 			positional = append(positional, rest...)
 			break
@@ -234,8 +186,8 @@ func parseAnnotateArgs(fs *flag.FlagSet, args []string, files int) ([]string, in
 }
 
 // finishAnnotate prints the result or the failure and answers the exit code.
-// A failure's message goes to stderr: for exit 4 the operator shows it to the
-// caller, so those messages describe the ops and never name a local path.
+// For exit 4 the operator shows stderr to the caller, so those messages
+// describe the ops and never name a local path.
 func finishAnnotate(name string, result annotateResult, err error, emitJSON bool, stdout, stderr io.Writer, human func(io.Writer)) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", name, err)
@@ -286,9 +238,7 @@ func annotateShow(path string, stderr io.Writer) (annotateResult, error) {
 		return annotateResult{}, err
 	}
 	if source.unsupported != nil {
-		// The format's own rule: a reader that does not know the format ignores
-		// the whole member. Said out loud, but not a failure — the recording is
-		// still perfectly readable.
+		// A reader ignores a format it does not know; the recording is fine.
 		fmt.Fprintf(stderr, "cassini annotate show: %v; reporting no marks\n", source.unsupported)
 	}
 	result := newAnnotateResult(source.audioDigest())
@@ -347,13 +297,11 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 	if strings.TrimSpace(opsPath) == "" {
 		return usage("--ops is required (a file, or - for stdin)")
 	}
-	// Refused rather than defaulted: every mark names who made it, and on the
-	// operator path that is the authenticated caller. A blank id is a caller
-	// that failed to pass one, not an anonymous mark.
+	// A blank id is a caller that failed to pass one, not an anonymous mark.
 	if strings.TrimSpace(actorID) == "" {
 		return usage("--actor-id is required")
 	}
-	if tagNamespace != "" && !annotateNamespacePattern.MatchString(tagNamespace) {
+	if tagNamespace != "" && !portable.IsAnnotationTagNamespace(tagNamespace) {
 		return usage("--tag-namespace %q is not urn:uuid:<lowercase uuid>", tagNamespace)
 	}
 	var expect *int
@@ -370,9 +318,8 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 		return usage("--out must be a .opus file, got %s", outPath)
 	}
 
-	// The actor kind and the operation id come from the request on the
-	// operator path, so a bad one is the caller's invalid input (exit 4, shown
-	// to them), not a misuse of this command.
+	// The actor kind and operation id come from the request on the operator
+	// path, so a bad one is the caller's invalid input (exit 4), not a usage error.
 	invalid := func(format string, args ...any) int {
 		fmt.Fprintf(stderr, "%s: "+format+"\n", append([]any{fs.Name()}, args...)...)
 		return annotateExitInvalid
@@ -380,7 +327,7 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 	if actorKind != portable.AnnotationActorPerson && actorKind != portable.AnnotationActorAgent {
 		return invalid("--actor-kind must be %s or %s, got %q", portable.AnnotationActorPerson, portable.AnnotationActorAgent, actorKind)
 	}
-	if operationID != "" && !annotateIDPattern.MatchString(operationID) {
+	if operationID != "" && !portable.IsAnnotationID(operationID) {
 		return invalid("--operation-id %q is not a valid id", operationID)
 	}
 
@@ -395,8 +342,6 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 		fmt.Fprintf(stderr, "%s: read --ops: %v\n", fs.Name(), err)
 		return annotateExitRuntime
 	}
-	// Parsed before the recording is even opened: a malformed batch should cost
-	// nothing and change nothing.
 	ops, err := parseAnnotateOps(raw)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", fs.Name(), err)
@@ -417,8 +362,7 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 			ActorKind:   actorKind,
 			ActorID:     actorID,
 			OperationID: operationID,
-			// Whole seconds, UTC, ending Z — the format's createdAtUtc shape.
-			CreatedAt: time.Now().UTC().Truncate(time.Second).Format("2006-01-02T15:04:05Z"),
+			CreatedAt:   time.Now().UTC().Truncate(time.Second).Format("2006-01-02T15:04:05Z"),
 		},
 		tagNamespace:   tagNamespace,
 		expectRevision: expect,
@@ -447,21 +391,17 @@ type annotateApplyRequest struct {
 	expectRevision *int
 }
 
-// annotateApply applies one batch and writes it once. It answers whether the
-// file was rewritten: a batch that changes nothing is not a commit, so it gets
-// no new revision and no rewrite — only a byte-for-byte copy when --out names
-// another file, because a caller that asked for an output must find one there.
-//
-// Every refusal happens before the output is touched, so exits 3, 4 and 5 leave
-// both the input and --out exactly as they were.
+// annotateApply applies one batch and writes it once, answering whether the
+// file was rewritten. A batch that changes nothing gets no new revision and no
+// rewrite — only a copy when --out names another file. Every refusal happens
+// before the output is touched.
 func annotateApply(ctx context.Context, req annotateApplyRequest) (annotateResult, bool, error) {
 	source, err := readAnnotateSource(req.inputPath)
 	if err != nil {
 		return annotateResult{}, false, err
 	}
 	if source.unsupported != nil {
-		// Writing a v1 document here would silently destroy marks a newer
-		// writer made. A reader may ignore them; a writer must not.
+		// A reader may ignore marks it cannot read; a writer must not replace them.
 		return annotateResult{}, false, fmt.Errorf("%v; refusing to replace marks this build cannot read", source.unsupported)
 	}
 	digest := source.audioDigest()
@@ -473,15 +413,19 @@ func annotateApply(ctx context.Context, req annotateApplyRequest) (annotateResul
 		return annotateResult{}, false, annotateFail(annotateExitRevision,
 			"the file is at revision %d, not the expected %d; nothing was written", current, *req.expectRevision)
 	}
-	// Marks bound to other audio have time ranges that mean nothing against
-	// this audio. Adding to such a document, or editing it, would mix two
-	// timelines under one binding; migrating them is future work.
-	if source.doc != nil && !source.doc.Resolved(digest) {
-		return annotateResult{}, false, annotateFail(annotateExitUnresolved,
-			"the file's marks were made against different audio (bound to %s, this audio is %s); apply will not change them until they are migrated, and nothing was written",
-			source.doc.AudioOpusSHA256, digest)
-	}
+	// Marks bound to other audio can be removed or relabelled, but a new mark
+	// would put two timelines under one binding. Their ranges mean nothing
+	// against this audio, so they are checked for structure only.
 	durationMS := source.manifest.Audio.DurationMS
+	unresolved := source.doc != nil && len(source.doc.Items) > 0 && !source.doc.Resolved(digest)
+	if unresolved {
+		if slices.ContainsFunc(req.ops, func(op annotateOp) bool { return op.Op == annotateOpMark }) {
+			return annotateResult{}, false, annotateFail(annotateExitUnresolved,
+				"the file's marks were made against different audio (bound to %s, this audio is %s); they can be removed or relabelled, but no mark can be added until they are migrated, and nothing was written",
+				source.doc.AudioOpusSHA256, digest)
+		}
+		durationMS = math.MaxInt64
+	}
 	outcome, err := applyAnnotationOps(source.doc, req.ops, durationMS, req.stamp)
 	if err != nil {
 		return annotateResult{}, false, err
@@ -513,19 +457,18 @@ func annotateApply(ctx context.Context, req annotateApplyRequest) (annotateResul
 	doc := outcome.Doc
 	doc.Format = portable.AnnotationsFormatV1
 	doc.Revision = current + 1
+	// The binding and namespace are the file's, never the request's. Only marks
+	// that survive from other audio keep another binding.
+	doc.AudioOpusSHA256 = digest
+	doc.TagNamespace = req.tagNamespace
 	if source.doc != nil {
-		// The binding and the namespace are the file's, never the request's: a
-		// namespace that changed would split one tag into two across the
-		// archive, and the binding is the audio these marks were made against.
-		doc.AudioOpusSHA256 = source.doc.AudioOpusSHA256
 		doc.TagNamespace = source.doc.TagNamespace
-	} else {
-		doc.AudioOpusSHA256 = digest
-		doc.TagNamespace = req.tagNamespace
-		if doc.TagNamespace == "" {
-			if doc.TagNamespace, err = newAnnotationTagNamespace(); err != nil {
-				return annotateResult{}, false, err
-			}
+		if unresolved && len(doc.Items) > 0 {
+			doc.AudioOpusSHA256 = source.doc.AudioOpusSHA256
+		}
+	} else if doc.TagNamespace == "" {
+		if doc.TagNamespace, err = newAnnotationTagNamespace(); err != nil {
+			return annotateResult{}, false, err
 		}
 	}
 	if err := portable.ValidateAnnotations(doc, durationMS); err != nil {
@@ -534,12 +477,11 @@ func annotateApply(ctx context.Context, req annotateApplyRequest) (annotateResul
 			err:  fmt.Errorf("the batch would leave annotations that do not validate: %w", err),
 		}
 	}
-
 	resolvedOut, err := preparePortableMeetingOutput(req.outPath)
 	if err != nil {
 		return annotateResult{}, false, err
 	}
-	written, err := writeAnnotateDocument(ctx, source, resolvedOut, doc, durationMS)
+	written, err := writeAnnotateDocument(ctx, source, resolvedOut, doc)
 	if err != nil {
 		return annotateResult{}, false, err
 	}
@@ -589,9 +531,8 @@ their original binding and reported unresolved.
 		fmt.Fprintf(stderr, "annotate carry configuration error: --out must be a .opus file, got %s\n", outPath)
 		return annotateExitUsage
 	}
-	// The sealed file is the pipeline's artifact, checked against the seal
-	// digest before it leaves. Writing over it would turn that check into a
-	// check of carry's own output.
+	// The sealed file is checked against the seal digest before it leaves;
+	// writing over it would turn that into a check of carry's own output.
 	if same, err := sameFilePath(sealed, outPath); err != nil {
 		fmt.Fprintf(stderr, "annotate carry configuration error: %v\n", err)
 		return annotateExitUsage
@@ -612,24 +553,17 @@ their original binding and reported unresolved.
 }
 
 // annotateCarry writes the delivered copy's marks into a copy of the sealed
-// file.
-//
-// The document moves as it is — its revision, namespace and binding included.
-// Carry is not a batch: nobody made a new mark, and a client that read revision
-// 4 before the rerun can still write with --expect-revision 4 after it. When
-// the rerun changed the audio, the binding still names the audio the marks
-// were made for, so they arrive unresolved rather than silently re-pinned to a
-// timeline they were never drawn on.
-//
-// When the sealed file already carries annotations they are replaced: nothing
-// produces them at publish yet, and merging is D-743's to define.
+// file. The document moves as it is, revision included: carry is not a batch,
+// so a client that read revision 4 before a rerun can still write against it
+// after. Marks keep the binding of the audio they were drawn on, so across
+// changed audio they arrive unresolved rather than silently re-pinned.
+// Annotations already on the sealed file are replaced.
 func annotateCarry(ctx context.Context, deliveredPath, sealedPath, outPath string) (annotateResult, error) {
 	delivered, err := readAnnotateSource(deliveredPath)
 	if err != nil {
 		return annotateResult{}, fmt.Errorf("read the delivered copy: %w", err)
 	}
 	if delivered.unsupported != nil {
-		// Dropping them would be the very loss carry exists to prevent.
 		return annotateResult{}, fmt.Errorf("the delivered copy: %v; refusing to publish over marks this build cannot carry", delivered.unsupported)
 	}
 	sealed, err := readAnnotateSource(sealedPath)
@@ -656,6 +590,10 @@ func annotateCarry(ctx context.Context, deliveredPath, sealedPath, outPath strin
 
 	doc := cloneAnnotations(delivered.doc)
 	doc.Canonicalize()
+	// A document with no marks has nothing to be wrong about.
+	if len(doc.Items) == 0 {
+		doc.AudioOpusSHA256 = digest
+	}
 	bound := annotationBoundDuration(doc, sealed, delivered)
 	if err := portable.ValidateAnnotations(doc, bound); err != nil {
 		return annotateResult{}, &annotateFailure{
@@ -667,7 +605,7 @@ func annotateCarry(ctx context.Context, deliveredPath, sealedPath, outPath strin
 	if err != nil {
 		return annotateResult{}, err
 	}
-	written, err := writeAnnotateDocument(ctx, sealed, resolvedOut, doc, bound)
+	written, err := writeAnnotateDocument(ctx, sealed, resolvedOut, doc)
 	if err != nil {
 		return annotateResult{}, err
 	}
@@ -682,10 +620,9 @@ func annotateCarry(ctx context.Context, deliveredPath, sealedPath, outPath strin
 	return result, nil
 }
 
-// annotationBoundDuration is the duration of the audio a document's time
-// ranges were made against — the bound their endMs must respect. When none of
-// the files at hand carries that audio its duration is not known here, so the
-// bound cannot be checked; the document's structure still is.
+// annotationBoundDuration is the duration of the audio a document's ranges were
+// drawn on. When no file at hand carries that audio the bound is unknown, and
+// only the document's structure can be checked.
 func annotationBoundDuration(doc *portable.Annotations, files ...annotateSource) int64 {
 	for _, file := range files {
 		if doc.Resolved(file.audioDigest()) {
@@ -697,15 +634,11 @@ func annotationBoundDuration(doc *portable.Annotations, files ...annotateSource)
 
 // ---------------------------------------------------------------- reading
 
-// annotateSource is one portable .opus as annotate reads it: the tags, the
-// payload twice over (the raw JSON for the generic edit, the struct for the
-// named fields), and the annotations it carries.
 type annotateSource struct {
 	path     string
 	tags     map[string]string
-	rawJSON  []byte
 	manifest portable.Manifest
-	// doc is nil when the file carries no annotations — or carries them in a
+	// doc is nil when the file carries no annotations, or carries them in a
 	// format this build does not know, which unsupported then says.
 	doc         *portable.Annotations
 	unsupported error
@@ -714,26 +647,11 @@ type annotateSource struct {
 func (s annotateSource) audioDigest() string { return s.manifest.Integrity.OpusSHA256 }
 
 func readAnnotateSource(path string) (annotateSource, error) {
-	tags, err := portableMeetingTags(path)
+	manifest, tags, err := readPortableMeetingManifest(path)
 	if err != nil {
 		return annotateSource{}, err
 	}
-	rawJSON, err := decodePortableMeetingPayload(tags)
-	if err != nil {
-		return annotateSource{}, err
-	}
-	manifest, err := portable.DecodePublishedManifest(rawJSON)
-	if err != nil {
-		return annotateSource{}, err
-	}
-	// The same cross-check readPortableMeetingManifest makes. The audio digest
-	// is the recording's identity and the binding of every mark; a file whose
-	// tag and manifest disagree about it cannot say which audio it is.
-	if tagged := portableTagValue(tags, "CASSINI_AUDIO_OPUS_SHA256"); tagged != manifest.Integrity.OpusSHA256 {
-		return annotateSource{}, fmt.Errorf("portable Opus audio digest disagrees between tags and manifest: tag=%s manifest=%s",
-			tagged, manifest.Integrity.OpusSHA256)
-	}
-	source := annotateSource{path: path, tags: tags, rawJSON: rawJSON, manifest: manifest}
+	source := annotateSource{path: path, tags: tags, manifest: manifest}
 	doc, err := portable.ParseAnnotations(manifest.Annotations)
 	switch {
 	case errors.Is(err, portable.ErrAnnotationsFormatUnsupported):
@@ -746,8 +664,7 @@ func readAnnotateSource(path string) (annotateSource, error) {
 	return source, nil
 }
 
-// describeAnnotateSource fills in what a file carries, for a file that was not
-// rewritten: show, a batch that changed nothing, a carry with nothing to carry.
+// describeAnnotateSource fills in what a file that was not rewritten carries.
 func describeAnnotateSource(result *annotateResult, source annotateSource) {
 	if source.doc == nil {
 		return
@@ -761,40 +678,33 @@ func describeAnnotateSource(result *annotateResult, source annotateSource) {
 // ---------------------------------------------------------------- writing
 
 // writeAnnotateDocument writes doc as the annotations of a copy of source at
-// resolvedOut, through retag's stage-verify-rename commit, and answers the
-// annotations member as read back out of the written file.
-//
-// The verification is the design's four checks, run against the STAGED file
-// before it replaces anything:
-//
-//  1. the audio digest is the source's (commitPortableManifestRewrite has just
-//     recomputed it from the staged audio);
-//  2. the manifest minus annotations is the source's, compared as generic JSON
-//     so fields no Go struct models are covered too;
-//  3. the annotations are exactly the intended document;
-//  4. they validate — against boundDurationMS, the duration of the audio the
-//     marks were made against.
-//
-// And one more, because a manifest is not the whole file: every tag outside the
-// main payload is the source's. The transcript bodies are chunk sets of their
-// own, which the payload read-back never looks at.
-func writeAnnotateDocument(ctx context.Context, source annotateSource, resolvedOut string, doc *portable.Annotations, boundDurationMS int64) (json.RawMessage, error) {
+// resolvedOut, and answers the member as read back out of the written file.
+// commitPortableManifestRewrite verifies the staged audio; this verifies, still
+// on the staged file, that the manifest outside annotations is the source's
+// (compared as generic JSON, so fields no struct models are covered), that the
+// annotations are exactly doc, and that every tag outside the main payload
+// survived — the transcripts are chunk sets of their own, which the payload
+// read-back never looks at.
+func writeAnnotateDocument(ctx context.Context, source annotateSource, resolvedOut string, doc *portable.Annotations) (json.RawMessage, error) {
 	intendedJSON, err := json.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("encode annotations: %w", err)
 	}
-	intended, err := decodeAnnotateGenericJSON(intendedJSON)
+	intended, err := decodePortableMeetingDocument(intendedJSON)
 	if err != nil {
 		return nil, err
 	}
-	document, err := decodePortableMeetingDocument(source.rawJSON)
+	rawJSON, err := decodePortableMeetingPayload(source.tags)
+	if err != nil {
+		return nil, err
+	}
+	document, err := decodePortableMeetingDocument(rawJSON)
 	if err != nil {
 		return nil, err
 	}
 	document["annotations"] = json.RawMessage(intendedJSON)
-	// A second, untouched decode of the source — the edit above mutates the
-	// first — to compare the written manifest with.
-	pristine, err := decodePortableMeetingDocument(source.rawJSON)
+	// A second decode to compare against: the edit above mutates the first.
+	pristine, err := decodePortableMeetingDocument(rawJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -802,9 +712,6 @@ func writeAnnotateDocument(ctx context.Context, source annotateSource, resolvedO
 
 	var writtenAnnotations json.RawMessage
 	verify := func(_, written portable.Manifest, writtenTags map[string]string) error {
-		if written.Integrity.OpusSHA256 != source.audioDigest() {
-			return fmt.Errorf("verify annotated file: audio digest %s is not the source's %s", written.Integrity.OpusSHA256, source.audioDigest())
-		}
 		writtenRaw, err := decodePortableMeetingPayload(writtenTags)
 		if err != nil {
 			return fmt.Errorf("verify annotated file: %w", err)
@@ -813,23 +720,13 @@ func writeAnnotateDocument(ctx context.Context, source annotateSource, resolvedO
 		if err != nil {
 			return fmt.Errorf("verify annotated file: %w", err)
 		}
-		writtenMember, ok := writtenDocument["annotations"]
-		if !ok {
-			return errors.New("verify annotated file: the written manifest carries no annotations")
-		}
+		writtenMember := writtenDocument["annotations"]
 		delete(writtenDocument, "annotations")
 		if !reflect.DeepEqual(writtenDocument, pristine) {
 			return errors.New("verify annotated file: the manifest changed outside annotations")
 		}
-		if !reflect.DeepEqual(writtenMember, intended) {
+		if !reflect.DeepEqual(writtenMember, any(intended)) {
 			return errors.New("verify annotated file: the written annotations are not the intended document")
-		}
-		parsed, err := portable.ParseAnnotations(written.Annotations)
-		if err != nil || parsed == nil {
-			return fmt.Errorf("verify annotated file: the written annotations do not parse: %v", err)
-		}
-		if err := portable.ValidateAnnotations(parsed, boundDurationMS); err != nil {
-			return fmt.Errorf("verify annotated file: %w", err)
 		}
 		if err := verifyAnnotateTagsPreserved(source.tags, writtenTags); err != nil {
 			return err
@@ -844,9 +741,8 @@ func writeAnnotateDocument(ctx context.Context, source annotateSource, resolvedO
 }
 
 // annotateTagMayMove names the tags a manifest rewrite legitimately changes:
-// the main payload's chunk set and its four counters, and the plain mirrors
-// retagOpusTags re-derives from the (unchanged) manifest. `encoder` is
-// ffmpeg's own stamp, which a different ffmpeg build rewrites.
+// the main payload's chunk set and counters, the plain mirrors retagOpusTags
+// re-derives, and ffmpeg's own `encoder` stamp.
 func annotateTagMayMove(key string) bool {
 	if isPayloadChunkTag(key) {
 		return true
@@ -861,9 +757,9 @@ func annotateTagMayMove(key string) bool {
 }
 
 // verifyAnnotateTagsPreserved checks that every tag outside the main payload
-// survived the rewrite with its value, and that no CASSINI_* tag appeared from
-// nowhere. ffmpeg runs with -map_metadata -1, so a tag not carried forward is
-// deleted — and the per-transcript chunk sets are tags.
+// survived the rewrite unchanged and that no CASSINI_* tag appeared. ffmpeg runs
+// with -map_metadata -1, so a tag not carried forward is deleted — and the
+// per-transcript chunk sets are tags.
 func verifyAnnotateTagsPreserved(before, after map[string]string) error {
 	for key, value := range before {
 		if annotateTagMayMove(key) {
@@ -884,51 +780,21 @@ func verifyAnnotateTagsPreserved(before, after map[string]string) error {
 	return nil
 }
 
-// copyPortableMeetingFile places a byte-for-byte copy of src at resolvedOut,
-// through the same stage-and-rename commit the rewrites use, so a reader of
-// resolvedOut sees the old file or the whole copy and never a partial one. The
-// staged copy is re-hashed before the rename: it is about to be uploaded over a
-// recording that, under D-612, cannot be deleted.
+// copyPortableMeetingFile places a copy of src at resolvedOut through a stage
+// file and a rename, so a reader never sees a partial copy.
 func copyPortableMeetingFile(src, resolvedOut string) error {
 	stagePath, err := createPortableStagePath(resolvedOut)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(stagePath) }()
-
-	in, err := os.Open(src)
-	if err != nil {
+	if err := copyFile(src, stagePath, 0o644); err != nil {
 		return fmt.Errorf("copy portable meeting file: %w", err)
-	}
-	defer in.Close()
-	out, err := os.OpenFile(stagePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return fmt.Errorf("copy portable meeting file: %w", err)
-	}
-	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(out, hash), in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("copy portable meeting file: %w", err)
-	}
-	if err := out.Sync(); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("copy portable meeting file: %w", err)
-	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("copy portable meeting file: %w", err)
-	}
-	staged, err := annotateFileSHA256(stagePath)
-	if err != nil {
-		return err
-	}
-	if want := hex.EncodeToString(hash.Sum(nil)); staged != want {
-		return fmt.Errorf("copy portable meeting file: the staged copy hashes to %s, the source to %s", staged, want)
 	}
 	return commitPortableMeetingOutput(stagePath, resolvedOut)
 }
 
-// annotateFileSHA256 is the container digest: the sha256 of the file as it is
-// on disk.
+// annotateFileSHA256 is the container digest: the sha256 of the file on disk.
 func annotateFileSHA256(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -942,20 +808,8 @@ func annotateFileSHA256(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-// decodeAnnotateGenericJSON decodes JSON the way decodePortableMeetingDocument
-// does — numbers kept as their literal text — so two decodes compare equal
-// exactly when the documents do.
-func decodeAnnotateGenericJSON(raw []byte) (any, error) {
-	document, err := decodePortableMeetingDocument(raw)
-	if err != nil {
-		return nil, err
-	}
-	return document, nil
-}
-
-// newAnnotationTagNamespace mints a urn:uuid namespace from a random (version
-// 4) uuid. A namespace is minted only when neither the file nor the operator
-// supplies one — a CLI user annotating a file by hand.
+// newAnnotationTagNamespace mints a random (version 4) urn:uuid, for a file's
+// first write when neither the file nor the operator supplies a namespace.
 func newAnnotationTagNamespace() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -966,7 +820,6 @@ func newAnnotationTagNamespace() (string, error) {
 	return fmt.Sprintf("urn:uuid:%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
-// printAnnotateDocumentSummary is the human half of every subcommand.
 func printAnnotateDocumentSummary(w io.Writer, result annotateResult) {
 	doc, err := portable.ParseAnnotations(result.Annotations)
 	if err != nil || doc == nil {

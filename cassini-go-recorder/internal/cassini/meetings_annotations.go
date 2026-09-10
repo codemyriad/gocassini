@@ -11,88 +11,39 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
+	"gocassini/internal/inspect"
 	"gocassini/internal/portable"
 )
 
 // `cassini meetings tags | annotations | annotate`: the agent's side of tags
-// and marks (D-737).
-//
-// A mark lives inside the recording's .opus, as manifest.annotations, so a
-// recording carries its marks wherever it goes. This CLI never touches a file.
-// It asks the app, which:
-//
-//   - reads a meeting's marks AS THE CALLER, so Nextcloud re-checks the
-//     permission on the bytes, exactly as `meetings context` does;
-//   - writes a batch only after the same visibility check, as its own service
-//     account (the recordings mount gives ordinary users a read ceiling), and
-//     stamps every new mark with the caller's authenticated Nextcloud user id.
-//
-// The id is therefore never something this command sends, and cannot be
-// spoofed from here. The kind (--actor-kind) is sent, and defaults to agent
-// because this CLI is what agents drive: it is self-declared attribution — for
-// telling a person's marks from an agent run's, and for undoing a run in one
-// step — not an access control.
-//
-// The published routes' discipline holds throughout: failure is loud, denial
-// is empty. A meeting the caller may not read answers 404 exactly like one that
-// does not exist, and nothing below tells the two apart.
+// and marks. This CLI never touches a file. The app reads a meeting's marks as
+// the caller, and writes a batch after the same visibility check, stamping each
+// new mark with the caller's authenticated user id — never a value sent from
+// here. --actor-kind is self-declared attribution, not an access control.
 
 const (
 	meetingsAnnotationsMeetingPath = "annotations/meetings/"
 	meetingsAnnotationsTagsPath    = "annotations/tags"
 
-	// maxAnnotateBodyBytes is the app's cap on one annotate request. The ops
-	// file is read up to it and no further: a larger batch would only be
-	// refused with 413 after the upload, and an unbounded read of stdin is not
-	// something to do on an agent's say-so.
+	// maxAnnotateBodyBytes is the app's cap on one annotate request.
 	maxAnnotateBodyBytes = 64 << 10
 
-	// meetingsWriteTimeout bounds one annotate request. Far longer than the
-	// reads' 20s on purpose: one commit re-uploads the whole recording (about
-	// 14 MB for an hour), and the app retries a collision with a concurrent
-	// writer up to three times before it answers. Cutting that off early turns
-	// a write that probably landed into "maybe", the worst answer a write has.
+	// meetingsWriteTimeout is far longer than the reads' on purpose: one commit
+	// re-uploads the whole recording and the app retries a collision before it
+	// answers. Cutting that short turns a write that probably landed into "maybe".
 	meetingsWriteTimeout = 3 * time.Minute
 )
 
-// Exit codes annotate shares with `cassini annotate`, so an agent reads the same
-// number the same way whichever of the two it drove.
-const (
-	meetingsExitRevision   = 3 // --expect-revision did not match
-	meetingsExitInvalid    = 4 // the ops were refused, or the batch is too large
-	meetingsExitUnresolved = 5 // the meeting's marks are bound to other audio
-)
-
-// meetingsStdin is where `--ops -` reads from. Package-level so tests can
-// substitute it.
+// meetingsStdin is where `--ops -` reads from; tests substitute it.
 var meetingsStdin io.Reader = os.Stdin
 
-var (
-	// errMeetingsTagsUnavailable means the app does not serve tags at all: one
-	// older than D-737, or a deployment that cannot attribute a mark (the app
-	// does not mount the routes there). Distinct from every other failure
-	// because no retry and no permission change will help.
-	errMeetingsTagsUnavailable = errors.New("this Cassini app does not offer tags and marks")
+// errMeetingsTagsUnavailable is an app whose tags route answers 404: one that
+// serves no tags, so a --tag can only be refused, never passed on and ignored.
+var errMeetingsTagsUnavailable = errors.New("this Cassini app does not offer tags and marks; ask an administrator to update it")
 
-	// errMeetingsTagsNotReady is the app saying its tag index is still being
-	// built from the recordings. Distinct because the right response is to wait.
-	errMeetingsTagsNotReady = errors.New("the tag index is not ready yet")
-
-	// errMeetingsAnnotateAnswerUnreadable means the app answered 200 — the batch
-	// is committed — and the answer could not be decoded. Distinct from a
-	// transport failure, where the commit may or may not have happened.
-	errMeetingsAnnotateAnswerUnreadable = errors.New("the batch was committed, but the app's answer could not be read")
-)
-
-// meetingsAnnotationsAnswer is GET annotations/meetings/<id>. Annotations is
-// the document the recording carries, verbatim, or null; Resolved is the app's
-// comparison of its binding with the recording's audio digest, null when there
-// is no document.
 type meetingsAnnotationsAnswer struct {
 	MeetingID   string          `json:"meetingId"`
 	Revision    int             `json:"revision"`
@@ -100,43 +51,36 @@ type meetingsAnnotationsAnswer struct {
 	Resolved    *bool           `json:"resolved"`
 }
 
-// meetingsAnnotateRequest is the POST body. It deliberately has no actor id:
-// the app takes that from the authenticated caller and nowhere else.
+// meetingsAnnotateRequest has no actor id: the app takes that from the
+// authenticated caller and nowhere else.
 type meetingsAnnotateRequest struct {
-	Ops            json.RawMessage `json:"ops"`
-	ExpectRevision *int            `json:"expectRevision,omitempty"`
-	ActorKind      string          `json:"actorKind"`
-	OperationID    string          `json:"operationId,omitempty"`
+	Ops            []json.RawMessage `json:"ops"`
+	ExpectRevision *int              `json:"expectRevision,omitempty"`
+	ActorKind      string            `json:"actorKind"`
+	OperationID    string            `json:"operationId,omitempty"`
 }
 
-// meetingsAnnotateAnswer is the POST's 200: what the batch did.
 type meetingsAnnotateAnswer struct {
-	MeetingID   string          `json:"meetingId"`
-	Revision    int             `json:"revision"`
-	OperationID string          `json:"operationId"`
-	Added       []string        `json:"added"`
-	Removed     []string        `json:"removed"`
-	NotFound    []string        `json:"notFound"`
-	Annotations json.RawMessage `json:"annotations"`
-	Resolved    *bool           `json:"resolved"`
+	MeetingID   string   `json:"meetingId"`
+	Revision    int      `json:"revision"`
+	OperationID string   `json:"operationId"`
+	Added       []string `json:"added"`
+	Removed     []string `json:"removed"`
+	NotFound    []string `json:"notFound"`
+	Resolved    *bool    `json:"resolved"`
 }
 
-// meetingsTagsAnswer is GET annotations/tags: the vocabulary across the
-// caller's readable meetings, and how much of that set the tag index covers.
 type meetingsTagsAnswer struct {
-	Tags     []meetingsTagEntry `json:"tags"`
+	Tags []struct {
+		TagID    string `json:"tagId"`
+		Label    string `json:"label"`
+		Meetings int    `json:"meetings"`
+		Marks    int    `json:"marks"`
+	} `json:"tags"`
 	Coverage struct {
 		Visible int `json:"visible"`
 		Indexed int `json:"indexed"`
 	} `json:"coverage"`
-}
-
-type meetingsTagEntry struct {
-	TagID     string `json:"tagId"`
-	Namespace string `json:"namespace"`
-	Label     string `json:"label"`
-	Meetings  int    `json:"meetings"`
-	Marks     int    `json:"marks"`
 }
 
 func runMeetingsTags(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -150,13 +94,10 @@ func runMeetingsTags(ctx context.Context, args []string, stdout, stderr io.Write
   cassini meetings tags [--json]
 
 List the tags on the meetings you may read: each tag's id and label, and how
-many of your meetings and marks carry it. A tag that is on no meeting you can
-read does not appear.
+many of your meetings and marks carry it. The tag= value, or the label, is what
+--tag on `+"`meetings search`"+` and `+"`meetings list`"+` accepts.
 
-The tag= value, or the label, is what --tag on `+"`meetings search`"+` and
-`+"`meetings list`"+` accepts.
-
-`+"\n")
+`)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -176,10 +117,9 @@ The tag= value, or the label, is what --tag on `+"`meetings search`"+` and
 	}
 	warnAboutInsecureTLS(stderr, cfg)
 
-	client := newMeetingsClient(cfg)
-	body, vocabulary, err := client.tags(ctx)
+	body, vocabulary, err := newMeetingsClient(cfg).tags(ctx)
 	if err != nil {
-		return reportAnnotationsError(ctx, client, stderr, "tags", cfg, err)
+		return reportMeetingsError(stderr, "tags", cfg, err)
 	}
 	if *asJSON {
 		return writeMeetingsAnswerJSON(stdout, stderr, "tags", body)
@@ -188,9 +128,7 @@ The tag= value, or the label, is what --tag on `+"`meetings search`"+` and
 	fmt.Fprintf(stdout, "tags=%d caller=%s indexed=%d of %d meeting(s) you can read\n",
 		len(vocabulary.Tags), cfg.user, vocabulary.Coverage.Indexed, vocabulary.Coverage.Visible)
 	if unindexed := vocabulary.Coverage.Visible - vocabulary.Coverage.Indexed; unindexed > 0 {
-		// The honest sentence, as search's coverage note is: without it a short
-		// vocabulary reads as "nobody tagged that", when some meetings were
-		// never read into the index at all.
+		// Without it a short vocabulary reads as "nobody tagged that".
 		fmt.Fprintf(stdout, "note=%d meeting(s) you can read are not in the tag index yet, so these counts do not cover them\n", unindexed)
 	}
 	if len(vocabulary.Tags) == 0 {
@@ -203,7 +141,7 @@ The tag= value, or the label, is what --tag on `+"`meetings search`"+` and
 	}
 	for _, tag := range vocabulary.Tags {
 		fmt.Fprintf(stdout, "tag=%s meetings=%d marks=%d label=%s\n",
-			meetingsToken(tag.TagID), tag.Meetings, tag.Marks, blankMeetingsDash(tag.Label))
+			inspect.Token(tag.TagID), tag.Meetings, tag.Marks, blankMeetingsDash(tag.Label))
 	}
 	fmt.Fprintln(stdout, "hint=narrow a search or a list with --tag <label or tag= value>; read one meeting's marks with `cassini meetings annotations <meeting-id>`")
 	return 0
@@ -220,11 +158,10 @@ func runMeetingsAnnotations(ctx context.Context, args []string, stdout, stderr i
   cassini meetings annotations <meeting-id> [--json]
 
 Print one meeting's tags and marks: for each mark, its tag, what it covers (the
-whole meeting, or a stretch of it), who made it, and the batch it came in. The
-marks are read out of the recording itself, as you, so Nextcloud checks that
-you may read it. Use `+"`cassini meetings list`"+` to find the id.
+whole meeting, or a stretch of it), who made it, and the batch it came in. Use
+`+"`cassini meetings list`"+` to find the id.
 
-`+"\n")
+`)
 		fs.PrintDefaults()
 	}
 	meetingID, code, ok := parseMeetingsOneID(fs, args, "annotations", stderr)
@@ -237,10 +174,10 @@ you may read it. Use `+"`cassini meetings list`"+` to find the id.
 	}
 	warnAboutInsecureTLS(stderr, cfg)
 
-	client := newMeetingsClient(cfg)
-	body, answer, err := client.meetingAnnotations(ctx, meetingID)
+	var answer meetingsAnnotationsAnswer
+	body, err := newMeetingsClient(cfg).getAnnotations(ctx, meetingsAnnotationsMeetingPath+url.PathEscape(meetingID), &answer)
 	if err != nil {
-		return reportAnnotationsError(ctx, client, stderr, "annotations", cfg, err)
+		return reportMeetingsError(stderr, "annotations", cfg, err)
 	}
 	if *asJSON {
 		return writeMeetingsAnswerJSON(stdout, stderr, "annotations", body)
@@ -249,21 +186,18 @@ you may read it. Use `+"`cassini meetings list`"+` to find the id.
 	return 0
 }
 
-// printMeetingsAnnotations renders one meeting's document, one line per mark.
-//
-// It reads the document with the format's own tolerant reader, so this command
-// behaves as the format asks every reader to: a format it does not know is
-// named and skipped, never guessed at.
+// printMeetingsAnnotations renders one meeting's document, one line per mark,
+// through the format's tolerant reader: a format it does not know is named and
+// skipped, never guessed at.
 func printMeetingsAnnotations(stdout, stderr io.Writer, cfg meetingsConfig, meetingID string, answer meetingsAnnotationsAnswer) {
 	doc, err := portable.ParseAnnotations(answer.Annotations)
-	switch {
-	case errors.Is(err, portable.ErrAnnotationsFormatUnsupported):
-		fmt.Fprintf(stdout, "meeting=%s revision=%d caller=%s\n", meetingsToken(meetingID), answer.Revision, cfg.user)
-		fmt.Fprintln(stdout, "note=this meeting's marks are in a format this cassini build does not read; update the CLI, or read the raw document with --json")
-		return
-	case err != nil:
-		fmt.Fprintf(stdout, "meeting=%s revision=%d caller=%s\n", meetingsToken(meetingID), answer.Revision, cfg.user)
-		fmt.Fprintf(stderr, "warning=this meeting's marks could not be read (%s); --json shows the raw document\n", oneLineField(err.Error()))
+	if err != nil {
+		fmt.Fprintf(stdout, "meeting=%s revision=%d caller=%s\n", inspect.Token(meetingID), answer.Revision, cfg.user)
+		if errors.Is(err, portable.ErrAnnotationsFormatUnsupported) {
+			fmt.Fprintln(stdout, "note=this meeting's marks are in a format this cassini build does not read; update the CLI, or read the raw document with --json")
+		} else {
+			fmt.Fprintf(stderr, "warning=this meeting's marks could not be read (%s); --json shows the raw document\n", oneLineField(err.Error()))
+		}
 		return
 	}
 	var tags, marks int
@@ -271,7 +205,7 @@ func printMeetingsAnnotations(stdout, stderr io.Writer, cfg meetingsConfig, meet
 		tags, marks = len(doc.Tags), len(doc.Items)
 	}
 	fmt.Fprintf(stdout, "meeting=%s revision=%d tags=%d marks=%d resolved=%s caller=%s\n",
-		meetingsToken(meetingID), answer.Revision, tags, marks, meetingsResolved(answer.Resolved), cfg.user)
+		inspect.Token(meetingID), answer.Revision, tags, marks, meetingsResolved(answer.Resolved), cfg.user)
 	if marks == 0 {
 		fmt.Fprintln(stdout, "note=this meeting carries no marks")
 		return
@@ -284,18 +218,17 @@ func printMeetingsAnnotations(stdout, stderr io.Writer, cfg meetingsConfig, meet
 		labels[tag.ID] = tag.Label
 	}
 	for _, item := range doc.Items {
-		// The label goes last, as a title does everywhere else in this family:
-		// it is free text, and anything after it would be ambiguous.
+		// The label is free text, so it goes last.
 		fmt.Fprintf(stdout, "mark=%s target=%s actor=%s:%s created=%s operation=%s tag_id=%s tag=%s\n",
-			meetingsToken(item.ID),
+			inspect.Token(item.ID),
 			describeMeetingsTarget(item.Target),
-			meetingsToken(item.Actor.Kind), meetingsToken(item.Actor.ID),
-			meetingsToken(item.CreatedAtUTC),
-			meetingsToken(item.OperationID),
-			meetingsToken(item.TagID),
+			inspect.Token(item.Actor.Kind), inspect.Token(item.Actor.ID),
+			inspect.Token(item.CreatedAtUTC),
+			inspect.Token(item.OperationID),
+			inspect.Token(item.TagID),
 			blankMeetingsDash(labels[item.TagID]))
 	}
-	fmt.Fprintf(stdout, "hint=add or remove marks with `cassini meetings annotate %s --ops <file>`; --json carries each range's exact milliseconds\n", meetingsToken(meetingID))
+	fmt.Fprintf(stdout, "hint=add or remove marks with `cassini meetings annotate %s --ops <file>`; --json carries each range's exact milliseconds\n", inspect.Token(meetingID))
 }
 
 func runMeetingsAnnotate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -328,12 +261,10 @@ Apply a batch of ops to one meeting's marks, as one commit. The ops file is the
     {"op": "relabel", "tagId": "tag_...", "label": "recruiting"}
   ]}
 
-Every new mark is attributed to the Nextcloud account you authenticate as, with
---actor-kind saying whether a person or an agent made it (agent by default).
-Marking is idempotent: a mark that already exists is not added twice, so
-re-running a batch is safe.
+Every new mark is attributed to the account you authenticate as. A mark that
+already exists is not added twice, so re-running a batch is safe.
 
-`+"\n")
+`)
 		fs.PrintDefaults()
 	}
 	meetingID, code, ok := parseMeetingsOneID(fs, args, "annotate", stderr)
@@ -343,8 +274,6 @@ re-running a batch is safe.
 	passed := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { passed[f.Name] = true })
 
-	// Everything about the request is checked before the network call: a
-	// malformed batch is the caller's to fix either way.
 	if strings.TrimSpace(*opsPath) == "" {
 		fmt.Fprintln(stderr, "annotate configuration error: --ops is required (a file, or - for stdin)")
 		return 2
@@ -361,24 +290,43 @@ re-running a batch is safe.
 			fmt.Fprintf(stderr, "annotate configuration error: --expect-revision must be 0 or more, got %d\n", *expectRevision)
 			return 2
 		}
-		value := *expectRevision
-		expect = &value
+		expect = expectRevision
 	}
-	ops, code, err := readMeetingsAnnotateOps(*opsPath)
+	source := meetingsStdin
+	if *opsPath != "-" {
+		file, err := os.Open(*opsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "annotate configuration error: read --ops: %v\n", err)
+			return 2
+		}
+		defer file.Close()
+		source = file
+	}
+	raw, err := io.ReadAll(io.LimitReader(source, maxAnnotateBodyBytes+1))
+	if err != nil {
+		fmt.Fprintf(stderr, "annotate configuration error: read --ops: %v\n", err)
+		return 2
+	}
+	if len(raw) > maxAnnotateBodyBytes {
+		fmt.Fprintf(stderr, "annotate configuration error: --ops is larger than %d KiB, the most the app accepts in one request; split it into several\n", maxAnnotateBodyBytes>>10)
+		return annotateExitInvalid
+	}
+	ops, err := parseAnnotateOps(raw)
+	if err == nil && len(ops) == 0 {
+		err = errors.New("--ops holds no ops, so there is nothing to apply")
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "annotate configuration error: %v\n", err)
-		return code
+		return annotateExitInvalid
 	}
-	body, err := json.Marshal(meetingsAnnotateRequest{
-		Ops: ops, ExpectRevision: expect, ActorKind: kind, OperationID: strings.TrimSpace(*operationID),
-	})
+	request := meetingsAnnotateRequest{ExpectRevision: expect, ActorKind: kind, OperationID: strings.TrimSpace(*operationID)}
+	for _, op := range ops {
+		request.Ops = append(request.Ops, op.raw)
+	}
+	body, err := json.Marshal(request)
 	if err != nil {
 		fmt.Fprintf(stderr, "annotate failed: encode the request: %v\n", err)
 		return 1
-	}
-	if len(body) > maxAnnotateBodyBytes {
-		fmt.Fprintf(stderr, "annotate configuration error: the batch is larger than %d KiB, the most the app accepts in one request; split it into several\n", maxAnnotateBodyBytes>>10)
-		return meetingsExitInvalid
 	}
 	if err := resolveMeetingsConfig(fs, &cfg); err != nil {
 		fmt.Fprintf(stderr, "annotate configuration error: %v\n", err)
@@ -386,30 +334,27 @@ re-running a batch is safe.
 	}
 	warnAboutInsecureTLS(stderr, cfg)
 
-	client := newMeetingsClient(cfg)
-	answerBody, answer, err := client.annotate(ctx, meetingID, body)
+	answerBody, answer, err := newMeetingsClient(cfg).annotate(ctx, meetingID, body)
 	if err != nil {
-		return reportAnnotationsError(ctx, client, stderr, "annotate", cfg, err)
+		return reportAnnotateError(stderr, cfg, err)
 	}
 	if *asJSON {
 		return writeMeetingsAnswerJSON(stdout, stderr, "annotate", answerBody)
 	}
 
 	fmt.Fprintf(stdout, "annotated=%s revision=%d operation=%s added=%d removed=%d not_found=%d resolved=%s caller=%s\n",
-		meetingsToken(firstNonBlank(answer.MeetingID, meetingID)), answer.Revision, meetingsToken(answer.OperationID),
+		inspect.Token(firstNonBlank(answer.MeetingID, meetingID)), answer.Revision, inspect.Token(answer.OperationID),
 		len(answer.Added), len(answer.Removed), len(answer.NotFound), meetingsResolved(answer.Resolved), cfg.user)
 	for _, id := range answer.Added {
-		fmt.Fprintf(stdout, "change=added mark=%s\n", meetingsToken(id))
+		fmt.Fprintf(stdout, "change=added mark=%s\n", inspect.Token(id))
 	}
 	for _, id := range answer.Removed {
-		fmt.Fprintf(stdout, "change=removed mark=%s\n", meetingsToken(id))
+		fmt.Fprintf(stdout, "change=removed mark=%s\n", inspect.Token(id))
 	}
 	for _, id := range answer.NotFound {
-		fmt.Fprintf(stdout, "change=not-found id=%s\n", meetingsToken(id))
+		fmt.Fprintf(stdout, "change=not-found id=%s\n", inspect.Token(id))
 	}
 	if len(answer.Added) > 0 && answer.OperationID != "" {
-		// The whole point of stamping a batch: an agent run that went wrong is
-		// one op away from gone, and the op is printed where the run will see it.
 		fmt.Fprintf(stdout, "hint=undo this batch's marks with {\"op\": \"undo-operation\", \"operationId\": %q}\n", answer.OperationID)
 	}
 	return 0
@@ -434,9 +379,8 @@ func parseMeetingsOneID(fs *flag.FlagSet, args []string, verb string, stderr io.
 		return "", 2, false
 	}
 	meetingID := strings.TrimSpace(fs.Arg(0))
-	// "." and ".." are the only ids PathEscape leaves able to move the request:
-	// resolved against the app root they are dot segments, and would send the
-	// request to some other route entirely.
+	// PathEscape leaves "." and "..", which would resolve as dot segments and
+	// send the request to another route.
 	if meetingID == "" || meetingID == "." || meetingID == ".." {
 		fmt.Fprintf(stderr, "%s configuration error: %q is not a meeting id; run `cassini meetings list` to find one\n", verb, meetingID)
 		return "", 2, false
@@ -444,164 +388,67 @@ func parseMeetingsOneID(fs *flag.FlagSet, args []string, verb string, stderr io.
 	return meetingID, 0, true
 }
 
-// readMeetingsAnnotateOps reads the ops document and returns its ops array
-// untouched, with the exit code to use if it cannot.
-//
-// The ops themselves are not validated here. The app validates them — by
-// running `cassini annotate apply`, which owns that contract — and answers 400
-// with the reason; a second validator in this client would be one more copy of
-// the contract to keep in step. What is checked is only what makes the request
-// itself wrong: a file that cannot be read (usage, 2), or one that is not a
-// single {"ops": [...]} document with at least one op, or is too large to send
-// (invalid ops, 4 — the same code the app's refusal earns).
-func readMeetingsAnnotateOps(path string) (json.RawMessage, int, error) {
-	source, name := meetingsStdin, "stdin"
-	if path != "-" {
-		file, err := os.Open(path)
-		if err != nil {
-			return nil, 2, fmt.Errorf("read --ops: %w", err)
-		}
-		defer file.Close()
-		source, name = file, path
-	}
-	raw, err := io.ReadAll(io.LimitReader(source, maxAnnotateBodyBytes+1))
-	if err != nil {
-		return nil, 2, fmt.Errorf("read --ops %s: %w", name, err)
-	}
-	if len(raw) > maxAnnotateBodyBytes {
-		return nil, meetingsExitInvalid, fmt.Errorf("--ops %s is larger than %d KiB, the most the app accepts in one request; split it into several", name, maxAnnotateBodyBytes>>10)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	// Strict on the envelope. A member other than "ops" — an expectRevision
-	// typed into the file, say — would otherwise be silently dropped, and the
-	// batch would run without the guard its author thought it had. Those are
-	// flags here.
-	decoder.DisallowUnknownFields()
-	var doc struct {
-		Ops json.RawMessage `json:"ops"`
-	}
-	if err := decoder.Decode(&doc); err != nil {
-		return nil, meetingsExitInvalid, fmt.Errorf(`--ops %s is not an {"ops": [...]} document: %v`, name, err)
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, meetingsExitInvalid, fmt.Errorf("--ops %s holds more than one JSON document", name)
-	}
-	var ops []json.RawMessage
-	if err := json.Unmarshal(doc.Ops, &ops); err != nil {
-		return nil, meetingsExitInvalid, fmt.Errorf(`--ops %s: "ops" must be an array of ops`, name)
-	}
-	if len(ops) == 0 {
-		return nil, meetingsExitInvalid, fmt.Errorf("--ops %s holds no ops, so there is nothing to apply", name)
-	}
-	return doc.Ops, 0, nil
-}
-
 func (c *meetingsClient) annotationsURL(ref string) (*url.URL, error) {
 	root, err := c.appRootURL()
 	if err != nil {
 		return nil, err
 	}
-	target, err := root.Parse(ref)
+	return root.Parse(ref)
+}
+
+// getAnnotations GETs an annotations route and decodes it into answer.
+func (c *meetingsClient) getAnnotations(ctx context.Context, ref string, answer any) ([]byte, error) {
+	target, err := c.annotationsURL(ref)
 	if err != nil {
-		return nil, fmt.Errorf("build annotations URL: %w", err)
+		return nil, err
 	}
-	return target, nil
+	body, _, err := c.readListing(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(body, answer); err != nil {
+		return nil, fmt.Errorf("parse the answer from %s: %w", meetingsTargetLabel(target), err)
+	}
+	return body, nil
 }
 
-func (c *meetingsClient) meetingAnnotationsURL(meetingID string) (*url.URL, error) {
-	return c.annotationsURL(meetingsAnnotationsMeetingPath + url.PathEscape(meetingID))
-}
-
-// tags GETs the caller's vocabulary. A 404 means the app has no tags at all and
-// a 503 that its index is still being built; both come back as their own errors.
 func (c *meetingsClient) tags(ctx context.Context) ([]byte, meetingsTagsAnswer, error) {
-	target, err := c.annotationsURL(meetingsAnnotationsTagsPath)
-	if err != nil {
-		return nil, meetingsTagsAnswer{}, err
-	}
-	body, _, err := c.readListing(ctx, target)
-	if err != nil {
-		switch meetingsHTTPStatus(err) {
-		case http.StatusNotFound:
-			return nil, meetingsTagsAnswer{}, errMeetingsTagsUnavailable
-		case http.StatusServiceUnavailable:
-			return nil, meetingsTagsAnswer{}, errMeetingsTagsNotReady
-		}
-		return nil, meetingsTagsAnswer{}, err
-	}
 	var answer meetingsTagsAnswer
-	if err := json.Unmarshal(body, &answer); err != nil {
-		return nil, meetingsTagsAnswer{}, fmt.Errorf("parse tags from %s: %w", meetingsTargetLabel(target), err)
+	body, err := c.getAnnotations(ctx, meetingsAnnotationsTagsPath, &answer)
+	if meetingsHTTPStatus(err) == http.StatusNotFound {
+		err = errMeetingsTagsUnavailable
 	}
-	return body, answer, nil
-}
-
-func (c *meetingsClient) meetingAnnotations(ctx context.Context, meetingID string) ([]byte, meetingsAnnotationsAnswer, error) {
-	target, err := c.meetingAnnotationsURL(meetingID)
-	if err != nil {
-		return nil, meetingsAnnotationsAnswer{}, err
-	}
-	body, _, err := c.readListing(ctx, target)
-	if err != nil {
-		return nil, meetingsAnnotationsAnswer{}, err
-	}
-	var answer meetingsAnnotationsAnswer
-	if err := json.Unmarshal(body, &answer); err != nil {
-		return nil, meetingsAnnotationsAnswer{}, fmt.Errorf("parse annotations from %s: %w", meetingsTargetLabel(target), err)
-	}
-	return body, answer, nil
+	return body, answer, err
 }
 
 func (c *meetingsClient) annotate(ctx context.Context, meetingID string, body []byte) ([]byte, meetingsAnnotateAnswer, error) {
-	target, err := c.meetingAnnotationsURL(meetingID)
+	var answer meetingsAnnotateAnswer
+	target, err := c.annotationsURL(meetingsAnnotationsMeetingPath + url.PathEscape(meetingID))
 	if err != nil {
-		return nil, meetingsAnnotateAnswer{}, err
+		return nil, answer, err
 	}
-	// A client of its own, for meetingsWriteTimeout, on the same transport as
-	// the reads so --insecure means the same thing here, and refusing redirects
-	// for the same reason they do.
-	writer := &http.Client{
-		Timeout:       meetingsWriteTimeout,
-		Transport:     c.json.Transport,
-		CheckRedirect: refuseMeetingsRedirect,
-	}
+	// The reads' transport, so --insecure means the same thing here.
+	writer := &http.Client{Timeout: meetingsWriteTimeout, Transport: c.json.Transport, CheckRedirect: refuseMeetingsRedirect}
 	resp, err := c.post(ctx, target, body, writer)
 	if err != nil {
-		return nil, meetingsAnnotateAnswer{}, err
+		return nil, answer, err
 	}
 	defer resp.Body.Close()
-	answerBody, err := io.ReadAll(io.LimitReader(resp.Body, maxCatalogBytes+1))
-	if err != nil || len(answerBody) > maxCatalogBytes {
-		return nil, meetingsAnnotateAnswer{}, fmt.Errorf("%w (%s)", errMeetingsAnnotateAnswerUnreadable, meetingsTargetLabel(target))
+	answerBody, err := io.ReadAll(io.LimitReader(resp.Body, maxCatalogBytes))
+	if err == nil {
+		err = json.Unmarshal(answerBody, &answer)
 	}
-	var answer meetingsAnnotateAnswer
-	if err := json.Unmarshal(answerBody, &answer); err != nil {
-		return nil, meetingsAnnotateAnswer{}, fmt.Errorf("%w (%s): %v", errMeetingsAnnotateAnswerUnreadable, meetingsTargetLabel(target), err)
+	if err != nil {
+		return nil, answer, fmt.Errorf("the batch was committed, but the answer from %s could not be read: %w", meetingsTargetLabel(target), err)
 	}
 	return answerBody, answer, nil
 }
 
-// annotationsOffered tells apart the two things a 404 on a meeting's
-// annotations can mean: an app with no tags at all, or a meeting this caller
-// cannot read. Asking the tags route settles it without revealing anything —
-// it answers per caller and never 404s for a denial — and it is asked only
-// once a 404 has already happened.
-func (c *meetingsClient) annotationsOffered(ctx context.Context) bool {
-	_, _, err := c.tags(ctx)
-	return !errors.Is(err, errMeetingsTagsUnavailable)
-}
-
 // meetingsTagNarrowing is what the vocabulary says about a --tag before the app
-// is asked to narrow by it.
-//
-// Asking first is not optional. An app older than tags does not know the
-// parameter and ignores it, so a tagged search against one would answer the
-// untagged question under the tagged one's name: the failure `meetings search`
-// already refuses to commit by never falling back to a local scan. The tags
-// route exists exactly where tag narrowing does, so its 404 is the refusal. The
-// same answer then buys two honest sentences: whether any meeting the caller can
-// read carries the tag at all, and how many of their meetings the tag index has
-// not read.
+// is asked to narrow by it. Asking first is not optional: an app older than
+// tags ignores the parameter, and would answer the untagged question under the
+// tagged one's name. The same answer says whether any readable meeting carries
+// the tag, and how many the tag index has not read.
 type meetingsTagNarrowing struct {
 	checked   bool
 	known     bool
@@ -626,9 +473,8 @@ func (c *meetingsClient) checkTagNarrowing(ctx context.Context, tag string) (mee
 	return narrowing, nil
 }
 
-// report writes what a caller must know about a tag-narrowed answer, as lines
-// under key: note= beside the text output, and warning= on stderr beside
-// --json, so the path an agent reads is not the one that never hears it.
+// report writes what a caller must know about a tag-narrowed answer under key:
+// note= beside text output, warning= on stderr beside --json.
 func (n meetingsTagNarrowing) report(w io.Writer, key string) {
 	if !n.checked {
 		return
@@ -641,79 +487,32 @@ func (n meetingsTagNarrowing) report(w io.Writer, key string) {
 	}
 }
 
-// reportAnnotationsError phrases a failure from the annotation routes, or from
-// the tag check in front of a narrowed search or list, and returns the exit
-// code. What it does not recognise goes to reportMeetingsError, so the shared
-// statuses read the same everywhere in this family.
-func reportAnnotationsError(ctx context.Context, client *meetingsClient, stderr io.Writer, verb string, cfg meetingsConfig, err error) int {
+// reportAnnotateError maps the app's refusals of a batch onto the exit codes
+// `cassini annotate` gives the same conditions.
+func reportAnnotateError(stderr io.Writer, cfg meetingsConfig, err error) int {
+	status, reason := meetingsHTTPStatus(err), meetingsServerReason(err)
 	switch {
-	case errors.Is(err, errMeetingsTagsUnavailable):
-		fmt.Fprintf(stderr, "meetings %s failed: this Cassini app does not offer tags and marks; ask an administrator to update it\n", verb)
-		return 1
-	case errors.Is(err, errMeetingsTagsNotReady):
-		fmt.Fprintf(stderr, "meetings %s failed: the app is still building its tag index from the recordings; wait a moment and retry\n", verb)
-		return 1
-	case errors.Is(err, errMeetingsAnnotateAnswerUnreadable):
-		fmt.Fprintf(stderr, "meetings %s failed: %v\n", verb, err)
-		fmt.Fprintf(stderr, "hint=check what the meeting now carries with `cassini meetings annotations <meeting-id>` before re-running anything\n")
+	case status == http.StatusBadRequest:
+		fmt.Fprintf(stderr, "meetings annotate failed: the app refused these ops: %s\n", reason)
+		return annotateExitInvalid
+	case status == http.StatusRequestEntityTooLarge:
+		fmt.Fprintln(stderr, "meetings annotate failed: the batch is too large for the app; split it into several")
+		return annotateExitInvalid
+	case status == http.StatusConflict && reason == "revision-conflict":
+		fmt.Fprintln(stderr, "meetings annotate failed: the meeting's marks are no longer at the revision you expected; re-read them with `cassini meetings annotations <meeting-id>` and decide again")
+		return annotateExitRevision
+	case status == http.StatusConflict && reason == "unresolved":
+		fmt.Fprintln(stderr, "meetings annotate failed: this meeting's marks were made against different audio, so no new mark can be added to it")
+		return annotateExitUnresolved
+	case status == http.StatusConflict && reason == "conflict":
+		fmt.Fprintln(stderr, "meetings annotate failed: the recording kept changing while the app tried to write it; nothing was written, and re-running the same ops is safe")
 		return 1
 	}
-
-	reason := meetingsServerReason(err)
-	switch meetingsHTTPStatus(err) {
-	case http.StatusNotFound:
-		if !client.annotationsOffered(ctx) {
-			fmt.Fprintf(stderr, "meetings %s failed: this Cassini app does not offer tags and marks; ask an administrator to update it\n", verb)
-			return 1
-		}
-		// Absent or unreadable: the shared wording, which never says which.
-		return reportMeetingsError(stderr, verb, cfg, err)
-	case http.StatusBadRequest:
-		if verb == "annotate" {
-			fmt.Fprintf(stderr, "meetings annotate failed: the app refused these ops: %s\n", reason)
-			return meetingsExitInvalid
-		}
-		fmt.Fprintf(stderr, "meetings %s failed: the app refused the request: %s\n", verb, reason)
-		return 2
-	case http.StatusRequestEntityTooLarge:
-		fmt.Fprintf(stderr, "meetings %s failed: the batch is too large for the app (at most %d KiB and 200 ops per request); split it into several\n", verb, maxAnnotateBodyBytes>>10)
-		return meetingsExitInvalid
-	case http.StatusConflict:
-		switch reason {
-		case "revision-conflict":
-			fmt.Fprintf(stderr, "meetings %s failed: the meeting's marks are no longer at the revision you expected, because someone else changed them; re-read them with `cassini meetings annotations <meeting-id>` and decide again\n", verb)
-			return meetingsExitRevision
-		case "unresolved":
-			fmt.Fprintf(stderr, "meetings %s failed: this meeting's marks were made against different audio (the recording changed after they were made), so no new mark can be added to it\n", verb)
-			return meetingsExitUnresolved
-		case "conflict":
-			fmt.Fprintf(stderr, "meetings %s failed: the recording kept changing while the app tried to write it, and it gave up after retrying; nothing was written, and re-running the same ops is safe\n", verb)
-			return 1
-		}
-		fmt.Fprintf(stderr, "meetings %s failed: the app reported a conflict: %s\n", verb, reason)
-		return 1
-	case http.StatusMethodNotAllowed:
-		fmt.Fprintf(stderr, "meetings %s failed: the app did not accept this request on its annotations route; its route declarations may predate tags (they take effect only when the app's version changes), so ask an administrator to update it\n", verb)
-		return 1
-	case http.StatusServiceUnavailable:
-		fmt.Fprintf(stderr, "meetings %s failed: the app is still building its tag index from the recordings; wait a moment and retry\n", verb)
-		return 1
-	case 0:
-		if verb == "annotate" {
-			// No answer at all: the batch may or may not have landed. Saying so
-			// is the only honest report, and the ops being idempotent is what
-			// makes it survivable.
-			fmt.Fprintf(stderr, "meetings annotate failed: %v\n", err)
-			fmt.Fprintf(stderr, "hint=the batch may or may not have been committed; marking is idempotent, so check with `cassini meetings annotations <meeting-id>` or re-run the same ops\n")
-			return 1
-		}
-	}
-	return reportMeetingsError(stderr, verb, cfg, err)
+	return reportMeetingsError(stderr, "annotate", cfg, err)
 }
 
-// meetingsServerReason is the app's own explanation of a refusal, from its
-// {"error": "..."} body, flattened to one line. It falls back to the start of
-// the raw body, which is what a proxy's error page sends.
+// meetingsServerReason is the app's {"error": "..."} on one line, or the start
+// of the raw body, which is what a proxy's error page sends.
 func meetingsServerReason(err error) string {
 	var httpErr *meetingsHTTPError
 	if !errors.As(err, &httpErr) {
@@ -728,9 +527,8 @@ func meetingsServerReason(err error) string {
 	return oneLineField(httpErr.Snippet)
 }
 
-// writeMeetingsAnswerJSON re-emits the app's answer as it was sent, indented,
-// so the server's payload stays the single contract — as `list --json` keeps
-// the catalog's.
+// writeMeetingsAnswerJSON re-emits the app's answer as sent, indented, so the
+// server's payload stays the single contract.
 func writeMeetingsAnswerJSON(stdout, stderr io.Writer, verb string, body []byte) int {
 	var out bytes.Buffer
 	if err := json.Indent(&out, body, "", "  "); err != nil {
@@ -748,15 +546,10 @@ func writeMeetingsAnswerJSON(stdout, stderr io.Writer, verb string, body []byte)
 // describeMeetingsTarget renders what a mark covers: "meeting", or where in the
 // recording to listen, as `meetings search` prints a moment.
 func describeMeetingsTarget(target portable.AnnotationTarget) string {
-	switch target.Kind {
-	case portable.AnnotationTargetMeeting:
-		return "meeting"
-	case portable.AnnotationTargetTimeRange:
-		if target.StartMS != nil && target.EndMS != nil {
-			return formatMeetingsSpan(*target.StartMS, *target.EndMS)
-		}
+	if target.Kind == portable.AnnotationTargetTimeRange && target.StartMS != nil && target.EndMS != nil {
+		return formatMeetingsSpan(*target.StartMS, *target.EndMS)
 	}
-	return meetingsToken(target.Kind)
+	return inspect.Token(target.Kind)
 }
 
 func meetingsResolved(value *bool) string {
@@ -764,27 +557,4 @@ func meetingsResolved(value *bool) string {
 		return "-"
 	}
 	return meetingsYesNo(*value)
-}
-
-// meetingsToken renders a server-supplied value that sits mid-line in a
-// key=value record. A value that is one plain token passes through; any other
-// is Go-quoted.
-//
-// blankMeetingsDash is not enough here. It keeps a value on one line, but a
-// space survives it, and that is fine only for the last field of a line — a
-// title. Mid-line, a Nextcloud user id with a space in it (Nextcloud allows
-// them) or a tag label would run into the next field, and one shaped like
-// "x resolved=yes" would add a fact. Quoting keeps every value one field;
-// strconv.Quote also escapes the control, separator and bidi characters
-// oneLineField flattens.
-func meetingsToken(value string) string {
-	if value == "" {
-		return "-"
-	}
-	for _, r := range value {
-		if unicode.IsSpace(r) || !unicode.IsPrint(r) || r == '"' || r == '=' || r == ',' {
-			return strconv.Quote(value)
-		}
-	}
-	return value
 }
