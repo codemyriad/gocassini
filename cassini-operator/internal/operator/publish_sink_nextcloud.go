@@ -6,11 +6,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
+	"sync"
 )
 
 // The nextcloud-files sink delivers a published meeting into the canonical
@@ -35,8 +39,14 @@ import (
 //	   │        PROPPATCH deny  ← owner-only, unconditional
 //	   │        PUT (bytes)     ← fileid unchanged, so the deny still covers it
 //	   │        PROPFIND        ← post-condition: stored length AND rules
+//	   │      a .opus that is ALREADY there is a re-delivery, and its bytes are
+//	   │      the sealed audio plus the marks on the delivered copy (D-737):
+//	   │        GET             ← the delivered copy, at the gate's ETag
+//	   │        annotate carry  ← its marks into a staged copy of the sealed file
+//	   │        PUT If-Match    ← 412: a mark landed meanwhile; read it again
 //	   ├─ 5. per-file ACL: the meeting's audience                ← access, THEN
-//	   └─ 6. upsert this meeting into catalog.json → PUT         ← index, LAST
+//	   ├─ 6. upsert this meeting into catalog.json → PUT         ← index, LAST
+//	   └─ 7. record the delivered marks in the projection   ← never fails a publish
 //
 // Steps 4-6 are ordered the way they are because of D-594: the object must never
 // be reachable with content in it and no rules on it, and it must never be
@@ -72,6 +82,17 @@ type nextcloudFilesPublishSink struct {
 	// participant fetcher, which live on the Runtime, so it is injected rather
 	// than reached for.
 	applyAccess func(ctx context.Context, jobID string) error
+	// cassiniBin is the CLI a re-delivery carries the delivered copy's marks
+	// forward with (D-737). Empty means no CLI: the recording is delivered as it
+	// always was, which loses nothing, because the routes that write marks are
+	// not mounted without one either (newAnnotationService).
+	cassiniBin string
+	// annotations is the marks projection, read at delivery time rather than
+	// captured at construction so the order the Runtime is assembled in does not
+	// matter. Nil, or answering nil, means there is no projection to update.
+	annotations func() annotationIndex
+	// noCLIOnce keeps "marks are not carried here" to one line per process.
+	noCLIOnce sync.Once
 }
 
 func (s *nextcloudFilesPublishSink) Name() string { return publishSinkNextcloudFiles }
@@ -230,10 +251,16 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	}
 	alreadyIndexed := catalogNamesMeeting(existingCatalog, d.JobID)
 
+	// What each re-delivered recording now carries, as carry reported it, for
+	// the projection once the delivery is complete (step 7).
+	carried := map[string]annotateResult{}
 	for _, item := range uploads {
-		fresh, err := s.deliverAsset(ctx, item, alreadyIndexed, accessControlled)
+		fresh, marks, err := s.deliverAsset(ctx, item, alreadyIndexed, accessControlled)
 		if err != nil {
 			return "", err
+		}
+		if marks != nil {
+			carried[item.remote] = *marks
 		}
 		if item.remote == opusRemote && fresh {
 			audienceNeeded = true
@@ -260,6 +287,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	if err := s.upsertRemoteCatalog(ctx, existingCatalog, catalogMissing, incoming, catalogEntryOverlay{RoomName: d.RoomName}, accessControlled, root); err != nil {
 		return "", err
 	}
+	s.indexDeliveredMarks(ctx, uploads, carried)
 	return root, nil
 }
 
@@ -306,6 +334,12 @@ type upload struct {
 // The last row is deliberate: a re-delivery replaces content, never access. An
 // audience someone widened by hand in the Files UI survives it.
 //
+// Wherever the leaf is present, "bytes" means the sealed audio plus the marks
+// the delivered copy carries, not the sealed file alone (D-737): marks written
+// since the last publish live only on the delivered copy, so replacing it with
+// the sealed file erases them. See putOverDeliveredCopy. marks is carry's report
+// of what was delivered, nil where nothing was carried.
+//
 // None of it applies in the default model (D-616). There the whole reason for
 // the dance is absent: the tree is private to the service account, no other
 // account has a mount of it, and nothing about a leaf's existence discloses
@@ -313,9 +347,23 @@ type upload struct {
 // file to PROPPATCH rules onto it would not merely be wasted work — the
 // PROPPATCH would be REJECTED, because `nc:acl-list` is only settable inside a
 // Team folder with advanced ACL, and every publish would fail.
-func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item upload, alreadyIndexed, accessControlled bool) (audienceNeeded bool, err error) {
+func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item upload, alreadyIndexed, accessControlled bool) (audienceNeeded bool, marks *annotateResult, err error) {
 	if !accessControlled {
-		return false, s.putAssetBytes(ctx, item, accessControlled)
+		if !s.carriesMarks(item) {
+			return false, nil, s.putAssetBytes(ctx, item, accessControlled)
+		}
+		// This model has no health gate, so the one thing a re-delivery needs to
+		// know — is a delivered copy there, and at which version — is asked here,
+		// and only for a leaf that could be carrying marks.
+		state, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, item.remote)
+		if err != nil {
+			return false, nil, fmt.Errorf("inspect %s: %w", item.remote, err)
+		}
+		if !state.Exists {
+			return false, nil, s.putAssetBytes(ctx, item, accessControlled)
+		}
+		marks, err := s.putOverDeliveredCopy(ctx, item, state, accessControlled)
+		return false, marks, err
 	}
 	if item.isDir {
 		// A legacy artifactPath export is a directory, which has no single leaf
@@ -323,30 +371,53 @@ func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item uploa
 		// rather than a few skipped steps — nothing that should ever be fed to
 		// the repair branch, where a missing rule set would DELETE the tree.
 		// This asset shape is carried exactly as it was before D-594.
-		return false, s.putAssetBytes(ctx, item, accessControlled)
+		return false, nil, s.putAssetBytes(ctx, item, accessControlled)
 	}
 
 	state, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, item.remote)
 	if err != nil {
-		return false, fmt.Errorf("inspect %s: %w", item.remote, err)
+		return false, nil, fmt.Errorf("inspect %s: %w", item.remote, err)
 	}
 
+	// content is what the final PUT sends: the sealed file, unless the repair
+	// below is about to delete a delivered copy whose marks must survive it.
+	content := item
 	switch {
 	case state.Exists && !everyoneRuleGovernsRead(state.Rules):
 		// The D-594 state itself: a delivered recording carrying no broad-group
 		// rule, readable by every account. Repair it before replacing it —
 		// deleting it first would only move the exposure into a trash every
 		// account can read.
+		//
+		// Its marks are carried out FIRST, because the repair deletes the leaf
+		// and every mark on it. The content PUT that follows is unconditional:
+		// the leaf is then the empty reservation createProtectedLeaf made, and
+		// no writer can commit a mark to an empty file. What this cannot see is
+		// a mark committed between the fetch and the DELETE — a window of two
+		// requests, on a leaf that is already in a state nothing should leave it
+		// in (selfHealLeafProtection rules such leaves in place at startup).
+		if s.carriesMarks(item) {
+			dir, cleanup, err := newCarryDir(item)
+			if err != nil {
+				return false, nil, err
+			}
+			defer cleanup()
+			staged, result, err := s.stageDeliveredMarks(ctx, item, dir)
+			if err != nil {
+				return false, nil, err
+			}
+			content, marks = staged, &result
+		}
 		if err := s.repairUnprotectedLeaf(ctx, item.remote); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if err := s.createProtectedLeaf(ctx, item); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		audienceNeeded = true
 	case !state.Exists:
 		if err := s.createProtectedLeaf(ctx, item); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		audienceNeeded = true
 	default:
@@ -361,12 +432,247 @@ func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item uploa
 		// step, so the baseline is somebody's decision and not our unfinished
 		// work — leave it alone.
 		audienceNeeded = !audienceApplied(state.Rules) && !alreadyIndexed
+		if s.carriesMarks(item) {
+			// Content only, still: carrying marks is a PUT, never a PROPPATCH, so
+			// "a re-delivery replaces content, never access" holds unchanged.
+			marks, err := s.putOverDeliveredCopy(ctx, item, state, accessControlled)
+			if err != nil {
+				return false, nil, err
+			}
+			return audienceNeeded, marks, nil
+		}
 	}
 
-	if err := s.putAssetBytes(ctx, item, accessControlled); err != nil {
-		return false, err
+	if err := s.putAssetBytes(ctx, content, accessControlled); err != nil {
+		return false, nil, err
 	}
-	return audienceNeeded, nil
+	return audienceNeeded, marks, nil
+}
+
+// maxCarryAttempts bounds how often a re-delivery re-reads a recording that
+// keeps changing under it. Three, as the write endpoint uses: a person marking
+// by hand does not commit three times inside one fetch-carry-PUT, so a third
+// refusal means something is writing continuously and a later rerun is the
+// better moment.
+const maxCarryAttempts = 3
+
+// putOverDeliveredCopy re-delivers item over a recording that is already in the
+// archive, carrying the marks written on it since it was delivered (D-737).
+//
+// Marks exist ONLY on the delivered copy — the write endpoint rewrites that file
+// and nothing else — so a re-delivery of the sealed file on its own silently
+// erases every one of them. It is D-640's trap again: "writing it into
+// catalog.json alone does not last; the exporter re-derives on every
+// republish."
+//
+//	PROPFIND   ETag E                  (the health gate's, on the first attempt)
+//	GET        the delivered copy
+//	carry      its marks → a staged copy of the sealed file
+//	PUT        the staged copy, If-Match: E
+//	  412  →   someone committed a mark after the GET: start again, ≤ 3 times
+//
+// If-Match is what keeps this from being a lost update of its own. Without it a
+// mark committed between the GET and the PUT would be overwritten by a staged
+// copy that never saw it — the same erasure, just narrower.
+func (s *nextcloudFilesPublishSink) putOverDeliveredCopy(ctx context.Context, item upload, state ncLeafState, accessControlled bool) (*annotateResult, error) {
+	dir, cleanup, err := newCarryDir(item)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	for attempt := 1; ; attempt++ {
+		if attempt > 1 {
+			if state, err = s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, item.remote); err != nil {
+				return nil, fmt.Errorf("inspect %s: %w", item.remote, err)
+			}
+			if !state.Exists {
+				// Removed by hand mid-rerun. Re-deriving its access from here
+				// would be guessing; the next publish takes the absent branch.
+				return nil, fmt.Errorf("refusing to publish %s: it disappeared while this rerun was carrying its marks forward; re-run the publish", item.remote)
+			}
+		}
+		if state.ETag == "" {
+			// Sabre always reports one. Without it the PUT could only be
+			// unconditional, which is the lost update If-Match is here to stop.
+			return nil, fmt.Errorf("refusing to publish %s: Nextcloud reported no ETag for it, so it cannot be replaced without risking a mark written meanwhile; re-run the publish", item.remote)
+		}
+		staged, result, err := s.stageDeliveredMarks(ctx, item, dir)
+		if err != nil {
+			return nil, err
+		}
+		err = s.putAssetBytesIfMatch(ctx, staged, accessControlled, state.ETag)
+		if err == nil {
+			return &result, nil
+		}
+		if !errors.Is(err, errDAVPreconditionFailed) {
+			return nil, err
+		}
+		if attempt >= maxCarryAttempts {
+			return nil, fmt.Errorf("refusing to publish %s: it changed under this rerun %d times — marks are being written to it right now; re-run the publish: %w",
+				item.remote, attempt, err)
+		}
+		s.logf("nc files: %s changed while its marks were being carried (attempt %d of %d) — reading it again", item.remote, attempt, maxCarryAttempts)
+	}
+}
+
+// stageDeliveredMarks fetches the delivered copy of item and has carry write its
+// marks into a staged copy of the sealed file. It answers the staged copy —
+// what the PUT sends, and what the size post-check compares against — and
+// carry's report of it.
+//
+// The sealed file is never modified: carry reads it and writes a copy. So the
+// seal preflight in Deliver, which ran before any of this, still proves exactly
+// what it always did, that the audio leaving is the audio this job sealed; and
+// carry's own verification proves the rest, that the staged copy is that audio
+// unchanged plus the delivered copy's marks. Together: the bytes leaving are the
+// sealed audio plus the marks already delivered (spec/cassini-opus-audio-
+// integrity-v1.md, "Three digests").
+func (s *nextcloudFilesPublishSink) stageDeliveredMarks(ctx context.Context, item upload, dir string) (upload, annotateResult, error) {
+	delivered := filepath.Join(dir, "delivered.opus")
+	staged := filepath.Join(dir, "staged.opus")
+	// A retry reuses the directory, and nothing of the previous attempt may leak
+	// into this one — least of all a staged copy of marks read at a stale ETag.
+	for _, p := range []string{delivered, staged} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return upload{}, annotateResult{}, err
+		}
+	}
+	if _, _, err := s.cfg.davDownloadFile(ctx, s.client, ncRecordingsOwner, item.remote, delivered); err != nil {
+		return upload{}, annotateResult{}, fmt.Errorf("fetch the delivered %s to carry its marks: %w", item.remote, err)
+	}
+	result, err := runAnnotateCarry(ctx, s.cassiniBin, delivered, item.local, staged)
+	if err != nil {
+		return s.sealedIfDeliveredIsUnreadable(ctx, item, delivered, err)
+	}
+	info, err := os.Stat(staged)
+	if err != nil {
+		return upload{}, annotateResult{}, fmt.Errorf("carry the marks on %s: it reported success and wrote nothing: %w", item.remote, err)
+	}
+	if result.Resolved != nil && !*result.Resolved {
+		// Silvio's rule: marks made against different audio are kept, with the
+		// binding they were made under, and flagged — never dropped, and never
+		// redrawn against audio they were not made for. So this is a delivery,
+		// not a failure. Logged because somebody will ask why their ranges
+		// stopped resolving after a rerun.
+		s.logf("nc files: %s: %d mark(s) on the delivered copy were made against different audio — carried unresolved and delivered", item.remote, result.Carried)
+	}
+	return upload{local: staged, remote: item.remote, size: info.Size()}, result, nil
+}
+
+// sealedIfDeliveredIsUnreadable decides what a failed carry means.
+//
+// Exactly one failure is safe to deliver past: the delivered copy is not a
+// recording at all — the zero-byte reservation a first publish leaves when it
+// dies before its content lands, or bytes an interrupted upload truncated.
+// Nothing could have committed a mark into either (apply cannot read them), so
+// there is nothing to carry, and the sealed file goes as it is — still under
+// If-Match. Refusing instead would wedge the meeting: every rerun would fetch
+// the same unreadable copy and fail on it forever.
+//
+// Anything else fails the publish, because delivering past it is precisely the
+// silent loss of every mark this exists to prevent. The CLI is asked to read
+// each file on its own to tell the two apart: the delivered copy must be
+// unreadable AND the sealed file readable, which puts the fault in the
+// delivered bytes rather than in the CLI.
+func (s *nextcloudFilesPublishSink) sealedIfDeliveredIsUnreadable(ctx context.Context, item upload, delivered string, carryErr error) (upload, annotateResult, error) {
+	if _, err := runAnnotateShow(ctx, s.cassiniBin, delivered); err == nil {
+		return upload{}, annotateResult{}, fmt.Errorf("carry the marks on %s into this rerun: %w", item.remote, carryErr)
+	}
+	sealed, err := runAnnotateShow(ctx, s.cassiniBin, item.local)
+	if err != nil {
+		return upload{}, annotateResult{}, fmt.Errorf("carry the marks on %s into this rerun: %w (and the CLI cannot read the sealed file either: %v)", item.remote, carryErr, err)
+	}
+	s.logf("nc files: the delivered %s is not a readable recording, so it carries no marks — delivering the sealed file (%v)", item.remote, carryErr)
+	return item, sealed, nil
+}
+
+// carriesMarks reports whether a re-delivery of item has marks to carry forward:
+// only a recording carries them, and only the CLI can move them.
+func (s *nextcloudFilesPublishSink) carriesMarks(item upload) bool {
+	if item.isDir || !strings.HasSuffix(item.remote, ".opus") {
+		return false
+	}
+	if strings.TrimSpace(s.cassiniBin) == "" {
+		s.noCLIOnce.Do(func() {
+			s.logf("nc files: no cassini binary configured — a re-delivery replaces a recording without carrying marks forward; none can exist here, because the routes that write them are not mounted without one")
+		})
+		return false
+	}
+	return true
+}
+
+// newCarryDir makes the scratch directory a re-delivery holds the delivered copy
+// and the staged one in. Beside the sealed file rather than in the system temp
+// dir: on the operator's own volume like the recording itself (a /tmp on tmpfs
+// would hold two recordings in memory), and inside the attempt site, which a
+// successful publish removes anyway. Removed on return either way — the app
+// keeps no copy of a delivered recording (D-550).
+func newCarryDir(item upload) (string, func(), error) {
+	dir, err := os.MkdirTemp(filepath.Dir(item.local), ".carry-")
+	if err != nil {
+		return "", nil, fmt.Errorf("carry scratch for %s: %w", item.remote, err)
+	}
+	return dir, func() { _ = os.RemoveAll(dir) }, nil
+}
+
+// publishAnnotationsUnreadable is the projection's reason for a delivered
+// recording whose marks could not be read back or recorded.
+const publishAnnotationsUnreadable = "marks-unreadable"
+
+// indexDeliveredMarks records what each delivered recording now carries in the
+// marks projection (D-737), once the delivery is complete — the file first, the
+// projection second, the order a mark write commits in.
+//
+// A re-delivery already has carry's report of the staged copy it delivered. A
+// first publish delivered the sealed file itself, which is still on disk, so it
+// is read there rather than fetched back. Nothing here can fail a publish: the
+// projection is rebuildable, and a recording it could not read is recorded
+// unavailable, so the vocabulary reports partial coverage rather than a false
+// complete one.
+func (s *nextcloudFilesPublishSink) indexDeliveredMarks(ctx context.Context, uploads []upload, carried map[string]annotateResult) {
+	if s.annotations == nil {
+		return
+	}
+	index := s.annotations()
+	if index == nil {
+		return
+	}
+	for _, item := range uploads {
+		if item.isDir || !strings.HasSuffix(item.remote, ".opus") {
+			continue
+		}
+		// The projection's join key: the delivered leaf's basename, the same
+		// string the per-caller visibility scan returns.
+		name := path.Base(item.remote)
+		result, ok := carried[item.remote]
+		if !ok {
+			if strings.TrimSpace(s.cassiniBin) == "" {
+				// Nothing to read marks with — and, for the same reason, none to read.
+				continue
+			}
+			var err error
+			if result, err = runAnnotateShow(ctx, s.cassiniBin, item.local); err != nil {
+				s.markAnnotationsUnavailable(ctx, index, name, fmt.Errorf("read marks: %w", err))
+				continue
+			}
+		}
+		if err := index.Record(ctx, name, result); err != nil {
+			s.markAnnotationsUnavailable(ctx, index, name, fmt.Errorf("record marks: %w", err))
+		}
+	}
+}
+
+func (s *nextcloudFilesPublishSink) markAnnotationsUnavailable(ctx context.Context, index annotationIndex, name string, cause error) {
+	s.logf("annotations index: %s: %v — recorded as unavailable", name, cause)
+	if err := index.MarkUnavailable(ctx, name, publishAnnotationsUnreadable); err != nil {
+		s.logf("annotations index: %s: could not record it unavailable either: %v", name, err)
+	}
+}
+
+func (s *nextcloudFilesPublishSink) logf(format string, args ...any) {
+	if s.logger != nil {
+		s.logger.Printf(format, args...)
+	}
 }
 
 // createProtectedLeaf establishes the leaf with an owner-only ACL and no content.
@@ -412,7 +718,14 @@ func (s *nextcloudFilesPublishSink) repairUnprotectedLeaf(ctx context.Context, r
 // tell. Comparing the stored length against what we sent turns that into a failed
 // publish the operator can re-run.
 func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item upload, accessControlled bool) error {
-	if _, err := s.cfg.davPutFileStatus(ctx, s.client, ncRecordingsOwner, item.remote, item.local, ncRecordingsContentType); err != nil {
+	return s.putAssetBytesIfMatch(ctx, item, accessControlled, "")
+}
+
+// putAssetBytesIfMatch is putAssetBytes made conditional on the stored copy
+// still carrying ifMatch (when set). A refusal wraps errDAVPreconditionFailed
+// and has written nothing, so the read-back below never runs for it.
+func (s *nextcloudFilesPublishSink) putAssetBytesIfMatch(ctx context.Context, item upload, accessControlled bool, ifMatch string) error {
+	if _, _, err := s.cfg.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, item.remote, item.local, ncRecordingsContentType, ifMatch); err != nil {
 		return fmt.Errorf("put %s: %w", item.remote, err)
 	}
 	if item.isDir {
@@ -595,6 +908,13 @@ func newPublishSinkFor(name string, cfg Config, exapp ExAppConfig, rt *Runtime, 
 			logger:      logger,
 			client:      &http.Client{Timeout: ncFilesUploadTimeout},
 			applyAccess: rt.applyNCFilesAccessStrict,
+			cassiniBin:  cfg.CassiniBin,
+			annotations: func() annotationIndex {
+				if rt == nil {
+					return nil
+				}
+				return rt.annotations
+			},
 		}, nil
 	default:
 		return newPublishSink(name, cfg, logger)

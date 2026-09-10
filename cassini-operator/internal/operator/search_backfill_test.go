@@ -289,9 +289,9 @@ func TestBackfillCountsATargetWithNoJoinKeyAsFailed(t *testing.T) {
 // stubArchive stands in for reading a published recording out of Nextcloud.
 func stubArchive(words []searchTranscriptWord, digest string, err error) (searchArchiveReader, *int) {
 	calls := 0
-	return func(context.Context, string) ([]searchTranscriptWord, string, error) {
+	return func(context.Context, string) (searchArchiveCopy, error) {
 		calls++
-		return words, digest, err
+		return searchArchiveCopy{Words: words, Digest: digest}, err
 	}, &calls
 }
 

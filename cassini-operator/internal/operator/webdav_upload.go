@@ -3,7 +3,9 @@ package operator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -264,6 +266,40 @@ func (c ExAppConfig) davPutFileIfMatch(ctx context.Context, client *http.Client,
 		return resp.StatusCode, strings.TrimSpace(resp.Header.Get("ETag")), nil
 	}
 	return resp.StatusCode, "", fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
+}
+
+// davDownloadFile streams relPath, read as userID, into destPath and answers the
+// sha256 of the bytes written. Any non-2xx is an error; status says which, so a
+// caller can tell absence (404) from failure without parsing a message.
+//
+// Streamed rather than read into memory: a long meeting is tens of megabytes.
+func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, userID, relPath, destPath string) (digest string, status int, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
+	if err != nil {
+		return "", 0, err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer drainClose(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", resp.StatusCode, fmt.Errorf("GET %s -> %d", relPath, resp.StatusCode)
+	}
+	file, err := os.Create(destPath)
+	if err != nil {
+		return "", resp.StatusCode, err
+	}
+	defer file.Close()
+	sum := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(file, sum), resp.Body); err != nil {
+		return "", resp.StatusCode, fmt.Errorf("read %s: %w", relPath, err)
+	}
+	if err := file.Sync(); err != nil {
+		return "", resp.StatusCode, err
+	}
+	return hex.EncodeToString(sum.Sum(nil)), resp.StatusCode, nil
 }
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is

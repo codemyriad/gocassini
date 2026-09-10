@@ -2,11 +2,8 @@ package operator
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -48,12 +45,23 @@ import (
 // NO index, and a coarse reference to a real moment beats a meeting that
 // search silently cannot see.
 
-// searchArchiveReader returns the words of one published recording, and the
-// digest of the bytes it read them from.
+// searchArchiveCopy is what reading one published recording yields.
+type searchArchiveCopy struct {
+	Words []searchTranscriptWord
+	// Digest is the sha256 of the bytes read: the container as it stands in the
+	// archive, which every mark commit changes.
+	Digest string
+	// AudioDigest is the copy's own integrity.opusAudioSha256 — identity, which
+	// no mark commit changes (D-737). Empty when the CLI could not report it, in
+	// which case nothing is verified by it.
+	AudioDigest string
+}
+
+// searchArchiveReader reads one published recording.
 //
 // A function rather than a concrete type so backfill stays testable without a
 // Nextcloud, and so a deployment with no archive access simply passes nil.
-type searchArchiveReader func(ctx context.Context, opusName string) ([]searchTranscriptWord, string, error)
+type searchArchiveReader func(ctx context.Context, opusName string) (searchArchiveCopy, error)
 
 // searchDeliveredStateReader reports what the archive itself holds for one
 // recording: whether the published leaf exists, and the sha256 the delivery
@@ -96,23 +104,32 @@ func (c ExAppConfig) archiveDeliveredState() searchDeliveredStateReader {
 // index it fills grants nobody anything.
 func (c ExAppConfig) archiveOpusReader(cassiniBin, workDir string) searchArchiveReader {
 	client := &http.Client{Timeout: archiveOpusReadTimeout}
-	return func(ctx context.Context, opusName string) ([]searchTranscriptWord, string, error) {
+	return func(ctx context.Context, opusName string) (searchArchiveCopy, error) {
 		tmp, err := os.MkdirTemp(workDir, "search-backfill-")
 		if err != nil {
-			return nil, "", fmt.Errorf("temp dir: %w", err)
+			return searchArchiveCopy{}, fmt.Errorf("temp dir: %w", err)
 		}
 		defer os.RemoveAll(tmp)
 
 		local := filepath.Join(tmp, opusName)
 		digest, err := c.downloadArchiveOpus(ctx, client, opusName, local)
 		if err != nil {
-			return nil, "", err
+			return searchArchiveCopy{}, err
 		}
 		words, err := transcriptWordsFromOpus(ctx, cassiniBin, local)
 		if err != nil {
-			return nil, "", err
+			return searchArchiveCopy{}, err
 		}
-		return words, digest, nil
+		read := searchArchiveCopy{Words: words, Digest: digest}
+		// The audio digest is what lets a local bundle be verified against an
+		// archive copy that has since been marked (D-737): the marks moved the
+		// container digest and left the audio alone. A copy whose audio digest
+		// cannot be read is simply not verified by it — the words above still
+		// index it, exactly as before marks existed.
+		if shown, err := runAnnotateShow(ctx, cassiniBin, local); err == nil {
+			read.AudioDigest = strings.ToLower(strings.TrimSpace(shown.AudioOpusSHA256))
+		}
+		return read, nil
 	}
 }
 
@@ -128,40 +145,17 @@ const archiveOpusReadTimeout = 10 * time.Minute
 // bytes that are written, so what gets recorded is the artifact that was
 // actually indexed rather than one the caller was told about.
 func (c ExAppConfig) downloadArchiveOpus(ctx context.Context, client *http.Client, opusName, destPath string) (string, error) {
-	url := c.davFileURL(ncRecordingsOwner, ncArchiveRoot()+"/meetings/"+opusName)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", err
+	digest, status, err := c.davDownloadFile(ctx, client, ncRecordingsOwner, ncArchiveRoot()+"/meetings/"+opusName, destPath)
+	// Branch on STATUS first: absence is a statement about the archive, and
+	// reading it off the error text would report a missing recording as a
+	// transport failure the operator would retry forever.
+	if status == http.StatusNotFound {
+		return "", fmt.Errorf("%s is not in the archive", opusName)
 	}
-	c.setAppAPIDAVHeadersForUser(req, ncRecordingsOwner)
-	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", opusName, err)
 	}
-	defer drainClose(resp.Body)
-	// Branch on STATUS, never on err: a 404 comes back with a nil error, and
-	// reading absence off err would report a missing recording as a transport
-	// failure the operator would retry forever.
-	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("%s is not in the archive", opusName)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("fetch %s -> HTTP %d", opusName, resp.StatusCode)
-	}
-
-	file, err := os.Create(destPath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	digest := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(file, digest), resp.Body); err != nil {
-		return "", fmt.Errorf("read %s: %w", opusName, err)
-	}
-	if err := file.Sync(); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
+	return digest, nil
 }
 
 // transcriptWordsFromOpus asks the cassini CLI to read the transcript back out
