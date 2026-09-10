@@ -606,3 +606,31 @@ func TestNCSinkRepairCarriesTheMarksOutBeforeDeletingTheLeaf(t *testing.T) {
 	}
 	assertLeafProtected(t, w.fakeNCFiles, carryOpus)
 }
+
+// A carry that keeps refusing — marks in a format an older build does not know,
+// after a rollback — must not leave the recording readable by every account on
+// every rerun. The leaf is denied, keeps its marks, and the publish fails.
+func TestNCSinkRepairDeniesTheLeafWhenItsMarksCannotBeCarried(t *testing.T) {
+	w := newWiredNC(t)
+	sink, applied := newCarryingSink(t, w, newFakeAnnotateCLI(t, fakeAnnotateOptions{carryFails: true}))
+	w.mu.Lock()
+	w.files[carryOpus] = []byte("leaked +mark") // delivered, marked, and carrying no rule
+	w.mu.Unlock()
+
+	for _, run := range []string{"one", "two"} {
+		_, err := publishMeetingA(t, sink, run)
+		if err == nil || !strings.Contains(err.Error(), "carry the marks") {
+			t.Fatalf("publish %s: Deliver() error = %v, want the carry failure", run, err)
+		}
+		assertLeafProtected(t, w.fakeNCFiles, carryOpus)
+		if got := w.content(carryOpus); got != "leaked +mark" {
+			t.Fatalf("publish %s: the archive holds %q, want the marked copy kept", run, got)
+		}
+	}
+	// Denied on the first publish; the second finds it protected and fails at
+	// the carry again, touching nothing.
+	assertSequence(t, "reruns", w.sequenceSince(0, carryOpus), "PROPFIND", "GET", "PROPPATCH", "PROPFIND", "GET")
+	if *applied != 0 {
+		t.Errorf("audience applied %d times over a failed publish", *applied)
+	}
+}

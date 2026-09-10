@@ -398,15 +398,23 @@ func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item uploa
 		// in (selfHealLeafProtection rules such leaves in place at startup).
 		if s.carriesMarks(item) {
 			dir, cleanup, err := newCarryDir(item)
+			if err == nil {
+				defer cleanup()
+				var result annotateResult
+				if content, result, err = s.stageDeliveredMarks(ctx, item, dir); err == nil {
+					marks = &result
+				}
+			}
 			if err != nil {
+				// A carry that keeps refusing (marks a rolled-back build cannot read)
+				// must not leave the recording readable by every account on every
+				// rerun: deny it, keep its marks, and fail.
+				if denyErr := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, item.remote, recordingACLRules(nil, false)); denyErr != nil {
+					return false, nil, errors.Join(err, fmt.Errorf("protect unprotected %s: %w", item.remote, denyErr))
+				}
+				s.logf("nc files: %s was delivered without an access rule — denied; its marks could not be carried, so it was not replaced", item.remote)
 				return false, nil, err
 			}
-			defer cleanup()
-			staged, result, err := s.stageDeliveredMarks(ctx, item, dir)
-			if err != nil {
-				return false, nil, err
-			}
-			content, marks = staged, &result
 		}
 		if err := s.repairUnprotectedLeaf(ctx, item.remote); err != nil {
 			return false, nil, err
