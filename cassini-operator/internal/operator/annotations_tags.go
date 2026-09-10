@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -54,6 +55,19 @@ type tagVocabularyResponse struct {
 // serveTags answers GET annotations/tags: the tag vocabulary across the caller's
 // visible meetings, with coverage (design doc §3).
 func (s *annotationService) serveTags(w http.ResponseWriter, r *http.Request, caller string) {
+	// First, as search does it: every answer costs a PROPFIND and a catalog GET
+	// against Nextcloud, exactly as a search does, so the two share one budget
+	// per caller rather than handing a looping agent a second one.
+	if allowed, wait := s.rt.searchLimiter.allow(caller); !allowed {
+		seconds := int(wait.Seconds())
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeJSONError(w, http.StatusTooManyRequests,
+			"too many requests; each one asks Nextcloud what you may read, so they are rate limited — retry shortly")
+		return
+	}
 	store := s.rt.annotationReads()
 	if store == nil {
 		// Checked before Nextcloud is asked anything: a request that cannot be

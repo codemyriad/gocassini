@@ -277,10 +277,24 @@ func (s *annotationService) applyOnce(ctx context.Context, staging string, attem
 		}
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("fetch %s: %w", relPath, err))
 	}
+	// What the recording holds before the batch, so that a batch which changes
+	// nothing can be recognised by its result and cost no upload.
+	inDigest, err := fileSHA256(in)
+	if err != nil {
+		return annotateResult{}, annotateUnavailable(fmt.Errorf("digest %s: %w", in, err))
+	}
 
 	result, err := runAnnotateApply(ctx, s.bin, in, out, ops, opts)
 	if err != nil {
 		return annotateResult{}, annotateApplyFailure(err)
+	}
+	// A batch that changed nothing — a retry of marks already there, an unmark
+	// of one already gone — leaves the bytes as they were, and `cassini annotate`
+	// says so by answering the input's own digest. Re-uploading tens of
+	// megabytes would buy nothing but a new ETag, which would make every other
+	// writer's next attempt retry.
+	if result.ContainerSHA256 != "" && result.ContainerSHA256 == inDigest {
+		return result, nil
 	}
 	info, err := os.Stat(out)
 	if err != nil {
