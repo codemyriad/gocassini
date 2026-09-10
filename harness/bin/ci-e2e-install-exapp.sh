@@ -46,6 +46,12 @@ TEST_USER="${TEST_USER:-e2euser}"
 TEST_USER_PASSWORD="${TEST_USER_PASSWORD:-Tn8mY3qVrJ2x!E2e}"
 APP_SECRET="${APP_SECRET:-$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
 EXPECT_GPU_UNAVAILABLE="${CASSINI_EXPECT_GPU_UNAVAILABLE:-0}"
+STORAGE_MODE="${CASSINI_E2E_STORAGE_MODE:-access_controlled}"
+case "$STORAGE_MODE" in
+  access_controlled) HARNESS_STORAGE_MODE="acl-enabled" ;;
+  default)           HARNESS_STORAGE_MODE="default" ;;
+  *) echo "CASSINI_E2E_STORAGE_MODE must be access_controlled or default, got $STORAGE_MODE" >&2; exit 2 ;;
+esac
 
 mkdir -p "$LOG_DIR"
 
@@ -81,11 +87,15 @@ log "starting Nextcloud core stack on host port $NEXTCLOUD_HOST_PORT"
 # `cassini dev stack up`; plain `up` (no --reset) because the PID-scoped
 # project is fresh by construction.
 export PROJECT_NAME NEXTCLOUD_HOST_PORT
+# The harness and ExApp are given the same explicit model. This script runs
+# both access-controlled and default legs in CI; an undeclared mode is a third,
+# intentionally-unconfigured state and would make neither leg meaningful.
 "$REPO_ROOT/bin/cassini" dev stack up \
   --public-mode local-http \
   --services core \
   --cassini none \
   --recording-backend none \
+  --storage-mode "$HARNESS_STORAGE_MODE" \
   >"$LOG_DIR/stack-up.log" 2>&1 \
   || { tail -n 40 "$LOG_DIR/stack-up.log"; fail "cassini dev stack up failed"; }
 
@@ -119,6 +129,11 @@ log "starting Cassini ExApp container ($IMAGE_REF)"
 # No CASSINI_OPERATOR_BASE_PATH injection: a real AppAPI deploy never sets
 # CASSINI_* vars, so this test relies on the /operator default baked into the
 # runtime image and must catch the image ever losing it.
+#
+# CASSINI_STORAGE_MODE is the one CASSINI_* variable this job does declare, and
+# it has to. Since D-708 nothing falls back: an app that has not been told which
+# storage model to use is UNDECIDED and publishes nothing. The harness uses the
+# matching declaration to construct this leg's substrate.
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \
   --name "$CONTAINER_NAME" \
@@ -131,6 +146,7 @@ docker run -d \
   -e AA_VERSION=5.0.0 \
   -e CASSINI_APPAPI_REQUIRED=true \
   -e NEXTCLOUD_URL="$NEXTCLOUD_URL_INTERNAL" \
+  -e "CASSINI_STORAGE_MODE=$STORAGE_MODE" \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" >/dev/null
 
@@ -297,21 +313,21 @@ substrate_field() {
   substrate_json | jq -r ".$1 // \"\"" 2>/dev/null || echo ""
 }
 
-# (a) POSITIVE: with the two prerequisites — the ONLY manual step a production
-#     admin performs — the whole substrate must appear with no further
-#     configuration. Acceptance criterion 2.
-#
-#     They are enabled explicitly rather than assumed: whether a given Nextcloud
-#     image ships either of them is not this test's contract, and asserting on
-#     the base image's app list would make the result depend on an upstream
-#     packaging decision.
-log "ensuring the two native prerequisites are enabled"
-for app in groupfolders group_everyone; do
-  occ app:install "$app" >/dev/null 2>&1 || true
-  occ app:enable  "$app" >/dev/null 2>&1 \
-    || fail "could not enable required Nextcloud app $app"
-  require_app_enabled "$app"
-done
+# An access-controlled archive needs Group Folders and Everyone Group. Default
+# mode intentionally proves the opposite topology: the service account owns a
+# private root and no Team folder need exist. Recycle after any setup work so
+# the enabled edge observes the final substrate.
+if [[ "$STORAGE_MODE" == "access_controlled" ]]; then
+  log "ensuring the two native prerequisites are enabled"
+  for app in groupfolders group_everyone; do
+    occ app:install "$app" >/dev/null 2>&1 || true
+    occ app:enable  "$app" >/dev/null \
+      || fail "could not enable required Nextcloud app $app"
+    require_app_enabled "$app"
+  done
+else
+  log "default-mode leg requires no access-control substrate"
+fi
 cycle_exapp
 await_substrate provisioned
 
@@ -345,10 +361,25 @@ sink=$(substrate_field publish_sink)
   || fail "expected the resolved sink nextcloud-files, got '$sink'"
 admin_user=$(substrate_field admin_user)
 [[ -n "$admin_user" ]] || fail "the resolved administrator is not reported"
-enabled_prereqs=$(substrate_json | jq '[.prerequisites[] | select(.state == "enabled")] | length' 2>/dev/null || echo 0)
-[[ "$enabled_prereqs" == "2" ]] \
-  || fail "expected both prerequisites reported enabled, got $enabled_prereqs"
-log "OK   /status: provisioned, expected GPU readiness, sink=$sink, admin_user=$admin_user, 2 prerequisites enabled"
+if [[ "$STORAGE_MODE" == "access_controlled" ]]; then
+  enabled_prereqs=$(substrate_json | jq '[.prerequisites[] | select(.state == "enabled")] | length' 2>/dev/null || echo 0)
+  [[ "$enabled_prereqs" == "2" ]] \
+    || fail "expected both prerequisites reported enabled, got $enabled_prereqs"
+fi
+log "OK   /status: provisioned, expected GPU readiness, sink=$sink, admin_user=$admin_user, mode=$STORAGE_MODE"
+
+# The topology probes below can only show that a root happens to be usable. The
+# storage endpoint is the authoritative assertion that this container recorded
+# the model CI declared, rather than merely falling into a compatible shape.
+storage_status_body="$LOG_DIR/operator-storage.json"
+storage_status=$(curl -sS -u "admin:admin" -o "$storage_status_body" -w '%{http_code}' "$SUBSTRATE_PROXY/operator/storage")
+if [[ "$storage_status" != "200" ]] || ! jq -e --arg mode "$STORAGE_MODE" '
+  .mode == $mode and .mode_confirmed == true and .awaiting_choice == false and .ok == true
+' "$storage_status_body" >/dev/null; then
+  log "operator/storage: $(cat "$storage_status_body" 2>/dev/null || true)"
+  fail "operator/storage did not record the declared $STORAGE_MODE mode"
+fi
+log "OK   /storage: declared $STORAGE_MODE mode is resolved and confirmed"
 
 # The USER-readable half of the same verdict. This is the only route that lets
 # someone who is NOT an administrator find out that an install was never
@@ -366,7 +397,7 @@ setup_keys=$(jq -r 'keys | join(",")' "$setup_json" 2>/dev/null || echo "")
   || fail "operator/setup must expose ok+state only — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
 log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_keys)"
 
-# A fresh install must produce a Team folder whose recordings can be DELETED and
+# Access-controlled acceptance: a fresh install must produce a Team folder whose recordings can be DELETED and
 # MOVED across directories. This is D-612's acceptance, asserted live so the flag cannot silently
 # come back: Cassini used to create the folder with Group Folders'
 # acl_default_no_permission, which on v21+ pins the base permission at READ and
@@ -379,6 +410,7 @@ log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_key
 # recording existing. Run from inside the ExApp container using the same
 # act-as-user credential the operator itself uses — the account's password is
 # generated and never stored, so Basic auth is not available to us.
+if [[ "$STORAGE_MODE" == "access_controlled" ]]; then
 d612_probe=$(docker exec "$CONTAINER_NAME" sh -c '
   AUTH=$(printf "cassini:%s" "$APP_SECRET" | base64 -w0)
   ROOT="$NEXTCLOUD_URL/remote.php/dav/files/cassini/Cassini/Recordings"
@@ -468,6 +500,57 @@ if [[ "$propfind_status" != "207" ]]; then
   fail "PROPFIND of Cassini/Recordings/meetings as $TEST_USER expected 207 (a mounted Team folder), got $propfind_status — the tree is in the owner's private home"
 fi
 log "OK   $TEST_USER sees Cassini/Recordings/meetings: it is a Team folder, not a private home"
+
+# THE MIRROR. The default model's root is a different top-level directory
+# (`CassiniNoACL`), and its whole safety argument is that nobody else has a mount
+# of it. On an ACCESS-CONTROLLED install it should not exist at all — and if it
+# ever does, a third account must not be able to see it, because that would mean
+# something had been mounted over the one path the operator serves as the owner.
+propfind_status=$(curl -sS -X PROPFIND -u "$TEST_USER:$TEST_USER_PASSWORD" -H 'Depth: 1' \
+  -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/remote.php/dav/files/$TEST_USER/CassiniNoACL/Recordings")
+if [[ "$propfind_status" != "404" ]]; then
+  fail "PROPFIND of CassiniNoACL/Recordings as $TEST_USER returned $propfind_status, want 404 — the default mode's root must be private to the ${RECORDINGS_OWNER:-cassini} account, and anything mounted there would be served to every caller as its owner"
+fi
+log "OK   $TEST_USER cannot see CassiniNoACL/Recordings: the default mode's root is private"
+else
+  # Default-mode acceptance: the service account's own directory is the only
+  # archive. Check it as the owner via AppAPI, then prove that a third account
+  # has no mount of it. This is deliberately not a Team-folder ACL check.
+  occ user:info cassini >/dev/null 2>&1 \
+    || fail "the cassini service account was not created by the install"
+  log "OK   the cassini service account exists"
+
+  default_root_status=$(docker exec "$CONTAINER_NAME" sh -c '
+    AUTH=$(printf "cassini:%s" "$APP_SECRET" | base64 -w0)
+    curl -sS -o /dev/null -w "%{http_code}" -X PROPFIND -H "Depth: 1" \
+      -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" \
+      "$NEXTCLOUD_URL/remote.php/dav/files/cassini/CassiniNoACL/Recordings/meetings"
+  ' 2>/dev/null || echo 000)
+  [[ "$default_root_status" == "207" ]] \
+    || fail "the service account cannot inspect CassiniNoACL/Recordings/meetings (PROPFIND -> $default_root_status)"
+  log "OK   the default archive exists in the service account's private Files tree"
+
+  propfind_status=$(curl -sS -X PROPFIND -u "$TEST_USER:$TEST_USER_PASSWORD" -H 'Depth: 1' \
+    -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/remote.php/dav/files/$TEST_USER/CassiniNoACL/Recordings")
+  [[ "$propfind_status" == "404" ]] \
+    || fail "PROPFIND of CassiniNoACL/Recordings as $TEST_USER returned $propfind_status, want 404 — the default root must remain private to cassini"
+  log "OK   $TEST_USER cannot see CassiniNoACL/Recordings"
+
+  # Group Folders is optional in default mode. If an image supplies it anyway,
+  # its management API must still confirm that Cassini did not create a Team
+  # folder merely because the app was enabled.
+  if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q '  - groupfolders:'; then
+    gf_json="$LOG_DIR/groupfolders-default.json"
+    curl -sS -u "admin:admin" -H 'OCS-APIRequest: true' \
+      "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/index.php/apps/groupfolders/folders?format=json" \
+      -o "$gf_json" || fail "could not list Team folders"
+    jq -e '[.ocs.data[]? | select(.mount_point == "Cassini")] | length == 0' "$gf_json" >/dev/null \
+      || fail "default mode created a Cassini Team folder"
+  fi
+  log "OK   default mode has no Cassini Team folder"
+fi
 
 
 # --- 7b. Assert proxied routes --------------------------------------------

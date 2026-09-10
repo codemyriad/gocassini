@@ -86,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install xmllint
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+        run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends libxml2-utils
       - name: Wellformed XML check
         run: xmllint --noout appinfo/info.xml
       - name: Required-fields sanity check
@@ -364,7 +364,9 @@ jobs:
       - name: Install host validation tools
         if: needs.classify-changes.outputs.relevant == 'true'
         run: |
-          sudo apt-get update
+          # A vendor apt source we never install from can fail `apt-get update`
+          # (exit 100) and take this step with it. See ci-apt-update.sh.
+          sudo ./scripts/ci-apt-update.sh
           # Portable-image mode probes retained audio inside the image and does
           # not decode speech or require host ffmpeg/ffprobe.
           sudo apt-get install -y --no-install-recommends jq libxml2-utils ffmpeg
@@ -449,7 +451,9 @@ jobs:
 
       - name: Install host validation tools
         run: |
-          sudo apt-get update
+          # A vendor apt source we never install from can fail `apt-get update`
+          # (exit 100) and take this step with it. See ci-apt-update.sh.
+          sudo ./scripts/ci-apt-update.sh
           # ffmpeg supplies both ffmpeg and ffprobe, which the orchestrator
           # preflights before stack up (a contract enforced by
           # test-faithful-host-tools.sh) even on the control path.
@@ -1083,7 +1087,7 @@ jobs:
     name: E2E manual-install proxy + lifecycle (Nextcloud / AppAPI)
     runs-on: ubuntu-latest
     needs: build-image
-    timeout-minutes: 30
+    timeout-minutes: 50
     # Heavy tier: push/dispatch, or a PR labeled `full-ci` (spins up a full
     # Nextcloud + AppAPI install — minutes-expensive).
     if: >-
@@ -1103,6 +1107,13 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
+        run: ./harness/bin/ci-e2e-install-exapp.sh
+
+      - name: Run manual-install default-storage e2e against a fresh Nextcloud + AppAPI
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
+          CASSINI_E2E_STORAGE_MODE: default
         run: ./harness/bin/ci-e2e-install-exapp.sh
 
   # D-684 removed the hosted-CPU Talk/ASR roundtrip. This CUDA job owns the

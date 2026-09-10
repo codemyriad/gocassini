@@ -185,7 +185,7 @@ If the recorder finalized a usable `.run`, the job may continue into build and p
 
 Summary generation is an optional capability layer. Transcripts are never
 rewritten by a model, so a missing summary is the only LLM-shaped output that
-can go missing.
+can go missing from the automatic build pipeline.
 
 ### What to check
 

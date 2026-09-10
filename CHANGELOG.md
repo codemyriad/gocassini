@@ -244,7 +244,7 @@ mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md)
 
 ### Added
 - Cassini marketing and docs microsite (`cassini-microsite/`): homepage, changelog page, and docs section with sidebar navigation.
-- The Cassini microsite is now published at https://gocassini.codemyriad.io.
+- The Cassini microsite is now published at https://gocassini.com.
 - Release tooling for the Nextcloud App Store: a version-ladder CLI
   (`scripts/release-version.sh`), changelog folder (`scripts/fold-changelog.sh`),
   local release-prep orchestrator (`scripts/prepare-release.sh`), App Store

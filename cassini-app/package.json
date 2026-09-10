@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@nextcloud/initial-state": "^3.0.0",
+    "@melt-ui/svelte": "^0.86.6",
     "cassini-viewer": "*"
   },
   "devDependencies": {

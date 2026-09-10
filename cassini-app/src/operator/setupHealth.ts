@@ -23,11 +23,42 @@
 //	                /setup, the USER-readable half that carries the verdict
 //	                and none of the detail.
 
+import type { OperatorPanel } from "../surfaceRouting";
+
 // SetupHealth is GET <base>/setup — readable by any logged-in Nextcloud user.
 export interface SetupHealth {
   ok: boolean;
   state: string;
+  // awaitingChoice says the one thing missing is a DECISION: nobody has told
+  // Cassini which storage model this Nextcloud should use (D-708).
+  //
+  // It changes what BOTH audiences are told. Every other reason recordings
+  // cannot be served reads as "something is broken"; this one reads as "somebody
+  // has to decide", and the two need different sentences and different next
+  // steps. It is a bit, not a detail — it names no account, no path and no
+  // folder id, which is why it is safe on the user-readable half.
+  awaitingChoice: boolean;
+  // What this deployment's AI configuration allows, or null when the operator
+  // did not say — an install older than D-722, or a build serving no operator
+  // at all. Null is a THIRD state and not a default: silence must read as
+  // "unknown", never as "not configured", exactly as the catalog's hasSummary
+  // does. Nothing renders an unconfigured notice from a question that was
+  // never answered.
+  features: SetupFeatures | null;
 }
+
+// SetupFeatures is the readiness signal (D-722): the two questions every
+// "not configured yet" state in the app reduces to. Both are one bit — the
+// endpoint, the model and the key are ADMIN-only and stay that way.
+export interface SetupFeatures {
+  // A recording will be summarised: the step is on and still resolves to an
+  // endpoint.
+  summaries: boolean;
+  // At least one endpoint exists, which is all insight creation needs.
+  insights: boolean;
+}
+
+export type SetupFeature = "summaries" | "insights";
 
 // RecordingsAccess is the `recordings_access` block of GET <base>/status —
 // ADMIN-only, and the only place the actionable detail exists.
@@ -36,6 +67,16 @@ export interface RecordingsAccess {
   state: string;
   step: string;
   detail: string;
+  // mode is the storage model this archive is under (D-616): "default",
+  // "access_controlled", or "" when no preflight has resolved one. It decides
+  // which prerequisite is worth naming — the default model needs no Nextcloud
+  // app at all, so telling its administrator to install two would send them
+  // after the wrong thing.
+  mode: string;
+  // modeConfirmed says a person (or a dev/CI deploy option) chose the mode. An
+  // unconfirmed mode governs where the archive is and still refuses to publish,
+  // because the two models differ in who can read a recording.
+  modeConfirmed: boolean;
   prerequisites: { name: string; state: string }[];
 }
 
@@ -43,6 +84,11 @@ export interface SetupNoticeStep {
   label: string;
   // Shell lines to run, verbatim. Empty when the step is not a command.
   commands: string[];
+  // action turns a step into something to PRESS rather than to find. "setup"
+  // opens the Setup tab, which since D-708 is the only sanctioned route to a
+  // storage decision — telling an administrator to go and look for a tab is a
+  // step they have to perform on the app's behalf.
+  action?: "setup";
 }
 
 // SetupNotice is everything the panel renders. The copy lives HERE, not in the
@@ -82,6 +128,51 @@ const NATIVE_APP_NAMES: Record<string, string> = {
   group_everyone: "Everyone Group",
 };
 
+// The dedicated recordings owner, and the narrow group that gives it a
+// write-capable mount. Both ids are compile-time constants in the operator
+// (webdav_upload.go / nc_provision.go), so they are literals here too.
+const SERVICE_ACCOUNT = "cassini";
+const SERVICE_ACCOUNT_GROUP = "cassini";
+
+// Machine-readable steps this file branches on. They are the operator's own,
+// from nc_storage_probe.go — keyed rather than matched on prose so a reworded
+// message cannot silently change which instructions an administrator gets.
+const SERVICE_ACCOUNT_STEP = "owner_account";
+const MODE_MISMATCH_STEP = "mode_mismatch";
+
+const SERVICE_ACCOUNT_SETUP: SetupNoticeStep = {
+  label: `Create the ${SERVICE_ACCOUNT} account and its group. Cassini does not create accounts for you`,
+  commands: [
+    `occ group:add ${SERVICE_ACCOUNT_GROUP}`,
+    `occ user:add --group=${SERVICE_ACCOUNT_GROUP} ${SERVICE_ACCOUNT}`,
+  ],
+};
+
+// The offer, not the recipe (D-671). Cassini can now perform most of its own
+// setup, as the administrator, using Nextcloud's own password confirmation — so
+// the first thing to say is "there is a button", and the commands become the
+// alternative rather than the only way.
+const SETUP_TAB_OFFER: SetupNoticeStep = {
+  label:
+    "Open the Setup tab. Cassini can make these changes for you — Nextcloud will ask you " +
+    "to confirm your password, and Cassini never sees it",
+  commands: [],
+  action: "setup",
+};
+
+// The decision, which is a different offer from the setup one: nothing is
+// missing and nothing is broken, and the button is the whole remedy.
+const CHOOSE_STORAGE_OFFER: SetupNoticeStep = {
+  label: "Open the Setup tab and choose where recordings are kept",
+  commands: [],
+  action: "setup",
+};
+
+// Machine-readable steps for the two states that are a question rather than a
+// fault (D-708). Keyed rather than matched on prose, like every other step here.
+const MODE_UNDECIDED_STEP = "storage_mode_undecided";
+const MODE_UNCONFIRMED_STEP = "storage_mode_unconfirmed";
+
 const RERUN_SETUP: SetupNoticeStep = {
   // Provisioning is driven by the AppAPI enabled callback, so re-running it
   // means re-firing that edge. A container restart alone does not (D-541).
@@ -114,6 +205,12 @@ export async function fetchSetupHealth(
     const response = await fetchImpl(url, {
       method: "GET",
       headers: { Accept: "application/json" },
+      // Same reason catalog.json is fetched this way: AppAPI caches a proxied
+      // GET for an hour, and both answers here change the moment an
+      // administrator acts — finishing setup, or configuring an endpoint. A
+      // cached one would leave the app telling everyone the deployment is
+      // still broken long after it was fixed.
+      cache: "no-store",
     });
     if (response.status !== 200) {
       return null;
@@ -128,7 +225,25 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
   if (!isRecord(body) || typeof body.ok !== "boolean" || typeof body.state !== "string") {
     return null;
   }
-  return { ok: body.ok, state: body.state };
+  // Absent reads as false, which is the right degrade for an operator that
+  // predates the field: it had already chosen a mode on its own, so the notice
+  // it produces is the ordinary "something is broken" one.
+  return {
+    ok: body.ok,
+    state: body.state,
+    awaitingChoice: body.awaiting_choice === true,
+    features: readSetupFeatures(body.features),
+  };
+}
+
+// readSetupFeatures insists on both booleans or neither. A half-answer is an
+// operator this build does not understand, and guessing the missing half is how
+// a deployment that summarises perfectly well ends up told it does not.
+export function readSetupFeatures(value: unknown): SetupFeatures | null {
+  if (!isRecord(value) || typeof value.summaries !== "boolean" || typeof value.insights !== "boolean") {
+    return null;
+  }
+  return { summaries: value.summaries, insights: value.insights };
 }
 
 // readRecordingsAccess pulls the admin-only detail out of a /status body.
@@ -155,6 +270,8 @@ export function readRecordingsAccess(body: unknown): RecordingsAccess | null {
     state: access.state,
     step: typeof access.step === "string" ? access.step : "",
     detail: typeof access.detail === "string" ? access.detail : "",
+    mode: typeof access.mode === "string" ? access.mode : "",
+    modeConfirmed: access.mode_confirmed === true,
     prerequisites,
   };
 }
@@ -190,24 +307,50 @@ export function buildSetupNotice(options: {
   if (!verdict || verdict.ok) {
     return null;
   }
-  const blocking = blocksBrowsing(verdict.state);
-  const title = blocking ? "Cassini is not set up yet" : "Cassini has not finished setting itself up";
+  // A decision nobody has taken is not a broken install, and saying it is
+  // sends both audiences after the wrong thing (D-708). The administrator has
+  // nothing to fix and one button to press; the person who is not an
+  // administrator is not looking at a fault they should report as one.
+  const awaitingChoice = isAwaitingChoice(health, access);
+  // …and it does not blank the meeting list, which is the difference between an
+  // unmade decision and a broken substrate.
+  //
+  // Every deployed installation upgrades into this state, and in it the operator
+  // has touched nothing: reads are exactly what they were, so an
+  // access-controlled archive still lists for the people it belongs to and a
+  // recorded-but-unconfirmed default one still lists for everybody. Standing in
+  // for the list there would blank a working archive on every existing instance
+  // to report something that is not wrong with it. On a fresh install the list
+  // is empty anyway, so the strip sits above nothing.
+  const blocking = !awaitingChoice && blocksBrowsing(verdict.state);
+  const title = awaitingChoice
+    ? "Cassini needs to be told where recordings are kept"
+    : blocking
+      ? "Cassini is not set up yet"
+      : "Cassini has not finished setting itself up";
   if (!isAdmin) {
     return {
       blocking,
       title,
-      summary: blocking
-        ? "Recordings cannot be shown until an administrator finishes setting Cassini up on " +
-          "this Nextcloud. There is nothing wrong with your account, and nothing for you to fix."
-        : "New recordings will not appear until an administrator finishes setting Cassini up on " +
-          "this Nextcloud. Anything already published is still listed below, and there is " +
-          "nothing wrong with your account.",
+      summary: awaitingChoice
+        ? "Cassini keeps meeting recordings in Nextcloud, and an administrator has to choose " +
+          "which of two ways it does that — the choice decides who can read a recording, so " +
+          "Cassini does not make it on its own. There is nothing wrong with your account, and " +
+          "nothing for you to fix."
+        : blocking
+          ? "Recordings cannot be shown until an administrator finishes setting Cassini up on " +
+            "this Nextcloud. There is nothing wrong with your account, and nothing for you to fix."
+          : "New recordings will not appear until an administrator finishes setting Cassini up on " +
+            "this Nextcloud. Anything already published is still listed below, and there is " +
+            "nothing wrong with your account.",
       steps: [],
       detail: "",
       note: "",
-      shareLabel:
-        "Send this link to an administrator. Opening it as an administrator shows them " +
-        "exactly what is missing and how to fix it.",
+      shareLabel: awaitingChoice
+        ? "Send this link to an administrator. Opening it as an administrator shows them the " +
+          "choice and lets them make it."
+        : "Send this link to an administrator. Opening it as an administrator shows them " +
+          "exactly what is missing and how to fix it.",
       shareUrl: appUrl,
       reference: "",
     };
@@ -245,6 +388,9 @@ export function buildSetupNotice(options: {
 //	unavailable   NOT READABLE. Nothing was provisioned, or the app supplying
 //	              the mount is gone; the per-caller scan finds no mount and the
 //	              catalog fails closed to empty.
+//	              The ONE exception is carved out by the caller rather than here:
+//	              an unmade storage decision reports `unavailable`, and in that
+//	              state the operator has touched nothing — see buildSetupNotice.
 //	degraded      NOT READABLE. The steps that abort (migration, catalog
 //	              migration, root ACL) all run after the mount root has been
 //	              narrowed to owner-only, so nobody can traverse to the
@@ -256,19 +402,103 @@ function blocksBrowsing(state: string): boolean {
   return state !== "unknown";
 }
 
+// isAwaitingChoice reads the bit off whichever half answered.
+//
+// /setup carries it explicitly for everybody; /status carries the step, which is
+// the fallback for an install whose manifest predates the route. Both are
+// checked because an administrator can be reading either.
+function isAwaitingChoice(health: SetupHealth | null, access: RecordingsAccess | null): boolean {
+  if (health?.awaitingChoice) {
+    return true;
+  }
+  const step = access?.step ?? "";
+  return step === MODE_UNDECIDED_STEP || step === MODE_UNCONFIRMED_STEP;
+}
+
 function adminNotice(
   state: string,
   access: RecordingsAccess | null,
 ): { summary: string; steps: SetupNoticeStep[] } {
+  // The decision comes first, before every "something is missing" branch.
+  //
+  // It has to: an instance with no chosen mode very often ALSO has a missing
+  // prerequisite for one of the two models, and sending an administrator to
+  // install an app before they have said which model they want is sending them
+  // after something they may not need at all — the deps-free model needs no
+  // Nextcloud app whatsoever.
+  if (access?.step === MODE_UNDECIDED_STEP) {
+    return {
+      summary:
+        "Cassini keeps recordings in Nextcloud in one of two ways, and they differ in who can " +
+        "read a recording — so it will not choose for you. Nothing is published or recorded " +
+        "until you pick one, and you can change your mind afterwards.",
+      steps: [CHOOSE_STORAGE_OFFER],
+    };
+  }
+  if (access?.step === MODE_UNCONFIRMED_STEP) {
+    return {
+      summary:
+        "Cassini is keeping recordings under one of its two storage models, but nobody chose it — " +
+        "an earlier version recorded it without asking, or a switch was interrupted. Confirm it, " +
+        "or pick the other one. Recordings already published are unaffected and still readable. " +
+        (access.detail || ""),
+      steps: [CHOOSE_STORAGE_OFFER],
+    };
+  }
+  // The service account is the one prerequisite BOTH storage models need:
+  // every recording is written and read as it, in a Team folder and in a
+  // private home alike. It is checked first because in the default model it is
+  // the ONLY thing that can be missing, and the missing-apps branch below would
+  // otherwise send that administrator to install two apps they do not need
+  // (D-616).
+  if (access?.step === SERVICE_ACCOUNT_STEP) {
+    return {
+      summary:
+        "Cassini stores every recording as a dedicated Nextcloud service account, and that " +
+        "account does not exist on this instance. Nothing can be published or read until it does.",
+      steps: [SETUP_TAB_OFFER, SERVICE_ACCOUNT_SETUP, RERUN_SETUP],
+    };
+  }
+  if (access?.step === "storage_mode_declared_conflict") {
+    return {
+      summary:
+        "Cassini's storage mode was set by a deploy option, and this Nextcloud does not match it. " +
+        "That option is for development and CI, where the stack knows what it built — so a " +
+        "disagreement is refused rather than recorded, and nothing has been written down. " +
+        (access.detail || ""),
+      steps: [CHOOSE_STORAGE_OFFER, RERUN_SETUP],
+    };
+  }
+  if (access?.step.startsWith(MODE_MISMATCH_STEP)) {
+    return {
+      summary:
+        "Cassini's storage mode and this Nextcloud disagree about where recordings live, so it " +
+        "will not publish into a place the read side is not looking. " +
+        (access.detail || ""),
+      steps: [
+        {
+          label:
+            "Open the Setup tab and pick the storage mode you want. Switching carries the recordings that are already published, and nothing is removed until they have arrived",
+          commands: [],
+          action: "setup",
+        },
+      ],
+    };
+  }
   const missing = missingNativeApps(access);
-  if (missing.length > 0) {
+  if (missing.length > 0 && access?.mode !== "default") {
     return {
       summary:
         "Cassini keeps recordings in Nextcloud Files and shows each person only the meetings " +
         "they were in. It needs two Nextcloud apps to do that, and an external app cannot " +
         "install them for itself. Until they are enabled, recordings reach nobody.",
       steps: [
+        SETUP_TAB_OFFER,
         {
+          // Installing an app is the one step Cassini may not be able to take:
+          // Nextcloud demands the administrator's password on that request
+          // itself, which Cassini does not have and will not ask for. It tries,
+          // and hands off to Nextcloud's own Apps page when it is refused.
           label: `Install and enable ${describeApps(missing)}, either from Apps in Nextcloud or on the server`,
           commands: missing.map((app) => `occ app:install ${app} && occ app:enable ${app}`),
         },
@@ -313,6 +543,7 @@ function adminNotice(
             "Read the nc provision: lines in the Cassini container log, which name the step and what Nextcloud answered, and fix the cause",
           commands: [],
         },
+        SETUP_TAB_OFFER,
         RERUN_SETUP,
       ],
     };
@@ -325,7 +556,7 @@ function adminNotice(
       "reported the state as " +
       (state || "unknown") +
       (access?.step ? ` and stopped at ${access.step}.` : "."),
-    steps: [RERUN_SETUP],
+    steps: [SETUP_TAB_OFFER, RERUN_SETUP],
   };
 }
 
@@ -358,6 +589,90 @@ function describeApps(ids: string[]): string {
     return described[0];
   }
   return `${described.slice(0, -1).join(", ")} and ${described[described.length - 1]}`;
+}
+
+// --- The unconfigured states (D-722) ---
+//
+// Same discipline as buildSetupNotice above, and for the same reason: the copy
+// is the part worth testing, .svelte files are not unit-tested in this repo, and
+// a wrong sentence about what leaves this deployment is a worse failure than a
+// missing one. NeedsSetupCard renders this and decides nothing.
+
+export interface FeatureNotice {
+  title: string;
+  summary: string;
+  // panel is the operator panel that fixes it, and actionLabel the link to it.
+  // BOTH are empty for anyone who is not an administrator — that panel is ADMIN
+  // at the proxy and its PUT would 403, so offering the control would be
+  // offering a way to fail. They get the fact and who can act on it, which is
+  // the whole of the remedy available to them.
+  panel: OperatorPanel | "";
+  actionLabel: string;
+  // actionTitle is the REMEDY as a heading — "Add a provider to create
+  // insights" — and its presence is what tells NeedsSetupCard to draw the
+  // compact locked card rather than the explanatory block.
+  //
+  // Set only for an administrator looking at an unconfigured capability, which
+  // is the one case where the paragraph is wasted: they know what an endpoint
+  // is, the button is right there, and a warning triangle over three sentences
+  // is in the way. Everyone else, and every run FAILURE, keeps the prose —
+  // "the endpoint rejected the request" is not a state anybody can be expected
+  // to infer from a title.
+  actionTitle?: string;
+  // The compact card's button. Shorter than actionLabel because the title
+  // beside it has already said what is missing, and it is the same words as the
+  // button on the panel it opens.
+  actionShortLabel?: string;
+}
+
+// The one panel behind both facts: providers and the summarise step are edited
+// together in AI providers (Settings.svelte maps `endpoints` -> LLMSettingsPanel).
+const AI_PANEL: OperatorPanel = "endpoints";
+
+// Only an administrator can act, and only they are told there is somewhere to
+// go — see FeatureNotice.panel.
+const ADMIN_ACTION = "Open AI providers";
+// The button on the compact card. Same words as the button on the panel it
+// opens, so the second press is the one the first one promised.
+const ADMIN_ACTION_SHORT = "Add a provider";
+const NOT_YOURS_TO_FIX = " Only a Nextcloud administrator can change that, and there is nothing " +
+  "wrong with your account.";
+
+// buildFeatureNotice returns what to say about a capability this deployment does
+// not have, or null when there is nothing to say — which is BOTH "it is
+// configured" and "nobody answered". A standalone export has no operator to ask,
+// and absence there must not read as "not configured": it is the same three-state
+// rule the catalog's hasSummary follows.
+export function buildFeatureNotice(options: {
+  features: SetupFeatures | null;
+  feature: SetupFeature;
+  isAdmin: boolean;
+}): FeatureNotice | null {
+  const { features, feature, isAdmin } = options;
+  if (features === null || features[feature]) {
+    return null;
+  }
+  const summary =
+    feature === "insights"
+      ? "Asking a question of a set of meetings needs an AI endpoint, and this deployment has " +
+        "none it can reach — either none is configured, or none is switched on for a step. " +
+        "Recording and transcription are unaffected: they run here, and need no endpoint."
+      : "A summary needs an AI endpoint and the summarise step switched on, and this deployment " +
+        "does not have both. Transcripts are unaffected: they are produced here, and need " +
+        "neither.";
+  return {
+    title:
+      feature === "insights" ? "No AI endpoint is available" : "Meetings are not being summarised",
+    summary: isAdmin ? summary : summary + NOT_YOURS_TO_FIX,
+    panel: isAdmin ? AI_PANEL : "",
+    actionLabel: isAdmin ? ADMIN_ACTION : "",
+    actionTitle: isAdmin
+      ? feature === "insights"
+        ? "Add a provider to create insights"
+        : "Add a provider to write summaries"
+      : undefined,
+    actionShortLabel: isAdmin ? ADMIN_ACTION_SHORT : undefined,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

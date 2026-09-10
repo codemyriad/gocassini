@@ -90,7 +90,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install xmllint
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+        run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends libxml2-utils
 
       # Manual dispatch remains useful for repairing historical releases cut
       # before cassini_capture existed. New tags always contain it; old tags
@@ -181,7 +181,7 @@ jobs:
           ref: ${{ needs.validate.outputs.tag }}
 
       - name: Install store-schema validators
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
+        run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
 
       - name: Setup Node for the capture companion
         if: ${{ needs.validate.outputs.companion == 'true' }}

@@ -35,6 +35,20 @@ export interface MeetingCatalogEntry {
   // convention of one publish path.
   jobId?: string;
   attemptNumber?: number;
+  // What the meeting holds, so the list and a selection can be described
+  // without fetching a single .opus (D-716): whether the producer sealed a
+  // summary into the file, and how many words its default transcript carries —
+  // the same count `cassini meetings context` reports, so a selection's total
+  // matches the bundle an agent is later handed.
+  //
+  // Both are optional, and their absence is a THIRD state, not a default. An
+  // archive published before these fields existed says nothing about either,
+  // and that silence must read as "unknown" — never as "no summary", never as
+  // "0 words". `undefined` is what carries it: a consumer that reaches for
+  // `entry.hasSummary` as a boolean, or `entry.wordCount` as a number, has to
+  // narrow it first, so the distinction cannot be lost by accident.
+  hasSummary?: boolean;
+  wordCount?: number;
 }
 
 export interface MeetingCatalog {
@@ -67,21 +81,103 @@ export async function loadMeetingCatalog(
       `Could not load the meeting list (HTTP ${response.status}).`,
     );
   }
-  const catalog = validateMeetingCatalog((await response.json()) as unknown);
+  return materializeCatalog(await response.json(), response.url);
+}
+
+// materializeCatalog validates a catalog payload and rewrites each entry's
+// asset paths against the URL the payload was fetched from.
+//
+// Shared by loadMeetingCatalog and loadMeetingsList so the two cannot drift.
+// Resolving against responseUrl rather than a configured base is what makes
+// both work unchanged in every deployment mode — and it is why the list
+// endpoint's path has a file-shaped last segment: `published/meetings-list`
+// resolves `./meetings/x.opus` to `published/meetings/x.opus`, exactly as
+// `published/catalog.json` does.
+function materializeCatalog(payload: unknown, responseUrl: string): MeetingCatalog {
+  const catalog = validateMeetingCatalog(payload);
   return {
     ...catalog,
     meetings: sortMeetingCatalogEntries(
       catalog.meetings.map((meeting) => ({
         ...meeting,
         artifactPath: meeting.artifactPath
-          ? resolveCatalogAssetUrl(meeting.artifactPath, response.url)
+          ? resolveCatalogAssetUrl(meeting.artifactPath, responseUrl)
           : undefined,
         audioPath: meeting.audioPath
-          ? resolveCatalogAssetUrl(meeting.audioPath, response.url)
+          ? resolveCatalogAssetUrl(meeting.audioPath, responseUrl)
           : undefined,
       })),
     ),
   };
+}
+
+// The operator's meetings-list endpoint (D-701). It answers the same catalog
+// envelope, already filtered to what the calling account may read, and — unlike
+// catalog.json — it reports a substrate failure as an error status rather than
+// as a valid empty list.
+//
+// That distinction is the reason the viewer wants it. catalog.json answers 200
+// with an empty catalog when the per-caller scan fails or the recordings mount
+// is missing, which App.svelte cannot tell from "this account has no meetings":
+// it replaces the list with nothing, and the archive silently blanks. An error
+// status instead throws, and the refresh path keeps the last known-good list
+// while showing what went wrong.
+const MEETINGS_LIST_PATH = "published/meetings-list";
+
+// LoadMeetingsListResult distinguishes "the server answered" from "this
+// deployment does not serve the endpoint at all" — an operator older than
+// D-701, or one publishing to the local sink. Absent is not an error and not an
+// empty list; it means ask catalog.json instead.
+export type LoadMeetingsListResult =
+  | { status: "ok"; catalog: MeetingCatalog }
+  | { status: "absent" };
+
+// resolveMeetingsListUrl returns the endpoint URL, or "" when this build has no
+// operator behind it (a standalone export, or a plain static host) and the
+// question does not arise.
+export function resolveMeetingsListUrl(): string {
+  const viewerBase = readViewerBase();
+  if (!viewerBase) {
+    return "";
+  }
+  return new URL(MEETINGS_LIST_PATH, viewerBase).toString();
+}
+
+export async function loadMeetingsList(): Promise<LoadMeetingsListResult> {
+  const targetUrl = resolveMeetingsListUrl();
+  if (!targetUrl) {
+    return { status: "absent" };
+  }
+  // Same cache stance as catalog.json: the list changes on every publish, and a
+  // cached copy would also pin a visible set that a revocation has since
+  // narrowed.
+  const response = await fetch(targetUrl, { cache: "no-store" });
+  if (response.status === 404) {
+    // The route is not mounted. Distinct from a 502, which means the route
+    // exists and the substrate behind it is broken.
+    return { status: "absent" };
+  }
+  if (!response.ok) {
+    throw new Error(await meetingsListErrorMessage(response));
+  }
+  return { status: "ok", catalog: materializeCatalog(await response.json(), response.url) };
+}
+
+// meetingsListErrorMessage prefers the operator's own sentence over a bare
+// status. The endpoint explains what failed and, deliberately, that the failure
+// is not an empty result — which is exactly what a person looking at a suddenly
+// short meeting list needs to read.
+async function meetingsListErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as unknown;
+    if (isRecord(body) && typeof body.error === "string" && body.error.trim() !== "") {
+      return body.error;
+    }
+  } catch {
+    // A non-JSON body (a proxy error page, a truncated response) is not worth
+    // reporting verbatim; fall through to the status.
+  }
+  return `Could not load the meeting list (HTTP ${response.status}).`;
 }
 
 export function validateMeetingCatalog(value: unknown): MeetingCatalog {
@@ -167,7 +263,31 @@ function validateMeetingCatalogEntry(
     roomName: optionalRoomString(value.roomName),
     jobId: optionalRoomString(value.jobId),
     attemptNumber: optionalPositiveInteger(value.attemptNumber),
+    // Read leniently for the same reason, and with one extra: a value that is
+    // not a flag or not a count reads as unrecorded rather than as a fact, so
+    // a hand-edited catalog cannot talk the list into claiming a summary that
+    // is not there (D-716).
+    hasSummary: optionalBoolean(value.hasSummary),
+    wordCount: optionalWordCount(value.wordCount),
   };
+}
+
+// optionalBoolean reads an optional flag. Only a real boolean is an answer;
+// everything else — missing, null, the string "false" — means "not recorded",
+// which for hasSummary is the unknown state and not the negative one.
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+// optionalWordCount reads an optional transcript length. Zero is kept, unlike
+// the 1-based ordinal above: a meeting whose transcript came back empty really
+// does have no words, and that is a different statement from an entry that
+// never carried a count at all.
+function optionalWordCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return undefined;
+  }
+  return value;
 }
 
 // optionalPositiveInteger reads an optional 1-based ordinal. Anything that is

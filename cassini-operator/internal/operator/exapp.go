@@ -48,6 +48,7 @@ import (
 //   ├── /init                          lifecycle (AppAPI direct call)
 //   ├── /viewer, /viewer/*                 Cassini SPA static (USER per manifest)
 //   ├── /published/*                       site archive       (USER per manifest)
+//   ├── /insights, /insights/*             insight runs       (USER per manifest)
 //   ├── /ui/viewer.js, /ui/viewer.css       embedded Cassini build (USER per manifest)
 //   ├── /img/app.svg                        navigation icon    (USER per manifest)
 //   └── <BasePath>/jobs, /jobs/, /events   operator JSON API  (ADMIN per manifest)
@@ -66,6 +67,7 @@ const (
 	envAppAPIRequired       = "CASSINI_APPAPI_REQUIRED"
 	envViewerDist           = "CASSINI_VIEWER_DIST"
 	envNextcloudURL         = "NEXTCLOUD_URL"
+	envCassiniBin           = "CASSINI_BIN"
 	defaultExAppBindHost    = "0.0.0.0"
 	defaultExAppBindPort    = "8080"
 	viewerURLPrefix         = "/viewer"
@@ -177,7 +179,14 @@ type ExAppConfig struct {
 	// the nextcloud-files sink nothing is ever written to PublishedDir, so
 	// mounting a file server over it would only ever serve staleness.
 	PublishSink string
-	onEnabled   func(enabled bool, edge uint64)
+	// CassiniBin is the Cassini CLI the published routes shell out to, for the
+	// one read surface that renders rather than relays: published/meetings-context
+	// (D-717). Seeded from CASSINI_BIN, which the ExApp images bake, and meant
+	// to be overwritten with the operator's own resolved --cassini-bin — this
+	// struct is loaded before that value exists. Empty means the route is not
+	// served at all rather than served by a binary that may not be there.
+	CassiniBin string
+	onEnabled  func(enabled bool, edge uint64)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -192,6 +201,7 @@ func LoadExAppConfig() (ExAppConfig, error) {
 		AppSecret:    os.Getenv(envAppSecret),
 		NextcloudURL: strings.TrimSpace(os.Getenv(envNextcloudURL)),
 		ViewerDist:   strings.TrimSpace(os.Getenv(envViewerDist)),
+		CassiniBin:   strings.TrimSpace(os.Getenv(envCassiniBin)),
 	}
 	cfg.Active = strings.TrimSpace(cfg.AppSecret) != ""
 	required, err := parseBoolEnv(envAppAPIRequired)
@@ -360,7 +370,7 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 		root.Handle(viewerURLPrefix+"/", viewer)
 	}
 	if localArchive != "" || ncProxy != nil {
-		root.Handle(publishedURLPrefix+"/", publishedHandler(localArchive, publishedURLPrefix, logger, ncProxy))
+		root.Handle(publishedURLPrefix+"/", publishedHandler(localArchive, publishedURLPrefix, logger, ncProxy, c.meetingsContextHandler(logger)))
 	}
 
 	return lifecycle
@@ -688,6 +698,23 @@ func spaHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 	})
 }
 
+// isPublishedArchivePath reports whether a path under the published prefix is
+// archive data rather than a viewer asset.
+//
+// These paths must never fall through to the SPA fallback: a JSON or audio
+// fetch answered with index.html is worse than a miss. Note meetings-list does
+// not collide with the meetings/ prefix — it is a sibling, not a child, so a
+// recording can never be named such that it shadows the endpoint.
+//
+// meetings-context (D-717) is deliberately NOT here. It is the one archive path
+// rendered by the operator rather than relayed from Nextcloud Files, so it is
+// dispatched ahead of the proxy arm and would only 404 if it reached one.
+func isPublishedArchivePath(relPath string) bool {
+	return relPath == "catalog.json" ||
+		relPath == meetingsListPath ||
+		strings.HasPrefix(relPath, "meetings/")
+}
+
 // viewerHandler serves the standalone viewer SPA while preserving the static
 // export layout the viewer expects: catalog.json and meetings/* live next to the
 // SPA entry when Cassini is exported, but in an ExApp they are stored under the
@@ -708,7 +735,7 @@ func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
 		relPath = strings.TrimPrefix(relPath, "/")
-		if relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/") {
+		if isPublishedArchivePath(relPath) {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.Header().Set("Allow", "GET, HEAD")
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -753,7 +780,11 @@ func serveSPAIndex(w http.ResponseWriter, r *http.Request, indexPath string, log
 
 // publishedHandler serves files from `dir` under urlPrefix. No SPA fallback —
 // missing files 404. Used for the published meeting archive.
-func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc) http.Handler {
+//
+// meetingsContext is the one archive path that is rendered rather than relayed
+// (published/meetings-context, D-717); nil where this deployment cannot serve
+// it, in which case the path falls through and 404s like any other miss.
+func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc, meetingsContext http.Handler) http.Handler {
 	// nil when no sink writes a local archive. Everything outside the archive
 	// paths — including the site manifest cassini.json, which carries meeting
 	// counts and job ids — then 404s instead of being served off disk.
@@ -772,7 +803,14 @@ func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFiles
 		// the archive source only outside AppAPI (D-529).
 		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
 		relPath = strings.TrimPrefix(relPath, "/")
-		if ncProxy != nil && (relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/")) {
+		// Checked before the proxy arm: meetings-context is a sibling of
+		// catalog.json, not a file under meetings/, and nothing in Nextcloud
+		// Files answers it.
+		if relPath == meetingsContextPath && meetingsContext != nil {
+			meetingsContext.ServeHTTP(w, r)
+			return
+		}
+		if ncProxy != nil && isPublishedArchivePath(relPath) {
 			if ncProxy(w, r, relPath) {
 				return
 			}

@@ -62,7 +62,7 @@ func (c ExAppConfig) ncFilesAccessApplier(_ *log.Logger) ncFilesAccessApplier {
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}
 	return func(ctx context.Context, jobID string, mappings []aclMapping, public bool) error {
-		opusRel := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
+		opusRel := ncACLRecordingsRoot + "/meetings/" + jobID + ".opus"
 		if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, opusRel, mappings, public); err != nil {
 			return fmt.Errorf("acl opus: %w", err)
 		}
@@ -286,55 +286,154 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 	if err := rt.applyNCFilesAccessFn(ctx, jobID, mappings, binding.Public); err != nil {
 		return err
 	}
-	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s public=%t root=%s", jobID, len(mappings), source, binding.Public, ncRecordingsRoot)
+	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s public=%t root=%s", jobID, len(mappings), source, binding.Public, ncACLRecordingsRoot)
 	return nil
 }
 
-// serveFilteredCatalog writes the caller a catalog containing only the meetings
-// they may read (D-534 read side). It fetches the authoritative catalog as the
-// owner (metadata source), enumerates the meetings the caller can see with a
-// per-caller PROPFIND scan of meetings/ (advanced-ACL deny-read hides the rest),
-// and serves the catalog filtered to that set. Fails CLOSED: any scan error
-// yields an empty catalog, never the unfiltered one.
-func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger) {
-	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+// catalogResolveOutcome names the ways resolving a caller's readable meetings
+// can end.
+//
+// It exists because the two readers of that resolution answer the same
+// conditions DIFFERENTLY. `catalog.json` keeps its long-standing
+// empty-on-failure behaviour: three shipped clients poll it, and changing what
+// an empty answer means there would reach viewers and CLIs that are not
+// upgraded in lockstep. `published/meetings` is loud instead, because an agent
+// that reads "Nextcloud is unreachable" as "you have no meetings" acts on a
+// false negative it cannot detect.
+//
+// The resolution itself is shared, so there is exactly ONE place that decides
+// what a caller may read. A second reader must never mean a second
+// access-control path.
+type catalogResolveOutcome int
+
+const (
+	// catalogResolveOK: the intersection is trustworthy.
+	catalogResolveOK catalogResolveOutcome = iota
+	// catalogResolveNoArchive: the owner's catalog is absent. Nothing has ever
+	// been published — a legitimate empty answer, not a failure.
+	catalogResolveNoArchive
+	// catalogResolveUnavailable: the authoritative catalog could not be read.
+	catalogResolveUnavailable
+	// catalogResolveScanFailed: the per-caller PROPFIND errored, so WHICH
+	// meetings this caller may read is unknown — not known to be none.
+	catalogResolveScanFailed
+	// catalogResolveNoMount: the caller has no recordings mount at all. Every
+	// account should have one through its virtual `everyone` membership before
+	// its filesystem is first set up, so this means the Everyone Group app or
+	// the Team-folder mapping is unavailable — substrate, not permissions.
+	catalogResolveNoMount
+)
+
+// resolvedCatalog is a caller's readable slice of the archive.
+type resolvedCatalog struct {
+	// raw is the authoritative catalog exactly as the owner stores it. Kept so
+	// a caller answering empty can still mirror its top-level shape rather than
+	// inventing one.
+	raw []byte
+	// body is raw filtered to the meetings this caller may read. On ANY
+	// non-OK outcome it is an empty catalog, so a reader that ignores the
+	// outcome still cannot serve more than it should — the fail-closed property
+	// is in the value, not in the discipline of the caller.
+	body []byte
+}
+
+// resolveCatalogForCaller answers, for one caller, which meetings of the
+// archive they may read — in whichever storage model this instance runs
+// (D-616, D-708).
+//
+// The model is resolved HERE rather than by each reader, for the same reason
+// the resolution itself is shared: a second reader must not mean a second
+// access-control path, and it would be one if every reader re-derived which
+// tree to read and whose identity to read it with. The models answer the
+// question differently, but it is the same question.
+//
+//	access-controlled  intersect the owner's catalog with a per-caller PROPFIND
+//	                   of the Team folder, so advanced-ACL deny-read decides.
+//	default            serve the owner's catalog whole, out of the private root
+//	                   no Team folder can shadow. Nothing is filtered because
+//	                   nothing is restricted: being able to open the app IS the
+//	                   permission, and a per-caller scan of a tree only the
+//	                   service account has could answer nothing but 404.
+func (c ExAppConfig) resolveCatalogForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
+	if ncStorageServesAsOwner() {
+		return c.resolveOwnerCatalog(ctx, client, logger)
+	}
+	return c.resolveACLCatalogForCaller(ctx, client, caller, logger)
+}
+
+// resolveOwnerCatalog reads the default model's archive as its owner.
+//
+// It reports the same outcomes as the access-controlled resolution, so both
+// reach their readers through one vocabulary — but only three of them can
+// arise here: there is no per-caller scan to fail and no mount to be missing.
+func (c ExAppConfig) resolveOwnerCatalog(ctx context.Context, client *http.Client, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
+	empty := resolvedCatalog{raw: []byte(emptyCatalogJSON), body: []byte(emptyCatalogJSON)}
+
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncDefaultRecordingsRoot+"/"+ncSiteCatalogName)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("nc files read: catalog fetch failed: %v", err)
+		}
+		return empty, catalogResolveUnavailable
+	}
+	if status == http.StatusNotFound {
+		return empty, catalogResolveNoArchive
+	}
+	if status < 200 || status >= 300 {
+		if logger != nil {
+			logger.Printf("nc files read: catalog -> %d", status)
+		}
+		return empty, catalogResolveUnavailable
+	}
+	return resolvedCatalog{raw: raw, body: raw}, catalogResolveOK
+}
+
+// resolveACLCatalogForCaller fetches the authoritative catalog as the owner
+// (metadata source) and intersects it with the meetings the caller can actually
+// see, enumerated by a per-caller PROPFIND scan of meetings/ (advanced-ACL
+// deny-read hides the rest).
+//
+// The scan is re-run on every call and never memoised. That is what makes
+// revocation, group changes, publicness and deletion propagate with no index
+// maintenance anywhere — and it is why a cache here would be unsound in the
+// permissive direction: Nextcloud gives Cassini no permission-change signal.
+func (c ExAppConfig) resolveACLCatalogForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
+	empty := resolvedCatalog{raw: []byte(emptyCatalogJSON), body: []byte(emptyCatalogJSON)}
+
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/"+ncSiteCatalogName)
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files read: authoritative catalog fetch failed: %v", err)
 		}
-		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
-		return
+		return empty, catalogResolveUnavailable
 	}
+	// davGetBytes returns a nil error for a 404, so branch on STATUS, never on
+	// err alone (the discipline nc_backfill.go already follows). Reading the
+	// absent-archive case off err would fail open into an empty answer.
 	if status == http.StatusNotFound {
-		writeCatalogJSON(w, []byte(emptyCatalogJSON))
-		return
+		return empty, catalogResolveNoArchive
 	}
 	if status < 200 || status >= 300 {
 		if logger != nil {
 			logger.Printf("nc files read: authoritative catalog -> %d", status)
 		}
-		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
-		return
+		return empty, catalogResolveUnavailable
 	}
+	// From here the archive shape is known, so an empty answer can mirror it.
+	resolved := resolvedCatalog{raw: raw, body: emptyLike(raw)}
 
-	names, mounted, perr := c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
+	names, mounted, perr := c.davPropfindNames(ctx, client, caller, ncACLRecordingsRoot+"/meetings")
 	if perr != nil {
 		if logger != nil {
 			logger.Printf("nc files read: per-caller scan failed caller=%s: %v — serving empty (fail closed)", caller, perr)
 		}
-		writeCatalogJSON(w, emptyLike(raw))
-		return
+		return resolved, catalogResolveScanFailed
 	}
 	if !mounted {
-		// Every account should have this mount from its virtual `everyone`
-		// membership before its filesystem is first set up. A missing mount means
-		// the Everyone Group app or Team-folder mapping is unavailable; do not
-		// create mutable memberships or proxy around the broken substrate.
 		if logger != nil {
 			logger.Printf("nc files read: caller=%s has no recordings mount through required group %q — serving empty (fail closed)", caller, ncRecordingsEveryoneGroup)
 		}
-		writeCatalogJSON(w, emptyLike(raw))
-		return
+		return resolved, catalogResolveNoMount
 	}
 	visible := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -345,10 +444,54 @@ func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWr
 		if logger != nil {
 			logger.Printf("nc files read: filter catalog failed caller=%s: %v — serving empty", caller, ferr)
 		}
-		writeCatalogJSON(w, emptyLike(raw))
+		return resolved, catalogResolveScanFailed
+	}
+	resolved.body = body
+	return resolved, catalogResolveOK
+}
+
+// serveFilteredCatalog writes the caller a catalog containing only the meetings
+// they may read (D-534 read side). Fails CLOSED: any scan error yields an empty
+// catalog, never the unfiltered one.
+//
+// Its status mapping is deliberately UNCHANGED from before the resolution was
+// extracted: loud only when the authoritative catalog itself could not be read,
+// and a valid empty catalog for every other failure. That ambiguity is a known
+// wart — an empty answer here means both "you may read nothing" and "the
+// substrate is mis-provisioned" — but it is one three shipped clients already
+// live with, and narrowing it is its own change with its own blast radius.
+// `published/meetings` is where the loud version lives.
+func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger) {
+	resolved, outcome := c.resolveCatalogForCaller(ctx, client, caller, logger)
+	if outcome == catalogResolveUnavailable {
+		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
 		return
 	}
-	writeCatalogJSON(w, body)
+	writeCatalogJSON(w, resolved.body)
+}
+
+// serveOwnerCatalog writes the caller the authoritative catalog verbatim — the
+// default model's read path (D-616).
+//
+// It is deliberately the plain sibling of serveFilteredCatalog rather than a
+// flag on it, because the two answer different questions. Filtering exists to
+// hide meetings a caller may not read; in the default model there are none, and
+// the machinery that would do the hiding — a per-caller PROPFIND of a tree only
+// the service account has — cannot answer at all. Reusing it here would not be
+// conservative, it would serve an empty archive to every account on the
+// instance.
+//
+// What it does keep is the failure shape: an unreadable or missing catalog
+// yields the empty one, never an error page the viewer would render as
+// "HTTP 502" — the same mapping serveFilteredCatalog applies to its own
+// resolution.
+func (c ExAppConfig) serveOwnerCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, logger *log.Logger) {
+	resolved, outcome := c.resolveOwnerCatalog(ctx, client, logger)
+	if outcome == catalogResolveUnavailable {
+		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+		return
+	}
+	writeCatalogJSON(w, resolved.body)
 }
 
 func writeCatalogJSON(w http.ResponseWriter, body []byte) {
@@ -415,7 +558,7 @@ func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) 
 // error is returned so callers never expose a partially migrated tree through
 // the broad root grant.
 func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) error {
-	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings")
+	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncACLRecordingsRoot+"/meetings")
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files access: self-heal scan failed: %v", err)
@@ -439,7 +582,7 @@ func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Cl
 				next = ensureProtectedRules(rules)
 			}
 		}
-		relPath := ncRecordingsRoot + "/meetings/" + base
+		relPath := ncACLRecordingsRoot + "/meetings/" + base
 		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, next); err != nil {
 			if logger != nil {
 				logger.Printf("nc files access: self-heal %s failed: %v", base, err)
@@ -543,9 +686,10 @@ func audienceApplied(rules []aclRule) bool {
 // it is there at all, how many bytes Nextcloud thinks it holds, and the ACL rows
 // bound to it.
 type ncLeafState struct {
-	Exists bool
-	Size   int64
-	Rules  []aclRule
+	Exists   bool
+	Size     int64
+	Checksum string
+	Rules    []aclRule
 }
 
 // davPropfindLeafState reads one leaf's length and ACL rules in a single Depth-0
@@ -556,8 +700,8 @@ type ncLeafState struct {
 // of a first publish, and the caller distinguishes it via Exists.
 func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Client, userID, relPath string) (ncLeafState, error) {
 	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
-		`<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">` +
-		`<d:prop><d:getcontentlength/><nc:acl-list/></d:prop></d:propfind>`)
+		`<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">` +
+		`<d:prop><d:getcontentlength/><oc:checksums/><nc:acl-list/></d:prop></d:propfind>`)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relPath), bytes.NewReader(reqBody))
 	if err != nil {
 		return ncLeafState{}, err
@@ -584,8 +728,9 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 	var ms struct {
 		Responses []struct {
 			Propstat []struct {
-				Length string `xml:"prop>getcontentlength"`
-				ACLs   []struct {
+				Length    string   `xml:"prop>getcontentlength"`
+				Checksums []string `xml:"prop>checksums>checksum"`
+				ACLs      []struct {
 					Type        string `xml:"acl-mapping-type"`
 					ID          string `xml:"acl-mapping-id"`
 					Mask        int    `xml:"acl-mask"`
@@ -608,6 +753,11 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 		if trimmed := strings.TrimSpace(ps.Length); trimmed != "" {
 			if n, convErr := strconv.ParseInt(trimmed, 10, 64); convErr == nil {
 				state.Size = n
+			}
+		}
+		for _, checksum := range ps.Checksums {
+			if checksum = strings.TrimSpace(checksum); strings.HasPrefix(strings.ToLower(checksum), "sha256:") {
+				state.Checksum = checksum[len("sha256:"):]
 			}
 		}
 		for _, a := range ps.ACLs {

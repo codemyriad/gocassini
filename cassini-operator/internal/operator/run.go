@@ -337,9 +337,56 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncAccessSubstrate.markApplicable()
 	}
 
-	// Provisioning remains tied to the AppAPI enabled edge, but not to the eager
-	// whole-archive uploader removed by D-613.
+	// The storage mode (D-616) is read here, at startup, and not only on the
+	// enabled edge. The edge is what PROVES the mode against Nextcloud; this is
+	// what makes a plain container restart keep serving the archive the way the
+	// administrator chose, instead of falling back to the access-controlled read
+	// path for an instance that has no Team folder to read through. The file is
+	// local, so it costs no round-trip and cannot fail for want of Nextcloud.
+	//
+	// It deliberately does NOT make the substrate usable: publishing still waits
+	// for the edge (nc_access_status.go), because a recorded mode is a decision,
+	// not evidence that the storage behind it is still there.
+	ncStorage.setPath(storageSettingsPath(cfg))
+	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
+		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
+		// Clean: an unreadable file is not evidence of a half-done migration.
+		// Unconfirmed: writing a mode is how an administrator gets out of this.
+		ncStorage.set(true, storageModeSourceConfigured, true)
+	} else if settings.Configured() {
+		// The RECORDED source, carried through rather than flattened to
+		// "configured". It is what tells an administrator's click apart from a
+		// deploy option, and both apart from a mode a previous build wrote down
+		// on its own — which is the question the Setup tab now has to answer
+		// before it presents a decision as made (D-708).
+		source := settings.Source
+		if source == "" {
+			source = storageModeSourceConfigured
+		}
+		ncStorage.set(settings.AccessControlled(), source, settings.Clean())
+		logger.Printf("storage_mode -> %s (recorded, source=%s, confirmed=%t)", settings.Mode(), source, settings.Confirmed())
+	} else if declared, ok, raw := storageModeFromEnv(os.Getenv); ok {
+		// Declared but not yet recorded: the first enabled edge checks it against
+		// the instance and persists it only if it fits. Logged here so a
+		// deployment can see its own setting arrived, without waiting for that
+		// edge — and warned about, because this is a development and CI option.
+		logger.Printf("WARNING: storage_mode -> %s (declared by %s=%s, a development/CI deploy option; recorded on first enable if this instance matches it)", storageModeName(declared), envStorageMode, raw)
+	} else if raw != "" {
+		// Refused at startup rather than only on the enabled edge, because this
+		// is where a deploy option's typo is cheapest to notice.
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and no storage mode will be chosen for this install", envStorageMode, raw, storageModeEnvValues)
+	} else {
+		// Nothing recorded, nothing declared. Say so here rather than leaving an
+		// administrator to infer it from silence: this is the line that precedes
+		// every refusal to publish on a fresh install, and the Setup tab is what
+		// ends it.
+		logger.Printf("storage_mode -> undecided (nothing recorded, nothing declared by %s). Cassini does not choose a storage model on its own; publishing and recording are refused until an administrator picks one in the Setup tab", envStorageMode)
+	}
+
+	// The preflight remains tied to the AppAPI enabled edge, but not to the
+	// eager whole-archive uploader removed by D-613.
 	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
+	exappCfg.preflightOnRestart(runtime.ctx, logger)
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -350,6 +397,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	exappCfg.PublishedDir = cfg.SiteRoot
 	exappCfg.PublishSink = sink.Name()
+	// The CLI the published routes shell out to is the one loadConfig already
+	// resolved and checked is executable (D-717). LoadExAppConfig only seeds it
+	// from CASSINI_BIN, because it runs before that value exists; leaving the
+	// seed in place would mean a deployment configured with --cassini-bin
+	// silently does not serve published/meetings-context, and one configured
+	// with a relative CASSINI_BIN serves it via a path nothing validated.
+	exappCfg.CassiniBin = cfg.CassiniBin
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{
@@ -508,10 +562,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	// deploy (APP_PERSISTENT_STORAGE set) paths left unset or still at their
 	// baked image defaults land on the AppAPI volume instead of overlayfs.
 	persistRoot := persistentStorageRoot()
-	fs.StringVar(&cfg.DBPath, "db", exAppDataPathDefault(persistRoot,
-		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
-		imageDefaultDBPath, "operator/jobs.sqlite3",
-		filepath.Join(defaultDataRoot, "jobs.sqlite3")), "SQLite database path")
+	fs.StringVar(&cfg.DBPath, "db", defaultDBPath(persistRoot, defaultDataRoot), "SQLite database path")
 	fs.StringVar(&cfg.WorkRoot, "work-root", exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, ""),
 		imageDefaultWorkRoot, "operator/jobs",
@@ -617,6 +668,19 @@ func defaultSiteRoot(persistRoot, dataRoot string) string {
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
 		imageDefaultSiteRoot, "site/published",
 		filepath.Join(dataRoot, "site"))
+}
+
+// defaultDBPath is where the job database lands when nothing overrides it.
+//
+// Factored out because the one-shot commands need it too: storage_settings.json
+// lives beside the database, and a command that has to know which storage model
+// this installation runs cannot ask the running operator — it is a separate
+// process with its own empty ncStorage.
+func defaultDBPath(persistRoot, dataRoot string) string {
+	return exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
+		imageDefaultDBPath, "operator/jobs.sqlite3",
+		filepath.Join(dataRoot, "jobs.sqlite3"))
 }
 
 func parsePositiveIntEnvAny(names []string, fallback int) (int, error) {
@@ -810,8 +874,15 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/setup", rt.setupHandler)
+	api.HandleFunc("/ai/providers", rt.aiProvidersHandler)
+	api.HandleFunc("/ai/providers/", rt.aiProviderModelsHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
+	// A sibling of the /settings/ prefix rather than another branch inside the
+	// LLM settings handler: the workflow registry is not LLM policy, it is what
+	// the recorder ships, and an exact pattern wins over the prefix (D-718).
+	api.HandleFunc("/settings/workflows", rt.settingsWorkflowsHandler)
 	api.HandleFunc("/settings/", rt.llmSettingsHandler)
+	api.Handle("/storage", exappCfg.storageHandler(rt))
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 	// Source-audio intake (capture_upload.go). USER-level in appinfo/info.xml:
 	// every logged-in account may upload its OWN audio, and the handler binds
@@ -835,6 +906,15 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
 	rt.lifecycle = exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
+	// beside /published/ rather than under BasePath, because that is where
+	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
+	// mutating routes at that level. Nil, and therefore unmounted, wherever a run
+	// could not be performed at all (no AppAPI identity, no Nextcloud sink, no
+	// CLI): a route that always fails is worse than a route that is not there.
+	if insights := newInsightService(rt, exappCfg, logger); insights != nil {
+		insights.register(root)
+	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
 
@@ -863,6 +943,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/setup", api)
 		root.Handle("/settings", api)
 		root.Handle("/settings/", api)
+		root.Handle("/storage", api)
 		root.Handle("/talk/provisioning", api)
 		return
 	}

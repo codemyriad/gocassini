@@ -275,11 +275,14 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// catalogIDs reads the archive index of whichever storage model is in force —
+// the two have separate roots, so a helper pinned to one of them silently
+// reports "no meetings" for the other.
 func (f *fakeNCFiles) catalogIDs(t *testing.T) []string {
 	t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	raw, ok := f.files["Cassini/Recordings/catalog.json"]
+	raw, ok := f.files[ncArchiveRoot()+"/catalog.json"]
 	if !ok {
 		return nil
 	}
@@ -340,8 +343,8 @@ func TestNCSinkDeliversTheMeetingAndIndexesItLast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deliver() error = %v", err)
 	}
-	if location != ncRecordingsRoot {
-		t.Fatalf("location = %q, want %q", location, ncRecordingsRoot)
+	if location != ncACLRecordingsRoot {
+		t.Fatalf("location = %q, want %q", location, ncACLRecordingsRoot)
 	}
 	if !nc.has("Cassini/Recordings/meetings/meeting-a.opus") {
 		t.Fatalf("the .opus never reached Nextcloud")
@@ -813,7 +816,7 @@ func TestNCSinkRulesTheRecordingBeforeItHasAnyAudioInIt(t *testing.T) {
 	sink := newNCSink(t, nc.server(t).URL)
 	sink.applyAccess = func(ctx context.Context, jobID string) error {
 		return sink.cfg.davProppatchACLRules(ctx, sink.client, ncRecordingsOwner,
-			ncRecordingsRoot+"/meetings/"+jobID+".opus",
+			ncACLRecordingsRoot+"/meetings/"+jobID+".opus",
 			recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false))
 	}
 	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
@@ -860,7 +863,7 @@ func TestNCSinkRepublishReplacesContentButNotAccess(t *testing.T) {
 	sink.applyAccess = func(ctx context.Context, jobID string) error {
 		applied++
 		return sink.cfg.davProppatchACLRules(ctx, sink.client, ncRecordingsOwner,
-			ncRecordingsRoot+"/meetings/"+jobID+".opus",
+			ncACLRecordingsRoot+"/meetings/"+jobID+".opus",
 			recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false))
 	}
 	opus := "Cassini/Recordings/meetings/meeting-a.opus"
@@ -876,7 +879,7 @@ func TestNCSinkRepublishReplacesContentButNotAccess(t *testing.T) {
 	widened := append(recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false),
 		aclRule{Type: "user", ID: "carol", Mask: aclMaskAll, Permissions: aclPermRead})
 	if err := sink.cfg.davProppatchACLRules(context.Background(), sink.client, ncRecordingsOwner,
-		ncRecordingsRoot+"/meetings/meeting-a.opus", widened); err != nil {
+		ncACLRecordingsRoot+"/meetings/meeting-a.opus", widened); err != nil {
 		t.Fatalf("hand-widening the ACL failed: %v", err)
 	}
 	before := len(nc.aclBodiesFor(opus))
@@ -925,7 +928,7 @@ func TestNCSinkFinishesAnAudienceThatNeverLanded(t *testing.T) {
 		}
 		applied++
 		return sink.cfg.davProppatchACLRules(ctx, sink.client, ncRecordingsOwner,
-			ncRecordingsRoot+"/meetings/"+jobID+".opus",
+			ncACLRecordingsRoot+"/meetings/"+jobID+".opus",
 			recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false))
 	}
 
@@ -1036,7 +1039,7 @@ func TestNCSinkDoesNotUndoAHandNarrowedAudience(t *testing.T) {
 			sink.applyAccess = func(ctx context.Context, jobID string) error {
 				applied++
 				return sink.cfg.davProppatchACLRules(ctx, sink.client, ncRecordingsOwner,
-					ncRecordingsRoot+"/meetings/"+jobID+".opus",
+					ncACLRecordingsRoot+"/meetings/"+jobID+".opus",
 					recordingACLRules([]aclMapping{{Type: "user", ID: "bob"}}, tc.public))
 			}
 			opus := "Cassini/Recordings/meetings/meeting-a.opus"
@@ -1048,7 +1051,7 @@ func TestNCSinkDoesNotUndoAHandNarrowedAudience(t *testing.T) {
 			// The admin narrows it to exactly the shape recordingACLRules(nil,
 			// false) produces — no participants, everyone denied.
 			if err := sink.cfg.davProppatchACLRules(context.Background(), sink.client, ncRecordingsOwner,
-				ncRecordingsRoot+"/meetings/meeting-a.opus", recordingACLRules(nil, false)); err != nil {
+				ncACLRecordingsRoot+"/meetings/meeting-a.opus", recordingACLRules(nil, false)); err != nil {
 				t.Fatalf("hand-narrowing failed: %v", err)
 			}
 

@@ -25,6 +25,12 @@ for script in "$ORCHESTRATOR" "$VALIDATOR"; do
     || fail "$(basename "$script") does not preflight media tools"
 done
 
+# This vertical asserts that a non-participant cannot see or fetch a recording,
+# so it must opt in to the access-controlled substrate now that fresh stacks use
+# the default storage model.
+grep -F '  --storage-mode acl-enabled' "$ORCHESTRATOR" >/dev/null \
+  || fail "faithful private-Talk orchestrator does not explicitly select the ACL storage mode"
+
 faithful_job="$(sed -n '/^  faithful-installed-exapp-talk-cpu:/,/^  d403-manifest-sensitivity-control:/p' "$WORKFLOW")"
 grep -F 'apt-get install -y --no-install-recommends jq libxml2-utils' <<<"$faithful_job" >/dev/null \
   || fail "faithful CPU job does not install its minimal host tools"

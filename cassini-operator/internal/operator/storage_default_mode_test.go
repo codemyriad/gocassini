@@ -1,0 +1,410 @@
+package operator
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The default model's two halves — writing without ACLs and reading as the
+// owner — and the guard that keeps the second from failing open.
+
+// In the default model the leaf reservation dance is not merely unnecessary,
+// it is fatal: `nc:acl-list` is only settable inside a Team folder with
+// advanced ACL, so a PROPPATCH outside one answers 207 with a 403 propstat and
+// the publish fails. Nothing may be sent.
+func TestDefaultModePublishWritesTheBytesAndNoACLs(t *testing.T) {
+	setStorageMode(t, false)
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if !nc.has(ncDefaultRecordingsRoot + "/meetings/meeting-a.opus") {
+		t.Fatal("the recording never reached Nextcloud")
+	}
+	if got := nc.catalogIDs(t); len(got) != 1 || got[0] != "meeting-a" {
+		t.Fatalf("catalog ids = %v, want [meeting-a]", got)
+	}
+	for _, op := range ncOpsByMethod(nc, "PROPPATCH") {
+		t.Errorf("the default model PROPPATCHed %s — outside a Team folder that is rejected, and would fail every publish", op.path)
+	}
+}
+
+// ncOpsByMethod is opsFor's mirror image: opsFor answers "what happened to this
+// path", and the assertions here need "did this method happen at all".
+func ncOpsByMethod(f *fakeNCFiles, method string) []ncFilesOp {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []ncFilesOp
+	for _, op := range f.ops {
+		if op.method == method {
+			out = append(out, op)
+		}
+	}
+	return out
+}
+
+// The empty reservation exists only to get a rule onto a leaf before it holds
+// audio. With no rules to write, it is a wasted round-trip per asset and a
+// window in which a zero-byte recording is listed.
+func TestDefaultModePublishDoesNotReserveAnEmptyLeaf(t *testing.T) {
+	setStorageMode(t, false)
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	for _, op := range ncOpsByMethod(nc, http.MethodPut) {
+		if op.path == ncDefaultRecordingsRoot+"/meetings/meeting-a.opus" && op.body == "" {
+			t.Fatal("the default model reserved an empty leaf before writing the audio")
+		}
+	}
+}
+
+// Access control on is the unchanged path, and this is the regression guard
+// for it: the branch above must not have made the rules conditional on
+// anything but the mode.
+func TestAccessControlledPublishStillWritesTheLeafACL(t *testing.T) {
+	setStorageMode(t, true)
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if len(nc.aclBodiesFor(ncACLRecordingsRoot+"/meetings/meeting-a.opus")) == 0 {
+		t.Fatal("no ACL was written onto the recording under access control")
+	}
+}
+
+// The read path. In the default model no account has a mount of the service
+// account's home, so reading as the caller does not restrict the archive — it
+// hides all of it from everyone.
+func TestDefaultModeProxyReadsAsTheServiceAccount(t *testing.T) {
+	setUsableStorageMode(t, false)
+	catalog := `{"version":"cassini.viewer.catalog.v1","meetings":[` +
+		`{"id":"a","audioPath":"./meetings/JOB1.opus"},{"id":"b","audioPath":"./meetings/JOB2.opus"}]}`
+	var catalogGetAs, opusGetAs string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PROPFIND":
+			t.Errorf("the default model must not run a per-caller scan; got PROPFIND %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		case strings.HasSuffix(r.URL.Path, "/catalog.json"):
+			catalogGetAs = davUserOf(r.URL.Path)
+			_, _ = w.Write([]byte(catalog))
+		default:
+			opusGetAs = davUserOf(r.URL.Path)
+			_, _ = w.Write([]byte("opus-bytes"))
+		}
+	}))
+	defer srv.Close()
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0))
+
+	rec := httptest.NewRecorder()
+	if !proxy(rec, callerReq(http.MethodGet, "/published/catalog.json", "alice"), "catalog.json") {
+		t.Fatal("the proxy declined to handle catalog.json")
+	}
+	if catalogGetAs != ncRecordingsOwner {
+		t.Fatalf("catalog fetched as %q, want %q", catalogGetAs, ncRecordingsOwner)
+	}
+	var served siteCatalog
+	if err := json.Unmarshal(rec.Body.Bytes(), &served); err != nil {
+		t.Fatalf("served catalog is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	if len(served.Meetings) != 2 {
+		t.Fatalf("served %d meetings, want the whole archive (2) — the default model restricts nothing", len(served.Meetings))
+	}
+
+	rec = httptest.NewRecorder()
+	if !proxy(rec, callerReq(http.MethodGet, "/published/meetings/JOB1.opus", "alice"), "meetings/JOB1.opus") {
+		t.Fatal("the proxy declined to handle the recording")
+	}
+	if opusGetAs != ncRecordingsOwner {
+		t.Fatalf("recording fetched as %q, want %q", opusGetAs, ncRecordingsOwner)
+	}
+	if rec.Body.String() != "opus-bytes" {
+		t.Fatalf("body = %q, want the recording", rec.Body.String())
+	}
+}
+
+// The fail-open guard, in both of the ways it can be wrong.
+//
+// The owner read path hands out the whole archive, so it needs two independent
+// facts: the recorded mode says default, AND the last probe agreed with it. A
+// recorded `default` on an instance that still has a mounted Team folder is a
+// state the preflight itself names `mode_mismatch` — and in it, reading as the
+// owner would serve every account every recording in that folder, past its
+// per-recording ACLs, as the ACL manager.
+func TestOwnerReadPathNeedsBothTheModeAndTheEvidence(t *testing.T) {
+	readIdentity := func(t *testing.T) string {
+		t.Helper()
+		var readAs string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			readAs = davUserOf(r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+		proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0))
+		proxy(httptest.NewRecorder(), callerReq(http.MethodGet, "/published/meetings/JOB1.opus", "alice"), "meetings/JOB1.opus")
+		return readAs
+	}
+
+	t.Run("unresolved mode reads as the caller", func(t *testing.T) {
+		// A container that restarted but has not seen an enabled edge.
+		resetStorageMode(t)
+		ncAccessSubstrate.reset()
+		t.Cleanup(ncAccessSubstrate.reset)
+		if got := readIdentity(t); got != "alice" {
+			t.Fatalf("read as %q; an unresolved mode must stay per-caller until a preflight decides", got)
+		}
+	})
+
+	t.Run("default mode with the default root shadowed reads as the caller", func(t *testing.T) {
+		// The one state that still fails closed. Something IS mounted at
+		// CassiniNoACL, so the tree is not private, and serving it as the owner
+		// would hand it to whoever that folder is mapped to.
+		setStorageMode(t, false)
+		ncAccessSubstrate.reset()
+		t.Cleanup(ncAccessSubstrate.reset)
+		ncAccessSubstrate.markApplicable()
+		ncAccessSubstrate.setProbe(ncStorageProbe{ServiceAccount: true, FolderProbed: true, DefaultRootShadowed: true})
+		if got := readIdentity(t); got != "alice" {
+			t.Fatalf("read as %q while a Team folder was mounted over %q — that tree is not private", got, ncDefaultRecordingsMount)
+		}
+	})
+
+	t.Run("default mode with a proven substrate reads as the owner", func(t *testing.T) {
+		setUsableStorageMode(t, false)
+		if got := readIdentity(t); got != ncRecordingsOwner {
+			t.Fatalf("read as %q, want %q — the default model has no other way to serve the archive", got, ncRecordingsOwner)
+		}
+	})
+
+	t.Run("default mode with no probe at all still reads as the owner", func(t *testing.T) {
+		// A container that restarted and has not been re-enabled. The first pass
+		// read per-caller here, which served every account an EMPTY archive until
+		// somebody disabled and re-enabled the app — because the guard had to ask
+		// about `Cassini`, a path the access-controlled model legitimately mounts.
+		// It now asks about `CassiniNoACL`, which nothing mounts, so a missing
+		// answer is not a hazard and a reboot is a non-event for reads.
+		setStorageMode(t, false)
+		ncAccessSubstrate.reset()
+		t.Cleanup(ncAccessSubstrate.reset)
+		ncAccessSubstrate.markApplicable()
+		if got := readIdentity(t); got != ncRecordingsOwner {
+			t.Fatalf("read as %q after a restart; a default-mode archive must not read empty until the next enabled edge", got)
+		}
+	})
+
+	t.Run("access control never reads as the owner", func(t *testing.T) {
+		setUsableStorageMode(t, true)
+		if got := readIdentity(t); got != "alice" {
+			t.Fatalf("read as %q under access control; Nextcloud has to be the one deciding", got)
+		}
+	})
+}
+
+// An anonymous request gets nothing in either mode: the owner path is about
+// which identity Nextcloud is asked as, never about skipping the USER gate.
+func TestDefaultModeProxyStillRequiresACaller(t *testing.T) {
+	setUsableStorageMode(t, false)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("an anonymous request reached Nextcloud: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0))
+
+	rec := httptest.NewRecorder()
+	proxy(rec, callerReq(http.MethodGet, "/published/meetings/JOB1.opus", ""), "meetings/JOB1.opus")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("anonymous recording request = %d, want 404", rec.Code)
+	}
+}
+
+// davUserOf pulls the account a WebDAV path is addressed to out of
+// /remote.php/dav/files/<user>/...
+func davUserOf(path string) string {
+	const prefix = "/remote.php/dav/files/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	user, _, _ := strings.Cut(rest, "/")
+	return user
+}
+
+// Refusing a recording only when a prerequisite is NAMED. A container that
+// restarted an hour ago reports `unknown`, is very probably fine, and must not
+// turn a reboot into an outage.
+func TestRecordingRefusalOnlyFiresOnANamedMissingPrerequisite(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+
+	if got := ncAccessSubstrate.recordingRefusal(); got != "" {
+		t.Fatalf("an unchecked substrate refused a recording: %q", got)
+	}
+	ncAccessSubstrate.degraded("root_acl", errTransitionNotReady)
+	if got := ncAccessSubstrate.recordingRefusal(); got != "" {
+		t.Fatalf("a degraded substrate refused a recording: %q", got)
+	}
+	ncAccessSubstrate.reset()
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.unavailable(storageStepServiceAccount, errTransitionNotReady)
+	if got := ncAccessSubstrate.recordingRefusal(); got == "" {
+		t.Fatal("a missing service account did not refuse the recording")
+	}
+	ncAccessSubstrate.succeed()
+	if got := ncAccessSubstrate.recordingRefusal(); got == "" {
+		t.Fatal("succeed() cleared a recorded unavailability, which it must never do")
+	}
+
+	// A standalone operator has no substrate to be missing.
+	ncAccessSubstrate.reset()
+	ncAccessSubstrate.unavailable(storageStepServiceAccount, errTransitionNotReady)
+	if got := ncAccessSubstrate.recordingRefusal(); got != "" {
+		t.Fatalf("a deployment with no Nextcloud substrate refused a recording: %q", got)
+	}
+}
+
+// A refused Talk start creates no job and claims no room, and it answers 200 —
+// Talk never reads the body, and a 4xx or 5xx there produces either three
+// retries or a blank 500 with no message for the moderator at all.
+func TestTalkStartIsRefusedWithoutCreatingAJob(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.unavailable(storageStepServiceAccount, errTransitionNotReady)
+
+	talk := newFakeTalkServer(t)
+	defer talk.Close()
+	rt.cfg.TalkSharedSecret = "shared"
+
+	rec := httptest.NewRecorder()
+	rt.handleTalkStart(rec, httptest.NewRequest(http.MethodPost, "/api/v1/room/tok", nil),
+		talkRequestAuth{BackendURL: talk.server.URL},
+		"tok",
+		talkRoomRequest{Type: "start", Start: &talkStartData{Owner: "alice", Actor: &talkActorData{Type: "users", ID: "alice"}}})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refusal answered %d; Talk ignores the body and retries a 5xx three times, so it must be a 200", rec.Code)
+	}
+	jobs, err := rt.store.ListJobs(context.Background())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("a refused start created %d jobs, want 0", len(jobs))
+	}
+	if _, claimed := rt.lookupTalkRoomState(talkRoomKey(talk.server.URL, "tok")); claimed {
+		t.Fatal("a refused start left the room claimed, so the next attempt would be swallowed as a duplicate")
+	}
+}
+
+// The recorded deferral in ncFilesProxy's doc comment, made a fact.
+//
+// The proxy is constructed on AppAPI presence alone, not on the resolved publish
+// sink, so under CASSINI_PUBLISH_SINK=local it is still installed and still
+// claims catalog.json and meetings/*.
+//
+// What keeps that safe is now the PATH rather than the substrate record. The
+// first pass also required ncAccessSubstrate.usable(), because both models
+// addressed `Cassini/Recordings` and a `local`-sink deployment never probes —
+// so a recorded `default` over a live Team folder would have served an
+// access-controlled archive to every account. With separate roots the owner
+// identity is only ever paired with `CassiniNoACL/Recordings`, which no Team
+// folder mounts and which holds nothing but what the default model published.
+//
+// So the assertion changes shape: the guard is no longer "has a preflight
+// succeeded" but "did a probe positively find something mounted over the
+// default root". D-668's requirement — that the read identity is never chosen
+// from the recorded mode ALONE — is what both versions keep.
+func TestNCFilesProxyOwnerReadIsBoundedByTheDefaultRoot(t *testing.T) {
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+
+	// Access control never reads as the owner, whatever else is true.
+	ncStorage.set(true, storageModeSourceEnv, true)
+	if ncStorageServesAsOwner() {
+		t.Fatal("served as the owner under access control; Nextcloud has to be the one deciding")
+	}
+
+	// Default mode on a deployment that never probes (a `local` sink) serves the
+	// private root as its owner, which is the whole model.
+	ncStorage.set(false, storageModeSourceEnv, true)
+	if !ncStorageServesAsOwner() {
+		t.Fatal("refused to serve the private default root as its owner; nothing else can read it")
+	}
+
+	// Until a probe says something is mounted over that root.
+	ncAccessSubstrate.setProbe(ncStorageProbe{FolderProbed: true, DefaultRootShadowed: true})
+	if ncStorageServesAsOwner() {
+		t.Fatalf("served as the owner with a Team folder mounted at %q — that tree is not private", ncDefaultRecordingsMount)
+	}
+}
+
+// The meetings-list endpoint under the default model (D-701 x D-616).
+//
+// The two features met in a merge and neither side had this path: D-701 built
+// the endpoint on the per-caller intersect, and D-616 gave the default model a
+// private root that no per-caller scan can see into. Resolving the model inside
+// resolveCatalogForCaller is what joins them, and this pins the join — without
+// it the endpoint answers "you may read no meetings" on every default-model
+// install, which is precisely the false negative D-701 exists to prevent.
+func TestMeetingsListInTheDefaultModelServesTheWholeArchive(t *testing.T) {
+	setUsableStorageMode(t, false)
+	catalog := `{"version":"cassini.viewer.catalog.v1","meetings":[` +
+		`{"id":"a","dateLabel":"2026-08-01 09:00","audioPath":"./meetings/JOB1.opus","roomId":"rm_aaaaaaaaaaaaaaaa"},` +
+		`{"id":"b","dateLabel":"2026-08-15","audioPath":"./meetings/JOB2.opus","roomId":"rm_bbbbbbbbbbbbbbbb"}]}`
+	var catalogPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PROPFIND":
+			t.Errorf("the default model must not run a per-caller scan; got PROPFIND %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		case strings.HasSuffix(r.URL.Path, "/catalog.json"):
+			catalogPath = r.URL.Path
+			_, _ = w.Write([]byte(catalog))
+		default:
+			t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	rec := getMeetingsList(t, meetingsListConfig(srv.URL), "", "alice")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("meetings list = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	// Identity and root are one question: the private root read as its owner.
+	if davUserOf(catalogPath) != ncRecordingsOwner {
+		t.Fatalf("catalog fetched as %q, want %q", davUserOf(catalogPath), ncRecordingsOwner)
+	}
+	if !strings.Contains(catalogPath, ncDefaultRecordingsRoot) {
+		t.Fatalf("catalog fetched from %q, want it under %q", catalogPath, ncDefaultRecordingsRoot)
+	}
+	if got := listedIDs(t, decodeMeetingsList(t, rec)); len(got) != 2 {
+		t.Fatalf("listed %v, want the whole archive — the default model restricts nothing", got)
+	}
+
+	// The query surface is the endpoint's reason to exist, and it must narrow
+	// the same set in either model.
+	rec = getMeetingsList(t, meetingsListConfig(srv.URL), "room=rm_bbbbbbbbbbbbbbbb", "alice")
+	if got := listedIDs(t, decodeMeetingsList(t, rec)); len(got) != 1 || got[0] != "b" {
+		t.Fatalf("room filter listed %v, want [b]", got)
+	}
+}

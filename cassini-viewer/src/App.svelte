@@ -16,9 +16,35 @@
     filterMeetingsByRoom,
     type RoomBucket,
   } from "./viewer/rooms";
+  import {
+    EMPTY_SELECTION,
+    acknowledgeDropped,
+    clearSelection,
+    countHiddenByView,
+    describeSelectionGaps,
+    reconcileSelection,
+    selectedEntries,
+    shouldShowSelectionBar,
+    summarizeSelection,
+    toggleSelected,
+    type MeetingSelection,
+  } from "./viewer/selectionModel";
+  import {
+    ALL_BROWSE_TYPES,
+    filterInsightsByRoom,
+    insightsForMeeting,
+    resolveInsightSources,
+    toggleBrowseType,
+    type BrowseType,
+    type BrowseTypeFilter,
+    type InsightRecord,
+  } from "./viewer/insights";
+  import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
+  import PreparePanel from "./components/PreparePanel.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
+  import SelectionBar from "./components/SelectionBar.svelte";
 
   // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
   // is selected, which meeting is open, the `meeting` hash param, theme, and
@@ -79,6 +105,46 @@
   let selectedRoomKey: string | null = null;
   // Narrow viewports only: whether the rail is slid in over the list.
   let railOpen = false;
+
+  // Which meetings are PICKED for a context bundle, and whether the Prepare
+  // panel is open over the list (D-626). Transient UI state, deliberately not
+  // routed: the hash router rebuilds the fragment from {meeting, tx, timeMs} on
+  // every viewer navigation, so anything else put there is destroyed by the
+  // next click — and a selection is a thing you are doing, not a place you are.
+  let selection: MeetingSelection = EMPTY_SELECTION;
+  let prepareOpen = false;
+  // What the list is actually showing, reported by MeetingList: its text filter
+  // is list-local, so this is the only way the shell can say how many picked
+  // meetings the current narrowing hides.
+  let visibleMeetings: MeetingCatalogEntry[] = [];
+
+  // The caller's own insight runs (D-721), and which one the sheet is holding.
+  //
+  // Three states, kept apart on purpose: `insightsLoaded` says a listing has
+  // come back at least once, `insightsError` says the last one did not, and
+  // neither of them is "there are no insights". The list is told all three
+  // because "we could not ask" and "there are none" look identical otherwise.
+  let insights: InsightRecord[] = [];
+  let insightsLoaded = false;
+  let insightsError = "";
+  let insightsRefreshRunning = false;
+  // Deliberately NOT routed, for the reason the Prepare panel is not:
+  // buildViewerHash rebuilds the fragment from {meeting, tx, timeMs} on every
+  // viewer navigation, so an `insight=` param would be destroyed by the next
+  // click. Addressing an insight means teaching hashRouting.ts the param —
+  // there, not around it — which is a change of its own.
+  let selectedInsightId = "";
+  // The insight a meeting was opened OUT OF, so Back returns to the document
+  // that named it rather than to the list. Empty for a meeting opened from the
+  // list, which is most of them.
+  let insightReturnId = "";
+  // The open insight's document, and which run+attempt it belongs to: a retry
+  // is the same id with a later updatedAt, and the old answer must not be left
+  // on screen under a new one.
+  let insightDocument = "";
+  let insightDocumentKey = "";
+  let insightDocumentError = "";
+  let insightDocumentLoading = false;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
@@ -174,14 +240,97 @@
     pushMeetingUrl("");
     selectedMeetingId = "";
     notFoundMessage = "";
+    if (insightReturnId) {
+      const returning = insightReturnId;
+      insightReturnId = "";
+      // Only if it is still listed: a refresh can drop a run out from under an
+      // armed Back, and reopening a sheet on a record we no longer have would
+      // be a worse answer than landing on the list.
+      if (insights.some((record) => record.id === returning)) {
+        selectedInsightId = returning;
+      }
+    }
+  }
+
+  // One sheet, one thing. An insight opened from the list replaces whatever the
+  // sheet was holding, and the meeting's history entry goes with it — otherwise
+  // Back would return to a meeting the reader had already left.
+  function openInsight(record: InsightRecord) {
+    if (selectedMeetingId) {
+      pushMeetingUrl("");
+      selectedMeetingId = "";
+      notFoundMessage = "";
+    }
+    insightReturnId = "";
+    selectedInsightId = record.id;
+  }
+
+  // A source named by the document opens as itself, in the same sheet, with the
+  // way back to the document it came from armed — the reader went from the
+  // insight to the meeting, so the insight is where "back" means.
+  function openInsightSource(event: CustomEvent<MeetingCatalogEntry>) {
+    const from = selectedInsightId;
+    selectedInsightId = "";
+    loadCatalogMeeting(event.detail);
+    insightReturnId = from;
+  }
+
+  function closeSheet() {
+    if (selectedInsightId) {
+      selectedInsightId = "";
+      return;
+    }
+    handleBackToList();
   }
 
   function handleRoomSelect(event: CustomEvent<string | null>) {
     selectedRoomKey = event.detail;
   }
 
-  // Escape closes the topmost layer: the rooms drawer if it is over the sheet,
-  // otherwise the sheet. It deliberately does NOT fire while MeetingView's
+  // Picking is not opening: a picked meeting stays picked while another one is
+  // open, while the room chip changes, and while the search narrows past it.
+  function handlePick(event: CustomEvent<MeetingCatalogEntry>) {
+    selection = toggleSelected(selection, event.detail.id);
+    if (selection.ids.length === 0) {
+      // Nothing left to prepare; the panel would be describing an empty set.
+      prepareOpen = false;
+    }
+  }
+
+  function handleClearSelection() {
+    selection = clearSelection();
+    prepareOpen = false;
+  }
+
+  // syncSelectionToCatalog is called from a reactive statement rather than
+  // being one: reconcileSelection reads and writes `selection`, and a `$:` that
+  // did both would re-run on its own assignment. It returns the same object
+  // when nothing changed, so the common path invalidates nothing.
+  function syncSelectionToCatalog(meetings: MeetingCatalogEntry[]) {
+    const next = reconcileSelection(selection, meetings);
+    if (next !== selection) {
+      selection = next;
+      if (selection.ids.length === 0) {
+        prepareOpen = false;
+      }
+    }
+  }
+
+  // The bundle is assembled by whoever is behind the provider — the operator,
+  // through one implementation shared with the CLI. The viewer never assembles
+  // one itself, so a provider without the capability offers no Prepare at all
+  // rather than a lookalike (see dataProvider.ts).
+  function loadSelectedBundle(): Promise<string> {
+    const provider = dataProvider;
+    if (!provider.loadContextBundle) {
+      return Promise.reject(new Error("This build cannot assemble a context bundle."));
+    }
+    return provider.loadContextBundle(pickedMeetings);
+  }
+
+  // Escape closes the topmost layer, in the order they stack: the rooms drawer,
+  // then Prepare, then the meeting sheet. It deliberately does NOT fire while
+  // MeetingView's
   // shortcuts <dialog> is open — a native modal already answers Escape, and
   // closing the meeting out from under it would be a second, unasked-for action.
   function handleShellKeydown(event: KeyboardEvent) {
@@ -195,8 +344,12 @@
       railOpen = false;
       return;
     }
-    if (selectedMeetingId) {
-      handleBackToList();
+    if (prepareOpen) {
+      prepareOpen = false;
+      return;
+    }
+    if (selectedInsightId || selectedMeetingId) {
+      closeSheet();
     }
   }
 
@@ -206,6 +359,11 @@
       return;
     }
     notFoundMessage = "";
+    // Browser history is the meeting's story; the insight is not in it. Moving
+    // through it therefore leaves the insight behind rather than leaving a
+    // document open over the meeting the URL now names.
+    insightReturnId = "";
+    selectedInsightId = "";
     if (urlMeetingId) {
       const found = catalogMeetings.find((entry) => entry.id === urlMeetingId);
       selectedMeetingId = urlMeetingId;
@@ -376,9 +534,83 @@
     }
   }
 
+  // refreshInsights re-reads the caller's runs. It rides the catalog's own
+  // cadence rather than a timer of its own because it answers a question the
+  // catalog cannot: a run created a minute ago is `queued`, and the card that
+  // says so has to become the card that opens an answer without a reload.
+  //
+  // Kept independent of refreshCatalog: either listing can fail on its own, and
+  // a catalog error must not blank the insights or the other way round.
+  async function refreshInsights() {
+    const provider = dataProvider;
+    if (!provider.listInsights || insightsRefreshRunning) {
+      return;
+    }
+    insightsRefreshRunning = true;
+    try {
+      const listed = await provider.listInsights();
+      if (destroyed) {
+        return;
+      }
+      insights = listed;
+      insightsLoaded = true;
+      insightsError = "";
+    } catch (error) {
+      if (destroyed) {
+        return;
+      }
+      // The last known-good list stays on screen under the failure, exactly as
+      // the catalog's does — and the list says the listing failed rather than
+      // showing a count that would read as "none".
+      insightsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      insightsRefreshRunning = false;
+    }
+  }
+
+  // ensureInsightDocument fetches the open insight's answer once per attempt.
+  // Only a succeeded run has one: a queued, running or failed run has nothing
+  // to fetch, and asking for it would turn "not finished" into an error.
+  function ensureInsightDocument(record: InsightRecord | null) {
+    if (!record || record.status !== "succeeded") {
+      return;
+    }
+    const provider = dataProvider;
+    if (!provider.loadInsightDocument) {
+      return;
+    }
+    // updatedAt moves with every attempt, so a retry re-fetches rather than
+    // leaving the previous attempt's answer under the new record.
+    const key = `${record.id}@${record.updatedAt}`;
+    if (key === insightDocumentKey) {
+      return;
+    }
+    insightDocumentKey = key;
+    insightDocument = "";
+    insightDocumentError = "";
+    insightDocumentLoading = true;
+    void provider
+      .loadInsightDocument(record.id)
+      .then((markdown) => {
+        if (destroyed || insightDocumentKey !== key) {
+          return;
+        }
+        insightDocument = markdown;
+        insightDocumentLoading = false;
+      })
+      .catch((error: unknown) => {
+        if (destroyed || insightDocumentKey !== key) {
+          return;
+        }
+        insightDocumentError = error instanceof Error ? error.message : String(error);
+        insightDocumentLoading = false;
+      });
+  }
+
   function refreshCatalogWhenVisible() {
     if (document.visibilityState === "visible") {
       void refreshCatalog();
+      void refreshInsights();
     }
   }
 
@@ -396,6 +628,72 @@
     roomBuckets.find((bucket: RoomBucket) => bucket.key === selectedRoomKey)?.name ??
     null;
   $: roomMeetings = filterMeetingsByRoom(catalogMeetings, selectedRoomKey);
+
+  // A picked meeting can leave the archive under a 15-second refresh; run this
+  // against every catalog the shell observes.
+  $: syncSelectionToCatalog(catalogMeetings);
+  $: pickedIds = new Set(selection.ids);
+  $: pickedMeetings = selectedEntries(selection, catalogMeetings);
+  $: selectionTotals = summarizeSelection(pickedMeetings);
+  $: selectionGaps = describeSelectionGaps(selectionTotals);
+  $: hiddenSelectedCount = countHiddenByView(selection, visibleMeetings);
+  // Not `selection.ids.length > 0`: the bar is the only surface that reports a
+  // meeting having left the archive, so it has to survive a loss that took the
+  // last pick with it (selectionModel.shouldShowSelectionBar).
+  $: selectionBarUp = shouldShowSelectionBar(selection);
+  // Prepare exists only where something can produce the bundle. The standalone
+  // export's provider says it cannot by not implementing the method, and the
+  // whole affordance — checkbox, bar and panel — goes with it.
+  $: canPrepare = typeof dataProvider.loadContextBundle === "function";
+
+  // Insights exist here only if something can list them. A standalone export's
+  // provider cannot, and then there is no type filter, no card and no document
+  // — the honest reading of a build with no operator behind it.
+  $: insightsOffered = typeof dataProvider.listInsights === "function";
+  // Which kinds the browse list is showing. Owned here rather than in the list
+  // because the control that changes it is in the rail: two components reading
+  // one filter cannot each keep their own copy of it.
+  let browseTypes: BrowseTypeFilter = ALL_BROWSE_TYPES;
+  // What each kind would contribute under the current room and search, reported
+  // by the list because the search box is the list's.
+  let browseCounts = { meetings: 0, insights: 0 };
+  // A build with no insights must not be left narrowed to insights: the control
+  // that would put the meetings back is not rendered there.
+  $: if (!insightsOffered) {
+    browseTypes = ALL_BROWSE_TYPES;
+  }
+  $: canLoadInsightDocument = typeof dataProvider.loadInsightDocument === "function";
+  // Resolved against the WHOLE catalog, not the room-narrowed list: an insight
+  // spanning rooms names sources in each of them, and counting only the ones in
+  // the room being looked at would make the same insight claim a different
+  // number of meetings depending on where you saw it.
+  $: insightSources = resolveInsightSources(insights, catalogMeetings);
+  $: insightSourceCounts = new Map(
+    [...insightSources].map(([id, sources]) => [id, sources.length]),
+  );
+  $: roomInsights = filterInsightsByRoom(insights, selectedRoomKey);
+  // Called from a reactive statement rather than being one, for the reason
+  // syncSelectionToCatalog is: it writes the id that `selectedInsight` is
+  // derived from, and a `$:` doing both would be a cycle.
+  function dropMissingInsight(records: InsightRecord[]) {
+    // A run that leaves the list — deleted elsewhere, or never ours — must not
+    // leave a sheet open over a record nobody has any more. Only once a listing
+    // has actually come back: an empty list we never loaded is not evidence.
+    if (
+      selectedInsightId &&
+      insightsLoaded &&
+      !records.some((record) => record.id === selectedInsightId)
+    ) {
+      selectedInsightId = "";
+    }
+  }
+  $: dropMissingInsight(insights);
+  $: selectedInsight = selectedInsightId
+    ? insights.find((record) => record.id === selectedInsightId) ?? null
+    : null;
+  $: ensureInsightDocument(selectedInsight);
+  // The other direction: which insights read the meeting the sheet is holding.
+  $: linkedInsights = insightsForMeeting(insights, selectedMeetingId);
 
   $: selectedMeeting = selectedMeetingId
     ? catalogMeetings.find((entry) => entry.id === selectedMeetingId) ?? null
@@ -449,6 +747,10 @@
       prefersReducedMotion = reducedMotionMedia.matches;
       reducedMotionMedia.addEventListener("change", handleReducedMotionChange);
     }
+    // Independent of the catalog load below, and started beside it: the two
+    // lists come from two places and neither is a precondition for the other.
+    void refreshInsights();
+
     const initialMeetingId = currentViewerHash().meeting || null;
     const viewerConfig = window as typeof window & {
       __CASSINI_VIEWER_ARTIFACT_MODE__?: string;
@@ -552,23 +854,56 @@
       {selectedRoomKey}
       totalCount={catalogMeetings.length}
       open={railOpen}
+      {insightsOffered}
+      types={browseTypes}
+      meetingCount={browseCounts.meetings}
+      insightCount={browseCounts.insights}
       on:select={handleRoomSelect}
       on:close={() => (railOpen = false)}
+      on:toggleType={(event) => (browseTypes = toggleBrowseType(browseTypes, event.detail as BrowseType))}
     />
 
     <MeetingList
       meetings={roomMeetings}
+      types={browseTypes}
       totalCount={catalogMeetings.length}
+      insights={roomInsights}
+      totalInsightCount={insights.length}
+      {insightsOffered}
+      {insightsLoaded}
+      {insightsError}
+      {insightSourceCounts}
+      {selectedInsightId}
       {selectedRoomName}
       {selectedMeetingId}
+      {pickedIds}
+      selectable={canPrepare}
+      bottomOverlay={selectionBarUp}
       {ncMode}
       {themeMode}
       errorMessage={listError}
       on:select={(event) => loadCatalogMeeting(event.detail)}
+      on:pick={handlePick}
+      on:openInsight={(event) => openInsight(event.detail)}
+      on:visible={(event) => (visibleMeetings = event.detail)}
+      on:counts={(event) => (browseCounts = event.detail)}
       on:clearRoom={() => (selectedRoomKey = null)}
       on:openRooms={() => (railOpen = true)}
       on:toggleTheme={toggleTheme}
     />
+
+    {#if selectionBarUp}
+      <div class="selection-dock">
+        <SelectionBar
+          count={selection.ids.length}
+          hiddenCount={hiddenSelectedCount}
+          droppedCount={selection.dropped.length}
+          on:clear={handleClearSelection}
+          on:prepare={() => (prepareOpen = true)}
+          on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
+        />
+      </div>
+    {/if}
 
     {#if railOpen}
       <button
@@ -580,27 +915,89 @@
       ></button>
     {/if}
 
-    {#if selectedMeetingId}
+    <!-- One sheet, two kinds of thing (D-721). The wrapper's geometry is shared
+         deliberately: it is what anchors the panel to this shell rather than to
+         the viewport, and an insight that opened in a second, differently
+         positioned panel would cover Nextcloud's own chrome in the embedded
+         build. Switching kinds swaps the contents rather than the panel, so
+         following a source out of a document does not slide the sheet away and
+         back. -->
+    {#if selectedInsight || selectedMeetingId}
       <button
         type="button"
         class="shell-scrim sheet-scrim"
-        aria-label="Close the meeting"
+        aria-label={selectedInsight ? "Close the insight" : "Close the meeting"}
         transition:fade={scrimFade()}
-        on:click={handleBackToList}
+        on:click={closeSheet}
       ></button>
       <aside class="meeting-sheet" transition:sheetSlide={{}}>
-        <MeetingView
-          {dataProvider}
-          meeting={selectedMeeting}
-          bundled={false}
-          inSheet={true}
-          {isDesktop}
-          {prefersReducedMotion}
-          hasCatalog={catalogMeetings.length > 0}
-          {notFoundMessage}
-          on:back={handleBackToList}
-          on:enriched={handleEnriched}
-        />
+        {#if selectedInsight}
+          <InsightDocument
+            insight={selectedInsight}
+            sources={insightSources.get(selectedInsight.id) ?? []}
+            documentMarkdown={insightDocument}
+            documentError={insightDocumentError}
+            documentLoading={insightDocumentLoading}
+            canLoadDocument={canLoadInsightDocument}
+            on:close={closeSheet}
+            on:openSource={openInsightSource}
+          />
+        {:else}
+          <!-- The other direction (D-721): a meeting says which insights read
+               it. It used to be a strip pinned under the sheet, below the whole
+               transcript, where nobody scrolled to it; it is a section of the
+               meeting now, under the summary. Still the shell's fact rather
+               than the artifact's — what a meeting was used FOR is not part of
+               the recording — so it is handed down rather than looked up. -->
+          <MeetingView
+            {dataProvider}
+            meeting={selectedMeeting}
+            bundled={false}
+            inSheet={true}
+            {isDesktop}
+            {prefersReducedMotion}
+            hasCatalog={catalogMeetings.length > 0}
+            {notFoundMessage}
+            {linkedInsights}
+            {insightSourceCounts}
+            on:back={handleBackToList}
+            on:enriched={handleEnriched}
+            on:openInsight={(event) => openInsight(event.detail)}
+          />
+        {/if}
+      </aside>
+    {/if}
+
+    {#if prepareOpen}
+      <button
+        type="button"
+        class="shell-scrim prepare-scrim"
+        aria-label="Close Prepare"
+        transition:fade={scrimFade()}
+        on:click={() => (prepareOpen = false)}
+      ></button>
+      <aside class="prepare-sheet" transition:sheetSlide={{}}>
+        <PreparePanel
+          entries={pickedMeetings}
+          totals={selectionTotals}
+          gaps={selectionGaps}
+          loadBundle={loadSelectedBundle}
+          on:close={() => (prepareOpen = false)}
+        >
+          <!-- Forwarded, not decided (D-722). Whether this deployment can be
+               asked a question is a fact about the operator behind it, and the
+               viewing layer has none: the shell passes the answer through, and
+               a build with no shell — the standalone export — passes nothing,
+               which is the honest reading of a question nobody could ask. -->
+          <slot name="prepare-readiness" slot="readiness" />
+          <!-- The same forwarding, with the picked meetings riding down with
+               it (D-700): the shell's Generate card asks a question of the set
+               this panel is describing, and `let:` is what carries a slot prop
+               across the two levels. -->
+          <svelte:fragment slot="generate" let:entries>
+            <slot name="prepare-generate" {entries} />
+          </svelte:fragment>
+        </PreparePanel>
       </aside>
     {/if}
   </div>
@@ -634,6 +1031,10 @@
   .sheet-scrim {
     z-index: 20;
   }
+  /* Above the meeting sheet: Prepare opens over whatever is already on screen. */
+  .prepare-scrim {
+    z-index: 34;
+  }
   /* Above the sheet: with both open, the drawer is the layer on top, so its
      scrim has to cover the sheet too. */
   .rail-scrim {
@@ -654,11 +1055,55 @@
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
   }
 
+  /* The selection bar floats over the list it belongs to — inset past the rail
+     track, and absolute against the shell rather than fixed to the viewport,
+     for exactly the reason the sheet is (see the note in the script). 288px is
+     the rail's 268px plus the bar's own margin. */
+  .selection-dock {
+    position: absolute;
+    left: 288px;
+    right: 20px;
+    bottom: 14px;
+    z-index: 15;
+  }
+
+  /* Narrower than the meeting sheet: a review step, not a reading surface. */
+  .prepare-sheet {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 35;
+    width: min(460px, 100%);
+    display: flex;
+    flex-direction: column;
+    background-color: var(--color-base-100);
+    border-left: 1px solid var(--color-base-300);
+    box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
+  }
+
   @media (max-width: 720px) {
     /* The rail is out of flow down here (it is the drawer), so the list gets
        the whole shell rather than being squeezed beside an empty track. */
     .browse-shell {
       grid-template-columns: minmax(0, 1fr);
+    }
+    /* No rail track to clear. */
+    .selection-dock {
+      left: 12px;
+      right: 12px;
+    }
+    .prepare-sheet {
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 92%;
+      border-left: 0;
+      border-top: 1px solid var(--color-base-300);
+      border-radius: var(--radius-box, 1rem) var(--radius-box, 1rem) 0 0;
+      box-shadow: 0 -8px 30px oklch(0% 0 0 / 0.22);
     }
     /* A side drawer on a phone leaves the content it covers unreachable and
        reads as a page; a bottom sheet reads as a layer over the list. */

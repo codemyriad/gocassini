@@ -4,10 +4,23 @@
   import { cubicOut } from "svelte/easing";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape, X } from "@lucide/svelte";
+  import {
+    Play,
+    Pause,
+    Keyboard,
+    Calendar,
+    Clock,
+    FileText,
+    MessageSquare,
+    Users,
+    ArrowLeft,
+    CassetteTape,
+    X,
+  } from "@lucide/svelte";
   import {
     formatClockTime,
     isLikelyCrosstalkAcrossBlocks,
+    filterDisplaySegmentsByQuery,
     judgedDisplaySegments,
     normalizeSpeakerLabel,
     parseTimeHash,
@@ -46,6 +59,12 @@
   } from "../viewer/loadArtifact";
   import { buildDisplayTranscriptFromArtifacts, type PortableTranscriptDescriptor } from "../viewer/portable";
   import { formatMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
+  import { roomLabelOf } from "../viewer/rooms";
+  import {
+    formatInsightCreated,
+    insightHeadline,
+    type InsightRecord,
+  } from "../viewer/insights";
   import type { DataProvider } from "../viewer/dataProvider";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "../viewer/hashRouting";
 
@@ -72,9 +91,20 @@
   // meeting). Rendered in the same not-found card as an internal load failure.
   export let notFoundMessage = "";
 
+  // Which insights drew on this meeting, resolved by the shell against the
+  // WHOLE catalog and handed down. Empty in every build with no operator to
+  // ask — a standalone export has no insights and shows no section, rather
+  // than an empty one that implies there could have been some.
+  export let linkedInsights: InsightRecord[] = [];
+  // How many of each insight's sources this caller can read, again the shell's
+  // answer: it is not meetingIds.length, because a source they may not read is
+  // absent, and a count is a disclosure that it existed.
+  export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
+
   const dispatch = createEventDispatcher<{
     back: void;
     enriched: MeetingCatalogEntry;
+    openInsight: InsightRecord;
   }>();
 
   type DisplaySegment = JudgedDisplaySegment;
@@ -813,6 +843,8 @@
   // (D-690). repairTurnFinalWordInflation copies rather than mutates, so the
   // loaded artifact keeps its canonical times and every word keeps its original
   // START — seek targets never move.
+  let transcriptQuery = "";
+
   $: displaySegments = transcriptIndex
     ? sortBlocksInReadingOrder(
         repairTurnFinalWordInflation(
@@ -821,11 +853,22 @@
         ),
       )
     : [];
-  $: visibleSegments = displaySegments;
+  // The seam this was always for. The filter lives in core/transcript.ts
+  // because the interesting half is the mapping from matched canonical segments
+  // to rendered blocks, and that deserves a test that does not need a DOM.
+  $: visibleSegments = filterDisplaySegmentsByQuery(
+    transcriptIndex,
+    displaySegments,
+    transcriptQuery,
+  );
+  $: isFiltering = Boolean(transcriptIndex) && transcriptQuery.trim().length > 0;
   // Rows are TURNS, not blocks: the producer flushes a segment at every speaker
   // change, so one sentence spoken over somebody else arrives as a dozen
   // fragments and only the turn they came from is worth reading (D-693).
-  $: transcriptRows = buildTranscriptRows(displaySegments);
+  $: transcriptRows = buildTranscriptRows(visibleSegments);
+  // Keyed by block id and built from EVERY block, not the filtered ones: it is
+  // a lookup, so covering blocks that are currently hidden costs a few map
+  // entries, while missing one a row still renders would drop its words (D-734).
   $: wordPartsByBlock = new Map(displaySegments.map((block) => [block.id, transcriptWordParts(block)]));
   $: activeFollowRowKey = followRowKeyForBlocks(transcriptRows, activeSegments);
   $: continuationKeys = continuationRowKeys(transcriptRows);
@@ -876,14 +919,21 @@
        `scrollbar-gutter: stable` reserves the scrollbar gutter persistently
        so content width never shifts as scrollbar appears/disappears. -->
   <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
-    <!-- Sticky header — translucent bg so the transcript scrolls behind it.
-         Using base-100 (not base-200) so the header reads distinct from the
-         page bg even when there's no transcript content behind it. -->
-    <header class="sticky top-0 z-20 flex-none flex items-center gap-3 min-h-12 px-4 py-3 bg-base-200 border-b border-base-300 min-[981px]:border-none min-[981px]:bg-base-200/50 backdrop-blur-lg">
+    <!-- Sticky header — the meeting's identity, and the transcript flows under
+         it. It used to be a strip of status badges with the title in a second,
+         SCROLLING header below, so the one thing that says which meeting you
+         are reading left the screen as soon as you started reading it. Title
+         and the facts that identify a meeting are here now; the badges and the
+         transcript switcher keep their place at the right, where they were.
+         Opaque rather than translucent: this panel sits over the browse list,
+         and a blurred header with a meeting list showing through it reads as
+         two pages at once. -->
+    <header class="sticky top-0 z-20 flex-none min-h-12 px-4 py-3 min-[981px]:px-8 bg-base-200 border-b border-base-300">
+    <div class="flex items-center gap-2 min-w-0">
     {#if !isDesktop && !inSheet}
       <button
         on:click={() => dispatch("back")}
-        class="btn btn-square btn-neutral btn-xs"
+        class="btn btn-square btn-neutral btn-xs flex-none"
         type="button"
         aria-label="Back to meeting list"
       >
@@ -891,8 +941,12 @@
       </button>
     {/if}
 
+    <h1 class="flex-1 min-w-0 truncate text-lg font-bold min-[981px]:text-xl">
+      {meeting ? meeting.title : "Meeting transcript viewer"}
+    </h1>
+
     <!-- Status info: artifact mode, transcript switcher, timing precision. -->
-    <div class="ml-auto flex items-center gap-1 text-base-content/70">
+    <div class="flex flex-none items-center gap-1 text-base-content/70">
       <span class="badge badge-xs badge-outline px-1">
         {formatArtifactMode()}
       </span>
@@ -938,7 +992,7 @@
 
     <button
       type="button"
-      class="btn btn-ghost btn-xs btn-square"
+      class="btn btn-ghost btn-xs btn-square flex-none"
       on:click={openShortcutsDialog}
       aria-label="Keyboard shortcuts"
       title="Keyboard shortcuts"
@@ -949,13 +1003,45 @@
     {#if inSheet}
       <button
         type="button"
-        class="btn btn-ghost btn-xs btn-square"
+        class="btn btn-ghost btn-xs btn-square flex-none"
         on:click={() => dispatch("back")}
         aria-label="Close the meeting"
         title="Close (Esc)"
       >
         <X size={16} aria-hidden="true" />
       </button>
+    {/if}
+    </div>
+
+    <!-- The facts that identify a meeting, on one line under its name. Each is
+         rendered only where it is known: the room and the date come from the
+         catalog and are there before anything loads, the duration and the
+         speakers come out of the artifact and arrive with it. -->
+    {#if meeting}
+      <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-base-content/70">
+        <span class="inline-flex items-center gap-1.5">
+          <MessageSquare size={14} aria-hidden="true" />
+          {roomLabelOf(meeting)}
+        </span>
+        <span class="inline-flex items-center gap-1.5">
+          <Calendar size={14} aria-hidden="true" />
+          {formatMeetingDate(meeting.dateLabel)}
+        </span>
+        {#if transcriptIndex && clampedDurationMs > 0}
+          <span class="inline-flex items-center gap-1.5 tabular-nums">
+            <Clock size={14} aria-hidden="true" />
+            {formatClockTime(clampedDurationMs)}
+          </span>
+        {/if}
+        {#if speakerNames.length > 0}
+          <span class="inline-flex flex-wrap items-center gap-1.5">
+            <Users size={14} aria-hidden="true" />
+            {#each speakerNames as name}
+              <span class="badge badge-sm px-1">{name}</span>
+            {/each}
+          </span>
+        {/if}
+      </div>
     {/if}
   </header>
 
@@ -970,34 +1056,6 @@
     </div>
   {:else if transcriptIndex}
   <div out:fade={contentFadeConfig()}>
-  <header class="m-4 mb-8 min-[981px]:mx-8 min-[981px]:mb-0 min-w-0">
-    <h1 class="text-3xl font-bold mb-3">
-      {meeting
-        ? meeting.title
-        : "Meeting transcript viewer"}
-    </h1>
-    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 text-base-content/70 text-sm">
-      {#if transcriptIndex && meeting}
-        <span class="badge badge-ghost gap-1.5 px-0">
-          <Calendar size={14} aria-hidden="true" />
-          {formatMeetingDate(meeting.dateLabel)}
-        </span>
-        <span class="badge badge-ghost gap-1.5 tabular-nums px-0">
-          <Clock size={14} aria-hidden="true" />
-          {formatClockTime(clampedDurationMs)}
-        </span>
-        {#if speakerNames.length > 0}
-          <div class="flex flex-wrap items-center gap-1.5">
-            <Users size={14} class="text-base-content" aria-hidden="true" />
-            {#each speakerNames as name}
-              <span class="badge px-1">{name}</span>
-            {/each}
-          </div>
-        {/if}
-      {/if}
-    </div>
-  </header>
-
   <main class="flex flex-col gap-3.5 m-4 min-[981px]:m-8">
     {#if summaryHtml}
       <section class="flex flex-col gap-3.5 mb-4">
@@ -1029,6 +1087,45 @@
       </section>
     {/if}
 
+    <!-- Which insights read this meeting (D-721). Here, under the summary and
+         above the transcript, because it is a fact about the meeting of the
+         same kind as its summary — what came OUT of this conversation — and a
+         reader who has to scroll past the whole transcript to find it will
+         never find it. Rendered beside the recording rather than inside it:
+         what a meeting was used for is not part of what was recorded, which is
+         why the record comes from the shell rather than the artifact. -->
+    {#if linkedInsights.length > 0}
+      <!-- Titled inside like the summary above it, and in the secondary — this
+           theme's amber, the colour every insight surface uses — so the two
+           model-written blocks are visibly different kinds of thing. -->
+      <section
+        class="mb-4 flex flex-col gap-1 rounded-box border border-secondary/25 bg-secondary/10 p-3"
+      >
+        <p class="text-[10px] font-semibold tracking-[0.1em] uppercase text-secondary">
+          Insights
+        </p>
+        {#each linkedInsights as record (record.id)}
+          <button
+            type="button"
+            class="flex w-full items-baseline gap-2 rounded-field px-2 py-1.5 text-left cursor-pointer hover:bg-base-100/60"
+            on:click={() => dispatch("openInsight", record)}
+          >
+            <FileText size={14} class="shrink-0 self-center" aria-hidden="true" />
+            <span class="min-w-0 flex-1 truncate text-sm font-medium">
+              {insightHeadline(record)}
+            </span>
+            <span class="shrink-0 text-xs tabular-nums text-base-content/60">
+              {formatInsightCreated(record)}
+              {#if (insightSourceCounts.get(record.id) ?? 0) > 0}
+                &middot; Context from {insightSourceCounts.get(record.id)}
+                {insightSourceCounts.get(record.id) === 1 ? "meeting" : "meetings"}
+              {/if}
+            </span>
+          </button>
+        {/each}
+      </section>
+    {/if}
+
     <div class="flex justify-between items-start gap-4 pb-1.5 border-b border-base-300">
       <div>
         <p class="text-xl font-semibold text-base-content">Transcript</p>
@@ -1036,8 +1133,32 @@
       </div>
     </div>
 
-    {#if visibleSegments.length === 0}
+    {#if displaySegments.length > 0}
+      <label class="flex items-center gap-2">
+        <span class="sr-only">Find in this transcript</span>
+        <input
+          bind:value={transcriptQuery}
+          class="input input-sm w-full border-base-300 shadow-none"
+          placeholder="Find in this transcript"
+          type="search"
+        />
+        {#if isFiltering}
+          <span class="whitespace-nowrap text-xs text-base-content/70">
+            {visibleSegments.length} of {displaySegments.length}
+          </span>
+        {/if}
+      </label>
+    {/if}
+
+    {#if displaySegments.length === 0}
       <p class="text-base-content/70 text-sm leading-normal">No transcript loaded yet.</p>
+    {:else if visibleSegments.length === 0}
+      <!-- Distinct from the line above on purpose: "no transcript" and "nothing
+           matched what you typed" are different facts, and the first one read as
+           an answer to a search would say the meeting has no words in it. -->
+      <p class="text-base-content/70 text-sm leading-normal">
+        Nothing in this transcript matches “{transcriptQuery.trim()}”.
+      </p>
     {:else}
       <div
         bind:this={transcriptPane}

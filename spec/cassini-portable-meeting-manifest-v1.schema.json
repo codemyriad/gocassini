@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+  "$id": "https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json",
   "title": "Cassini Portable Meeting Manifest v1",
   "description": "This schema is deliberately open. Every object below accepts members it does not declare, except integrity and every payloadRef, and a consumer MUST ignore a manifest member it does not recognise, at any depth, rather than treat its presence as an error. Those two objects are the exception because everything in them is an instruction, for reassembling bytes or for deciding whether this audio and this transcript belong together, so an unrecognised member there is a decode or verification failure and not a lost hint. Adding a member to either one is a new major version. Being open does not mean the file may be anything: every member this schema does declare keeps the type and the meaning declared here.",
   "type": "object",

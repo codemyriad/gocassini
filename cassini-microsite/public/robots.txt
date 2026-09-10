@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://gocassini.codemyriad.io/sitemap-index.xml
+Sitemap: https://gocassini.com/sitemap-index.xml

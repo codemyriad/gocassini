@@ -19,6 +19,13 @@
 # your installation is already past the migration point and there is nothing to
 # do.
 #
+# It also refuses on an installation running the DEFAULT storage mode (D-616).
+# Everything it writes is protected by Team-folder ACL rules, and those mean
+# nothing in the service account's own home — which is where the default mode
+# keeps recordings, readable by every signed-in account by design. If you meant
+# to move an archive INTO the Team folder, switch storage modes in the app's
+# Setup tab instead: that moves the recordings that are already published.
+#
 #   ./scripts/backfill-nc-files.sh --dry-run      # check first, change nothing
 #   ./scripts/backfill-nc-files.sh                # migrate; recordings stay private
 #   ./scripts/backfill-nc-files.sh --public       # migrate; everyone may read them
@@ -161,7 +168,8 @@ recordings that nothing links to yet.
 
 Do not simply re-run it: the guard will refuse, because Nextcloud Files now
 holds recordings. Fix the error reported above, then remove the recordings this
-run uploaded from Cassini/Recordings/ in the Files app before trying again.
+run uploaded from the archive root (Cassini/Recordings under access control) in the
+Files app before trying again.
 EOF
     ;;
   *)
@@ -174,7 +182,8 @@ The migration ended unexpectedly (exit $status). That is not one of the codes it
 reports for itself, so the container or the container CLI failed rather than the
 migration.
 
-Check Cassini/Recordings/ in the Files app before re-running: whether anything
+Check the archive root (Cassini/Recordings under access control) in the Files app
+before re-running: whether anything
 was written is unknown.
 EOF
     ;;
