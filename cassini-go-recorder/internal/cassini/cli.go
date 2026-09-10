@@ -137,6 +137,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runRecord(ctx, args[1:], stdout, stderr)
 	case "retag":
 		return runRetag(ctx, args[1:], stdout, stderr)
+	case "annotate":
+		return runAnnotate(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "serve":
 		return runServe(ctx, args[1:], stdout, stderr)
 	default:
@@ -407,9 +409,12 @@ Usage:
   cassini record --call <CALL_URL> --out "./Meeting.opus"
   cassini record --simulate --out ./runs/demo.run
   cassini retag ./Meeting.opus --out ./Retagged.opus --room-id rm_9f2a1c3d4e5b6a70
+  cassini annotate show ./Meeting.opus
+  cassini annotate apply ./Meeting.opus --ops ./ops.json --actor-id alice
   cassini serve ./site
 
 Commands:
+  annotate Read and write the tags and marks a packed .opus file carries
   build    Build a browser-ready meeting artifact from a recording
   dev      Access the local harness namespace
   doctor   Validate the local environment before expensive work starts
