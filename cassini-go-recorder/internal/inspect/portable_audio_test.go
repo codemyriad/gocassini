@@ -200,6 +200,9 @@ type portableFixtureOptions struct {
 	withDerived                bool
 	dropLastTranscriptChunk    bool
 	repeatFirstTranscriptChunk bool
+	// annotations selects the manifest's annotations member: "" for none, or
+	// one of the fixtureAnnotations kinds.
+	annotations string
 }
 
 func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
@@ -281,6 +284,9 @@ func buildPublishedPortableTags(t *testing.T, opts portableFixtureOptions, audio
 			"name": "summary.md", "mime": "text/markdown",
 			"contentBase64": base64.StdEncoding.EncodeToString([]byte("# Meeting Summary\n")),
 		}}
+	}
+	if opts.annotations != "" {
+		manifest.Annotations = fixtureAnnotations(t, opts.annotations, identity.SHA256)
 	}
 	inputs := []portable.TranscriptInput{{
 		ID: portable.DefaultWordsTranscriptID, Default: true,
