@@ -6,7 +6,7 @@
   import { wizardNeeded } from "./operator/storageWizard";
   import type { StorageStatus } from "./operator/types";
   import SetupWizard from "./SetupWizard.svelte";
-  import StoragePanel from "./StoragePanel.svelte";
+  import RecordingAccessPanel from "./RecordingAccessPanel.svelte";
 
   // The Setup surface (D-616 first pass): instance-level configuration, as
   // opposed to the operator surface's runs and the browse surface's meetings.
@@ -92,7 +92,7 @@
       {/key}
     {:else if operatorClient}
       {#key operatorClient}
-        <StoragePanel {operatorClient} />
+        <RecordingAccessPanel {operatorClient} />
       {/key}
     {/if}
   </div>
