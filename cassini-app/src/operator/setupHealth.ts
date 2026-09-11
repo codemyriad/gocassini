@@ -29,15 +29,19 @@ import type { OperatorPanel } from "../surfaceRouting";
 export interface SetupHealth {
   ok: boolean;
   state: string;
-  // awaitingChoice says the one thing missing is a DECISION: nobody has told
-  // Cassini which storage model this Nextcloud should use (D-708).
+  // mode is the storage model in force: "default", "access_controlled", or ""
+  // when the operator did not say — an install predating D-755, or a build
+  // serving no operator at all (D-756).
   //
-  // It changes what BOTH audiences are told. Every other reason recordings
-  // cannot be served reads as "something is broken"; this one reads as "somebody
-  // has to decide", and the two need different sentences and different next
-  // steps. It is a bit, not a detail — it names no account, no path and no
-  // folder id, which is why it is safe on the user-readable half.
-  awaitingChoice: boolean;
+  // It is on the USER-readable half deliberately. Who can see a recording is
+  // not administrator detail: it is the one fact every reader of the meeting
+  // list needs, and the audience chip renders it for everybody. It names no
+  // account, no path and no folder id, which is what makes it safe here.
+  //
+  // The enum names stop at this file. recordingAudience() below turns them into
+  // the audience the viewing layer knows about, so no component ever sees
+  // `access_controlled`.
+  mode: string;
   // What this deployment's AI configuration allows, or null when the operator
   // did not say — an install older than D-722, or a build serving no operator
   // at all. Null is a THIRD state and not a default: silence must read as
@@ -168,11 +172,6 @@ const CHOOSE_STORAGE_OFFER: SetupNoticeStep = {
   action: "setup",
 };
 
-// Machine-readable steps for the two states that are a question rather than a
-// fault (D-708). Keyed rather than matched on prose, like every other step here.
-const MODE_UNDECIDED_STEP = "storage_mode_undecided";
-const MODE_UNCONFIRMED_STEP = "storage_mode_unconfirmed";
-
 const RERUN_SETUP: SetupNoticeStep = {
   // Provisioning is driven by the AppAPI enabled callback, so re-running it
   // means re-firing that edge. A container restart alone does not (D-541).
@@ -225,15 +224,37 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
   if (!isRecord(body) || typeof body.ok !== "boolean" || typeof body.state !== "string") {
     return null;
   }
-  // Absent reads as false, which is the right degrade for an operator that
-  // predates the field: it had already chosen a mode on its own, so the notice
-  // it produces is the ordinary "something is broken" one.
+  // An absent mode reads as "" — nobody said — and the chip renders nothing.
+  // Guessing one would put a sentence about who can see recordings on screen on
+  // the strength of a question that was never answered.
   return {
     ok: body.ok,
     state: body.state,
-    awaitingChoice: body.awaiting_choice === true,
+    mode: typeof body.mode === "string" ? body.mode : "",
     features: readSetupFeatures(body.features),
   };
+}
+
+// RecordingAudience is who can see a recording, in the terms the viewing layer
+// renders: the two audience names this whole change is about, plus "" for an
+// answer nobody gave.
+//
+// It exists so the storage enum stops here. `default` and `access_controlled`
+// are the operator's words for where the bytes live; "everyone with a Nextcloud
+// account" and "meeting participants" are what that means to a person, and the
+// chip in the meeting list is a viewing-layer control that must not have to
+// know either enum.
+export type RecordingAudience = "" | "everyone" | "participants";
+
+export function recordingAudience(health: SetupHealth | null): RecordingAudience {
+  switch (health?.mode) {
+    case "default":
+      return "everyone";
+    case "access_controlled":
+      return "participants";
+    default:
+      return "";
+  }
 }
 
 // readSetupFeatures insists on both booleans or neither. A half-answer is an
@@ -307,50 +328,30 @@ export function buildSetupNotice(options: {
   if (!verdict || verdict.ok) {
     return null;
   }
-  // A decision nobody has taken is not a broken install, and saying it is
-  // sends both audiences after the wrong thing (D-708). The administrator has
-  // nothing to fix and one button to press; the person who is not an
-  // administrator is not looking at a fault they should report as one.
-  const awaitingChoice = isAwaitingChoice(health, access);
-  // …and it does not blank the meeting list, which is the difference between an
-  // unmade decision and a broken substrate.
-  //
-  // Every deployed installation upgrades into this state, and in it the operator
-  // has touched nothing: reads are exactly what they were, so an
-  // access-controlled archive still lists for the people it belongs to and a
-  // recorded-but-unconfirmed default one still lists for everybody. Standing in
-  // for the list there would blank a working archive on every existing instance
-  // to report something that is not wrong with it. On a fresh install the list
-  // is empty anyway, so the strip sits above nothing.
-  const blocking = !awaitingChoice && blocksBrowsing(verdict.state);
-  const title = awaitingChoice
-    ? "Cassini needs to be told where recordings are kept"
-    : blocking
-      ? "Cassini is not set up yet"
-      : "Cassini has not finished setting itself up";
+  // There is no "somebody has to decide" state any more (D-756). The operator
+  // resolves the mode when it is enabled and records from then on, so every
+  // notice this file produces is now a fault: something is missing or something
+  // is broken. A fresh install shows no notice at all.
+  const blocking = blocksBrowsing(verdict.state);
+  const title = blocking
+    ? "Cassini is not set up yet"
+    : "Cassini has not finished setting itself up";
   if (!isAdmin) {
     return {
       blocking,
       title,
-      summary: awaitingChoice
-        ? "Cassini keeps meeting recordings in Nextcloud, and an administrator has to choose " +
-          "which of two ways it does that — the choice decides who can read a recording, so " +
-          "Cassini does not make it on its own. There is nothing wrong with your account, and " +
-          "nothing for you to fix."
-        : blocking
-          ? "Recordings cannot be shown until an administrator finishes setting Cassini up on " +
-            "this Nextcloud. There is nothing wrong with your account, and nothing for you to fix."
-          : "New recordings will not appear until an administrator finishes setting Cassini up on " +
-            "this Nextcloud. Anything already published is still listed below, and there is " +
-            "nothing wrong with your account.",
+      summary: blocking
+        ? "Recordings cannot be shown until an administrator finishes setting Cassini up on " +
+          "this Nextcloud. There is nothing wrong with your account, and nothing for you to fix."
+        : "New recordings will not appear until an administrator finishes setting Cassini up on " +
+          "this Nextcloud. Anything already published is still listed below, and there is " +
+          "nothing wrong with your account.",
       steps: [],
       detail: "",
       note: "",
-      shareLabel: awaitingChoice
-        ? "Send this link to an administrator. Opening it as an administrator shows them the " +
-          "choice and lets them make it."
-        : "Send this link to an administrator. Opening it as an administrator shows them " +
-          "exactly what is missing and how to fix it.",
+      shareLabel:
+        "Send this link to an administrator. Opening it as an administrator shows them " +
+        "exactly what is missing and how to fix it.",
       shareUrl: appUrl,
       reference: "",
     };
@@ -388,9 +389,6 @@ export function buildSetupNotice(options: {
 //	unavailable   NOT READABLE. Nothing was provisioned, or the app supplying
 //	              the mount is gone; the per-caller scan finds no mount and the
 //	              catalog fails closed to empty.
-//	              The ONE exception is carved out by the caller rather than here:
-//	              an unmade storage decision reports `unavailable`, and in that
-//	              state the operator has touched nothing — see buildSetupNotice.
 //	degraded      NOT READABLE. The steps that abort (migration, catalog
 //	              migration, root ACL) all run after the mount root has been
 //	              narrowed to owner-only, so nobody can traverse to the
@@ -402,49 +400,14 @@ function blocksBrowsing(state: string): boolean {
   return state !== "unknown";
 }
 
-// isAwaitingChoice reads the bit off whichever half answered.
-//
-// /setup carries it explicitly for everybody; /status carries the step, which is
-// the fallback for an install whose manifest predates the route. Both are
-// checked because an administrator can be reading either.
-function isAwaitingChoice(health: SetupHealth | null, access: RecordingsAccess | null): boolean {
-  if (health?.awaitingChoice) {
-    return true;
-  }
-  const step = access?.step ?? "";
-  return step === MODE_UNDECIDED_STEP || step === MODE_UNCONFIRMED_STEP;
-}
-
 function adminNotice(
   state: string,
   access: RecordingsAccess | null,
 ): { summary: string; steps: SetupNoticeStep[] } {
-  // The decision comes first, before every "something is missing" branch.
+  // There is no undecided and no unconfirmed mode to branch on any more
+  // (D-756): the operator resolves one when it is enabled, and a resolved mode
+  // counts as confirmed. Every branch below is a fault.
   //
-  // It has to: an instance with no chosen mode very often ALSO has a missing
-  // prerequisite for one of the two models, and sending an administrator to
-  // install an app before they have said which model they want is sending them
-  // after something they may not need at all — the deps-free model needs no
-  // Nextcloud app whatsoever.
-  if (access?.step === MODE_UNDECIDED_STEP) {
-    return {
-      summary:
-        "Cassini keeps recordings in Nextcloud in one of two ways, and they differ in who can " +
-        "read a recording — so it will not choose for you. Nothing is published or recorded " +
-        "until you pick one, and you can change your mind afterwards.",
-      steps: [CHOOSE_STORAGE_OFFER],
-    };
-  }
-  if (access?.step === MODE_UNCONFIRMED_STEP) {
-    return {
-      summary:
-        "Cassini is keeping recordings under one of its two storage models, but nobody chose it — " +
-        "an earlier version recorded it without asking, or a switch was interrupted. Confirm it, " +
-        "or pick the other one. Recordings already published are unaffected and still readable. " +
-        (access.detail || ""),
-      steps: [CHOOSE_STORAGE_OFFER],
-    };
-  }
   // The service account is the one prerequisite BOTH storage models need:
   // every recording is written and read as it, in a Team folder and in a
   // private home alike. It is checked first because in the default model it is

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import storagePanelSource from "./StoragePanel.svelte?raw";
-import setupSource from "./Setup.svelte?raw";
 import appSource from "./App.svelte?raw";
 
 // Svelte components are not mounted in this repo, so the panel's load-bearing
@@ -91,31 +90,6 @@ describe("StoragePanel", () => {
   it("distinguishes an unresolved mode from the default one", () => {
     expect(storagePanelSource).toContain('status.mode === ""');
     expect(storagePanelSource).toContain("Not checked yet");
-  });
-});
-
-describe("the Setup surface", () => {
-  it("is the storage panel's only host, and builds its own client", () => {
-    expect(setupSource).toContain("import StoragePanel from \"./StoragePanel.svelte\"");
-    expect(setupSource).toContain("new OperatorClient(loadConfig().operatorBasePath)");
-  });
-
-  it("is a shell tab gated on the same admin probe as the operator surface", () => {
-    expect(appSource).toContain('import Setup from "./Setup.svelte"');
-    expect(appSource).toContain('aria-current={surface === "setup" ? "page" : undefined}');
-    expect(appSource).toContain('on:click={() => selectSurface("setup")}');
-    // The tab bar lives inside `{#if operatorAvailable}`, so there is exactly
-    // one gate for every admin surface.
-    expect(appSource.indexOf("{#if operatorAvailable}")).toBeLessThan(
-      appSource.indexOf('selectSurface("setup")'),
-    );
-  });
-
-  it("hides browse for any admin surface, not only the operator one", () => {
-    // `surface === "operator"` here would leave the meeting list rendered
-    // underneath the Setup surface.
-    expect(appSource).toContain('class:cassini-shell-hidden={surface !== "browse"}');
-    expect(appSource).not.toContain('class:cassini-shell-hidden={surface === "operator"}');
   });
 });
 
@@ -302,7 +276,7 @@ describe("StoragePanel setup signal", () => {
 // The shell has to be able to act on it: one writer of the notice, called again
 // rather than only at mount, with the listener released on destroy.
 describe("App shell setup refresh", () => {
-  it("re-reads its setup health when the Setup tab says something changed", () => {
+  it("re-reads its setup health when something says this instance changed", () => {
     expect(appSource).toContain('import { onSetupChanged } from "./operator/setupSignal"');
     expect(appSource).toContain("async function readInstanceState()");
     expect(appSource).toContain("stopListeningForSetupChanges = onSetupChanged(");

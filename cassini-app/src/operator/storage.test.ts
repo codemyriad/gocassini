@@ -440,3 +440,32 @@ describe("OperatorClient overwrite confirmation", () => {
     expect(status.preview?.overwrite_names).toEqual(["both.opus", "old.opus", "catalog.json"]);
   });
 });
+
+// The first-run flag (D-756). It lives on the operator, not in this browser, so
+// the dialog is shown once per install rather than once per administrator per
+// machine.
+describe("acknowledgeFirstRun", () => {
+  it("records the acknowledgement on the storage route, with no new route", async () => {
+    // AppAPI learns an ExApp's routes when it registers, so anything new has to
+    // travel on a route that already exists or an upgraded install 404s it.
+    const fetchMock = vi.fn(async () => jsonResponse({ ...READY_STORAGE, first_run: false }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const status = await new OperatorClient("/operator").acknowledgeFirstRun();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/operator/storage");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ action: "acknowledge_first_run" });
+    expect(status.first_run).toBe(false);
+  });
+
+  it("reads an absent flag as answered, never as a fresh install", async () => {
+    // An operator predating the flag has been running for however long, and a
+    // first-run dialog on top of an install with recordings in it would be a
+    // question about something that happened a year ago.
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ ...READY_STORAGE })));
+
+    expect((await new OperatorClient("/operator").getStorage()).first_run).toBe(false);
+  });
+});

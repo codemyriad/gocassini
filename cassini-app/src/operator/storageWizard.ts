@@ -1,60 +1,23 @@
-import type {
-  StorageArchiveFacts,
-  StorageModeOption,
-  StorageStatus,
-  StorageTransitionPreview,
-} from "./types";
+import type { StorageArchiveFacts, StorageTransitionPreview } from "./types";
 
-// The decisions behind the setup wizard, apart from the component that renders
-// them (D-708).
+// What is in a recordings root, and what a switch would do to it, in an
+// administrator's words.
 //
-// The split is the one setupHealth.ts already uses, and for the same reason:
-// `.svelte` files in this repo are tested by reading their source text, which
-// cannot say anything about a stepped flow's behaviour. Everything here is
-// ordinary TypeScript with ordinary unit tests, and SetupWizard.svelte renders
-// what it returns.
-//
-//	  1 Review      what is on this Nextcloud, for BOTH models
-//	  2 Choose      a mode. Available -> use it; blocked -> scaffold it first
-//	  3 Carry over  ONLY when the choice would change the outcome
-//	  4 Confirm     the preview's facts, then one click
-//
-// Step 3 is the whole of the spec's "do not show the config when there is no
-// choice to be made". A confirmation that asks about something with one possible
-// answer is a confirmation nobody reads.
-
-export type WizardStep = "review" | "choose" | "carry" | "confirm";
-
-// WizardAction is what a mode's button does, and it is the spec's rule about
-// prerequisites made explicit: a mode whose prerequisites are missing can only
-// be SCAFFOLDED, and the switch appears once they are met.
-export type WizardAction = "use" | "scaffold" | "blocked";
-
-export interface WizardModeCard {
-  mode: StorageModeOption["mode"];
-  label: string;
-  summary: string;
-  active: boolean;
-  available: boolean;
-  action: WizardAction;
-  actionLabel: string;
-  // contents is what is in this mode's root right now, in one phrase. It is the
-  // fact the choice actually turns on.
-  contents: string;
-  // blocker is the operator's sentence about what is missing. Empty when the
-  // mode is available.
-  blocker: string;
-  root: string;
-}
+// This file used to hold the setup wizard's decisions as well (D-708). The
+// wizard is gone (D-756): a fresh install resolves its own mode and records,
+// so there is no question to step anybody through, and nothing decides whether
+// to ask. What is left is the two descriptions StoragePanel.svelte still
+// renders, and they stay here for the reason they were here in the first
+// place: `.svelte` files in this repo are tested by reading their source text,
+// which can say nothing about what a sentence claims. Both go with the panel
+// when phase 3 retires it.
 
 // describeArchive says what is in a root, and refuses to call an unread one
 // empty.
 //
 // "We could not look" and "there is nothing there" are the same zero, and every
 // version of this feature that conflated them produced a screen that told an
-// administrator their recordings did not exist. The wizard's first screen is the
-// one place that matters most: it is where somebody decides which archive is the
-// real one.
+// administrator their recordings did not exist.
 export function describeArchive(archive: StorageArchiveFacts): string {
   if (!archive.probed) {
     return "Cassini could not read this folder, so it cannot say what is in it";
@@ -66,46 +29,6 @@ export function describeArchive(archive: StorageArchiveFacts): string {
     return "empty";
   }
   return archive.meetings === 1 ? "1 recording" : `${archive.meetings} recordings`;
-}
-
-// modeCard turns one operator-supplied mode into the card the wizard renders.
-export function modeCard(option: StorageModeOption): WizardModeCard {
-  let action: WizardAction = option.available ? "use" : "blocked";
-  if (!option.available && option.setup.length > 0) {
-    action = "scaffold";
-  }
-  let actionLabel = `Use ${option.label.toLowerCase()}`;
-  if (action === "scaffold") {
-    actionLabel = `Set up ${option.label.toLowerCase()}`;
-  } else if (action === "blocked") {
-    actionLabel = "Not available yet";
-  }
-  return {
-    mode: option.mode,
-    label: option.label,
-    summary: option.summary,
-    active: option.active,
-    available: option.available,
-    action,
-    actionLabel,
-    contents: describeArchive(option.archive),
-    blocker: option.blocker,
-    root: option.root,
-  };
-}
-
-export function modeCards(status: StorageStatus | null): WizardModeCard[] {
-  return (status?.modes ?? []).map(modeCard);
-}
-
-// wizardNeeded reports whether the Setup tab should ask rather than present.
-//
-// It is `mode_confirmed`, not `mode === ""`. An install carrying a mode a
-// previous build recorded on its own, or one an interrupted first decision left
-// behind, has a mode and has not been asked — and presenting that as a settled
-// choice is exactly what this whole change removes.
-export function wizardNeeded(status: StorageStatus | null): boolean {
-  return status !== null && !status.mode_confirmed;
 }
 
 // migrationFacts is the fixed overwrite migration in administrator-facing

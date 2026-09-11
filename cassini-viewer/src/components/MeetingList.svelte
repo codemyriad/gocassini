@@ -76,6 +76,16 @@
   // would undercount an insight that spans rooms, which most of them do.
   export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
 
+  // Who can see the recordings in this list (D-756). The shell resolves it from
+  // the deployment's storage mode and hands down the audience, never the mode
+  // itself: the storage enum is the operator's word for where the bytes live,
+  // and this layer has no business knowing it.
+  //
+  // "" is "nobody said" — a standalone export, which has no operator to ask,
+  // and an operator too old to report it — and it renders nothing. A chip is a
+  // claim about who can read a recording, and there is no safe guess.
+  export let audience: "" | "everyone" | "participants" = "";
+
   // The filter is list-local state — no other surface reads it.
   let filter = "";
   // Which kinds the list is showing. The SHELL owns this now: the control moved
@@ -212,6 +222,19 @@
       {:else if insightsOffered && insightsError}
         <span class="dot" aria-hidden="true"></span>
         <span>insights unavailable</span>
+      {/if}
+      <!-- The permanent disclosure, before the transient ones: this is the only
+           thing on the browse surface that says who can see these recordings,
+           and it says the same to everybody. Hiding it from non-admins is what
+           D-670 was raised to stop. -->
+      {#if audience === "everyone"}
+        <span class="chip audience" title="Anyone with an account on this Nextcloud can see every recording">
+          Visible to anyone with a Nextcloud account
+        </span>
+      {:else if audience === "participants"}
+        <span class="chip audience limited" title="Only the people in each call can see its recording">
+          Visible to meeting participants
+        </span>
       {/if}
       {#if selectedRoomName !== null}
         <span class="chip">
@@ -503,6 +526,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* The audience chip is not a narrowing: nothing was filtered and there is
+     nothing to clear, so it drops the primary fill that means "this list is
+     incomplete" and reads as the standing fact it is. Same shape, so the line
+     stays one row of chips. */
+  .chip.audience {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 20%, transparent);
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* The narrower audience is the one worth colouring: a recording only its
+     participants can see is the exception on a Nextcloud, and the chip is how
+     you tell the two apart at a glance. */
+  .chip.audience.limited {
+    background-color: color-mix(in oklch, var(--color-success) 15%, transparent);
+    border-color: color-mix(in oklch, var(--color-success) 38%, transparent);
+    color: var(--color-success);
+  }
+
   .chip button {
     display: inline-flex;
     flex: none;
