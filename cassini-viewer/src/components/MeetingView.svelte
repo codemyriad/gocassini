@@ -29,15 +29,10 @@
   import TranscriptWords from "./TranscriptWords.svelte";
   import MeetingTags from "./marking/MeetingTags.svelte";
   import TranscriptFrame from "./marking/TranscriptFrame.svelte";
-  import { createMarksSession } from "./marking/session";
+  import { createMarksSession, type ApplyAnnotations, type LoadAnnotations } from "./marking/session";
   import { findStops } from "../core/find";
   import { wordsByTime } from "../core/marking";
-  import type {
-    AnnotationRequest,
-    AnnotationResult,
-    MeetingAnnotations,
-    VocabularyTag,
-  } from "../viewer/annotations";
+  import type { AnnotationResult, VocabularyTag } from "../viewer/annotations";
   import { createWordHighlighter } from "../core/wordHighlight";
   import {
     keyboardEventTargetsControl,
@@ -115,8 +110,8 @@
   // Tags and marks (D-746), bound by the shell to the current meeting. Without a
   // loader, as in the standalone export, there is no tagging here at all.
   export let tagVocabulary: VocabularyTag[] = [];
-  export let loadAnnotations: (() => Promise<MeetingAnnotations>) | null = null;
-  export let applyAnnotations: ((request: AnnotationRequest) => Promise<AnnotationResult>) | null = null;
+  export let loadAnnotations: LoadAnnotations | null = null;
+  export let applyAnnotations: ApplyAnnotations | null = null;
 
   const dispatch = createEventDispatcher<{
     back: void;

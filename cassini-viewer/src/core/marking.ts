@@ -15,7 +15,7 @@ export interface WordSpan {
   to: number;
 }
 
-export const PAUSE_MS = 400;
+const PAUSE_MS = 400;
 
 export function wordsByTime(
   parts: Iterable<{ id: string; startMs?: number; endMs?: number }>,

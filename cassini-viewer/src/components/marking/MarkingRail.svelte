@@ -4,7 +4,7 @@
   import { railTicks } from "../../core/marking";
   import { formatClockTime } from "../../core/transcript";
   import type { TagColorId } from "../../viewer/tagPalette";
-  import type { PlacedMark } from "./session";
+  import { describeMark, type PlacedMark } from "./session";
 
   // The whole meeting top to bottom: drag to grab a stretch, click for one turn.
   export let durationMs: number;
@@ -16,7 +16,6 @@
   export let playheadMs = 0;
   export let labels = true;
 
-  // Movement below this is a click, not a drag.
   const CLICK_SLOP_PX = 4;
   const dispatch = createEventDispatcher<{
     grab: { aMs: number; bMs: number; handle: boolean };
@@ -62,8 +61,10 @@
     drag = null;
   }
 
+  // Not once the frame has taken Enter to confirm a stretch: picking a turn
+  // then would swap the stretch being tagged for the one under the playhead.
   function onKeydown(event: KeyboardEvent) {
-    if (event.target === track && (event.key === "Enter" || event.key === " ")) {
+    if (!event.defaultPrevented && event.target === track && (event.key === "Enter" || event.key === " ")) {
       event.preventDefault();
       event.stopPropagation();
       dispatch("pick", playheadMs);
@@ -123,7 +124,7 @@
         style:top={pct(mark.startMs)}
         style:height={pct(mark.endMs - mark.startMs)}
         style:left="{mark.column * 4}px"
-        title="{mark.tag.label}, {formatClockTime(mark.startMs)}–{formatClockTime(mark.endMs)}"
+        title={describeMark(mark)}
         on:click={() => dispatch("select", mark)}
       ></button>
     {/each}

@@ -1,11 +1,10 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 
 import { stackColumns } from "../../core/marking";
+import { formatClockTime } from "../../core/transcript";
 import {
   AnnotationError,
-  moveStretchOps,
   splitByTarget,
-  timeRange,
   type AnnotationItem,
   type AnnotationRequest,
   type AnnotationResult,
@@ -37,13 +36,6 @@ export function markRequest(pick: TagPick, target: AnnotationTarget): Annotation
     tagStyles: [{ label: pick.label, color: pick.color, icon: "" }],
   };
 }
-
-export const stretchRequest = (pick: TagPick, startMs: number, endMs: number) =>
-  markRequest(pick, timeRange(startMs, endMs));
-
-export const moveRequest = (itemId: string, tag: AnnotationTag, startMs: number, endMs: number) => ({
-  ops: moveStretchOps(itemId, tag, startMs, endMs),
-});
 
 export const removeRequest = (itemIds: readonly string[]): AnnotationRequest => ({
   ops: itemIds.map((itemId) => ({ op: "unmark", itemId })),
@@ -109,9 +101,11 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
     }
   }
 
+  // One write at a time: two in flight could answer out of order, and the
+  // older document would be the one left on screen.
   async function write(request: AnnotationRequest): Promise<boolean> {
     const current = generation;
-    if (!apply) {
+    if (!apply || get(state).busy) {
       return false;
     }
     state.update((s) => ({ ...s, busy: true, error: "" }));
@@ -162,6 +156,9 @@ export interface MarksView {
   placed: PlacedMark[];
   lost: AnnotationItem[];
 }
+
+export const describeMark = (mark: PlacedMark) =>
+  `${mark.tag.label}, ${formatClockTime(mark.startMs)} to ${formatClockTime(mark.endMs)}, marked by ${mark.item.actor.id}`;
 
 // Stretches made against other audio are counted as lost and never placed.
 export function viewMarks(state: MarksState, vocabulary: readonly VocabularyTag[]): MarksView {

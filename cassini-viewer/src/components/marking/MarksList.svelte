@@ -3,7 +3,7 @@
 
   import { formatClockTime } from "../../core/transcript";
   import TagChip from "../tags/TagChip.svelte";
-  import type { PlacedMark } from "./session";
+  import { describeMark, type PlacedMark } from "./session";
 
   export let marks: readonly PlacedMark[] = [];
 
@@ -21,7 +21,7 @@
             type="button"
             class="flex w-full min-w-0 items-center gap-2 rounded-field px-2 py-1.5 text-left hover:bg-base-200"
             data-tag-color={mark.color}
-            aria-label={`${mark.tag.label}, ${formatClockTime(mark.startMs)} to ${formatClockTime(mark.endMs)}, marked by ${mark.item.actor.id}. Jump to it.`}
+            aria-label={`${describeMark(mark)}. Jump to it.`}
             on:click={() => dispatch("jump", mark)}
           >
             <span class="w-1 self-stretch rounded-full bg-(--tag)" aria-hidden="true"></span>

@@ -9,14 +9,13 @@ import {
   type AnnotationsDocument,
   type MeetingAnnotations,
   type VocabularyTag,
+  timeRange,
 } from "../../viewer/annotations";
 import {
   createMarksSession,
   markRequest,
-  moveRequest,
   PREPARING_RETRY_MS,
   removeRequest,
-  stretchRequest,
   untagMeetingRequest,
   viewMarks,
   type MarksState,
@@ -76,7 +75,7 @@ const vocab = (tagId: string, label: string, color: VocabularyTag["color"]): Voc
 
 describe("the requests a meeting view sends", () => {
   it("marks a stretch with a tag that exists", () => {
-    expect(stretchRequest({ tagId: "t-hiring", label: "hiring" }, 1200.4, 5400)).toEqual({
+    expect(markRequest({ tagId: "t-hiring", label: "hiring" }, timeRange(1200.4, 5400))).toEqual({
       ops: [
         { op: "mark", tag: { id: "t-hiring", label: "hiring" }, target: { kind: "time-range", startMs: 1200, endMs: 5400 } },
       ],
@@ -84,18 +83,9 @@ describe("the requests a meeting view sends", () => {
   });
 
   it("sends a new tag's colour in the same request", () => {
-    expect(stretchRequest({ label: "risk", color: "red", icon: "" }, 0, 900)).toEqual({
+    expect(markRequest({ label: "risk", color: "red", icon: "" }, timeRange(0, 900))).toEqual({
       ops: [{ op: "mark", tag: { label: "risk" }, target: { kind: "time-range", startMs: 0, endMs: 900 } }],
       tagStyles: [{ label: "risk", color: "red", icon: "" }],
-    });
-  });
-
-  it("moves a stretch in one request, so it is never missing between two", () => {
-    expect(moveRequest("i1", { id: "t-hiring", label: "hiring" }, 4000, 9500)).toEqual({
-      ops: [
-        { op: "unmark", itemId: "i1" },
-        { op: "mark", tag: { id: "t-hiring", label: "hiring" }, target: { kind: "time-range", startMs: 4000, endMs: 9500 } },
-      ],
     });
   });
 
@@ -153,6 +143,22 @@ describe("a meeting's marks session", () => {
     expect(get(session)).toMatchObject({ error: "Remove the marks that can't be placed first.", busy: false });
     expect(get(session).annotations?.annotations).toBe(doc);
     expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("refuses a second write while one is in flight, so an older answer never lands last", async () => {
+    let finish: (value: AnnotationResult) => void = () => {};
+    const sent: AnnotationRequest[] = [];
+    const session = createMarksSession(() => {});
+    await session.open(
+      async () => meeting(),
+      (request) => (sent.push(request), new Promise((resolve) => (finish = resolve))),
+    );
+    const first = session.write(removeRequest(["i1"]));
+    expect(await session.write(removeRequest(["i2"]))).toBe(false);
+    finish(result());
+    expect(await first).toBe(true);
+    expect(sent).toEqual([removeRequest(["i1"])]);
+    expect(get(session).busy).toBe(false);
   });
 
   it("says tags are being prepared on a 503, and tries again", async () => {
