@@ -1,6 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Sun, Moon, Search, PanelLeft, X } from "@lucide/svelte";
+  import { Sun, Moon, Search, PanelLeft, Tag, X } from "@lucide/svelte";
+  import type { VocabularyTag } from "../viewer/annotations";
+  import { rowChips, wholeTagState, type MeetingTags, type TagPick } from "../viewer/listTags";
+  import { colorFor } from "../viewer/tagPalette";
+  import TagChip from "./tags/TagChip.svelte";
+  import TagPicker from "./tags/TagPicker.svelte";
   import {
     filterMeetingCatalogEntries,
     formatMeetingDateShort,
@@ -76,6 +81,13 @@
   // would undercount an insight that spans rooms, which most of them do.
   export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
 
+  export let meetingTags: MeetingTags = new Map();
+  // Null offers no row tag button: the build cannot tag, or the vocabulary has not loaded.
+  export let tags: readonly VocabularyTag[] | null = null;
+  export let tagFilterCount = 0;
+  export let tagNotice = "";
+  let tagging: { meeting: MeetingCatalogEntry; anchor: HTMLElement } | null = null;
+
   // The filter is list-local state — no other surface reads it.
   let filter = "";
   // Which kinds the list is showing. The SHELL owns this now: the control moved
@@ -92,7 +104,14 @@
     clearRoom: void;
     openRooms: void;
     toggleTheme: void;
+    tagMeeting: { meeting: MeetingCatalogEntry; pick: TagPick };
+    clearTags: void;
+    dismissTagNotice: void;
   }>();
+
+  function toggleTagging(meeting: MeetingCatalogEntry, anchor: HTMLElement) {
+    tagging = tagging?.meeting.id === meeting.id ? null : { meeting, anchor };
+  }
 
   // Title and date, as it has been since D-420 — the ticket's "keep the
   // existing date/name filter working inside a room". It deliberately does NOT
@@ -145,6 +164,9 @@
   // and omitting "3 not shown here" — the exact claim
   // selectionModel.countHiddenByView exists to prevent.
   $: dispatch("visible", types.meetings ? visibleMeetings : []);
+  $: if (tagging && !visibleMeetings.some((meeting) => meeting.id === tagging?.meeting.id)) {
+    tagging = null;
+  }
 </script>
 
 <section
@@ -163,7 +185,11 @@
         aria-label="Choose a room"
       >
         <PanelLeft size={15} aria-hidden="true" />
-        <span>{selectedRoomName ?? "All"}</span>
+        <span
+          >{selectedRoomName ?? "All"}{tagFilterCount > 0
+            ? ` · ${tagFilterCount} ${tagFilterCount === 1 ? "tag" : "tags"}`
+            : ""}</span
+        >
       </button>
 
       <label class="search-field">
@@ -248,6 +274,12 @@
         Insights could not be listed: {insightsError} The meetings are unaffected.
       </p>
     {/if}
+    {#if tagNotice}
+      <p class="list-note" role="status">
+        {tagNotice}
+        <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+      </p>
+    {/if}
     {#if totalCount === 0 && totalInsightCount === 0}
       <div class="list-empty">
         <strong>No meetings yet</strong>
@@ -273,7 +305,11 @@
       <div class="list-empty">
         <strong>Nothing matches</strong>
         <span>
-          {#if selectedRoomName !== null && trimmedFilter}
+          {#if tagFilterCount > 0}
+            No meeting here has {tagFilterCount === 1 ? "that tag" : "those tags"}{trimmedFilter
+              ? " and matches that search"
+              : ""}.
+          {:else if selectedRoomName !== null && trimmedFilter}
             No {matchNoun} in {selectedRoomName} matches that search.
           {:else if selectedRoomName !== null}
             {selectedRoomName} has no {matchNounPlural}.
@@ -287,7 +323,11 @@
             There are no {matchNounPlural} to show.
           {/if}
         </span>
-        {#if trimmedFilter}
+        {#if tagFilterCount > 0}
+          <button type="button" class="list-empty-action" on:click={() => dispatch("clearTags")}>
+            Clear tag filter
+          </button>
+        {:else if trimmedFilter}
           <button type="button" class="list-empty-action" on:click={() => (filter = "")}>
             Clear search
           </button>
@@ -317,6 +357,7 @@
             />
           {:else}
             {@const meeting = item.meeting}
+            {@const chips = rowChips(meetingTags.get(meeting.id))}
             <!-- The row is a container, not a control, so that picking and
                  opening can sit side by side: a checkbox cannot live inside a
                  button, and demoting the whole row to a click-handling div would
@@ -356,6 +397,24 @@
                       <span class="dot" aria-hidden="true"></span>
                       <span>{meeting.speakerCount} speakers</span>
                     {/if}
+                    {#if chips.shown.length > 0}
+                      <span class="row-tags">
+                        {#each chips.shown as { tag, whole, stretches } (tag.tagId)}
+                          <TagChip
+                            label={tag.label}
+                            color={colorFor(tag)}
+                            icon={tag.icon}
+                            variant={whole ? "whole" : "stretch"}
+                            count={stretches}
+                          />
+                        {/each}
+                        {#if chips.rest.length > 0}
+                          <span class="row-tags-more" title={chips.rest.map(({ tag }) => tag.label).join(", ")}
+                            >+{chips.rest.length}</span
+                          >
+                        {/if}
+                      </span>
+                    {/if}
                   </span>
                 </span>
                 {#if typeof meeting.digestDurationMs === "number"}
@@ -364,12 +423,38 @@
                   </span>
                 {/if}
               </button>
+              {#if tags}
+                <button
+                  type="button"
+                  class="row-tag"
+                  aria-haspopup="dialog"
+                  aria-expanded={tagging?.meeting.id === meeting.id}
+                  aria-label={`Tag ${meeting.title}`}
+                  title="Tag this meeting"
+                  on:click={(event) => toggleTagging(meeting, event.currentTarget)}
+                >
+                  <Tag size={15} aria-hidden="true" />
+                </button>
+              {/if}
             </div>
           {/if}
         {/each}
       {/each}
     {/if}
   </div>
+
+  {#if tags && tagging}
+    {@const meeting = tagging.meeting}
+    <TagPicker
+      {tags}
+      label={`Tag ${meeting.title}`}
+      multiple
+      selected={wholeTagState(meetingTags, [meeting.id]).selected}
+      anchor={tagging.anchor}
+      on:pick={(event) => dispatch("tagMeeting", { meeting, pick: event.detail })}
+      on:close={() => (tagging = null)}
+    />
+  {/if}
 
   <!-- Sticky footer: load note (only renders when there's an error) -->
   {#if errorMessage && !selectedMeetingId}
@@ -561,6 +646,8 @@
     position: relative;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    column-gap: 0.5rem;
     align-items: center;
     width: 100%;
     padding: 9px 20px;
@@ -691,6 +778,45 @@
     height: 3px;
     border-radius: 50%;
     background-color: currentColor;
+  }
+  .row-tags {
+    display: inline-flex;
+    gap: 4px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .row-tags-more {
+    flex: none;
+    font-weight: 600;
+  }
+  /* Above the open action's hit area, like the checkbox. Hidden, not removed, so it stays in the tab order. */
+  .row-tag {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-field, 0.5rem);
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+    opacity: 0;
+  }
+  .meeting-row:hover .row-tag,
+  .row-tag:focus-visible,
+  .row-tag[aria-expanded="true"] {
+    opacity: 1;
+    background-color: var(--color-base-100);
+    border-color: var(--color-base-300);
+  }
+  @media (hover: none) {
+    .row-tag {
+      opacity: 1;
+    }
   }
   .row-duration {
     flex: none;
