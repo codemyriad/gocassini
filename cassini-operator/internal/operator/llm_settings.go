@@ -152,16 +152,16 @@ func envIntFrom(getenv func(string) string, key string) int {
 	return n
 }
 
-// llmProviderNameFor derives a display name from an endpoint URL.
-func llmProviderNameFor(base string) string {
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" {
-		return "Default"
-	}
-	if host := strings.ToLower(u.Hostname()); host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai") {
-		return "OpenRouter"
-	}
-	return u.Host
+// llmProviderDefaultName is the display name a provider gets when the
+// administrator gave it none: its position in the list, and nothing about it.
+//
+// Never derived from the URL. The name is the one field of a provider that
+// every signed-in user sees — GET /ai/providers serves it so the Prepare panel
+// can offer a choice — and a name that repeated the host would hand the whole
+// audience an internal hostname the settings surface withholds. "Endpoint 1"
+// says nothing and is what an administrator is expected to rename (D-740).
+func llmProviderDefaultName(position int) string {
+	return fmt.Sprintf("Endpoint %d", position)
 }
 
 // SeedLLMSettings derives the first-start policy from the deploy environment,
@@ -188,7 +188,7 @@ func SeedLLMSettings(getenv func(string) string) LLMSettings {
 		return s
 	}
 	provider := LLMProvider{
-		ID: "default", Name: llmProviderNameFor(base), BaseURL: base, APIKey: key,
+		ID: "default", Name: llmProviderDefaultName(1), BaseURL: base, APIKey: key,
 		TimeoutSec: envIntFrom(getenv, envLLMTimeoutSec),
 		MaxTokens:  envIntFrom(getenv, envLLMMaxTokens),
 	}
@@ -279,7 +279,7 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 			return s, fmt.Errorf("provider %q: %w", p.ID, err)
 		}
 		if p.Name == "" {
-			p.Name = llmProviderNameFor(p.BaseURL)
+			p.Name = llmProviderDefaultName(len(providers) + 1)
 		}
 		if p.TimeoutSec < 0 {
 			return s, fmt.Errorf("provider %q: timeout_sec must not be negative", p.ID)

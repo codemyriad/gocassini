@@ -34,7 +34,7 @@ func TestSeedLLMSettingsFromKeylessEndpoint(t *testing.T) {
 		t.Fatalf("providers = %+v, want one", s.Providers)
 	}
 	p := s.Providers[0]
-	if p.ID != "default" || p.Name != "qwen.internal:8000" || p.BaseURL != "http://qwen.internal:8000/v1" || p.APIKey != "" {
+	if p.ID != "default" || p.Name != "Endpoint 1" || p.BaseURL != "http://qwen.internal:8000/v1" || p.APIKey != "" {
 		t.Fatalf("provider = %+v", p)
 	}
 	if !s.Summary.Enabled || s.Summary.Provider != "default" || s.Summary.Model != "qwen3-30b" {
@@ -48,8 +48,43 @@ func TestSeedLLMSettingsKeyAloneImpliesOpenRouter(t *testing.T) {
 		t.Fatalf("providers = %+v, want one", s.Providers)
 	}
 	p := s.Providers[0]
-	if p.BaseURL != openRouterBaseURL || p.Name != "OpenRouter" || p.APIKey != "sk-or-secret" {
+	if p.BaseURL != openRouterBaseURL || p.Name != "Endpoint 1" || p.APIKey != "sk-or-secret" {
 		t.Fatalf("provider = %+v", p)
+	}
+}
+
+// A provider's display name is the one field every signed-in user sees, so an
+// unnamed one gets its position and never its host: "Endpoint 2", not
+// "qwen.internal:8000" (D-740).
+func TestUnnamedProvidersAreNumberedAndNeverNamedAfterTheirHost(t *testing.T) {
+	got, err := normalizeLLMSettings(LLMSettings{Providers: []LLMProvider{
+		{ID: "hosted", BaseURL: openRouterBaseURL},
+		{ID: "local", Name: "  ", BaseURL: "http://qwen.internal:8000/v1"},
+		{ID: "named", Name: "Lab box", BaseURL: "http://lab.internal:8000/v1"},
+	}})
+	if err != nil {
+		t.Fatalf("normalizeLLMSettings: %v", err)
+	}
+	for i, want := range []string{"Endpoint 1", "Endpoint 2", "Lab box"} {
+		if got.Providers[i].Name != want {
+			t.Errorf("provider %d name = %q, want %q", i, got.Providers[i].Name, want)
+		}
+	}
+
+	// And the USER route, which is where the name goes, carries no host.
+	clearLLMEnv(t)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.setLLMSettings(got)
+	rec := httptest.NewRecorder()
+	rt.aiProvidersHandler(rec, httptest.NewRequest(http.MethodGet, "/ai/providers", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, host := range []string{"openrouter.ai", "qwen.internal", "lab.internal"} {
+		if strings.Contains(rec.Body.String(), host) {
+			t.Errorf("GET /ai/providers names a host (%s): %s", host, rec.Body.String())
+		}
 	}
 }
 
@@ -264,7 +299,7 @@ func TestGetLLMSettingsRedactsKeys(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "sk-or-secret-value") || strings.Contains(rec.Body.String(), `"api_key"`) {
 		t.Fatalf("GET leaked the key: %s", rec.Body.String())
 	}
-	if len(out.Providers) != 1 || !out.Providers[0].APIKeyConfigured || out.Providers[0].Name != "OpenRouter" {
+	if len(out.Providers) != 1 || !out.Providers[0].APIKeyConfigured || out.Providers[0].Name != "Endpoint 1" {
 		t.Fatalf("providers = %+v", out.Providers)
 	}
 	if out.Effective.Summary == nil || out.Effective.Summary.BaseURL != openRouterBaseURL || !out.Effective.Summary.APIKeyConfigured {
