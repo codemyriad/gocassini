@@ -186,12 +186,19 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             main_image="${REGISTRY}/${IMAGE}:branch-main"
             validated="$(docker buildx imagetools inspect "$main_image" \
-              --format '{{ json .Image.Config.Labels }}' 2>/dev/null \
-              | jq -r '."io.gocassini.ffmpeg.requested-version" // empty' || true)"
+              --format '{{ json .Image }}' 2>/dev/null \
+              | jq -r '
+                  if .config? then
+                    [.config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty]
+                  else
+                    [.[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty] | unique
+                  end
+                  | if length == 1 then .[0] else empty end
+                ' || true)"
             case "${validated}" in
               "" | latest | *[!0-9.]* | .* | *..* | *.)
                 echo "::warning::${main_image} carries no validated FFmpeg version" \
-                  "(got '${validated:-none}'); falling back to resolving upstream"
+                  "(got '\''${validated:-none}'\''); falling back to resolving upstream"
                 ;;
               *)
                 echo "Pinning FFmpeg ${validated}, as already gated by the current main image"
@@ -293,8 +300,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=build-image
+          cache-to: type=gha,mode=max,scope=build-image
 
       # Non-PR builds (push, release tags, workflow_dispatch) build multi-arch
       # images (linux/amd64,linux/arm64) and push the multi-arch manifest list
@@ -311,8 +318,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=build-image
+          cache-to: type=gha,mode=max,scope=build-image
 
       # PR builds can't reach ghcr (push step is skipped), so they still
       # need the artifact-based handoff. Push builds skip the artifact —
@@ -596,8 +603,8 @@ jobs:
           tags: gocassini:arm64-smoke
           build-args: |
             FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=smoke-arm64
+          cache-to: type=gha,mode=max,scope=smoke-arm64
 
       - name: Validate environment in ARM64 container
         run: |
@@ -610,17 +617,31 @@ jobs:
       - name: Smoke-transcribe with bundled Parakeet on ARM64
         run: |
           set -euo pipefail
+          out_dir="${RUNNER_TEMP}/smoke-arm64"
+          mkdir -p "${out_dir}"
           docker run --rm --platform linux/arm64 \
             -v "${GITHUB_WORKSPACE}/harness/media:/media:ro" \
+            -v "${out_dir}:/out" \
             --entrypoint /bin/sh gocassini:arm64-smoke -c '
               set -eu
-              /usr/local/bin/cassini build /media/parakeet-smoke.mkv --out /tmp/smoke.opus
-              if [ ! -s /tmp/smoke.opus ] || [ "$(stat -c%s /tmp/smoke.opus)" -le 50000 ]; then
-                echo "ARM64 transcription failed to produce valid opus meeting" >&2
-                exit 1
-              fi
-              /usr/local/bin/cassini inspect --transcript /tmp/smoke.opus
+              /usr/local/bin/cassini build /media/parakeet-smoke.mkv --out /out/smoke.opus
             '
+          if [ ! -s "${out_dir}/smoke.opus" ] || [ "$(stat -c%s "${out_dir}/smoke.opus")" -le 50000 ]; then
+            echo "::error::ARM64 transcription failed to produce valid opus meeting" >&2
+            exit 1
+          fi
+
+          words=$(docker run --rm --platform linux/arm64 \
+            -v "${out_dir}:/out:ro" \
+            --entrypoint /bin/sh gocassini:arm64-smoke -c '
+              /usr/local/bin/cassini inspect --transcript /out/smoke.opus
+            ' | jq '[.segments[]?.words[]?] | length')
+
+          echo "ARM64 transcribed ${words} word(s) from parakeet-smoke.mkv"
+          if [ "${words}" -lt 40 ]; then
+            echo "::error::ARM64 transcription produced only ${words} words (expected >= 40)" >&2
+            exit 1
+          fi
 
   build-cuda-base:
     name: Build CUDA base image (model + CUDA libs)
@@ -1207,7 +1228,7 @@ jobs:
           # image out from under a tag it just decided to keep forever.
           # We must protect child manifests of both keep-forever tags AND
           # the rolling $KEEP retained SHA tags so multi-arch images remain pullable.
-          echo "${GH_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin >/dev/null 2>&1 || true
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin >/dev/null
           : > "$tmp/protected.txt"
 
           # 1. Keep-forever tag set. Persist it under RUNNER_TEMP so the
@@ -1243,8 +1264,11 @@ jobs:
 
           while read -r tag; do
             [[ -z "$tag" ]] && continue
-            docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${PACKAGE}:${tag}" 2>/dev/null \
-              | jq -r '.manifests[]?.digest // empty' >> "$tmp/protected.txt" || true
+            if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${PACKAGE}:${tag}")"; then
+              echo "::error::Failed to inspect retained tag ghcr.io/${OWNER}/${PACKAGE}:${tag}; aborting prune to protect manifests" >&2
+              exit 1
+            fi
+            echo "$raw" | jq -r '.manifests[]?.digest // empty' >> "$tmp/protected.txt"
           done < "$tmp/all-retained-tags.txt"
           sort -u -o "$tmp/protected.txt" "$tmp/protected.txt"
           echo "Protected $(wc -l < "$tmp/protected.txt") child manifest(s) referenced by kept tags."
