@@ -252,7 +252,10 @@ Content-Type: application/json
 
 {
   "meetingIds": ["..."],
-  "workflow": "summarise"
+  "workflow": "summarise",
+  "question": "",
+  "provider": "",
+  "model": ""
 }
 ```
 
@@ -264,9 +267,13 @@ Behavior:
 - `question` belongs only to a workflow that has somewhere to put one, and is
   refused **both ways**: sent to a workflow that takes none it would be dropped
   without being asked, and withheld from one that needs it the prompt would go
-  out with its placeholder still in it. Either mistake is a `400`. No workflow
-  this image ships takes a question yet, so today `question` must be absent or
-  empty
+  out with its placeholder still in it. Either mistake is a `400`. The shipped
+  `ask` workflow ("Ask your own question") takes one and requires it; every
+  other shipped workflow asks its own
+- `provider` and `model` are optional and name the endpoint (by the id
+  `GET /operator/ai/providers` lists) and model this run should reach. An
+  unknown provider, or a model with no provider, is a `400`. Empty means the
+  deployment's configured insight endpoint
 - returns `201` with the run
 
 ### List the caller's runs
@@ -293,7 +300,10 @@ POST /insights/:id/retry
 ```
 
 Valid only for a run in `failed`. The id is stable across attempts; each retry
-increments `attemptNumber`.
+increments `attemptNumber`. A retry replays the request as it was made — the
+same workflow, meetings, question and the endpoint the caller picked — and
+falls back to the deployment's configured endpoint only when the request named
+none, or named one that has since been removed.
 
 ### The run object
 
@@ -302,9 +312,14 @@ increments `attemptNumber`.
   "createdBy": "alice", "attemptNumber": 1,
   "workflowId": "summarise", "workflowVersion": "v0", "workflowSha256": "...",
   "meetingIds": ["..."], "roomIds": ["..."], "question": "",
+  "requestedProvider": "", "requestedModel": "",
   "provider": "", "model": "", "documentPath": "", "error": "",
   "createdAt": "RFC3339", "updatedAt": "RFC3339" }
 ```
+
+`requestedProvider` and `requestedModel` are what the caller asked for (the
+create body's `provider` and `model`); `provider` and `model` are what the latest
+attempt actually reached, and are empty until an attempt has resolved them.
 
 `status` is `queued`, `running`, `succeeded` or `failed` — the same four words
 the `cassini insight` CLI uses, deliberately not the job pipeline's five.
