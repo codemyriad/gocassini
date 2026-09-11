@@ -27,7 +27,7 @@ func resetStorageMode(t *testing.T) {
 // setStorageMode puts the process in a mode an administrator CHOSE.
 //
 // `user` rather than `configured`, so the provenance these tests read back is
-// the one a click leaves. setUnconfirmedStorageMode is the other half: a mode
+// the one a click leaves. setSelfRecordedStorageMode is the other half: a mode
 // an older build recorded on its own, which since D-753 governs and publishes
 // exactly like this one and differs only in what /storage says wrote it.
 func setStorageMode(t *testing.T, accessControlled bool) string {
@@ -39,9 +39,11 @@ func setStorageMode(t *testing.T, accessControlled bool) string {
 	return path
 }
 
-// setUnconfirmedStorageMode is a mode that GOVERNS and that nobody chose — a
+// setSelfRecordedStorageMode is a mode that GOVERNS and that nobody chose — a
 // fallback an older build recorded, or a settings file of unknown provenance.
-func setUnconfirmedStorageMode(t *testing.T, accessControlled bool) string {
+// It is CONFIRMED like every other recorded mode (D-753); only its provenance
+// differs, which is why the name no longer says "unconfirmed".
+func setSelfRecordedStorageMode(t *testing.T, accessControlled bool) string {
 	t.Helper()
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)

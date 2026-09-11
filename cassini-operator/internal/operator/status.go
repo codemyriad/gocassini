@@ -347,17 +347,6 @@ type setupFeatures struct {
 	Insights bool `json:"insights"`
 }
 
-// storageAwaitingChoice reports whether the reason recordings cannot be served
-// is that nobody has chosen a storage model.
-//
-// Keyed on the STEP rather than on the mode record, because /setup is answered
-// from the same snapshot /status is and must not reach past it into
-// process-wide state that could have moved in between — the two would then
-// disagree about the same instant.
-func storageAwaitingChoice(step string) bool {
-	return step == storageStepModeUndecided || step == storageStepModeUnconfirmed
-}
-
 // setupHandler answers GET <base>/setup for any logged-in Nextcloud user.
 //
 // Deliberately 200 even when OK is false. /status answers 503 because a monitor
@@ -387,9 +376,13 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// and it has to agree with the admin surface, which is reading this.
 	mode, _ := ncStorage.snapshot()
 	writeJSON(w, http.StatusOK, setupResponse{
-		OK:             access.OK,
-		State:          access.State,
-		AwaitingChoice: storageAwaitingChoice(access.Step),
+		OK:    access.OK,
+		State: access.State,
+		// Always false, like /storage's copy of it (D-753): the two steps it
+		// used to be keyed on are not emitted any more, because nothing asks an
+		// administrator to choose a storage model. Kept in the shape so a client
+		// that has not been rebuilt still parses this response.
+		AwaitingChoice: false,
 		Mode:           mode,
 		// The user-safe half of the cause table, which is empty for every step
 		// whose honest sentence would name an account or a path.

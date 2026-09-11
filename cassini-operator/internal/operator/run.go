@@ -273,6 +273,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer store.Close()
+	// The enabled edge asks this when Nextcloud cannot be believed about what
+	// the install already holds: an operator that has published nothing has no
+	// archive an open storage mode could strand (D-753, storageModeFromProbe).
+	// Registered here because the preflight runs from an ExAppConfig, which has
+	// no Store in it.
+	setDeliveredRecordingsCounter(store.CountDeliveredRecordings)
+	defer setDeliveredRecordingsCounter(nil)
 	interruptedAt := nowUTCString()
 	interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
 	if err != nil {
@@ -328,24 +335,21 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// for the edge (nc_access_status.go), because a recorded mode is a decision,
 	// not evidence that the storage behind it is still there.
 	ncStorage.setPath(storageSettingsPath(cfg))
+	settings, err := LoadStorageSettings(ncStorage.settingsPath())
 	// The first-run acknowledgement rides in the same file (D-755) and is
 	// mirrored here whatever the mode turns out to be — including on the error
 	// branch below, where the zero value is the honest answer: a file nothing
 	// could read is not evidence that anybody has seen the dialog.
-	if firstRun, err := LoadStorageSettings(ncStorage.settingsPath()); err == nil {
-		ncStorage.setFirstRunAcknowledged(firstRun.FirstRunAcknowledged)
-	}
-	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
+	ncStorage.setFirstRunAcknowledged(err == nil && settings.FirstRunAcknowledged)
+	if err != nil {
 		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
 		// Clean: an unreadable file is not evidence of a half-done migration.
-		// Unconfirmed: writing a mode is how an administrator gets out of this.
 		ncStorage.set(true, storageModeSourceConfigured, true)
 	} else if settings.Configured() {
 		// The RECORDED source, carried through rather than flattened to
 		// "configured". It is what tells an administrator's click apart from a
 		// deploy option, and both apart from a mode a previous build wrote down
-		// on its own — which is the question the Setup tab now has to answer
-		// before it presents a decision as made (D-708).
+		// on its own.
 		source := settings.Source
 		if source == "" {
 			source = storageModeSourceConfigured

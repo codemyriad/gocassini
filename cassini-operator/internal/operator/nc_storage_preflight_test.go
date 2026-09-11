@@ -42,6 +42,12 @@ type storageMock struct {
 	aclArchive []string
 	// defaultArchive is the same for the default model's own root.
 	defaultArchive []string
+	// createsServiceAccount makes `POST /cloud/users` actually work, the way an
+	// instance that has not adopted Nextcloud 34.0.2's password confirmation
+	// answers it. Off by default, because the refusal is the expected answer on
+	// a current Nextcloud and every other test here is about an instance whose
+	// shape does not change under it (D-754).
+	createsServiceAccount bool
 	// failAppList makes Nextcloud refuse to say which apps are enabled, which
 	// is a different answer from "that app is off" and must not be read as one.
 	failAppList bool
@@ -134,6 +140,14 @@ func (m *storageMock) server(t *testing.T) *httptest.Server {
 				t.Fatalf("encode folder fixture: %v", err)
 			}
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":`+string(encoded)+`}}`)
+		case r.Method == http.MethodPost && p == "/ocs/v2.php/cloud/users" && m.createsServiceAccount:
+			// The account exists from here on, which is the whole point: every
+			// later read in the same preflight run has to see it, including the
+			// two archive PROPFINDs that are made AS it.
+			m.mu.Lock()
+			m.serviceAccount = true
+			m.mu.Unlock()
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[]}}`)
 		case r.Method == "PROPFIND" && m.failPropfindAll:
 			w.WriteHeader(http.StatusInternalServerError)
 		case r.Method == "PROPFIND" && (m.homeChildren != nil || m.dirs != nil):
@@ -194,6 +208,16 @@ func mappedCassiniFolder() *gfFolder {
 		Manage:     []gfManage{{Type: "user", ID: ncRecordingsOwner}},
 		ACL:        true,
 	}
+}
+
+// setDeliveredRecordings answers the probe's "has this install published
+// anything" question with a fixed number, so a test can be an install with a
+// past or an install without one. A non-nil err is a count nobody could take,
+// which is a different answer from zero.
+func setDeliveredRecordings(t *testing.T, count int, err error) {
+	t.Helper()
+	setDeliveredRecordingsCounter(func(context.Context) (int, error) { return count, err })
+	t.Cleanup(func() { setDeliveredRecordingsCounter(nil) })
 }
 
 // runStoragePreflight wires the singletons a preflight touches to throwaway
@@ -463,6 +487,43 @@ func TestStorageModeFromProbeReadsTheArchiveRatherThanThePath(t *testing.T) {
 		wantAccessCtrl:  false,
 		wantWhyMentions: ncRecordingsOwner,
 	}, {
+		// The Team-folder app is off, so an access-controlled archive and an
+		// empty install answer identically: the mount is gone and both roots
+		// 404. One of those two answers is an archive, and `default` would
+		// strand it and widen every recording made afterwards. This operator
+		// has published before, so it is the install with a past.
+		name:            "the Team-folder app is off and this install has delivered recordings",
+		probe:           probed(ncStorageProbe{DeliveredRecordingsProbed: true, DeliveredRecordings: 3}),
+		wantOK:          false,
+		wantWhyMentions: ncRecordingsMount,
+	}, {
+		// The same shape, with the local history that tells it apart: this
+		// operator has never delivered a recording, so there is no archive for
+		// an open mode to strand. A deps-free Nextcloud is the ordinary fresh
+		// install (AIO ships without `groupfolders`) and must not be held up.
+		name:            "the Team-folder app is off and nothing has ever been delivered",
+		probe:           probed(ncStorageProbe{DeliveredRecordingsProbed: true}),
+		wantOK:          true,
+		wantAccessCtrl:  false,
+		wantWhyMentions: ncAppGroupFolders,
+	}, {
+		// The other tie-breaker, on its own: Cassini made the service account on
+		// this very edge. Every recording in either model is written and read as
+		// that account, so one that did not exist a minute ago owns nothing, and
+		// the count is not even needed.
+		name:            "the Team-folder app is off and the account was created on this edge",
+		probe:           probed(ncStorageProbe{ServiceAccountCreated: true}),
+		wantOK:          true,
+		wantAccessCtrl:  false,
+		wantWhyMentions: ncRecordingsOwner,
+	}, {
+		// Neither tie-breaker available: the count could not be taken, and an
+		// absent answer is not a zero. Fail closed.
+		name:            "the Team-folder app is off and the delivery count is unknown",
+		probe:           probed(ncStorageProbe{}),
+		wantOK:          false,
+		wantWhyMentions: ncAppGroupFolders,
+	}, {
 		name:            "a root that could not be listed",
 		probe:           ncStorageProbe{FolderProbed: true, ServiceAccount: true, DefaultArchive: ncArchiveFacts{Probed: true}},
 		wantOK:          false,
@@ -477,6 +538,123 @@ func TestStorageModeFromProbeReadsTheArchiveRatherThanThePath(t *testing.T) {
 			}
 			if !strings.Contains(why, tc.wantWhyMentions) {
 				t.Fatalf("why = %q, which never mentions %q — the evidence is what makes the record honest", why, tc.wantWhyMentions)
+			}
+		})
+	}
+}
+
+// The create and the resolution happen on the SAME enabled edge (D-754, D-753),
+// and both recordings roots are read AS the account being created. A probe taken
+// before the create skipped them, so believing it would answer
+// `storage_mode_unresolved` for the most ordinary install there is: a fresh one
+// that Cassini has just made able to record.
+func TestPreflightResolvesTheModeAfterCreatingTheServiceAccount(t *testing.T) {
+	mock := &storageMock{createsServiceAccount: true}
+	cfg, path := runStoragePreflight(t, mock, io.Discard)
+
+	if !mock.saw(http.MethodPost, "/ocs/v2.php/cloud/users") {
+		t.Fatalf("the preflight never attempted the create; requests: %v", mock.reqs)
+	}
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.Mode != storageModeDefault || snap.ModeSource != storageModeSourceResolved {
+		t.Fatalf("mode = (%q, %q), want (%q, %q)", snap.Mode, snap.ModeSource, storageModeDefault, storageModeSourceResolved)
+	}
+	if !snap.OK || snap.Step == storageStepModeUnresolved {
+		t.Fatalf("substrate = %+v, want a usable install: the account it needed exists now", snap)
+	}
+	settings := readPersistedMode(t, path)
+	if !settings.Configured() || settings.Mode() != storageModeDefault || settings.Source != storageModeSourceResolved {
+		t.Fatalf("%s = %+v, want mode %q from %q", storageSettingsFileName, settings, storageModeDefault, storageModeSourceResolved)
+	}
+	// The dialog is the only thing left between this install and a recording,
+	// and it is not a gate: nothing refuses.
+	if refusal := ncAccessSubstrate.recordingRefusal(); refusal != "" {
+		t.Fatalf("a recording was refused after the account was created: %q", refusal)
+	}
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	if status := cfg.storageStatus(rt, nil); !status.FirstRun {
+		t.Fatal("first_run is false on an install nobody has acknowledged")
+	}
+}
+
+// What the count above is counting. A delivery is a publish that finished and
+// succeeded: a build that completed without publishing is not one, and neither
+// is a publish that failed. Getting that wrong in either direction decides who
+// can read an organisation's meetings on a deps-free install.
+func TestCountDeliveredRecordingsCountsOnlyDeliveries(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	if n, err := store.CountDeliveredRecordings(ctx); err != nil || n != 0 {
+		t.Fatalf("CountDeliveredRecordings() on a fresh store = (%d, %v), want (0, nil)", n, err)
+	}
+
+	insertJob(t, store.db, "delivered", "2026-06-12T10:00:00Z")
+	if err := store.MarkPublishSucceeded(ctx, "delivered", "/site/m.opus", "/site/m.opus", nowUTCString()); err != nil {
+		t.Fatalf("MarkPublishSucceeded() error = %v", err)
+	}
+	insertJob(t, store.db, "built-only", "2026-06-12T11:00:00Z")
+	if err := store.MarkBuildSucceeded(ctx, "built-only", "/work/m.meeting", "/work/m.meeting", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildSucceeded() error = %v", err)
+	}
+	insertJob(t, store.db, "publish-failed", "2026-06-12T12:00:00Z")
+	if err := store.MarkPublishFailed(ctx, "publish-failed", "", "", "the sink refused it", nowUTCString()); err != nil {
+		t.Fatalf("MarkPublishFailed() error = %v", err)
+	}
+
+	if n, err := store.CountDeliveredRecordings(ctx); err != nil || n != 1 {
+		t.Fatalf("CountDeliveredRecordings() = (%d, %v), want (1, nil): only the delivered job counts", n, err)
+	}
+}
+
+// The deps-free fresh install, end to end: a Nextcloud with neither native app
+// (which is what Nextcloud AIO ships), the service account already made by hand,
+// and nothing in either root. The Team folder is invisible there whether or not
+// one exists, so the resolution leans on this operator's own delivery history —
+// and the two answers it can give must lead to different places.
+func TestPreflightResolvesADepsFreeInstallFromItsOwnDeliveryHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		delivered  int
+		wantMode   string
+		wantSource string
+	}{
+		{name: "nothing ever delivered", delivered: 0, wantMode: storageModeDefault, wantSource: storageModeSourceResolved},
+		{name: "recordings delivered before", delivered: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setDeliveredRecordings(t, tc.delivered, nil)
+			mock := &storageMock{apps: []string{}, serviceAccount: true}
+			_, path := runStoragePreflight(t, mock, io.Discard)
+
+			snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+			if snap.Mode != tc.wantMode || snap.ModeSource != tc.wantSource {
+				t.Fatalf("mode = (%q, %q), want (%q, %q)", snap.Mode, snap.ModeSource, tc.wantMode, tc.wantSource)
+			}
+			settings := readPersistedMode(t, path)
+			if tc.wantMode == "" {
+				if settings.Configured() {
+					t.Fatalf("%s recorded %+v for an install whose Team folder could be hiding an archive", storageSettingsFileName, settings)
+				}
+				if snap.Step != storageStepModeUnresolved {
+					t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUnresolved)
+				}
+				// Degraded, never unavailable: a call is not spent over this.
+				if refusal := ncAccessSubstrate.recordingRefusal(); refusal != "" {
+					t.Fatalf("a recording was refused while the mode was unresolved: %q", refusal)
+				}
+				return
+			}
+			if !settings.Configured() || settings.Mode() != tc.wantMode || settings.Source != tc.wantSource {
+				t.Fatalf("%s = %+v, want mode %q from %q", storageSettingsFileName, settings, tc.wantMode, tc.wantSource)
+			}
+			if !snap.OK {
+				t.Fatalf("substrate = %+v, want a usable deps-free install", snap)
 			}
 		})
 	}
@@ -540,10 +718,13 @@ func TestPreflightAcceptsADepsFreeInstanceWithAServiceAccount(t *testing.T) {
 	if !mock.saw("MKCOL", "/"+ncDefaultRecordingsRoot+"/meetings") {
 		t.Fatalf("the canonical collections were never created; requests: %v", mock.reqs)
 	}
-	// Nothing was scaffolded on the administrator's behalf.
+	// Nothing was scaffolded on the administrator's behalf. The service account
+	// is the one prerequisite the preflight will create (D-754) and this
+	// instance already has it, so on this fixture that write must not happen
+	// either: an account that is there is never written to.
 	for _, forbidden := range []string{"/ocs/v2.php/cloud/users", "/ocs/v2.php/cloud/groups", "/index.php/apps/groupfolders/folders"} {
 		if mock.saw(http.MethodPost, forbidden) {
-			t.Errorf("the preflight POSTed to %s — the first pass must create no prerequisites", forbidden)
+			t.Errorf("the preflight POSTed to %s on an instance that needed nothing created", forbidden)
 		}
 	}
 }
@@ -621,8 +802,11 @@ func TestPreflightKeepsAccessControlWhenTheSettingsFileIsUnreadable(t *testing.T
 	// The mode itself is not a question: nothing asks an administrator to
 	// confirm a file Cassini could not read, it simply keeps the safe model and
 	// says so in the log (D-753).
-	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepServiceAccount && !strings.HasPrefix(snap.Step, "app_missing:") {
-		t.Fatalf("step = %q, want the missing prerequisite named: %+v", snap.Step, snap)
+	// The fixture has the service account and neither native app, and access
+	// control is what the unreadable file keeps: the missing app is the
+	// prerequisite, and it is the only one reachable here.
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); !strings.HasPrefix(snap.Step, "app_missing:") {
+		t.Fatalf("step = %q, want app_missing:<app>: %+v", snap.Step, snap)
 	}
 }
 

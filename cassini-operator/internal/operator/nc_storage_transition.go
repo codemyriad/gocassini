@@ -284,38 +284,18 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl,
 		// which is the request an administrator makes by pressing the button for
 		// the mode already in force — see finishMigration.
 		if ncStorage.migrationClean() {
-			if !ncStorage.confirmedMode() {
-				client := &http.Client{Timeout: ncProvisionTimeout}
-				probe, err := c.probeNCStorage(ctx, client, logger)
-				if err != nil {
-					return storageTransitionResult{}, fmt.Errorf("could not inspect this Nextcloud: %w", err)
-				}
-				if ready, step, detail := probe.sanityForTarget(current); !ready {
-					return storageTransitionResult{}, fmt.Errorf("%w (%s): %s", errTransitionNotReady, step, detail)
-				}
-				result := storageTransitionResult{Mode: storageModeName(current), Confirmed: true}
-				if err := c.recordStorageMode(current, storageModeSourceUser, true, logger); err != nil {
-					return result, fmt.Errorf("could not record the administrator's storage-mode confirmation: %w", err)
-				}
-				logger.Printf("nc storage: administrator confirmed %s mode; no recordings moved", storageModeName(current))
-				return result, nil
-			}
 			// The zero result IS the answer: nothing moved, so there is no
 			// transition to report and the caller renders the current state
 			// unchanged. A no-op that described a move would put "0 recordings
 			// were copied" on screen every time somebody double-clicked.
+			//
+			// D-708 had a third case here: a mode that governed and that nobody
+			// had confirmed, which this call confirmed without moving anything.
+			// A recorded mode is a settled mode now (D-753), so the only thing
+			// left to ask for at the mode already in force is the tidy-up below.
 			return storageTransitionResult{}, nil
 		}
-		result, err := c.finishMigration(ctx, &http.Client{Timeout: ncProvisionTimeout}, logger)
-		if err != nil || ncStorage.confirmedMode() {
-			return result, err
-		}
-		result.Confirmed = true
-		if err := c.recordStorageMode(current, storageModeSourceUser, true, logger); err != nil {
-			return result, fmt.Errorf("could not record the administrator's storage-mode confirmation: %w", err)
-		}
-		logger.Printf("nc storage: administrator confirmed %s mode after finishing its migration", storageModeName(current))
-		return result, nil
+		return c.finishMigration(ctx, &http.Client{Timeout: ncProvisionTimeout}, logger)
 	}
 
 	client := &http.Client{Timeout: ncProvisionTimeout}

@@ -535,10 +535,11 @@ recordings at — and `migration_clean`.
 | `user` | An administrator picked it in **Operator › Settings › Who can see recordings** | yes |
 | `resolved_on_enable` | Cassini resolved it when the app was enabled, from what the instance already held | yes |
 | `env` | `CASSINI_STORAGE_MODE` declared it, and the instance matched | yes |
-| `migrating` | A switch was interrupted before it finished; this is where the recordings are, not what anybody wanted | no |
-| `default` | A fallback an older version recorded on its own. Nothing writes this any more | no |
-| `derived` | Inferred from the instance by a build older still | no |
-| `configured` | A settings file whose provenance cannot be established | no |
+| `resolved_on_enable` | Cassini worked it out on the enabled edge, from the recordings this install already had | yes |
+| `migrating` | A switch was interrupted before it finished; this is where the recordings are, not what anybody wanted | yes |
+| `default` | A fallback an older version recorded on its own. Nothing writes this any more | yes |
+| `derived` | Inferred from the instance by a build older still | yes |
+| `configured` | A settings file whose provenance cannot be established | yes |
 
 `mode_confirmed` is provenance, not a gate. An audience resolved on enable is
 confirmed: it is the audience the recordings already had, or the one an empty
