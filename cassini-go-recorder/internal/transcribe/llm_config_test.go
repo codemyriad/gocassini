@@ -237,6 +237,31 @@ func TestDefaultInsightLLMConfigOwnEndpointBringsItsOwnKey(t *testing.T) {
 	}
 }
 
+// The operator always sends INSIGHT_MODEL with INSIGHT_BASE_URL (D-749): with
+// both present the summary step's model is never consulted, however it is set.
+// The inverse — INSIGHT_BASE_URL alone — is what let a model chosen for one
+// host reach another (D-740 P0), and is why the operator never sends it alone.
+func TestDefaultInsightLLMConfigOwnModelBeatsTheSummaryModel(t *testing.T) {
+	clearStepEndpointEnv(t)
+	t.Setenv("OPENROUTER_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "")
+	t.Setenv("SUMMARY_BASE_URL", "https://summary.example/v1")
+	t.Setenv("SUMMARY_MODEL", "small")
+	t.Setenv("INSIGHT_BASE_URL", "http://qwen.internal:8000/v1")
+	t.Setenv("INSIGHT_MODEL", "qwen3-30b")
+
+	if cfg := DefaultInsightLLMConfig(); cfg.BaseURL != "http://qwen.internal:8000/v1" || cfg.Model != "qwen3-30b" {
+		t.Fatalf("insight = %+v, want its own endpoint and model", cfg)
+	}
+
+	// Without INSIGHT_MODEL the summary model leaks across: the recorder's
+	// layering is what it is, and the operator's always-emit rule is the fix.
+	t.Setenv("INSIGHT_MODEL", "")
+	if cfg := DefaultInsightLLMConfig(); cfg.Model != "small" {
+		t.Fatalf("model = %q; the layering contract this test documents has changed", cfg.Model)
+	}
+}
+
 // A model override alone keeps the endpoint it is layered over — the same rule
 // the summary step has always had.
 func TestDefaultInsightLLMConfigModelAloneKeepsTheEndpoint(t *testing.T) {

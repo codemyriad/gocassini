@@ -6,6 +6,7 @@ import {
   createInsight,
   describeRunProgress,
   isTerminalStatus,
+  listAIProviders,
   listInsights,
   pollDelayMs,
   readInsight,
@@ -381,5 +382,24 @@ describe("what a failed run says", () => {
 
   it("says nothing about a run that has not failed", () => {
     expect(buildRunFailureNotice({ run: run({ status: "running" }), isAdmin: true })).toBeNull();
+  });
+});
+
+describe("listAIProviders", () => {
+  it("carries each endpoint's default model, which is what a run on it asks for", async () => {
+    // One model per endpoint (D-749): the picker shows it beside the choice
+    // rather than offering a second place to choose one.
+    const fetchImpl = respondWith(
+      JSON.stringify([
+        { id: "hosted", name: "OpenRouter", model: "openai/gpt-4o-mini" },
+        { id: "local", name: "Qwen" },
+      ]),
+    );
+    const choices = await listAIProviders("/operator", fetchImpl);
+    expect(choices).toEqual([
+      { id: "hosted", name: "OpenRouter", model: "openai/gpt-4o-mini" },
+      { id: "local", name: "Qwen" },
+    ]);
+    expect(fetchImpl.mock.calls[0][0]).toBe("/operator/ai/providers");
   });
 });

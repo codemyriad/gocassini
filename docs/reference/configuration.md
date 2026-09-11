@@ -80,11 +80,17 @@ When the recorder is run by the operator, these LLM variables only seed the
 operator's own LLM settings on its first start (`llm-settings.json` beside the
 job database; `GET`/`PUT /settings/llm`). After that the persisted settings —
 not the environment — are what every build receives, so endpoints and models
-change without a redeploy. The operator emits the per-step variables itself
-from that file; an insight step with no endpoint of its own emits nothing,
-which is how the fallback above takes effect. Each step also names the workflow
-it runs (`summary.template` / `insight.template`); empty means the workflow
-Cassini ships.
+change without a redeploy. Each provider in that file carries a default
+`model`, set in AI providers; a step with no `model` of its own asks for the
+provider's, and only when neither names one does the recorder's built-in
+default apply. The operator emits the per-step variables itself from that
+file; an insight step with no endpoint of its own emits nothing, which is how
+the fallback above takes effect. An insight run started from the app is the
+exception: its child always receives `INSIGHT_MODEL` for the endpoint the
+asker chose, and no `SUMMARY_*` variables at all, so a model chosen for one
+endpoint can never reach another. Each step also names the workflow it runs
+(`summary.template` / `insight.template`); empty means the workflow Cassini
+ships.
 
 `insight.template` selects the default workflow for in-app insight runs; empty
 selects the first shipped workflow. `summary.template` is persisted and

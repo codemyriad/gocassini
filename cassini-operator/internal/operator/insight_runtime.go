@@ -804,32 +804,50 @@ func (s *insightService) endpointFor(run InsightRun) insightProviderRef {
 // Layered over insightChildEnv rather than replacing it, so everything that
 // environment already decides — the STT policy, the operator's own secrets
 // being withheld — keeps deciding it, and only the endpoint moves.
+//
+// The SUMMARY_* set is removed as well. The recorder layers INSIGHT_* over
+// SUMMARY_*, so any INSIGHT_ variable left unset would be filled in from the
+// summary endpoint — a model, a leash or a token budget chosen for one host
+// arriving at another. The model was the case that bit (D-740 P0): an insight
+// with no model of its own ran the summary model against whichever endpoint
+// the asker had picked. INSIGHT_MODEL is therefore always emitted here, from
+// the run's own choice, else the chosen endpoint's default, else the model the
+// insight step is configured with when that step resolves to this same
+// endpoint (D-749).
 func (s *insightService) insightChildEnvFor(ref insightProviderRef) []string {
 	base := s.insightChildEnv()
 	if ref.id == "" {
 		return base
 	}
+	settings := s.rt.currentLLMSettings()
 	var chosen *LLMProvider
-	for _, p := range s.rt.currentLLMSettings().Providers {
-		if p.ID == ref.id {
-			chosen = &p
+	for i := range settings.Providers {
+		if settings.Providers[i].ID == ref.id {
+			chosen = &settings.Providers[i]
 			break
 		}
 	}
 	if chosen == nil {
 		return base
 	}
+	model := modelFor(*chosen, ref.model)
+	if model == "" {
+		if step, stepModel, ok := settings.insightEndpoint(); ok && step.ID == chosen.ID {
+			model = stepModel
+		}
+	}
+	drop := map[string]bool{}
+	for _, step := range []string{llmStepSummary, llmStepInsight} {
+		b, k, m, t, n := llmStepEnv(step)
+		drop[b], drop[k], drop[m], drop[t], drop[n] = true, true, true, true, true
+	}
+	out := withoutEnv(base, drop)
 	baseKey, keyKey, modelKey, timeoutKey, tokensKey := llmStepEnv(llmStepInsight)
-	out := withoutEnv(base, map[string]bool{
-		baseKey: true, keyKey: true, modelKey: true, timeoutKey: true, tokensKey: true,
-	})
 	out = append(out, baseKey+"="+chosen.BaseURL)
 	if chosen.APIKey != "" {
 		out = append(out, keyKey+"="+chosen.APIKey)
 	}
-	if ref.model != "" {
-		out = append(out, modelKey+"="+ref.model)
-	}
+	out = append(out, modelKey+"="+model)
 	if chosen.TimeoutSec > 0 {
 		out = append(out, timeoutKey+"="+strconv.Itoa(chosen.TimeoutSec))
 	}

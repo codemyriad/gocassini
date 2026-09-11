@@ -23,15 +23,22 @@
   // The TEMPLATE picker is admin-only, because the registry is ADMIN at the
   // proxy and a control that 403s when opened is worse than none.
   //
-  // The PROVIDER and MODEL pickers are for everybody. Choosing which of the
-  // configured endpoints answers your question is the asker's decision — it is
-  // where their own transcripts go — so `operator/ai/providers` is a USER route
-  // carrying ids and display names and nothing else. The base URL, the key and
-  // the request bounds stay on the ADMIN settings surface.
+  // The PROVIDER picker is for everybody. Choosing which of the configured
+  // endpoints answers your question is the asker's decision — it is where
+  // their own transcripts go — so `operator/ai/providers` is a USER route
+  // carrying ids, display names and each endpoint's default model, and nothing
+  // else. The base URL, the key and the request bounds stay on the ADMIN
+  // settings surface.
+  //
+  // There is no MODEL picker. One endpoint has one default model, set by the
+  // administrator in AI providers, and that is what a run asks for (D-749):
+  // a per-run combobox was a second place to choose a model for one job, and
+  // an empty one — the default — let the child inherit a model chosen for a
+  // different endpoint. The request still carries `model`, empty, so a per-run
+  // override can return without a wire change.
   import { createEventDispatcher, onDestroy } from "svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
 
-  import ModelCombobox from "./ModelCombobox.svelte";
   import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import { loadConfig } from "./operator/config";
   import type { OperatorClient } from "./operator/client";
@@ -43,7 +50,6 @@
     describeRunProgress,
     isTerminalStatus,
     listAIProviders,
-    listAIProviderModels,
     pollDelayMs,
     readInsight,
     retryInsight,
@@ -87,19 +93,17 @@
   let question = "";
 
   // The endpoints this deployment has, and the one this run will reach.
-  // Defaults to the first provider and its own default model, which is what
-  // somebody who does not care should get without touching anything.
+  // Defaults to the first provider, which is what somebody who does not care
+  // should get without touching anything. The model is the endpoint's own
+  // default, shown rather than chosen.
   let providers: AIProviderChoice[] = [];
   let providersAsked = false;
   let providersError = "";
   let chosenProvider = "";
-  let chosenModel = "";
-
-  // Fetched when the model field is opened rather than on load: it is a call
-  // out to the endpoint, and most runs never touch the model.
-  let modelsByProvider: Record<string, AIProviderChoice[]> = {};
-  let modelsErrorByProvider: Record<string, string> = {};
-  let loadingModelsFor = "";
+  // Always empty: the operator resolves the chosen endpoint's default model.
+  // Kept on the wire so a per-run override can come back without a change to
+  // the request shape.
+  const chosenModel = "";
 
   // The operator base is the same one every other call in this app resolves,
   // and it is a pure read of the injected config — no client, so it works for
@@ -152,7 +156,7 @@
   $: if (operatorBasePath !== "" && !providersAsked) {
     void loadProviders();
   }
-  $: chosenModels = modelsByProvider[chosenProvider] ?? [];
+  $: chosenProviderEntry = providers.find((provider) => provider.id === chosenProvider) ?? null;
 
   $: chosenWorkflowEntry = workflows.find((workflow) => workflow.id === chosenWorkflow) ?? null;
 
@@ -212,35 +216,8 @@
     }
   }
 
-  async function loadModels(providerId: string) {
-    if (
-      operatorBasePath === "" ||
-      providerId === "" ||
-      modelsByProvider[providerId] ||
-      loadingModelsFor !== ""
-    ) {
-      return;
-    }
-    loadingModelsFor = providerId;
-    modelsErrorByProvider = { ...modelsErrorByProvider, [providerId]: "" };
-    try {
-      modelsByProvider = {
-        ...modelsByProvider,
-        [providerId]: await listAIProviderModels(operatorBasePath, providerId),
-      };
-    } catch (error) {
-      modelsErrorByProvider = { ...modelsErrorByProvider, [providerId]: describe(error) };
-    } finally {
-      loadingModelsFor = "";
-    }
-  }
-
   function chooseProvider(id: string) {
-    // The model belonged to the old endpoint. Carried across it would name a
-    // model the new one may never have heard of, and the operator refuses a
-    // model with no provider to run it on.
     chosenProvider = id;
-    chosenModel = "";
   }
 
   async function generate() {
@@ -449,14 +426,11 @@
       </p>
     {/if}
 
-    <!-- Where this question goes, and on which model. Offered to EVERYBODY, not
-         only administrators: it is the asker's own transcripts being sent, so
-         the choice is theirs. Absent only where there is nothing to choose
-         between — one endpoint, or a list that could not be read. -->
-    <!-- Where this question goes, and on which model. Offered to EVERYBODY, not
-         only administrators: it is the asker's own transcripts being sent, so
-         the choice is theirs. Absent only where there is nothing to choose —
-         no endpoint at all, or a list that could not be read. -->
+    <!-- Where this question goes. Offered to EVERYBODY, not only
+         administrators: it is the asker's own transcripts being sent, so the
+         choice is theirs. Absent only where there is nothing to choose — no
+         endpoint at all, or a list that could not be read. The model is the
+         endpoint's default, read-only: choosing an endpoint is choosing it. -->
     {#if providers.length > 0}
       <div class="ins-endpoint">
         <label class="tpl-field">
@@ -471,16 +445,10 @@
             {/each}
           </select>
         </label>
-        <!-- Empty is the endpoint's own default, which is what somebody who
-             does not care should get without touching anything. Opening the
-             field fetches what this endpoint serves. -->
-        <ModelCombobox
-          bind:value={chosenModel}
-          models={chosenModels}
-          loading={loadingModelsFor === chosenProvider}
-          error={modelsErrorByProvider[chosenProvider] ?? ""}
-          on:open={() => void loadModels(chosenProvider)}
-        />
+        <p class="ins-card-note ins-model">
+          Model: {#if chosenProviderEntry?.model}<code>{chosenProviderEntry.model}</code
+            >{:else}the endpoint's own default{/if}
+        </p>
       </div>
     {/if}
     {#if providersError}
@@ -651,8 +619,11 @@
 
   .ins-endpoint {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 12px;
+    gap: 6px;
+  }
+  .ins-model code {
+    font-family: monospace;
+    overflow-wrap: anywhere;
   }
 
   .ins-card-foot {

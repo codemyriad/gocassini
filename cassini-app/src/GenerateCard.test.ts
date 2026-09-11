@@ -148,18 +148,25 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("$: if (operatorBasePath !== \"\" && !providersAsked)");
   });
 
-  it("defaults to the first provider and the endpoint's own model", () => {
+  it("defaults to the first provider", () => {
     // Somebody who does not care should get a working run without touching
     // anything.
     expect(generateCardSource).toContain("chosenProvider = providers[0].id;");
-    expect(generateCardSource).toContain('let chosenModel = "";');
   });
 
-  it("clears the model when the endpoint changes", () => {
-    // Carried across it would name a model the new endpoint may never have
-    // heard of, and the operator refuses a model with no provider to run it on.
-    expect(generateCardSource).toContain("function chooseProvider(id: string) {");
-    expect(generateCardSource).toContain('chosenModel = "";');
+  it("shows the endpoint's default model and offers no second place to choose one", () => {
+    // One endpoint, one model, set in AI providers (D-749). A per-run combobox
+    // was a second place to choose a model for one job, and its empty default
+    // let the child inherit a model chosen for a different endpoint.
+    expect(generateCardSource).not.toContain("ModelCombobox");
+    expect(generateCardSource).not.toContain("listAIProviderModels");
+    expect(generateCardSource).not.toContain("loadingModelsFor");
+    expect(generateCardSource).toContain("chosenProviderEntry?.model");
+    expect(generateCardSource).toContain("the endpoint's own default");
+    // The wire keeps `model`, empty, so a per-run override can return without
+    // a request-shape change.
+    expect(generateCardSource).toContain('const chosenModel = "";');
+    expect(generateCardSource).toContain("model: chosenModel,");
   });
 
   it("still runs when the endpoints cannot be listed", () => {

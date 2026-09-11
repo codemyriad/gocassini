@@ -86,12 +86,15 @@ export interface CreateInsightRequest {
 }
 
 // AIProviderChoice is one endpoint as somebody choosing between them sees it:
-// `GET operator/ai/providers`, USER-readable. An id and a name, and nothing
-// else — the base URL, the key and the request bounds stay on the ADMIN
-// settings surface.
+// `GET operator/ai/providers`, USER-readable. An id, a name and the default
+// model the endpoint answers with — choosing an endpoint is choosing that
+// model (D-749) — and nothing else: the base URL, the key and the request
+// bounds stay on the ADMIN settings surface. The same shape reads a models
+// listing, where `model` is simply absent.
 export interface AIProviderChoice {
   id: string;
   name: string;
+  model?: string;
 }
 
 // listAIProviders and listAIProviderModels are the picker's data, for everyone.
@@ -132,7 +135,14 @@ function readChoices(payload: unknown): AIProviderChoice[] {
   const choices: AIProviderChoice[] = [];
   for (const entry of payload) {
     if (isRecord(entry) && typeof entry.id === "string" && entry.id !== "") {
-      choices.push({ id: entry.id, name: typeof entry.name === "string" ? entry.name : entry.id });
+      const choice: AIProviderChoice = {
+        id: entry.id,
+        name: typeof entry.name === "string" ? entry.name : entry.id,
+      };
+      if (typeof entry.model === "string" && entry.model !== "") {
+        choice.model = entry.model;
+      }
+      choices.push(choice);
     }
   }
   return choices;
