@@ -129,6 +129,18 @@ type storageStatusResponse struct {
 	// `Mode == ""`, which also happens before any preflight has run — the UI has
 	// to tell "nobody has chosen" apart from "nobody has looked yet".
 	AwaitingChoice bool `json:"awaiting_choice"`
+	// FirstRun says the one-time dialog that tells an administrator who will be
+	// able to read recordings has not been answered on this install (D-755).
+	//
+	// Per INSTALL, not per browser: the dialog states a fact about the archive,
+	// and a second administrator opening the app is not a second first run. See
+	// storageFirstRun for when it is false without anybody having answered.
+	FirstRun bool `json:"first_run"`
+	// Migration is how far a running mode switch has got, and null when none is
+	// running. The switch itself is a blocking request holding provisionMu, so
+	// this is only ever non-null to a CONCURRENT reader — which is the entire
+	// point of it.
+	Migration *storageMigrationProgress `json:"migration"`
 	// ServiceAccount is the account every recording is written and read as, and
 	// what an administrator can do about its password.
 	ServiceAccount storageServiceAccount `json:"service_account"`
@@ -192,6 +204,11 @@ const (
 	// into the Team folder — makes every already-published recording readable by
 	// every account, so the confirmation has to state facts and not only policy.
 	storageActionPreview = "preview"
+	// storageActionAcknowledgeFirstRun records that an administrator has seen the
+	// first-run dialog. It changes nothing about the archive and asks Nextcloud
+	// nothing — it is a note in the operator's own settings file, so a fresh
+	// install stops showing the dialog on every visit and on every browser.
+	storageActionAcknowledgeFirstRun = "acknowledge_first_run"
 	// storageActionFinishMigration completes a switch that stopped part way: it
 	// clears the root the recorded mode does NOT name and marks the instance
 	// settled. It is the one recovery action, and it is the same action whichever
@@ -300,6 +317,14 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		}
 		c.preflightNCStorage(ctx, rt.logger)
 		writeJSON(w, http.StatusOK, c.storageStatus(rt, &result))
+	case storageActionAcknowledgeFirstRun:
+		// No preflight and no probe: nothing about Nextcloud has changed, and a
+		// dialog dismissal must not cost an administrator a round of probing.
+		if err := acknowledgeStorageFirstRun(rt.logger); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
 	case storageActionInstallApps:
 		installs, err := c.attemptAppInstalls(ctx, rt.logger)
 		if err != nil {
@@ -314,7 +339,7 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp.Installs = installs
 		writeJSON(w, http.StatusOK, resp)
 	default:
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q, %q, %q or %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration))
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q, %q, %q, %q or %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration, storageActionAcknowledgeFirstRun))
 	}
 }
 
@@ -332,6 +357,33 @@ func (c ExAppConfig) attemptAppInstalls(ctx context.Context, logger *log.Logger)
 		return nil, fmt.Errorf("could not inspect this Nextcloud: %w", err)
 	}
 	return c.installMissingApps(ctx, client, probe, logger), nil
+}
+
+// acknowledgeStorageFirstRun writes the acknowledgement down and mirrors it into
+// this process.
+//
+// It takes no lock and touches no Nextcloud: the flag is not part of the mode
+// state machine, and SaveStorageSettings carries it across every step of one,
+// so there is nothing here for a concurrent switch to race with.
+//
+// A missing settings path is not an error, for the same reason it is not one in
+// recordStorageMode: an operator without a persistent volume still runs, it just
+// cannot outlive its container — and refusing to dismiss a dialog there would
+// leave that deployment showing it forever.
+func acknowledgeStorageFirstRun(logger *log.Logger) error {
+	path := ncStorage.settingsPath()
+	if path == "" {
+		ncStorage.setFirstRunAcknowledged(true)
+		if logger != nil {
+			logger.Printf("nc storage: no settings path configured; the first-run acknowledgement governs this process only")
+		}
+		return nil
+	}
+	if err := AcknowledgeStorageFirstRun(path); err != nil {
+		return fmt.Errorf("could not record that the first-run dialog was answered: %w", err)
+	}
+	ncStorage.setFirstRunAcknowledged(true)
+	return nil
 }
 
 // finishStorageMigration is the handler-side wrapper for the recovery. It takes
@@ -424,6 +476,8 @@ func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionRes
 		ModeSource:     source,
 		ModeConfirmed:  ncStorage.confirmedMode(),
 		AwaitingChoice: !resolved,
+		FirstRun:       storageFirstRun(ncStorage.acknowledgedFirstRun(), resolved, probed, probe),
+		Migration:      ncStorageMigration.snapshot(),
 		ServiceAccount: storageServiceAccount{
 			User:     ncRecordingsOwner,
 			Known:    probed,
@@ -456,6 +510,44 @@ func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionRes
 		storageOption(true, mode, probe, probed),
 	}
 	return resp
+}
+
+// storageFirstRun decides whether this install still owes an administrator the
+// one-time dialog (D-755).
+//
+// Two ways to be past it, and the second is the whole reason this is a rule
+// rather than a stored bit:
+//
+//	acknowledged   somebody answered the dialog. Recorded per install, so it
+//	               stays answered for every administrator and every browser.
+//	past it        a mode is recorded AND the last probe found recordings. An
+//	               install that has been keeping recordings under a decided mode
+//	               has had its first run, whichever release it happened under —
+//	               and it would be a strange thing to stop an upgrade to tell
+//	               somebody how an archive they have been using for a year works.
+//
+// Both halves of the second rule are load-bearing. Recordings without a recorded
+// mode are the upgrade the operator has not resolved yet, and a recorded mode
+// without recordings is the fresh install this dialog exists for — it is
+// recorded on enable now, which is exactly not evidence that anybody saw
+// anything. An unprobed instance answers "not past it": failing to look is not
+// evidence of an empty archive, and the cost of being wrong is one dialog.
+func storageFirstRun(acknowledged, modeRecorded, probed bool, probe ncStorageProbe) bool {
+	if acknowledged {
+		return false
+	}
+	if modeRecorded && probed && storageProbeFoundRecordings(probe) {
+		return false
+	}
+	return true
+}
+
+// storageProbeFoundRecordings asks whether EITHER root holds a recording. Both,
+// rather than the one the recorded mode names, because an archive stranded in
+// the other mode is still an archive somebody has been recording into — the
+// reading that decides "is this install past its first run".
+func storageProbeFoundRecordings(probe ncStorageProbe) bool {
+	return probe.ACLArchive.Meetings() > 0 || probe.DefaultArchive.Meetings() > 0
 }
 
 // storageOption builds one mode's entry. `probed` is false before any preflight

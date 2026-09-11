@@ -328,6 +328,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// for the edge (nc_access_status.go), because a recorded mode is a decision,
 	// not evidence that the storage behind it is still there.
 	ncStorage.setPath(storageSettingsPath(cfg))
+	// The first-run acknowledgement rides in the same file (D-755) and is
+	// mirrored here whatever the mode turns out to be — including on the error
+	// branch below, where the zero value is the honest answer: a file nothing
+	// could read is not evidence that anybody has seen the dialog.
+	if firstRun, err := LoadStorageSettings(ncStorage.settingsPath()); err == nil {
+		ncStorage.setFirstRunAcknowledged(firstRun.FirstRunAcknowledged)
+	}
 	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
 		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
 		// Clean: an unreadable file is not evidence of a half-done migration.

@@ -191,6 +191,18 @@ type StorageSettings struct {
 	// the leftovers are at the other one, so "clear the root the mode does not
 	// name" finishes every case. See finishMigration.
 	MigrationClean *bool `json:"migration_clean,omitempty"`
+
+	// FirstRunAcknowledged records that an administrator has seen the dialog a
+	// fresh install shows once — who will be able to read recordings, and the
+	// service account that will own them (D-755).
+	//
+	// It lives here rather than in the browser because the question is about the
+	// INSTALL, not about the person looking: a second administrator, or the same
+	// one on another machine, must not be asked again. It is a plain bool
+	// because absence carries nothing beyond "not yet" — unlike the two pointers
+	// above, where a file written before the field existed describes a state
+	// that is not the zero value.
+	FirstRunAcknowledged bool `json:"first_run_acknowledged,omitempty"`
 }
 
 // storageModeFromEnv reads the declared initial mode.
@@ -311,18 +323,57 @@ func LoadStorageSettings(path string) (StorageSettings, error) {
 // SaveStorageSettings records a decision atomically (temp file + rename), so a
 // crash mid-write cannot leave a truncated file that the loader above would
 // then refuse — which would take the operator's storage mode with it.
+//
+// It carries FirstRunAcknowledged forward from whatever is already on disk.
+// That flag is about the administrator rather than about the archive, and every
+// caller here is writing a step of the mode state machine — a migration that
+// un-acknowledged the first-run dialog would put it back in front of somebody
+// who has already answered it.
 func SaveStorageSettings(path string, accessControlEnabled bool, source string, migrationClean bool) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("storage settings path must not be empty")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir storage settings dir: %w", err)
-	}
-	data, err := json.MarshalIndent(StorageSettings{
+	// Best effort: an unreadable file must not stop the mode being written. The
+	// mode is the invariant the archive rests on; the acknowledgement is one
+	// dialog shown once more.
+	existing, _ := LoadStorageSettings(path)
+	return writeStorageSettings(path, StorageSettings{
 		AccessControlEnabled: &accessControlEnabled,
 		Source:               source,
 		MigrationClean:       &migrationClean,
-	}, "", "  ")
+		FirstRunAcknowledged: existing.FirstRunAcknowledged,
+	})
+}
+
+// AcknowledgeStorageFirstRun records that the first-run dialog has been
+// answered, leaving the mode record exactly as it is.
+//
+// Idempotent by construction: it writes `true` over whatever is there, so a
+// double-click, a retry of a request whose response was lost, and a second
+// administrator all produce the same file.
+//
+// A file it cannot parse IS an error here, and deliberately not the best-effort
+// treatment SaveStorageSettings gives it: overwriting the mode record to record
+// a dialog dismissal would trade the decision that governs who can read the
+// archive for the one thing it is safe to ask again.
+func AcknowledgeStorageFirstRun(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("storage settings path must not be empty")
+	}
+	settings, err := LoadStorageSettings(path)
+	if err != nil {
+		return err
+	}
+	settings.FirstRunAcknowledged = true
+	return writeStorageSettings(path, settings)
+}
+
+// writeStorageSettings is the atomic write both of the above share.
+func writeStorageSettings(path string, settings StorageSettings) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir storage settings dir: %w", err)
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal storage settings: %w", err)
 	}
@@ -367,6 +418,13 @@ type ncStorageModeState struct {
 	// touch the disk — /status, /storage, and the PUT that decides whether a
 	// request for the mode already in force is a no-op or a repair.
 	clean bool
+	// firstRunAcknowledged mirrors StorageSettings.FirstRunAcknowledged, for the
+	// same reason clean is mirrored: /storage answers it on every request and
+	// must not read the volume to do it.
+	//
+	// It is deliberately NOT written by set(): every step of a mode switch calls
+	// that, and none of them is evidence about a dialog somebody answered.
+	firstRunAcknowledged bool
 }
 
 var ncStorage ncStorageModeState
@@ -396,6 +454,23 @@ func (s *ncStorageModeState) set(accessControlEnabled bool, source string, clean
 	s.confirmed = storageSourceConfirmed(source)
 	s.clean = clean
 	s.mu.Unlock()
+}
+
+// setFirstRunAcknowledged mirrors the persisted acknowledgement into this
+// process. Startup calls it with what the file said; the acknowledge action
+// calls it with true once the write has landed.
+func (s *ncStorageModeState) setFirstRunAcknowledged(acknowledged bool) {
+	s.mu.Lock()
+	s.firstRunAcknowledged = acknowledged
+	s.mu.Unlock()
+}
+
+// acknowledgedFirstRun reports whether the first-run dialog has been answered
+// on this install.
+func (s *ncStorageModeState) acknowledgedFirstRun() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.firstRunAcknowledged
 }
 
 // recordedSource is the provenance of the mode in force, or "" when there is
@@ -468,5 +543,6 @@ func (s *ncStorageModeState) reset() {
 	s.source = ""
 	s.confirmed = false
 	s.clean = false
+	s.firstRunAcknowledged = false
 	s.mu.Unlock()
 }

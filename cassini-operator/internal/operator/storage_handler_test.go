@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -354,5 +355,227 @@ func TestStorageReportsAStrandedArchiveWithoutCallingItAFailure(t *testing.T) {
 	}
 	if body.StrandedRecordings != 4 || body.StrandedRoot != ncACLRecordingsRoot {
 		t.Fatalf("stranded = %d at %q, want 4 at %q", body.StrandedRecordings, body.StrandedRoot, ncACLRecordingsRoot)
+	}
+}
+
+// --- The first run (D-755) --------------------------------------------------
+
+// postStorageAction is the POST every action test makes.
+func postStorageAction(t *testing.T, cfg ExAppConfig, rt *Runtime, body string) storageStatusResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage", strings.NewReader(body))
+	cfg.storageHandler(rt).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /storage %s = %d, want 200 (%s)", body, rec.Code, rec.Body.String())
+	}
+	return decodeStorage(t, rec)
+}
+
+// A fresh install owes the dialog until somebody answers it, and then never
+// again — on any browser, to any administrator. That is the whole reason the
+// flag is in the operator's settings file rather than in local storage.
+func TestStorageFirstRunIsAcknowledgedOncePerInstall(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetSubstrateRecord(t)
+	settings := setStorageMode(t, false)
+	if err := SaveStorageSettings(settings, false, storageModeSourceUser, true); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	// A probed instance with an empty archive: the fresh install this dialog
+	// exists for. Nothing here makes it "past" its first run.
+	ncAccessSubstrate.setProbe(ncStorageProbe{ServiceAccount: true, FolderProbed: true, DefaultRootProbed: true})
+	ncAccessSubstrate.succeed()
+	cfg := testExAppConfig("http://nextcloud.invalid")
+
+	if body := getStorage(t, cfg, rt); !body.FirstRun {
+		t.Fatal("a fresh install with an empty archive did not report first_run")
+	}
+
+	// The action answers with the full status, so the caller never has to follow
+	// up with a GET to find out what it changed.
+	body := postStorageAction(t, cfg, rt, `{"action":"acknowledge_first_run"}`)
+	if body.FirstRun {
+		t.Fatalf("first_run is still true after acknowledging it: %+v", body)
+	}
+	if len(body.Modes) != 2 || body.Mode != storageModeDefault {
+		t.Fatalf("the acknowledgement did not answer with the full storage status: %+v", body)
+	}
+
+	// Persisted per install: the record, not the response, is what makes the
+	// next container answer the same way.
+	persisted := readPersistedMode(t, settings)
+	if !persisted.FirstRunAcknowledged {
+		t.Fatalf("%s = %+v, want first_run_acknowledged", storageSettingsFileName, persisted)
+	}
+	// And the mode record it shares a file with is untouched.
+	if !persisted.Configured() || persisted.AccessControlled() || !persisted.Clean() {
+		t.Fatalf("acknowledging the dialog rewrote the mode record: %+v", persisted)
+	}
+
+	// Idempotent: a double-click, or a retry of a request whose response was
+	// lost, is the same request.
+	if again := postStorageAction(t, cfg, rt, `{"action":"acknowledge_first_run"}`); again.FirstRun {
+		t.Fatalf("a second acknowledgement re-opened the first run: %+v", again)
+	}
+	if persisted := readPersistedMode(t, settings); !persisted.FirstRunAcknowledged || persisted.AccessControlled() {
+		t.Fatalf("%s after a second acknowledgement = %+v", storageSettingsFileName, persisted)
+	}
+}
+
+// The dialog can be answered before a mode has ever been written down — an
+// install whose settings file does not exist yet. Recording the answer must not
+// invent a decision nobody took.
+func TestStorageFirstRunAcknowledgementDoesNotDecideAMode(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	settings := filepath.Join(t.TempDir(), storageSettingsFileName)
+	ncStorage.setPath(settings)
+
+	body := postStorageAction(t, testExAppConfig("http://nextcloud.invalid"), rt, `{"action":"acknowledge_first_run"}`)
+	if body.FirstRun {
+		t.Fatalf("first_run is still true after acknowledging it: %+v", body)
+	}
+	if body.Mode != "" || !body.AwaitingChoice {
+		t.Fatalf("the acknowledgement decided a mode: mode=%q awaiting_choice=%t", body.Mode, body.AwaitingChoice)
+	}
+	persisted := readPersistedMode(t, settings)
+	if !persisted.FirstRunAcknowledged || persisted.Configured() {
+		t.Fatalf("%s = %+v, want the acknowledgement alone", storageSettingsFileName, persisted)
+	}
+}
+
+// The acknowledgement outlives the mode state machine. Every step of a switch
+// rewrites storage_settings.json, and a switch that put the first-run dialog
+// back in front of the administrator who had just used it would be absurd.
+func TestStorageFirstRunAcknowledgementSurvivesAModeWrite(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetSubstrateRecord(t)
+	settings := setStorageMode(t, false)
+	ncAccessSubstrate.setProbe(ncStorageProbe{ServiceAccount: true})
+	ncAccessSubstrate.succeed()
+	cfg := testExAppConfig("http://nextcloud.invalid")
+
+	postStorageAction(t, cfg, rt, `{"action":"acknowledge_first_run"}`)
+	if err := SaveStorageSettings(settings, true, storageModeSourceUser, false); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	if persisted := readPersistedMode(t, settings); !persisted.FirstRunAcknowledged {
+		t.Fatalf("a mode write dropped the first-run acknowledgement: %+v", persisted)
+	}
+}
+
+// An install that has been keeping recordings under a decided mode is past its
+// first run, whichever release it happened under. Both halves of that rule
+// matter, so both are pinned here.
+func TestStorageFirstRunIsFalseForAnInstallThatIsAlreadyPastIt(t *testing.T) {
+	withRecordings := ncStorageProbe{ACLArchive: ncArchiveFacts{Probed: true, Present: true, Entries: []davEntry{{Name: "m1.opus"}}}}
+	for _, tc := range []struct {
+		name         string
+		modeRecorded bool
+		probed       bool
+		probe        ncStorageProbe
+		want         bool
+	}{
+		{
+			// The upgrade: a mode is recorded and the archive is not empty.
+			name:         "recorded mode and recordings",
+			modeRecorded: true,
+			probed:       true,
+			probe:        withRecordings,
+			want:         false,
+		},
+		{
+			// A mode with nothing under it is the fresh install this dialog is
+			// for — the operator records one on enable, which is exactly not
+			// evidence that anybody saw anything.
+			name:         "recorded mode, empty archive",
+			modeRecorded: true,
+			probed:       true,
+			want:         true,
+		},
+		{
+			// Recordings the operator has not resolved a mode for yet. Who can
+			// read them is still the open question.
+			name:   "recordings, no recorded mode",
+			probed: true,
+			probe:  withRecordings,
+			want:   true,
+		},
+		{
+			// Failing to look is not evidence of an empty archive, but it is not
+			// evidence of a full one either, and the cost of being wrong here is
+			// one dialog.
+			name:         "recorded mode, never probed",
+			modeRecorded: true,
+			probe:        withRecordings,
+			want:         true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := storageFirstRun(false, tc.modeRecorded, tc.probed, tc.probe); got != tc.want {
+				t.Fatalf("storageFirstRun(false, %t, %t, …) = %t, want %t", tc.modeRecorded, tc.probed, got, tc.want)
+			}
+			// An answered dialog is answered whatever the instance looks like.
+			if got := storageFirstRun(true, tc.modeRecorded, tc.probed, tc.probe); got {
+				t.Fatal("an acknowledged install reported first_run again")
+			}
+		})
+	}
+}
+
+// The upgrade, end to end through the endpoint: an install with a recorded mode
+// and recordings in the Team folder never sees the dialog at all.
+func TestStorageDoesNotAskAnUpgradingInstallToSeeTheFirstRunDialog(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetSubstrateRecord(t)
+	setStorageMode(t, true)
+	ncAccessSubstrate.setProbe(ncStorageProbe{
+		ServiceAccount: true,
+		ACLArchive:     ncArchiveFacts{Probed: true, Present: true, Entries: []davEntry{{Name: "m1.opus"}, {Name: "m2.opus"}}},
+	})
+	ncAccessSubstrate.succeed()
+
+	body := getStorage(t, testExAppConfig("http://nextcloud.invalid"), rt)
+	if body.FirstRun {
+		t.Fatalf("an install with a recorded mode and an archive was asked to do its first run again: %+v", body)
+	}
+}
+
+// Nothing is running, so there is nothing to report. `null` rather than an
+// inactive object: the UI branches on the field's presence.
+func TestStorageReportsNoMigrationWhenNoneIsRunning(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	rec := httptest.NewRecorder()
+	testExAppConfig("http://nextcloud.invalid").storageHandler(rt).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/storage", nil))
+	if !strings.Contains(rec.Body.String(), `"migration":null`) {
+		t.Fatalf("an idle instance did not report migration:null: %s", rec.Body.String())
+	}
+}
+
+func TestStorageRejectsAnUnknownAction(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/storage", strings.NewReader(`{"action":"acknowledge"}`))
+	testExAppConfig("http://nextcloud.invalid").storageHandler(rt).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /storage with an unknown action = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), storageActionAcknowledgeFirstRun) {
+		t.Fatalf("the error does not offer the acknowledge action: %s", rec.Body.String())
 	}
 }
