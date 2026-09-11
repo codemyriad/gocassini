@@ -25,7 +25,13 @@
   } from "./operator/setupHealth";
   import { onSetupChanged } from "./operator/setupSignal";
   import type { StorageStatus } from "./operator/types";
-  import { applySurface, readSurface, type OperatorPanel, type Surface } from "./surfaceRouting";
+  import {
+    applyPanel,
+    applySurface,
+    readSurface,
+    type OperatorPanel,
+    type Surface,
+  } from "./surfaceRouting";
 
   // The Cassini in-Nextcloud shell (D-420). It hosts role-gated surfaces fed
   // through the DataProvider seam: everyone gets "browse" (cassini-viewer's App
@@ -133,6 +139,10 @@
   // is what makes it once per install; this is what makes it disappear on the
   // click rather than on the round trip that follows.
   let firstRunClosed = false;
+
+  // Where "Who can see recordings" lives: a section at the top of the settings
+  // panel the operator's nav calls "Publish pipeline" (SettingsPanel.svelte).
+  const RECORDING_ACCESS_PANEL: OperatorPanel = "pipeline";
 
   // What the first-run dialog says and does, or null for "say nothing". Every
   // decision in it is taken in operator/firstRun.ts, where it is tested.
@@ -309,6 +319,25 @@
     // the viewer each read the fragment through popstate. Announcing it once
     // makes a deep link behave like a navigation, instead of three independent
     // updates that can disagree about where we are.
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
+  // "Change who can see first" on the first-run dialog (D-756). The audience
+  // control is a SECTION of a settings panel, not the operator's front page, and
+  // the operator's default panel is the run console — so selecting the surface
+  // alone lands an administrator on a list of jobs, one click short of the thing
+  // the button they pressed named.
+  //
+  // Same mechanism as handleOpenPanel: push the fragment, then announce it once,
+  // so the surface, the operator's panel nav and the viewer all read the same
+  // address instead of three updates that can disagree about where we are.
+  function openRecordingAccess(): void {
+    firstRunClosed = true;
+    if (!operatorAvailable) {
+      return;
+    }
+    const hash = applyPanel(applySurface(window.location.hash, "operator"), RECORDING_ACCESS_PANEL);
+    window.history.pushState({}, "", locationWithHash(hash));
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
@@ -519,10 +548,7 @@
           {operatorClient}
           plan={firstRun}
           on:done={() => (firstRunClosed = true)}
-          on:settings={() => {
-            firstRunClosed = true;
-            selectSurface("operator");
-          }}
+          on:settings={openRecordingAccess}
         />
       </div>
     {/if}
