@@ -80,6 +80,11 @@
   // check itself could not be made) leaves the shell exactly as it was.
   let setupNotice: SetupNoticeContent | null = null;
 
+  // True while the notice's own "Try again" is running (D-759). The button is
+  // in the notice; the operator client and the re-read are here, so the state
+  // that says whether the request is still in flight is here too.
+  let setupRetryBusy = false;
+
   // What this deployment's AI configuration allows (D-722), from the same
   // USER-level /setup call. Null until it answers, and null forever on an
   // operator too old to say — a third state, not a default: the app says
@@ -257,6 +262,37 @@
     }
   }
 
+  // "Try again" on the setup notice: the same check a restart runs, asked for
+  // by hand (D-759).
+  //
+  // It is deliberately the operator's OWN re-check rather than another read of
+  // /setup: the verdict the app reads is the last recorded outcome of a
+  // preflight, so re-reading it would re-render the same answer and teach an
+  // administrator that the button does nothing. recheckStorage makes the
+  // operator look at Nextcloud again; readInstanceState then re-reads
+  // everything that answer decides, exactly as the setup-changed signal does.
+  //
+  // A non-administrator has no operator client and no button, but the re-read
+  // is still the right fallback: it is what their notice is drawn from.
+  async function retrySetupCheck(): Promise<void> {
+    if (setupRetryBusy) {
+      return;
+    }
+    setupRetryBusy = true;
+    try {
+      await operatorClient?.recheckStorage();
+    } catch (error) {
+      // The re-read below still runs: a refused re-check is itself an answer,
+      // and the notice must not be left saying "Checking…" because of it.
+      console.warn("Cassini: the setup re-check failed.", error);
+    }
+    try {
+      await readInstanceState();
+    } finally {
+      setupRetryBusy = false;
+    }
+  }
+
   // Following an unconfigured state's link to the panel that fixes it. The card
   // built the address from the CURRENT fragment, so the viewer's meeting/tx/t
   // survive the trip and the back button returns to exactly the meeting that
@@ -423,7 +459,13 @@
            there too. -->
       <div class="cassini-shell-banner" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("operator")} />
+          <SetupNotice
+            notice={setupNotice}
+            tone={setupNotice.tone}
+            busy={setupRetryBusy}
+            on:retry={retrySetupCheck}
+            on:navigate={() => selectSurface("operator")}
+          />
         </div>
       </div>
     {/if}
@@ -437,7 +479,13 @@
         data-theme={themeMode}
       >
         <div class="cassini-root" data-theme={themeMode}>
-          <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("operator")} />
+          <SetupNotice
+            notice={setupNotice}
+            tone={setupNotice.tone}
+            busy={setupRetryBusy}
+            on:retry={retrySetupCheck}
+            on:navigate={() => selectSurface("operator")}
+          />
         </div>
       </div>
     {:else}
@@ -501,7 +549,13 @@
        in the standalone build), both of which are height:100%. -->
   <div class="cassini-setup-surface" data-theme={themeMode}>
     <div class="cassini-root" data-theme={themeMode}>
-      <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("operator")} />
+      <SetupNotice
+        notice={setupNotice}
+        tone={setupNotice.tone}
+        busy={setupRetryBusy}
+        on:retry={retrySetupCheck}
+        on:navigate={() => selectSurface("operator")}
+      />
     </div>
   </div>
 {:else if setupNotice}
@@ -511,7 +565,13 @@
   <div class="cassini-shell">
     <div class="cassini-shell-banner" data-theme={themeMode}>
       <div class="cassini-root" data-theme={themeMode}>
-        <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("operator")} />
+        <SetupNotice
+          notice={setupNotice}
+          tone={setupNotice.tone}
+          busy={setupRetryBusy}
+          on:retry={retrySetupCheck}
+          on:navigate={() => selectSurface("operator")}
+        />
       </div>
     </div>
     <div class="cassini-shell-surface">

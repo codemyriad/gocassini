@@ -985,13 +985,27 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
 		t.Fatalf("decode setup response: %v", err)
 	}
-	// ok + state + awaiting_choice + mode + features. The third is a bit, not a
-	// detail: it says whether the thing standing between this instance and
-	// working recordings is a DECISION rather than a fault, which is what a
-	// non-administrator needs in order to be told the right thing (D-708). It
-	// names no account, no path and no folder id.
-	if len(fields) != 5 {
-		t.Fatalf("setup must answer with ok+state+awaiting_choice+mode+features only, got %#v", fields)
+	// ok + state + awaiting_choice + mode + cause + features. The third is a
+	// bit, not a detail: it says whether the thing standing between this
+	// instance and working recordings is a DECISION rather than a fault, which
+	// is what a non-administrator needs in order to be told the right thing
+	// (D-708). It names no account, no path and no folder id.
+	//
+	// The fifth is the same discipline applied to a sentence (D-759): what kind
+	// of thing broke, in words, with the account, the app and the path left out
+	// — the leak checks above and below are what hold it to that, and
+	// storage_causes_test.go holds every sentence in the table to it.
+	if len(fields) != 6 {
+		t.Fatalf("setup must answer with ok+state+awaiting_choice+mode+cause+features only, got %#v", fields)
+	}
+	cause, isString := fields["cause"].(string)
+	if !isString {
+		t.Fatalf("setup cause = %#v, want a string", fields["cause"])
+	}
+	// The arranged failure is a missing app, which has a user-level sentence, so
+	// an empty string here would pass the leak checks without ever testing them.
+	if cause != storageUserCauseFor("app_missing:"+ncAppGroupFolders) {
+		t.Fatalf("setup cause = %q, want the user-level sentence for the recorded step", cause)
 	}
 	if _, isBool := fields["awaiting_choice"].(bool); !isBool {
 		t.Fatalf("setup did not carry awaiting_choice as a boolean: %#v", fields)
