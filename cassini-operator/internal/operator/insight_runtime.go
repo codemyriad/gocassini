@@ -490,8 +490,15 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 // never on the text. A message-derived classification changes silently whenever a
 // message is reworded, which is the failure this avoids.
 func explainInsightExit(ctx context.Context, code int) string {
-	if ctx.Err() != nil {
+	// Two ways the context ends, and they are different advice. The deadline is
+	// the run's own 60-minute bound, and a smaller selection is the fix; a
+	// cancellation is the operator shutting down under the run, and nothing
+	// about the request was wrong — retrying it as it was is the fix (D-740).
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return fmt.Sprintf("The insight took longer than %d minutes and was stopped. A smaller selection, or a faster endpoint, will finish.", int(insightRunTimeout.Minutes()))
+	case ctx.Err() != nil:
+		return "Cassini restarted before this insight finished — retry it."
 	}
 	switch code {
 	case 1:

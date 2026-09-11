@@ -395,11 +395,19 @@ func TestExplainInsightExitGivesEachCodeItsOwnAction(t *testing.T) {
 			}
 		}
 	}
-	// A cancelled context outranks whatever the killed child reported.
+	// A context that ended outranks whatever the killed child reported — and
+	// the two ways it ends are different advice. The deadline is the run's own
+	// bound, so a smaller selection is the fix; a cancellation is the operator
+	// going away under the run, so retrying it unchanged is (D-740).
+	expired, expire := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer expire()
+	if !strings.Contains(explainInsightExit(expired, 5), "longer than") {
+		t.Error("a run stopped by its own timeout must say so, not blame the model")
+	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if !strings.Contains(explainInsightExit(cancelled, 5), "longer than") {
-		t.Error("a run stopped by its own timeout must say so, not blame the model")
+	if got := explainInsightExit(cancelled, 5); !strings.Contains(got, "restarted") || strings.Contains(got, "longer than") {
+		t.Errorf("a run cancelled by shutdown = %q, want it to say Cassini restarted, not that it took too long", got)
 	}
 }
 
