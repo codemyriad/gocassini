@@ -1,9 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
 
-  import { formatClockTime } from "../../core/transcript";
   import TagIcon from "../tags/TagIcon.svelte";
-  import type { PlacedMark } from "./session";
+  import { describeMark, type PlacedMark } from "./session";
 
   export let brackets: readonly { mark: PlacedMark; top: number; height: number }[] = [];
   export let selectedId: string | undefined = undefined;
@@ -14,8 +13,6 @@
   const dispatch = createEventDispatcher<{ select: PlacedMark }>();
 
   $: labelLeft = (Math.max(0, ...brackets.map(({ mark }) => mark.column)) + 1) * COLUMN_PX + 4;
-  const describe = (mark: PlacedMark) =>
-    `${mark.tag.label}, ${formatClockTime(mark.startMs)} to ${formatClockTime(mark.endMs)}, marked by ${mark.item.actor.id}`;
 </script>
 
 {#each brackets as { mark, top, height } (mark.item.id)}
@@ -29,8 +26,8 @@
     style:top="{top}px"
     style:height="{height}px"
     style:left="{mark.column * COLUMN_PX}px"
-    aria-label={describe(mark)}
-    title={labels ? undefined : describe(mark)}
+    aria-label={describeMark(mark)}
+    title={labels ? undefined : describeMark(mark)}
     on:pointerenter={() => (hoverId = mark.item.id)}
     on:pointerleave={() => (hoverId = null)}
     on:focus={() => (hoverId = mark.item.id)}

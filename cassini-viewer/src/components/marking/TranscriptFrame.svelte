@@ -13,17 +13,16 @@
     type WordSpan,
   } from "../../core/marking";
   import { keyboardEventTargetsControl } from "../../core/wordInteraction";
-  import type { AnnotationRequest, VocabularyTag } from "../../viewer/annotations";
+  import { moveStretchOps, timeRange, type AnnotationRequest, type VocabularyTag } from "../../viewer/annotations";
   import MarkBrackets from "./MarkBrackets.svelte";
   import MarkingRail from "./MarkingRail.svelte";
   import MarksList from "./MarksList.svelte";
   import StretchToolbar from "./StretchToolbar.svelte";
   import TranscriptToolbar from "./TranscriptToolbar.svelte";
   import {
-    moveRequest,
+    markRequest,
     pickColor,
     removeRequest,
-    stretchRequest,
     viewMarks,
     type MarksSession,
     type PlacedMark,
@@ -156,28 +155,31 @@
     return first && last ? { first, last } : null;
   }
 
-  function layout() {
-    if (!textCell) return;
-    const origin = textCell.getBoundingClientRect();
-    const point = (rect: DOMRect, x: number): Point => ({ x: x - origin.left, y: rect.top - origin.top, h: rect.height });
-    const ends = edges(selected);
-    pins = ends && { from: point(ends.first, ends.first.left), to: point(ends.last, ends.last.right) };
-    brackets = (view?.placed ?? []).flatMap((mark) => {
+  // Apart, so a drag re-measures its two ends and not every mark.
+  function placePins() {
+    const origin = textCell?.getBoundingClientRect();
+    const ends = origin && edges(selected);
+    const point = (rect: DOMRect, x: number): Point => ({ x: x - origin!.left, y: rect.top - origin!.top, h: rect.height });
+    pins = ends ? { from: point(ends.first, ends.first.left), to: point(ends.last, ends.last.right) } : null;
+  }
+  $: selected, pageAt, width, void tick().then(placePins);
+
+  function placeBrackets() {
+    const origin = textCell?.getBoundingClientRect();
+    brackets = (origin && view?.placed ? view.placed : []).flatMap((mark) => {
       const found = edges(onPage(spanForRange(words, mark.startMs, mark.endMs), pageAt));
       if (!found) return [];
-      const top = Math.min(found.first.top, found.last.top) - origin.top - 3;
-      return [{ mark, top, height: Math.max(found.first.bottom, found.last.bottom) - origin.top + 3 - top }];
+      const top = Math.min(found.first.top, found.last.top) - origin!.top - 3;
+      return [{ mark, top, height: Math.max(found.first.bottom, found.last.bottom) - origin!.top + 3 - top }];
     });
   }
-  $: selected, view, pageAt, width, void tick().then(layout);
+  $: view, pageAt, width, void tick().then(placeBrackets);
 
-  function revealWord(index: number | undefined, block: ScrollLogicalPosition = "center") {
-    page[pageAt.get(words[index ?? -1]?.id ?? "") ?? -1]?.scrollIntoView({ block });
+  function reveal(wordId: string | undefined, block: ScrollLogicalPosition = "center") {
+    page[pageAt.get(wordId ?? "") ?? -1]?.scrollIntoView({ block });
   }
-
-  function revealStop() {
-    page[pageAt.get(stops[stop]?.id ?? "") ?? -1]?.scrollIntoView({ block: "center" });
-  }
+  const revealWord = (index: number | undefined, block?: ScrollLogicalPosition) => reveal(words[index ?? -1]?.id, block);
+  const revealStop = () => reveal(stops[stop]?.id);
 
   function step(direction: 1 | -1) {
     stop = (stop + direction + stops.length) % stops.length;
@@ -257,9 +259,9 @@
     if (await session.write(request)) selection = null;
   }
   const tagStretch = (event: CustomEvent<TagPick>) =>
-    range && write(stretchRequest(event.detail, range.startMs, range.endMs));
+    range && write(markRequest(event.detail, timeRange(range.startMs, range.endMs)));
   const saveMove = () =>
-    selectedMark && range && write(moveRequest(selectedMark.item.id, selectedMark.tag, range.startMs, range.endMs));
+    selectedMark && range && write({ ops: moveStretchOps(selectedMark.item.id, selectedMark.tag, range.startMs, range.endMs) });
   const removeMark = () => selectedMark && write(removeRequest([selectedMark.item.id]));
 
   // Capture phase, so Esc clears a selection before the shell closes the sheet on it.

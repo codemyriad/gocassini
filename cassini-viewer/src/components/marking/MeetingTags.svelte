@@ -26,7 +26,7 @@
           color={look.color}
           icon={look.icon}
           variant="whole"
-          removable
+          removable={!$session.busy}
           on:remove={() => session.write(untagMeetingRequest(look.tag.id))}
         />
       {/each}

@@ -42,12 +42,8 @@ describe("MeetingView header", () => {
 describe("MeetingView tagging", () => {
   it("works unwired: every tagging prop has a default, and no loader means no tagging", () => {
     expect(meetingViewSource).toContain("export let tagVocabulary: VocabularyTag[] = [];");
-    expect(meetingViewSource).toContain(
-      "export let loadAnnotations: (() => Promise<MeetingAnnotations>) | null = null;",
-    );
-    expect(meetingViewSource).toContain(
-      "export let applyAnnotations: ((request: AnnotationRequest) => Promise<AnnotationResult>) | null = null;",
-    );
+    expect(meetingViewSource).toContain("export let loadAnnotations: LoadAnnotations | null = null;");
+    expect(meetingViewSource).toContain("export let applyAnnotations: ApplyAnnotations | null = null;");
     // A null loader leaves the session off, and an off session draws nothing
     // (marking.components.test.ts renders both states).
     expect(meetingViewSource).toContain('$: marksFor = loadAnnotations ? (meeting?.id ?? "") : null;');

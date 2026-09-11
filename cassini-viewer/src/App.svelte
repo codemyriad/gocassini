@@ -1067,7 +1067,11 @@
         transition:fade={scrimFade()}
         on:click={closeSheet}
       ></button>
-      <aside class="meeting-sheet" transition:sheetSlide={{}}>
+      <aside
+        class="meeting-sheet"
+        class:tagging={!selectedInsight && Boolean(dataProvider.loadMeetingAnnotations)}
+        transition:sheetSlide={{}}
+      >
         {#if selectedInsight}
           <InsightDocument
             insight={selectedInsight}
@@ -1194,6 +1198,10 @@
     background-color: var(--color-base-200);
     border-left: 1px solid var(--color-base-300);
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
+  }
+  /* Room for the marking rail on the left and the brackets on the right (D-746). */
+  .meeting-sheet.tagging {
+    width: min(940px, 100%);
   }
 
   /* The selection bar floats over the list it belongs to — inset past the rail
