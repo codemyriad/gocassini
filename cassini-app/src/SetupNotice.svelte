@@ -1,155 +1,80 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { TriangleAlert } from "@lucide/svelte";
+  import { Info, TriangleAlert } from "@lucide/svelte";
   import type { SetupNotice } from "./operator/setupHealth";
 
-  // What the Cassini shell shows when the app is not set up. It renders a
-  // decision it did not make: every word, and whether this is blocking, comes
-  // from buildSetupNotice (setupHealth.ts), which is where the copy is tested.
-  // What belongs here is presentation only — an administrator and everyone else
-  // get different content through the same component, never a different one.
-  //
-  // Two layouts, from notice.blocking:
-  //
-  //   blocking   the archive cannot be read, so this stands in for the meeting
-  //              list: a centred card with room for the commands.
-  //   advisory   the archive reads fine and the list is still below, so this is
-  //              a strip. The instructions are there, behind a disclosure, so
-  //              the band stays one line tall until someone wants them.
   export let notice: SetupNotice;
-
-  // A step carrying `action: "setup"` is something to PRESS, not something to
-  // find. Since D-708 the Setup tab is the only sanctioned route to a storage
-  // decision, and "open the Setup tab" as prose is a navigation the reader has
-  // to perform on the app's behalf.
-  //
-  // The shell owns which surface is showing, so this asks rather than acts.
   const dispatch = createEventDispatcher<{ navigate: "setup" }>();
+
+  // Keep the browser action visible. Server diagnostics and manual recovery
+  // are optional, for administrators investigating a setup failure.
+  $: technicalSteps = notice.steps.filter((step) => !step.action);
 </script>
 
-{#if notice.blocking}
-  <div class="grid min-h-full place-items-center p-4 sm:p-6">
-    <section class="card w-full max-w-2xl border border-base-300 bg-base-100 shadow-sm" role="status">
-      <div class="card-body gap-5">
-        <header class="flex items-start gap-3">
-          <TriangleAlert size={22} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
-          <div class="flex flex-col gap-2">
-            <h2 class="text-lg font-bold">{notice.title}</h2>
-            <p class="text-base-content/80">{notice.summary}</p>
-          </div>
-        </header>
+<div class={notice.blocking ? "grid min-h-full place-items-center p-4 sm:p-6" : "px-3 py-2"}>
+  <section
+    class="w-full rounded-box border {notice.blocking ? 'max-w-2xl shadow-sm' : ''} {notice.tone === 'info' ? 'border-base-300 bg-base-100' : 'border-warning/40 bg-base-100'}"
+    role="status"
+  >
+    <div class="flex items-start gap-3 p-4 sm:p-5">
+      {#if notice.tone === "info"}
+        <Info size={22} class="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+      {:else}
+        <TriangleAlert size={22} class="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
+      {/if}
+      <div class="flex min-w-0 flex-1 flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <h2 class="text-base font-semibold">{notice.title}</h2>
+          <p class="max-w-prose text-sm text-base-content/80">{notice.summary}</p>
+        </div>
 
-        {#if notice.detail}
-          <!-- The operator's own sentence, verbatim, so this panel and the
-               container log read the same. Administrators only. -->
-          <p class="rounded-box bg-base-200 p-3 font-mono text-xs break-words text-base-content/70">
-            {notice.detail}
-          </p>
-        {/if}
-
-        {#if notice.steps.length > 0}
-          <ol class="flex list-none flex-col gap-4">
-            {#each notice.steps as step, index (step.label)}
-              <li class="flex flex-col gap-2">
-                <p class="text-sm font-medium">
-                  <span class="text-base-content/50">{index + 1}.</span>
-                  {step.label}
-                </p>
-                {#if step.action === "setup"}
-                  <button
-                    class="btn btn-sm btn-primary w-fit"
-                    type="button"
-                    on:click={() => dispatch("navigate", "setup")}
-                  >
-                    Open the Setup tab
-                  </button>
-                {/if}
-                {#if step.commands.length > 0}
-                  <pre
-                    class="m-0 overflow-x-auto rounded-box bg-base-200 p-3 font-mono text-xs leading-relaxed">{step.commands.join(
-                      "\n",
-                    )}</pre>
-                {/if}
-              </li>
-            {/each}
-          </ol>
-        {/if}
-
-        {#if notice.note}
-          <p class="text-xs text-base-content/60">{notice.note}</p>
+        {#if notice.actionLabel}
+          <button
+            class="btn btn-sm btn-primary w-fit"
+            type="button"
+            on:click={() => dispatch("navigate", "setup")}
+          >
+            {notice.actionLabel}
+          </button>
         {/if}
 
         {#if notice.shareUrl}
-          <div class="flex flex-col gap-2 border-t border-base-300 pt-4">
-            <p class="text-sm">{notice.shareLabel}</p>
-            <a class="link link-primary text-sm break-all" href={notice.shareUrl}>{notice.shareUrl}</a>
+          <div class="flex flex-col gap-1 text-sm">
+            <p>{notice.shareLabel}</p>
+            <a class="link link-primary break-all" href={notice.shareUrl}>{notice.shareUrl}</a>
           </div>
         {/if}
 
-        {#if notice.reference}
-          <p class="text-xs text-base-content/60">{notice.reference}</p>
-        {/if}
-      </div>
-    </section>
-  </div>
-{:else}
-  <div class="px-3 py-2">
-    <section class="alert alert-warning items-start gap-3 py-2" role="status">
-      <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
-      <div class="flex min-w-0 flex-col gap-1">
-        <p class="text-sm">
-          <span class="font-semibold">{notice.title}.</span>
-          {notice.summary}
-        </p>
-
-        {#if notice.steps.length > 0 || notice.shareUrl}
-          <details class="text-sm">
-            <summary class="cursor-pointer font-medium">
-              {notice.steps.length > 0 ? "How to fix it" : "What to do"}
-            </summary>
-            <div class="mt-2 flex flex-col gap-3">
+        {#if notice.detail || technicalSteps.length > 0 || notice.reference}
+          <details class="text-sm text-base-content/70">
+            <summary class="w-fit cursor-pointer">Technical details</summary>
+            <div class="mt-3 flex flex-col gap-3">
               {#if notice.detail}
-                <p class="font-mono text-xs break-words opacity-80">{notice.detail}</p>
+                <p class="rounded-box bg-base-200 p-3 font-mono text-xs break-words">{notice.detail}</p>
               {/if}
-              {#each notice.steps as step, index (step.label)}
-                <div class="flex flex-col gap-1">
-                  <p class="text-sm">
-                    <span class="opacity-60">{index + 1}.</span>
-                    {step.label}
-                  </p>
-                  {#if step.action === "setup"}
-                    <button
-                      class="btn btn-xs btn-primary w-fit"
-                      type="button"
-                      on:click={() => dispatch("navigate", "setup")}
-                    >
-                      Open the Setup tab
-                    </button>
-                  {/if}
-                  {#if step.commands.length > 0}
-                    <pre
-                      class="m-0 overflow-x-auto rounded-box bg-base-200 p-2 font-mono text-xs leading-relaxed text-base-content">{step.commands.join(
-                        "\n",
-                      )}</pre>
-                  {/if}
-                </div>
-              {/each}
+              {#if technicalSteps.length > 0}
+                <p class="font-medium">Manual recovery for server administrators</p>
+                <ol class="flex list-inside list-decimal flex-col gap-3">
+                  {#each technicalSteps as step (step.label)}
+                    <li>
+                      {step.label}
+                      {#if step.commands.length > 0}
+                        <pre class="mt-2 overflow-x-auto rounded-box bg-base-200 p-3 font-mono text-xs leading-relaxed">{step.commands.join("\n")}</pre>
+                      {/if}
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
               {#if notice.note}
-                <p class="text-xs opacity-70">{notice.note}</p>
-              {/if}
-              {#if notice.shareUrl}
-                <div class="flex flex-col gap-1">
-                  <p class="text-sm">{notice.shareLabel}</p>
-                  <a class="link text-sm break-all" href={notice.shareUrl}>{notice.shareUrl}</a>
-                </div>
+                <p class="text-xs">{notice.note}</p>
               {/if}
               {#if notice.reference}
-                <p class="text-xs opacity-70">{notice.reference}</p>
+                <p class="text-xs">{notice.reference}</p>
               {/if}
             </div>
           </details>
         {/if}
       </div>
-    </section>
-  </div>
-{/if}
+    </div>
+  </section>
+</div>

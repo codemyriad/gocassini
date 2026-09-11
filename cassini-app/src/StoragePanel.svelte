@@ -14,6 +14,8 @@
   import {
     describeArchive,
     migrationFacts,
+    recordingAccessLabel,
+    recordingAccessSummary,
   } from "./operator/storageWizard";
   import type {
     StorageModeOption,
@@ -23,12 +25,10 @@
 
   // The storage-mode switch, and since D-671 the setup that gets you to one.
   //
-  // Every sentence rendered here — what a mode means, what switching to it
-  // would do, what is missing and which command fixes it — comes from GET
-  // /storage. That is not laziness: the operator is the layer that knows the
-  // Team folder's id, the group names and which prerequisite is actually
-  // absent, and a wrong instruction is a worse failure than a missing one. This
-  // component decides only when to ask, and who performs what.
+  // Audience labels and summaries are shared with the setup wizard. Plans,
+  // storage paths, migration consequences and diagnostics come from GET
+  // /storage: the operator knows the actual folders and missing prerequisites.
+  // This component chooses when to ask and who performs each action.
   //
   // Who performs what is the whole shape of D-671:
   //
@@ -262,7 +262,7 @@
     }
     finishAndAnnounce({
       tone: "success",
-      message: `Setup finished for ${option.label.toLowerCase()} storage.`,
+      message: `Setup finished for ${recordingAccessLabel(option.mode).toLowerCase()} storage.`,
       detail: "Every tab now shows the instance as it is; there is nothing to refresh.",
     });
   }
@@ -296,7 +296,7 @@
         );
         finishAndAnnounce({
           tone: status.transition?.leftover_source ? "warning" : "success",
-          message: `Storage is now ${target.label.toLowerCase()}.`,
+          message: `Recording access is now set to ${recordingAccessLabel(target.mode).toLowerCase()}.`,
           detail: describeTransition(status),
         });
       }
@@ -624,21 +624,24 @@
               {:else}
                 <HardDrive size={16} class="shrink-0 text-base-content/60" aria-hidden="true" />
               {/if}
-              <h3 class="text-sm font-semibold">{option.label}</h3>
+              <h3 class="text-sm font-semibold">{recordingAccessLabel(option.mode)}</h3>
               {#if option.active}
                 <span class="badge badge-primary badge-sm">Current</span>
               {/if}
             </div>
 
-            <p class="text-xs text-base-content/70">{option.summary}</p>
+            <p class="text-xs text-base-content/70">{recordingAccessSummary(option.mode)}</p>
 
             <!-- What is actually in this mode's folder. It is reported for BOTH
                  modes, always, because "my recordings are gone" is the symptom
                  of a mode nobody switched — and an unread folder says so rather
                  than reading as an empty one. -->
-            <p class="text-xs break-words text-base-content/60">
-              <code class="break-all">{option.root}</code> — {describeArchive(option.archive)}
-            </p>
+            <p class="text-xs text-base-content/60">Recordings in this location: {describeArchive(option.archive)}</p>
+            <details class="text-xs text-base-content/60">
+              <summary class="w-fit cursor-pointer">Storage details</summary>
+              <code class="mt-1 block break-all">{option.root}</code>
+              <p class="mt-1">{option.summary}</p>
+            </details>
 
             {#if option.blocker}
               <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-2">
@@ -698,9 +701,9 @@
               {:else if !option.available && option.setup.length === 0}
                 Not available yet
               {:else if !option.available}
-                Set up {option.label.toLowerCase()}
+                Set up {recordingAccessLabel(option.mode).toLowerCase()}
               {:else}
-                Switch to {option.label.toLowerCase()}
+                Switch to {recordingAccessLabel(option.mode).toLowerCase()}
               {/if}
             </button>
           </div>
@@ -783,7 +786,7 @@
                   </p>
                 {/if}
               {:else}
-                <p class="text-sm font-semibold">Switch to {pending.label.toLowerCase()}?</p>
+                <p class="text-sm font-semibold">Switch to {recordingAccessLabel(pending.mode).toLowerCase()}?</p>
                 <p class="text-xs break-words text-base-content/80">{pending.consequence}</p>
                 <!-- These are the migration facts: what moves, from where, and
                      what would be replaced at the destination. They are fetched
@@ -902,7 +905,7 @@
         <div class="alert alert-success items-start gap-3 text-sm" role="status">
           <div class="grid gap-1">
             <p class="font-semibold">
-              Storage is now {status.mode === "access_controlled" ? "access controlled" : "default"}.
+              Recording access is now set to {recordingAccessLabel(status.mode).toLowerCase()}.
             </p>
             <p class="text-xs break-words">{describeTransition(status)}</p>
           </div>

@@ -529,8 +529,9 @@ describe("buildSetupNotice", () => {
       isAdmin: true,
       appUrl: APP_URL,
     });
-    expect(notice?.summary).toContain("something-new");
-    expect(notice?.summary).toContain("a_new_step");
+    expect(notice?.detail).toContain("something-new");
+    expect(notice?.summary).not.toContain("something-new");
+    expect(notice?.detail).toContain("a_new_step");
   });
 
   // An install whose manifest predates /setup: the verdict has to come from
@@ -706,7 +707,7 @@ describe("buildSetupNotice when nobody has chosen a storage model", () => {
 
   it("tells a non-administrator that somebody has to decide, not that something broke", () => {
     const notice = buildSetupNotice({ health, access: null, isAdmin: false, appUrl: APP_URL });
-    expect(notice?.title).toContain("where recordings are kept");
+    expect(notice?.title).toBe("Finish setting up Cassini");
     expect(notice?.summary).toContain("choose");
     expect(notice?.summary).toContain("nothing for you to fix");
     // Still no detail, no step, no account name: the user-readable half carries
@@ -734,7 +735,9 @@ describe("buildSetupNotice when nobody has chosen a storage model", () => {
     expect(notice?.steps).toHaveLength(1);
     expect(notice?.steps[0].action).toBe("setup");
     expect(notice?.steps[0].commands).toEqual([]);
-    expect(notice?.summary).toContain("will not choose for you");
+    expect(notice?.summary).toContain("Choose who can see meeting recordings");
+    expect(notice?.tone).toBe("info");
+    expect(notice?.actionLabel).toBe("Choose recording access");
   });
 
   // The decision has to come BEFORE every "something is missing" branch: an
@@ -784,7 +787,8 @@ describe("buildSetupNotice when nobody has chosen a storage model", () => {
       isAdmin: true,
       appUrl: APP_URL,
     });
-    expect(notice?.summary).toContain("nobody chose it");
+    expect(notice?.summary).toContain("Confirm your choice to continue setup");
+    expect(notice?.summary).not.toContain("New recordings can start once");
     expect(notice?.summary).toContain("still readable");
     expect(notice?.steps[0].action).toBe("setup");
   });
@@ -832,5 +836,39 @@ describe("buildSetupNotice does not blank the list for an unmade decision", () =
       appUrl: APP_URL,
     });
     expect(notice?.blocking).toBe(true);
+  });
+});
+
+// Mixed-version upgrades can provide the public choice bit without an admin
+// diagnosis. It must still lead to the wizard, never to server commands.
+describe("setup invitation with incomplete upgrade diagnostics", () => {
+  it("uses the public choice signal when admin details are absent", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable", awaitingChoice: true, features: null },
+      access: null,
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+    expect(notice?.tone).toBe("info");
+    expect(notice?.blocking).toBe(false);
+    expect(notice?.actionLabel).toBe("Choose recording access");
+    expect(notice?.steps).toEqual([expect.objectContaining({ action: "setup", commands: [] })]);
+    expect(notice?.summary).not.toContain("operator");
+  });
+
+  it("recognises the screenshot state without the newer public endpoint", () => {
+    const notice = buildSetupNotice({
+      health: null,
+      access: { ok: false, state: "unavailable", step: "storage_mode_undecided",
+        detail: "storage_mode_undecided: nobody has chosen", mode: "", modeConfirmed: false,
+        prerequisites: [] },
+      isAdmin: true,
+      appUrl: APP_URL,
+    });
+    expect(notice?.tone).toBe("info");
+    expect(notice?.blocking).toBe(false);
+    expect(notice?.actionLabel).toBe("Choose recording access");
+    expect(notice?.summary).not.toContain("storage_mode_undecided");
+    expect(notice?.steps.every(step => step.commands.length === 0)).toBe(true);
   });
 });

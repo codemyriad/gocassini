@@ -68,22 +68,39 @@ export function describeArchive(archive: StorageArchiveFacts): string {
   return archive.meetings === 1 ? "1 recording" : `${archive.meetings} recordings`;
 }
 
+export function recordingAccessLabel(mode: StorageStatus["mode"]): string {
+  if (mode === "") return "Not chosen yet";
+  return mode === "access_controlled" ? "Meeting participants" : "Everyone in Cassini";
+}
+
+export function recordingAccessSummary(mode: StorageModeOption["mode"]): string {
+  return mode === "access_controlled"
+    ? "New recordings and their room names are visible only to the people in each meeting. " +
+      "Requires Team folders and Everyone Group. Everyone Group adds an everyone group " +
+      "throughout Nextcloud, including other apps’ sharing menus."
+    : "Everyone who can open Cassini can see all recordings and their room names. " +
+      "No extra Nextcloud apps needed.";
+}
+
+// Describe the audience first; storage paths are available in the details.
+// Migration consequences still come from the operator's confirmation preview.
 // modeCard turns one operator-supplied mode into the card the wizard renders.
 export function modeCard(option: StorageModeOption): WizardModeCard {
   let action: WizardAction = option.available ? "use" : "blocked";
   if (!option.available && option.setup.length > 0) {
     action = "scaffold";
   }
-  let actionLabel = `Use ${option.label.toLowerCase()}`;
+  const label = recordingAccessLabel(option.mode);
+  let actionLabel = "Choose this option";
   if (action === "scaffold") {
-    actionLabel = `Set up ${option.label.toLowerCase()}`;
+    actionLabel = "Set up this option";
   } else if (action === "blocked") {
     actionLabel = "Not available yet";
   }
   return {
     mode: option.mode,
-    label: option.label,
-    summary: option.summary,
+    label,
+    summary: recordingAccessSummary(option.mode),
     active: option.active,
     available: option.available,
     action,

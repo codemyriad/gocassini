@@ -91,15 +91,16 @@ export interface SetupNoticeStep {
   action?: "setup";
 }
 
-// SetupNotice is everything the panel renders. The copy lives HERE, not in the
-// component, because this is the part worth testing — a wrong instruction is a
-// worse failure than a missing one, and .svelte files are not unit-tested in
-// this repo.
+// SetupNotice owns the diagnosis and copy. The component keeps the browser
+// action visible and technical recovery behind a disclosure; render tests
+// verify that separation for both administrators and other users.
 export interface SetupNotice {
   // blocking means the archive genuinely cannot be read, so the panel stands in
   // for the meeting list. Advisory means setup is unproven but reads still work,
   // and the list must stay: see blocksBrowsing.
   blocking: boolean;
+  tone: "info" | "warning";
+  actionLabel: string;
   title: string;
   summary: string;
   steps: SetupNoticeStep[];
@@ -324,19 +325,19 @@ export function buildSetupNotice(options: {
   // is empty anyway, so the strip sits above nothing.
   const blocking = !awaitingChoice && blocksBrowsing(verdict.state);
   const title = awaitingChoice
-    ? "Cassini needs to be told where recordings are kept"
+    ? "Finish setting up Cassini"
     : blocking
       ? "Cassini is not set up yet"
       : "Cassini has not finished setting itself up";
   if (!isAdmin) {
     return {
       blocking,
+      tone: awaitingChoice ? "info" : "warning",
+      actionLabel: "",
       title,
       summary: awaitingChoice
-        ? "Cassini keeps meeting recordings in Nextcloud, and an administrator has to choose " +
-          "which of two ways it does that — the choice decides who can read a recording, so " +
-          "Cassini does not make it on its own. There is nothing wrong with your account, and " +
-          "nothing for you to fix."
+        ? "An administrator needs to choose who can see meeting recordings before new recordings " +
+          "can start. There is nothing for you to fix."
         : blocking
           ? "Recordings cannot be shown until an administrator finishes setting Cassini up on " +
             "this Nextcloud. There is nothing wrong with your account, and nothing for you to fix."
@@ -355,13 +356,15 @@ export function buildSetupNotice(options: {
       reference: "",
     };
   }
-  const admin = adminNotice(verdict.state, access);
+  const admin = adminNotice(verdict.state, access, awaitingChoice);
   return {
     blocking,
+    tone: awaitingChoice ? "info" : "warning",
+    actionLabel: awaitingChoice ? "Choose recording access" : "Continue setup",
     title,
     summary: admin.summary,
     steps: admin.steps,
-    detail: access?.detail ?? "",
+    detail: access?.detail || [verdict.state, access?.step].filter(Boolean).join(": "),
     note: admin.steps.some((step) => step.commands.length > 0) ? OCC_NOTE : "",
     shareLabel: "",
     shareUrl: "",
@@ -418,6 +421,7 @@ function isAwaitingChoice(health: SetupHealth | null, access: RecordingsAccess |
 function adminNotice(
   state: string,
   access: RecordingsAccess | null,
+  awaitingChoice: boolean,
 ): { summary: string; steps: SetupNoticeStep[] } {
   // The decision comes first, before every "something is missing" branch.
   //
@@ -426,22 +430,13 @@ function adminNotice(
   // install an app before they have said which model they want is sending them
   // after something they may not need at all — the deps-free model needs no
   // Nextcloud app whatsoever.
-  if (access?.step === MODE_UNDECIDED_STEP) {
+  if (awaitingChoice) {
     return {
-      summary:
-        "Cassini keeps recordings in Nextcloud in one of two ways, and they differ in who can " +
-        "read a recording — so it will not choose for you. Nothing is published or recorded " +
-        "until you pick one, and you can change your mind afterwards.",
-      steps: [CHOOSE_STORAGE_OFFER],
-    };
-  }
-  if (access?.step === MODE_UNCONFIRMED_STEP) {
-    return {
-      summary:
-        "Cassini is keeping recordings under one of its two storage models, but nobody chose it — " +
-        "an earlier version recorded it without asking, or a switch was interrupted. Confirm it, " +
-        "or pick the other one. Recordings already published are unaffected and still readable. " +
-        (access.detail || ""),
+      summary: access?.step === MODE_UNCONFIRMED_STEP
+        ? "Please confirm who can see meeting recordings. " +
+          "Existing recordings are still readable. Confirm your choice to continue setup."
+        : "Choose who can see meeting recordings: everyone who can open Cassini, or only the " +
+          "people in each meeting. We’ll guide you through setup before new recordings can start.",
       steps: [CHOOSE_STORAGE_OFFER],
     };
   }
@@ -465,7 +460,7 @@ function adminNotice(
         "Cassini's storage mode was set by a deploy option, and this Nextcloud does not match it. " +
         "That option is for development and CI, where the stack knows what it built — so a " +
         "disagreement is refused rather than recorded, and nothing has been written down. " +
-        (access.detail || ""),
+        "Open Setup to review your recording access settings.",
       steps: [CHOOSE_STORAGE_OFFER, RERUN_SETUP],
     };
   }
@@ -474,7 +469,7 @@ function adminNotice(
       summary:
         "Cassini's storage mode and this Nextcloud disagree about where recordings live, so it " +
         "will not publish into a place the read side is not looking. " +
-        (access.detail || ""),
+        "Open Setup to review your recording access settings.",
       steps: [
         {
           label:
@@ -549,13 +544,11 @@ function adminNotice(
     };
   }
   // unavailable with a step that is not one of the above, or a state this build
-  // does not know. Name what the operator named and stop guessing.
+  // does not know. Keep the invitation general; the diagnosis stays in details.
   return {
     summary:
-      "Cassini's setup did not complete, so recordings cannot be served. The operator " +
-      "reported the state as " +
-      (state || "unknown") +
-      (access?.step ? ` and stopped at ${access.step}.` : "."),
+      "Cassini needs a little more setup before recordings can be shown. " +
+      "Open Setup to review what’s needed and continue.",
     steps: [SETUP_TAB_OFFER, RERUN_SETUP],
   };
 }

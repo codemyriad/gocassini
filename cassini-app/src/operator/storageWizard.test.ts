@@ -71,6 +71,18 @@ describe("describeArchive", () => {
 });
 
 describe("modeCard", () => {
+  it("explains the audience and dependencies before storage mechanics", () => {
+    const shared = modeCard(option());
+    expect(shared.label).toBe("Everyone in Cassini");
+    expect(shared.summary).toContain("all recordings and their room names");
+    expect(shared.summary).toContain("No extra Nextcloud apps");
+    expect(shared.summary).not.toContain("CassiniNoACL");
+    const restricted = modeCard(option({ mode: "access_controlled" }));
+    expect(restricted.label).toBe("Meeting participants");
+    expect(restricted.summary).toContain("New recordings");
+    expect(restricted.summary).toContain("throughout Nextcloud");
+    expect(restricted.summary).toContain("sharing menus");
+  });
   it("offers a blocked mode as something to set up, not to switch to", () => {
     const card = modeCard(
       option({
@@ -80,7 +92,7 @@ describe("modeCard", () => {
       }),
     );
     expect(card.action).toBe("scaffold");
-    expect(card.actionLabel).toBe("Set up default");
+    expect(card.actionLabel).toBe("Set up this option");
   });
 
   it("does not offer to set up a mode it has no steps for", () => {

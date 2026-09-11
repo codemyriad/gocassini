@@ -361,12 +361,13 @@
       </button>
     </nav>
 
-    {#if setupNotice && !setupNotice.blocking}
+    {#if setupNotice && !setupNotice.blocking && surface !== "setup"}
       <!-- Advisory: setup is unproven but the archive still reads, so this is a
            strip above the list, not a replacement for it. Kept beside the nav
            rather than inside the browse slot so it stays put while an
            administrator works on the operator surface — publishing is refused
-           there too. -->
+           there too. Setup owns the next action while it is open, so avoid
+           repeating the invitation above the wizard or its recovery screen. -->
       <div class="cassini-shell-banner" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
           <SetupNotice notice={setupNotice} on:navigate={() => selectSurface("setup")} />

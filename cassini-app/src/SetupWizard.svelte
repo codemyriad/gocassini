@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { HardDrive, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
+  import { HardDrive, Info, Lock, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import PasswordReveal from "./PasswordReveal.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import { NcSetupError, isSetupAvailable, nextcloudUrl } from "./operator/ncSetup";
@@ -9,6 +9,7 @@
   import {
     migrationFacts,
     modeCards,
+    recordingAccessLabel,
   } from "./operator/storageWizard";
   import type {
     StorageModeOption,
@@ -273,9 +274,8 @@
         // with, so an installation still on an older manifest 404s every request
         // this tab makes — and the symptom says nothing about the cause.
         return (
-          "This Nextcloud does not know about Cassini's storage routes, which happens when the app " +
-          "was updated in place from a version that predates them. Re-register the app in Nextcloud " +
-          "(External Apps → remove and add Cassini again, keeping its data)."
+          "Cassini’s setup service could not be found. If you just updated Cassini, check that " +
+          "the update has finished in Nextcloud’s External Apps page, then reload Setup."
         );
       }
       return error.message;
@@ -292,10 +292,10 @@
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
   <header class="flex items-start justify-between gap-3 px-4 py-3">
     <div class="min-w-0">
-      <h2 class="font-semibold">Where should Cassini keep recordings?</h2>
+      <h2 class="font-semibold">Who should be able to see recordings?</h2>
       <p class="text-xs text-base-content/60">
-        The two ways differ in who can read a recording, so Cassini does not choose for you.
-        Recording and publishing are paused until you pick one, and you can change your mind later.
+        Recordings are saved in Nextcloud. Choose who can see them, and we’ll help you finish setup.
+        You can change this later.
       </p>
     </div>
     <button
@@ -335,13 +335,12 @@
         <!-- A mode is in force that nobody chose: a previous build recorded it,
              or a first decision was interrupted. The archive is where it says
              and reads work; what is missing is somebody's agreement. -->
-        <div class="alert alert-warning items-start gap-3 text-sm" role="status">
-          <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+        <div class="flex items-start gap-3 rounded-box border border-base-300 bg-base-200 p-3 text-sm" role="status">
+          <Info size={16} class="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
           <span class="break-words">
-            Cassini is already keeping recordings under the
-            <strong>{status.mode === "access_controlled" ? "access controlled" : "default"}</strong>
-            model, but nobody chose it. Confirm it below, or pick the other one. Recordings already
-            published are unaffected.
+            Please review your recording access settings.
+            The current setting is <strong>{recordingAccessLabel(status.mode)}</strong>.
+            Confirm it below, or choose another option. Existing recordings remain available.
           </span>
         </div>
       {/if}
@@ -371,9 +370,11 @@
 
             <p class="text-xs text-base-content/70">{card.summary}</p>
 
-            <p class="text-xs break-words text-base-content/60">
-              <code class="break-all">{card.root}</code> — {card.contents}
-            </p>
+            <p class="text-xs text-base-content/60">Recordings in this location: {card.contents}</p>
+            <details class="text-xs text-base-content/60">
+              <summary class="w-fit cursor-pointer">Storage location</summary>
+              <code class="mt-1 block break-all">{card.root}</code>
+            </details>
 
             {#if card.blocker}
               <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-2">
@@ -448,7 +449,7 @@
           role="group"
           aria-label="Confirm the storage mode"
         >
-          <p class="text-sm font-semibold">Use {target.label.toLowerCase()} storage?</p>
+          <p class="text-sm font-semibold">Allow access for {recordingAccessLabel(target.mode).toLowerCase()}?</p>
           <p class="text-xs break-words text-base-content/80">{target.consequence}</p>
 
           {#if previewing}
@@ -509,7 +510,7 @@
                 <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
                 {progress || "Applying…"}
               {:else}
-                Yes, use {target.label.toLowerCase()}
+                Confirm recording access
               {/if}
             </button>
             <button class="btn btn-sm btn-ghost" type="button" disabled={busy} on:click={cancel}>
