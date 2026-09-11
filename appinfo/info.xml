@@ -333,10 +333,12 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <!-- USER: tags and marks (D-737). A meeting's annotations are read as the
            caller, so Nextcloud re-checks the ACL on the bytes; a write is made
            by the service account after the same visibility check every archive
-           read makes. Anyone who can read a meeting can mark it. -->
+           read makes. Anyone who can read a meeting can mark it, and can
+           recolour, rename, merge or delete a tag across the meetings they
+           can read (annotations/tags/…, D-746). -->
       <route>
-        <url>^annotations\/tags\/?$</url>
-        <verb>GET</verb>
+        <url>^annotations\/tags(\/.*)?$</url>
+        <verb>GET,POST</verb>
         <access_level>USER</access_level>
       </route>
       <route>

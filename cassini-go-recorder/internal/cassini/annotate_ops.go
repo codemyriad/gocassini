@@ -23,6 +23,7 @@ const (
 	annotateOpUnmarkTag     = "unmark-tag"
 	annotateOpUndoOperation = "undo-operation"
 	annotateOpRelabel       = "relabel"
+	annotateOpMergeTag      = "merge-tag"
 )
 
 // annotateOpFields is the members each op may carry besides "op". Another op's
@@ -33,6 +34,7 @@ var annotateOpFields = map[string][]string{
 	annotateOpUnmarkTag:     {"tagId", "target"},
 	annotateOpUndoOperation: {"operationId"},
 	annotateOpRelabel:       {"tagId", "label"},
+	annotateOpMergeTag:      {"tagId", "into"},
 }
 
 // annotateOp is the union of every op's members.
@@ -44,11 +46,12 @@ type annotateOp struct {
 	TagID       string                     `json:"tagId"`
 	OperationID string                     `json:"operationId"`
 	Label       *string                    `json:"label"`
+	Into        *annotateOpTag             `json:"into"`
 	raw         json.RawMessage            // the op as sent, for the meetings client to forward
 }
 
-// annotateOpTag names the tag a mark applies. An absent label means "the tag
-// with this id"; an empty one is invalid.
+// annotateOpTag names the tag a mark applies, or a merge moves marks to. An
+// absent label means "the tag with this id"; an empty one is invalid.
 type annotateOpTag struct {
 	ID    string  `json:"id"`
 	Label *string `json:"label"`
@@ -105,7 +108,7 @@ func parseAnnotateOps(raw []byte) ([]annotateOp, error) {
 		allowed, known := annotateOpFields[op.Op]
 		if !known {
 			return nil, annotateFail(annotateExitInvalid,
-				"ops[%d]: unknown op %q (want mark, unmark, unmark-tag, undo-operation or relabel)", i, op.Op)
+				"ops[%d]: unknown op %q (want mark, unmark, unmark-tag, undo-operation, relabel or merge-tag)", i, op.Op)
 		}
 		// encoding/json matches names case-insensitively; this checks the spelling.
 		names := make([]string, 0, len(members))
@@ -146,6 +149,8 @@ func applyAnnotationOps(current *portable.Annotations, ops []annotateOp, duratio
 			err = applyUndoOperationOp(work, op, &notFound)
 		case annotateOpRelabel:
 			err = applyRelabelOp(work, op, &notFound)
+		case annotateOpMergeTag:
+			err = applyMergeTagOp(work, op, &notFound)
 		default:
 			err = annotateFail(annotateExitInvalid, "unknown op")
 		}
@@ -319,6 +324,60 @@ func applyRelabelOp(doc *portable.Annotations, op annotateOp, notFound *[]string
 		}
 	}
 	doc.Tags[index].Label = label
+	return nil
+}
+
+// applyMergeTagOp moves every mark of tagId in this file to into, defining into
+// here if the file lacks it. A mark whose target into already covers is dropped
+// as a duplicate; the emptied source is dropped with the other unused tags.
+func applyMergeTagOp(doc *portable.Annotations, op annotateOp, notFound *[]string) error {
+	if op.TagID == "" {
+		return annotateFail(annotateExitInvalid, "needs a tagId")
+	}
+	if op.Into == nil || op.Into.ID == "" {
+		return annotateFail(annotateExitInvalid, `needs into: {"id", "label"}`)
+	}
+	label, hasLabel, err := annotateOpLabel(op.Into.Label, "into.label")
+	if err != nil {
+		return err
+	}
+	if !hasLabel {
+		return annotateFail(annotateExitInvalid, "into needs a label, to define the tag in files that lack it")
+	}
+	if op.Into.ID == op.TagID {
+		return annotateFail(annotateExitInvalid, "a tag cannot be merged into itself")
+	}
+	if !slices.ContainsFunc(doc.Tags, func(tag portable.AnnotationTag) bool { return tag.ID == op.TagID }) {
+		*notFound = append(*notFound, op.TagID)
+		return nil
+	}
+	if findAnnotationTag(doc, op.Into.ID, "", false) == "" {
+		for _, tag := range doc.Tags {
+			if tag.ID != op.TagID && strings.EqualFold(tag.Label, label) {
+				return annotateFail(annotateExitInvalid, "label %q is already tag %q's in this file", label, tag.ID)
+			}
+		}
+		doc.Tags = append(doc.Tags, portable.AnnotationTag{ID: op.Into.ID, Label: label})
+	}
+
+	var covered []portable.AnnotationTarget
+	for _, item := range doc.Items {
+		if item.TagID == op.Into.ID {
+			covered = append(covered, item.Target)
+		}
+	}
+	kept := make([]portable.AnnotationItem, 0, len(doc.Items))
+	for _, item := range doc.Items {
+		if item.TagID == op.TagID {
+			if slices.ContainsFunc(covered, func(target portable.AnnotationTarget) bool { return sameAnnotationTarget(target, item.Target) }) {
+				continue
+			}
+			item.TagID = op.Into.ID
+			covered = append(covered, item.Target)
+		}
+		kept = append(kept, item)
+	}
+	doc.Items = kept
 	return nil
 }
 
