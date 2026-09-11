@@ -976,7 +976,7 @@ func TestTransitionPreviewSaysWhenThereIsNothingToMove(t *testing.T) {
 func TestTransitionPreviewDoesNotOfferToOverwriteTheModeBeingConfirmed(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
-	setUnconfirmedStorageMode(t, false)
+	setSelfRecordedStorageMode(t, false)
 
 	mock := &storageMock{serviceAccount: true}
 	mock.dirs = map[string][]string{
@@ -1348,7 +1348,7 @@ func TestFirstChoiceAdoptsAnExistingAccessControlledArchive(t *testing.T) {
 func TestSwitchToARecordedModeNobodyChoseMigratesNothing(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
-	settings := setUnconfirmedStorageMode(t, false)
+	settings := setSelfRecordedStorageMode(t, false)
 
 	mock := newTransitionMock()
 	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio")

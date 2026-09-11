@@ -102,7 +102,7 @@ const (
 	// fallback, kept here only so a file carrying it is still readable.
 	storageModeSourceDerived = "derived"
 	// storageModeSourceUser means an administrator chose it, by switching modes
-	// in the Setup tab.
+	// in Operator › Settings › Who can see recordings.
 	storageModeSourceUser = "user"
 	// storageModeSourceMigrating marks the mode a switch is carrying an archive
 	// OUT of, on an install that had not chosen one.
@@ -128,8 +128,8 @@ const (
 
 	// envStorageMode declares the mode a FRESH install starts in, for a
 	// DEVELOPMENT OR CI deployment. It is not a production affordance: a
-	// production install is asked, in the Setup tab, and nothing else decides
-	// (D-708).
+	// production install resolves its own mode on the enabled edge and changes
+	// it in Operator › Settings › Who can see recordings (D-753).
 	//
 	// It seeds the flag and nothing more: once storage_settings.json records a
 	// decision, the file is authoritative and changing this variable does not
@@ -274,13 +274,6 @@ func (s StorageSettings) Clean() bool { return s.MigrationClean == nil || *s.Mig
 // `Source` and still shown; it simply gates nothing.
 func (s StorageSettings) Confirmed() bool { return s.Configured() }
 
-// storageSourceConfirmed is Confirmed's rule on its own, so the resolvers can
-// apply it to a source they are carrying rather than to a loaded file. Only the
-// absence of a mode is unconfirmed now — see Confirmed.
-func storageSourceConfirmed(source string) bool {
-	return strings.TrimSpace(source) != ""
-}
-
 func storageModeName(accessControlled bool) string {
 	if accessControlled {
 		return storageModeAccessControlled
@@ -408,10 +401,6 @@ type ncStorageModeState struct {
 	resolved             bool
 	accessControlEnabled bool
 	source               string
-	// confirmed is whether a mode has been settled at all — by a person, by a
-	// deploy option, or by the enabled edge resolving one from the archive that
-	// was already there (D-753). It is false only while nothing is resolved.
-	confirmed bool
 	// clean mirrors StorageSettings.MigrationClean for the readers that must not
 	// touch the disk — /status, /storage, and the PUT that decides whether a
 	// request for the mode already in force is a no-op or a repair.
@@ -442,14 +431,14 @@ func (s *ncStorageModeState) settingsPath() string {
 // set records the mode this process is operating under, where it came from, and
 // whether the last migration finished tidying up.
 //
-// `confirmed` is derived from the source rather than passed, so there is one
-// rule for "was this chosen" and every caller cannot help but agree with it.
+// There is no `confirmed` to pass or to derive: a mode that is recorded is a
+// mode that is settled, which is StorageSettings.Confirmed's rule and the only
+// one there is (D-753). The provenance is still carried, in `source`.
 func (s *ncStorageModeState) set(accessControlEnabled bool, source string, clean bool) {
 	s.mu.Lock()
 	s.resolved = true
 	s.accessControlEnabled = accessControlEnabled
 	s.source = source
-	s.confirmed = storageSourceConfirmed(source)
 	s.clean = clean
 	s.mu.Unlock()
 }
@@ -483,13 +472,15 @@ func (s *ncStorageModeState) recordedSource() string {
 	return s.source
 }
 
-// confirmedMode reports whether the resolved mode is a decision somebody took.
-// False for an unresolved process: nothing has been decided, which is the state
-// the setup wizard exists to end.
+// confirmedMode reports whether a mode has been settled at all — by a person, by
+// a deploy option, or by the enabled edge resolving one from the archive that
+// was already there (D-753). It is StorageSettings.Confirmed applied to this
+// process rather than to a loaded file, and it says the same thing: only the
+// ABSENCE of a mode is unconfirmed. Provenance is `source`, and gates nothing.
 func (s *ncStorageModeState) confirmedMode() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.resolved && s.confirmed
+	return s.resolved
 }
 
 // migrationClean reports the recorded cleanup state. It answers `true` for an
@@ -539,7 +530,6 @@ func (s *ncStorageModeState) reset() {
 	s.resolved = false
 	s.accessControlEnabled = false
 	s.source = ""
-	s.confirmed = false
 	s.clean = false
 	s.firstRunAcknowledged = false
 	s.mu.Unlock()
