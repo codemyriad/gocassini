@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { render } from "svelte/server";
 
+import { tagsByMeeting, type VocabularyTag } from "../viewer/annotations";
+import MeetingList from "./MeetingList.svelte";
 import meetingListSource from "./MeetingList.svelte?raw";
 
 // Source-level assertions, for the reason MeetingView.transcript.test.ts gives:
@@ -143,5 +146,62 @@ describe("MeetingList insights", () => {
     expect(meetingListSource).toContain(
       "sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}",
     );
+  });
+});
+
+describe("MeetingList tags", () => {
+  const tag = (tagId: string): VocabularyTag => ({
+    tagId,
+    namespace: "ns",
+    label: `tag-${tagId}`,
+    meetings: 1,
+    marks: 1,
+    color: "teal",
+    icon: "",
+    changedBy: "",
+    changedAtUtc: "",
+  });
+  const tags = ["a", "b", "c", "d"].map(tag);
+  const meetingTags = tagsByMeeting({
+    tags,
+    meetings: [
+      {
+        meetingId: "m1",
+        tags: [
+          { tagId: "a", whole: true, stretches: 0 },
+          { tagId: "b", whole: false, stretches: 3 },
+          { tagId: "c", whole: true, stretches: 0 },
+          { tagId: "d", whole: false, stretches: 1 },
+        ],
+      },
+    ],
+    coverage: { visible: 1, indexed: 1 },
+  });
+  const meetings = [{ id: "m1", title: "Hiring sync", dateLabel: "2026-09-01" }];
+  const html = (props: Record<string, unknown>) =>
+    render(MeetingList as never, { props: { meetings, totalCount: 1, ...props } } as never).body;
+
+  it("shows three chips on a row, whole-meeting tags first, then how many more", () => {
+    const row = html({ meetingTags, tags });
+    expect(row.match(/class="tag-chip[\s"]/g)).toHaveLength(3);
+    expect(row.match(/class="tag-chip\s[^"]*\bwhole\b/g)).toHaveLength(2);
+    expect(row).toMatch(/>3<span class="sr-only[^"]*"> stretches</);
+    expect(row).toMatch(/title="tag-d"[^>]*>\+1</);
+  });
+
+  it("offers a tag button on each row only where tagging is", () => {
+    expect(html({ meetingTags, tags })).toContain('aria-label="Tag Hiring sync"');
+    const plain = html({});
+    expect(plain).not.toContain("row-tag");
+    expect(plain).not.toContain("tag-chip");
+  });
+
+  it("toggles whole-meeting tags from the row, ticking the ones already on it", () => {
+    expect(meetingListSource).toContain("selected={wholeTagState(meetingTags, [meeting.id]).selected}");
+    expect(meetingListSource).toContain('dispatch("tagMeeting", { meeting, pick: event.detail })');
+  });
+
+  it("says when the tag filter is what emptied the list", () => {
+    expect(html({ meetings: [], tagFilterCount: 2, tags })).toContain("No meeting here has those tags.");
   });
 });
