@@ -285,6 +285,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	// Join tracked workers (including startup readiness) before returning or
+	// closing the store; callers may release the log writers after Run exits.
+	defer runtime.Shutdown()
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
 	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier(logger)

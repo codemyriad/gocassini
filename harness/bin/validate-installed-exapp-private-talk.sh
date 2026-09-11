@@ -658,10 +658,15 @@ prepare_readiness_test() {
   curl -fsS "${AUTH[@]}" -X POST "$PROXY_URL/operator/readiness/check" >"$LOG_DIR/readiness-check-$label.json"
   jq -e 'any(.checks[]; .code == "hpb_authenticated" and .state == "passed")' \
     "$LOG_DIR/readiness-check-$label.json" >/dev/null || fail "HPB probe failed for $label"
+  # Prove this is an authenticated user with access to a USER route first.
+  # AppAPI versions may hide ADMIN routes with 404 instead of returning 403;
+  # the successful administrator calls above already prove these routes exist.
+  code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/setup")"
+  [[ "$code" == 200 ]] || fail "ordinary-user setup route returned $code"
   code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/readiness")"
-  [[ "$code" == 403 ]] || fail "readiness admin route returned $code for an ordinary user"
+  [[ "$code" == 403 || "$code" == 404 ]] || fail "readiness admin route returned $code for an ordinary user"
   code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -X PUT -H 'Content-Type: application/json' --data '{"internal_secret":"must-not-save"}' -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/talk/setup")"
-  [[ "$code" == 403 ]] || fail "secret configuration route returned $code for an ordinary user"
+  [[ "$code" == 403 || "$code" == 404 ]] || fail "secret configuration route returned $code for an ordinary user"
 }
 
 new_job_ids=()
