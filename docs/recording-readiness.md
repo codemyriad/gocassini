@@ -46,8 +46,10 @@ routes inaccessible until registration metadata is refreshed.
    dialed by Cassini. Use a room from this instance.
    The connection check authenticates
    but never joins the call or records media.
-4. Open **Connect Talk**. Review that this replaces the previous recorder,
-   then run the generated commands on your server. They save the previous
+4. Open **Connect Talk**. Identify the installation method and who can change
+   its server configuration. Use the administrator request if you lack host
+   access. For a confirmed command path, review the advanced commands and
+   acknowledge that they replace the previous recorder. They save the previous
    `recording_servers` value to a private, uniquely named backup and prompt for
    an administrator app password. Keep that backup for rollback.
 5. Press **Check again**. A rejected recording credential means the handoff
@@ -174,32 +176,43 @@ because the existing harness uses fixed HaRP/ExApp names. The normal installed
 CPU CI job runs this check. Its Nextcloud restart is not an AIO mastercontainer
 restart; validate the AIO-specific persistence settings on your deployment too.
 
-## Proposed follow-up: environment-aware repair guidance
+## Environment-aware repair guidance
 
-The current implementation checks recording prerequisites; it does not yet
-reliably classify every Nextcloud installation. Before replacing generic handoff
-instructions, gather authoritative deployment evidence where the administrator's
-API permissions expose it. Report the evidence and its confidence. Cassini's own
-container environment is not proof of how Nextcloud is installed, and an absent
-marker is not proof that a deployment type is absent.
+Each repair form opens beneath its check. Cassini uses its live diagnostics for
+capability findings, but does not infer Nextcloud's installation method from its
+own container or assume that an administrator has host access. The form starts
+with both installation method and access unknown.
 
-Use detected capabilities to show only relevant repair paths. If deployment type
-or administrator access remains unknown, ask for the installation method and
-whether the person can access the server. Include a provider-managed/unknown
-choice. Never choose host-specific commands based on a weak hostname heuristic.
+Administrators can identify AIO, Docker, Compose, a host/archive installation,
+Snap, or another/unknown method. Access is a separate choice: host terminal,
+container/appliance console, provider/another administrator, or unknown. These
+are user-supplied choices, not automatic detection results. They stay in page
+memory and are not saved as deployment facts.
 
-Every unresolved check should explain:
+For a confirmed host terminal and a supported command path, Connect Talk offers
+advanced commands. Docker, Compose and host installations require explicit
+service/container, web-server user and absolute occ-path details as applicable.
+The instructions identify the Nextcloud host as the target even when Cassini runs
+elsewhere. The script checks its tools and Nextcloud before writing configuration;
+copying requires acknowledgment that the current recorder will be replaced.
+Changing installation details clears that acknowledgment.
 
-- What is missing and what capability it enables.
-- Exactly what value, permission or component is needed.
-- Where it can be obtained for the confirmed deployment type.
-- Who can supply it when the current administrator lacks access.
-- How to recheck after the repair.
+Provider-managed, console-only, unknown and other installations receive a safe
+administrator request and guidance on what information to obtain. Each request
+uses known check labels and states; it excludes raw messages, room URLs, job IDs
+and credentials. Secret-related requests ask the administrator to configure the
+value securely rather than reply with it in a support ticket. These requests are
+copyable text; Cassini does not send them automatically.
 
-For example, explain that the signaling server's internal-client secret is
-needed, distinguish it from the recording-backend secret, and provide the
-confirmed platform's retrieval instructions or a shareable request to its
-administrator. For a missing deploy daemon, explain the AppAPI deployment
-requirement in the installation guide: Cassini cannot show an in-app diagnosis
-before its own installation succeeds. Provider requests should contain safe
-findings and required changes, never saved secrets.
+The command paths are covered by generation, quoting, gating and browser tests.
+They have not all been validated on live platform deployments. A Snap occ wrapper
+is not proof of ExApp compatibility; a provider's actual policies and a remote
+execution host may determine what is possible. Podman, Kubernetes and vendor NAS
+packages need a verified platform-specific path before generated commands can
+be offered for them.
+
+Automatic environment classification from authoritative deployment metadata and
+an in-app Talk configuration operation remain future work. Neither is claimed
+by this UI. The [pre-install guide](before-installing.md) explains eligibility
+before Cassini can run, including actual AppAPI test deployment, recorder-target
+architecture, HPB and provider involvement.

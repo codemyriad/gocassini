@@ -2,7 +2,7 @@
 
 Open [the standalone HTML](../../recording-setup-preview.html) directly in a browser.
 It renders the production `RecordingSetup.svelte` component using a simulated
-operator client. The sidebar selects 14 fixture states; preview controls simulate
+operator client. The sidebar selects 19 fixture states; preview controls simulate
 Talk and processing events. No operator API requests are sent.
 
 The surrounding app navigation and storage placeholder are presentation context.
@@ -17,3 +17,7 @@ node docs/previews/recording-setup/build.mjs
 ```
 
 The generated file contains its JavaScript and CSS and needs no web server.
+
+The environment examples cover unknown, provider-managed, console-only, confirmed
+AIO, Compose and host access. These are fixture choices, not automatic detection.
+The generated commands have not been executed by the walkthrough.

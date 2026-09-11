@@ -17,3 +17,10 @@ Review follow-up: mount readiness routes for root-path deployments; accept publi
 and index.php Talk links while pinning probes to the configured backend; keep
 playback links on the current browser page; clarify expired incoming handoff
 checks; prioritize actionable findings and refresh shell health only on changes.
+
+Community-evidence iteration: repair forms ask separately about installation
+method and server access, with no assumed AIO deployment. Add sanitized provider
+requests, confirmed AIO/Docker/Compose/host/Snap command paths, explicit execution
+details, preflight tool checks, and a pre-install eligibility guide. Refresh the
+offline walkthrough with 19 screens. Automatic environment classification and
+in-app Talk configuration remain future work.

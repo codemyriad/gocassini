@@ -48,31 +48,6 @@ export function readinessTitle(report: RecordingReadiness): string {
   if (report.state !== "passed") return "Recording setup needs verification";
   return "Recording checks passed";
 }
-const shellQuote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
-
-// Commands contain no credentials. curl prompts for the administrator's app
-// password; the backend supplies its generated credential directly to occ.
-export function handoffScript(provisioningUrl: string, aio: boolean): string {
-  const occ = aio ? "docker exec -u www-data nextcloud-aio-nextcloud php occ" : "sudo -u www-data php occ";
-  return [
-    "#!/usr/bin/env bash", "set -euo pipefail", "umask 077",
-    ...(aio ? [
-      `docker exec nextcloud-aio-nextcloud sh -c 'test "$TALK_RECORDING_ENABLED" != yes && test "$REMOVE_DISABLED_APPS" != yes' || {`,
-      `  printf '%s\\n' 'Disable AIO Talk Recording and set NEXTCLOUD_KEEP_DISABLED_APPS=true on the mastercontainer. Recreate through AIO, then retry.' >&2`,
-      `  exit 1`,
-      `}`,
-    ] : []),
-    `backup=$(mktemp ./cassini-recording-backend.XXXXXX)`,
-    `${occ} config:app:get spreed recording_servers --default-value='' > "$backup"`,
-    `printf 'Previous recording backend saved to %s\\n' "$backup"`,
-    `read -r -p 'Nextcloud administrator username: ' admin_user`,
-    `recording_servers=$(curl --fail --silent --show-error --user "$admin_user" ${shellQuote(provisioningUrl)} | jq -ce '.recording_servers | select(.servers | length > 0)')`,
-    `${occ} config:app:set spreed recording_servers --value="$recording_servers"`,
-    `${occ} config:app:set spreed call_recording --value=yes`,
-    `unset recording_servers`,
-  ].join("\n");
-}
-
 // Ignore check timestamps and job progress: the shell only needs health changes.
 export function readinessHealthKey(report: RecordingReadiness | null): string {
   if (!report) return "";

@@ -1,5 +1,9 @@
 # Installing Cassini as a Nextcloud ExApp
 
+Start with [Before installing Cassini](before-installing.md) to check eligibility
+and identify who can configure the required services.
+
+
 This is the **production install guide**. Cassini ships as a Nextcloud AppAPI
 external app: one container exposes the admin operator surface, the recording
 viewer, the published meeting archive, and the Talk recording backend over a

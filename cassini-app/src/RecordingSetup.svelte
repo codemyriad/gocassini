@@ -1,7 +1,9 @@
 <script lang="ts">
+  import DeploymentGuidance from './DeploymentGuidance.svelte';
+  import { initialEnvironment } from './operator/deploymentGuidance';
   import { onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, stateLabels, readinessTitle, handoffScript, readinessHealthKey, readinessRows, rowActions, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, stateLabels, readinessTitle, readinessHealthKey, readinessRows, rowActions, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
   let report: RecordingReadiness | null = null;
@@ -12,11 +14,10 @@
   let panel = "";
   let panelOwner = "";
   $: rows = report ? readinessRows(report) : [];
-  let aio = true;
+  let environment = initialEnvironment();
   let provisioningURL = "";
   let alive = true;
   let polling = false;
-  let copied = false;
 
   async function load(check = false) {
     if (busy || polling) return;
@@ -51,10 +52,6 @@
       const base = new URL((await import("./operator/config")).loadConfig().operatorBasePath, window.location.href);
       provisioningURL = base.href.replace(/\/$/, "") + "/talk/provisioning";
     }
-  }
-  async function copyScript() {
-    try { await navigator.clipboard.writeText(handoffScript(provisioningURL, aio)); copied = true; }
-    catch { error = "Clipboard access failed. Select and copy the commands below."; }
   }
   onMount(() => {
     alive = true;
@@ -115,7 +112,7 @@
               <button class="btn btn-primary btn-sm mt-3" disabled={busy || !secret.trim()}>Save secret</button>
             </form>
           {/if}
-          <details class="mt-3 text-sm"><summary>Where to find it</summary><p class="my-2">On AIO, run this on the Docker host:</p><pre class="overflow-auto text-xs">docker exec nextcloud-aio-talk printenv INTERNAL_SECRET</pre><p class="mt-2">For standalone HPB, ask its administrator for [clients] internalsecret in server.conf. If you use managed hosting, your provider may need to help.</p></details>
+          <DeploymentGuidance purpose="secret" {report} bind:environment />
           <button class="btn btn-sm mt-3" disabled={busy} on:click={() => load(true)}>Test connection</button>
         {:else if panel === "test_room"}
           <h3 class="font-semibold">Choose a test room</h3>
@@ -126,16 +123,10 @@
           </form>
         {:else if panel === "setup_hpb"}
           <h3 class="font-semibold">Enable Talk’s high-performance backend</h3>
-          <p class="my-2 text-sm">On AIO, enable the Talk component in the AIO management interface and start the containers. Then check Talk’s administration settings. For custom installations, your server administrator needs to deploy and connect HPB.</p>
-          <a class="link" href="https://nextcloud-talk.readthedocs.io/en/stable/quick-install/" target="_blank" rel="noreferrer">Open Nextcloud’s HPB installation guide</a>
+          <DeploymentGuidance purpose="hpb" {report} bind:environment />
         {:else if panel === "connect_talk"}
           <h3 class="font-semibold">Use Cassini as Talk’s recording backend</h3>
-          <p class="my-2 text-sm">This replaces the current recording backend. Cassini cannot change Talk’s settings directly. The commands below save a backup, request your Nextcloud administrator app password, and configure Talk. Run them with Bash on the server; jq and curl are required.</p>
-          <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={aio} />Nextcloud All-in-One</label>
-          {#if aio}<p class="my-3 text-sm">Disable AIO’s Talk Recording component and set NEXTCLOUD_KEEP_DISABLED_APPS=true on its mastercontainer before applying the handoff. Keep Talk enabled. The commands check the effective settings; follow the persistence instructions, then repeat the test after restarting.</p>{:else}<p class="my-3 text-sm">Run from your Nextcloud installation directory. Adjust the occ invocation if your installation uses a different web-server user or container.</p>{/if}
-          <pre class="my-3 overflow-auto rounded bg-base-100 p-3 text-xs">{handoffScript(provisioningURL, aio)}</pre>
-          <button class="btn btn-sm" on:click={copyScript}>{copied ? "Copied" : "Copy commands"}</button>
-          <a class="link ml-3 text-sm" href="https://github.com/codemyriad/gocassini/blob/main/docs/recording-readiness.md" target="_blank" rel="noreferrer">Persistence and rollback instructions</a>
+          <DeploymentGuidance purpose="handoff" {report} {provisioningURL} bind:environment />
         {:else if panel === "test_recording"}
           <h3 class="font-semibold">Verify a recording through Talk</h3>
           <ol class="my-3 list-inside list-decimal space-y-2 text-sm">
