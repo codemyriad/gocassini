@@ -145,8 +145,8 @@ CI publishes to `ghcr.io/codemyriad/gocassini`:
 
 | Tag | What it is |
 |---|---|
-| `X.Y.Z` | Portable capture image. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, while operator-managed transcription immediately enters `build/blocked` instead of using CPU ASR. |
-| `X.Y.Z-cuda` | CUDA release build (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
+| `X.Y.Z` | Multi-arch portable image (`linux/amd64`, `linux/arm64`). Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, and runs local CPU transcription with bundled int8 Parakeet on x86_64 and 64-bit ARM servers. |
+| `X.Y.Z-cuda` | CUDA release build for x86_64 (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
 | `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
 | `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit, for pinning a specific build |
 | `latest` / `latest-cuda` / `latest-rocm` | Convenience tags — fine for demos, **not** for production installs |

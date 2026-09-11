@@ -210,9 +210,12 @@ jobs:
     needs: [classify-changes, validate-manifest, resolve-ffmpeg]
     outputs:
       image_ref: ${{ steps.meta.outputs.tags }}
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.build-push.outputs.digest || steps.build-pr.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -275,12 +278,11 @@ jobs:
           # Primary tag used by the smoke job (PR builds use the sha tag too).
           echo "primary=${TAGS[0]}" >> "$GITHUB_OUTPUT"
 
-      # Build always loads the image into the local docker daemon so the
-      # downstream smoke/e2e jobs can restore it from a tarball artifact —
-      # works uniformly for push, pull_request, and workflow_dispatch
-      # events without relying on registry pull from private ghcr.
-      - name: Build image (local load)
-        id: build
+      # PR builds build linux/amd64 and load it locally so downstream smoke/e2e
+      # jobs can restore it from the tarball artifact without pushing to ghcr.
+      - name: Build image (local load, PR)
+        if: github.event_name == 'pull_request'
+        id: build-pr
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -294,15 +296,23 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Push image tags to ghcr (non-PR)
+      # Non-PR builds (push, release tags, workflow_dispatch) build multi-arch
+      # images (linux/amd64,linux/arm64) and push the multi-arch manifest list
+      # directly to ghcr.io. Downstream jobs pull the primary ref via ghcr.
+      - name: Build and push multi-arch image (non-PR)
         if: github.event_name != 'pull_request'
-        run: |
-          set -euo pipefail
-          while IFS= read -r tag; do
-            [[ -z "${tag}" ]] && continue
-            echo "Pushing ${tag}"
-            docker push "${tag}"
-          done <<<"${{ steps.meta.outputs.tags }}"
+        id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       # PR builds can't reach ghcr (push step is skipped), so they still
       # need the artifact-based handoff. Push builds skip the artifact —
