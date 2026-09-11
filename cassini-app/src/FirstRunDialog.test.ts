@@ -64,8 +64,8 @@ describe("the first-run dialog", () => {
   it("is an inline dialog over a scrim, never a <dialog>", () => {
     // The app runs inside a shadow root on Nextcloud's embedded page, where the
     // top layer is the one element whose styling and focus behaviour do not
-    // reliably follow it. StoragePanel.svelte's confirmation is inline for the
-    // same reason.
+    // reliably follow it. RecordingAccessPanel.svelte's confirmations are
+    // inline for the same reason.
     expect(dialogSource).toContain('role="dialog"');
     expect(dialogSource).not.toContain("</dialog>");
     expect(dialogSource).toContain(".first-run-scrim {");

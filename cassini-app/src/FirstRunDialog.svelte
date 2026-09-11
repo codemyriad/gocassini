@@ -114,7 +114,8 @@
 <!-- An inline role="dialog" over a scrim, not a <dialog>: the whole app runs
      inside a shadow root on Nextcloud's embedded page, where the top layer is
      the one place whose styling and focus behaviour do not reliably follow it.
-     StoragePanel.svelte's confirmation is inline for the same reason. -->
+     RecordingAccessPanel.svelte's confirmations are inline for the same
+     reason. -->
 <div class="first-run-scrim">
   <div
     class="first-run-card w-full max-w-lg rounded-box border border-base-300 bg-base-100 p-5 shadow-lg sm:p-6"

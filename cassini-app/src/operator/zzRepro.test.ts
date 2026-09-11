@@ -5,7 +5,7 @@ import type { StorageSetupStep } from "./types";
 
 // Repro: the operator's plan for a stock Nextcloud (verified against
 // storageSetupPlan(true, probe{both apps missing})), partitioned exactly the way
-// StoragePanel.runSetup does.
+// runModeSetup does.
 
 function stubNextcloud() {
   (globalThis as { OC?: unknown }).OC = {
@@ -59,7 +59,7 @@ describe("repro", () => {
       });
     }) as unknown as typeof fetch;
 
-    // The partition StoragePanel.runSetup performs, verbatim.
+    // The partition runModeSetup performs, verbatim.
     const browserSteps = PLAN.filter((step) => step.browser);
     const appSteps = PLAN.filter((step) => !step.browser);
     expect(appSteps).toHaveLength(2);

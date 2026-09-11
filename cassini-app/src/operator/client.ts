@@ -163,8 +163,12 @@ export class OperatorClient {
   // putStorage switches the storage model, which MOVES every published
   // recording. It is one call and it blocks for the length of the move: the
   // operator holds its provisioning lock for the whole transition and re-runs
-  // its preflight before answering, so there is no half-switched state to poll
-  // for and nothing useful this client could do with one.
+  // its preflight before answering.
+  //
+  // Its answer is the authoritative status. Progress, while it is out, is read
+  // by a SECOND reader calling getStorage() — `migration` on that response is
+  // the move as the operator sees it (D-755) — because this promise says
+  // nothing until the whole move is done.
   async putStorage(accessControlEnabled: boolean, confirmOverwrite = false): Promise<StorageStatus> {
     return normalizeStorage(
       await this.#request<unknown>("/storage", {
@@ -183,9 +187,9 @@ export class OperatorClient {
   // recheckStorage makes the operator look at Nextcloud again.
   //
   // The setup writes happen in the browser (D-671), so the operator cannot see
-  // them until it re-probes — without this the Setup tab would go on reporting
-  // what was missing before the administrator fixed it. It is also what a plan
-  // is RECOMPUTED from: the operator cannot see a Team folder until
+  // them until it re-probes — without this the settings section would go on
+  // reporting what was missing before the administrator fixed it. It is also
+  // what a plan is RECOMPUTED from: the operator cannot see a Team folder until
   // `groupfolders` is enabled, so a plan built before the apps went in is stale
   // about everything after them.
   async recheckStorage(): Promise<StorageStatus> {
@@ -253,7 +257,6 @@ export class OperatorClient {
     );
   }
 
-  // --- D-757 -----------------------------------------------------------------
   // acknowledgeFirstRun records that an administrator has seen the first-run
   // dialog. It is kept in the operator's settings store, per install, so the
   // dialog is shown once for this Nextcloud rather than once per browser.
@@ -270,7 +273,6 @@ export class OperatorClient {
       }),
     );
   }
-  // --- end D-757 ---------------------------------------------------------------
 
   // The insight templates this deployment ships (D-718). Read-only: the
   // prompts are compiled into the recorder image, so there is no PUT.
@@ -296,7 +298,6 @@ export class OperatorClient {
     eventSource.addEventListener("attempt.updated", handleMessage as EventListener);
     return eventSource;
   }
-
 
   async #request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${this.#baseUrl}${path}`, {
@@ -457,7 +458,7 @@ function normalizeStorage(raw: unknown): StorageStatus {
     mode_source: asString(value.mode_source),
     // Absent reads as UNCONFIRMED and NOT awaiting a choice, which is the pair
     // an operator predating these fields produces: it had already recorded a
-    // mode, and the wizard asking about it once is the safe direction.
+    // mode, and treating it as unconfirmed is the safe direction.
     mode_confirmed: value.mode_confirmed === true,
     awaiting_choice: value.awaiting_choice === true,
     service_account: normalizeServiceAccount(value.service_account),
@@ -468,7 +469,7 @@ function normalizeStorage(raw: unknown): StorageStatus {
     checked_at: asString(value.checked_at),
     // Absent reads as SETTLED, matching the operator's own absent-means-clean
     // rule. An older operator that does not send the field must not make the
-    // Setup tab offer a cleanup that DELETES from a root.
+    // settings section offer a cleanup that DELETES from a root.
     migration_clean: value.migration_clean !== false,
     pending_cleanup: asString(value.pending_cleanup),
     stranded_root: asString(value.stranded_root),

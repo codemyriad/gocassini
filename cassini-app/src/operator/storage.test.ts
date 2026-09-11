@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OperatorClient, OperatorHttpError } from "./client";
 
-// GET/PUT <base>/storage as the Setup tab sees it (D-616).
+// GET/PUT <base>/storage as the settings section sees it (D-616).
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -108,7 +108,7 @@ describe("OperatorClient storage", () => {
   });
 
   // An unresolved mode is a third answer, not a missing one. Coercing it to
-  // "default" here would make the Setup tab claim a decision nobody made.
+  // "default" here would make the settings section claim a decision nobody made.
   it("keeps an unresolved mode empty rather than defaulting it", async () => {
     vi.stubGlobal(
       "fetch",
@@ -205,8 +205,8 @@ describe("OperatorClient storage", () => {
     expect(status.transition?.source_cleared).toBe(false);
   });
 
-  // An operator that predates migration_clean must not make the Setup tab offer
-  // a cleanup, because that cleanup DELETES from a root.
+  // An operator that predates migration_clean must not make the settings section
+  // offer a cleanup, because that cleanup DELETES from a root.
   it("reads an absent migration_clean as a settled instance", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ ...READY_STORAGE })));
 
