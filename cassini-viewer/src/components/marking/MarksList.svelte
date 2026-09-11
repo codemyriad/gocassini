@@ -10,7 +10,7 @@
   const dispatch = createEventDispatcher<{ jump: PlacedMark }>();
 </script>
 
-<div class="max-h-[50vh] overflow-y-auto rounded-box border border-base-300 bg-base-100 p-1.5" role="region" aria-label="Marks in this meeting">
+<div class="max-h-[30vh] overflow-y-auto sm:max-h-[50vh] rounded-box border border-base-300 bg-base-100 p-1.5" role="region" aria-label="Marks in this meeting">
   {#if marks.length === 0}
     <p class="p-2 text-xs text-base-content/60">No marks yet. Drag down the rail beside the transcript to grab a stretch.</p>
   {:else}

@@ -758,10 +758,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Wraps, so tag chips that don't fit go under the date instead of crushing it. */
   .row-meta {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    gap: 2px 8px;
     min-width: 0;
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
