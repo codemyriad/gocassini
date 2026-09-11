@@ -399,3 +399,30 @@ export interface InsightWorkflow {
   // sent to the model, not a description of them.
   instruction: string;
 }
+
+// --- D-757: what GET /storage gained for "Who can see recordings" -------------
+//
+// Declared as a separate block, merged into the interface above rather than
+// edited into it, so that two branches adding fields to the same response do
+// not collide on the same lines. Same file, same interface: TypeScript merges
+// these declarations, and nothing downstream can tell the difference.
+
+// StorageMigration is a mode switch that is RUNNING. Null at every other
+// moment. The phases are the operator's own order — copy, verify, flip the
+// mode, clear the old root — which is what lets an interrupted switch be
+// described honestly: whichever phase it stopped at, a complete archive exists
+// somewhere. Counts are recordings.
+export interface StorageMigration {
+  active: boolean;
+  phase: "copying" | "verifying" | "switching" | "clearing";
+  done: number;
+  total: number;
+}
+
+export interface StorageStatus {
+  // first_run is true until an administrator acknowledges the first-run dialog.
+  // It is per INSTALL, in the operator's settings store, not per browser: a
+  // second administrator opening Cassini must not be asked again.
+  first_run: boolean;
+  migration: StorageMigration | null;
+}

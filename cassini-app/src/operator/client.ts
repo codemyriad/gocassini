@@ -14,6 +14,7 @@ import type {
   SettingsUpdate,
   AppInstallOutcome,
   StorageArchiveFacts,
+  StorageMigration,
   StorageMode,
   StorageModeOption,
   StorageServiceAccount,
@@ -252,6 +253,25 @@ export class OperatorClient {
     );
   }
 
+  // --- D-757 -----------------------------------------------------------------
+  // acknowledgeFirstRun records that an administrator has seen the first-run
+  // dialog. It is kept in the operator's settings store, per install, so the
+  // dialog is shown once for this Nextcloud rather than once per browser.
+  //
+  // On the existing POST /storage, like every other action here: AppAPI learns
+  // an ExApp's routes when it is REGISTERED, so a new route would 404 on every
+  // installation that updated in place.
+  async acknowledgeFirstRun(): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "acknowledge_first_run" }),
+      }),
+    );
+  }
+  // --- end D-757 ---------------------------------------------------------------
+
   // The insight templates this deployment ships (D-718). Read-only: the
   // prompts are compiled into the recorder image, so there is no PUT.
   async listInsightWorkflows(): Promise<InsightWorkflow[]> {
@@ -456,6 +476,8 @@ function normalizeStorage(raw: unknown): StorageStatus {
     transition: normalizeStorageTransition(value.transition),
     installs: normalizeInstalls(value.installs),
     preview: normalizeStoragePreview(value.preview),
+    // D-757: see normalizeRecordingAccess at the end of this file.
+    ...normalizeRecordingAccess(value),
   };
 }
 
@@ -662,4 +684,61 @@ function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {
       instruction: asString(item.instruction),
     }))
     .filter((item) => item.id !== "" && item.sha256 !== "");
+}
+
+// --- D-757: the fields GET /storage gained for "Who can see recordings" -------
+//
+// A block of its own at the end of the file, spliced into normalizeStorage by
+// one line, so a branch adding other fields to the same response does not
+// collide with this one.
+
+// normalizeRecordingAccess reads the two fields the settings section needs.
+//
+// Absent reads as "not the first run" and "no switch is running", which is what
+// an operator predating these fields produces: it has been serving recordings
+// for a while, and it has no switch in flight it could tell us about. The safe
+// direction for both — a first-run dialog shown to an install that has been
+// running for months, or a progress panel for a move nobody started, would each
+// be a claim made from a missing field.
+function normalizeRecordingAccess(value: Record<string, unknown>): {
+  first_run: boolean;
+  migration: StorageMigration | null;
+} {
+  return {
+    first_run: value.first_run === true,
+    migration: normalizeMigration(value.migration),
+  };
+}
+
+// normalizeMigration keeps `null` meaning "no switch is running". A row that is
+// present but not active means the same thing and is normalised to null here,
+// so the UI has one test rather than two.
+function normalizeMigration(value: unknown): StorageMigration | null {
+  if (value == null || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (row.active !== true) {
+    return null;
+  }
+  return {
+    active: true,
+    phase: normalizeMigrationPhase(row.phase),
+    done: asCount(row.done),
+    total: asCount(row.total),
+  };
+}
+
+const MIGRATION_PHASES: readonly StorageMigration["phase"][] = [
+  "copying",
+  "verifying",
+  "switching",
+  "clearing",
+];
+
+// A phase this build has never heard of reads as the FIRST one. The steps are
+// ordered and a switch only ever moves forward through them, so the earliest is
+// the one guess that cannot claim work is finished when it is not.
+function normalizeMigrationPhase(value: unknown): StorageMigration["phase"] {
+  return MIGRATION_PHASES.find((phase) => phase === value) ?? "copying";
 }
