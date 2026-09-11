@@ -82,10 +82,10 @@ docker-deployed ExApp and the operator stores all durable data under it
 
 ## Step 1 — Register a deploy daemon (HaRP)
 
-**AIO:** enable its HaRP component, start the containers, and run Test deploy
-against its automatically registered daemon. Reuse this integration rather than
-launching the generic HaRP container below. Also enable AIO's Talk component for
-HPB. See [AIO restart persistence](recording-readiness.md#aio-restart-persistence)
+**AIO:** check the installed version's available components and registered
+daemon. Start integrated HaRP where provided and run Test deploy. Older/custom
+versions may need migration or separate provisioning. Reuse a working integrated
+service rather than launching a second HaRP. Enable AIO's Talk component for HPB. See [AIO restart persistence](recording-readiness.md#aio-restart-persistence)
 before handing recording over to Cassini.
 
 
@@ -114,17 +114,21 @@ show it afterwards.
 
 ### Step 1b — Route `/exapps/*` to HaRP at your reverse proxy
 
-**Required for every HaRP daemon**, local or remote. AppAPI does not talk to a
-HaRP-hosted ExApp over an internal address — it builds a **public** URL and
-dials it:
+**Required for every HaRP daemon**, local or remote. Current integrated AIO can
+provide this route in its own frontend: first inspect the deployed topology and
+[the routing guidance](recording-readiness.md#harp-routing-and-missing-navigation).
+The explicit host rules below apply when that route is not already provided.
+The HaRP ExApp URL must resolve through the configured route, for example:
 
 ```
 GET https://cloud.example.com/exapps/<appid>/heartbeat
 ```
 
-Your TLS terminator must send `/exapps/*` to HaRP's `8780`, *not* to Nextcloud.
-Without this route the request reaches Nextcloud, which 502s, and
-install/enable never completes.
+The proxy chain must deliver `/exapps/*` to the correct HaRP frontend, commonly
+port `8780`, rather than to Nextcloud's PHP handler. Integrated AIO can provide
+this hop. Missing or incorrect routing can produce 404/502 errors and prevent
+installation or enablement; inspect the response and proxy logs before changing
+configuration.
 
 Caddy:
 

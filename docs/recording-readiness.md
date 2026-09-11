@@ -12,9 +12,12 @@ transcription is supported; NVIDIA/CUDA is optional. Live Talk capture requires
 standalone signaling with HPB media support and its internal client secret.
 Installing AppAPI alone does not configure its deploy daemon.
 
-On AIO, enable HaRP and Talk in the AIO management interface, start the
-containers, and use Administration → AppAPI → Test deploy. Reuse the AIO daemon;
-do not install a second HaRP alongside it just to follow a generic guide.
+On AIO, check the installed version's available components and registered deploy
+daemon. Enable and start integrated HaRP and Talk where provided; older or custom
+installations may need migration or separate provisioning. Reuse a working AIO
+daemon rather than installing a second HaRP to follow a generic guide. Use
+Administration → AppAPI → Test deploy and verify that deployment, initialization
+and enablement all complete.
 For custom installations, follow [Nextcloud's AppAPI guide](https://docs.nextcloud.com/server/latest/admin_manual/exapps_management/AppAPIAndExternalApps.html).
 A hosted account may require provider assistance with these server components.
 
@@ -27,6 +30,31 @@ routes using the documented [update procedure](exapp-update-constraints.md).
 The new ADMIN routes are `/operator/readiness`, `/operator/readiness/check`, and
 `/operator/talk/setup`. Deploying only a new container image may leave these
 routes inaccessible until registration metadata is refreshed.
+
+## HaRP routing and missing navigation
+
+HaRP requires requests to `/exapps/*` on the public Nextcloud address to reach its
+ExApp frontend (`HP_EXAPPS_ADDRESS`, commonly port 8780), preserving the path.
+This is a routing requirement, not necessarily a separate host-proxy rule:
+
+- Current integrated AIO already has an `/exapps/*` route in its
+  [Apache-container Caddy configuration](https://github.com/nextcloud/all-in-one/blob/main/Containers/apache/Caddyfile).
+  An external proxy forwarding to that frontend can use its integrated route.
+- Separately deployed HaRP, older/custom stacks, or a proxy forwarding directly
+  to Nextcloud while bypassing the AIO frontend need the appropriate explicit
+  route. The proxy administrator must use the actual HaRP address; `localhost`
+  refers to the proxy host, which may be a different machine.
+
+Follow the [HaRP proxy examples](https://github.com/nextcloud/HaRP#configuring-your-reverse-proxy)
+and the [installation routing section](exapp-install.md#step-1b--route-exapps-to-harp-at-your-reverse-proxy).
+AIO cannot modify an independently managed external proxy's configuration.
+
+If deployment fails or Cassini's navigation entry never appears, inspect the
+AppAPI deployment/initialization/enablement results and the corresponding proxy
+and app logs. A 502 on the enable callback warrants checking the route and
+upstream availability. A missing icon alone does not identify the cause: app
+state, failed initialization and registration/permission problems also need
+checking. Do not change proxy routing solely because an icon is absent.
 
 ## Complete Setup
 

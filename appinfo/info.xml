@@ -3,7 +3,7 @@
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
   <id>gocassini</id>
   <name>Cassini</name>
-  <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
+  <summary>Record Talk meetings (AppAPI ExApp + Talk HPB required).</summary>
   <description><![CDATA[Cassini records a Nextcloud Talk call without joining as a participant, then
 transcribes and publishes a readable archive in Nextcloud Files. Optionally, it
 can also summarize each meeting when you configure an OpenAI-compatible LLM

@@ -35,7 +35,7 @@
 
   {#if purpose === 'hpb'}
     <h4 class="font-semibold">What you need</h4>
-    <p class="text-sm">A Talk high-performance backend with standalone signaling, media support, and internal-client authentication. A working Talk call alone does not establish that this is available.</p>
+    <p class="text-sm">A Talk high-performance backend with standalone signaling, media support, and internal-client authentication. Ordinary Talk calls can work peer-to-peer without HPB. Cassini recording requires the separate standalone signaling service and its media backend; working calls alone do not establish recording readiness.</p>
     {#if environment.installation === 'aio' && environment.access === 'host'}
       <p class="text-sm">Open the AIO management interface, enable Talk, and start its containers. Check the high-performance backend in Nextcloud’s Talk administration settings, then return here and check again.</p>
     {:else}
@@ -66,7 +66,7 @@
       {/if}
       {#if environment.installation === 'compose'}<p class="text-sm">Run from the directory containing the Compose file for Nextcloud, using the same project configuration used to deploy it.</p>{/if}
       {#if environment.installation === 'snap'}<p class="text-sm">This uses Snap’s <code>nextcloud.occ</code> wrapper. It only configures Talk; it does not provision an ExApp deployment engine or HPB. Cassini’s execution host may be separate.</p>{/if}
-      {#if environment.installation === 'aio'}<p class="text-sm">Keep AIO’s Talk component enabled, disable Talk Recording, and configure <code>NEXTCLOUD_KEEP_DISABLED_APPS=true</code> on the mastercontainer. This also changes cleanup of other disabled optional apps. Follow the persistence guide before applying the handoff, then test again after restarting.</p>{/if}
+      {#if environment.installation === 'aio'}<p class="text-sm">For HaRP deployments, /exapps/* on the public Nextcloud address must reach the correct HaRP service. Current integrated AIO can route this internally; a separately deployed HaRP or a proxy that bypasses AIO’s frontend needs an explicit route. Ask the proxy administrator to verify the actual path rather than adding a second route blindly.</p><p class="text-sm">Keep AIO’s Talk component enabled, disable Talk Recording, and configure <code>NEXTCLOUD_KEEP_DISABLED_APPS=true</code> on the mastercontainer. This also changes cleanup of other disabled optional apps. Follow the persistence guide before applying the handoff, then test again after restarting.</p>{/if}
       {#if script}
         <details><summary class="cursor-pointer text-sm font-medium">Advanced: review the host commands</summary>
           <p class="my-2 text-sm">Requires Bash, curl and jq on the host, plus Docker or sudo for the selected method. The script checks these tools and Nextcloud before changing settings. Missing tools should be installed by the host administrator using that system’s package manager.</p>

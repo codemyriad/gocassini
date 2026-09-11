@@ -16,6 +16,13 @@ AIO, Compose and NAS are overlapping descriptions: an AIO deployment can use
 Compose on a NAS. Identify the Nextcloud installation method, the ExApp execution
 host and the Talk signaling server separately; they need not be the same machine.
 
+## Working calls do not imply recording readiness
+
+Ordinary Nextcloud Talk calls can work peer-to-peer without HPB. Cassini recording
+requires a separate standalone signaling service with HPB media support (such as
+Janus) and internal-client authentication. TURN helps connectivity but is not a
+replacement for HPB or the recording backend. See [Talk scalability](https://nextcloud-talk.readthedocs.io/en/latest/scalability/).
+
 ## Check eligibility before attempting deployment
 
 | Needed | Where to check or obtain it | Who can resolve it |
@@ -26,8 +33,11 @@ host and the Talk signaling server separately; they need not be the same machine
 | Talk HPB with media support and internal-client authentication | Talk administration and the signaling service's configuration. A working ordinary Talk call is insufficient evidence | Talk/HPB administrator/provider |
 | A route from Talk to the recording backend, and Cassini to Nextcloud/HPB | Confirm the intended public and internal addresses, TLS and proxy routing | Network/service administrator |
 
-For AIO, its management interface provides the relevant components; enable and
-verify what is needed. For other deployments, arrange a supported ExApp execution
+For AIO, check what the installed version actually provides and which deploy
+daemon is registered. Reuse an integrated HaRP service where available; older or
+custom installations may need migration or separate provisioning. Enabling a
+component is not proof that the complete network path works. For HaRP, verify
+`/exapps/*` routing as described in the [recording setup guide](recording-readiness.md#harp-routing-and-missing-navigation). For other deployments, arrange a supported ExApp execution
 engine and HPB rather than assuming the Nextcloud installation already includes
 them. For Snap, Podman, Kubernetes or a vendor NAS package, check that deployment's
 supported integration path. A different occ wrapper alone does not establish
