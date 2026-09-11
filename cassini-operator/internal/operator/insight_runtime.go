@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -119,6 +120,13 @@ const (
 	// timed out must still be able to say that it timed out.
 	insightFinishTimeout = 30 * time.Second
 
+	// insightFinishTries is how many times that write is attempted, and
+	// insightFinishBackoff the pause before the second (doubled before the
+	// third). Enough to ride out a busy database; short enough that a card is
+	// not left saying `running` for long after the run ended.
+	insightFinishTries   = 3
+	insightFinishBackoff = 2 * time.Second
+
 	// maxConcurrentInsightRuns bounds how many runs may hold a staging directory
 	// and a pair of subprocesses at once. Runs past it stay `queued`, which is
 	// what the status word means; the alternative is an unbounded number of
@@ -223,6 +231,9 @@ type insightService struct {
 	// attempt is the attempt number the caller already claimed, or 0 when the
 	// launch is to claim one itself (see launch).
 	launchFn func(id string, attempt int)
+	// finishBackoff is the pause between tries at recording an outcome. A
+	// field so a test of the retry does not wait on it.
+	finishBackoff time.Duration
 }
 
 // newInsightService returns the service, or nil when this deployment cannot run
@@ -258,6 +269,8 @@ func newInsightService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *insi
 		slots:  make(chan struct{}, maxConcurrentInsightRuns),
 		now:    func() time.Time { return time.Now().UTC() },
 		newID:  newInsightRunID,
+
+		finishBackoff: insightFinishBackoff,
 	}
 	service.launchFn = func(id string, attempt int) { go service.launch(id, attempt) }
 	return service
@@ -302,14 +315,46 @@ func (s *insightService) launch(id string, attempt int) {
 	defer cancel()
 	outcome := s.perform(ctx, run)
 
-	// Detached from the attempt's context on purpose: a run that was cancelled or
-	// timed out has to be able to record that it was, and it cannot do that
-	// through the context that just expired. Still bounded, and a row a killed
-	// operator left `running` is repaired by the store's own startup sweep.
-	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), insightFinishTimeout)
-	defer finishCancel()
-	if err := s.store.FinishAttempt(finishCtx, id, outcome); err != nil {
-		s.logf("insights: record the outcome of run=%s: %v", id, err)
+	s.recordOutcome(ctx, id, outcome)
+}
+
+// recordOutcome writes how the attempt ended, and does not give up on the first
+// failure.
+//
+// Detached from the attempt's context on purpose: a run that was cancelled or
+// timed out has to be able to record that it was, and it cannot do that through
+// the context that just expired. Retried, because the write is the one thing
+// standing between a finished run and a card that says `running` until the
+// sweep fails it an hour later with a message about a restart that never
+// happened — and because a SQLite busy or a transient I/O error is exactly the
+// kind of failure a second try clears. Still bounded: each try has its own
+// timeout, the backoff is short, and a row nothing could write is repaired by
+// the store's own sweep. errInsightRunNotRunning is not retried: the row moved
+// on, and writing over it would be the double-run this file guards against.
+//
+// If it still fails, the document path is logged at error level: a succeeded
+// run whose outcome was never written has delivered a document the card will
+// never link to, and the path is the only way to find it (D-740).
+func (s *insightService) recordOutcome(ctx context.Context, id string, outcome InsightOutcome) {
+	var err error
+	for try := 1; try <= insightFinishTries; try++ {
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), insightFinishTimeout)
+		err = s.store.FinishAttempt(finishCtx, id, outcome)
+		finishCancel()
+		if err == nil || errors.Is(err, errInsightRunNotRunning) || errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if try < insightFinishTries {
+			s.logf("insights: record the outcome of run=%s (try %d of %d): %v", id, try, insightFinishTries, err)
+			select {
+			case <-time.After(s.finishBackoff * time.Duration(try)):
+			case <-s.rt.ctx.Done():
+				// The operator is going; the sweep will find this row.
+			}
+		}
+	}
+	if err != nil {
+		s.logf("ERROR: insights: the outcome of run=%s could not be recorded (%s, document=%q): %v", id, outcome.Status, outcome.DocumentPath, err)
 	}
 }
 

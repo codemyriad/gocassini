@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -38,6 +39,10 @@ type fakeInsightStore struct {
 	listErr  error
 	getErr   error
 	beginErr error
+	// finishFailures is how many FinishAttempt calls fail before one succeeds;
+	// finished counts every call, so the retry can be asserted.
+	finishFailures int
+	finished       int
 }
 
 func (f *fakeInsightStore) status(id string) string {
@@ -143,7 +148,15 @@ func (f *fakeInsightStore) ResumeAttempt(_ context.Context, id string, attempt i
 func (f *fakeInsightStore) FinishAttempt(_ context.Context, id string, outcome InsightOutcome) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	run := f.runs[id]
+	f.finished++
+	if f.finishFailures > 0 {
+		f.finishFailures--
+		return errors.New("database is locked")
+	}
+	run, ok := f.runs[id]
+	if !ok {
+		return sql.ErrNoRows
+	}
 	run.Status = outcome.Status
 	run.Provider, run.Model, run.DocumentPath, run.Error = outcome.Provider, outcome.Model, outcome.DocumentPath, outcome.Error
 	f.runs[id] = run

@@ -650,6 +650,71 @@ func TestLaunchDoesNotClaimAnAttemptTheRequestAlreadyTook(t *testing.T) {
 	}
 }
 
+// The write that records how an attempt ended is retried, because it is the one
+// thing between a finished run and a card that says `running` until the sweep
+// fails it with a message about a restart that never happened. And when it still
+// fails, the log names the document, which is otherwise unfindable (D-740).
+func TestLaunchRetriesRecordingTheOutcomeAndNamesTheDocumentIfItCannot(t *testing.T) {
+	t.Run("a transient failure is retried", func(t *testing.T) {
+		dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+		bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+		queued := insightTestRun()
+		queued.Status = insightStatusQueued
+		store := newFakeInsightStore(queued)
+		store.finishFailures = insightFinishTries - 1
+		service, logs := insightTestService(t, dav.server.URL, bin, store)
+
+		service.launch(queued.ID, 0)
+
+		if got := store.status(queued.ID); got != insightStatusSucceeded {
+			t.Fatalf("status = %q, want succeeded: the outcome was recorded on a later try", got)
+		}
+		if store.finished != insightFinishTries {
+			t.Errorf("FinishAttempt called %d times, want %d", store.finished, insightFinishTries)
+		}
+		if strings.Contains(logs.String(), "ERROR") {
+			t.Errorf("a retry that succeeded was logged as an error: %s", logs.String())
+		}
+	})
+
+	t.Run("a persistent failure names the document", func(t *testing.T) {
+		dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+		bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+		queued := insightTestRun()
+		queued.Status = insightStatusQueued
+		store := newFakeInsightStore(queued)
+		store.finishFailures = insightFinishTries
+		service, logs := insightTestService(t, dav.server.URL, bin, store)
+
+		service.launch(queued.ID, 0)
+
+		if store.finished != insightFinishTries {
+			t.Errorf("FinishAttempt called %d times, want %d and then give up", store.finished, insightFinishTries)
+		}
+		delivered := dav.delivered()
+		if len(delivered) != 1 {
+			t.Fatalf("delivered %d documents, want 1", len(delivered))
+		}
+		documentPath := strings.TrimPrefix(delivered[0].path, "alice/")
+		if !strings.Contains(logs.String(), "ERROR") || !strings.Contains(logs.String(), documentPath) {
+			t.Errorf("the log must name the delivered document at error level, got: %s", logs.String())
+		}
+	})
+
+	t.Run("a row that moved on is not retried", func(t *testing.T) {
+		dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+		bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+		store := newFakeInsightStore()
+		service, _ := insightTestService(t, dav.server.URL, bin, store)
+
+		// No such run: the fake answers ErrNoRows the way the real store does.
+		service.recordOutcome(context.Background(), "ins_0000000000000000", insightFailure("x"))
+		if store.finished != 1 {
+			t.Errorf("FinishAttempt called %d times for a run that is gone, want once", store.finished)
+		}
+	})
+}
+
 // A claimed attempt is re-asserted, not trusted. Between the retry handler's
 // claim and this goroutine getting a slot, the sweep can fail the row and a
 // person can retry it again — which begins attempt 2 and launches a second
