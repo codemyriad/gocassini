@@ -16,6 +16,11 @@
   import { RefreshCw } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import ModelCombobox from "./ModelCombobox.svelte";
+  // D-757: "Who can see recordings" is a section of the Settings panel, above
+  // the pipeline it applies to. Its own component because it is a page's worth
+  // of state — a switch, its prerequisites, its progress — and none of it is
+  // shared with the settings below.
+  import RecordingAccessPanel from "./RecordingAccessPanel.svelte";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
@@ -360,6 +365,8 @@
   $: summaryDirty = llm !== null && JSON.stringify(summary) !== savedSummary;
   $: isDirty = sttDirty || summaryDirty;
 </script>
+
+<RecordingAccessPanel {operatorClient} />
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
   <header class="flex items-start justify-between gap-3 px-4 py-3">

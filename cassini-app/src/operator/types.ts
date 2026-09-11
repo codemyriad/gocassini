@@ -311,10 +311,6 @@ export interface StorageStatus {
   // awaiting_choice said nothing was recorded at all. It stays in the shape for
   // compatibility and is always false after D-753; nothing branches on it.
   awaiting_choice: boolean;
-  // D-756: first_run is true until an administrator has acknowledged the
-  // first-run dialog. It is persisted per install by the operator, not per
-  // browser, so the second administrator to open Cassini does not see it again.
-  first_run: boolean;
   service_account: StorageServiceAccount;
   // migration_clean is false when a mode switch stopped before it finished
   // tidying up. The archive is complete at the mode's own root — that is the
@@ -403,4 +399,31 @@ export interface InsightWorkflow {
   // The system prompt with its template already spliced in: the exact bytes
   // sent to the model, not a description of them.
   instruction: string;
+}
+
+// --- D-757: what GET /storage gained for "Who can see recordings" -------------
+//
+// Declared as a separate block, merged into the interface above rather than
+// edited into it, so that two branches adding fields to the same response do
+// not collide on the same lines. Same file, same interface: TypeScript merges
+// these declarations, and nothing downstream can tell the difference.
+
+// StorageMigration is a mode switch that is RUNNING. Null at every other
+// moment. The phases are the operator's own order — copy, verify, flip the
+// mode, clear the old root — which is what lets an interrupted switch be
+// described honestly: whichever phase it stopped at, a complete archive exists
+// somewhere. Counts are recordings.
+export interface StorageMigration {
+  active: boolean;
+  phase: "copying" | "verifying" | "switching" | "clearing";
+  done: number;
+  total: number;
+}
+
+export interface StorageStatus {
+  // first_run is true until an administrator acknowledges the first-run dialog.
+  // It is per INSTALL, in the operator's settings store, not per browser: a
+  // second administrator opening Cassini must not be asked again.
+  first_run: boolean;
+  migration: StorageMigration | null;
 }

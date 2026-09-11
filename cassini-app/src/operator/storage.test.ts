@@ -441,25 +441,102 @@ describe("OperatorClient overwrite confirmation", () => {
   });
 });
 
-// The first-run flag (D-756). It lives on the operator, not in this browser, so
-// the dialog is shown once per install rather than once per administrator per
-// machine.
-describe("acknowledgeFirstRun", () => {
-  it("records the acknowledgement on the storage route, with no new route", async () => {
-    // AppAPI learns an ExApp's routes when it registers, so anything new has to
-    // travel on a route that already exists or an upgraded install 404s it.
+// --- D-757: the fields "Who can see recordings" reads -----------------------
+//
+// A block of its own at the end of the file so a branch adding other /storage
+// coverage does not collide with this one.
+
+describe("OperatorClient recording access", () => {
+  it("carries the first-run flag and a running switch", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...READY_STORAGE,
+          first_run: true,
+          migration: { active: true, phase: "verifying", done: 12, total: 134 },
+        }),
+      ),
+    );
+
+    const status = await new OperatorClient("/operator").getStorage();
+
+    expect(status.first_run).toBe(true);
+    expect(status.migration).toEqual({
+      active: true,
+      phase: "verifying",
+      done: 12,
+      total: 134,
+    });
+  });
+
+  // An operator predating these fields has been serving recordings for a while
+  // and has no switch in flight it could tell us about. Both absences have one
+  // safe reading, and it is this one.
+  it("reads both absences as a settled install with nothing running", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(READY_STORAGE)));
+
+    const status = await new OperatorClient("/operator").getStorage();
+
+    expect(status.first_run).toBe(false);
+    expect(status.migration).toBeNull();
+  });
+
+  // A row that is present but not active means the same thing as no row, so the
+  // UI has one test rather than two.
+  it("reads a finished migration as no migration", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...READY_STORAGE,
+          migration: { active: false, phase: "clearing", done: 134, total: 134 },
+        }),
+      ),
+    );
+
+    expect((await new OperatorClient("/operator").getStorage()).migration).toBeNull();
+  });
+
+  // The steps are ordered and a switch only moves forward through them, so the
+  // earliest phase is the one guess that cannot claim work is finished when it
+  // is not.
+  it("reads a phase it has never heard of as the first one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          ...READY_STORAGE,
+          migration: { active: true, phase: "reticulating", done: -3, total: 5 },
+        }),
+      ),
+    );
+
+    expect((await new OperatorClient("/operator").getStorage()).migration).toEqual({
+      active: true,
+      phase: "copying",
+      done: 0,
+      total: 5,
+    });
+  });
+
+  it("acknowledges the first-run dialog on the existing storage route", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ ...READY_STORAGE, first_run: false }));
     vi.stubGlobal("fetch", fetchMock);
 
     const status = await new OperatorClient("/operator").acknowledgeFirstRun();
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/operator/storage");
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ action: "acknowledge_first_run" });
     expect(status.first_run).toBe(false);
   });
+});
 
+// The first-run flag as D-756 reads it (D-757 covers the route call above).
+describe("acknowledgeFirstRun (D-756)", () => {
   it("reads an absent flag as answered, never as a fresh install", async () => {
     // An operator predating the flag has been running for however long, and a
     // first-run dialog on top of an install with recordings in it would be a
