@@ -250,6 +250,56 @@ func insightTestRun() InsightRun {
 	}
 }
 
+// newInsightService is the production constructor and the only place its four
+// nil-return guards live; every other test builds the service by hand. Where a
+// run could not be performed at all the routes must not be mounted, and where
+// it could the service must come up with its seams filled in (D-740).
+func TestNewInsightServiceIsNilWhereARunCannotBePerformed(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	logger := log.New(&bytes.Buffer{}, "", 0)
+	active := testExAppConfig("https://nc.example.com")
+	active.PublishSink = publishSinkNextcloudFiles
+
+	for _, tc := range []struct {
+		name  string
+		rt    *Runtime
+		exapp ExAppConfig
+	}{
+		{"no runtime", nil, active},
+		{"no store", &Runtime{cfg: rt.cfg}, active},
+		{"outside AppAPI", rt, func() ExAppConfig { c := active; c.AppSecret = ""; return c }()},
+		{"under the local sink", rt, func() ExAppConfig { c := active; c.PublishSink = "local"; return c }()},
+		{"with no cassini binary", &Runtime{store: rt.store}, active},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if service := newInsightService(tc.rt, tc.exapp, logger); service != nil {
+				t.Errorf("expected no service")
+			}
+		})
+	}
+
+	service := newInsightService(rt, active, logger)
+	if service == nil {
+		t.Fatal("expected a service for an AppAPI-active nextcloud-files deployment with a CLI")
+	}
+	if service.store == nil || service.client == nil || service.launchFn == nil || service.now == nil || service.newID == nil {
+		t.Fatalf("the service came up with a seam unfilled: %+v", service)
+	}
+	if service.finishBackoff != insightFinishBackoff || cap(service.slots) != maxConcurrentInsightRuns {
+		t.Errorf("backoff = %v, slots = %d; want the production bounds", service.finishBackoff, cap(service.slots))
+	}
+	// And it mounts: the same wiring run.go performs, so a route the manifest
+	// declares is a route the mux answers.
+	mux := http.NewServeMux()
+	service.register(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, insightsURLPath, nil))
+	if w.Code == http.StatusNotFound {
+		t.Errorf("GET %s = 404 after register", insightsURLPath)
+	}
+}
+
 // The delivery root must not be inside the recordings Team folder. Every account
 // has "Cassini" mounted read-only from the Everyone group, so a path under it in
 // a caller's home is not their own storage at all — it is a write into the
