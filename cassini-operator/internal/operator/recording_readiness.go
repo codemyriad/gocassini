@@ -135,38 +135,60 @@ func (rt *Runtime) signalingSecret() (string, string) {
 	return "", "unset"
 }
 
-// Restrict diagnostic targets to this configured Nextcloud instance. An admin
-// supplies a room, not an arbitrary endpoint to receive recording credentials.
-func (rt *Runtime) validTestRoom(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return false
-	}
-	base := strings.TrimRight(os.Getenv(envNextcloudURL), "/")
+// The pasted URL supplies the public identity for HPB. OCS probes use the deployment's
+// trusted backend, never a host supplied through this API. This supports public
+// URLs when AppAPI uses an internal address. The pasted host is never dialed.
+func (rt *Runtime) readinessBackendURL() string {
+	base := strings.TrimSpace(rt.cfg.TalkBackendURL)
 	if base == "" {
-		return false
+		base = strings.TrimSpace(os.Getenv(envNextcloudURL))
 	}
-	b, err := url.Parse(base)
-	if err != nil || !strings.EqualFold(u.Host, b.Host) || u.Scheme != b.Scheme {
-		return false
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return ""
 	}
-	prefix := strings.TrimRight(b.Path, "/") + "/call/"
-	token := strings.TrimPrefix(u.Path, prefix)
-	if !strings.HasPrefix(u.Path, prefix) || token == "" {
-		return false
+	return strings.TrimRight(base, "/")
+}
+
+func testRoomToken(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" {
+		return ""
 	}
-	for _, c := range token {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
-			return false
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if len(parts) < 2 || parts[len(parts)-2] != "call" {
+		return ""
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return ""
 		}
 	}
-	return true
+	token := parts[len(parts)-1]
+	for _, c := range token {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+			return ""
+		}
+	}
+	return token
+}
+
+func (rt *Runtime) validTestRoom(raw string) bool {
+	return rt.readinessBackendURL() != "" && testRoomToken(raw) != ""
+}
+
+func (rt *Runtime) connectionProbeArgs(room string) ([]string, error) {
+	base, token := rt.readinessBackendURL(), testRoomToken(room)
+	if base == "" || token == "" {
+		return nil, errors.New("invalid diagnostic target")
+	}
+	return []string{"talk-check", "--call", room, "--connect-url", base}, nil
 }
 
 func (rt *Runtime) runConnectionProbe(ctx context.Context, room string) ([]readinessCheck, error) {
-	args := []string{"talk-check", "--call", room}
-	if rt.cfg.TalkBackendURL != "" {
-		args = append(args, "--connect-url", rt.cfg.TalkBackendURL)
+	args, err := rt.connectionProbeArgs(room)
+	if err != nil {
+		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, args...)
 	cmd.Env = rt.recordChildEnv()
@@ -279,7 +301,7 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	if !inbound.IsZero() && time.Since(inbound) < readinessTTL {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "talk.handoff", State: "passed", Code: "talk_request_received", Message: "Talk recently sent an authenticated recording request to Cassini.", CheckedAt: inbound.UTC().Format(time.RFC3339)})
 	} else {
-		add("talk.handoff", "not_verified", "handoff_not_verified", "Start a test recording through Talk to verify that it calls Cassini.", "connect_talk")
+		add("talk.handoff", "not_verified", "handoff_not_verified", "No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.", "test_recording")
 	}
 	resp.Test = rt.readinessTest(ctx, state)
 	if resp.Test.PlaybackVerifiedAt == "" {
@@ -323,7 +345,7 @@ func (rt *Runtime) readinessTest(ctx context.Context, setup recordingSetupState)
 	result.Published = job.State == "succeeded" && job.PublishFinishedAt != nil && job.CompletedAt != nil
 	if result.Published {
 		// Browse is an authenticated application route, never the local artifact path.
-		result.ViewerURL = strings.TrimRight(os.Getenv(envNextcloudURL), "/") + "/index.php/apps/app_api/embedded/" + url.PathEscape(os.Getenv(envAppID)) + "/viewer#meeting=" + url.QueryEscape(id)
+		result.ViewerURL = "#meeting=" + url.QueryEscape(id)
 		if setup.PlaybackJobID == id {
 			result.PlaybackVerifiedAt = setup.PlaybackVerifiedAt
 		}
@@ -367,7 +389,7 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if body.TestRoomURL != nil && !rt.validTestRoom(strings.TrimSpace(*body.TestRoomURL)) {
-		writeJSONError(w, 400, "Use a /call/ room URL on this Nextcloud instance, without query parameters.")
+		writeJSONError(w, 400, "Use a Talk room URL without query parameters. Configure NEXTCLOUD_URL or the Talk backend URL on the server first.")
 		return
 	}
 	if body.Action != "" && body.Action != "arm_test" && body.Action != "confirm_playback" {
@@ -450,9 +472,14 @@ func (rt *Runtime) recordingConfigurationRefusal(req TriggerRequest) string {
 	rt.recordingSetup.mu.Lock()
 	defer rt.recordingSetup.mu.Unlock()
 	if time.Since(rt.recordingSetup.checkedAt) <= readinessTTL {
-		room, _ := url.Parse(rt.recordingSetup.state.TestRoomURL)
-		target, _ := url.Parse(req.effectiveCallURL())
-		if room != nil && target != nil && room.Scheme == target.Scheme && room.Host == target.Host && strings.Split(room.Path, "/call/")[0] == strings.Split(target.Path, "/call/")[0] {
+		backend, _ := url.Parse(rt.readinessBackendURL())
+		connect := rt.recordConnectURL(req)
+		if connect == "" {
+			connect = strings.TrimSuffix(strings.Split(req.effectiveCallURL(), "/call/")[0], "/index.php")
+		}
+		target, _ := url.Parse(connect)
+		// Cached evidence belongs to the probed backend, not the pasted browser link.
+		if backend != nil && target != nil && backend.Host != "" && backend.Scheme == target.Scheme && strings.EqualFold(backend.Host, target.Host) && strings.TrimRight(backend.Path, "/") == strings.TrimRight(target.Path, "/") {
 			for _, check := range rt.recordingSetup.checks {
 				switch check.Code {
 				case "hpb_missing", "hpb_unsupported", "signaling_auth_failed", "internal_clients_disabled", "recording_auth_rejected":
@@ -482,15 +509,16 @@ func (rt *Runtime) publicRecordingState() string {
 	if time.Since(s.checkedAt) > readinessTTL || len(s.checks) == 0 {
 		return "not_verified"
 	}
+	hasUnverified := false
 	for _, check := range s.checks {
 		if check.State == "needs_action" {
 			return "needs_action"
 		}
 		if check.State != "passed" {
-			return "not_verified"
+			hasUnverified = true
 		}
 	}
-	if time.Since(s.inboundAt) > readinessTTL || s.state.PlaybackVerifiedAt == "" {
+	if hasUnverified || time.Since(s.inboundAt) > readinessTTL || s.state.PlaybackVerifiedAt == "" {
 		return "not_verified"
 	}
 	return "passed"

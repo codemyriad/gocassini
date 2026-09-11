@@ -10,6 +10,8 @@ func TestParseCallURL(t *testing.T) {
 		wantToken string
 		wantErr   bool
 	}{
+		{name: "subdirectory", raw: "https://cloud.example.com/nc/call/token", wantBase: "https://cloud.example.com/nc", wantToken: "token"},
+		{name: "subdirectory with index.php", raw: "https://cloud.example.com/nc/index.php/call/token", wantBase: "https://cloud.example.com/nc", wantToken: "token"},
 		{
 			name:      "valid https URL",
 			raw:       "https://cloud.example.com/call/abc123",

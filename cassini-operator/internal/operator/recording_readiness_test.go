@@ -3,9 +3,11 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -66,10 +68,10 @@ func TestRecordingSetupSecretPersistenceAndRedaction(t *testing.T) {
 	putRecordingSetup(t, rt, `{"internal_secret":"replacement"}`, 409)
 }
 
-func TestRecordingSetupRejectsForeignTargetsAndMalformedStore(t *testing.T) {
+func TestRecordingSetupRejectsMalformedTargetsAndStore(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
-	for _, room := range []string{"http://cloud.test/call/testroom", "https://other.test/call/testroom", "https://user:pass@cloud.test/call/testroom", "https://cloud.test/call/testroom?secret=x", "https://cloud.test/call/../admin"} {
+	for _, room := range []string{"javascript://cloud.test/call/testroom", "https://cloud.test/index.php/call/", "https://cloud.test/call/room/extra", "https://user:pass@cloud.test/call/testroom", "https://cloud.test/call/testroom?secret=x", "https://cloud.test/call/../admin"} {
 		body, _ := json.Marshal(map[string]string{"test_room_url": room})
 		putRecordingSetup(t, rt, string(body), 400)
 	}
@@ -180,7 +182,7 @@ func TestReadinessTestRequiresTalkPublicationAndPlayback(t *testing.T) {
 	putRecordingSetup(t, rt, `{"action":"confirm_playback","job_id":"another-recording"}`, 409)
 	putRecordingSetup(t, rt, `{"action":"confirm_playback","job_id":"test-recording"}`, 200)
 	report := rt.readiness(context.Background())
-	if !report.Test.Published || report.Test.PlaybackVerifiedAt == "" || !strings.Contains(report.Test.ViewerURL, "/viewer#meeting=test-recording") {
+	if !report.Test.Published || report.Test.PlaybackVerifiedAt == "" || report.Test.ViewerURL != "#meeting=test-recording" {
 		t.Fatalf("test=%+v", report.Test)
 	}
 	// Restart retains history but clears all live handoff evidence.
@@ -204,6 +206,16 @@ func TestReadinessAdmissionUsesOnlyCurrentDefinitiveFailures(t *testing.T) {
 	rt.recordingSetup.checks = []readinessCheck{{State: "needs_action", Code: "signaling_auth_failed", Message: "Rejected internal credential."}}
 	if got := rt.recordingConfigurationRefusal(req); !strings.Contains(got, "Rejected internal credential") {
 		t.Fatalf("refusal=%s", got)
+	}
+	// A pasted browser hostname cannot extend cached vetoes to another backend.
+	rt.recordingSetup.state.TestRoomURL = "https://other.test/index.php/call/testroom"
+	foreign := TriggerRequest{TalkAuthMode: talkAuthModeHPBInternal, URL: "https://other.test/call/anotherroom"}
+	if got := rt.recordingConfigurationRefusal(foreign); got != "" {
+		t.Fatalf("foreign backend vetoed: %s", got)
+	}
+	foreign.TalkConnectURL = "https://cloud.test"
+	if got := rt.recordingConfigurationRefusal(foreign); got == "" {
+		t.Fatal("explicit trusted connection missed cached failure")
 	}
 	rt.recordingSetup.checkedAt = time.Now().Add(-2 * readinessTTL)
 	if got := rt.recordingConfigurationRefusal(req); got != "" {
@@ -235,4 +247,79 @@ func TestRecordingSetupRefusalIsAConflictBeforeJobCreation(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatal("created a doomed job")
 	}
+}
+
+func TestReadinessRoutesMountedAtRootAndPrefix(t *testing.T) {
+	for _, base := range []string{"", "/", "/operator"} {
+		root := http.NewServeMux()
+		mountBasePathOnto(root, base, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+		for _, route := range []string{"/readiness", "/readiness/check", "/talk/setup"} {
+			rec := httptest.NewRecorder()
+			root.ServeHTTP(rec, httptest.NewRequest("GET", strings.TrimRight(base, "/")+route, nil))
+			if rec.Code != http.StatusNoContent {
+				t.Errorf("base=%q route=%s status=%d", base, route, rec.Code)
+			}
+		}
+	}
+}
+
+func TestReadinessPublicLinksNeverSelectProbeHost(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	t.Setenv(envNextcloudURL, "http://nextcloud:80/nextcloud")
+	for _, room := range []string{"https://cloud.example/nextcloud/call/token123", "https://cloud.example/nextcloud/index.php/call/token123", "https://untrusted.example/call/token123"} {
+		if !rt.validTestRoom(room) {
+			t.Fatalf("rejected browser link %s", room)
+		}
+		args, err := rt.connectionProbeArgs(room)
+		want := []string{"talk-check", "--call", room, "--connect-url", "http://nextcloud:80/nextcloud"}
+		if err != nil || !reflect.DeepEqual(args, want) {
+			t.Fatalf("probe target=%v err=%v", args, err)
+		}
+	}
+	t.Setenv(envNextcloudURL, "")
+	if rt.validTestRoom("https://cloud.example/call/token123") {
+		t.Fatal("accepted probe without trusted backend")
+	}
+	rt.cfg.TalkBackendURL = "https://trusted.example/nc"
+	args, err := rt.connectionProbeArgs("https://cloud.example/index.php/call/token123")
+	if err != nil || args[4] != rt.cfg.TalkBackendURL || args[2] != "https://cloud.example/index.php/call/token123" {
+		t.Fatalf("standalone target=%v err=%v", args, err)
+	}
+}
+
+func TestReadinessPublicStatePrioritizesActionRegardlessOfOrder(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	putRecordingSetup(t, rt, `{"internal_secret":"internal"}`, 200)
+	rt.recordingSetup.checkedAt = time.Now()
+	for _, checks := range [][]readinessCheck{
+		{{State: "not_verified"}, {State: "needs_action"}},
+		{{State: "needs_action"}, {State: "not_verified"}},
+	} {
+		rt.recordingSetup.checks = checks
+		if rt.publicRecordingState() != "needs_action" {
+			t.Fatal("masked action with unknown status")
+		}
+	}
+}
+
+func TestReadinessExpiredHandoffOffersTestWithoutInventingPass(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	putRecordingSetup(t, rt, `{"internal_secret":"internal","test_room_url":"https://cloud.test/call/room"}`, 200)
+	rt.recordingSetup.inboundAt = time.Now().Add(-2 * readinessTTL)
+	rt.recordingSetup.probe = func(context.Context, string) ([]readinessCheck, error) {
+		return []readinessCheck{{ID: "talk.hpb", State: "passed", Code: "hpb_authenticated"}}, nil
+	}
+	rt.checkRecordingReadiness(context.Background())
+	for _, check := range rt.readiness(context.Background()).Checks {
+		if check.ID == "talk.handoff" {
+			if check.State != "not_verified" || check.Action != "test_recording" {
+				t.Fatalf("handoff=%+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("missing handoff check")
 }

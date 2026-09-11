@@ -72,3 +72,10 @@ export function handoffScript(provisioningUrl: string, aio: boolean): string {
     `unset recording_servers`,
   ].join("\n");
 }
+
+// Ignore check timestamps and job progress: the shell only needs health changes.
+export function readinessHealthKey(report: RecordingReadiness | null): string {
+  if (!report) return "";
+  return JSON.stringify([report.state, report.secret_configured,
+    report.checks.map(c => [c.id, c.state, c.code])]);
+}

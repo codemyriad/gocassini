@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, stateLabels, readinessTitle, handoffScript, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, stateLabels, readinessTitle, handoffScript, readinessHealthKey, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
   let report: RecordingReadiness | null = null;
@@ -22,8 +22,9 @@
     try {
       const next = check ? await operatorClient.checkReadiness() : await operatorClient.getReadiness();
       if (!alive) return;
+      const changed = readinessHealthKey(report) !== readinessHealthKey(next);
       report = next;
-      notifySetupChanged();
+      if (changed) notifySetupChanged();
       if (!room) room = next.test_room_url;
     } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
@@ -58,7 +59,14 @@
     const timer = window.setInterval(async () => {
       if (busy || polling || !report?.test.started_at || document.hidden) return;
       polling = true;
-      try { const next = await operatorClient.getReadiness(); if (alive) report = next; }
+      try {
+        const next = await operatorClient.getReadiness();
+        if (alive) {
+          const changed = readinessHealthKey(report) !== readinessHealthKey(next);
+          report = next;
+          if (changed) notifySetupChanged();
+        }
+      }
       catch { if (alive) error = "Could not refresh the test recording. Check the connection and try again."; }
       finally { polling = false; }
     }, 5000);
@@ -110,7 +118,7 @@
           <button class="btn btn-sm mt-3" disabled={busy} on:click={() => load(true)}>Test connection</button>
         {:else if panel === "test_room"}
           <h3 class="font-semibold">Choose a test room</h3>
-          <p class="my-2 text-sm">Use a dedicated room on this Nextcloud instance. Connection checks authenticate without joining or recording the call. Cassini saves this URL for future checks.</p>
+          <p class="my-2 text-sm">Paste the browser link for a dedicated room on this Nextcloud instance. Cassini checks its configured Nextcloud backend using the room token, without joining or recording the call. Cassini saves this URL for future checks.</p>
           <form on:submit|preventDefault={() => save({ test_room_url: room.trim() })}>
             <label class="block">Talk room URL<input class="input input-bordered mt-1 block w-full" type="url" bind:value={room} placeholder="https://cloud.example.com/call/roomtoken" /></label>
             <button class="btn btn-primary btn-sm mt-3" disabled={busy || !room.trim()}>Save test room</button>

@@ -650,10 +650,9 @@ scaffold_args=(--scaffold-only --nextcloud-host "$NEXTCLOUD_HOST")
 # Optional readiness vertical: two real Talk recordings separated by an
 # installed ExApp + Nextcloud restart. Kept opt-in for historical image tests.
 prepare_readiness_test() {
-  local label="$1" token instance_url body code
+  local label="$1" token body code
   token="$(jq -er --arg conversation "$CONVERSATION" '.conversations[$conversation].token' "$REPO_ROOT/harness/runtime/play-private-scaffold.json")"
-  instance_url="$(docker exec nc_app_gocassini printenv NEXTCLOUD_URL)"
-  body="$(jq -nc --arg room "${instance_url%/}/call/$token" '{test_room_url:$room,action:"arm_test"}')"
+  body="$(jq -nc --arg room "${BASE_URL%/}/index.php/call/$token" '{test_room_url:$room,action:"arm_test"}')"
   curl -fsS "${AUTH[@]}" -X PUT -H 'Content-Type: application/json' --data "$body" \
     "$PROXY_URL/operator/talk/setup" >"$LOG_DIR/readiness-armed-$label.json"
   curl -fsS "${AUTH[@]}" -X POST "$PROXY_URL/operator/readiness/check" >"$LOG_DIR/readiness-check-$label.json"

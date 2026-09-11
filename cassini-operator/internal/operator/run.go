@@ -909,6 +909,9 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/settings/", api)
 		root.Handle("/storage", api)
 		root.Handle("/talk/provisioning", api)
+		root.Handle("/readiness", api)
+		root.Handle("/readiness/check", api)
+		root.Handle("/talk/setup", api)
 		return
 	}
 	root.Handle(basePath, http.StripPrefix(basePath, api))

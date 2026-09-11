@@ -50,6 +50,10 @@ func TestProbeConnectionNeverJoinsOrCaptures(t *testing.T) {
 							return
 						}
 						hello.Add(1)
+						auth := asMap(asMap(msg["hello"])["auth"])
+						if asString(auth["url"]) != "https://public.invalid/nc/ocs/v2.php/apps/spreed/api/v3/signaling/backend" {
+							unexpected.Add(1)
+						}
 						if tc.authError {
 							_ = conn.WriteJSON(map[string]any{"id": msg["id"], "type": "error", "error": map[string]any{"code": "auth_failed", "message": "private upstream detail"}})
 							continue
@@ -61,7 +65,7 @@ func TestProbeConnectionNeverJoinsOrCaptures(t *testing.T) {
 						_ = conn.WriteJSON(map[string]any{"id": msg["id"], "type": "hello", "hello": map[string]any{"sessionid": "probe-session", "server": map[string]any{"features": features}}})
 					}
 				}
-				if r.URL.Path != "/ocs/v2.php/apps/spreed/api/v3/signaling/settings" {
+				if r.URL.Path != "/nc/ocs/v2.php/apps/spreed/api/v3/signaling/settings" {
 					unexpected.Add(1)
 					http.NotFound(w, r)
 					return
@@ -78,7 +82,7 @@ func TestProbeConnectionNeverJoinsOrCaptures(t *testing.T) {
 			defer server.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			checks := ProbeConnection(ctx, config.Config{CallURL: server.URL + "/call/testroom", TalkAuthMode: config.TalkAuthModeHPBInternal, TalkRecordingSecret: "recording", TalkSignalingInternalSecret: "internal"})
+			checks := ProbeConnection(ctx, config.Config{CallURL: "https://public.invalid/nc/index.php/call/testroom", ConnectBaseURL: server.URL + "/nc", TalkAuthMode: config.TalkAuthModeHPBInternal, TalkRecordingSecret: "recording", TalkSignalingInternalSecret: "internal"})
 			if len(checks) == 0 || checks[len(checks)-1].Code != tc.code {
 				t.Fatalf("checks=%+v", checks)
 			}

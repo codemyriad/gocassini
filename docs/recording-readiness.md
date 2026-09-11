@@ -38,7 +38,13 @@ routes inaccessible until registration metadata is refreshed.
    `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. This is different
    from the recording-backend secret, which Cassini generates itself.
 3. Choose a dedicated **Test room** on this Nextcloud. The URL is stored so
-   Cassini can recheck after restarting. The connection check authenticates
+   Cassini can recheck after restarting. Public links and `/index.php/call/` links
+   are supported even when AppAPI uses an internal hostname. Cassini extracts
+   the room token and always probes its deployment-configured Talk backend
+   (`CASSINI_TALK_BACKEND_URL`, falling back to `NEXTCLOUD_URL`); the pasted
+   hostname is retained as the public identity in the HPB handshake, but is never
+   dialed by Cassini. Use a room from this instance.
+   The connection check authenticates
    but never joins the call or records media.
 4. Open **Connect Talk**. Review that this replaces the previous recorder,
    then run the generated commands on your server. They save the previous
@@ -74,7 +80,9 @@ Do not prepare another test while your intended test is already recording.
 
 Live check results expire after five minutes and are discarded on restart.
 The last test's playback confirmation is retained as historical evidence.
-**Check again** refreshes connectivity and storage. An expired result is
+**Check again** refreshes outbound connectivity and storage. It cannot verify
+that Talk can still call Cassini: the expired incoming-connection check offers
+**Test a recording**, while the previous playback confirmation remains visible. An expired result is
 **Not verified**, never a green pass or a permanent veto on recording.
 
 ## AIO restart persistence
@@ -153,7 +161,7 @@ recording credentials produce an actionable recording refusal, not a container
 restart loop. CPU readiness follows the same device/model policy as processing.
 
 Tests cover HTTP/WebSocket authentication with no room joins, missing HPB,
-incorrect credentials, secret persistence/redaction, foreign-URL rejection,
+incorrect credentials, secret persistence/redaction, trusted diagnostic targets,
 coalescing and expiry, configuration edits, Talk-only test selection, publication
 and playback confirmation, and restart invalidation of live evidence.
 
