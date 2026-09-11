@@ -98,10 +98,24 @@ describe("the shell after the Setup tab", () => {
   });
 
   it("sends the setup notice's own button somewhere that exists", () => {
-    // The broken-install branches still carry a step with `action: "setup"`,
-    // and their copy is D-759's to rewrite. Until then the button goes to the
-    // operator surface, which is where the storage control lands in phase 3.
+    // The broken-install branches carry a step with `action: "settings"` since
+    // D-759, and it opens the operator surface, where "Who can see recordings"
+    // and the service-account controls live (D-757).
     expect(appSource).toContain('on:navigate={() => selectSurface("operator")}');
+  });
+
+  // "Try again" on the notice is the operator's own re-check (D-759), not
+  // another read of the verdict: the verdict is the last recorded outcome of a
+  // preflight, so re-reading it would render the same answer and teach an
+  // administrator that the button does nothing.
+  it("re-runs the operator's check when the notice asks, then re-reads the answer", () => {
+    expect(appSource).toContain("on:retry={retrySetupCheck}");
+    expect(appSource).toContain("await operatorClient?.recheckStorage();");
+    expect(appSource).toMatch(/async function retrySetupCheck[\s\S]{0,900}await readInstanceState\(\);/);
+    // The notice says which tone to draw itself in, and the shell says whether
+    // the request it asked for is still running.
+    expect(appSource).toContain("tone={setupNotice.tone}");
+    expect(appSource).toContain("busy={setupRetryBusy}");
   });
 
   it("shows the first-run dialog only to an administrator the operator answered for", () => {
