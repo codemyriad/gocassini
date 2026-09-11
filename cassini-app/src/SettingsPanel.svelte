@@ -319,6 +319,16 @@
     return provider ? provider.name || provider.base_url || provider.id : id;
   }
 
+  // What an empty model field on this step means, said in the field: the
+  // provider's default model is what runs (D-749), and the placeholder names
+  // it rather than the older "endpoint default", which named nothing.
+  function providerModelPlaceholder(id: string): string {
+    const model = llm?.providers.find((row) => row.id === id)?.model ?? "";
+    return model !== ""
+      ? `${model} (the provider's default)`
+      : "no default model set on this provider";
+  }
+
   // Switching the step on with nothing chosen would send a body the operator
   // refuses ("summary is enabled but has no provider"), so the first provider
   // is chosen for you — which is also what a fresh install wants.
@@ -590,6 +600,7 @@
                 models={summaryModels}
                 loading={loadingModelsFor === summary.provider}
                 error={modelsErrorByProvider[summary.provider] ?? ""}
+                placeholder={providerModelPlaceholder(summary.provider)}
                 on:open={() => void loadModels(summary.provider)}
               />
 

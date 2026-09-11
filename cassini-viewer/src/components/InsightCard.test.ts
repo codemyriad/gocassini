@@ -67,4 +67,15 @@ describe("InsightCard surface", () => {
       "background-color: color-mix(in oklch, var(--color-secondary) 26%, var(--color-base-100));",
     );
   });
+
+  it("lets a failed run be retried from the list, beside the card rather than inside it", () => {
+    // The card is a button and cannot hold another; the control sits next to
+    // it, only for a failed run, and only where the provider can retry (D-749).
+    const card = insightCardSource.indexOf('class="insight-card"');
+    const cardEnd = insightCardSource.indexOf("</button>", card);
+    const retry = insightCardSource.indexOf("{#if failed && canRetry}");
+    expect(retry).toBeGreaterThan(cardEnd);
+    expect(insightCardSource).toContain('dispatch("retry")');
+    expect(insightCardSource).toContain("export let canRetry = false;");
+  });
 });

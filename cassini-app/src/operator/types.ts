@@ -145,6 +145,9 @@ export interface LLMProviderView {
   // 0 means "use the recorder default" (900s / 4096 tokens).
   timeout_sec: number;
   max_tokens: number;
+  // The endpoint's default model: what every step on it asks for unless the
+  // step names one of its own (D-749). Empty means the recorder's own default.
+  model: string;
 }
 
 export interface LLMStep {
@@ -187,6 +190,7 @@ export interface LLMProviderUpdate {
   api_key?: string | null;
   timeout_sec?: number;
   max_tokens?: number;
+  model?: string;
 }
 
 export interface LLMSettingsUpdate {

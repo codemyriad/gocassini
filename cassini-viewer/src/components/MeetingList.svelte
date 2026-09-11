@@ -75,6 +75,11 @@
   // shell against the WHOLE catalog — not against this room's meetings, which
   // would undercount an insight that spans rooms, which most of them do.
   export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
+  // Retry from the card (D-749): offered where the shell's provider can, and
+  // the shell says which run is mid-retry and what the last retry answered.
+  export let insightsRetryable = false;
+  export let retryingInsightId = "";
+  export let insightRetryError: { id: string; message: string } | null = null;
 
   // The filter is list-local state — no other surface reads it.
   let filter = "";
@@ -87,6 +92,7 @@
     select: MeetingCatalogEntry;
     pick: MeetingCatalogEntry;
     openInsight: InsightRecord;
+    retryInsight: InsightRecord;
     visible: MeetingCatalogEntry[];
     counts: { meetings: number; insights: number };
     clearRoom: void;
@@ -313,7 +319,11 @@
               insight={item.insight}
               sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}
               selected={item.insight.id === selectedInsightId}
+              canRetry={insightsRetryable}
+              retrying={retryingInsightId === item.insight.id}
+              retryError={insightRetryError?.id === item.insight.id ? insightRetryError.message : ""}
               on:open={() => dispatch("openInsight", item.insight)}
+              on:retry={() => dispatch("retryInsight", item.insight)}
             />
           {:else}
             {@const meeting = item.meeting}

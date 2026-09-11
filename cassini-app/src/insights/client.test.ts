@@ -4,8 +4,11 @@ import {
   buildRunFailureNotice,
   classifyRunError,
   createInsight,
+  describeAIFailure,
   describeRunProgress,
   isTerminalStatus,
+  listAIProviderModels,
+  listAIProviders,
   listInsights,
   pollDelayMs,
   readInsight,
@@ -329,8 +332,8 @@ describe("what a failed run says", () => {
   });
 
   it("does not promise a retry replays the endpoint that failed", () => {
-    // Retry re-resolves provider and model from current settings, which is what
-    // makes "add a key" a fix rather than a suggestion.
+    // Retry replays the endpoint that failed but reads its key and model as they
+    // stand now, which is what makes "add a key" a fix rather than a suggestion.
     const notice = buildRunFailureNotice({
       run: run({ status: "failed", error: "provider-refused: 401 Unauthorized" }),
       isAdmin: true,
@@ -381,5 +384,55 @@ describe("what a failed run says", () => {
 
   it("says nothing about a run that has not failed", () => {
     expect(buildRunFailureNotice({ run: run({ status: "running" }), isAdmin: true })).toBeNull();
+  });
+});
+
+describe("listAIProviders", () => {
+  it("carries each endpoint's default model, which is what a run on it asks for", async () => {
+    // One model per endpoint (D-749): the picker shows it beside the choice
+    // rather than offering a second place to choose one.
+    const fetchImpl = respondWith(
+      JSON.stringify([
+        { id: "hosted", name: "OpenRouter", model: "openai/gpt-4o-mini" },
+        { id: "local", name: "Qwen" },
+      ]),
+    );
+    const choices = await listAIProviders("/operator", fetchImpl);
+    expect(choices).toEqual([
+      { id: "hosted", name: "OpenRouter", model: "openai/gpt-4o-mini" },
+      { id: "local", name: "Qwen" },
+    ]);
+    expect(fetchImpl.mock.calls[0][0]).toBe("/operator/ai/providers");
+  });
+});
+
+describe("what a failed AI read says", () => {
+  it("repeats the operator's diagnosis for a models listing", async () => {
+    // The operator names the endpoint and what it answered; that sentence is
+    // the whole diagnosis, and discarding it for "HTTP 502" was how a base
+    // URL with /chat/completions on the end stayed a mystery (D-749).
+    const fetchImpl = respondWith(
+      JSON.stringify({ error: "list models from OpenRouter: HTTP 404" }),
+      { status: 502 },
+    );
+    await expect(listAIProviderModels("/operator", "hosted", fetchImpl)).rejects.toThrow(
+      "This endpoint's model list could not be read: list models from OpenRouter: HTTP 404",
+    );
+  });
+
+  it("names the request when the operator said nothing", () => {
+    expect(describeAIFailure("providers", 404, "")).toBe(
+      "The AI endpoints could not be listed (HTTP 404).",
+    );
+    expect(describeAIFailure("providers/x/models", 502, "")).toBe(
+      "This endpoint's model list could not be read (HTTP 502).",
+    );
+  });
+
+  it("still carries the status, so a caller can tell a missing route from a refusal", async () => {
+    const fetchImpl = respondWith("not found", { status: 404 });
+    await expect(listAIProviders("/operator", fetchImpl)).rejects.toMatchObject({
+      status: 404,
+    });
   });
 });

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { render } from "svelte/server";
 
+import InsightDocument from "./InsightDocument.svelte";
 import insightDocumentSource from "./InsightDocument.svelte?raw";
+import type { InsightRecord } from "../viewer/insights";
 
 // Source-level assertions, for the reason MeetingList.test.ts gives: the suite
 // runs in node with no DOM harness.
@@ -48,7 +51,7 @@ describe("InsightDocument", () => {
 
   it("gives a run with no answer yet its own honest state, not an empty page", () => {
     expect(insightDocumentSource).toContain("{#if pending}");
-    expect(insightDocumentSource).toContain("{:else if failed}");
+    expect(insightDocumentSource).toContain("{:else if failure}");
     expect(insightDocumentSource).toContain("{:else if !canLoadDocument}");
     expect(insightDocumentSource).toContain("{:else if documentLoading}");
     expect(insightDocumentSource).toContain("{:else if documentError}");
@@ -83,5 +86,73 @@ describe("InsightDocument", () => {
       "sources.map((source) => roomLabelOf(source))",
     );
     expect(insightDocumentSource).not.toContain("insight.roomIds");
+  });
+
+  describe("a failed run, rendered", () => {
+    // Rendered, not read: the words a reader gets for a failure are the
+    // behaviour, and the token the operator puts on `error` is the one thing
+    // that must not reach them.
+    function failedRun(error: string): InsightRecord {
+      return {
+        id: "ins_0123456789abcdef",
+        status: "failed",
+        createdBy: "alice",
+        attemptNumber: 2,
+        workflowId: "summarise",
+        workflowVersion: "v0",
+        workflowSha256: "abc",
+        meetingIds: ["m1"],
+        roomIds: ["r1"],
+        question: "What was decided?",
+        provider: "hosted",
+        model: "",
+        documentPath: "",
+        error,
+        createdAt: "2026-09-03T10:00:00Z",
+        updatedAt: "2026-09-03T10:00:00Z",
+      };
+    }
+    const plainText = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+
+    it("says why in sentences, and never prints the operator's token", () => {
+      const html = render(InsightDocument, {
+        props: { insight: failedRun("provider-refused: HTTP 401 Unauthorized") },
+      }).body;
+      const text = plainText(html);
+      expect(text).toContain("The endpoint rejected the request");
+      expect(text).toContain("The operator reported: HTTP 401 Unauthorized");
+      expect(text).not.toContain("provider-refused");
+    });
+
+    it("offers Retry exactly where the provider can perform one", () => {
+      const withRetry = render(InsightDocument, {
+        props: { insight: failedRun("model-failed: timeout"), canRetry: true },
+      }).body;
+      expect(withRetry).toMatch(/<button[^>]*>\s*Retry\s*<\/button>/);
+      expect(plainText(withRetry)).toContain("Runs again on the endpoint this insight asked for.");
+
+      const without = render(InsightDocument, {
+        props: { insight: failedRun("model-failed: timeout"), canRetry: false },
+      }).body;
+      expect(without).not.toMatch(/>\s*Retry\s*</);
+    });
+
+    it("locks the button while a retry is in flight and shows what a refused one said", () => {
+      const html = render(InsightDocument, {
+        props: {
+          insight: failedRun("model-failed: timeout"),
+          canRetry: true,
+          retrying: true,
+          retryError: "That insight is already running.",
+        },
+      }).body;
+      expect(html).toMatch(/<button[^>]*disabled[^>]*>\s*Retrying…\s*<\/button>/);
+      expect(plainText(html)).toContain("That insight is already running.");
+    });
+  });
+
+  it("dispatches retry rather than performing one", () => {
+    expect(insightDocumentSource).toContain('dispatch("retry")');
+    expect(insightDocumentSource).not.toContain("fetch(");
   });
 });

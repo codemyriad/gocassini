@@ -19,6 +19,11 @@
 // worse failure than a missing one. The card renders decisions it did not make.
 
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
+import {
+  classifyInsightError,
+  INSIGHT_FAILURE_COPY,
+  type InsightFailureReason,
+} from "cassini-viewer/insights";
 
 import type { FeatureNotice } from "../operator/setupHealth";
 import type { OperatorPanel } from "../surfaceRouting";
@@ -86,12 +91,15 @@ export interface CreateInsightRequest {
 }
 
 // AIProviderChoice is one endpoint as somebody choosing between them sees it:
-// `GET operator/ai/providers`, USER-readable. An id and a name, and nothing
-// else — the base URL, the key and the request bounds stay on the ADMIN
-// settings surface.
+// `GET operator/ai/providers`, USER-readable. An id, a name and the default
+// model the endpoint answers with — choosing an endpoint is choosing that
+// model (D-749) — and nothing else: the base URL, the key and the request
+// bounds stay on the ADMIN settings surface. The same shape reads a models
+// listing, where `model` is simply absent.
 export interface AIProviderChoice {
   id: string;
   name: string;
+  model?: string;
 }
 
 // listAIProviders and listAIProviderModels are the picker's data, for everyone.
@@ -132,7 +140,14 @@ function readChoices(payload: unknown): AIProviderChoice[] {
   const choices: AIProviderChoice[] = [];
   for (const entry of payload) {
     if (isRecord(entry) && typeof entry.id === "string" && entry.id !== "") {
-      choices.push({ id: entry.id, name: typeof entry.name === "string" ? entry.name : entry.id });
+      const choice: AIProviderChoice = {
+        id: entry.id,
+        name: typeof entry.name === "string" ? entry.name : entry.id,
+      };
+      if (typeof entry.model === "string" && entry.model !== "") {
+        choice.model = entry.model;
+      }
+      choices.push(choice);
     }
   }
   return choices;
@@ -153,9 +168,25 @@ async function sendAI(
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new InsightRequestError(response.status, `AI providers could not be read (HTTP ${response.status}).`);
+    throw new InsightRequestError(
+      response.status,
+      describeAIFailure(path, response.status, await readServedMessage(response)),
+    );
   }
   return response.json();
+}
+
+// describeAIFailure names which of the two AI reads failed, and repeats what
+// the operator said about it. The operator's sentence is the diagnosis — a
+// models listing that failed says which endpoint and what it answered — and
+// the generic "AI providers could not be read (HTTP 502)" it used to be
+// replaced with told the reader neither which request nor why.
+export function describeAIFailure(path: string, status: number, served: string): string {
+  const subject =
+    path === "providers"
+      ? "The AI endpoints could not be listed"
+      : "This endpoint's model list could not be read";
+  return served !== "" ? `${subject}: ${served}` : `${subject} (HTTP ${status}).`;
 }
 
 
@@ -401,25 +432,12 @@ export function describeRunProgress(run: InsightRun): string {
   }
 }
 
-// The four kinds of failure internal/insight classifies, because the answers
-// differ. They are matched on the operator's own reason token rather than on a
-// sentence: a sentence changes whenever someone improves it.
-export type InsightFailureReason =
-  | "no-provider"
-  | "provider-refused"
-  | "model-failed"
-  | "bad-request"
-  | "unknown";
-
-export function classifyRunError(error: string): InsightFailureReason {
-  const text = error.toLowerCase();
-  for (const reason of ["no-provider", "provider-refused", "model-failed", "bad-request"] as const) {
-    if (text.includes(reason)) {
-      return reason;
-    }
-  }
-  return "unknown";
-}
+// The four kinds of failure internal/insight classifies, and what each says,
+// live in the viewing layer (cassini-viewer/insights) so the browse card, the
+// document sheet and this app's Generate card describe one failure one way
+// (D-749). Re-exported under the name this module always had.
+export type { InsightFailureReason };
+export const classifyRunError = classifyInsightError;
 
 // The one panel behind every AI failure: the endpoint, its key, its model and
 // its request bounds are all edited in AI providers (Settings.svelte maps
@@ -449,7 +467,7 @@ export function buildRunFailureNotice(options: {
     return null;
   }
   const reason = classifyRunError(run.error);
-  const { title, summary, fixable } = FAILURE_COPY[reason];
+  const { title, summary, fixable } = INSIGHT_FAILURE_COPY[reason];
   const reported = run.error.trim() === "" ? "" : ` The operator reported: ${run.error.trim()}`;
   const remediable = fixable && isAdmin;
   return {
@@ -459,57 +477,6 @@ export function buildRunFailureNotice(options: {
     actionLabel: remediable ? ADMIN_ACTION : "",
   };
 }
-
-// fixable means "a setting in AI providers is what changes the outcome", which
-// is what decides whether an administrator is offered a link. A bad request is
-// the one failure no endpoint configuration repairs.
-const FAILURE_COPY: Record<
-  InsightFailureReason,
-  { title: string; summary: string; fixable: boolean }
-> = {
-  "no-provider": {
-    title: "No AI endpoint is configured",
-    summary:
-      "This insight never reached a model, because this deployment has no AI endpoint it can " +
-      "use. Retry re-resolves the endpoint and model from the settings as they stand at that " +
-      "moment, so configuring one first is what makes a retry work.",
-    fixable: true,
-  },
-  "provider-refused": {
-    title: "The endpoint rejected the request",
-    summary:
-      "The AI endpoint answered and refused — usually a missing or rejected key, or a quota. " +
-      "Retry re-resolves the endpoint, its key and its model from the settings as they stand at " +
-      "that moment, so fixing the credential first is what makes a retry work.",
-    fixable: true,
-  },
-  "model-failed": {
-    title: "The model did not answer",
-    summary:
-      "The endpoint was reached but produced no usable answer — a timeout, an unreachable host, " +
-      "or a server error. This is the failure a straight Retry is a sensible response to; if it " +
-      "keeps timing out, the endpoint's request timeout is the setting that governs it.",
-    fixable: true,
-  },
-  "bad-request": {
-    title: "Cassini could not run that request",
-    summary:
-      "The run was refused before anything was sent to a model — an unknown template, or a " +
-      "selection this deployment will not assemble. Changing the AI configuration will not " +
-      "change the answer; changing the template or the meetings will.",
-    fixable: false,
-  },
-  unknown: {
-    title: "The insight failed",
-    summary: "The run did not finish, and nothing was written to your files.",
-    // Not fixable, for the reason bad-request is not: the operator classifies
-    // only the four failures it can name, and this is the one it deliberately
-    // left unclassified. Offering "Open AI providers" for it would send an
-    // administrator to a panel nobody said would change the outcome. The
-    // operator's own sentence, repeated below, still carries everything known.
-    fixable: false,
-  },
-};
 
 // --- Request failures, as opposed to run failures ---
 

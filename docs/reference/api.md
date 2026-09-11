@@ -267,6 +267,13 @@ Behavior:
   out with its placeholder still in it. Either mistake is a `400`. No workflow
   this image ships takes a question yet, so today `question` must be absent or
   empty
+- `provider` is optional — the id of one of the configured AI endpoints
+  (`GET /operator/ai/providers` lists them). Absent, the deployment's
+  configured insight endpoint answers
+- `model` is optional and needs `provider`. Absent or empty, the run asks for
+  that endpoint's default model — the one set on the provider in AI providers.
+  The app never sends one today; the field stays so a per-run override can
+  return without a wire change
 - returns `201` with the run
 
 ### List the caller's runs

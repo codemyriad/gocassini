@@ -52,4 +52,13 @@ describe("SelectionBar", () => {
     expect(selectionBarSource).toContain('dispatch("prepare")');
     expect(selectionBarSource).not.toContain("let selection");
   });
+
+  it("refuses Prepare above the operator's cap, and says the number", () => {
+    // Every action in the panel would be refused above it; the bar says so
+    // before the panel opens (D-749).
+    expect(selectionBarSource).toContain('import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";');
+    expect(selectionBarSource).toContain("$: overCap = count > MAX_SELECTED_MEETINGS;");
+    expect(selectionBarSource).toContain("disabled={overCap}");
+    expect(selectionBarSource).toContain("A bundle holds at most {MAX_SELECTED_MEETINGS}");
+  });
 });

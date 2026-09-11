@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { X } from "@lucide/svelte";
+  import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";
 
   // The selection bar (D-626). Presentational: the shell owns the selection and
   // decides whether this exists at all.
@@ -25,6 +26,10 @@
   // user between picking and preparing.
   export let droppedCount = 0;
 
+  // Above the operator's cap Prepare would open a panel whose every action is
+  // refused, so the button says the number instead (D-749).
+  $: overCap = count > MAX_SELECTED_MEETINGS;
+
   const dispatch = createEventDispatcher<{
     clear: void;
     prepare: void;
@@ -47,7 +52,12 @@
         {#if hiddenCount > 0}
           {hiddenCount} not shown here.
         {/if}
-        Assemble them into one document you can take away.
+        {#if overCap}
+          A bundle holds at most {MAX_SELECTED_MEETINGS}; unpick {count - MAX_SELECTED_MEETINGS} to
+          prepare.
+        {:else}
+          Assemble them into one document you can take away.
+        {/if}
       </p>
     </div>
 
@@ -57,7 +67,12 @@
       <button type="button" class="selbar-clear" on:click={() => dispatch("clear")}>
         Clear selection
       </button>
-      <button type="button" class="selbar-prepare" on:click={() => dispatch("prepare")}>
+      <button
+        type="button"
+        class="selbar-prepare"
+        disabled={overCap}
+        on:click={() => dispatch("prepare")}
+      >
         Prepare
       </button>
     </div>

@@ -31,6 +31,12 @@ export interface MeetingSelection {
 
 export const EMPTY_SELECTION: MeetingSelection = { ids: [], dropped: [] };
 
+// MAX_SELECTED_MEETINGS mirrors the operator's cap on one bundle
+// (maxContextMeetings in published_context.go, which the insight route shares):
+// above it the request is refused before any Nextcloud call. Said here, before
+// the request, rather than discovered as a 400 after it (D-749).
+export const MAX_SELECTED_MEETINGS = 20;
+
 export function isSelected(selection: MeetingSelection, id: string): boolean {
   return selection.ids.includes(id);
 }
@@ -237,6 +243,15 @@ export function formatSelectionWordCount(totals: SelectionTotals): string {
 // wrong is the failure this panel exists to prevent.
 export function describeSelectionGaps(totals: SelectionTotals): string[] {
   const gaps: string[] = [];
+  // First, because it is the one gap that stops everything: the operator
+  // refuses a bundle, and a question, over more than this many meetings.
+  if (totals.count > MAX_SELECTED_MEETINGS) {
+    const excess = totals.count - MAX_SELECTED_MEETINGS;
+    gaps.push(
+      `A bundle holds at most ${MAX_SELECTED_MEETINGS} meetings, and ${totals.count} are picked. ` +
+        `Unpick ${excess === 1 ? "one" : excess} to prepare or generate.`,
+    );
+  }
   if (totals.withoutSummary > 0) {
     gaps.push(
       totals.withoutSummary === 1

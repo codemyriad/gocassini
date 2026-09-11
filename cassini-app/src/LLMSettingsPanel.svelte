@@ -33,8 +33,10 @@
     TextAlignStart,
     TriangleAlert,
   } from "@lucide/svelte";
+  import ModelCombobox from "./ModelCombobox.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import type {
+    LLMModel,
     LLMProviderUpdate,
     LLMProviderView,
     LLMSettings,
@@ -68,6 +70,10 @@
     timeoutSec: number | null;
     maxTokens: number | null;
     advanced: boolean;
+    // The endpoint's default model — the one thing every step on it, and
+    // every insight run that picks it, will ask for unless a step names its
+    // own (D-749).
+    model: string;
   }
   let draft: ProviderDraft | null = null;
 
@@ -76,9 +82,11 @@
   // is a fact, where a tick that only means "a row exists" is decoration. A
   // failure here is reported as itself and never as a broken endpoint — the
   // list may 404 on a server that answers completions perfectly well.
+  // The listing itself is kept, not only its count: it is what the default
+  // model field offers when a saved endpoint is edited.
   type ProbeState =
     | { status: "checking" }
-    | { status: "ok"; count: number }
+    | { status: "ok"; count: number; models: LLMModel[] }
     | { status: "failed"; message: string };
   let probes: Record<string, ProbeState> = {};
 
@@ -130,7 +138,7 @@
     probes = { ...probes, [providerId]: { status: "checking" } };
     try {
       const models = await operatorClient.listProviderModels(providerId);
-      probes = { ...probes, [providerId]: { status: "ok", count: models.length } };
+      probes = { ...probes, [providerId]: { status: "ok", count: models.length, models } };
     } catch (error) {
       probes = { ...probes, [providerId]: { status: "failed", message: asMessage(error) } };
     }
@@ -154,6 +162,7 @@
       timeoutSec: null,
       maxTokens: null,
       advanced: false,
+      model: "",
     };
   }
 
@@ -169,7 +178,37 @@
       timeoutSec: provider.timeout_sec > 0 ? provider.timeout_sec : null,
       maxTokens: provider.max_tokens > 0 ? provider.max_tokens : null,
       advanced: provider.timeout_sec > 0 || provider.max_tokens > 0,
+      model: provider.model,
     };
+  }
+
+  // What the default-model field can offer for the draft. A saved endpoint's
+  // listing is the probe's; an unsaved one has no id the operator can ask on
+  // its behalf, and the field says so rather than showing an empty list that
+  // would read as an endpoint with no models.
+  $: draftModels =
+    draft && probes[draft.id]?.status === "ok" ? probeModelsOf(probes[draft.id]) : [];
+  $: draftModelsLoading = draft !== null && probes[draft.id]?.status === "checking";
+  $: draftModelsError = draft
+    ? draft.existing
+      ? probeErrorOf(probes[draft.id])
+      : "Save the provider first to list its models."
+    : "";
+
+  function probeModelsOf(state: ProbeState | undefined): LLMModel[] {
+    return state?.status === "ok" ? state.models : [];
+  }
+
+  function probeErrorOf(state: ProbeState | undefined): string {
+    return state?.status === "failed" ? state.message : "";
+  }
+
+  // Opening the field on a saved endpoint whose listing failed is a retry;
+  // on one that listed, it is free.
+  function reprobeDraft() {
+    if (draft?.existing && probes[draft.id]?.status === "failed") {
+      void probe(draft.id);
+    }
   }
 
   // A URL is the only field a request cannot be made without. A key is not:
@@ -188,6 +227,7 @@
       base_url: provider.base_url,
       timeout_sec: provider.timeout_sec,
       max_tokens: provider.max_tokens,
+      model: provider.model,
       // api_key omitted: the server keeps the stored key for an id it is not
       // told about, which is the only way a list it never serves can survive a
       // round trip.
@@ -198,6 +238,7 @@
       base_url: current.baseUrl.trim(),
       timeout_sec: current.timeoutSec ?? 0,
       max_tokens: current.maxTokens ?? 0,
+      model: current.model.trim(),
     };
     if (current.keyCleared) {
       edited.api_key = "";
@@ -253,6 +294,7 @@
               base_url: row.base_url,
               timeout_sec: row.timeout_sec,
               max_tokens: row.max_tokens,
+              model: row.model,
             })),
           // A step still pointing at the removed endpoint would be rejected —
           // the operator refuses an enabled step with an unknown provider —
@@ -433,6 +475,13 @@
                     <span>
                       {provider.api_key_configured ? "Key stored" : "No key"}
                     </span>
+                    <!-- The model every step on this endpoint asks for. Not
+                         having one is worth seeing: the recorder then falls
+                         back to its own default, which a local endpoint has
+                         probably never heard of. -->
+                    <span class:text-warning={!provider.model}>
+                      {provider.model ? `Model ${provider.model}` : "No default model"}
+                    </span>
                     {#if probes[provider.id]?.status === "ok"}
                       {@const state = probes[provider.id]}
                       <span>
@@ -548,6 +597,21 @@
                 </button>
               {/if}
             </label>
+
+            <!-- One model per endpoint (D-749). Summaries and insights ask
+                 for this unless a step names its own; a person creating an
+                 insight picks an endpoint and gets this model with it. Free
+                 text over the endpoint's own listing, for the reason the
+                 combobox gives: the registry of models is the endpoint's. -->
+            <ModelCombobox
+              bind:value={draft.model}
+              label="Default model"
+              models={draftModels}
+              loading={draftModelsLoading}
+              error={draftModelsError}
+              placeholder="e.g. openai/gpt-4o-mini or qwen3-30b"
+              on:open={reprobeDraft}
+            />
 
             <!-- Behind a disclosure rather than dropped: these describe the
                  HOST, and a CPU-bound local model needs a longer leash than a

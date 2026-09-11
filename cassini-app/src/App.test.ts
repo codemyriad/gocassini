@@ -63,6 +63,16 @@ describe("the shell's setup features", () => {
     expect(generate).toHaveLength(3);
   });
 
+  it("hands every Generate card's created run back to the viewer", () => {
+    // Submit closes the panel (D-749). The viewer owns the list and the panel;
+    // the card only knows a run started. The callback rides down as a slot
+    // prop, and a call site that forgot it would leave that reader with a
+    // button that did nothing visible.
+    const forwarded = appSource.match(/on:created=\{\(event\) => onInsightCreated\(event\.detail\)\}/g) ?? [];
+    expect(forwarded).toHaveLength(3);
+    expect(appSource.match(/let:onInsightCreated/g) ?? []).toHaveLength(3);
+  });
+
   it("builds the template client from the probe, never from the admin hint", () => {
     // The hint (OC.isUserAdmin) exists to stop the operator tab flashing in.
     // `operator/settings/workflows` is ADMIN at the proxy, so acting on the
@@ -80,5 +90,13 @@ describe("the shell's setup features", () => {
     // mount established and tell a working deployment it is unconfigured.
     expect(appSource).toMatch(/if \(health\) \{\s*setupFeatures = health\.features;/);
     expect(appSource).toContain("the setup re-check failed.");
+  });
+
+  it("re-reads them each time the Prepare panel opens, at every mount of the viewer", () => {
+    // A non-admin never leaves the operator surface, so the return-leg refresh
+    // never fires for them; the panel opening is the moment the readiness card
+    // is looked at (D-749).
+    const refreshed = appSource.match(/on:prepareOpen=\{\(\) => void refreshSetupFeatures\(\)\}/g) ?? [];
+    expect(refreshed).toHaveLength(3);
   });
 });

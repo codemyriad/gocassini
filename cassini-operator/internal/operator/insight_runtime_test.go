@@ -843,8 +843,71 @@ func TestTheChildEnvCarriesTheChosenEndpoint(t *testing.T) {
 	if got, ok := envValue(env, "INSIGHT_API_KEY"); ok {
 		t.Errorf("a keyless endpoint was given a key: %q", got)
 	}
-	// And the summary step is untouched: only the insight endpoint moves.
-	if got, ok := envValue(env, "SUMMARY_BASE_URL"); !ok || got != openRouterBaseURL {
-		t.Errorf("SUMMARY_BASE_URL = %q (present=%v), want the configured summary endpoint", got, ok)
+	// And nothing of the summary endpoint reaches an insight child: the
+	// recorder would layer INSIGHT_* over it, and a leash or a model chosen for
+	// one host must not fill a gap on another.
+	for _, key := range []string{"SUMMARY_BASE_URL", "SUMMARY_API_KEY", "SUMMARY_MODEL", "SUMMARY_TIMEOUT_SEC", "SUMMARY_MAX_TOKENS"} {
+		if got, ok := envValue(env, key); ok {
+			t.Errorf("%s = %q reached the insight child", key, got)
+		}
+	}
+}
+
+// D-740 P0 row 1, the repro: an endpoint chosen in Prepare and no model named
+// for the run. The child used to inherit SUMMARY_MODEL — a model chosen for
+// another host — or fall through to the recorder's hard-coded default. Now the
+// chosen endpoint's own default model is what it asks for, and INSIGHT_MODEL
+// is always present so nothing can be inherited (D-749).
+func TestTheChildEnvAlwaysNamesTheChosenEndpointsModel(t *testing.T) {
+	rt := &Runtime{}
+	rt.setLLMSettings(LLMSettings{
+		Providers: []LLMProvider{
+			{ID: "hosted", BaseURL: openRouterBaseURL, APIKey: "sk-or", Model: "openai/gpt-4o-mini"},
+			{ID: "local", BaseURL: "http://qwen.internal:8000/v1", Model: "qwen3-30b"},
+		},
+		Summary: LLMStep{Enabled: true, Provider: "hosted", Model: "small"},
+	})
+	s := &insightService{rt: rt}
+
+	env := s.insightChildEnvFor(insightProviderRef{id: "local"})
+	if got, ok := envValue(env, "INSIGHT_MODEL"); !ok || got != "qwen3-30b" {
+		t.Fatalf("INSIGHT_MODEL = %q (present=%v), want the chosen endpoint's default; env=%v", got, ok, env)
+	}
+	if got, ok := envValue(env, "SUMMARY_MODEL"); ok {
+		t.Fatalf("SUMMARY_MODEL = %q reached the insight child", got)
+	}
+
+	// An explicit model for the run still beats the endpoint's default.
+	env = s.insightChildEnvFor(insightProviderRef{id: "local", model: "qwen3-235b"})
+	if got, _ := envValue(env, "INSIGHT_MODEL"); got != "qwen3-235b" {
+		t.Fatalf("INSIGHT_MODEL = %q, want the run's own choice", got)
+	}
+}
+
+// An endpoint with no default of its own, chosen for a run that named none,
+// gets an empty INSIGHT_MODEL rather than another endpoint's. The summary step
+// here runs "small" on the hosted endpoint; that name must not follow the run
+// to the local one.
+func TestTheChildEnvNeverBorrowsAnotherEndpointsModel(t *testing.T) {
+	rt := &Runtime{}
+	rt.setLLMSettings(LLMSettings{
+		Providers: []LLMProvider{
+			{ID: "hosted", BaseURL: openRouterBaseURL, APIKey: "sk-or"},
+			{ID: "local", BaseURL: "http://qwen.internal:8000/v1"},
+		},
+		Summary: LLMStep{Enabled: true, Provider: "hosted", Model: "small"},
+	})
+	s := &insightService{rt: rt}
+
+	env := s.insightChildEnvFor(insightProviderRef{id: "local"})
+	if got, ok := envValue(env, "INSIGHT_MODEL"); !ok || got != "" {
+		t.Fatalf("INSIGHT_MODEL = %q (present=%v), want present and empty", got, ok)
+	}
+
+	// Chosen the endpoint the insight step itself resolves to, the step's
+	// configured model is the honest answer.
+	env = s.insightChildEnvFor(insightProviderRef{id: "hosted"})
+	if got, _ := envValue(env, "INSIGHT_MODEL"); got != "small" {
+		t.Fatalf("INSIGHT_MODEL = %q, want the insight step's own resolved model", got)
 	}
 }

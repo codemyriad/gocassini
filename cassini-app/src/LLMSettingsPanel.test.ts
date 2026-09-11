@@ -73,3 +73,34 @@ describe("AI providers verification", () => {
     expect(llmSettingsPanelSource).toContain("Summaries and insights may still work");
   });
 });
+
+describe("AI providers default model (D-749)", () => {
+  it("edits one default model per endpoint, on the provider draft", () => {
+    // Summaries and insights ask for this model unless a step names its own,
+    // and whoever creates an insight gets it with the endpoint they pick.
+    expect(llmSettingsPanelSource).toContain("<ModelCombobox");
+    expect(llmSettingsPanelSource).toContain("bind:value={draft.model}");
+    expect(llmSettingsPanelSource).toContain('label="Default model"');
+    expect(llmSettingsPanelSource).toContain("model: provider.model,");
+    expect(llmSettingsPanelSource).toContain("model: current.model.trim(),");
+  });
+
+  it("carries every other endpoint's model through a save and a remove", () => {
+    // PUT replaces the whole list, so a row sent back without its model is a
+    // model silently cleared.
+    // providerUpdates (save) and removeProvider both rebuild the list.
+    expect(llmSettingsPanelSource).toContain("      model: provider.model,\n      // api_key omitted");
+    expect(llmSettingsPanelSource).toContain("model: row.model,");
+  });
+
+  it("says when an endpoint has no default model", () => {
+    // The recorder then falls back to its own default, which a local endpoint
+    // has probably never heard of.
+    expect(llmSettingsPanelSource).toContain("No default model");
+  });
+
+  it("offers a saved endpoint's own listing and says why an unsaved one has none", () => {
+    expect(llmSettingsPanelSource).toContain("Save the provider first to list its models.");
+    expect(llmSettingsPanelSource).toContain("models: LLMModel[]");
+  });
+});

@@ -202,6 +202,13 @@
     void refreshSetupFeatures();
   }
 
+  // Also asked each time the Prepare panel opens (the viewer says so with
+  // `prepareOpen`): the readiness card in that panel is built from these
+  // features, and a non-admin — who never visits the operator surface, so the
+  // return-leg refresh above never fires for them — would otherwise see "no AI
+  // endpoint" until a reload, however long ago an administrator fixed it. The
+  // operator serves /setup with Cache-Control: no-store so this re-read reaches
+  // it rather than AppAPI's hour-long proxy cache (D-749).
   async function refreshSetupFeatures(): Promise<void> {
     try {
       const { operatorBasePath } = loadConfig();
@@ -391,16 +398,21 @@
            hidden while an admin surface is active; those mount only when active
            so the operator's SSE stream + polling don't run in the background. -->
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-        <ViewerApp {ncMode} {dataProvider}>
+        <ViewerApp {ncMode} {dataProvider} on:prepareOpen={() => void refreshSetupFeatures()}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
           <!-- Its opposite, driven by the same bit (D-700): the readiness card
                says a question cannot be asked here, this one asks it. The Prepare
                panel hands down the meetings it is describing; whether there is an
                endpoint to ask, and whether this reader may pick a template, are
                the shell's to know and neither is a fact the viewing layer has. -->
-          <svelte:fragment slot="prepare-generate" let:entries>
+          <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
             {#if insightsReady}
-              <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+              <GenerateCard
+                {entries}
+                {operatorClient}
+                on:open={handleOpenPanel}
+                on:created={(event) => onInsightCreated(event.detail)}
+              />
             {/if}
           </svelte:fragment>
         </ViewerApp>
@@ -452,22 +464,32 @@
       </div>
     </div>
     <div class="cassini-shell-surface">
-      <ViewerApp {ncMode} {dataProvider}>
+      <ViewerApp {ncMode} {dataProvider} on:prepareOpen={() => void refreshSetupFeatures()}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
-        <svelte:fragment slot="prepare-generate" let:entries>
+        <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
           {#if insightsReady}
-            <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+            <GenerateCard
+              {entries}
+              {operatorClient}
+              on:open={handleOpenPanel}
+              on:created={(event) => onInsightCreated(event.detail)}
+            />
           {/if}
         </svelte:fragment>
       </ViewerApp>
     </div>
   </div>
 {:else}
-  <ViewerApp {ncMode} {dataProvider}>
+  <ViewerApp {ncMode} {dataProvider} on:prepareOpen={() => void refreshSetupFeatures()}>
     <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
-    <svelte:fragment slot="prepare-generate" let:entries>
+    <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
       {#if insightsReady}
-        <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+        <GenerateCard
+          {entries}
+          {operatorClient}
+          on:open={handleOpenPanel}
+          on:created={(event) => onInsightCreated(event.detail)}
+        />
       {/if}
     </svelte:fragment>
   </ViewerApp>

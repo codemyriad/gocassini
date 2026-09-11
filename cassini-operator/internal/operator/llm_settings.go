@@ -56,10 +56,16 @@ type LLMProvider struct {
 	// hosted API.
 	TimeoutSec int `json:"timeout_sec,omitempty"`
 	MaxTokens  int `json:"max_tokens,omitempty"`
+	// Model is the endpoint's default model: what every step on this endpoint
+	// asks for unless the step names one of its own. One place to choose a
+	// model for one endpoint, instead of one per step and one per insight run
+	// (D-749).
+	Model string `json:"model,omitempty"`
 }
 
 // LLMStep is the policy for one LLM step: whether it runs, on which provider,
-// with which model. An empty model leaves the recorder's default in place.
+// with which model. An empty model means the provider's default model, and
+// only when the provider has none does the recorder's own default apply.
 type LLMStep struct {
 	Enabled  bool   `json:"enabled"`
 	Provider string `json:"provider,omitempty"`
@@ -268,6 +274,7 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 		p.Name = strings.Join(strings.Fields(p.Name), " ")
 		p.BaseURL = strings.TrimSpace(p.BaseURL)
 		p.APIKey = strings.TrimSpace(p.APIKey)
+		p.Model = strings.TrimSpace(p.Model)
 		if !llmProviderIDPattern.MatchString(p.ID) {
 			return s, fmt.Errorf("provider id %q must be letters, digits, '.', '_' or '-'", p.ID)
 		}
@@ -287,7 +294,7 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 		if p.MaxTokens < 0 {
 			return s, fmt.Errorf("provider %q: max_tokens must not be negative", p.ID)
 		}
-		for _, f := range []struct{ name, value string }{{"id", p.ID}, {"name", p.Name}, {"base_url", p.BaseURL}} {
+		for _, f := range []struct{ name, value string }{{"id", p.ID}, {"name", p.Name}, {"base_url", p.BaseURL}, {"model", p.Model}} {
 			if utf8.RuneCountInString(f.value) > maxLLMFieldRunes {
 				return s, fmt.Errorf("provider %q: %s exceeds %d characters", p.ID, f.name, maxLLMFieldRunes)
 			}
@@ -342,6 +349,17 @@ func validLLMBaseURL(raw string) error {
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("base_url %q must be an http(s) URL", raw)
 	}
+	// The recorder appends /chat/completions and the model list appends
+	// /models itself, so a base URL that already ends in one of them reaches
+	// nothing: .../chat/completions/models is a 404 on every provider. It is
+	// the most common way to copy an endpoint out of a provider's docs, and
+	// the 502 it used to produce named nothing (D-749).
+	path := strings.TrimRight(strings.ToLower(u.Path), "/")
+	for _, suffix := range []string{"/chat/completions", "/models"} {
+		if strings.HasSuffix(path, suffix) {
+			return fmt.Errorf("base_url %q ends in %s; give the API root instead (for example https://openrouter.ai/api/v1)", raw, suffix)
+		}
+	}
 	return nil
 }
 
@@ -373,6 +391,25 @@ func newLLMProviderID() string {
 // `ok` false means no provider is registered at all, which is the only state in
 // which an insight has nothing to ask.
 func (s LLMSettings) insightEndpoint() (LLMProvider, string, bool) {
+	p, model, ok := s.insightEndpointRaw()
+	return p, modelFor(p, model), ok
+}
+
+// modelFor is the model a step on provider p asks for: the step's own when it
+// names one, else the provider's default. Explicit beats default; nothing else
+// is consulted, so a model can never arrive at an endpoint it was not chosen
+// for (D-749).
+func modelFor(p LLMProvider, stepModel string) string {
+	if m := strings.TrimSpace(stepModel); m != "" {
+		return m
+	}
+	return p.Model
+}
+
+// insightEndpointRaw is insightEndpoint before the provider default is
+// applied: the endpoint and the model the resolving step names, which may be
+// empty.
+func (s LLMSettings) insightEndpointRaw() (LLMProvider, string, bool) {
 	if p, ok := s.provider(s.Insight); ok {
 		return p, s.Insight.Model, true
 	}
@@ -454,7 +491,7 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 		out = append(out, kv)
 	}
 	summaryProvider, summaryOK := s.provider(s.Summary)
-	out = s.appendStepEnv(out, llmStepSummary, summaryProvider, s.Summary.Model, summaryOK)
+	out = s.appendStepEnv(out, llmStepSummary, summaryProvider, modelFor(summaryProvider, s.Summary.Model), summaryOK)
 	insightProvider, insightModel, insightOK := s.insightEndpoint()
 	out = s.appendStepEnv(out, llmStepInsight, insightProvider, insightModel, insightOK)
 	return out
@@ -544,6 +581,7 @@ type llmProviderView struct {
 	APIKeyConfigured bool   `json:"api_key_configured"`
 	TimeoutSec       int    `json:"timeout_sec"`
 	MaxTokens        int    `json:"max_tokens"`
+	Model            string `json:"model"`
 }
 
 // llmEffectiveStep is what the recorder will actually receive for a step; nil
@@ -577,7 +615,7 @@ func (s LLMSettings) view() llmSettingsResponse {
 	for _, p := range s.Providers {
 		providers = append(providers, llmProviderView{
 			ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, APIKeyConfigured: p.APIKey != "",
-			TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens,
+			TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens, Model: p.Model,
 		})
 	}
 	return llmSettingsResponse{
@@ -617,7 +655,7 @@ func (s LLMSettings) effectiveStep(step LLMStep) *llmEffectiveStep {
 	if !ok {
 		return nil
 	}
-	return &llmEffectiveStep{Provider: p.ID, BaseURL: p.BaseURL, Model: step.Model, APIKeyConfigured: p.APIKey != ""}
+	return &llmEffectiveStep{Provider: p.ID, BaseURL: p.BaseURL, Model: modelFor(p, step.Model), APIKeyConfigured: p.APIKey != ""}
 }
 
 // llmProviderUpdate is one provider in a PUT body. APIKey distinguishes
@@ -629,6 +667,7 @@ type llmProviderUpdate struct {
 	APIKey     *string `json:"api_key"`
 	TimeoutSec int     `json:"timeout_sec"`
 	MaxTokens  int     `json:"max_tokens"`
+	Model      string  `json:"model"`
 }
 
 // llmSettingsUpdate is the PUT body. Every field is optional; a present
@@ -704,7 +743,7 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 			if id == "" {
 				id = newLLMProviderID()
 			}
-			next := LLMProvider{ID: id, Name: p.Name, BaseURL: p.BaseURL, TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens}
+			next := LLMProvider{ID: id, Name: p.Name, BaseURL: p.BaseURL, TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens, Model: p.Model}
 			if p.APIKey != nil {
 				next.APIKey = *p.APIKey
 			} else if old, ok := stored[id]; ok {
@@ -841,9 +880,12 @@ func listLLMModels(ctx context.Context, p LLMProvider) ([]llmModel, error) {
 // ADMIN route makes, against the same provider record.
 
 // llmProviderChoice is one endpoint as somebody choosing between them sees it.
+// Model is the endpoint's default, which is what their insight will ask for:
+// choosing an endpoint is choosing a model, and they are owed that answer.
 type llmProviderChoice struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Model string `json:"model,omitempty"`
 }
 
 func (rt *Runtime) aiProvidersHandler(w http.ResponseWriter, r *http.Request) {
@@ -854,7 +896,7 @@ func (rt *Runtime) aiProvidersHandler(w http.ResponseWriter, r *http.Request) {
 	settings := rt.currentLLMSettings()
 	choices := make([]llmProviderChoice, 0, len(settings.Providers))
 	for _, p := range settings.Providers {
-		choices = append(choices, llmProviderChoice{ID: p.ID, Name: p.Name})
+		choices = append(choices, llmProviderChoice{ID: p.ID, Name: p.Name, Model: p.Model})
 	}
 	// no-store for the reason /setup is: this answer changes the moment an
 	// administrator registers or removes an endpoint, and AppAPI caches a

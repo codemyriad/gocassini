@@ -219,6 +219,10 @@ func TestNormalizeLLMSettingsRejectsUnresolvablePolicy(t *testing.T) {
 		"not a url":                     {Providers: []LLMProvider{{ID: "x", BaseURL: "qwen"}}},
 		"id with slash":                 {Providers: []LLMProvider{{ID: "a/b", BaseURL: "http://qwen.internal/v1"}}},
 		"negative timeout":              {Providers: []LLMProvider{{ID: "x", BaseURL: "http://qwen.internal/v1", TimeoutSec: -1}}},
+		// The recorder appends /chat/completions itself; a base URL that
+		// already carries it reaches nothing (D-749).
+		"completions url as base": {Providers: []LLMProvider{{ID: "x", BaseURL: "https://openrouter.ai/api/v1/chat/completions"}}},
+		"models url as base":      {Providers: []LLMProvider{{ID: "x", BaseURL: "https://openrouter.ai/api/v1/models/"}}},
 	}
 	for name, in := range cases {
 		if _, err := normalizeLLMSettings(in); err == nil {
@@ -707,5 +711,104 @@ func TestFirstProviderDoesNotOverruleAnExplicitChoice(t *testing.T) {
 	}
 	if got := enableSummaryOnFirstProvider(before, after); got.Summary.Enabled {
 		t.Fatalf("summary = %+v, want left off — the request named a provider and said no", got.Summary)
+	}
+}
+
+// The base URL check has to say what to do, not only that it was refused: a
+// URL copied out of a provider's docs ends in /chat/completions, and the 502
+// that used to result named nothing (D-749).
+func TestValidLLMBaseURLNamesTheFix(t *testing.T) {
+	err := validLLMBaseURL("https://openrouter.ai/api/v1/chat/completions")
+	if err == nil || !strings.Contains(err.Error(), "API root") {
+		t.Fatalf("err = %v, want a message pointing at the API root", err)
+	}
+	if err := validLLMBaseURL("https://openrouter.ai/api/v1"); err != nil {
+		t.Fatalf("the API root itself was refused: %v", err)
+	}
+}
+
+// One default model per endpoint (D-749): a step that names no model asks for
+// the provider's default, on both wires and in the effective view; a step that
+// names one keeps it.
+func TestProviderDefaultModelFillsEveryStepThatNamesNone(t *testing.T) {
+	s, err := normalizeLLMSettings(LLMSettings{
+		Providers: []LLMProvider{
+			{ID: "hosted", BaseURL: openRouterBaseURL, Model: "  openai/gpt-4o-mini  "},
+			{ID: "local", BaseURL: "http://qwen.internal:8000/v1", Model: "qwen3-30b"},
+		},
+		Summary: LLMStep{Enabled: true, Provider: "hosted"},
+		Insight: LLMStep{Enabled: true, Provider: "local", Model: "qwen3-235b"},
+	})
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if s.Providers[0].Model != "openai/gpt-4o-mini" {
+		t.Fatalf("provider model = %q, want trimmed", s.Providers[0].Model)
+	}
+	env := s.ChildEnv(nil)
+	for key, want := range map[string]string{
+		"SUMMARY_MODEL": "openai/gpt-4o-mini",
+		"INSIGHT_MODEL": "qwen3-235b",
+	} {
+		if got, ok := envValue(env, key); !ok || got != want {
+			t.Errorf("%s = %q (present=%v), want %q; env=%v", key, got, ok, want, env)
+		}
+	}
+	view := s.view()
+	if view.Providers[0].Model != "openai/gpt-4o-mini" {
+		t.Errorf("provider view model = %q", view.Providers[0].Model)
+	}
+	if got := view.Effective.Summary; got == nil || got.Model != "openai/gpt-4o-mini" {
+		t.Errorf("effective summary = %+v, want the provider default", got)
+	}
+	if got := view.Effective.Insight; got == nil || got.Model != "qwen3-235b" {
+		t.Errorf("effective insight = %+v, want the step's own model", got)
+	}
+	// The step keeps its record of "no model of my own": the default is
+	// applied when resolving, never written into the step.
+	if s.Summary.Model != "" {
+		t.Errorf("summary step model = %q, want empty", s.Summary.Model)
+	}
+
+	// An insight with no step of its own inherits the summary endpoint AND its
+	// provider's default model.
+	s.Insight = LLMStep{}
+	if got, model, ok := s.insightEndpoint(); !ok || got.ID != "hosted" || model != "openai/gpt-4o-mini" {
+		t.Errorf("insightEndpoint = %s/%q (ok=%v), want hosted/openai/gpt-4o-mini", got.ID, model, ok)
+	}
+}
+
+func TestPutLLMSettingsStoresTheProviderModelAndTheChoiceShowsIt(t *testing.T) {
+	clearLLMEnv(t)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	body := `{"providers":[{"id":"local","name":"Qwen","base_url":"http://qwen.internal:8000/v1","model":"qwen3-30b"}],"summary":{"enabled":true,"provider":"local"}}`
+	rec := httptest.NewRecorder()
+	rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodPut, "/settings/llm", strings.NewReader(body)))
+	out := decodeLLMSettings(t, rec)
+	if len(out.Providers) != 1 || out.Providers[0].Model != "qwen3-30b" {
+		t.Fatalf("providers = %+v", out.Providers)
+	}
+	if out.Effective.Summary == nil || out.Effective.Summary.Model != "qwen3-30b" {
+		t.Fatalf("effective summary = %+v, want the provider default", out.Effective.Summary)
+	}
+	stored, err := LoadOrInitLLMSettings(rt.llmSettingsPath, llmGetenv(nil))
+	if err != nil || stored.Providers[0].Model != "qwen3-30b" {
+		t.Fatalf("stored = %+v (err=%v), want the model persisted", stored.Providers, err)
+	}
+	if got, _ := envValue(rt.childEnv(), "SUMMARY_MODEL"); got != "qwen3-30b" {
+		t.Fatalf("SUMMARY_MODEL = %q after PUT", got)
+	}
+
+	// Whoever picks an endpoint in Prepare is owed the model it will ask for.
+	rec = httptest.NewRecorder()
+	rt.aiProvidersHandler(rec, httptest.NewRequest(http.MethodGet, "/ai/providers", nil))
+	var choices []llmProviderChoice
+	if err := json.Unmarshal(rec.Body.Bytes(), &choices); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(choices) != 1 || choices[0].Model != "qwen3-30b" {
+		t.Fatalf("choices = %+v, want the default model on the choice", choices)
 	}
 }
