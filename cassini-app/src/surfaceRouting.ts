@@ -1,6 +1,6 @@
 // Shell-level surface routing for the Cassini app (D-420 V3, slice B5).
 //
-// The shell hosts N role-gated surfaces (today: browse + operator + setup). Which
+// The shell hosts N role-gated surfaces (today: browse + operator). Which
 // one is active is encoded in location.hash as `surface=operator`, layered on top
 // of the viewing layer's own hash params (meeting/tx/t — see
 // cassini-viewer/src/viewer/hashRouting.ts). We deliberately reuse the SAME
@@ -14,20 +14,20 @@
 // The viewer's readViewerHash() ignores the surface param; readSurface() here
 // ignores everything else.
 //
-// `setup` (D-616) is the third surface: instance-level configuration, today the
-// storage-mode switch. It is deliberately not a panel inside the operator
-// surface — the operator surface is about runs, and a control that moves every
-// recording in the instance does not belong beside a run list.
+// `setup` (D-616) was a third surface, and is gone (D-756): there is no storage
+// decision to block on any more, so the one control that survives it moves into
+// Operator. `#surface=setup` is not a surface this build knows, and an unknown
+// surface has always fallen back to browse — which is what every link already
+// written against the Setup tab now does.
 
-export type Surface = "browse" | "operator" | "setup";
+export type Surface = "browse" | "operator";
 
 // The panels inside the operator surface (D-723). Pipeline and endpoint
 // configuration is NOT a surface of its own: it is a left nav inside Operator,
 // a Console group above a Settings group, so there is one admin surface to gate
-// and one place to look for a knob. `setup` above stays separate because it is
-// not a knob on the pipeline — it decides where the whole archive lives, and
-// moves it. Naming a panel in the hash is what lets an "unconfigured" notice
-// elsewhere in the app link straight at the panel that fixes it (D-722).
+// and one place to look for a knob. Naming a panel in the hash is what lets an
+// "unconfigured" notice elsewhere in the app link straight at the panel that
+// fixes it (D-722).
 //
 // The ids are the design prototype's own `OP_PANELS`, kept verbatim so a deep
 // link written against the design and one written against the code are the
@@ -63,7 +63,7 @@ const TIME_PARAM = "t";
 // ADMIN_SURFACES are the ones the shell shows only when the operator boundary
 // probe succeeds. Keeping them in one list is what stops readSurface and the
 // tab bar drifting apart when a fourth is added.
-export const ADMIN_SURFACES: readonly Surface[] = ["operator", "setup"];
+export const ADMIN_SURFACES: readonly Surface[] = ["operator"];
 
 function isAdminSurface(value: string | null): value is Surface {
   return value !== null && (ADMIN_SURFACES as readonly string[]).includes(value);

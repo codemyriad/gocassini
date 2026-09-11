@@ -277,6 +277,27 @@ export class OperatorClient {
     return eventSource;
   }
 
+  // --- D-756 ---------------------------------------------------------------
+
+  // acknowledgeFirstRun records that an administrator has seen the first-run
+  // dialog, and answers the refreshed record.
+  //
+  // The flag is the operator's, not the browser's: it is persisted per install
+  // beside the other operator settings, so the second administrator to open
+  // Cassini is not asked something the first one has already answered, and
+  // clearing a browser's storage cannot bring the dialog back.
+  async acknowledgeFirstRun(): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "acknowledge_first_run" }),
+      }),
+    );
+  }
+
+  // --- end D-756 -----------------------------------------------------------
+
   async #request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${this.#baseUrl}${path}`, {
       ...init,
@@ -439,6 +460,10 @@ function normalizeStorage(raw: unknown): StorageStatus {
     // mode, and the wizard asking about it once is the safe direction.
     mode_confirmed: value.mode_confirmed === true,
     awaiting_choice: value.awaiting_choice === true,
+    // D-756: absent reads as false, so an operator predating the flag never
+    // puts the first-run dialog in front of an install that has been running
+    // for a year.
+    first_run: value.first_run === true,
     service_account: normalizeServiceAccount(value.service_account),
     ok: value.ok === true,
     state: asString(value.state),

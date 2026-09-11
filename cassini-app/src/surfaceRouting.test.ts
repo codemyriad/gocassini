@@ -104,31 +104,23 @@ describe("applyJob", () => {
   });
 });
 
-// The Setup surface (D-616). It rides the same param as the operator surface,
-// so the risk is that one of readSurface / surfaceHash / applySurface learns
-// about it and the others do not — which is why each is asserted separately
-// rather than only through a round-trip.
-describe("the setup surface", () => {
-  it("is read from the hash like any other admin surface", () => {
-    expect(readSurface("#surface=setup")).toBe("setup");
-    expect(readSurface("#surface=setup&meeting=abc")).toBe("setup");
+// The Setup surface (D-616) is gone (D-756). Links to it exist — the notice
+// that sent administrators there shipped, and so did the tab — so what matters
+// is that they degrade rather than break.
+describe("the setup surface, after it was removed", () => {
+  it("sends a deep link to the tab that no longer exists back to browse", () => {
+    expect(readSurface("#surface=setup")).toBe("browse");
+    expect(readSurface("#surface=setup&meeting=abc")).toBe("browse");
   });
 
-  it("gets its own marker, and round-trips", () => {
-    expect(surfaceHash("setup")).toBe("#surface=setup");
-    expect(readSurface(surfaceHash("setup"))).toBe("setup");
+  it("keeps the viewer's own deep link while dropping the dead surface", () => {
+    // The meeting the reader was looking at survives the fallback: the surface
+    // param is the shell's, and clearing it must not take meeting/tx/t with it.
+    expect(applySurface("#surface=setup&meeting=abc&t=5s", "browse")).toBe("#meeting=abc&t=5s");
   });
 
-  it("preserves the viewer's params and replaces a sibling surface", () => {
-    expect(applySurface("#meeting=abc&t=5s", "setup")).toBe("#surface=setup&meeting=abc&t=5s");
-    expect(applySurface("#surface=operator&meeting=abc", "setup")).toBe(
-      "#surface=setup&meeting=abc",
-    );
-    expect(applySurface("#surface=setup&meeting=abc", "browse")).toBe("#meeting=abc");
-  });
-
-  it("is listed as an admin surface, which is what gates the tab on the probe", () => {
-    expect([...ADMIN_SURFACES].sort()).toEqual(["operator", "setup"]);
+  it("leaves the operator surface as the one surface the probe gates", () => {
+    expect([...ADMIN_SURFACES]).toEqual(["operator"]);
   });
 });
 

@@ -1,33 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { describeArchive, migrationFacts, modeCard, wizardNeeded } from "./storageWizard";
-import type {
-  StorageArchiveFacts,
-  StorageModeOption,
-  StorageStatus,
-  StorageTransitionPreview,
-} from "./types";
+import { describeArchive, migrationFacts } from "./storageWizard";
+import type { StorageArchiveFacts, StorageTransitionPreview } from "./types";
 
 function archive(partial: Partial<StorageArchiveFacts> = {}): StorageArchiveFacts {
   return { probed: true, present: true, meetings: 0, catalog: false, ...partial };
-}
-
-function option(partial: Partial<StorageModeOption> = {}): StorageModeOption {
-  return {
-    mode: "default",
-    label: "Default",
-    active: false,
-    available: true,
-    summary: "",
-    consequence: "",
-    blocker: "",
-    step: "",
-    instructions: [],
-    setup: [],
-    root: "CassiniNoACL/Recordings",
-    archive: archive(),
-    ...partial,
-  };
 }
 
 function preview(partial: Partial<StorageTransitionPreview> = {}): StorageTransitionPreview {
@@ -67,44 +44,6 @@ describe("describeArchive", () => {
   it("counts what is there", () => {
     expect(describeArchive(archive({ meetings: 1 }))).toBe("1 recording");
     expect(describeArchive(archive({ meetings: 41 }))).toBe("41 recordings");
-  });
-});
-
-describe("modeCard", () => {
-  it("offers a blocked mode as something to set up, not to switch to", () => {
-    const card = modeCard(
-      option({
-        available: false,
-        blocker: "the groupfolders app is not enabled",
-        setup: [{ id: "app", action: "enable_app", title: "", args: {}, browser: false, occ: "", app_url: "" }],
-      }),
-    );
-    expect(card.action).toBe("scaffold");
-    expect(card.actionLabel).toBe("Set up default");
-  });
-
-  it("does not offer to set up a mode it has no steps for", () => {
-    const card = modeCard(option({ available: false, blocker: "a Team folder is mounted over it" }));
-    expect(card.action).toBe("blocked");
-    expect(card.actionLabel).toBe("Not available yet");
-  });
-
-  it("offers an available mode with what is in it", () => {
-    const card = modeCard(option({ available: true, archive: archive({ meetings: 3 }) }));
-    expect(card.action).toBe("use");
-    expect(card.contents).toBe("3 recordings");
-  });
-});
-
-describe("wizardNeeded", () => {
-  it("asks whenever nobody confirmed the mode, even when one is in force", () => {
-    expect(wizardNeeded({ mode: "default", mode_confirmed: false } as StorageStatus)).toBe(true);
-    expect(wizardNeeded({ mode: "", mode_confirmed: false } as StorageStatus)).toBe(true);
-    expect(wizardNeeded({ mode: "default", mode_confirmed: true } as StorageStatus)).toBe(false);
-  });
-
-  it("asks nothing before the status has loaded", () => {
-    expect(wizardNeeded(null)).toBe(false);
   });
 });
 

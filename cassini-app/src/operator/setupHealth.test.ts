@@ -7,6 +7,7 @@ import {
   readRecordingsAccess,
   readSetupFeatures,
   readSetupHealth,
+  recordingAudience,
   shareableAppUrl,
   type RecordingsAccess,
 } from "./setupHealth";
@@ -63,7 +64,7 @@ describe("fetchSetupHealth", () => {
         "/index.php/apps/app_api/proxy/gocassini/operator/",
         fetchWithJSON(200, { ok: false, state: "unavailable" }, (u) => (called = u)),
       ),
-    ).toEqual({ ok: false, state: "unavailable", awaitingChoice: false, features: null });
+    ).toEqual({ ok: false, state: "unavailable", mode: "", features: null });
     expect(called).toBe("/index.php/apps/app_api/proxy/gocassini/operator/setup");
   });
 
@@ -106,20 +107,27 @@ describe("readSetupHealth", () => {
     expect(readSetupHealth({ ok: true, state: "provisioned" })).toEqual({
       ok: true,
       state: "provisioned",
-      // Absent reads as false, which is the right degrade for an operator that
-      // predates the field: it had already chosen a mode on its own.
-      awaitingChoice: false,
-      features: null,
-    });
-    expect(readSetupHealth({ ok: false, state: "unavailable", awaiting_choice: true })).toEqual({
-      ok: false,
-      state: "unavailable",
-      awaitingChoice: true,
+      // An absent mode reads as "", which is the right degrade for an operator
+      // that predates the field: nobody said, so the chip says nothing.
+      mode: "",
       features: null,
     });
     expect(readSetupHealth({ state: "provisioned" })).toBeNull();
     expect(readSetupHealth(null)).toBeNull();
     expect(readSetupHealth([{ ok: true, state: "x" }])).toBeNull();
+  });
+
+  // The mode is on the USER-level endpoint so the audience chip can render for
+  // everybody (D-756). It is the one storage fact that is not admin detail.
+  it("carries the storage mode, for the audience chip", () => {
+    expect(readSetupHealth({ ok: true, state: "provisioned", mode: "access_controlled" })).toEqual({
+      ok: true,
+      state: "provisioned",
+      mode: "access_controlled",
+      features: null,
+    });
+    // A mode that is not a string is not a mode. "" is "nobody said".
+    expect(readSetupHealth({ ok: true, state: "provisioned", mode: 7 })?.mode).toBe("");
   });
 
   it("carries the readiness signal when the operator reports one", () => {
@@ -128,9 +136,34 @@ describe("readSetupHealth", () => {
     ).toEqual({
       ok: true,
       state: "provisioned",
-      awaitingChoice: false,
+      mode: "",
       features: { summaries: false, insights: true },
     });
+  });
+});
+
+// The chip's whole job is to stop the storage enum reaching a person, and
+// recordingAudience is where that translation happens (D-756). The viewing
+// layer never sees `default` or `access_controlled`.
+describe("recordingAudience", () => {
+  it("names the two audiences, and nothing else", () => {
+    expect(recordingAudience({ ok: true, state: "provisioned", mode: "default", features: null })).toBe(
+      "everyone",
+    );
+    expect(
+      recordingAudience({ ok: true, state: "provisioned", mode: "access_controlled", features: null }),
+    ).toBe("participants");
+  });
+
+  it("says nothing when nobody said", () => {
+    // A standalone export, an operator too old to report the mode, and a /setup
+    // call that failed are the same three-state rule the readiness signal
+    // follows: absence is not an audience.
+    expect(recordingAudience(null)).toBe("");
+    expect(recordingAudience({ ok: true, state: "provisioned", mode: "", features: null })).toBe("");
+    expect(
+      recordingAudience({ ok: true, state: "provisioned", mode: "something_else", features: null }),
+    ).toBe("");
   });
 });
 
@@ -698,27 +731,36 @@ describe("buildSetupNotice offers the Setup tab", () => {
   });
 });
 
-// A decision nobody has taken is not a broken install (D-708). It reaches both
-// audiences differently from every other reason recordings cannot be served,
-// and it is the one state whose remedy is a button rather than a fix.
-describe("buildSetupNotice when nobody has chosen a storage model", () => {
-  const health = { ok: false, state: "unavailable", awaitingChoice: true };
-
-  it("tells a non-administrator that somebody has to decide, not that something broke", () => {
-    const notice = buildSetupNotice({ health, access: null, isAdmin: false, appUrl: APP_URL });
-    expect(notice?.title).toContain("where recordings are kept");
-    expect(notice?.summary).toContain("choose");
-    expect(notice?.summary).toContain("nothing for you to fix");
-    // Still no detail, no step, no account name: the user-readable half carries
-    // a bit and nothing else.
-    expect(notice?.steps).toEqual([]);
-    expect(notice?.detail).toBe("");
-    expect(notice?.shareUrl).toBe(APP_URL);
+// There is no "somebody has to decide" state any more (D-756): the operator
+// resolves the mode when it is enabled and records from then on. What used to
+// be an unmade decision is now either nothing at all or an ordinary fault, and
+// both audiences are told the ordinary thing.
+describe("buildSetupNotice when the operator resolved the mode itself", () => {
+  it("says nothing to anybody on an install that is simply working", () => {
+    const health = { ok: true, state: "provisioned", mode: "default", features: null };
+    expect(buildSetupNotice({ health, access: null, isAdmin: true, appUrl: APP_URL })).toBeNull();
+    expect(buildSetupNotice({ health, access: null, isAdmin: false, appUrl: APP_URL })).toBeNull();
   });
 
-  it("gives an administrator the button, and no instructions to hunt for", () => {
+  it("does not invite a non-administrator to go and find an administrator to decide", () => {
     const notice = buildSetupNotice({
-      health,
+      health: { ok: false, state: "unavailable", mode: "default", features: null },
+      access: null,
+      isAdmin: false,
+      appUrl: APP_URL,
+    });
+    expect(notice?.title).toBe("Cassini is not set up yet");
+    expect(notice?.summary).not.toContain("choose");
+    expect(notice?.summary).not.toContain("decide");
+    expect(notice?.shareLabel).toContain("exactly what is missing");
+  });
+
+  // The steps the operator still reports for an install that was never
+  // resolved. They are not a question the app asks any more, so they get the
+  // ordinary fault branch rather than a branch of their own.
+  it("treats a leftover undecided step as an ordinary fault", () => {
+    const notice = buildSetupNotice({
+      health: { ok: false, state: "unavailable", mode: "", features: null },
       access: {
         ok: false,
         state: "unavailable",
@@ -731,47 +773,17 @@ describe("buildSetupNotice when nobody has chosen a storage model", () => {
       isAdmin: true,
       appUrl: APP_URL,
     });
-    expect(notice?.steps).toHaveLength(1);
-    expect(notice?.steps[0].action).toBe("setup");
-    expect(notice?.steps[0].commands).toEqual([]);
-    expect(notice?.summary).toContain("will not choose for you");
+    expect(notice?.title).toBe("Cassini is not set up yet");
+    expect(notice?.summary).not.toContain("will not choose for you");
+    expect(notice?.summary).toContain("stopped at storage_mode_undecided");
+    // …and it blocks, like every other unreadable substrate: an unmade decision
+    // is no longer the carve-out that kept the list on screen.
+    expect(notice?.blocking).toBe(true);
   });
 
-  // The decision has to come BEFORE every "something is missing" branch: an
-  // instance with no chosen mode very often also lacks a prerequisite for one of
-  // the two models, and sending an administrator to install an app before they
-  // have said which model they want sends them after something the deps-free
-  // model does not need at all.
-  it("asks for the decision before naming a missing app", () => {
+  it("treats a leftover unconfirmed step the same way", () => {
     const notice = buildSetupNotice({
-      health,
-      access: {
-        ok: false,
-        state: "unavailable",
-        step: "storage_mode_undecided",
-        detail: "",
-        mode: "",
-        modeConfirmed: false,
-        prerequisites: [
-          { name: "groupfolders", state: "missing" },
-          { name: "group_everyone", state: "missing" },
-        ],
-      },
-      isAdmin: true,
-      appUrl: APP_URL,
-    });
-    expect(notice?.summary).not.toContain("two Nextcloud apps");
-    expect(notice?.steps.some((step) => step.commands.some((c) => c.includes("occ app:install")))).toBe(
-      false,
-    );
-  });
-
-  // A mode a previous build recorded on its own is a question, not a decision —
-  // and the copy has to say the recordings are unaffected, because "Cassini
-  // refuses to publish" reads as data loss otherwise.
-  it("treats a mode nobody confirmed as a question", () => {
-    const notice = buildSetupNotice({
-      health,
+      health: { ok: false, state: "unavailable", mode: "default", features: null },
       access: {
         ok: false,
         state: "unavailable",
@@ -784,49 +796,28 @@ describe("buildSetupNotice when nobody has chosen a storage model", () => {
       isAdmin: true,
       appUrl: APP_URL,
     });
-    expect(notice?.summary).toContain("nobody chose it");
-    expect(notice?.summary).toContain("still readable");
-    expect(notice?.steps[0].action).toBe("setup");
+    expect(notice?.summary).not.toContain("nobody chose it");
+    expect(notice?.summary).toContain("stopped at storage_mode_unconfirmed");
   });
 });
 
-// An unmade decision must not blank a working meeting list (D-708 review).
-//
-// Every deployed installation upgrades into this state, and in it the operator
-// has touched nothing: reads are exactly what they were. Standing in for the
-// list would blank a working archive on every existing instance to report
-// something that is not wrong with it.
-describe("buildSetupNotice does not blank the list for an unmade decision", () => {
-  const health = { ok: false, state: "unavailable", awaitingChoice: true };
-
-  it("is advisory for a non-administrator, whose archive still reads", () => {
-    const notice = buildSetupNotice({ health, access: null, isAdmin: false, appUrl: APP_URL });
-    expect(notice?.blocking).toBe(false);
+describe("buildSetupNotice blanks the list whenever the archive cannot be read", () => {
+  // The carve-out that kept the list on screen for an unmade decision is gone
+  // with the decision (D-756). What is left is the original rule: `unknown` is
+  // a restart that never re-ran setup and still reads, everything else does not.
+  it("keeps the list after a plain restart, for both audiences", () => {
+    const health = { ok: false, state: "unknown", mode: "default", features: null };
+    expect(buildSetupNotice({ health, access: null, isAdmin: false, appUrl: APP_URL })?.blocking).toBe(
+      false,
+    );
+    expect(buildSetupNotice({ health, access: null, isAdmin: true, appUrl: APP_URL })?.blocking).toBe(
+      false,
+    );
   });
 
-  it("is advisory for an administrator too", () => {
+  it("takes it away when the substrate is actually broken", () => {
     const notice = buildSetupNotice({
-      health,
-      access: {
-        ok: false,
-        state: "unavailable",
-        step: "storage_mode_undecided",
-        detail: "",
-        mode: "",
-        modeConfirmed: false,
-        prerequisites: [],
-      },
-      isAdmin: true,
-      appUrl: APP_URL,
-    });
-    expect(notice?.blocking).toBe(false);
-  });
-
-  // …and every OTHER unavailable state still blocks, because there the archive
-  // genuinely cannot be read.
-  it("still blocks when the substrate is actually broken", () => {
-    const notice = buildSetupNotice({
-      health: { ok: false, state: "unavailable", awaitingChoice: false },
+      health: { ok: false, state: "unavailable", mode: "", features: null },
       access: null,
       isAdmin: false,
       appUrl: APP_URL,

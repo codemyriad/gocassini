@@ -304,12 +304,17 @@ export interface StorageStatus {
   mode: StorageMode;
   mode_source: string;
   // mode_confirmed says a person (or a dev/CI deploy option) chose this mode,
-  // as opposed to a build recording one on its own. False is what puts the
-  // Setup tab into its wizard rather than its settled panel (D-708).
+  // as opposed to a build recording one on its own. Since D-756 a mode the
+  // operator resolved on enable counts as confirmed: "unconfirmed" is no
+  // longer a state the UI knows about.
   mode_confirmed: boolean;
-  // awaiting_choice says nothing is recorded at all. Not the same as
-  // `mode === ""`, which also happens before any preflight has run.
+  // awaiting_choice said nothing was recorded at all. It stays in the shape for
+  // compatibility and is always false after D-753; nothing branches on it.
   awaiting_choice: boolean;
+  // D-756: first_run is true until an administrator has acknowledged the
+  // first-run dialog. It is persisted per install by the operator, not per
+  // browser, so the second administrator to open Cassini does not see it again.
+  first_run: boolean;
   service_account: StorageServiceAccount;
   // migration_clean is false when a mode switch stopped before it finished
   // tidying up. The archive is complete at the mode's own root — that is the

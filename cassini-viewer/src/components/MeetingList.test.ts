@@ -145,3 +145,52 @@ describe("MeetingList insights", () => {
     );
   });
 });
+
+// The audience chip (D-756). It is the only permanent statement on the browse
+// surface of who can see these recordings, and it is the same for everybody:
+// an administrator and a non-administrator must never disagree about what is
+// true. D-670 exists because the previous behaviour was to say nothing.
+describe("MeetingList audience chip", () => {
+  it("names the two audiences in the words the whole product uses", () => {
+    expect(meetingListSource).toContain("Visible to anyone with a Nextcloud account");
+    expect(meetingListSource).toContain("Visible to meeting participants");
+    // Never the storage enum, and never "Everyone in Cassini": the viewing
+    // layer is handed an audience, not a mode.
+    expect(meetingListSource).not.toContain("access_controlled");
+    expect(meetingListSource).not.toContain("Everyone in Cassini");
+  });
+
+  it("explains each one in a sentence, in the chip's title", () => {
+    expect(meetingListSource).toContain(
+      'title="Anyone with an account on this Nextcloud can see every recording"',
+    );
+    expect(meetingListSource).toContain(
+      'title="Only the people in each call can see its recording"',
+    );
+  });
+
+  it("renders nothing at all when nobody said", () => {
+    // A standalone export has no operator to ask, and an operator too old to
+    // report the mode said nothing either. Absence is not an audience, and a
+    // chip is a claim about who can read a recording.
+    expect(meetingListSource).toContain(
+      'export let audience: "" | "everyone" | "participants" = "";',
+    );
+    expect(meetingListSource).toMatch(
+      /\{#if audience === "everyone"\}[\s\S]{0,400}\{:else if audience === "participants"\}[\s\S]{0,400}\{\/if\}/,
+    );
+  });
+
+  it("sits in the result line, and does not look like a narrowing", () => {
+    // The other chips on that line are active filters with a clear button.
+    // This one filters nothing, so it drops the primary fill that means "this
+    // list is incomplete".
+    const resultline = meetingListSource.slice(
+      meetingListSource.indexOf('<div class="resultline"'),
+      meetingListSource.indexOf("</header>"),
+    );
+    expect(resultline).toContain('class="chip audience"');
+    expect(resultline).toContain('class="chip audience limited"');
+    expect(meetingListSource).toContain(".chip.audience {");
+  });
+});

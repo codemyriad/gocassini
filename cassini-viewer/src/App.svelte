@@ -69,6 +69,14 @@
   // explicitly. It is threaded down to MeetingView for artifact loads.
   export let dataProvider: DataProvider = new StaticCatalogProvider();
 
+  // Who can see the recordings this viewer is listing (D-756). Part of the
+  // viewing layer's public surface because the chip that states it belongs
+  // beside the meeting count, and passed down rather than resolved here: the
+  // fact comes from the deployment's operator, which this layer cannot reach
+  // and a standalone export does not have. "" is "nobody said", and the chip
+  // renders nothing.
+  export let audience: "" | "everyone" | "participants" = "";
+
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
   let bundledMode = false;
@@ -867,6 +875,7 @@
       meetings={roomMeetings}
       types={browseTypes}
       totalCount={catalogMeetings.length}
+      {audience}
       insights={roomInsights}
       totalInsightCount={insights.length}
       {insightsOffered}
