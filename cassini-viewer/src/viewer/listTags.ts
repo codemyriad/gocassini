@@ -1,5 +1,5 @@
 import type { MeetingCatalogEntry } from "./catalog";
-import type { AnnotationRequest, MeetingTag } from "./annotations";
+import { AnnotationError, type AnnotationRequest, type MeetingTag, type TagVocabulary } from "./annotations";
 import type { TagColorId } from "./tagPalette";
 
 export type TagMatch = "any" | "all";
@@ -23,11 +23,7 @@ export function filterByTags<T extends { id: string }>(
   });
 }
 
-export function rowChips(tags: readonly MeetingTag[] = [], max = 3) {
-  return { shown: tags.slice(0, max), rest: tags.slice(max) };
-}
-
-export function hasWholeTag(byMeeting: MeetingTags, meetingId: string, tagId: string): boolean {
+function hasWholeTag(byMeeting: MeetingTags, meetingId: string, tagId: string): boolean {
   return byMeeting.get(meetingId)?.some(({ tag, whole }) => whole && tag.tagId === tagId) ?? false;
 }
 
@@ -90,4 +86,89 @@ export function bulkReport(remove: boolean, done: number, total: number): string
     return `${verb} ${total} ${total === 1 ? "meeting" : "meetings"}`;
   }
   return `${verb} ${done} of ${total} — ${total - done} failed`;
+}
+
+// Writes run in the order they were picked, never two at once and never dropped;
+// `drained` runs once the last of a burst settles.
+export function createWriteQueue(drained: () => void) {
+  let tail: Promise<void> = Promise.resolve();
+  let pending = 0;
+  return (write: () => Promise<void>): Promise<void> => {
+    pending += 1;
+    tail = tail
+      .then(write)
+      .catch(() => undefined)
+      .finally(() => {
+        pending -= 1;
+        if (pending === 0) {
+          drained();
+        }
+      });
+    return tail;
+  };
+}
+
+// 503 while the operator first indexes the archive, 429 once the caller's search budget is spent.
+export function tagRetryDelay(error: unknown, attempt: number): number | null {
+  if (!(error instanceof AnnotationError) || (error.status !== 503 && error.status !== 429)) {
+    return null;
+  }
+  return Math.min(2_000 * 2 ** attempt, 60_000);
+}
+
+// Each load spends one of the caller's searches, so only one is in flight. A
+// plain reload is dropped while one runs; reload(true), for after a write,
+// queues one more so the answer cannot predate the write. `loaded` gets null
+// when a load fails.
+export function createTagLoader(
+  load: () => Promise<TagVocabulary>,
+  loaded: (vocabulary: TagVocabulary | null) => void,
+) {
+  let running = false;
+  let again = false;
+  let stopped = false;
+  let attempt = 0;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+
+  async function reload(fresh = false): Promise<void> {
+    if (running) {
+      again ||= fresh;
+      return;
+    }
+    if (stopped) {
+      return;
+    }
+    clearTimeout(retry);
+    running = true;
+    try {
+      const vocabulary = await load();
+      attempt = 0;
+      if (!stopped) {
+        loaded(vocabulary);
+      }
+    } catch (error) {
+      const delay = tagRetryDelay(error, attempt);
+      attempt += 1;
+      if (!stopped) {
+        loaded(null);
+        if (delay !== null) {
+          retry = setTimeout(() => void reload(), delay);
+        }
+      }
+    } finally {
+      running = false;
+      if (again) {
+        again = false;
+        void reload();
+      }
+    }
+  }
+
+  return {
+    reload,
+    stop() {
+      stopped = true;
+      clearTimeout(retry);
+    },
+  };
 }

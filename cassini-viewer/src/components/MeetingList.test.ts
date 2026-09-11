@@ -205,3 +205,21 @@ describe("MeetingList tags", () => {
     expect(html({ meetings: [], tagFilterCount: 2, tags })).toContain("No meeting here has those tags.");
   });
 });
+
+describe("MeetingList tag filter over insights", () => {
+  it("says why a tag filter empties a list showing only insights", () => {
+    const body = render(MeetingList as never, {
+      props: {
+        meetings: [],
+        totalCount: 1,
+        insightsOffered: true,
+        insightsLoaded: true,
+        totalInsightCount: 2,
+        types: { meetings: false, insights: true },
+        tagFilterCount: 1,
+      },
+    } as never).body;
+    expect(body).toContain("Insights carry no tags, so a tag filter hides them.");
+    expect(body).not.toContain("No meeting here has");
+  });
+});

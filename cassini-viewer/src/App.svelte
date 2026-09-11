@@ -43,10 +43,10 @@
   import {
     applyEach,
     bulkReport,
+    createTagLoader,
+    createWriteQueue,
     filterByTags,
-    hasWholeTag,
     planBulkTag,
-    wholeTagRequest,
     wholeTagState,
     type MeetingTags,
     type TagMatch,
@@ -162,8 +162,6 @@
   // Tags (D-746). A failed reload keeps the last vocabulary that loaded.
   let tagVocabulary: TagVocabulary | null = null;
   let tagsFailed = false;
-  let tagLoadGeneration = 0;
-  let tagWriting = false;
   let selectedTagIds: string[] = [];
   let tagMatch: TagMatch = "any";
   let tagNotice = "";
@@ -329,46 +327,30 @@
     tagReport = "";
   }
 
-  async function refreshTags() {
-    const provider = dataProvider;
-    if (!provider.loadTagVocabulary) {
-      return;
-    }
-    const generation = ++tagLoadGeneration;
-    try {
-      const next = await provider.loadTagVocabulary();
-      if (!destroyed && generation === tagLoadGeneration) {
-        tagVocabulary = next;
-        tagsFailed = false;
-      }
-    } catch {
-      if (!destroyed && generation === tagLoadGeneration) {
-        tagsFailed = true;
-      }
+  const tagLoader = createTagLoader(
+    () => dataProvider.loadTagVocabulary!(),
+    (vocabulary) => {
+      tagVocabulary = vocabulary ?? tagVocabulary;
+      tagsFailed = !vocabulary;
+    },
+  );
+
+  // On open, on return to the tab and after writes; not on the catalog's timer.
+  function refreshTags(fresh = false) {
+    if (dataProvider.loadTagVocabulary) {
+      void tagLoader.reload(fresh);
     }
   }
 
-  // One write at a time: a second pick before the vocabulary reloads would toggle against stale state.
-  async function writeTags(write: (apply: NonNullable<DataProvider["applyAnnotationOps"]>) => Promise<void>) {
-    const provider = dataProvider;
-    if (!provider.applyAnnotationOps || tagWriting) {
-      return;
-    }
-    tagWriting = true;
-    try {
-      await write((entry, request) => provider.applyAnnotationOps!(entry, request));
-      await refreshTags();
-    } finally {
-      tagWriting = false;
-    }
-  }
+  const queueTagWrite = createWriteQueue(() => refreshTags(true));
 
+  // Both plan from what the picker showed when it was clicked.
   function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
-    const remove = "tagId" in pick && hasWholeTag(meetingTags, meeting.id, pick.tagId);
+    const { remove, request } = planBulkTag([meeting], meetingTags, pick);
     tagNotice = "";
-    void writeTags(async (apply) => {
+    void queueTagWrite(async () => {
       try {
-        await apply(meeting, wholeTagRequest(pick, remove));
+        await dataProvider.applyAnnotationOps!(meeting, request);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         tagNotice = `Could not ${remove ? "untag" : "tag"} “${meeting.title}”: ${reason}`;
@@ -378,8 +360,8 @@
 
   function tagSelection(pick: TagPick) {
     const plan = planBulkTag(pickedMeetings, meetingTags, pick);
-    void writeTags(async (apply) => {
-      const { done } = await applyEach(plan.targets, (entry) => apply(entry, plan.request));
+    void queueTagWrite(async () => {
+      const { done } = await applyEach(plan.targets, (entry) => dataProvider.applyAnnotationOps!(entry, plan.request));
       tagReport = bulkReport(plan.remove, done, plan.targets.length);
     });
   }
@@ -717,7 +699,15 @@
     if (document.visibilityState === "visible") {
       void refreshCatalog();
       void refreshInsights();
-      void refreshTags();
+    }
+  }
+
+  // Tags reload on return rather than on the timer: each load spends one of the
+  // caller's searches (annotations/tags shares search's rate budget).
+  function refreshOnReturn() {
+    refreshCatalogWhenVisible();
+    if (document.visibilityState === "visible") {
+      refreshTags();
     }
   }
 
@@ -854,8 +844,8 @@
       // entry appears without a hard browser reload. Gated on `embedded`, not
       // ncMode: an ExApp with Theming off still needs this, and it is the only
       // thing that recovers a catalog that was absent at mount (D-543).
-      window.addEventListener("focus", refreshCatalogWhenVisible);
-      document.addEventListener("visibilitychange", refreshCatalogWhenVisible);
+      window.addEventListener("focus", refreshOnReturn);
+      document.addEventListener("visibilitychange", refreshOnReturn);
       catalogRefreshTimer = window.setInterval(
         refreshCatalogWhenVisible,
         CATALOG_REFRESH_INTERVAL_MS,
@@ -875,7 +865,7 @@
     // Independent of the catalog load below, and started beside it: the two
     // lists come from two places and neither is a precondition for the other.
     void refreshInsights();
-    void refreshTags();
+    refreshTags();
 
     const initialMeetingId = currentViewerHash().meeting || null;
     const viewerConfig = window as typeof window & {
@@ -927,8 +917,9 @@
     destroyed = true;
     window.removeEventListener("popstate", handlePopState);
     window.removeEventListener("hashchange", handlePopState);
-    window.removeEventListener("focus", refreshCatalogWhenVisible);
-    document.removeEventListener("visibilitychange", refreshCatalogWhenVisible);
+    window.removeEventListener("focus", refreshOnReturn);
+    document.removeEventListener("visibilitychange", refreshOnReturn);
+    tagLoader.stop();
     if (catalogRefreshTimer !== undefined) {
       window.clearInterval(catalogRefreshTimer);
     }
@@ -1112,7 +1103,7 @@
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}
             applyAnnotations={annotationCalls.apply}
-            on:tagsChanged={refreshTags}
+            on:tagsChanged={() => refreshTags(true)}
           />
         {/if}
       </aside>
