@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { Check, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import PasswordReveal from "./PasswordReveal.svelte";
   import { loadConfig } from "./operator/config";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
+  import { accountSteps } from "./operator/firstRun";
   import {
     NcSetupError,
     isSetupAvailable,
     nextcloudUrl,
     resetServiceAccountPassword,
+    runSetupPlan,
   } from "./operator/ncSetup";
   import { runModeSetup } from "./operator/runModeSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
@@ -23,6 +25,7 @@
     modeSourceLabel,
     needsPrerequisites,
     occRecipe,
+    preparingTitle,
     requiredApps,
     storageCheckLine,
     storageLocation,
@@ -61,8 +64,10 @@
   // nothing reloads the page, so there is nothing for it to survive.
   let done = "";
 
-  // Which panel is open. Null is the settled section.
-  let flow: "prereqs" | "confirm" | "switching" | null = null;
+  // Which panel is open. Null is the settled section. "preparing" is the
+  // browser's own half of a switch and "switching" the operator's: they are two
+  // states because only the second one survives a closed tab.
+  let flow: "prereqs" | "confirm" | "preparing" | "switching" | null = null;
   // target is the mode being switched TO. Null while a switch that this page
   // did not start is being watched, which is the one case where nothing on the
   // wire says where it is going.
@@ -70,6 +75,7 @@
 
   let switching = false;
   let installing = false;
+  let creatingAccount = false;
   let resuming = false;
   let resetting = false;
   // progress is runModeSetup's own step message, while the browser is building
@@ -82,10 +88,18 @@
   // moment the app can tell a recording that predates it from one that does
   // not: the operator keeps no per-recording audience to read back later.
   let switched = false;
-  // credential is the service account's password, when this session just minted
-  // one. It exists nowhere else, at either end, and there is no second chance
-  // at it — so everything else is disabled until it is acknowledged.
+  // credential is the service account's password, when the administrator asked
+  // for one through "Set a password". It exists nowhere else, at either end,
+  // and there is no second chance at it — so everything else is disabled until
+  // it is acknowledged. Nothing else in this section mints one: an account
+  // created here signs in through AppAPI's act-as-user header and needs none.
   let credential: { user: string; password: string } | null = null;
+
+  // The first button inside each inline alertdialog. The panels render further
+  // down the page than the control that opened them, so an alertdialog nothing
+  // focuses is one a keyboard reader is told about and cannot reach.
+  let prereqsFocus: HTMLButtonElement | null = null;
+  let confirmFocus: HTMLButtonElement | null = null;
 
   // The full report. The operator's own /status, which is a sibling of every
   // route this client calls.
@@ -152,7 +166,15 @@
     target = mode;
     // The checklist is only for the two apps, and only while one is missing.
     // Everything else this mode needs is done during the switch.
-    flow = needsPrerequisites(status, mode) ? "prereqs" : "confirm";
+    void openPanel(needsPrerequisites(status, mode) ? "prereqs" : "confirm");
+  }
+
+  // openPanel shows one of the two alertdialogs and puts the focus on its first
+  // button, which is Cancel in both: the way out, not the way on.
+  async function openPanel(next: "prereqs" | "confirm"): Promise<void> {
+    flow = next;
+    await tick();
+    (next === "prereqs" ? prereqsFocus : confirmFocus)?.focus();
   }
 
   function cancel(): void {
@@ -179,7 +201,7 @@
       status = await operatorClient.recheckStorage();
       notifySetupChanged();
       if (target !== null && !needsPrerequisites(status, target)) {
-        flow = "confirm";
+        void openPanel("confirm");
       }
     } catch (error) {
       actionError = asMessage(error);
@@ -188,14 +210,51 @@
     }
   }
 
+  // createAccount makes the `cassini` account from this section, for the install
+  // whose administrator left the first-run dialog by its other button. Without
+  // it the only remaining way to create the account is a switch to Meeting
+  // participants, which is a different decision entirely.
+  //
+  // The same two steps the dialog runs, from the same plan (firstRun.ts), and
+  // the password runSetupPlan mints is dropped on the floor for the same
+  // reason: the operator signs in as the account through AppAPI's act-as-user
+  // header, so a credential shown once here would be made out of a value
+  // nothing uses. "Set a password" below is the row for the rare day somebody
+  // needs to sign in as it themselves.
+  async function createAccount(): Promise<void> {
+    if (!operatorClient || busy || accountPlan.length === 0) {
+      return;
+    }
+    creatingAccount = true;
+    actionError = "";
+    progress = "";
+    try {
+      await runSetupPlan(accountPlan, {
+        onProgress: ({ step, index, total }) => (progress = `${index + 1}/${total} — ${step.title}`),
+      });
+      status = await operatorClient.recheckStorage();
+      notifySetupChanged();
+    } catch (error) {
+      actionError = asMessage(error);
+    } finally {
+      creatingAccount = false;
+      progress = "";
+    }
+  }
+
   // confirmSwitch is the only thing that moves recordings, and it is reachable
   // only from the confirmation panel.
   //
   // It builds what the mode still needs first — the Team folder, its mappings,
   // the ACL, the manager — through runModeSetup, which is the sequence the
-  // Setup tab used and which keeps the apps-first ordering that is easy to get
-  // wrong. Then one PUT, which blocks for the length of the move while the poll
-  // below reads its progress.
+  // settings section shares with the first-run dialog and which keeps the
+  // apps-first ordering that is easy to get wrong. Then one PUT, which blocks
+  // for the length of the move while the poll below reads its progress.
+  //
+  // The two halves are two panels, in that order, because only the second one
+  // survives a closed tab: runModeSetup writes to Nextcloud FROM THIS BROWSER,
+  // so a page that offered "you can close this page" while it ran would be
+  // inviting an administrator to abort the setup and get no switch at all.
   async function confirmSwitch(): Promise<void> {
     if (!operatorClient || target === null || switching) {
       return;
@@ -205,9 +264,8 @@
     actionError = "";
     done = "";
     migration = null;
-    flow = "switching";
-    stopPoll?.();
-    stopPoll = pollMigration(null);
+    progress = "";
+    flow = "preparing";
     try {
       const option = status?.modes.find((row) => row.mode === mode) ?? null;
       if (option && !option.available && option.setup.length > 0) {
@@ -215,18 +273,21 @@
           progress = message;
         });
         status = result.status;
-        if (result.createdAccount && result.password) {
-          credential = { user: result.createdAccount, password: result.password };
-        }
         if (!result.finished) {
           // An app install the operator could not perform is still outstanding,
           // and everything left lives inside those apps. Back to the checklist,
           // which is where the two buttons for that are.
           notifySetupChanged();
-          flow = "prereqs";
+          void openPanel("prereqs");
           return;
         }
       }
+      // From here the work is the operator's and it survives a closed tab, so
+      // this is where the switching panel and its poll start.
+      progress = "";
+      flow = "switching";
+      stopPoll?.();
+      stopPoll = pollMigration(null);
       // Sent without the overwrite answer the client can carry. The operator
       // still refuses a switch that finds artefacts at the destination, and
       // that guard stays; this section does not offer a way past it, because a
@@ -257,6 +318,10 @@
       stopPoll?.();
       stopPoll = null;
       switching = false;
+      // Whatever happened, no switch is running as far as this page knows. A
+      // stale count left here would go on disabling the whole section, because
+      // a running switch is what `busy` is.
+      migration = null;
       progress = "";
     }
   }
@@ -412,7 +477,22 @@
   // Whether this page can act as the administrator at all. False on the
   // standalone build, which has neither Nextcloud's scripts nor its session.
   $: setupAvailable = isSetupAvailable();
-  $: busy = switching || installing || resuming || resetting || credential !== null;
+  $: accountPlan = accountSteps(status);
+  // The account the first-run dialog would have made. `known` is the operator
+  // saying which account it wants; `exists` is whether Nextcloud has it.
+  $: needsAccount =
+    status !== null && status.service_account.known && !status.service_account.exists;
+  // busy is every reason to touch nothing, and a switch RUNNING is one of them
+  // whether or not this page started it: a second PUT, or finish_migration, in
+  // the middle of a move is the one thing this section must not make reachable.
+  $: busy =
+    switching ||
+    installing ||
+    creatingAccount ||
+    resuming ||
+    resetting ||
+    credential !== null ||
+    migration !== null;
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
@@ -490,8 +570,36 @@
         </div>
       {/if}
 
+      {#if needsAccount}
+        <!-- The account the first-run dialog would have made, for the install
+             whose administrator left that dialog by its other button. It
+             applies in both modes: nothing is recorded at all without it. -->
+        <div class="flex flex-wrap items-center gap-3 rounded-box border border-warning bg-warning/10 p-3">
+          <p class="text-sm">Cassini needs a Nextcloud account to keep recordings in.</p>
+          <button
+            class="btn btn-sm btn-warning"
+            type="button"
+            disabled={busy || !setupAvailable || accountPlan.length === 0}
+            on:click={createAccount}
+          >
+            {#if creatingAccount}
+              <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              Creating…
+            {:else}
+              Create the account
+            {/if}
+          </button>
+          {#if creatingAccount && progress}
+            <p class="text-xs break-words text-base-content/70" aria-live="polite">{progress}</p>
+          {/if}
+        </div>
+      {/if}
+
       <!-- The two audiences. One sentence each about who can see, the current
-           one marked, and choosing the other one starts the switch. -->
+           one marked, and choosing the other one starts the switch.
+           The current option is not disabled: a checked radio that cannot be
+           focused is a radiogroup a keyboard reader cannot read, and choose()
+           already no-ops on the mode in force. -->
       <div class="grid gap-3 lg:grid-cols-2" role="radiogroup" aria-label="Who can see recordings">
         {#each options as option (option.mode)}
           <button
@@ -501,7 +609,7 @@
             type="button"
             role="radio"
             aria-checked={option.current}
-            disabled={busy || option.current}
+            disabled={busy}
             on:click={() => choose(option.mode)}
           >
             <span class="flex items-center gap-2">
@@ -557,15 +665,14 @@
             Everyone Group adds a group called <b>Everyone</b> to the whole of Nextcloud. It shows up
             when sharing files in other apps too, not only in Cassini.
           </p>
-          <!-- One sentence, not a checklist: these are Cassini's own steps, it
-               performs them during the switch, and an administrator is not
-               being asked to do any of them. -->
-          <p class="text-xs break-words text-base-content/60">
-            Cassini does the rest itself while the switch runs: the Team folder, the group mappings,
-            advanced permissions, and the manager that sets each recording's audience.
-          </p>
           <div class="flex flex-wrap items-center gap-2">
-            <button class="btn btn-sm btn-ghost" type="button" disabled={installing} on:click={cancel}>
+            <button
+              class="btn btn-sm btn-ghost"
+              type="button"
+              disabled={installing}
+              bind:this={prereqsFocus}
+              on:click={cancel}
+            >
               Cancel
             </button>
             <a class="btn btn-sm btn-outline" href={nextcloudUrl("/settings/apps")} target="_top">
@@ -602,7 +709,14 @@
           {/each}
           <p class="text-xs break-words text-base-content/70">{confirmation.pause}</p>
           <div class="flex flex-wrap items-center gap-2">
-            <button class="btn btn-sm btn-ghost" type="button" on:click={cancel}>Cancel</button>
+            <button
+              class="btn btn-sm btn-ghost"
+              type="button"
+              bind:this={confirmFocus}
+              on:click={cancel}
+            >
+              Cancel
+            </button>
             <button
               class="btn btn-sm {confirmation.danger ? 'btn-error' : 'btn-warning'}"
               type="button"
@@ -612,6 +726,24 @@
               {confirmation.confirmLabel}
             </button>
           </div>
+        </div>
+      {/if}
+
+      {#if flow === "preparing"}
+        <!-- The browser's own half. No permission to close the page: this runs
+             HERE, and closing the tab aborts it. -->
+        <div
+          class="grid gap-2 rounded-box border border-base-300 bg-base-200 p-3"
+          role="status"
+          aria-live="polite"
+        >
+          <p class="flex items-center gap-2 text-sm font-semibold">
+            <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+            {preparingTitle(target)}
+          </p>
+          {#if progress}
+            <p class="text-xs break-words text-base-content/70">{progress}</p>
+          {/if}
         </div>
       {/if}
 
@@ -647,9 +779,6 @@
               </li>
             {/each}
           </ul>
-          {#if progress}
-            <p class="text-xs break-words text-base-content/60">{progress}</p>
-          {/if}
         </div>
       {/if}
 
@@ -676,6 +805,7 @@
             <dd class="text-sm">
               <span class={status.ok ? "text-success" : "text-warning"}>{checkLine}</span>
               {#if reportUrl}
+                <span class="text-base-content/40">·</span>
                 <a
                   class="link link-hover text-base-content/70"
                   href={reportUrl}

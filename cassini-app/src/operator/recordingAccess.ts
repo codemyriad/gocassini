@@ -78,8 +78,12 @@ export function recordingCount(status: StorageStatus | null): RecordingCount {
 // The widening direction names it, because everything in both roots ends up
 // readable by every account — not only what the mode in force can see today.
 export function totalRecordingCount(status: StorageStatus | null): RecordingCount {
-  const rows = status?.modes.filter((option) => option.archive.probed) ?? [];
-  if (rows.length === 0) {
+  const rows = status?.modes ?? [];
+  // Every row, or no number at all: a total taken from the one root somebody
+  // could list is not a total. The danger button would say 134 while 136 are
+  // about to become visible, which is the one number in this section that must
+  // not be short.
+  if (rows.length === 0 || rows.some((option) => !option.archive.probed)) {
     return { known: false, count: 0 };
   }
   return { known: true, count: rows.reduce((sum, option) => sum + option.archive.meetings, 0) };
@@ -110,6 +114,15 @@ export function existingRecordingsLine(status: StorageStatus | null, switched = 
       return "Only the people in each call can see the recordings you already have.";
     }
     return "Anyone with a Nextcloud account can see the recordings you already have.";
+  }
+  if (count === 0) {
+    // "You have 0 recordings" is a sentence about an absence. The audience is
+    // still worth saying, in the tense that fits: it is what the next recording
+    // gets.
+    if (mode === PARTICIPANTS) {
+      return "No recordings yet. Only the people in each call will be able to see them.";
+    }
+    return "No recordings yet. Anyone with a Nextcloud account will be able to see them.";
   }
   const have = `You have ${plural(count, "recording")}`;
   if (mode === PARTICIPANTS && switched) {
@@ -273,6 +286,18 @@ export function switchSteps(migration: StorageMigration | null): SwitchStep[] {
         : "",
     state: index < current ? "done" : index === current ? "now" : "pending",
   }));
+}
+
+// preparingTitle is the browser's own half of a switch, which happens BEFORE
+// the operator is asked to move anything: the Team folder and its mappings, or
+// the service account. It is a separate line from switchingTitle because
+// closing the tab here aborts it, and the page must not be offering to be
+// closed yet.
+export function preparingTitle(target: AccessMode | null): string {
+  if (target === PARTICIPANTS) {
+    return "Preparing the Team folder…";
+  }
+  return "Preparing the cassini account…";
 }
 
 // switchingTitle names where the switch is going. Null is the switch this page

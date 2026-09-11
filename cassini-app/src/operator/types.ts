@@ -203,7 +203,8 @@ export interface LLMModel {
 
 // StorageMode mirrors the operator's storage_settings.json vocabulary (D-616).
 // "" is a third answer, not a missing one: it means no preflight has resolved a
-// mode yet, which the Setup tab has to be able to tell apart from "default".
+// mode yet, which the settings section has to be able to tell apart from
+// "default".
 export type StorageMode = "" | "default" | "access_controlled";
 
 // StorageModeOption is one of the two models as GET <basePath>/storage
@@ -225,9 +226,9 @@ export interface StorageModeOption {
   // that is already available.
   setup: StorageSetupStep[];
   // root is where this model keeps recordings, and archive is what is in it
-  // right now. Both are reported for BOTH models, always — the question the
-  // setup wizard is built around is answered by what is already in each of them
-  // (D-708).
+  // right now. Both are reported for BOTH models, always — the count the
+  // settings section states before a switch is taken from what is already in
+  // each of them (D-708).
   root: string;
   archive: StorageArchiveFacts;
 }
@@ -335,6 +336,12 @@ export interface StorageStatus {
   // preview is present only on the response to a preview request. Nothing has
   // happened when it is set.
   preview: StorageTransitionPreview | null;
+  // first_run is true until an administrator acknowledges the first-run dialog.
+  // It is per INSTALL, in the operator's settings store, not per browser: a
+  // second administrator opening Cassini must not be asked again (D-757).
+  first_run: boolean;
+  // migration is a mode switch that is RUNNING, and null at every other moment.
+  migration: StorageMigration | null;
 }
 
 // StorageTransitionPreview is what a mode switch WOULD do, before it does any
@@ -402,11 +409,6 @@ export interface InsightWorkflow {
 }
 
 // --- D-757: what GET /storage gained for "Who can see recordings" -------------
-//
-// Declared as a separate block, merged into the interface above rather than
-// edited into it, so that two branches adding fields to the same response do
-// not collide on the same lines. Same file, same interface: TypeScript merges
-// these declarations, and nothing downstream can tell the difference.
 
 // StorageMigration is a mode switch that is RUNNING. Null at every other
 // moment. The phases are the operator's own order — copy, verify, flip the
@@ -418,12 +420,4 @@ export interface StorageMigration {
   phase: "copying" | "verifying" | "switching" | "clearing";
   done: number;
   total: number;
-}
-
-export interface StorageStatus {
-  // first_run is true until an administrator acknowledges the first-run dialog.
-  // It is per INSTALL, in the operator's settings store, not per browser: a
-  // second administrator opening Cassini must not be asked again.
-  first_run: boolean;
-  migration: StorageMigration | null;
 }

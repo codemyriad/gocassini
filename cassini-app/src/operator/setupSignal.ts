@@ -3,19 +3,19 @@
 //
 // App.svelte reads its setup health ONCE, in onMount, and nothing writes it
 // again. Everything that could change that health — building the substrate,
-// installing the apps, switching the storage mode — happens down inside
-// StoragePanel, which refreshes its own `/storage` view and nothing else. So an
-// administrator who fixed their instance on the Setup tab went back to Browse
+// installing the apps, switching the storage mode — happens down inside the
+// settings section, which refreshes its own `/storage` view and nothing else.
+// So an administrator who fixed their instance in Operator went back to Browse
 // and was still told Cassini was not configured.
 //
 //	App.svelte ──onMount──▶ fetchSetupHealth ──▶ setupNotice ──▶ banner / notice
 //	     ▲                                            ▲
 //	     │                                            └── nothing wrote this again
-//	     └── onSetupChanged ◀── notifySetupChanged() ◀── StoragePanel, after a
-//	                                                     successful action
+//	     └── onSetupChanged ◀── notifySetupChanged() ◀── RecordingAccessPanel,
+//	                                                     after a successful action
 //
 // A module-level listener registry rather than a Svelte store, and rather than
-// prop-drilling a callback through Setup.svelte: the two ends are three
+// prop-drilling a callback through Operator.svelte: the two ends are three
 // components apart and have nothing else to say to each other, so a store would
 // be a shared value nobody reads and a prop would be a parameter every
 // intermediate component carries without using. This is one function each way,

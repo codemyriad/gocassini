@@ -11,6 +11,7 @@ import {
   modeSourceLabel,
   needsPrerequisites,
   occRecipe,
+  preparingTitle,
   recordingCount,
   requiredApps,
   storageCheckLine,
@@ -178,6 +179,38 @@ describe("the existing-recordings line", () => {
     );
   });
 
+  // "You have 0 recordings" is a sentence about an absence. The audience is
+  // still worth saying, in the tense that fits.
+  it("says there are none yet rather than counting nothing", () => {
+    const empty = statusOf({
+      modes: [
+        modeOption({ mode: "default", active: true, archive: { probed: true, present: true, meetings: 0, catalog: true } }),
+        modeOption({ mode: "access_controlled" }),
+      ],
+    });
+    expect(existingRecordingsLine(empty)).toBe(
+      "No recordings yet. Anyone with a Nextcloud account will be able to see them.",
+    );
+    const participants = statusOf({
+      mode: "access_controlled",
+      modes: [
+        modeOption({ mode: "default" }),
+        modeOption({
+          mode: "access_controlled",
+          active: true,
+          archive: { probed: true, present: false, meetings: 0, catalog: false },
+        }),
+      ],
+    });
+    expect(existingRecordingsLine(participants)).toBe(
+      "No recordings yet. Only the people in each call will be able to see them.",
+    );
+    // Including on the way out of a switch that moved nothing.
+    expect(existingRecordingsLine(participants, true)).toBe(
+      "No recordings yet. Only the people in each call will be able to see them.",
+    );
+  });
+
   // A rule nothing has resolved has no audience to name, and naming the
   // fallback would assert it as though it were in force.
   it("says nothing while no mode is resolved", () => {
@@ -298,6 +331,28 @@ describe("confirming a switch", () => {
     });
   });
 
+  // The widening button says the number that is about to become visible, so a
+  // total taken from the one root somebody could list is not a total: it would
+  // say 134 while 136 were about to be widened.
+  it("refuses a total while either root is unprobed", () => {
+    const half = statusOf({
+      mode: "access_controlled",
+      modes: [
+        modeOption({ mode: "default", archive: { probed: false, present: false, meetings: 0, catalog: false } }),
+        modeOption({
+          mode: "access_controlled",
+          active: true,
+          archive: { probed: true, present: true, meetings: 134, catalog: true },
+        }),
+      ],
+    });
+    expect(totalRecordingCount(half)).toEqual({ known: false, count: 0 });
+    expect(switchConfirmation(half, "default").confirmLabel).toBe(
+      "Make every recording visible to everyone",
+    );
+    expect(totalRecordingCount(null)).toEqual({ known: false, count: 0 });
+  });
+
   it("counts one existing recording in the singular", () => {
     const one = statusOf({
       modes: [
@@ -371,6 +426,15 @@ describe("while the switch runs", () => {
     expect(switchingLead({ active: true, phase: "copying", done: 0, total: 2 })).toBe(
       "Moving 2 recordings. You can close this page; the switch carries on.",
     );
+  });
+
+  // The browser's half comes first and does NOT survive a closed tab, so it is
+  // a separate line from the one that says the switch carries on.
+  it("names what this browser is building, before the operator moves anything", () => {
+    expect(preparingTitle("access_controlled")).toBe("Preparing the Team folder…");
+    expect(preparingTitle("default")).toBe("Preparing the cassini account…");
+    expect(preparingTitle(null)).toBe("Preparing the cassini account…");
+    expect(preparingTitle("access_controlled")).not.toContain("close this page");
   });
 
   it("names where the switch is going, and stays quiet when it cannot", () => {
