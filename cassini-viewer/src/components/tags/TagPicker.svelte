@@ -17,6 +17,8 @@
   export let mixed: readonly string[] = [];
   // Focus returns here on Esc, and a click on it does not count as outside.
   export let anchor: HTMLElement | null = null;
+  // Off to choose among existing tags only, as a merge target does.
+  export let creatable = true;
 
   const dispatch = createEventDispatcher<{
     pick: { tagId: string; label: string } | { label: string; color: TagColorId; icon: "" };
@@ -32,7 +34,7 @@
 
   $: matches = matchTags(tags, query);
   $: draft = query.trim();
-  $: canCreate = draft !== "" && !findByLabel(tags, draft);
+  $: canCreate = creatable && draft !== "" && !findByLabel(tags, draft);
   $: count = matches.length + (canCreate ? 1 : 0);
   $: if (active >= count) active = Math.max(0, count - 1);
   $: newColor = chosenColor ?? leastUsedColor(tags);
@@ -93,8 +95,8 @@
     type="text"
     maxlength="64"
     autocomplete="off"
-    placeholder="Find or create a tag"
-    aria-label="Find or create a tag"
+    placeholder={creatable ? "Find or create a tag" : "Find a tag"}
+    aria-label={creatable ? "Find or create a tag" : "Find a tag"}
     role="combobox"
     aria-expanded="true"
     aria-controls={`${uid}-list`}
