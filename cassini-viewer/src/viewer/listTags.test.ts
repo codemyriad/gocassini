@@ -1,13 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { tagsByMeeting, type TagVocabulary, type VocabularyTag } from "./annotations";
+import { AnnotationError, tagsByMeeting, type TagVocabulary, type VocabularyTag } from "./annotations";
 import { filterMeetingCatalogEntries, type MeetingCatalogEntry } from "./catalog";
 import {
   applyEach,
   bulkReport,
+  createTagLoader,
+  createWriteQueue,
   filterByTags,
   planBulkTag,
-  rowChips,
+  tagRetryDelay,
   wholeTagRequest,
   wholeTagState,
 } from "./listTags";
@@ -66,16 +68,6 @@ describe("filterByTags", () => {
   });
 });
 
-describe("rowChips", () => {
-  it("shows three and counts the rest", () => {
-    const four = ["a", "b", "c", "d"].map((id) => ({ tag: tag(id, id), whole: true, stretches: 0 }));
-    const { shown, rest } = rowChips(four);
-    expect(shown).toHaveLength(3);
-    expect(rest.map(({ tag }) => tag.label)).toEqual(["d"]);
-    expect(rowChips(undefined).shown).toEqual([]);
-  });
-});
-
 describe("whole-meeting tag requests", () => {
   it("marks an existing tag by id, unmarks it by tag, and colours a new one in the same request", () => {
     expect(wholeTagRequest({ tagId: "t_h", label: "hiring" }, false)).toEqual({
@@ -126,5 +118,80 @@ describe("tagging several meetings", () => {
     expect(result).toEqual({ done: 4, failed: 1 });
     expect(bulkReport(false, 4, 5)).toBe("Tagged 4 of 5 — 1 failed");
     expect(bulkReport(true, 2, 2)).toBe("Untagged 2 meetings");
+  });
+});
+
+describe("writing tags", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("queues a pick made while a write is in flight, keeps going past a failure, and reloads once", async () => {
+    const drained = vi.fn();
+    const enqueue = createWriteQueue(drained);
+    const order: string[] = [];
+    let finishFirst!: () => void;
+    void enqueue(() => new Promise<void>((resolve) => (order.push("first"), (finishFirst = resolve))));
+    void enqueue(async () => {
+      order.push("second");
+      throw new Error("busy");
+    });
+    const last = enqueue(async () => void order.push("third"));
+    await settle();
+    expect(order).toEqual(["first"]);
+    finishFirst();
+    await last;
+    expect(order).toEqual(["first", "second", "third"]);
+    expect(drained).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("loading the vocabulary", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const deferred = () => {
+    let resolve!: (value: TagVocabulary) => void;
+    const promise = new Promise<TagVocabulary>((done) => (resolve = done));
+    return { promise, resolve };
+  };
+
+  it("sends one request at a time, and one more after a write so the answer cannot predate it", async () => {
+    const first = deferred();
+    const load = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(vocabulary);
+    const loaded = vi.fn();
+    const loader = createTagLoader(load, loaded);
+    void loader.reload();
+    void loader.reload();
+    expect(load).toHaveBeenCalledTimes(1);
+    void loader.reload(true);
+    first.resolve(vocabulary);
+    await settle();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(loaded).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries while the index builds or the budget is spent, backing off, and gives up on anything else", async () => {
+    expect([0, 1, 2, 10].map((attempt) => tagRetryDelay(new AnnotationError(503, ""), attempt))).toEqual([
+      2_000, 4_000, 8_000, 60_000,
+    ]);
+    expect(tagRetryDelay(new AnnotationError(429, ""), 0)).toBe(2_000);
+    expect(tagRetryDelay(new AnnotationError(502, ""), 0)).toBeNull();
+    expect(tagRetryDelay(new Error("offline"), 0)).toBeNull();
+
+    vi.useFakeTimers();
+    const load = vi.fn().mockRejectedValueOnce(new AnnotationError(503, "")).mockResolvedValue(vocabulary);
+    const loaded = vi.fn();
+    const loader = createTagLoader(load, loaded);
+    await loader.reload();
+    expect(loaded).toHaveBeenLastCalledWith(null);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(loaded).toHaveBeenLastCalledWith(vocabulary);
+
+    const stopped = createTagLoader(vi.fn().mockRejectedValue(new AnnotationError(503, "")), vi.fn());
+    await stopped.reload();
+    stopped.stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

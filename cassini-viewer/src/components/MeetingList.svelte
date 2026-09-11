@@ -2,7 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import { Sun, Moon, Search, PanelLeft, Tag, X } from "@lucide/svelte";
   import type { VocabularyTag } from "../viewer/annotations";
-  import { rowChips, wholeTagState, type MeetingTags, type TagPick } from "../viewer/listTags";
+  import { wholeTagState, type MeetingTags, type TagPick } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
   import TagChip from "./tags/TagChip.svelte";
   import TagPicker from "./tags/TagPicker.svelte";
@@ -305,7 +305,9 @@
       <div class="list-empty">
         <strong>Nothing matches</strong>
         <span>
-          {#if tagFilterCount > 0}
+          {#if tagFilterCount > 0 && insightsOnly}
+            Insights carry no tags, so a tag filter hides them.
+          {:else if tagFilterCount > 0}
             No meeting here has {tagFilterCount === 1 ? "that tag" : "those tags"}{trimmedFilter
               ? " and matches that search"
               : ""}.
@@ -357,7 +359,7 @@
             />
           {:else}
             {@const meeting = item.meeting}
-            {@const chips = rowChips(meetingTags.get(meeting.id))}
+            {@const rowTags = meetingTags.get(meeting.id) ?? []}
             <!-- The row is a container, not a control, so that picking and
                  opening can sit side by side: a checkbox cannot live inside a
                  button, and demoting the whole row to a click-handling div would
@@ -397,9 +399,9 @@
                       <span class="dot" aria-hidden="true"></span>
                       <span>{meeting.speakerCount} speakers</span>
                     {/if}
-                    {#if chips.shown.length > 0}
+                    {#if rowTags.length > 0}
                       <span class="row-tags">
-                        {#each chips.shown as { tag, whole, stretches } (tag.tagId)}
+                        {#each rowTags.slice(0, 3) as { tag, whole, stretches } (tag.tagId)}
                           <TagChip
                             label={tag.label}
                             color={colorFor(tag)}
@@ -408,9 +410,9 @@
                             count={stretches}
                           />
                         {/each}
-                        {#if chips.rest.length > 0}
-                          <span class="row-tags-more" title={chips.rest.map(({ tag }) => tag.label).join(", ")}
-                            >+{chips.rest.length}</span
+                        {#if rowTags.length > 3}
+                          <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}
+                            >+{rowTags.length - 3}</span
                           >
                         {/if}
                       </span>

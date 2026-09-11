@@ -119,14 +119,13 @@
         {/each}
       </div>
       {#if selectedTagIds.length >= 2}
-        <div class="join mx-4 mt-1.5" role="radiogroup" aria-label="Show meetings with">
+        <div class="join mx-4 mt-1.5" role="group" aria-label="Show meetings with">
           {#each TAG_MATCHES as mode}
             <button
               type="button"
-              role="radio"
               class="btn btn-xs join-item flex-1"
               class:btn-active={tagMatch === mode}
-              aria-checked={tagMatch === mode}
+              aria-pressed={tagMatch === mode}
               on:click={() => dispatch("tagMatch", mode)}>{mode} of them</button
             >
           {/each}

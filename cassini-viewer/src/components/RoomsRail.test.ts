@@ -78,8 +78,8 @@ describe("RoomsRail tag filter", () => {
   });
 
   it("offers any or all only once two tags are ticked", () => {
-    expect(html({ selectedTagIds: ["hiring"] })).not.toContain('role="radiogroup"');
-    expect(html({ selectedTagIds: ["hiring", "budget"] })).toMatch(/aria-checked="true"[^>]*>any of them/);
+    expect(html({ selectedTagIds: ["hiring"] })).not.toContain("of them");
+    expect(html({ selectedTagIds: ["hiring", "budget"] })).toMatch(/aria-pressed="true"[^>]*>any of them/);
   });
 
   it("says quietly when tags are unavailable", () => {
