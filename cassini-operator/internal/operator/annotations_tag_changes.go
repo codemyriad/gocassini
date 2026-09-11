@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -54,7 +56,6 @@ type tagJob struct {
 	Failed        []tagJobFailure `json:"failed"`
 	StartedAtUTC  string          `json:"startedAtUtc"`
 	FinishedAtUTC string          `json:"finishedAtUtc,omitempty"`
-	done          chan struct{}   // closed when the job ends
 }
 
 // tagJobs is each caller's current or last job, one running per caller.
@@ -94,7 +95,6 @@ func (j *tagJobs) start(job *tagJob) bool {
 	if j.last == nil {
 		j.last = map[string]*tagJob{}
 	}
-	job.done = make(chan struct{})
 	j.last[job.Actor] = job
 	return true
 }
@@ -112,7 +112,6 @@ func (j *tagJobs) finish(job *tagJob, state string) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	job.State, job.FinishedAtUTC = state, time.Now().UTC().Format(time.RFC3339)
-	close(job.done)
 }
 
 // tagScope is what a change may touch: the caller's readable meetings.
@@ -171,6 +170,10 @@ func (s *annotationService) changeTag(w http.ResponseWriter, r *http.Request, ca
 		return
 	}
 	if !readTagChangeBody(w, r, body) {
+		return
+	}
+	if action == "merge" && merge.Into == "" {
+		writeJSONError(w, http.StatusBadRequest, "into is required")
 		return
 	}
 	if refusal := checkTagEdit(edit); refusal != "" {
@@ -309,10 +312,8 @@ func (s *annotationService) startTagJob(w http.ResponseWriter, r *http.Request, 
 // runTagJob applies op to each recording in turn, as the job's actor. A
 // failure is recorded and the job goes on.
 func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.RawMessage, titles map[string]string) {
+	// The process's context, not the request's: the job outlives the POST.
 	base := s.rt.ctx
-	if base == nil {
-		base = context.Background()
-	}
 	request := annotateWriteRequest{Ops: []json.RawMessage{op}, ActorKind: "person", OperationID: job.ID}
 	_, root := ncArchiveReadIdentity(job.Actor)
 	state := tagJobFinished
@@ -396,12 +397,24 @@ func findTag(tags []tagVocabularyEntry, tagID string) (tagVocabularyEntry, bool)
 	return tagVocabularyEntry{}, false
 }
 
-// readTagChangeBody decodes strictly: a field a route does not know is
-// refused, not ignored.
+// readTagChangeBody decodes one JSON object strictly: a field a route does not
+// know, or anything after the object, is refused. No body is an empty object.
 func readTagChangeBody(w http.ResponseWriter, r *http.Request, into any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxTagChangeBodyBytes))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTagChangeBodyBytes))
+	var tooLarge *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooLarge):
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "the request body is too large")
+		return false
+	case err != nil:
+		writeJSONError(w, http.StatusBadRequest, "the request body could not be read")
+		return false
+	case len(bytes.TrimSpace(raw)) == 0:
+		return true
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(into); err != nil {
+	if decoder.Decode(into) != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		writeJSONError(w, http.StatusBadRequest, "the body must be a JSON object with only the documented fields")
 		return false
 	}

@@ -210,6 +210,10 @@ func (s *annotationIndexSpy) ResolveLabel(context.Context, string, []string) (st
 	return "", false, nil
 }
 
+func (s *annotationIndexSpy) TagVisible(context.Context, string, []string) (bool, error) {
+	return true, nil
+}
+
 func (s *annotationIndexSpy) Namespace(context.Context) (string, error) { return "", nil }
 
 // newCarryingSink is newNCSink with the CLI wired in (nil: none configured) and

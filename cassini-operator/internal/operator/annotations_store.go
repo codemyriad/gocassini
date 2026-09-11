@@ -696,6 +696,11 @@ SELECT DISTINCT t.opus_name
 	return names, rows.Err()
 }
 
+func (s *annotationStore) TagVisible(ctx context.Context, tagID string, visible []string) (bool, error) {
+	names, err := s.tagCarriers(ctx, tagID, visible)
+	return len(names) > 0, err
+}
+
 // labelOwner is a tag other than except that one of visible labels label.
 func (s *annotationStore) labelOwner(ctx context.Context, label, except string, visible []string) (string, bool, error) {
 	var tagID string
