@@ -501,18 +501,19 @@ mode keeps recordings at — and `migration_clean`.
 
 | `mode_source` | Where the mode came from | `mode_confirmed` |
 |---|---|---|
-| `user` | An administrator chose it in the Setup tab | yes |
+| `user` | An administrator chose it in Operator › Settings › Who can see recordings | yes |
 | `env` | `CASSINI_STORAGE_MODE` declared it, and the instance matched | yes |
-| `migrating` | A switch was interrupted before it finished; this is where the recordings are, not what anybody wanted | no |
-| `default` | A fallback an older version recorded on its own. Nothing writes this any more | no |
-| `derived` | Inferred from the instance by a build older still | no |
-| `configured` | A settings file whose provenance cannot be established | no |
+| `resolved_on_enable` | Cassini worked it out on the enabled edge, from the recordings this install already had | yes |
+| `migrating` | A switch was interrupted before it finished; this is where the recordings are, not what anybody wanted | yes |
+| `default` | A fallback an older version recorded on its own. Nothing writes this any more | yes |
+| `derived` | Inferred from the instance by a build older still | yes |
+| `configured` | A settings file whose provenance cannot be established | yes |
 
-An **unconfirmed** mode governs — the archive really is at that root and reads
-work — and refuses to publish, because the two models differ in who can read a
-recording and nobody agreed to this one. Earlier releases reported every one of
-these as `configured`, so a fallback and an administrator's click were
-indistinguishable; that is what `mode_confirmed` exists to end.
+`mode_confirmed` is true whenever a mode is recorded at all, whatever recorded
+it. Only an install with no mode at all is unconfirmed, and it publishes nothing
+until the next enabled edge resolves one. The provenance above is kept because
+an administrator reading `/storage` should be able to tell a click from a
+deploy option from an answer Cassini worked out, but nothing branches on it.
 
 A `false` `migration_clean` is not a health failure and does not make `/status`
 answer 503: the archive is complete at `root`, and the only consequence is a

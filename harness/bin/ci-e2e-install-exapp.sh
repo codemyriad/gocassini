@@ -32,6 +32,12 @@
 #                      an upgrading install is never widened to "everyone with a
 #                      Nextcloud account" by an update.
 #
+# What the resolve leg does NOT cover: the service account being CREATED on the
+# enabled edge (D-754) and the mode being resolved on that same edge. bootstrap.sh
+# creates the `cassini` account before Cassini has ever seen this Nextcloud, so
+# every leg here starts with one and the create is a no-op. The unit tests own
+# that path (TestPreflightResolvesTheModeAfterCreatingTheServiceAccount).
+#
 # What this script does NOT cover: the Talk recording path itself. A refused
 # recording is a property of the substrate verdict this script asserts
 # (recordingRefusal reads it), but the POST that starts a recording needs a
@@ -123,12 +129,18 @@ seed_team_folder_archive() {
   NEXTCLOUD_DATA_DIR="$(occ config:system:get datadirectory | tr -d '\r')"
   [[ -n "$NEXTCLOUD_DATA_DIR" ]] || fail "could not read Nextcloud's datadirectory"
   SEEDED_ARCHIVE_ROOT="$NEXTCLOUD_DATA_DIR/__groupfolders/$folder_id/files/$SEED_RECORDINGS_PATH"
+  # The whole group folder, because `mkdir -p` below runs as ROOT and creates
+  # every missing level of that path. Chowning only the leaf leaves an
+  # intermediate `files/` owned by root, which the web server then cannot write
+  # into: the seeding succeeds and the next upload fails, several hundred lines
+  # later, as something else.
+  local owned_root="$NEXTCLOUD_DATA_DIR/__groupfolders/$folder_id"
 
   # The $VARs below are expanded INSIDE the container, by the shell this
   # `compose exec -e` hands them to. Expanding them out here would put a host
   # path into a container command.
   # shellcheck disable=SC2016
-  compose exec -T -e SEED_ROOT="$SEEDED_ARCHIVE_ROOT" -e SEED_IDS="${SEED_MEETINGS[*]}" nextcloud sh -c '
+  compose exec -T -e SEED_ROOT="$SEEDED_ARCHIVE_ROOT" -e SEED_OWNED_ROOT="$owned_root" -e SEED_IDS="${SEED_MEETINGS[*]}" nextcloud sh -c '
     set -e
     mkdir -p "$SEED_ROOT/meetings"
     entries=""
@@ -137,7 +149,7 @@ seed_team_folder_archive() {
       entries="${entries:+$entries,}{\"id\":\"$id\",\"title\":\"$id\",\"audioPath\":\"meetings/$id.opus\"}"
     done
     printf "{\"version\":\"cassini.viewer.catalog.v1\",\"meetings\":[%s]}" "$entries" > "$SEED_ROOT/catalog.json"
-    chown -R www-data:www-data "$SEED_ROOT"
+    chown -R www-data:www-data "$SEED_OWNED_ROOT"
   ' >/dev/null || fail "could not seed the Cassini Team folder"
   occ groupfolders:scan "$folder_id" >/dev/null || fail "could not scan the seeded Team folder"
 
