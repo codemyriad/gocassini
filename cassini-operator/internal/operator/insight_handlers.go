@@ -497,10 +497,11 @@ func (s *insightService) read(w http.ResponseWriter, r *http.Request, caller, id
 // The attempt is claimed HERE, inside the request, because BeginAttempt is the
 // lock: taking it in the background goroutine would make the 409 a guess about a
 // race rather than the outcome of it. Nothing about the request is re-read — the
-// workflow, the meetings and the question are fixed — and the endpoint is
-// re-resolved from current settings by the run path, which is the whole point of
-// the button: "no provider configured" and "401" are exactly the failures a
-// replay of the stored provider could never fix.
+// workflow, the meetings, the question and the endpoint the asker CHOSE are
+// fixed. The run path replays that choice (RequestedProvider) and falls back to
+// the deployment's configured endpoint only where the request named nothing or
+// named an endpoint since removed (see endpointFor), which is what keeps
+// "configure an endpoint, then retry" a fix for "no provider configured".
 func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, id string) {
 	existing, ok := s.ownRun(w, r, caller, id)
 	if !ok {
