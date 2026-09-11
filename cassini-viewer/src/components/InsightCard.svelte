@@ -23,8 +23,13 @@
   export let sourceCount = 0;
   // Whether this insight is the one the sheet is holding.
   export let selected = false;
+  // Whether a failed run can be retried from the card (D-749). Only where the
+  // provider offers it; the shell owns the request.
+  export let canRetry = false;
+  export let retrying = false;
+  export let retryError = "";
 
-  const dispatch = createEventDispatcher<{ open: void }>();
+  const dispatch = createEventDispatcher<{ open: void; retry: void }>();
 
   $: headline = insightHeadline(insight);
   // A finished run says what it is by having a document to open, so the badge
@@ -32,6 +37,7 @@
   // readable answer. Without it a queued run is a card with nothing behind it,
   // and a failed one is indistinguishable from a good one.
   $: pending = insight.status !== "succeeded";
+  $: failed = insight.status === "failed";
 </script>
 
 <div class="insight-row">
@@ -60,13 +66,58 @@
       {/if}
     </span>
   </button>
+  <!-- Beside the card rather than inside it: the card is a button, and a
+       button cannot hold another. A failed run is recoverable from the list it
+       is seen in, not only from the panel that started it (D-749). -->
+  {#if failed && canRetry}
+    <div class="insight-retry">
+      <button type="button" disabled={retrying} on:click={() => dispatch("retry")}>
+        {retrying ? "Retrying…" : "Retry"}
+      </button>
+      {#if retryError}
+        <span class="insight-retry-error" role="status">{retryError}</span>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
   /* Inset from the list's full-bleed rows, so the card reads as an object
      sitting in the stream rather than another row of it. */
   .insight-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     padding: 6px 20px;
+  }
+
+  .insight-retry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-left: 12px;
+    font-size: 0.75rem;
+  }
+  .insight-retry button {
+    padding: 2px 10px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 550;
+    background: transparent;
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    color: var(--color-base-content);
+  }
+  .insight-retry button:hover:not(:disabled) {
+    background-color: var(--color-base-200);
+  }
+  .insight-retry button:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  .insight-retry-error {
+    color: var(--color-error);
   }
 
   /* Secondary, not primary: the open row and the active-narrowing chips are

@@ -6,6 +6,7 @@
   import { formatMeetingDateShort, type MeetingCatalogEntry } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
   import {
+    describeInsightFailure,
     formatInsightCreated,
     formatInsightStatus,
     insightHeadline,
@@ -38,16 +39,27 @@
   // False where the build can list insights but cannot fetch one's document.
   // Then the panel says so, rather than rendering an answer-shaped blank.
   export let canLoadDocument = true;
+  // Whether a failed run can be retried from here (D-749): true where the
+  // provider offers it, and only then is the control rendered. The shell owns
+  // the request; this only asks.
+  export let canRetry = false;
+  export let retrying = false;
+  export let retryError = "";
 
   const dispatch = createEventDispatcher<{
     close: void;
     openSource: MeetingCatalogEntry;
+    retry: void;
   }>();
 
   $: question = insight.question?.trim() ?? "";
   $: headline = insightHeadline(insight);
   $: pending = insight.status === "queued" || insight.status === "running";
   $: failed = insight.status === "failed";
+  // Never `insight.error` raw: it starts with the operator's reason token,
+  // which is for software. The sentences are the viewing layer's, shared with
+  // the app's Generate card.
+  $: failure = failed ? describeInsightFailure(insight) : null;
 
   // The mock files an insight under one room. A real one can span them —
   // spanning rooms is the whole premise of asking one question of several
@@ -159,10 +171,30 @@
         This run is {formatInsightStatus(insight.status).toLowerCase()}. The answer appears
         here when it finishes — the list keeps checking.
       </p>
-    {:else if failed}
-      <p class="ins-note ins-note-error" role="status">
-        This run failed{insight.error ? `: ${insight.error}` : "."}
-      </p>
+    {:else if failure}
+      <div class="ins-note ins-note-error" role="status">
+        <p class="ins-failure-title">{failure.title}</p>
+        <p>{failure.summary}</p>
+        {#if failure.detail}
+          <p class="ins-failure-detail">The operator reported: {failure.detail}</p>
+        {/if}
+        {#if canRetry}
+          <!-- Retry from where the failure is seen, not only from the panel
+               that started the run — which is gone by the time most people
+               notice (D-749). A retry re-runs the request: the endpoint this
+               insight asked for, falling back to the deployment's own only if
+               that endpoint has since been removed. -->
+          <div class="ins-retry">
+            <button type="button" disabled={retrying} on:click={() => dispatch("retry")}>
+              {retrying ? "Retrying…" : "Retry"}
+            </button>
+            <span>Runs again on the endpoint this insight asked for.</span>
+          </div>
+          {#if retryError}
+            <p class="ins-failure-detail">{retryError}</p>
+          {/if}
+        {/if}
+      </div>
     {:else if !canLoadDocument}
       <p class="ins-note" role="status">
         This build cannot fetch the document — the run and what it read are all it can show.
@@ -399,6 +431,46 @@
   .ins-note-error {
     background-color: color-mix(in oklch, var(--color-error) 18%, transparent);
     color: var(--color-base-content);
+  }
+  .ins-note-error p {
+    margin: 0;
+  }
+  .ins-note-error p + p {
+    margin-top: 0.375rem;
+  }
+  .ins-failure-title {
+    font-weight: 600;
+  }
+  .ins-failure-detail {
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+    overflow-wrap: anywhere;
+  }
+  .ins-retry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.625rem;
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .ins-retry button {
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 550;
+    background-color: var(--color-base-100);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    color: var(--color-base-content);
+  }
+  .ins-retry button:hover:not(:disabled) {
+    background-color: var(--color-base-200);
+  }
+  .ins-retry button:disabled {
+    cursor: default;
+    opacity: 0.6;
   }
 
   .ins-prov {

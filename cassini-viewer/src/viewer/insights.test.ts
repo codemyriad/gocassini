@@ -4,6 +4,8 @@ import { NO_ROOM_KEY, UNDATED_MONTH_LABEL } from "./rooms";
 import {
   ALL_BROWSE_TYPES,
   buildBrowseFeed,
+  classifyInsightError,
+  describeInsightFailure,
   filterInsights,
   filterInsightsByRoom,
   formatInsightStatus,
@@ -413,5 +415,51 @@ describe("stripInsightFrontMatter", () => {
   it("survives CRLF and a byte-order mark", () => {
     const crlf = "﻿---\r\nversion: \"v1\"\r\n---\r\n\r\nThe answer.\r\n";
     expect(stripInsightFrontMatter(crlf).trim()).toBe("The answer.");
+  });
+});
+
+describe("what a failed run says (D-749)", () => {
+  function failed(error: string): InsightRecord {
+    return {
+      id: "ins_0123456789abcdef",
+      status: "failed",
+      createdBy: "alice",
+      attemptNumber: 1,
+      workflowId: "summarise",
+      workflowVersion: "v0",
+      workflowSha256: "abc",
+      meetingIds: ["m1"],
+      roomIds: ["r1"],
+      question: "",
+      provider: "hosted",
+      model: "",
+      documentPath: "",
+      error,
+      createdAt: "2026-09-03T10:00:00Z",
+      updatedAt: "2026-09-03T10:00:00Z",
+    };
+  }
+
+  it("classifies on the operator's reason token, not on its prose", () => {
+    expect(classifyInsightError("no-provider: nothing configured")).toBe("no-provider");
+    expect(classifyInsightError("provider-refused: HTTP 401")).toBe("provider-refused");
+    expect(classifyInsightError("model-failed: context deadline exceeded")).toBe("model-failed");
+    expect(classifyInsightError("bad-request: unknown workflow")).toBe("bad-request");
+    expect(classifyInsightError("something else entirely")).toBe("unknown");
+    expect(classifyInsightError("")).toBe("unknown");
+  });
+
+  it("never repeats the token, and keeps what the operator said after it", () => {
+    const said = describeInsightFailure(failed("provider-refused: HTTP 401 Unauthorized"));
+    expect(said.title).toBe("The endpoint rejected the request");
+    expect(said.detail).toBe("HTTP 401 Unauthorized");
+    expect(`${said.title} ${said.summary} ${said.detail}`).not.toContain("provider-refused");
+  });
+
+  it("has a sentence for a failure the operator did not classify", () => {
+    const said = describeInsightFailure(failed("the disk was full"));
+    expect(said.title).toBe("The insight failed");
+    expect(said.detail).toBe("the disk was full");
+    expect(describeInsightFailure(failed("")).detail).toBe("");
   });
 });
