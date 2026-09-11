@@ -82,9 +82,14 @@ func writeFrontmatter(buf *strings.Builder, record Record) {
 	fmt.Fprintf(buf, "  version: %s\n", yamlString(record.Workflow.Version))
 	fmt.Fprintf(buf, "  sha256: %s\n", yamlString(record.Workflow.SHA256))
 
+	// The kind and the model, never the base URL. The document lands in the
+	// requester's own files and travels from there, and the endpoint's address
+	// is administrator-only everywhere else in the product — the USER routes
+	// serve an id and a name and nothing more. A document that named the host
+	// would hand every reader what the settings surface withholds (D-740). The
+	// JSON record, which stays on the operator's side, keeps it.
 	fmt.Fprint(buf, "provider:\n")
 	fmt.Fprintf(buf, "  kind: %s\n", yamlString(record.Provider.Kind))
-	fmt.Fprintf(buf, "  baseUrl: %s\n", yamlString(record.Provider.BaseURL))
 	fmt.Fprintf(buf, "  model: %s\n", yamlString(record.Provider.Model))
 
 	fmt.Fprint(buf, "context:\n")

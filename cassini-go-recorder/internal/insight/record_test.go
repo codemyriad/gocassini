@@ -31,7 +31,9 @@ func succeededArtifact() Artifact {
 }
 
 // The document has to be able to answer, on its own, which meetings, which
-// prompt version and which model produced it.
+// prompt version and which model produced it — and never which host: the
+// endpoint's address is administrator-only everywhere else, and this file is
+// the one artifact that leaves with the person who asked.
 func TestRenderMarkdownWritesTheProvenance(t *testing.T) {
 	document, err := RenderMarkdown(succeededArtifact())
 	if err != nil {
@@ -50,7 +52,6 @@ workflow:
   sha256: "abc123"
 provider:
   kind: "openai-compatible"
-  baseUrl: "http://model.invalid/v1"
   model: "qwen2.5:7b"
 context:
   version: "cassini.meetings.context.v1"
@@ -72,6 +73,9 @@ They agreed.
 `
 	if document != want {
 		t.Errorf("document =\n%s\nwant\n%s", document, want)
+	}
+	if strings.Contains(document, "model.invalid") {
+		t.Errorf("the document names the endpoint's host:\n%s", document)
 	}
 }
 
