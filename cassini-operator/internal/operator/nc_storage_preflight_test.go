@@ -210,6 +210,16 @@ func mappedCassiniFolder() *gfFolder {
 	}
 }
 
+// setDeliveredRecordings answers the probe's "has this install published
+// anything" question with a fixed number, so a test can be an install with a
+// past or an install without one. A non-nil err is a count nobody could take,
+// which is a different answer from zero.
+func setDeliveredRecordings(t *testing.T, count int, err error) {
+	t.Helper()
+	setDeliveredRecordingsCounter(func(context.Context) (int, error) { return count, err })
+	t.Cleanup(func() { setDeliveredRecordingsCounter(nil) })
+}
+
 // runStoragePreflight wires the singletons a preflight touches to throwaway
 // state and returns where the mode was persisted.
 func runStoragePreflight(t *testing.T, mock *storageMock, logs io.Writer) (cfg ExAppConfig, settingsPath string) {
@@ -480,8 +490,36 @@ func TestStorageModeFromProbeReadsTheArchiveRatherThanThePath(t *testing.T) {
 		// The Team-folder app is off, so an access-controlled archive and an
 		// empty install answer identically: the mount is gone and both roots
 		// 404. One of those two answers is an archive, and `default` would
-		// strand it and widen every recording made afterwards.
-		name:            "neither root present while the Team-folder app is off",
+		// strand it and widen every recording made afterwards. This operator
+		// has published before, so it is the install with a past.
+		name:            "the Team-folder app is off and this install has delivered recordings",
+		probe:           probed(ncStorageProbe{DeliveredRecordingsProbed: true, DeliveredRecordings: 3}),
+		wantOK:          false,
+		wantWhyMentions: ncRecordingsMount,
+	}, {
+		// The same shape, with the local history that tells it apart: this
+		// operator has never delivered a recording, so there is no archive for
+		// an open mode to strand. A deps-free Nextcloud is the ordinary fresh
+		// install (AIO ships without `groupfolders`) and must not be held up.
+		name:            "the Team-folder app is off and nothing has ever been delivered",
+		probe:           probed(ncStorageProbe{DeliveredRecordingsProbed: true}),
+		wantOK:          true,
+		wantAccessCtrl:  false,
+		wantWhyMentions: ncAppGroupFolders,
+	}, {
+		// The other tie-breaker, on its own: Cassini made the service account on
+		// this very edge. Every recording in either model is written and read as
+		// that account, so one that did not exist a minute ago owns nothing, and
+		// the count is not even needed.
+		name:            "the Team-folder app is off and the account was created on this edge",
+		probe:           probed(ncStorageProbe{ServiceAccountCreated: true}),
+		wantOK:          true,
+		wantAccessCtrl:  false,
+		wantWhyMentions: ncRecordingsOwner,
+	}, {
+		// Neither tie-breaker available: the count could not be taken, and an
+		// absent answer is not a zero. Fail closed.
+		name:            "the Team-folder app is off and the delivery count is unknown",
 		probe:           probed(ncStorageProbe{}),
 		wantOK:          false,
 		wantWhyMentions: ncAppGroupFolders,
@@ -537,6 +575,88 @@ func TestPreflightResolvesTheModeAfterCreatingTheServiceAccount(t *testing.T) {
 	defer cleanup()
 	if status := cfg.storageStatus(rt, nil); !status.FirstRun {
 		t.Fatal("first_run is false on an install nobody has acknowledged")
+	}
+}
+
+// What the count above is counting. A delivery is a publish that finished and
+// succeeded: a build that completed without publishing is not one, and neither
+// is a publish that failed. Getting that wrong in either direction decides who
+// can read an organisation's meetings on a deps-free install.
+func TestCountDeliveredRecordingsCountsOnlyDeliveries(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	if n, err := store.CountDeliveredRecordings(ctx); err != nil || n != 0 {
+		t.Fatalf("CountDeliveredRecordings() on a fresh store = (%d, %v), want (0, nil)", n, err)
+	}
+
+	insertJob(t, store.db, "delivered", "2026-06-12T10:00:00Z")
+	if err := store.MarkPublishSucceeded(ctx, "delivered", "/site/m.opus", "/site/m.opus", nowUTCString()); err != nil {
+		t.Fatalf("MarkPublishSucceeded() error = %v", err)
+	}
+	insertJob(t, store.db, "built-only", "2026-06-12T11:00:00Z")
+	if err := store.MarkBuildSucceeded(ctx, "built-only", "/work/m.meeting", "/work/m.meeting", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildSucceeded() error = %v", err)
+	}
+	insertJob(t, store.db, "publish-failed", "2026-06-12T12:00:00Z")
+	if err := store.MarkPublishFailed(ctx, "publish-failed", "", "", "the sink refused it", nowUTCString()); err != nil {
+		t.Fatalf("MarkPublishFailed() error = %v", err)
+	}
+
+	if n, err := store.CountDeliveredRecordings(ctx); err != nil || n != 1 {
+		t.Fatalf("CountDeliveredRecordings() = (%d, %v), want (1, nil): only the delivered job counts", n, err)
+	}
+}
+
+// The deps-free fresh install, end to end: a Nextcloud with neither native app
+// (which is what Nextcloud AIO ships), the service account already made by hand,
+// and nothing in either root. The Team folder is invisible there whether or not
+// one exists, so the resolution leans on this operator's own delivery history —
+// and the two answers it can give must lead to different places.
+func TestPreflightResolvesADepsFreeInstallFromItsOwnDeliveryHistory(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		delivered  int
+		wantMode   string
+		wantSource string
+	}{
+		{name: "nothing ever delivered", delivered: 0, wantMode: storageModeDefault, wantSource: storageModeSourceResolved},
+		{name: "recordings delivered before", delivered: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setDeliveredRecordings(t, tc.delivered, nil)
+			mock := &storageMock{apps: []string{}, serviceAccount: true}
+			_, path := runStoragePreflight(t, mock, io.Discard)
+
+			snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+			if snap.Mode != tc.wantMode || snap.ModeSource != tc.wantSource {
+				t.Fatalf("mode = (%q, %q), want (%q, %q)", snap.Mode, snap.ModeSource, tc.wantMode, tc.wantSource)
+			}
+			settings := readPersistedMode(t, path)
+			if tc.wantMode == "" {
+				if settings.Configured() {
+					t.Fatalf("%s recorded %+v for an install whose Team folder could be hiding an archive", storageSettingsFileName, settings)
+				}
+				if snap.Step != storageStepModeUnresolved {
+					t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUnresolved)
+				}
+				// Degraded, never unavailable: a call is not spent over this.
+				if refusal := ncAccessSubstrate.recordingRefusal(); refusal != "" {
+					t.Fatalf("a recording was refused while the mode was unresolved: %q", refusal)
+				}
+				return
+			}
+			if !settings.Configured() || settings.Mode() != tc.wantMode || settings.Source != tc.wantSource {
+				t.Fatalf("%s = %+v, want mode %q from %q", storageSettingsFileName, settings, tc.wantMode, tc.wantSource)
+			}
+			if !snap.OK {
+				t.Fatalf("substrate = %+v, want a usable deps-free install", snap)
+			}
+		})
 	}
 }
 

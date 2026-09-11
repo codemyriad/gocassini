@@ -273,6 +273,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer store.Close()
+	// The enabled edge asks this when Nextcloud cannot be believed about what
+	// the install already holds: an operator that has published nothing has no
+	// archive an open storage mode could strand (D-753, storageModeFromProbe).
+	// Registered here because the preflight runs from an ExAppConfig, which has
+	// no Store in it.
+	setDeliveredRecordingsCounter(store.CountDeliveredRecordings)
+	defer setDeliveredRecordingsCounter(nil)
 	interruptedAt := nowUTCString()
 	interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
 	if err != nil {

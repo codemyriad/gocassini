@@ -149,13 +149,19 @@ func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *h
 	}
 
 	if probe.ServiceAccount {
-		// The account exists NOW and did not a moment ago, so the probe carries
-		// no archive facts: both roots are read as this account, and the probe
-		// skips them when there is none. Without this the mode cannot be
-		// resolved on the very edge that made the install able to record
-		// (ArchivesComparable() stays false, storageModeFromProbe answers
-		// storage_mode_unresolved), and a fresh install publishes nothing until
-		// somebody enables the app a second time.
+		// The account exists NOW and did not when this function was entered.
+		// Recorded, because it is the one fact that proves an install is fresh
+		// no matter what Nextcloud is showing: both models write and read every
+		// recording as this account, so one that did not exist a minute ago
+		// owns nothing anywhere (storageModeFromProbe).
+		probe.ServiceAccountCreated = true
+		// And the probe carries no archive facts at all: both roots are read as
+		// this account, and the probe skips them when there is none. Without
+		// this the mode cannot be resolved on the very edge that made the
+		// install able to record (ArchivesComparable() stays false,
+		// storageModeFromProbe answers storage_mode_unresolved), and a fresh
+		// install publishes nothing until somebody enables the app a second
+		// time.
 		c.probeArchives(ctx, client, probe, logger)
 	}
 

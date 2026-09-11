@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // One read-only look at what the Nextcloud side of this install actually is
@@ -63,6 +64,12 @@ type ncStorageProbe struct {
 	// mode-dependent gates, and "Cassini asked and Nextcloud refused" is a
 	// different thing for an administrator to read than "it is not there".
 	ServiceAccountAttempt string
+	// ServiceAccountCreated is true when this run's attempt actually made the
+	// account (D-754). It is the strongest evidence of a FRESH install there is:
+	// every recording in either model is written and read as that account, so an
+	// account that did not exist a moment ago cannot own an archive, and nothing
+	// this instance is hiding can be one.
+	ServiceAccountCreated bool
 	// OwnerGroup is true when the narrow `cassini` group exists. Tracked apart
 	// from the account because the two can genuinely come apart — an
 	// administrator who ran `occ user:add` without `--group` has one and not the
@@ -131,6 +138,19 @@ type ncStorageProbe struct {
 	// Empty is only meaningful when both roots were probed; ArchivesComparable
 	// is the guard.
 	DuplicateNames []string
+
+	// DeliveredRecordings is the only fact here that does not come from
+	// Nextcloud: how many recordings this operator's OWN job database says it
+	// has published (Store.CountDeliveredRecordings). DeliveredRecordingsProbed
+	// says the count was taken, drawing the same "answered" distinction
+	// FolderProbed does — a count nobody could take is not a zero.
+	//
+	// It answers "has this install been recording here before" for the one
+	// resolution arm where Nextcloud cannot be believed: with `groupfolders`
+	// disabled a Team-folder archive is invisible, and an operator that has
+	// delivered nothing has no archive that could be hiding there.
+	DeliveredRecordings       int
+	DeliveredRecordingsProbed bool
 }
 
 // ncArchiveFacts is one recordings root, as the service account sees it.
@@ -270,6 +290,44 @@ const (
 	storageStepModeMismatch = "mode_mismatch"
 )
 
+// ncDeliveredRecordings is how the probe asks the operator's own job database
+// how much it has published, without a Store to ask.
+//
+// A package-level hook for the same reason ncStorage and ncAccessSubstrate are
+// package-level: the enabled edge runs from an ExAppConfig, which carries no
+// Store and no Runtime, and threading one through every probe to answer a
+// single yes/no question would be a larger change than the question is worth.
+// Run() registers the store's counter once; a process that never opened one
+// (and every test that does not care) leaves it nil, which reads as "could not
+// count" rather than as zero.
+var ncDeliveredRecordings struct {
+	mu    sync.RWMutex
+	count func(context.Context) (int, error)
+}
+
+// setDeliveredRecordingsCounter registers the job database's counter. Passing
+// nil unregisters it, which is what a test restoring the previous value does.
+func setDeliveredRecordingsCounter(count func(context.Context) (int, error)) {
+	ncDeliveredRecordings.mu.Lock()
+	ncDeliveredRecordings.count = count
+	ncDeliveredRecordings.mu.Unlock()
+}
+
+// countDeliveredRecordings answers the count and whether anybody could take it.
+func countDeliveredRecordings(ctx context.Context) (int, bool, error) {
+	ncDeliveredRecordings.mu.RLock()
+	count := ncDeliveredRecordings.count
+	ncDeliveredRecordings.mu.RUnlock()
+	if count == nil {
+		return 0, false, nil
+	}
+	n, err := count(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	return n, true, nil
+}
+
 // probeNCStorage answers "what is this instance set up for", acting as the
 // resolved administrator for the OCS/Group-Folders reads and as the service
 // account for the one WebDAV read.
@@ -369,6 +427,15 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 	probe.DefaultArchive.Root = ncDefaultRecordingsRoot
 	if probe.ServiceAccount {
 		c.probeArchives(ctx, client, &probe, logger)
+	}
+
+	// This operator's own history, which Nextcloud cannot be asked for and which
+	// no amount of it being switched off can change.
+	if count, probed, err := countDeliveredRecordings(ctx); err != nil {
+		logger.Printf("nc storage: count delivered recordings: %v", err)
+	} else {
+		probe.DeliveredRecordings = count
+		probe.DeliveredRecordingsProbed = probed
 	}
 	return probe, nil
 }
@@ -551,10 +618,16 @@ const storageStepModeUnresolved = "storage_mode_unresolved"
 //	                                       carries it into the split root.
 //	recordings in the default root only    default. Adopted.
 //	nothing in either root                 default. An empty archive starts open.
-//	nothing in either root, and the        nothing. An unmounted Team folder
-//	`groupfolders` app is not enabled      cannot be read, so "empty" and
-//	                                       "invisible" are the same answer, and
-//	                                       one of them is an archive.
+//	nothing in either root, the            default. The account was made a moment
+//	`groupfolders` app is not enabled,     ago, or this operator has published
+//	and either the service account was     nothing ever: either way there is no
+//	made on this edge or no recording      archive an open mode could strand.
+//	has ever been delivered
+//	nothing in either root, the            nothing. An unmounted Team folder
+//	`groupfolders` app is not enabled,     cannot be read, so "empty" and
+//	and this install HAS delivered         "invisible" are the same answer, and
+//	recordings                             on an install with a past one of them
+//	                                       is an archive.
 //	no service account                     default. Every recording is written and
 //	                                       read as that account, so an install
 //	                                       without one has no archive to keep.
@@ -608,13 +681,36 @@ func storageModeFromProbe(p ncStorageProbe) (accessControlled, ok bool, why stri
 		// archive is stranded the moment the app comes back. An `occ upgrade`
 		// window, or an app left disabled by a Nextcloud major, is long enough.
 		//
-		// An install with no service account is not held up by this: the arm
-		// above answers for it. Nor is one that has recorded anything under the
-		// default model, whose own root is present. What waits is the one shape
-		// that cannot be told apart from an upgrade, and it is told what to do.
+		// Nextcloud cannot tell the two apart while the app is off. Two local
+		// facts can, and either is enough — a deps-free install is the ordinary
+		// fresh install (Nextcloud AIO ships without `groupfolders`), so this
+		// must not hold one up:
+		if p.ServiceAccountCreated {
+			// Cassini made the account on THIS edge. Every recording in either
+			// model is written and read as it, so a minute ago there was no
+			// identity that could own an archive here. There is nothing to hide.
+			return false, true, fmt.Sprintf(
+				"the %q account was created on this enabled edge, so this install has no archive yet",
+				ncRecordingsOwner)
+		}
+		if p.DeliveredRecordingsProbed && p.DeliveredRecordings == 0 {
+			// This operator has never published a recording. Job rows are never
+			// deleted, so that count is the install's whole history, and an
+			// install with no history has nothing an open mode could strand.
+			return false, true, fmt.Sprintf(
+				"the %q app is not enabled and nothing is at %s or %s, and this install has delivered no recordings",
+				ncAppGroupFolders, ncACLRecordingsRoot, ncDefaultRecordingsRoot)
+		}
+		// It has delivered recordings, or nobody could say. Either way this is
+		// not demonstrably a fresh install, and the one place its archive could
+		// be is the Team folder nothing here can currently see.
+		history := fmt.Sprintf("this install has already delivered %d recording(s)", p.DeliveredRecordings)
+		if !p.DeliveredRecordingsProbed {
+			history = "Cassini could not count what this install has already delivered"
+		}
 		return false, false, fmt.Sprintf(
-			"the %q app is not enabled, so a %q Team folder would be invisible here, and neither %s nor %s is present",
-			ncAppGroupFolders, ncRecordingsMount, ncACLRecordingsRoot, ncDefaultRecordingsRoot)
+			"the %q app is not enabled, so a %q Team folder would be invisible here, neither %s nor %s is present, and %s",
+			ncAppGroupFolders, ncRecordingsMount, ncACLRecordingsRoot, ncDefaultRecordingsRoot, history)
 	case p.DefaultArchive.Populated():
 		return false, true, fmt.Sprintf(
 			"%d recording(s) are in %s", p.DefaultArchive.Meetings(), ncDefaultRecordingsRoot)
