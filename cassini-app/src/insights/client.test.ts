@@ -332,8 +332,8 @@ describe("what a failed run says", () => {
   });
 
   it("does not promise a retry replays the endpoint that failed", () => {
-    // Retry re-resolves provider and model from current settings, which is what
-    // makes "add a key" a fix rather than a suggestion.
+    // Retry replays the endpoint that failed but reads its key and model as they
+    // stand now, which is what makes "add a key" a fix rather than a suggestion.
     const notice = buildRunFailureNotice({
       run: run({ status: "failed", error: "provider-refused: 401 Unauthorized" }),
       isAdmin: true,

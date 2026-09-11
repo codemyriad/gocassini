@@ -99,16 +99,16 @@ export const INSIGHT_FAILURE_COPY: Record<
     title: "No AI endpoint is configured",
     summary:
       "This insight never reached a model, because this deployment has no AI endpoint it can " +
-      "use. Retry re-resolves the endpoint and model from the settings as they stand at that " +
-      "moment, so configuring one first is what makes a retry work.",
+      "use. Retry runs on whichever endpoint the deployment has when it is pressed, so " +
+      "configuring one first is what makes a retry work.",
     fixable: true,
   },
   "provider-refused": {
     title: "The endpoint rejected the request",
     summary:
       "The AI endpoint answered and refused — usually a missing or rejected key, or a quota. " +
-      "Retry re-resolves the endpoint, its key and its model from the settings as they stand at " +
-      "that moment, so fixing the credential first is what makes a retry work.",
+      "Retry runs on the same endpoint with its key and model as they stand at that moment, " +
+      "so fixing the credential first is what makes a retry work.",
     fixable: true,
   },
   "model-failed": {
