@@ -368,13 +368,26 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 	probe.ACLArchive.Root = ncACLRecordingsRoot
 	probe.DefaultArchive.Root = ncDefaultRecordingsRoot
 	if probe.ServiceAccount {
-		probe.ACLArchive = c.probeArchiveAt(ctx, client, ncACLRecordingsRoot, logger)
-		probe.DefaultArchive = c.probeArchiveAt(ctx, client, ncDefaultRecordingsRoot, logger)
-		if probe.ArchivesComparable() {
-			probe.DuplicateNames = duplicateNames(probe.ACLArchive, probe.DefaultArchive)
-		}
+		c.probeArchives(ctx, client, &probe, logger)
 	}
 	return probe, nil
+}
+
+// probeArchives reads both recordings roots as the service account and derives
+// the one fact that needs the two of them.
+//
+// Split out of probeNCStorage because the account can come into existence DURING
+// the enabled edge (D-754): the probe that ran before the create skipped both
+// roots, so ArchivesComparable() is false and a mode cannot be resolved from it.
+// Re-reading them as the account that now exists is what turns a fresh install
+// into `default` rather than into `storage_mode_unresolved`.
+func (c ExAppConfig) probeArchives(ctx context.Context, client *http.Client, probe *ncStorageProbe, logger *log.Logger) {
+	probe.ACLArchive = c.probeArchiveAt(ctx, client, ncACLRecordingsRoot, logger)
+	probe.DefaultArchive = c.probeArchiveAt(ctx, client, ncDefaultRecordingsRoot, logger)
+	probe.DuplicateNames = nil
+	if probe.ArchivesComparable() {
+		probe.DuplicateNames = duplicateNames(probe.ACLArchive, probe.DefaultArchive)
+	}
 }
 
 // probeArchiveAt reads one recordings root: what is under `meetings`, when each
@@ -499,10 +512,10 @@ func (p ncStorageProbe) strandedArchiveMeetings(accessControlled bool) int {
 // edge now resolves the mode from the archive it finds (storageModeFromProbe)
 // and keeps any recorded one, so neither state is reachable.
 //
-// They are named here rather than deleted because /status still maps them to
-// `awaiting_choice` for a client that has not been rebuilt, and because a
-// monitor keyed on either will now see nothing — which is the correct outcome
-// and an alarming one to discover.
+// They are named here rather than deleted because recordingRefusal still guards
+// against either coming back — re-introducing one must not silently stop every
+// recording again — and because a monitor keyed on either will now see nothing,
+// which is the correct outcome and an alarming one to discover.
 const storageStepModeUndecided = "storage_mode_undecided"
 
 const storageStepModeUnconfirmed = "storage_mode_unconfirmed"
@@ -538,6 +551,10 @@ const storageStepModeUnresolved = "storage_mode_unresolved"
 //	                                       carries it into the split root.
 //	recordings in the default root only    default. Adopted.
 //	nothing in either root                 default. An empty archive starts open.
+//	nothing in either root, and the        nothing. An unmounted Team folder
+//	`groupfolders` app is not enabled      cannot be read, so "empty" and
+//	                                       "invisible" are the same answer, and
+//	                                       one of them is an archive.
 //	no service account                     default. Every recording is written and
 //	                                       read as that account, so an install
 //	                                       without one has no archive to keep.
@@ -581,6 +598,23 @@ func storageModeFromProbe(p ncStorageProbe) (accessControlled, ok bool, why stri
 		return false, true, fmt.Sprintf(
 			"%d recording(s) are at %s, which with no Team folder mounted is the %q account's own directory",
 			p.ACLArchive.Meetings(), ncACLRecordingsRoot, ncRecordingsOwner)
+	case !prereqEnabled(p.Prereqs, ncAppGroupFolders) && !p.ACLArchive.Present && !p.DefaultArchive.Present:
+		// "Nothing anywhere", read off an instance whose Team-folder machinery is
+		// switched off, is not evidence that there is nothing anywhere. With
+		// `groupfolders` disabled the `Cassini` mount is gone from the service
+		// account's files, so an access-controlled archive answers exactly like
+		// an empty install: both roots 404 and neither is confirmed present.
+		// Resolving `default` there records the open model permanently, and the
+		// archive is stranded the moment the app comes back. An `occ upgrade`
+		// window, or an app left disabled by a Nextcloud major, is long enough.
+		//
+		// An install with no service account is not held up by this: the arm
+		// above answers for it. Nor is one that has recorded anything under the
+		// default model, whose own root is present. What waits is the one shape
+		// that cannot be told apart from an upgrade, and it is told what to do.
+		return false, false, fmt.Sprintf(
+			"the %q app is not enabled, so a %q Team folder would be invisible here, and neither %s nor %s is present",
+			ncAppGroupFolders, ncRecordingsMount, ncACLRecordingsRoot, ncDefaultRecordingsRoot)
 	case p.DefaultArchive.Populated():
 		return false, true, fmt.Sprintf(
 			"%d recording(s) are in %s", p.DefaultArchive.Meetings(), ncDefaultRecordingsRoot)
@@ -645,11 +679,11 @@ func (p ncStorageProbe) declaredModeConflicts(accessControlled bool) []string {
 	return out
 }
 
-// declaredModeConflictDetail is the sentence /status, the Setup tab and the
-// container log all carry for a refused declaration.
+// declaredModeConflictDetail is the sentence /status, the app and the container
+// log all carry for a refused declaration.
 func declaredModeConflictDetail(accessControlled bool, conflicts []string) string {
 	return fmt.Sprintf(
-		"%s declared the storage mode %q, but this instance does not match it: %s. That deploy option is for development and CI, where the stack knows what it built — so a disagreement is refused rather than recorded. Nothing has been written down. Fix the stack, or remove %s and choose a mode in the Setup tab",
+		"%s declared the storage mode %q, but this instance does not match it: %s. That deploy option is for development and CI, where the stack knows what it built — so a disagreement is refused rather than recorded. Nothing has been written down. Fix the stack, or remove %s and choose who can see recordings in Operator › Settings",
 		envStorageMode, storageModeName(accessControlled), strings.Join(conflicts, "; "), envStorageMode)
 }
 
@@ -737,7 +771,7 @@ func (p ncStorageProbe) sanity(accessControlled bool) (ok bool, step, detail str
 	if p.DefaultRootShadowed {
 		return false, storageStepModeMismatch + ":" + storageStepDefaultRootShadowed,
 			fmt.Sprintf(
-				"a Team folder is mounted at %q, which is where the default storage mode keeps its recordings. A mounted Team folder wins that path, so recordings would be written into a shared folder rather than %q's own private tree, and everyone mapped to that folder could read them. Unmap or rename that Team folder (`occ groupfolders:list`, then `occ groupfolders:group <id> <group> --delete`), or turn access control on in the Setup tab if this instance was meant to be access-controlled",
+				"a Team folder is mounted at %q, which is where the default storage mode keeps its recordings. A mounted Team folder wins that path, so recordings would be written into a shared folder rather than %q's own private tree, and everyone mapped to that folder could read them. Unmap or rename that Team folder (`occ groupfolders:list`, then `occ groupfolders:group <id> <group> --delete`), or choose \"Meeting participants\" in Operator › Settings › Who can see recordings if this instance was meant to be access-controlled",
 				ncDefaultRecordingsMount, ncRecordingsOwner)
 	}
 	return true, "", ""

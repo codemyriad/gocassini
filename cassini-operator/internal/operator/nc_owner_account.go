@@ -94,6 +94,11 @@ type ownerAccountOutcome struct {
 // account this call just created has to be in them or the run would report a
 // prerequisite it had satisfied a moment earlier.
 //
+// One part of it IS re-run: the two recordings roots, which answer as the
+// service account and were therefore skipped entirely by a probe taken while
+// there was none. They are what the mode is resolved from, so leaving them empty
+// would trade a created account for an unresolvable install.
+//
 // It never returns an error. A refused create is a reported state, not a
 // failure of the preflight, and the caller continues to resolving the mode:
 // an install whose account is missing still has a mode, and that mode is what
@@ -141,6 +146,17 @@ func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *h
 		logger.Printf("nc storage: re-check owner group %q: %v", ncRecordingsOwnerGroup, err)
 	} else {
 		probe.OwnerGroup = exists
+	}
+
+	if probe.ServiceAccount {
+		// The account exists NOW and did not a moment ago, so the probe carries
+		// no archive facts: both roots are read as this account, and the probe
+		// skips them when there is none. Without this the mode cannot be
+		// resolved on the very edge that made the install able to record
+		// (ArchivesComparable() stays false, storageModeFromProbe answers
+		// storage_mode_unresolved), and a fresh install publishes nothing until
+		// somebody enables the app a second time.
+		c.probeArchives(ctx, client, probe, logger)
 	}
 
 	var membershipErr error
@@ -226,10 +242,24 @@ func ownerGroupIncompleteDetail(groupExists bool, membershipErr error, refusal s
 // Both shapes count. The provisioning API answers an ExApp `HTTP 403`, the
 // Group Folders routes answer `HTTP 200` with `ocs.meta.statuscode` 403, and
 // ocsRefusal renders both with the code in the text — so the message is the
-// reliable half and the bare code is the fallback.
+// reliable half and the code is the fallback.
+//
+// The code is read where ocsRefusal puts it and nowhere else: at the front, as
+// `HTTP 403` or `OCS 403`. Matching a bare "403" anywhere in the string also
+// matched it inside a body snippet, a quoted URL or a folder id, and told an
+// administrator to confirm their password for a refusal that was nothing of the
+// kind.
 func passwordConfirmationRefusal(refusal string) bool {
-	lower := strings.ToLower(refusal)
-	return strings.Contains(lower, "password confirmation") || strings.Contains(lower, "403")
+	lower := strings.ToLower(strings.TrimSpace(refusal))
+	if strings.Contains(lower, "password confirmation") {
+		return true
+	}
+	for _, code := range []string{"http 403", "ocs 403"} {
+		if lower == code || strings.HasPrefix(lower, code+":") {
+			return true
+		}
+	}
+	return false
 }
 
 // --- The two writes, judged on the envelope ------------------------------------

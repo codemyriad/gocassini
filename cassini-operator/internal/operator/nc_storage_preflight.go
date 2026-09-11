@@ -233,9 +233,10 @@ func (c ExAppConfig) resolveStorageMode(logger *log.Logger) storageResolution {
 			// could say it was access-controlled. Keep the safe model, say why,
 			// and write nothing over a file we could not read.
 			//
-			// Reported as UNCONFIRMED, so the Setup tab offers a decision rather
-			// than presenting one — writing a mode is how an administrator gets
-			// out of this state.
+			// Reported with the `configured` provenance, which is all an
+			// unreadable file supports. The mode governs; writing one from
+			// Operator › Settings › Who can see recordings is how an
+			// administrator gets out of this state.
 			logger.Printf("ERROR: nc storage: %v — keeping access control ON until the file is readable or removed", err)
 			// Clean, deliberately. An unreadable file is not evidence that a
 			// migration is half done, and reporting one would offer a cleanup
@@ -269,7 +270,7 @@ func (c ExAppConfig) resolveStorageMode(logger *log.Logger) storageResolution {
 	declared, ok, raw := storageModeFromEnv(os.Getenv)
 	switch {
 	case ok:
-		logger.Printf("WARNING: nc storage: %s=%s declared the storage mode %q. That deploy option is for development and CI; a production install is asked in the Setup tab", envStorageMode, raw, storageModeName(declared))
+		logger.Printf("WARNING: nc storage: %s=%s declared the storage mode %q. That deploy option is for development and CI; a production install resolves its own mode on the enabled edge and changes it in Operator › Settings › Who can see recordings", envStorageMode, raw, storageModeName(declared))
 		return storageResolution{
 			Decided:           true,
 			AccessControlled:  declared,
