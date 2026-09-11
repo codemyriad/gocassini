@@ -9,6 +9,9 @@
     "./MeetingView.svelte": "./src/components/MeetingView.svelte",
     "./MeetingList.svelte": "./src/components/MeetingList.svelte",
     "./dataProvider": "./src/viewer/dataProvider.ts",
+    "./annotations": "./src/viewer/annotations.ts",
+    "./tagPalette": "./src/viewer/tagPalette.ts",
+    "./tags/*": "./src/components/tags/*",
     "./app.css": "./src/app.css"
   },
   "scripts": {
