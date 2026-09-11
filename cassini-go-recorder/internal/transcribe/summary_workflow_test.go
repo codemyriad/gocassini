@@ -67,3 +67,52 @@ func TestChatCompletionHonoursItsContext(t *testing.T) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
 }
+
+// A reply the model stopped writing at its output limit is a failure, not a
+// short answer: `finish_reason: "length"` leaves plausible-looking bytes behind
+// with nothing in them saying they end early, so a caller that published them
+// would be publishing half a document. The content is discarded with the error.
+func TestChatCompletionFailsAReplyCutOffAtTheOutputLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"# Summary\n\nThey agreed to"},"finish_reason":"length"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	body, err := ChatCompletion(context.Background(), LLMConfig{BaseURL: srv.URL, Model: "m", MaxTokens: 64}, "sys", "usr")
+	if err == nil {
+		t.Fatal("ChatCompletion returned a truncated reply as a success")
+	}
+	if body != "" {
+		t.Errorf("body = %q, want the cut-off content discarded", body)
+	}
+	var truncated *TruncatedError
+	if !errors.As(err, &truncated) {
+		t.Fatalf("error = %v, want a *TruncatedError", err)
+	}
+	if truncated.MaxTokens != 64 {
+		t.Errorf("MaxTokens = %d, want the bound the request carried", truncated.MaxTokens)
+	}
+	if !strings.Contains(err.Error(), "cut off at the model's output limit") {
+		t.Errorf("message = %q, want it to say the answer was cut off", err.Error())
+	}
+
+	// And the summary step, which is the other caller, does not write it down.
+	if _, err := BuildMeetingSummary(LLMConfig{BaseURL: srv.URL, Model: "m"}, sampleStreams(), sampleSegments()); !errors.As(err, &truncated) {
+		t.Fatalf("BuildMeetingSummary error = %v, want the truncation to fail the summary", err)
+	}
+}
+
+// Every other finish reason, and a reply that carries none at all (older
+// servers), is the answer.
+func TestChatCompletionAcceptsAFinishedReply(t *testing.T) {
+	for _, finish := range []string{`,"finish_reason":"stop"`, ``} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"done"}` + finish + `}]}`))
+		}))
+		body, err := ChatCompletion(context.Background(), LLMConfig{BaseURL: srv.URL, Model: "m"}, "sys", "usr")
+		srv.Close()
+		if err != nil || body != "done" {
+			t.Fatalf("finish %q: body=%q err=%v, want the reply", finish, body, err)
+		}
+	}
+}

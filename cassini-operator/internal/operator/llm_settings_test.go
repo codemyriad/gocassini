@@ -1,7 +1,9 @@
 package operator
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,11 +34,14 @@ func TestSeedLLMSettingsFromKeylessEndpoint(t *testing.T) {
 		t.Fatalf("providers = %+v, want one", s.Providers)
 	}
 	p := s.Providers[0]
-	if p.ID != "default" || p.Name != "qwen.internal:8000" || p.BaseURL != "http://qwen.internal:8000/v1" || p.APIKey != "" {
+	if p.ID != "default" || p.Name != "Endpoint 1" || p.BaseURL != "http://qwen.internal:8000/v1" || p.APIKey != "" {
 		t.Fatalf("provider = %+v", p)
 	}
 	if !s.Summary.Enabled || s.Summary.Provider != "default" || s.Summary.Model != "qwen3-30b" {
 		t.Fatalf("summary = %+v, want enabled on default with qwen3-30b", s.Summary)
+	}
+	if !s.SummaryAutoEnabled {
+		t.Fatal("the seed is the first endpoint; the first-save rule must not get a later chance")
 	}
 }
 
@@ -46,8 +51,43 @@ func TestSeedLLMSettingsKeyAloneImpliesOpenRouter(t *testing.T) {
 		t.Fatalf("providers = %+v, want one", s.Providers)
 	}
 	p := s.Providers[0]
-	if p.BaseURL != openRouterBaseURL || p.Name != "OpenRouter" || p.APIKey != "sk-or-secret" {
+	if p.BaseURL != openRouterBaseURL || p.Name != "Endpoint 1" || p.APIKey != "sk-or-secret" {
 		t.Fatalf("provider = %+v", p)
+	}
+}
+
+// A provider's display name is the one field every signed-in user sees, so an
+// unnamed one gets its position and never its host: "Endpoint 2", not
+// "qwen.internal:8000" (D-740).
+func TestUnnamedProvidersAreNumberedAndNeverNamedAfterTheirHost(t *testing.T) {
+	got, err := normalizeLLMSettings(LLMSettings{Providers: []LLMProvider{
+		{ID: "hosted", BaseURL: openRouterBaseURL},
+		{ID: "local", Name: "  ", BaseURL: "http://qwen.internal:8000/v1"},
+		{ID: "named", Name: "Lab box", BaseURL: "http://lab.internal:8000/v1"},
+	}})
+	if err != nil {
+		t.Fatalf("normalizeLLMSettings: %v", err)
+	}
+	for i, want := range []string{"Endpoint 1", "Endpoint 2", "Lab box"} {
+		if got.Providers[i].Name != want {
+			t.Errorf("provider %d name = %q, want %q", i, got.Providers[i].Name, want)
+		}
+	}
+
+	// And the USER route, which is where the name goes, carries no host.
+	clearLLMEnv(t)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.setLLMSettings(got)
+	rec := httptest.NewRecorder()
+	rt.aiProvidersHandler(rec, httptest.NewRequest(http.MethodGet, "/ai/providers", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, host := range []string{"openrouter.ai", "qwen.internal", "lab.internal"} {
+		if strings.Contains(rec.Body.String(), host) {
+			t.Errorf("GET /ai/providers names a host (%s): %s", host, rec.Body.String())
+		}
 	}
 }
 
@@ -262,7 +302,7 @@ func TestGetLLMSettingsRedactsKeys(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "sk-or-secret-value") || strings.Contains(rec.Body.String(), `"api_key"`) {
 		t.Fatalf("GET leaked the key: %s", rec.Body.String())
 	}
-	if len(out.Providers) != 1 || !out.Providers[0].APIKeyConfigured || out.Providers[0].Name != "OpenRouter" {
+	if len(out.Providers) != 1 || !out.Providers[0].APIKeyConfigured || out.Providers[0].Name != "Endpoint 1" {
 		t.Fatalf("providers = %+v", out.Providers)
 	}
 	if out.Effective.Summary == nil || out.Effective.Summary.BaseURL != openRouterBaseURL || !out.Effective.Summary.APIKeyConfigured {
@@ -406,6 +446,66 @@ func TestLLMProviderModelsReportsUpstreamFailure(t *testing.T) {
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "HTTP 500") {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// The USER twin of that route is read by everybody who is signed in, and a
+// transport error's text carries the endpoint's full URL. The base URL is
+// administrator-only on every other surface, so the USER route says only what
+// kind of failure it was; the detail goes to the log and stays on the ADMIN
+// route (D-740).
+func TestAIProviderModelsTellsAUserNothingAboutTheEndpoint(t *testing.T) {
+	clearLLMEnv(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+	secretHost := strings.TrimPrefix(upstream.URL, "http://")
+
+	t.Run("the endpoint answered with an error", func(t *testing.T) {
+		t.Setenv(envLLMBaseURL, upstream.URL+"/v1/private-path")
+		var logs bytes.Buffer
+		rt, cleanup := newTestRuntimeWithLogger(t, log.New(&logs, "", 0))
+		defer cleanup()
+
+		rec := httptest.NewRecorder()
+		rt.aiProviderModelsHandler(rec, httptest.NewRequest(http.MethodGet, "/ai/providers/default/models", nil))
+		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "the endpoint returned HTTP 500") {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), secretHost) || strings.Contains(rec.Body.String(), "private-path") {
+			t.Fatalf("the USER route named the endpoint: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("the endpoint could not be reached", func(t *testing.T) {
+		// A closed server: the *url.Error this produces prints the whole URL.
+		gone := httptest.NewServer(http.NotFoundHandler())
+		goneURL := gone.URL
+		gone.Close()
+		t.Setenv(envLLMBaseURL, goneURL+"/v1/private-path")
+		var logs bytes.Buffer
+		rt, cleanup := newTestRuntimeWithLogger(t, log.New(&logs, "", 0))
+		defer cleanup()
+
+		rec := httptest.NewRecorder()
+		rt.aiProviderModelsHandler(rec, httptest.NewRequest(http.MethodGet, "/ai/providers/default/models", nil))
+		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "the endpoint could not be reached") {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "private-path") || strings.Contains(rec.Body.String(), strings.TrimPrefix(goneURL, "http://")) {
+			t.Fatalf("the USER route named the endpoint: %s", rec.Body.String())
+		}
+		if !strings.Contains(logs.String(), "private-path") {
+			t.Fatalf("the detail must still reach the log for an administrator: %s", logs.String())
+		}
+
+		// The ADMIN twin keeps the detail, because that is who fixes it.
+		rec = httptest.NewRecorder()
+		rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings/llm/providers/default/models", nil))
+		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "private-path") {
+			t.Fatalf("ADMIN status = %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 // --- D-719: the insight step ---
@@ -657,6 +757,9 @@ func TestFirstProviderSwitchesSummarisingOn(t *testing.T) {
 	if !got.Summary.Enabled || got.Summary.Provider != "p-1" {
 		t.Fatalf("summary = %+v, want enabled against p-1", got.Summary)
 	}
+	if !got.SummaryAutoEnabled {
+		t.Fatal("the one shot was fired and not recorded, so it would fire again")
+	}
 }
 
 // And at most once in a deployment's life. Every one of these is somebody who
@@ -667,6 +770,15 @@ func TestSummarisingIsNotSwitchedBackOn(t *testing.T) {
 		name          string
 		before, after LLMSettings
 	}{
+		{
+			// Every endpoint removed, then one added back. The transition from
+			// none to some happens a second time, and the removal cleared the
+			// step's provider — so without the persisted shot this fired again
+			// on an administrator who had switched summarising off (D-740).
+			name:   "the last endpoint removed and one re-added",
+			before: LLMSettings{SummaryAutoEnabled: true},
+			after:  LLMSettings{Providers: existing, SummaryAutoEnabled: true},
+		},
 		{
 			// The second endpoint, added by an administrator who deliberately
 			// switched summarising off after the first.
@@ -705,7 +817,52 @@ func TestFirstProviderDoesNotOverruleAnExplicitChoice(t *testing.T) {
 		Providers: []LLMProvider{{ID: "p-1", BaseURL: openRouterBaseURL}},
 		Summary:   LLMStep{Enabled: false, Provider: "p-1"},
 	}
-	if got := enableSummaryOnFirstProvider(before, after); got.Summary.Enabled {
+	got := enableSummaryOnFirstProvider(before, after)
+	if got.Summary.Enabled {
 		t.Fatalf("summary = %+v, want left off — the request named a provider and said no", got.Summary)
+	}
+	// The shot is spent by the decision, not by the flip: the administrator
+	// answered, and the rule must not get a second chance later.
+	if !got.SummaryAutoEnabled {
+		t.Fatal("an explicit first-save answer did not spend the one shot")
+	}
+}
+
+// The same rule through the API, across the saves an administrator actually
+// makes: register, switch off, remove everything, register again. The last
+// save must not switch summarising back on.
+func TestPutLLMSettingsDoesNotReEnableSummarisingAfterRemoveAndReAdd(t *testing.T) {
+	clearLLMEnv(t)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	put := func(body string) llmSettingsResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodPut, "/settings/llm", strings.NewReader(body)))
+		return decodeLLMSettings(t, rec)
+	}
+	const provider = `{"id":"p-1","name":"Hosted","base_url":"https://openrouter.ai/api/v1"}`
+
+	if out := put(`{"providers":[` + provider + `]}`); !out.Summary.Enabled || out.Summary.Provider != "p-1" {
+		t.Fatalf("first endpoint: summary = %+v, want switched on against it", out.Summary)
+	}
+	if out := put(`{"summary":{"enabled":false,"provider":"p-1"}}`); out.Summary.Enabled {
+		t.Fatalf("switching off: summary = %+v", out.Summary)
+	}
+	if out := put(`{"providers":[]}`); out.Summary.Enabled || len(out.Providers) != 0 {
+		t.Fatalf("removing everything: %+v", out)
+	}
+	if out := put(`{"providers":[` + provider + `]}`); out.Summary.Enabled {
+		t.Fatalf("re-adding: summary = %+v, want left off — the administrator already switched it off", out.Summary)
+	}
+
+	// And the shot survives a reload from disk, which is where a restart reads
+	// it from.
+	reloaded, err := LoadOrInitLLMSettings(rt.llmSettingsPath, llmGetenv(nil))
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.SummaryAutoEnabled {
+		t.Fatal("the one shot was not persisted")
 	}
 }

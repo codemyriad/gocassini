@@ -71,6 +71,12 @@
   }
   let draft: ProviderDraft | null = null;
 
+  // The endpoint Remove was pressed on, awaiting confirmation. Removing is the
+  // one action here that cannot be undone from this panel: the stored key is
+  // destroyed with the row and cannot be read back, and a step that ran on
+  // the endpoint is switched off with it. One click was too little for that.
+  let pendingRemoval: LLMProviderView | null = null;
+
   // What each saved endpoint answered when asked for its models. It doubles as
   // the mock's verified tick: "we listed 41 models from this URL with this key"
   // is a fact, where a tick that only means "a row exists" is decoration. A
@@ -235,6 +241,23 @@
     }
   }
 
+  // Which steps run on this endpoint, for the confirmation to name. The
+  // insight step is not shown in this panel, but a deployment that set it by
+  // hand still loses it here, and the prompt should say so.
+  function stepsRunningOn(provider: LLMProviderView): string[] {
+    if (!settings) {
+      return [];
+    }
+    const names: string[] = [];
+    if (settings.summary.enabled && settings.summary.provider === provider.id) {
+      names.push("meeting summaries");
+    }
+    if (settings.insight.enabled && settings.insight.provider === provider.id) {
+      names.push("insights");
+    }
+    return names;
+  }
+
   async function removeProvider(provider: LLMProviderView) {
     if (!settings || saving) {
       return;
@@ -242,6 +265,7 @@
     const current = settings;
     saving = true;
     saveError = "";
+    pendingRemoval = null;
     try {
       apply(
         await settingsClient().putLLMSettings({
@@ -472,12 +496,69 @@
                     class="btn btn-ghost btn-xs text-error"
                     type="button"
                     disabled={saving}
-                    on:click={() => void removeProvider(provider)}
+                    aria-expanded={pendingRemoval?.id === provider.id}
+                    on:click={() => (pendingRemoval = provider)}
                   >
                     Remove
                   </button>
                 </div>
               </div>
+              {#if pendingRemoval?.id === provider.id}
+                <!-- Inline, like StoragePanel's: the app runs inside a shadow
+                     root on Nextcloud's page, where a top-layer <dialog> does
+                     not reliably follow its styling or focus. It names the
+                     endpoint and says what is lost, because neither can be
+                     recovered from here: the key is not readable back, and a
+                     step switched off here has to be switched on again in
+                     Publish pipeline. -->
+                <div
+                  class="mt-3 grid gap-2 rounded-box border border-error bg-error/10 p-3"
+                  role="alertdialog"
+                  aria-label="Confirm removing this endpoint"
+                >
+                  <div class="flex items-start gap-2">
+                    <TriangleAlert size={18} class="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+                    <div class="grid gap-1">
+                      <p class="text-sm font-semibold">
+                        Remove {provider.name || provider.base_url || provider.id}?
+                      </p>
+                      <p class="text-xs break-words text-base-content/80">
+                        <code class="font-mono">{provider.base_url}</code>
+                      </p>
+                      <ul class="grid gap-1 text-xs text-base-content/80">
+                        {#if provider.api_key_configured}
+                          <li>The stored key is destroyed. Cassini cannot show it to you first.</li>
+                        {/if}
+                        {#if stepsRunningOn(provider).length > 0}
+                          <li>
+                            It stops {stepsRunningOn(provider).join(" and ")}: nothing will run
+                            them until an endpoint is chosen again in Publish pipeline.
+                          </li>
+                        {/if}
+                        <li>Meetings already published keep their summaries.</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button
+                      class="btn btn-sm btn-error"
+                      type="button"
+                      disabled={saving}
+                      on:click={() => void removeProvider(provider)}
+                    >
+                      Yes, remove it
+                    </button>
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      type="button"
+                      disabled={saving}
+                      on:click={() => (pendingRemoval = null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>

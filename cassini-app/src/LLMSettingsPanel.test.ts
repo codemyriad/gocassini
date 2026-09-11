@@ -53,6 +53,21 @@ describe("AI providers scope", () => {
     expect(llmSettingsPanelSource).toContain('return { ...step, enabled: false, provider: "" };');
   });
 
+  it("asks before removing an endpoint, naming what is lost", () => {
+    // One click used to destroy the stored key and silently switch off the
+    // step that ran on the endpoint. Remove now opens an inline confirmation
+    // (a top-layer <dialog> is unreliable inside the shadow root) that names
+    // the endpoint, says the key is destroyed and that summarising stops.
+    expect(llmSettingsPanelSource).toContain("on:click={() => (pendingRemoval = provider)}");
+    expect(llmSettingsPanelSource).toContain('role="alertdialog"');
+    expect(llmSettingsPanelSource).toContain("Remove {provider.name || provider.base_url || provider.id}?");
+    expect(llmSettingsPanelSource).toContain("The stored key is destroyed");
+    expect(llmSettingsPanelSource).toContain('names.push("meeting summaries");');
+    // The write happens only from the confirmation's own button.
+    expect(llmSettingsPanelSource.match(/void removeProvider\(provider\)/g)).toHaveLength(1);
+    expect(llmSettingsPanelSource).toContain("Yes, remove it");
+  });
+
   it("sends every untouched provider back, so a save cannot drop one", () => {
     // PUT replaces the whole list. A body carrying only the edited row would
     // delete every other endpoint on the deployment.

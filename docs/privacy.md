@@ -230,12 +230,18 @@ Controls:
 - **Registering your first endpoint switches summarising on**, pointed at it.
   That is deliberate: an install that has just configured an endpoint and still
   publishes meetings without summaries has done the work and not got the
-  feature. It happens **once**, on the save that takes a deployment from having
-  no endpoint to having one — adding a second endpoint, or any later save, never
-  switches it back on, so turning it off in Publish pipeline stays turned off.
+  feature. It happens **once in the deployment's life**: on the first save that
+  takes it from having no endpoint to having one, and the operator records that
+  it has happened. Adding a second endpoint, any later save, and even removing
+  every endpoint and registering one again never switch it back on, so turning
+  it off in Publish pipeline stays turned off. (A deployment whose first
+  endpoint came from the install environment counts as having had that save.)
   A deployment that wants a model for questions people ask by hand and nothing
-  else can therefore register an endpoint and switch summarising off, and then
-  nothing leaves except the questions people type.
+  else can therefore register an endpoint and switch summarising off. What
+  leaves it then is each insight somebody asks for: the question they typed
+  **and the transcripts and summaries of the meetings they selected**, sent to
+  the endpoint together. Switching summarising off stops the automatic send at
+  publish; it does not make an insight send less.
 - **A local model for insights, a hosted one for summaries (or the reverse).**
   The summary step and the insight step each resolve their own endpoint, so one
   can be pointed at a local model without the other. Which endpoint an insight

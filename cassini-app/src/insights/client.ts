@@ -180,10 +180,10 @@ const QUESTION_PLACEHOLDER = "{{QUESTION}}";
 // control the server refuses every use of is worse than no control, so the card
 // asks this before it offers the box (D-700).
 //
-// No workflow this image ships carries the placeholder — internal/insight/
-// workflows/workflows.go says so in as many words — so today this is false for
-// everything and the box is simply absent. The day one ships, it appears on its
-// own rather than waiting for this file to be edited.
+// One shipped workflow carries the placeholder — `ask`, "Ask your own question",
+// registered in internal/insight/workflows/workflows.go — so the box appears for
+// it and for nothing else. A workflow added later that takes a question shows
+// the box on its own rather than waiting for this file to be edited.
 export function workflowTakesQuestion(workflow: { instruction?: string } | null): boolean {
   return (workflow?.instruction ?? "").includes(QUESTION_PLACEHOLDER);
 }

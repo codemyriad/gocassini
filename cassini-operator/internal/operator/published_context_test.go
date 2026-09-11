@@ -312,6 +312,64 @@ func TestMeetingsContextFailsLoudly(t *testing.T) {
 			t.Fatalf("code = %d, want 502", w.Code)
 		}
 	})
+
+	t.Run("the per-caller scan failed", func(t *testing.T) {
+		// serveFilteredCatalog fails CLOSED: a PROPFIND that errors is served as
+		// an empty catalog, and an empty readable set used to send every id to
+		// the 404 branch — telling somebody who has just browsed their own
+		// meetings that one of them is not theirs (D-740).
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "catalog.json"):
+				_, _ = w.Write([]byte(contextCatalog))
+			case r.Method == "PROPFIND":
+				w.WriteHeader(http.StatusInternalServerError)
+			default:
+				t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer srv.Close()
+		var logs bytes.Buffer
+		handler := contextTestConfig(srv.URL, writeFakeCassini(t, "exit 9\n")).meetingsContextHandler(log.New(&logs, "", 0))
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, contextRequest("/published/meetings-context?id=MEETING1"))
+		if w.Code != http.StatusBadGateway {
+			t.Fatalf("code = %d, want 502 — a scan that never ran is not a denial (%s)", w.Code, w.Body.String())
+		}
+		if !strings.Contains(logs.String(), "outage") {
+			t.Errorf("the log must say the empty set was read as an outage: %s", logs.String())
+		}
+	})
+}
+
+// Every refusal carries no-store, not only the document. AppAPI caches a proxied
+// GET for an hour, and a cached 404 from an ACL since granted, or a cached 502
+// from an outage since cleared, would be served for the rest of it (D-740).
+func TestMeetingsContextRefusalsAreNeverCached(t *testing.T) {
+	srv, _ := stubRecordingsDAV(t, contextCatalog, []byte("OPUSBYTES"), "MEETING1.opus")
+	handler := contextTestConfig(srv.URL, writeFakeCassini(t, "exit 9\n")).meetingsContextHandler(log.New(&bytes.Buffer{}, "", 0))
+	for _, tc := range []struct {
+		name string
+		req  *http.Request
+		want int
+	}{
+		{"a bad request", contextRequest("/published/meetings-context"), http.StatusBadRequest},
+		{"no caller identity", callerReq(http.MethodGet, "/published/meetings-context?id=MEETING1", ""), http.StatusBadGateway},
+		{"a denied id", contextRequest("/published/meetings-context?id=SECRET"), http.StatusNotFound},
+		{"a failed render", contextRequest("/published/meetings-context?id=MEETING1"), http.StatusBadGateway},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, tc.req)
+			if w.Code != tc.want {
+				t.Fatalf("code = %d, want %d (%s)", w.Code, tc.want, w.Body.String())
+			}
+			if got := w.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q on a %d, want no-store", got, w.Code)
+			}
+		})
+	}
 }
 
 // Every one of these is refused before a single Nextcloud call: a bad request

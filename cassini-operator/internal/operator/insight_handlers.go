@@ -283,7 +283,7 @@ func (s *insightService) create(w http.ResponseWriter, r *http.Request, caller s
 	// claims the row the moment it begins, and a read racing with it would serve
 	// `running` from a call whose whole contract is that it answers `queued`.
 	writeJSON(w, http.StatusCreated, stored)
-	s.launchFn(id, false)
+	s.launchFn(id, 0)
 }
 
 // decodeInsightCreateRequest validates the body completely, and refuses on the
@@ -480,7 +480,9 @@ func (s *insightService) read(w http.ResponseWriter, r *http.Request, caller, id
 			// The run succeeded and the row says so; the file is the requester's
 			// own and they may have moved it. That is a fact about the document,
 			// not a failure of the run, so the run is still served — with an empty
-			// document, which is what the card renders as "no longer here".
+			// document. The viewer's document sheet reads an empty document on a
+			// succeeded run as "no longer at documentPath", which is the only
+			// honest reading: a succeeded run always has a path.
 			s.logf("insights: read document for run=%s caller=%s: %v", id, caller, err)
 		}
 		response.Document = document
@@ -495,10 +497,11 @@ func (s *insightService) read(w http.ResponseWriter, r *http.Request, caller, id
 // The attempt is claimed HERE, inside the request, because BeginAttempt is the
 // lock: taking it in the background goroutine would make the 409 a guess about a
 // race rather than the outcome of it. Nothing about the request is re-read — the
-// workflow, the meetings and the question are fixed — and the endpoint is
-// re-resolved from current settings by the run path, which is the whole point of
-// the button: "no provider configured" and "401" are exactly the failures a
-// replay of the stored provider could never fix.
+// workflow, the meetings, the question and the endpoint the asker CHOSE are
+// fixed. The run path replays that choice (RequestedProvider) and falls back to
+// the deployment's configured endpoint only where the request named nothing or
+// named an endpoint since removed (see endpointFor), which is what keeps
+// "configure an endpoint, then retry" a fix for "no provider configured".
 func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, id string) {
 	existing, ok := s.ownRun(w, r, caller, id)
 	if !ok {
@@ -535,7 +538,7 @@ func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, i
 		writeJSONError(w, http.StatusBadGateway, "the insight could not be retried")
 		return
 	}
-	s.launchFn(id, true)
+	s.launchFn(id, run.AttemptNumber)
 	writeJSON(w, http.StatusOK, run)
 }
 

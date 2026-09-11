@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -119,6 +120,13 @@ const (
 	// timed out must still be able to say that it timed out.
 	insightFinishTimeout = 30 * time.Second
 
+	// insightFinishTries is how many times that write is attempted, and
+	// insightFinishBackoff the pause before the second (doubled before the
+	// third). Enough to ride out a busy database; short enough that a card is
+	// not left saying `running` for long after the run ended.
+	insightFinishTries   = 3
+	insightFinishBackoff = 2 * time.Second
+
 	// maxConcurrentInsightRuns bounds how many runs may hold a staging directory
 	// and a pair of subprocesses at once. Runs past it stay `queued`, which is
 	// what the status word means; the alternative is an unbounded number of
@@ -190,6 +198,7 @@ type insightRunStore interface {
 	GetRun(ctx context.Context, id string) (InsightRun, error)
 	ListRuns(ctx context.Context, createdBy string) ([]InsightRun, error)
 	BeginAttempt(ctx context.Context, id string) (InsightRun, error)
+	ResumeAttempt(ctx context.Context, id string, attempt int) (InsightRun, error)
 	FinishAttempt(ctx context.Context, id string, outcome InsightOutcome) error
 }
 
@@ -218,7 +227,13 @@ type insightService struct {
 	// handler's job is the answer it gives, and driving a whole run through it
 	// to check a status code would leave the status codes tested through a
 	// subprocess and the subprocess tested through nothing.
-	launchFn func(id string, claimed bool)
+	//
+	// attempt is the attempt number the caller already claimed, or 0 when the
+	// launch is to claim one itself (see launch).
+	launchFn func(id string, attempt int)
+	// finishBackoff is the pause between tries at recording an outcome. A
+	// field so a test of the retry does not wait on it.
+	finishBackoff time.Duration
 }
 
 // newInsightService returns the service, or nil when this deployment cannot run
@@ -254,8 +269,10 @@ func newInsightService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *insi
 		slots:  make(chan struct{}, maxConcurrentInsightRuns),
 		now:    func() time.Time { return time.Now().UTC() },
 		newID:  newInsightRunID,
+
+		finishBackoff: insightFinishBackoff,
 	}
-	service.launchFn = func(id string, claimed bool) { go service.launch(id, claimed) }
+	service.launchFn = func(id string, attempt int) { go service.launch(id, attempt) }
 	return service
 }
 
@@ -270,11 +287,12 @@ func newInsightService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *insi
 // operator: on shutdown it is cancelled and every child dies with its process
 // group.
 //
-// claimed says whether a handler already took the attempt. A retry claims inside
-// the request, because BeginAttempt is the lock that makes its 409 exact; a
-// create answers 201/queued and claims here, which is what lets a run wait for a
+// attempt says whether a handler already took the attempt, and which. A retry
+// claims inside the request, because BeginAttempt is the lock that makes its
+// 409 exact, and passes the attempt number it was given; a create answers
+// 201/queued and passes 0 to claim here, which is what lets a run wait for a
 // slot under the status word that describes it.
-func (s *insightService) launch(id string, claimed bool) {
+func (s *insightService) launch(id string, attempt int) {
 	select {
 	case s.slots <- struct{}{}:
 	case <-s.rt.ctx.Done():
@@ -282,11 +300,12 @@ func (s *insightService) launch(id string, claimed bool) {
 	}
 	defer func() { <-s.slots }()
 
-	run, err := s.claim(id, claimed)
+	run, err := s.claim(id, attempt)
 	if err != nil {
 		// A busy run is not an error here: another attempt holds it, and the one
-		// thing this goroutine must not do is run a second one beside it.
-		if !errors.Is(err, errInsightRunBusy) {
+		// thing this goroutine must not do is run a second one beside it. Nor is
+		// a claimed attempt the row has moved on from — see claim.
+		if !errors.Is(err, errInsightRunBusy) && !errors.Is(err, errInsightRunNotRunning) {
 			s.logf("insights: claim run=%s: %v", id, err)
 		}
 		return
@@ -296,20 +315,67 @@ func (s *insightService) launch(id string, claimed bool) {
 	defer cancel()
 	outcome := s.perform(ctx, run)
 
-	// Detached from the attempt's context on purpose: a run that was cancelled or
-	// timed out has to be able to record that it was, and it cannot do that
-	// through the context that just expired. Still bounded, and a row a killed
-	// operator left `running` is repaired by the store's own startup sweep.
-	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), insightFinishTimeout)
-	defer finishCancel()
-	if err := s.store.FinishAttempt(finishCtx, id, outcome); err != nil {
-		s.logf("insights: record the outcome of run=%s: %v", id, err)
+	s.recordOutcome(ctx, id, outcome)
+}
+
+// recordOutcome writes how the attempt ended, and does not give up on the first
+// failure.
+//
+// Detached from the attempt's context on purpose: a run that was cancelled or
+// timed out has to be able to record that it was, and it cannot do that through
+// the context that just expired. Retried, because the write is the one thing
+// standing between a finished run and a card that says `running` until the
+// sweep fails it an hour later with a message about a restart that never
+// happened — and because a SQLite busy or a transient I/O error is exactly the
+// kind of failure a second try clears. Still bounded: each try has its own
+// timeout, the backoff is short, and a row nothing could write is repaired by
+// the store's own sweep. errInsightRunNotRunning is not retried: the row moved
+// on, and writing over it would be the double-run this file guards against.
+//
+// If it still fails, the document path is logged at error level: a succeeded
+// run whose outcome was never written has delivered a document the card will
+// never link to, and the path is the only way to find it (D-740).
+func (s *insightService) recordOutcome(ctx context.Context, id string, outcome InsightOutcome) {
+	var err error
+	for try := 1; try <= insightFinishTries; try++ {
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), insightFinishTimeout)
+		err = s.store.FinishAttempt(finishCtx, id, outcome)
+		finishCancel()
+		if err == nil || errors.Is(err, errInsightRunNotRunning) || errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if try < insightFinishTries {
+			s.logf("insights: record the outcome of run=%s (try %d of %d): %v", id, try, insightFinishTries, err)
+			select {
+			case <-time.After(s.finishBackoff * time.Duration(try)):
+			case <-s.rt.ctx.Done():
+				// The operator is going; the sweep will find this row.
+			}
+		}
+	}
+	if err != nil {
+		s.logf("ERROR: insights: the outcome of run=%s could not be recorded (%s, document=%q): %v", id, outcome.Status, outcome.DocumentPath, err)
 	}
 }
 
-func (s *insightService) claim(id string, claimed bool) (InsightRun, error) {
-	if claimed {
-		return s.store.GetRun(s.rt.ctx, id)
+// claim takes the attempt this launch is to run, or re-asserts the one a handler
+// already took.
+//
+// The claimed path is a compare-and-swap and not a read, on purpose. Between the
+// retry handler's BeginAttempt and this goroutine getting a slot, the row can
+// move: the store's sweep fails a `running` row that has not been written to in
+// over an hour, and a person who sees it failed can retry it again — which
+// begins attempt N+1 and launches a second goroutine. A plain read here would
+// let both proceed, and one run would be attempted twice at once. ResumeAttempt
+// succeeds only for a row still running at exactly the attempt this launch was
+// handed, and touches its timestamp so the sweep sees the wait as progress.
+func (s *insightService) claim(id string, attempt int) (InsightRun, error) {
+	if attempt > 0 {
+		run, err := s.store.ResumeAttempt(s.rt.ctx, id, attempt)
+		if errors.Is(err, errInsightRunNotRunning) {
+			s.logf("insights: run=%s attempt=%d was claimed but the row has moved on; not running it", id, attempt)
+		}
+		return run, err
 	}
 	return s.store.BeginAttempt(s.rt.ctx, id)
 }
@@ -469,8 +535,15 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 // never on the text. A message-derived classification changes silently whenever a
 // message is reworded, which is the failure this avoids.
 func explainInsightExit(ctx context.Context, code int) string {
-	if ctx.Err() != nil {
+	// Two ways the context ends, and they are different advice. The deadline is
+	// the run's own 60-minute bound, and a smaller selection is the fix; a
+	// cancellation is the operator shutting down under the run, and nothing
+	// about the request was wrong — retrying it as it was is the fix (D-740).
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return fmt.Sprintf("The insight took longer than %d minutes and was stopped. A smaller selection, or a faster endpoint, will finish.", int(insightRunTimeout.Minutes()))
+	case ctx.Err() != nil:
+		return "Cassini restarted before this insight finished — retry it."
 	}
 	switch code {
 	case 1:

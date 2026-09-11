@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -38,6 +39,10 @@ type fakeInsightStore struct {
 	listErr  error
 	getErr   error
 	beginErr error
+	// finishFailures is how many FinishAttempt calls fail before one succeeds;
+	// finished counts every call, so the retry can be asserted.
+	finishFailures int
+	finished       int
 }
 
 func (f *fakeInsightStore) status(id string) string {
@@ -127,10 +132,31 @@ func (f *fakeInsightStore) BeginAttempt(_ context.Context, id string) (InsightRu
 	return run, nil
 }
 
+func (f *fakeInsightStore) ResumeAttempt(_ context.Context, id string, attempt int) (InsightRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	run, ok := f.runs[id]
+	if !ok {
+		return InsightRun{}, sql.ErrNoRows
+	}
+	if run.Status != insightStatusRunning || run.AttemptNumber != attempt {
+		return InsightRun{}, errInsightRunNotRunning
+	}
+	return run, nil
+}
+
 func (f *fakeInsightStore) FinishAttempt(_ context.Context, id string, outcome InsightOutcome) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	run := f.runs[id]
+	f.finished++
+	if f.finishFailures > 0 {
+		f.finishFailures--
+		return errors.New("database is locked")
+	}
+	run, ok := f.runs[id]
+	if !ok {
+		return sql.ErrNoRows
+	}
 	run.Status = outcome.Status
 	run.Provider, run.Model, run.DocumentPath, run.Error = outcome.Provider, outcome.Model, outcome.DocumentPath, outcome.Error
 	f.runs[id] = run
@@ -172,7 +198,7 @@ func newInsightHandlerHarness(t *testing.T, runs ...InsightRun) *insightHandlerH
 	store := newFakeInsightStore(runs...)
 	service, _ := insightTestService(t, dav.server.URL, insightRegistryCassini(t), store)
 	harness := &insightHandlerHarness{service: service, store: store, dav: dav}
-	service.launchFn = func(id string, _ bool) { harness.launched = append(harness.launched, id) }
+	service.launchFn = func(id string, _ int) { harness.launched = append(harness.launched, id) }
 	return harness
 }
 
@@ -261,7 +287,7 @@ func TestCreateInsightAnswers502WhenNothingIsReadableAtAll(t *testing.T) {
 	store := newFakeInsightStore()
 	service, _ := insightTestService(t, dav.server.URL, insightRegistryCassini(t), store)
 	harness := &insightHandlerHarness{service: service, store: store, dav: dav}
-	service.launchFn = func(id string, _ bool) { harness.launched = append(harness.launched, id) }
+	service.launchFn = func(id string, _ int) { harness.launched = append(harness.launched, id) }
 
 	w := harness.do(t, http.MethodPost, "/insights", "alice", `{"meetingIds":["MEETING1"]}`)
 	if w.Code != http.StatusBadGateway {

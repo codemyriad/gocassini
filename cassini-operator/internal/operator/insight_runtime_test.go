@@ -235,7 +235,7 @@ func insightTestService(t *testing.T, ncURL, bin string, store insightRunStore) 
 		slots:    make(chan struct{}, maxConcurrentInsightRuns),
 		now:      func() time.Time { return time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC) },
 		newID:    func() (string, error) { return "ins_0123456789abcdef", nil },
-		launchFn: func(string, bool) {},
+		launchFn: func(string, int) {},
 	}, logs
 }
 
@@ -247,6 +247,56 @@ func insightTestRun() InsightRun {
 		WorkflowID:    "summarise",
 		MeetingIDs:    []string{"MEETING1", "MEETING2"},
 		AttemptNumber: 1,
+	}
+}
+
+// newInsightService is the production constructor and the only place its four
+// nil-return guards live; every other test builds the service by hand. Where a
+// run could not be performed at all the routes must not be mounted, and where
+// it could the service must come up with its seams filled in (D-740).
+func TestNewInsightServiceIsNilWhereARunCannotBePerformed(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	logger := log.New(&bytes.Buffer{}, "", 0)
+	active := testExAppConfig("https://nc.example.com")
+	active.PublishSink = publishSinkNextcloudFiles
+
+	for _, tc := range []struct {
+		name  string
+		rt    *Runtime
+		exapp ExAppConfig
+	}{
+		{"no runtime", nil, active},
+		{"no store", &Runtime{cfg: rt.cfg}, active},
+		{"outside AppAPI", rt, func() ExAppConfig { c := active; c.AppSecret = ""; return c }()},
+		{"under the local sink", rt, func() ExAppConfig { c := active; c.PublishSink = "local"; return c }()},
+		{"with no cassini binary", &Runtime{store: rt.store}, active},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if service := newInsightService(tc.rt, tc.exapp, logger); service != nil {
+				t.Errorf("expected no service")
+			}
+		})
+	}
+
+	service := newInsightService(rt, active, logger)
+	if service == nil {
+		t.Fatal("expected a service for an AppAPI-active nextcloud-files deployment with a CLI")
+	}
+	if service.store == nil || service.client == nil || service.launchFn == nil || service.now == nil || service.newID == nil {
+		t.Fatalf("the service came up with a seam unfilled: %+v", service)
+	}
+	if service.finishBackoff != insightFinishBackoff || cap(service.slots) != maxConcurrentInsightRuns {
+		t.Errorf("backoff = %v, slots = %d; want the production bounds", service.finishBackoff, cap(service.slots))
+	}
+	// And it mounts: the same wiring run.go performs, so a route the manifest
+	// declares is a route the mux answers.
+	mux := http.NewServeMux()
+	service.register(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, insightsURLPath, nil))
+	if w.Code == http.StatusNotFound {
+		t.Errorf("GET %s = 404 after register", insightsURLPath)
 	}
 }
 
@@ -395,11 +445,19 @@ func TestExplainInsightExitGivesEachCodeItsOwnAction(t *testing.T) {
 			}
 		}
 	}
-	// A cancelled context outranks whatever the killed child reported.
+	// A context that ended outranks whatever the killed child reported — and
+	// the two ways it ends are different advice. The deadline is the run's own
+	// bound, so a smaller selection is the fix; a cancellation is the operator
+	// going away under the run, so retrying it unchanged is (D-740).
+	expired, expire := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer expire()
+	if !strings.Contains(explainInsightExit(expired, 5), "longer than") {
+		t.Error("a run stopped by its own timeout must say so, not blame the model")
+	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if !strings.Contains(explainInsightExit(cancelled, 5), "longer than") {
-		t.Error("a run stopped by its own timeout must say so, not blame the model")
+	if got := explainInsightExit(cancelled, 5); !strings.Contains(got, "restarted") || strings.Contains(got, "longer than") {
+		t.Errorf("a run cancelled by shutdown = %q, want it to say Cassini restarted, not that it took too long", got)
 	}
 }
 
@@ -606,7 +664,7 @@ func TestLaunchClaimsTheAttemptItRunsAndRecordsTheOutcome(t *testing.T) {
 	store := newFakeInsightStore(queued)
 	service, _ := insightTestService(t, dav.server.URL, bin, store)
 
-	service.launch(queued.ID, false)
+	service.launch(queued.ID, 0)
 
 	if store.claims() != 1 {
 		t.Fatalf("BeginAttempt called %d times, want once: an unclaimed run is claimed here", store.claims())
@@ -632,13 +690,126 @@ func TestLaunchDoesNotClaimAnAttemptTheRequestAlreadyTook(t *testing.T) {
 	store := newFakeInsightStore(claimed)
 	service, _ := insightTestService(t, dav.server.URL, bin, store)
 
-	service.launch(claimed.ID, true)
+	service.launch(claimed.ID, claimed.AttemptNumber)
 
 	if store.claims() != 0 {
 		t.Fatalf("BeginAttempt called %d times for an attempt the request already claimed", store.claims())
 	}
 	if got := store.status(claimed.ID); got != insightStatusSucceeded {
 		t.Fatalf("status = %q, want succeeded", got)
+	}
+}
+
+// The write that records how an attempt ended is retried, because it is the one
+// thing between a finished run and a card that says `running` until the sweep
+// fails it with a message about a restart that never happened. And when it still
+// fails, the log names the document, which is otherwise unfindable (D-740).
+func TestLaunchRetriesRecordingTheOutcomeAndNamesTheDocumentIfItCannot(t *testing.T) {
+	t.Run("a transient failure is retried", func(t *testing.T) {
+		dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+		bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+		queued := insightTestRun()
+		queued.Status = insightStatusQueued
+		store := newFakeInsightStore(queued)
+		store.finishFailures = insightFinishTries - 1
+		service, logs := insightTestService(t, dav.server.URL, bin, store)
+
+		service.launch(queued.ID, 0)
+
+		if got := store.status(queued.ID); got != insightStatusSucceeded {
+			t.Fatalf("status = %q, want succeeded: the outcome was recorded on a later try", got)
+		}
+		if store.finished != insightFinishTries {
+			t.Errorf("FinishAttempt called %d times, want %d", store.finished, insightFinishTries)
+		}
+		if strings.Contains(logs.String(), "ERROR") {
+			t.Errorf("a retry that succeeded was logged as an error: %s", logs.String())
+		}
+	})
+
+	t.Run("a persistent failure names the document", func(t *testing.T) {
+		dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+		bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+		queued := insightTestRun()
+		queued.Status = insightStatusQueued
+		store := newFakeInsightStore(queued)
+		store.finishFailures = insightFinishTries
+		service, logs := insightTestService(t, dav.server.URL, bin, store)
+
+		service.launch(queued.ID, 0)
+
+		if store.finished != insightFinishTries {
+			t.Errorf("FinishAttempt called %d times, want %d and then give up", store.finished, insightFinishTries)
+		}
+		delivered := dav.delivered()
+		if len(delivered) != 1 {
+			t.Fatalf("delivered %d documents, want 1", len(delivered))
+		}
+		documentPath := strings.TrimPrefix(delivered[0].path, "alice/")
+		if !strings.Contains(logs.String(), "ERROR") || !strings.Contains(logs.String(), documentPath) {
+			t.Errorf("the log must name the delivered document at error level, got: %s", logs.String())
+		}
+	})
+
+	t.Run("a row that moved on is not retried", func(t *testing.T) {
+		dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+		bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+		store := newFakeInsightStore()
+		service, _ := insightTestService(t, dav.server.URL, bin, store)
+
+		// No such run: the fake answers ErrNoRows the way the real store does.
+		service.recordOutcome(context.Background(), "ins_0000000000000000", insightFailure("x"))
+		if store.finished != 1 {
+			t.Errorf("FinishAttempt called %d times for a run that is gone, want once", store.finished)
+		}
+	})
+}
+
+// A claimed attempt is re-asserted, not trusted. Between the retry handler's
+// claim and this goroutine getting a slot, the sweep can fail the row and a
+// person can retry it again — which begins attempt 2 and launches a second
+// goroutine. The goroutine still holding attempt 1 must then do nothing: not
+// stage, not ask the model, not deliver, and not write an outcome over attempt
+// 2's row (D-740).
+func TestLaunchDoesNotRunAnAttemptTheRowHasMovedOnFrom(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	claimed := insightTestRun() // running, attempt 1: what the retry handler handed out
+	store := newFakeInsightStore(claimed)
+	service, logs := insightTestService(t, dav.server.URL, bin, store)
+
+	// The sweep failed attempt 1 and a second retry began attempt 2.
+	store.mu.Lock()
+	moved := store.runs[claimed.ID]
+	moved.AttemptNumber = 2
+	store.runs[claimed.ID] = moved
+	store.mu.Unlock()
+
+	service.launch(claimed.ID, 1)
+
+	if len(dav.delivered()) != 0 {
+		t.Fatal("the stale attempt delivered a document beside the live one")
+	}
+	if dav.requestCount() != 0 {
+		t.Errorf("the stale attempt made %d Nextcloud calls, want none", dav.requestCount())
+	}
+	store.mu.Lock()
+	after := store.runs[claimed.ID]
+	store.mu.Unlock()
+	if after.Status != insightStatusRunning || after.AttemptNumber != 2 {
+		t.Fatalf("row = %s/%d after the stale launch, want attempt 2 left running", after.Status, after.AttemptNumber)
+	}
+	if !strings.Contains(logs.String(), "moved on") {
+		t.Errorf("the refused launch must say so in the log: %s", logs.String())
+	}
+
+	// The goroutine holding the live attempt runs it, exactly once.
+	service.launch(claimed.ID, 2)
+	if got := store.status(claimed.ID); got != insightStatusSucceeded {
+		t.Fatalf("status = %q after the live attempt, want succeeded", got)
+	}
+	if len(dav.delivered()) != 1 {
+		t.Fatalf("delivered %d documents, want exactly 1", len(dav.delivered()))
 	}
 }
 
@@ -659,7 +830,7 @@ func TestLaunchWaitsForASlotBeforeItClaims(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		service.launch(queued.ID, false)
+		service.launch(queued.ID, 0)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -701,7 +872,7 @@ func TestLaunchStopsWhenTheOperatorDoes(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		service.launch(queued.ID, false)
+		service.launch(queued.ID, 0)
 	}()
 	select {
 	case <-done:
@@ -736,7 +907,7 @@ exit 0
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		service.launch(queued.ID, false)
+		service.launch(queued.ID, 0)
 	}()
 	for waited := time.Duration(0); store.claims() == 0; waited += 20 * time.Millisecond {
 		if waited > 30*time.Second {
