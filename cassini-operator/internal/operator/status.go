@@ -94,6 +94,13 @@ type statusRecordingsAccess struct {
 	// "administrator", "mount_mapping:everyone".
 	Step   string `json:"step,omitempty"`
 	Detail string `json:"detail,omitempty"`
+	// Cause is the same failure said in one plain sentence, with no command, no
+	// path and no enum name in it (D-759, storage_causes.go). Detail stays as it
+	// was: it is the sentence to act on, and it is what the details block of a
+	// notice shows. This is what the notice OPENS with, so the first thing an
+	// administrator reads is what is wrong rather than which step recorded it.
+	// Empty when this build has no sentence for the step.
+	Cause string `json:"cause,omitempty"`
 	// AdminUser is the account provisioning resolved and acted as. Its absence
 	// is itself the diagnosis when Step is "administrator".
 	AdminUser string `json:"admin_user,omitempty"`
@@ -289,6 +296,18 @@ type setupResponse struct {
 	// which is a fact about their own recordings, and not one thing about where
 	// they are kept or how to move them.
 	Mode string `json:"mode"`
+	// Cause is why recordings cannot be served, in one plain sentence (D-759).
+	// Empty whenever they can, and empty whenever the honest cause cannot be
+	// told without naming an account, a path or an app — the same rule the rest
+	// of this struct follows. storage_causes.go holds the table and decides
+	// which causes are safe to say here; this route repeats one and adds
+	// nothing.
+	//
+	// A non-administrator is not being asked to fix anything. What the sentence
+	// buys them is the difference between "the app is broken" and "somebody is
+	// going to have to switch something back on", which is what they will pass
+	// on to whoever can act.
+	Cause string `json:"cause"`
 	// Features is the readiness signal behind every "not configured yet" state
 	// in the app (D-722). It rides here rather than on a route of its own
 	// because a NEW route only reaches AppAPI at registration time, and whether
@@ -372,6 +391,9 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 		State:          access.State,
 		AwaitingChoice: storageAwaitingChoice(access.Step),
 		Mode:           mode,
+		// The user-safe half of the cause table, which is empty for every step
+		// whose honest sentence would name an account or a path.
+		Cause: storageUserCauseFor(access.Step),
 		Features: setupFeatures{
 			Summaries: llm.Effective.Summary != nil,
 			Insights:  llm.Effective.Insight != nil,

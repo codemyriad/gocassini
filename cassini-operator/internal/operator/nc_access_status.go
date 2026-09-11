@@ -366,10 +366,15 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		State:       string(s.state),
 		Step:        s.step,
 		Detail:      s.detail,
-		AdminUser:   s.adminUser,
-		Mode:        s.mode,
-		ModeSource:  s.modeSource,
-		CheckedAt:   s.checkedAtUTC,
+		// The same failure in one plain sentence (D-759). Derived from the step
+		// rather than stored beside it, so a step recorded anywhere in this
+		// package gets its sentence without every recorder having to remember
+		// to pass one.
+		Cause:      storageCauseFor(s.step),
+		AdminUser:  s.adminUser,
+		Mode:       s.mode,
+		ModeSource: s.modeSource,
+		CheckedAt:  s.checkedAtUTC,
 	}
 	out.ModeConfirmed = ncStorage.confirmedMode()
 	if s.mode != "" {
@@ -388,6 +393,7 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		out.OK = true
 		out.Detail = "recordings are not served from Nextcloud Files; no substrate is expected"
 		out.Step = ""
+		out.Cause = ""
 		return out
 	}
 	if s.checkedAtUTC == "" {
