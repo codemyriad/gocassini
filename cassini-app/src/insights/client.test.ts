@@ -4,8 +4,10 @@ import {
   buildRunFailureNotice,
   classifyRunError,
   createInsight,
+  describeAIFailure,
   describeRunProgress,
   isTerminalStatus,
+  listAIProviderModels,
   listAIProviders,
   listInsights,
   pollDelayMs,
@@ -401,5 +403,36 @@ describe("listAIProviders", () => {
       { id: "local", name: "Qwen" },
     ]);
     expect(fetchImpl.mock.calls[0][0]).toBe("/operator/ai/providers");
+  });
+});
+
+describe("what a failed AI read says", () => {
+  it("repeats the operator's diagnosis for a models listing", async () => {
+    // The operator names the endpoint and what it answered; that sentence is
+    // the whole diagnosis, and discarding it for "HTTP 502" was how a base
+    // URL with /chat/completions on the end stayed a mystery (D-749).
+    const fetchImpl = respondWith(
+      JSON.stringify({ error: "list models from OpenRouter: HTTP 404" }),
+      { status: 502 },
+    );
+    await expect(listAIProviderModels("/operator", "hosted", fetchImpl)).rejects.toThrow(
+      "This endpoint's model list could not be read: list models from OpenRouter: HTTP 404",
+    );
+  });
+
+  it("names the request when the operator said nothing", () => {
+    expect(describeAIFailure("providers", 404, "")).toBe(
+      "The AI endpoints could not be listed (HTTP 404).",
+    );
+    expect(describeAIFailure("providers/x/models", 502, "")).toBe(
+      "This endpoint's model list could not be read (HTTP 502).",
+    );
+  });
+
+  it("still carries the status, so a caller can tell a missing route from a refusal", async () => {
+    const fetchImpl = respondWith("not found", { status: 404 });
+    await expect(listAIProviders("/operator", fetchImpl)).rejects.toMatchObject({
+      status: 404,
+    });
   });
 });

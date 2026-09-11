@@ -163,9 +163,25 @@ async function sendAI(
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new InsightRequestError(response.status, `AI providers could not be read (HTTP ${response.status}).`);
+    throw new InsightRequestError(
+      response.status,
+      describeAIFailure(path, response.status, await readServedMessage(response)),
+    );
   }
   return response.json();
+}
+
+// describeAIFailure names which of the two AI reads failed, and repeats what
+// the operator said about it. The operator's sentence is the diagnosis — a
+// models listing that failed says which endpoint and what it answered — and
+// the generic "AI providers could not be read (HTTP 502)" it used to be
+// replaced with told the reader neither which request nor why.
+export function describeAIFailure(path: string, status: number, served: string): string {
+  const subject =
+    path === "providers"
+      ? "The AI endpoints could not be listed"
+      : "This endpoint's model list could not be read";
+  return served !== "" ? `${subject}: ${served}` : `${subject} (HTTP ${status}).`;
 }
 
 

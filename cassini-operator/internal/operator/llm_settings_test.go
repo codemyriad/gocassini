@@ -219,6 +219,10 @@ func TestNormalizeLLMSettingsRejectsUnresolvablePolicy(t *testing.T) {
 		"not a url":                     {Providers: []LLMProvider{{ID: "x", BaseURL: "qwen"}}},
 		"id with slash":                 {Providers: []LLMProvider{{ID: "a/b", BaseURL: "http://qwen.internal/v1"}}},
 		"negative timeout":              {Providers: []LLMProvider{{ID: "x", BaseURL: "http://qwen.internal/v1", TimeoutSec: -1}}},
+		// The recorder appends /chat/completions itself; a base URL that
+		// already carries it reaches nothing (D-749).
+		"completions url as base": {Providers: []LLMProvider{{ID: "x", BaseURL: "https://openrouter.ai/api/v1/chat/completions"}}},
+		"models url as base":      {Providers: []LLMProvider{{ID: "x", BaseURL: "https://openrouter.ai/api/v1/models/"}}},
 	}
 	for name, in := range cases {
 		if _, err := normalizeLLMSettings(in); err == nil {
@@ -707,6 +711,19 @@ func TestFirstProviderDoesNotOverruleAnExplicitChoice(t *testing.T) {
 	}
 	if got := enableSummaryOnFirstProvider(before, after); got.Summary.Enabled {
 		t.Fatalf("summary = %+v, want left off — the request named a provider and said no", got.Summary)
+	}
+}
+
+// The base URL check has to say what to do, not only that it was refused: a
+// URL copied out of a provider's docs ends in /chat/completions, and the 502
+// that used to result named nothing (D-749).
+func TestValidLLMBaseURLNamesTheFix(t *testing.T) {
+	err := validLLMBaseURL("https://openrouter.ai/api/v1/chat/completions")
+	if err == nil || !strings.Contains(err.Error(), "API root") {
+		t.Fatalf("err = %v, want a message pointing at the API root", err)
+	}
+	if err := validLLMBaseURL("https://openrouter.ai/api/v1"); err != nil {
+		t.Fatalf("the API root itself was refused: %v", err)
 	}
 }
 

@@ -349,6 +349,17 @@ func validLLMBaseURL(raw string) error {
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("base_url %q must be an http(s) URL", raw)
 	}
+	// The recorder appends /chat/completions and the model list appends
+	// /models itself, so a base URL that already ends in one of them reaches
+	// nothing: .../chat/completions/models is a 404 on every provider. It is
+	// the most common way to copy an endpoint out of a provider's docs, and
+	// the 502 it used to produce named nothing (D-749).
+	path := strings.TrimRight(strings.ToLower(u.Path), "/")
+	for _, suffix := range []string{"/chat/completions", "/models"} {
+		if strings.HasSuffix(path, suffix) {
+			return fmt.Errorf("base_url %q ends in %s; give the API root instead (for example https://openrouter.ai/api/v1)", raw, suffix)
+		}
+	}
 	return nil
 }
 
