@@ -370,6 +370,44 @@ WHERE id = ?`, id))
 	return run, nil
 }
 
+// ResumeAttempt re-asserts an attempt a handler already began, before the work
+// starts on it. It is the second half of BeginAttempt's lock: a compare-and-swap
+// on `status = running AND attempt_number = attempt` that refreshes updated_at,
+// so a run that waited in the queue is not what the sweep fails next, and so a
+// goroutine handed attempt N cannot run beside the N+1 a later retry began after
+// the sweep failed N (D-740). errInsightRunNotRunning when the row has moved on.
+func (s *insightStore) ResumeAttempt(ctx context.Context, id string, attempt int) (InsightRun, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InsightRun{}, fmt.Errorf("begin insight resume: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
+UPDATE insight_runs
+SET updated_at = ?
+WHERE id = ? AND status = ? AND attempt_number = ?`, nowUTCString(), id, insightStatusRunning, attempt)
+	if err != nil {
+		return InsightRun{}, fmt.Errorf("resume insight attempt: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return InsightRun{}, fmt.Errorf("rows affected: %w", err)
+	}
+	if changed == 0 {
+		return InsightRun{}, errInsightRunNotRunning
+	}
+	run, err := scanInsightRun(tx.QueryRowContext(ctx, insightRunSelect+`
+WHERE id = ?`, id))
+	if err != nil {
+		return InsightRun{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return InsightRun{}, fmt.Errorf("commit insight resume: %w", err)
+	}
+	return run, nil
+}
+
 // FinishAttempt records how the running attempt ended, on both the run and the
 // attempt row.
 func (s *insightStore) FinishAttempt(ctx context.Context, id string, outcome InsightOutcome) error {

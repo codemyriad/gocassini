@@ -254,6 +254,59 @@ func TestInsightStoreRetryIsAnotherAttemptOnTheSameRun(t *testing.T) {
 	}
 }
 
+// ResumeAttempt is the second half of BeginAttempt's lock. A goroutine handed
+// attempt N may only run it while the row is still at attempt N and running; once
+// the sweep failed N and a retry began N+1, the older goroutine must be refused,
+// or one run is attempted twice at once (D-740).
+func TestInsightStoreResumeAttemptRefusesAnAttemptTheRowMovedOnFrom(t *testing.T) {
+	ctx := context.Background()
+	store := newInsightTestStore(t)
+	seedInsightRun(t, store, "ins_0123456789abcdef", "alice")
+	first, err := store.BeginAttempt(ctx, "ins_0123456789abcdef")
+	if err != nil {
+		t.Fatalf("BeginAttempt() error = %v", err)
+	}
+
+	// Waiting in the queue is progress: the resume refreshes updated_at, so a
+	// row this process is about to work on is not what the sweep fails next.
+	backdate := formatUTCString(time.Now().Add(-time.Hour))
+	if _, err := store.db.Exec(`UPDATE insight_runs SET updated_at = ?`, backdate); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	resumed, err := store.ResumeAttempt(ctx, "ins_0123456789abcdef", first.AttemptNumber)
+	if err != nil {
+		t.Fatalf("ResumeAttempt(same attempt) error = %v", err)
+	}
+	if resumed.Status != insightStatusRunning || resumed.AttemptNumber != 1 {
+		t.Fatalf("resumed = %s/%d, want running/1", resumed.Status, resumed.AttemptNumber)
+	}
+	if swept, err := store.MarkInterruptedRunsFailed(ctx, time.Now().Add(-time.Minute)); err != nil || swept != 0 {
+		t.Fatalf("swept %d (err %v) after a resume, want 0: the resume must count as progress", swept, err)
+	}
+
+	// Now the case the CAS exists for: the sweep fails the attempt, a person
+	// retries, and the goroutine still holding attempt 1 finally gets a slot.
+	if _, err := store.db.Exec(`UPDATE insight_runs SET updated_at = ?`, backdate); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	if swept, err := store.MarkInterruptedRunsFailed(ctx, time.Now()); err != nil || swept != 1 {
+		t.Fatalf("swept %d (err %v), want the stale attempt failed", swept, err)
+	}
+	second, err := store.BeginAttempt(ctx, "ins_0123456789abcdef")
+	if err != nil || second.AttemptNumber != 2 {
+		t.Fatalf("retry = %+v (err %v), want attempt 2", second, err)
+	}
+	if _, err := store.ResumeAttempt(ctx, "ins_0123456789abcdef", 1); !errors.Is(err, errInsightRunNotRunning) {
+		t.Fatalf("ResumeAttempt(stale attempt) error = %v, want errInsightRunNotRunning", err)
+	}
+	if _, err := store.ResumeAttempt(ctx, "ins_0123456789abcdef", 2); err != nil {
+		t.Fatalf("ResumeAttempt(current attempt) error = %v", err)
+	}
+	if _, err := store.ResumeAttempt(ctx, "ins_0000000000000000", 1); !errors.Is(err, errInsightRunNotRunning) {
+		t.Fatalf("ResumeAttempt(absent run) error = %v, want errInsightRunNotRunning", err)
+	}
+}
+
 func TestInsightStoreBeginAttemptRefusesARunThatIsNotQueuedOrFailed(t *testing.T) {
 	ctx := context.Background()
 	store := newInsightTestStore(t)

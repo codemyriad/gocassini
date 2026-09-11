@@ -235,7 +235,7 @@ func insightTestService(t *testing.T, ncURL, bin string, store insightRunStore) 
 		slots:    make(chan struct{}, maxConcurrentInsightRuns),
 		now:      func() time.Time { return time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC) },
 		newID:    func() (string, error) { return "ins_0123456789abcdef", nil },
-		launchFn: func(string, bool) {},
+		launchFn: func(string, int) {},
 	}, logs
 }
 
@@ -606,7 +606,7 @@ func TestLaunchClaimsTheAttemptItRunsAndRecordsTheOutcome(t *testing.T) {
 	store := newFakeInsightStore(queued)
 	service, _ := insightTestService(t, dav.server.URL, bin, store)
 
-	service.launch(queued.ID, false)
+	service.launch(queued.ID, 0)
 
 	if store.claims() != 1 {
 		t.Fatalf("BeginAttempt called %d times, want once: an unclaimed run is claimed here", store.claims())
@@ -632,13 +632,61 @@ func TestLaunchDoesNotClaimAnAttemptTheRequestAlreadyTook(t *testing.T) {
 	store := newFakeInsightStore(claimed)
 	service, _ := insightTestService(t, dav.server.URL, bin, store)
 
-	service.launch(claimed.ID, true)
+	service.launch(claimed.ID, claimed.AttemptNumber)
 
 	if store.claims() != 0 {
 		t.Fatalf("BeginAttempt called %d times for an attempt the request already claimed", store.claims())
 	}
 	if got := store.status(claimed.ID); got != insightStatusSucceeded {
 		t.Fatalf("status = %q, want succeeded", got)
+	}
+}
+
+// A claimed attempt is re-asserted, not trusted. Between the retry handler's
+// claim and this goroutine getting a slot, the sweep can fail the row and a
+// person can retry it again — which begins attempt 2 and launches a second
+// goroutine. The goroutine still holding attempt 1 must then do nothing: not
+// stage, not ask the model, not deliver, and not write an outcome over attempt
+// 2's row (D-740).
+func TestLaunchDoesNotRunAnAttemptTheRowHasMovedOnFrom(t *testing.T) {
+	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
+	claimed := insightTestRun() // running, attempt 1: what the retry handler handed out
+	store := newFakeInsightStore(claimed)
+	service, logs := insightTestService(t, dav.server.URL, bin, store)
+
+	// The sweep failed attempt 1 and a second retry began attempt 2.
+	store.mu.Lock()
+	moved := store.runs[claimed.ID]
+	moved.AttemptNumber = 2
+	store.runs[claimed.ID] = moved
+	store.mu.Unlock()
+
+	service.launch(claimed.ID, 1)
+
+	if len(dav.delivered()) != 0 {
+		t.Fatal("the stale attempt delivered a document beside the live one")
+	}
+	if dav.requestCount() != 0 {
+		t.Errorf("the stale attempt made %d Nextcloud calls, want none", dav.requestCount())
+	}
+	store.mu.Lock()
+	after := store.runs[claimed.ID]
+	store.mu.Unlock()
+	if after.Status != insightStatusRunning || after.AttemptNumber != 2 {
+		t.Fatalf("row = %s/%d after the stale launch, want attempt 2 left running", after.Status, after.AttemptNumber)
+	}
+	if !strings.Contains(logs.String(), "moved on") {
+		t.Errorf("the refused launch must say so in the log: %s", logs.String())
+	}
+
+	// The goroutine holding the live attempt runs it, exactly once.
+	service.launch(claimed.ID, 2)
+	if got := store.status(claimed.ID); got != insightStatusSucceeded {
+		t.Fatalf("status = %q after the live attempt, want succeeded", got)
+	}
+	if len(dav.delivered()) != 1 {
+		t.Fatalf("delivered %d documents, want exactly 1", len(dav.delivered()))
 	}
 }
 
@@ -659,7 +707,7 @@ func TestLaunchWaitsForASlotBeforeItClaims(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		service.launch(queued.ID, false)
+		service.launch(queued.ID, 0)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -701,7 +749,7 @@ func TestLaunchStopsWhenTheOperatorDoes(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		service.launch(queued.ID, false)
+		service.launch(queued.ID, 0)
 	}()
 	select {
 	case <-done:
@@ -736,7 +784,7 @@ exit 0
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		service.launch(queued.ID, false)
+		service.launch(queued.ID, 0)
 	}()
 	for waited := time.Duration(0); store.claims() == 0; waited += 20 * time.Millisecond {
 		if waited > 30*time.Second {

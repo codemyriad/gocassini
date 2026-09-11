@@ -283,7 +283,7 @@ func (s *insightService) create(w http.ResponseWriter, r *http.Request, caller s
 	// claims the row the moment it begins, and a read racing with it would serve
 	// `running` from a call whose whole contract is that it answers `queued`.
 	writeJSON(w, http.StatusCreated, stored)
-	s.launchFn(id, false)
+	s.launchFn(id, 0)
 }
 
 // decodeInsightCreateRequest validates the body completely, and refuses on the
@@ -535,7 +535,7 @@ func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, i
 		writeJSONError(w, http.StatusBadGateway, "the insight could not be retried")
 		return
 	}
-	s.launchFn(id, true)
+	s.launchFn(id, run.AttemptNumber)
 	writeJSON(w, http.StatusOK, run)
 }
 

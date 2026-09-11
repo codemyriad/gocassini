@@ -190,6 +190,7 @@ type insightRunStore interface {
 	GetRun(ctx context.Context, id string) (InsightRun, error)
 	ListRuns(ctx context.Context, createdBy string) ([]InsightRun, error)
 	BeginAttempt(ctx context.Context, id string) (InsightRun, error)
+	ResumeAttempt(ctx context.Context, id string, attempt int) (InsightRun, error)
 	FinishAttempt(ctx context.Context, id string, outcome InsightOutcome) error
 }
 
@@ -218,7 +219,10 @@ type insightService struct {
 	// handler's job is the answer it gives, and driving a whole run through it
 	// to check a status code would leave the status codes tested through a
 	// subprocess and the subprocess tested through nothing.
-	launchFn func(id string, claimed bool)
+	//
+	// attempt is the attempt number the caller already claimed, or 0 when the
+	// launch is to claim one itself (see launch).
+	launchFn func(id string, attempt int)
 }
 
 // newInsightService returns the service, or nil when this deployment cannot run
@@ -255,7 +259,7 @@ func newInsightService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *insi
 		now:    func() time.Time { return time.Now().UTC() },
 		newID:  newInsightRunID,
 	}
-	service.launchFn = func(id string, claimed bool) { go service.launch(id, claimed) }
+	service.launchFn = func(id string, attempt int) { go service.launch(id, attempt) }
 	return service
 }
 
@@ -270,11 +274,12 @@ func newInsightService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *insi
 // operator: on shutdown it is cancelled and every child dies with its process
 // group.
 //
-// claimed says whether a handler already took the attempt. A retry claims inside
-// the request, because BeginAttempt is the lock that makes its 409 exact; a
-// create answers 201/queued and claims here, which is what lets a run wait for a
+// attempt says whether a handler already took the attempt, and which. A retry
+// claims inside the request, because BeginAttempt is the lock that makes its
+// 409 exact, and passes the attempt number it was given; a create answers
+// 201/queued and passes 0 to claim here, which is what lets a run wait for a
 // slot under the status word that describes it.
-func (s *insightService) launch(id string, claimed bool) {
+func (s *insightService) launch(id string, attempt int) {
 	select {
 	case s.slots <- struct{}{}:
 	case <-s.rt.ctx.Done():
@@ -282,11 +287,12 @@ func (s *insightService) launch(id string, claimed bool) {
 	}
 	defer func() { <-s.slots }()
 
-	run, err := s.claim(id, claimed)
+	run, err := s.claim(id, attempt)
 	if err != nil {
 		// A busy run is not an error here: another attempt holds it, and the one
-		// thing this goroutine must not do is run a second one beside it.
-		if !errors.Is(err, errInsightRunBusy) {
+		// thing this goroutine must not do is run a second one beside it. Nor is
+		// a claimed attempt the row has moved on from — see claim.
+		if !errors.Is(err, errInsightRunBusy) && !errors.Is(err, errInsightRunNotRunning) {
 			s.logf("insights: claim run=%s: %v", id, err)
 		}
 		return
@@ -307,9 +313,24 @@ func (s *insightService) launch(id string, claimed bool) {
 	}
 }
 
-func (s *insightService) claim(id string, claimed bool) (InsightRun, error) {
-	if claimed {
-		return s.store.GetRun(s.rt.ctx, id)
+// claim takes the attempt this launch is to run, or re-asserts the one a handler
+// already took.
+//
+// The claimed path is a compare-and-swap and not a read, on purpose. Between the
+// retry handler's BeginAttempt and this goroutine getting a slot, the row can
+// move: the store's sweep fails a `running` row that has not been written to in
+// over an hour, and a person who sees it failed can retry it again — which
+// begins attempt N+1 and launches a second goroutine. A plain read here would
+// let both proceed, and one run would be attempted twice at once. ResumeAttempt
+// succeeds only for a row still running at exactly the attempt this launch was
+// handed, and touches its timestamp so the sweep sees the wait as progress.
+func (s *insightService) claim(id string, attempt int) (InsightRun, error) {
+	if attempt > 0 {
+		run, err := s.store.ResumeAttempt(s.rt.ctx, id, attempt)
+		if errors.Is(err, errInsightRunNotRunning) {
+			s.logf("insights: run=%s attempt=%d was claimed but the row has moved on; not running it", id, attempt)
+		}
+		return run, err
 	}
 	return s.store.BeginAttempt(s.rt.ctx, id)
 }
