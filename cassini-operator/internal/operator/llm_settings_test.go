@@ -1,7 +1,9 @@
 package operator
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -406,6 +408,66 @@ func TestLLMProviderModelsReportsUpstreamFailure(t *testing.T) {
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "HTTP 500") {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
+}
+
+// The USER twin of that route is read by everybody who is signed in, and a
+// transport error's text carries the endpoint's full URL. The base URL is
+// administrator-only on every other surface, so the USER route says only what
+// kind of failure it was; the detail goes to the log and stays on the ADMIN
+// route (D-740).
+func TestAIProviderModelsTellsAUserNothingAboutTheEndpoint(t *testing.T) {
+	clearLLMEnv(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+	secretHost := strings.TrimPrefix(upstream.URL, "http://")
+
+	t.Run("the endpoint answered with an error", func(t *testing.T) {
+		t.Setenv(envLLMBaseURL, upstream.URL+"/v1/private-path")
+		var logs bytes.Buffer
+		rt, cleanup := newTestRuntimeWithLogger(t, log.New(&logs, "", 0))
+		defer cleanup()
+
+		rec := httptest.NewRecorder()
+		rt.aiProviderModelsHandler(rec, httptest.NewRequest(http.MethodGet, "/ai/providers/default/models", nil))
+		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "the endpoint returned HTTP 500") {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), secretHost) || strings.Contains(rec.Body.String(), "private-path") {
+			t.Fatalf("the USER route named the endpoint: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("the endpoint could not be reached", func(t *testing.T) {
+		// A closed server: the *url.Error this produces prints the whole URL.
+		gone := httptest.NewServer(http.NotFoundHandler())
+		goneURL := gone.URL
+		gone.Close()
+		t.Setenv(envLLMBaseURL, goneURL+"/v1/private-path")
+		var logs bytes.Buffer
+		rt, cleanup := newTestRuntimeWithLogger(t, log.New(&logs, "", 0))
+		defer cleanup()
+
+		rec := httptest.NewRecorder()
+		rt.aiProviderModelsHandler(rec, httptest.NewRequest(http.MethodGet, "/ai/providers/default/models", nil))
+		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "the endpoint could not be reached") {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "private-path") || strings.Contains(rec.Body.String(), strings.TrimPrefix(goneURL, "http://")) {
+			t.Fatalf("the USER route named the endpoint: %s", rec.Body.String())
+		}
+		if !strings.Contains(logs.String(), "private-path") {
+			t.Fatalf("the detail must still reach the log for an administrator: %s", logs.String())
+		}
+
+		// The ADMIN twin keeps the detail, because that is who fixes it.
+		rec = httptest.NewRecorder()
+		rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings/llm/providers/default/models", nil))
+		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "private-path") {
+			t.Fatalf("ADMIN status = %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 // --- D-719: the insight step ---

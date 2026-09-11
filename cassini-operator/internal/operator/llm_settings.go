@@ -766,6 +766,31 @@ func (rt *Runtime) handleLLMProviderModels(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, llmModelsResponse{Provider: id, Models: models})
 }
 
+// llmUpstreamStatusError is the endpoint answering the model list with
+// something other than a 2xx. Typed so the USER route can say which status it
+// was without repeating anything else the error might carry.
+type llmUpstreamStatusError struct {
+	Status int
+}
+
+func (e *llmUpstreamStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d", e.Status)
+}
+
+// sanitisedLLMModelsError is what a non-administrator is told when the model
+// list could not be fetched. Fixed sentences on purpose: a transport error
+// carries the endpoint's full URL in its text (*url.Error prints it), and the
+// base URL is administrator-only on every surface a signed-in user can reach.
+// The status is kept because "HTTP 401" and "unreachable" are different things
+// to tell an administrator about; the detail goes to the server log (D-740).
+func sanitisedLLMModelsError(err error) string {
+	var upstream *llmUpstreamStatusError
+	if errors.As(err, &upstream) {
+		return fmt.Sprintf("the endpoint returned HTTP %d", upstream.Status)
+	}
+	return "the endpoint could not be reached"
+}
+
 // listLLMModels asks an OpenAI-compatible endpoint what it serves. Hosted
 // providers and the self-hosted servers that matter (llama.cpp, vLLM, Ollama,
 // LM Studio) all answer GET {base}/models with {"data":[{"id":...}]}; the key
@@ -794,7 +819,7 @@ func listLLMModels(ctx context.Context, p LLMProvider) ([]llmModel, error) {
 		return nil, errors.New("response too large")
 	}
 	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, &llmUpstreamStatusError{Status: resp.StatusCode}
 	}
 	var payload struct {
 		Data []struct {
@@ -875,5 +900,21 @@ func (rt *Runtime) aiProviderModelsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	rt.handleLLMProviderModels(w, r, id)
+	provider, ok := rt.currentLLMSettings().providerByID(id)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, fmt.Sprintf("unknown provider %q", id))
+		return
+	}
+	models, err := listLLMModels(r.Context(), provider)
+	if err != nil {
+		// The detail — which carries the URL — is for the log and the ADMIN
+		// twin under /settings/llm/providers/{id}/models, not for whoever is
+		// signed in.
+		if rt.logger != nil {
+			rt.logger.Printf("ai: list models from provider=%s: %v", id, err)
+		}
+		writeJSONError(w, http.StatusBadGateway, sanitisedLLMModelsError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, llmModelsResponse{Provider: id, Models: models})
 }
