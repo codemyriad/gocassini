@@ -56,6 +56,13 @@ type ncStorageProbe struct {
 	// prerequisite BOTH models need: every WebDAV write acts as it, in a Team
 	// folder and in a private home alike.
 	ServiceAccount bool
+	// ServiceAccountAttempt is what the enabled edge's attempt to CREATE the
+	// account ran into, or "" when there was nothing to create and nothing was
+	// attempted (nc_owner_account.go). It belongs with the facts because it
+	// changed them: since D-754 one write happens between this read and the
+	// mode-dependent gates, and "Cassini asked and Nextcloud refused" is a
+	// different thing for an administrator to read than "it is not there".
+	ServiceAccountAttempt string
 	// OwnerGroup is true when the narrow `cassini` group exists. Tracked apart
 	// from the account because the two can genuinely come apart — an
 	// administrator who ran `occ user:add` without `--group` has one and not the
@@ -428,7 +435,7 @@ func (p ncStorageProbe) accessControlReady() (ok bool, step, detail string) {
 			"Nextcloud did not answer which apps are enabled, so the access-controlled prerequisites could not be checked"
 	}
 	if !p.ServiceAccount {
-		return false, storageStepServiceAccount, missingServiceAccountDetail()
+		return false, storageStepServiceAccount, p.serviceAccountDetail()
 	}
 	if !p.EveryoneGroup {
 		return false, storageStepUniversalGroup,
@@ -462,7 +469,7 @@ func (p ncStorageProbe) accessControlReady() (ok bool, step, detail string) {
 // thing: the account that owns the tree. The tree itself is created on demand.
 func (p ncStorageProbe) defaultReady() (ok bool, step, detail string) {
 	if !p.ServiceAccount {
-		return false, storageStepServiceAccount, missingServiceAccountDetail()
+		return false, storageStepServiceAccount, p.serviceAccountDetail()
 	}
 	return true, "", ""
 }
@@ -563,6 +570,17 @@ func declaredModeConflictDetail(accessControlled bool, conflicts []string) strin
 // not been told does not publish at all — so the latch has nothing left to
 // catch. The fact it read is not lost: both roots' contents are on every probe,
 // and they are the first thing the setup wizard shows.
+
+// serviceAccountDetail is what an administrator reads when the account is
+// missing: the base sentence, plus what this run's create attempt ran into when
+// there was one. Both gates route through it, so /status, /storage and the log
+// carry the same sentence.
+func (p ncStorageProbe) serviceAccountDetail() string {
+	if p.ServiceAccountAttempt == "" {
+		return missingServiceAccountDetail()
+	}
+	return missingServiceAccountDetail() + ". " + p.ServiceAccountAttempt
+}
 
 func missingServiceAccountDetail() string {
 	return fmt.Sprintf(

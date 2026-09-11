@@ -21,6 +21,7 @@ import (
 //	enabled edge
 //	  │
 //	  ├── probe            read only: apps, account, groups, folder, tree
+//	  ├── service account  the one exception below: create it if it is missing
 //	  ├── resolve mode     the flag, or a default derived from the probe
 //	  │                    (derived once, then persisted — never re-derived)
 //	  ├── sanity check     does the storage match the mode it claims?
@@ -29,10 +30,12 @@ import (
 //	  │                    mode the container ACL + leaf self-heal
 //	  └── record           ncAccessSubstrate → /status, /setup, /storage
 //
-// The one thing it will not do is create a prerequisite. A missing app, a
-// missing account, an absent Team folder are reported with the command that
-// fixes them and nothing else happens — which is also why a bad setup can no
-// longer half-build a substrate that later reads as healthy.
+// It creates one prerequisite and no others: the `cassini` service account,
+// which both modes store every recording as, and which an install cannot record
+// a single meeting without (D-754, nc_owner_account.go). A missing app, an
+// absent Team folder, a group nobody mapped are still reported with the command
+// that fixes them and nothing else happens — which is also why a bad setup can
+// no longer half-build a substrate that later reads as healthy.
 
 // preflightNCStorage runs the enabled-edge preflight. No-op outside AppAPI.
 // Non-fatal in every branch: an operator that cannot reach Nextcloud should
@@ -71,6 +74,17 @@ func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.
 	}
 	ncAccessSubstrate.setAdminUser(probe.AdminUser)
 	ncAccessSubstrate.setPrerequisites(probe.Prereqs)
+
+	// D-754: the one write that happens before the mode is known, and the only
+	// prerequisite this preflight will try to create. Both modes are written and
+	// read as the `cassini` account, so a missing one is attempted HERE rather
+	// than in either mode's branch — an instance with neither native app needs
+	// the account just as much, and the deps-free model needs nothing else. It
+	// writes nothing when the account is already there, amends the probe with
+	// what is true afterwards, and reports rather than retries when Nextcloud
+	// refuses (nc_owner_account.go).
+	c.ensureServiceAccountOnEnable(ctx, client, &probe, logger)
+
 	ncAccessSubstrate.setProbe(probe)
 	logger.Printf("nc storage: probe %s", summarizeProbe(probe))
 

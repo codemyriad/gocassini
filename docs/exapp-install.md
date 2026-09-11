@@ -27,7 +27,11 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   enabled.
 - A registered AppAPI **deploy daemon** (next section).
 - **Required.** A `cassini` service account. Every recording is written and
-  read as it, in either storage mode. Cassini can create it for you: open
+  read as it, in either storage mode. Cassini tries to create it and its
+  `cassini` group itself when the app is enabled, which works on releases that
+  let an ExApp write to user administration. Nextcloud 34.0.2 and later refuse
+  that request (they require password confirmation, which an ExApp has no
+  session to give), and then Cassini creates it from your browser instead: open
   **Cassini → Setup** and accept the offer, and it will make the account as you,
   after Nextcloud's own password prompt. By hand instead:
 
@@ -56,9 +60,10 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   up: which apps are enabled, whether the `cassini` account exists, whether
   there is a Team folder. That check is read-only, and the archive itself is
   never touched as an administrator — every recording is written, read and
-  moved as `cassini`, including when the storage mode is switched. The one
-  thing the operator may attempt as the administrator is installing the two
-  native apps when you ask it to from the Setup tab. See
+  moved as `cassini`, including when the storage mode is switched. The writes
+  the operator may attempt as the administrator are creating the `cassini`
+  account and its group when the app is enabled, and installing the two native
+  apps when you ask it to from the Setup tab. See
   [Administrator discovery](#administrator-discovery) — in almost all cases this
   needs no configuration.
 - A Docker engine for the ExApp container. For GPU transcription it needs the
@@ -261,7 +266,7 @@ Options).
 | `CASSINI_TALK_RECORDING_SECRET` | No (auto-generated) | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). **Since D-447, if omitted the operator generates and persists one** — read it back from the provisioning endpoint (Step 5). An explicit value wins and is treated as externally managed |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
-| `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used to CHECK how this instance is set up — which apps are enabled, whether the `cassini` account exists, whether there is a Team folder. That check creates nothing; this release scaffolds no prerequisites (the Setup tab's app-install attempt is the one write it makes as this account), and switching storage modes moves nothing as it — the archive is copied by WebDAV as `cassini`, in both directions. A switch does re-run that same read-only check before it writes, so it still needs an administrator to be resolvable. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
+| `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used to CHECK how this instance is set up — which apps are enabled, whether the `cassini` account exists, whether there is a Team folder. That check creates nothing; the only writes made as this account are the attempt to create the `cassini` service account and its group when the app is enabled, and the Setup tab's app-install attempt, and switching storage modes moves nothing as it — the archive is copied by WebDAV as `cassini`, in both directions. A switch does re-run that same read-only check before it writes, so it still needs an administrator to be resolvable. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
 | `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in Nextcloud Files; `local` keeps them on the app's own volume. Set `local` only deliberately. Under `nextcloud-files`, *who may read* a recording is a separate choice made in the app's Setup tab, not here |
 | `CASSINI_STT_BACKEND` | No | Which registered speech-to-text engine transcription uses; empty selects the default (`sherpa-onnx`). An unknown value fails the build loudly before any audio is decoded |
 | `CASSINI_DISALLOW_MODEL_DOWNLOAD` | No | Set `1` on a host with no outbound network access. Each image bundles the model of the quality tier it runs by default, and any other tier downloads once into the model cache on the persistent volume. With this set, a build whose tier needs that download is blocked with a message that names the missing model and asks for a tier the image bundles, instead of starting and failing at the network |
