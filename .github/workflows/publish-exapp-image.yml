@@ -971,7 +971,10 @@ jobs:
     name: E2E manual-install proxy + lifecycle (Nextcloud / AppAPI)
     runs-on: ubuntu-latest
     needs: build-image
-    timeout-minutes: 50
+    # Three legs, three Nextcloud stacks, one after another (D-753 added the
+    # upgrade one). Raised from 50 with the leg rather than left to be
+    # discovered as a timeout on a green run.
+    timeout-minutes: 70
     # Heavy tier: push/dispatch, or a PR labeled `full-ci` (spins up a full
     # Nextcloud + AppAPI install — minutes-expensive).
     if: >-
@@ -998,6 +1001,19 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
           CASSINI_E2E_STORAGE_MODE: default
+        run: ./harness/bin/ci-e2e-install-exapp.sh
+
+      # The upgrade leg (D-753). An access-controlled Nextcloud whose Team folder
+      # already holds recordings, with nothing declared: the operator has to
+      # resolve `access_controlled` from what it finds, leave every recording
+      # where it is, and not refuse a recording for want of a decision. This is
+      # the merge condition for the enable-time resolution, not a follow-up —
+      # the one thing an upgrade may never do is widen an existing archive.
+      - name: Run manual-install upgrade e2e (storage mode resolved on enable)
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
+          CASSINI_E2E_STORAGE_MODE: resolve
         run: ./harness/bin/ci-e2e-install-exapp.sh
 
   # D-684 removed the hosted-CPU Talk/ASR roundtrip. This CUDA job owns the

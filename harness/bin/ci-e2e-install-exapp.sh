@@ -19,6 +19,24 @@
 #   7. Assert the proxied routes: admin sees operator + viewer, regular user
 #      sees viewer but the operator JSON API stays ADMIN (403 for non-admins).
 #
+# THREE LEGS, selected by CASSINI_E2E_STORAGE_MODE:
+#
+#   access_controlled  (default) the Team-folder model, declared to the
+#                      container through CASSINI_STORAGE_MODE.
+#   default            the deps-free model, declared the same way.
+#   resolve            the UPGRADE: an access-controlled stack whose Team folder
+#                      already holds recordings, with NOTHING declared and no
+#                      mode recorded. The operator has to work the mode out from
+#                      what it finds on the enabled edge (D-753) and keep every
+#                      recording exactly where it is. This is the leg that proves
+#                      an upgrading install is never widened to "everyone with a
+#                      Nextcloud account" by an update.
+#
+# What this script does NOT cover: the Talk recording path itself. A refused
+# recording is a property of the substrate verdict this script asserts
+# (recordingRefusal reads it), but the POST that starts a recording needs a
+# signaling stack — ci-e2e-talk-record-roundtrip.sh owns that.
+#
 # Tear down on success and on failure. Logs land in $LOG_DIR.
 set -euo pipefail
 
@@ -46,12 +64,32 @@ TEST_USER="${TEST_USER:-e2euser}"
 TEST_USER_PASSWORD="${TEST_USER_PASSWORD:-Tn8mY3qVrJ2x!E2e}"
 APP_SECRET="${APP_SECRET:-$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
 EXPECT_GPU_UNAVAILABLE="${CASSINI_EXPECT_GPU_UNAVAILABLE:-0}"
+# STORAGE_MODE is the model this leg ends up in; DECLARE_STORAGE_MODE says
+# whether the container was TOLD, and EXPECTED_MODE_SOURCE is how /storage has
+# to account for it afterwards. Splitting the three is what makes the upgrade
+# leg expressible: same model, same substrate, nothing declared.
+DECLARE_STORAGE_MODE=1
+SEED_TEAM_FOLDER=0
+EXPECTED_MODE_SOURCE="env"
 STORAGE_MODE="${CASSINI_E2E_STORAGE_MODE:-access_controlled}"
 case "$STORAGE_MODE" in
   access_controlled) HARNESS_STORAGE_MODE="acl-enabled" ;;
   default)           HARNESS_STORAGE_MODE="default" ;;
-  *) echo "CASSINI_E2E_STORAGE_MODE must be access_controlled or default, got $STORAGE_MODE" >&2; exit 2 ;;
+  resolve)
+    STORAGE_MODE="access_controlled"
+    HARNESS_STORAGE_MODE="acl-enabled"
+    DECLARE_STORAGE_MODE=0
+    SEED_TEAM_FOLDER=1
+    EXPECTED_MODE_SOURCE="resolved_on_enable"
+    ;;
+  *) echo "CASSINI_E2E_STORAGE_MODE must be access_controlled, default or resolve, got $STORAGE_MODE" >&2; exit 2 ;;
 esac
+
+# The archive the upgrade leg finds already there. Two recordings and the
+# catalog beside them: the shape the probe reads, and the shape a real install
+# upgrading into this build has.
+SEED_MEETINGS=(upgrade-a upgrade-b)
+SEED_RECORDINGS_PATH="Recordings"
 
 mkdir -p "$LOG_DIR"
 
@@ -60,6 +98,68 @@ fail() { log "FAIL: $*"; exit 1; }
 
 compose() { docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"; }
 occ()     { compose exec -T -u www-data nextcloud php occ "$@"; }
+
+# --- the upgrade leg's archive -------------------------------------------
+#
+# An install that has been recording for a year is the case the enable-time
+# resolution exists for, and the only way to have one here is to put it there
+# before Cassini has ever seen this Nextcloud. Written on disk and scanned in
+# rather than uploaded, for the same reason seed-nc-files.sh does it that way:
+# these recordings pre-date the ExApp, so there is no Cassini to upload them
+# through. The bytes are arbitrary — nothing in this leg plays them; what is
+# asserted is that they are still there, unmoved, afterwards.
+NEXTCLOUD_DATA_DIR=""
+SEEDED_ARCHIVE_ROOT=""
+SEEDED_ARCHIVE_LISTING=""
+
+seed_team_folder_archive() {
+  local folder_id
+  # `mountPoint` from occ, `mount_point` over HTTP: the two surfaces genuinely
+  # disagree and using one spelling against the other selects nothing.
+  folder_id="$(occ groupfolders:list --output=json_pretty 2>/dev/null \
+    | jq -r '[.[] | select((.mountPoint // .mount_point) == "Cassini") | .id] | sort | .[0] // empty' \
+    | tr -d '\r')"
+  [[ -n "$folder_id" ]] || fail "the harness brought up no Cassini Team folder to seed"
+  NEXTCLOUD_DATA_DIR="$(occ config:system:get datadirectory | tr -d '\r')"
+  [[ -n "$NEXTCLOUD_DATA_DIR" ]] || fail "could not read Nextcloud's datadirectory"
+  SEEDED_ARCHIVE_ROOT="$NEXTCLOUD_DATA_DIR/__groupfolders/$folder_id/files/$SEED_RECORDINGS_PATH"
+
+  # The $VARs below are expanded INSIDE the container, by the shell this
+  # `compose exec -e` hands them to. Expanding them out here would put a host
+  # path into a container command.
+  # shellcheck disable=SC2016
+  compose exec -T -e SEED_ROOT="$SEEDED_ARCHIVE_ROOT" -e SEED_IDS="${SEED_MEETINGS[*]}" nextcloud sh -c '
+    set -e
+    mkdir -p "$SEED_ROOT/meetings"
+    entries=""
+    for id in $SEED_IDS; do
+      printf "seeded-before-the-upgrade-%s" "$id" > "$SEED_ROOT/meetings/$id.opus"
+      entries="${entries:+$entries,}{\"id\":\"$id\",\"title\":\"$id\",\"audioPath\":\"meetings/$id.opus\"}"
+    done
+    printf "{\"version\":\"cassini.viewer.catalog.v1\",\"meetings\":[%s]}" "$entries" > "$SEED_ROOT/catalog.json"
+    chown -R www-data:www-data "$SEED_ROOT"
+  ' >/dev/null || fail "could not seed the Cassini Team folder"
+  occ groupfolders:scan "$folder_id" >/dev/null || fail "could not scan the seeded Team folder"
+
+  SEEDED_ARCHIVE_LISTING="$(team_folder_archive_listing)"
+  [[ -n "$SEEDED_ARCHIVE_LISTING" ]] || fail "the seeded archive listed nothing back"
+  log "seeded ${#SEED_MEETINGS[@]} recording(s) + catalog into Team folder $folder_id"
+}
+
+# team_folder_archive_listing is the archive as names and byte counts: enough to
+# catch a file moved, added, emptied or removed, and no dependency beyond `ls`
+# and `wc`, which is all the Nextcloud image is guaranteed to carry.
+team_folder_archive_listing() {
+  # shellcheck disable=SC2016  # expanded in the container, see above
+  compose exec -T -e SEED_ROOT="$SEEDED_ARCHIVE_ROOT" nextcloud sh -c '
+    cd "$SEED_ROOT" || exit 1
+    ls -1 .
+    echo --
+    ls -1 meetings
+    echo --
+    wc -c catalog.json meetings/*
+  ' 2>/dev/null | tr -d '\r'
+}
 
 cleanup() {
   local rc=$?
@@ -99,6 +199,16 @@ export PROJECT_NAME NEXTCLOUD_HOST_PORT
   >"$LOG_DIR/stack-up.log" 2>&1 \
   || { tail -n 40 "$LOG_DIR/stack-up.log"; fail "cassini dev stack up failed"; }
 
+# --- 1b. The archive an upgrading install already has ---------------------
+#
+# Before the daemon, before the register, before any enabled edge: at this point
+# the stack has the access-controlled substrate an administrator built and no
+# Cassini at all, which is exactly what an install upgrading into this build
+# looks like from the operator's side.
+if (( SEED_TEAM_FOLDER )); then
+  seed_team_folder_archive
+fi
+
 # --- 2. Install + enable app_api ------------------------------------------
 
 log "installing + enabling app_api"
@@ -130,10 +240,19 @@ log "starting Cassini ExApp container ($IMAGE_REF)"
 # CASSINI_* vars, so this test relies on the /operator default baked into the
 # runtime image and must catch the image ever losing it.
 #
-# CASSINI_STORAGE_MODE is the one CASSINI_* variable this job does declare, and
-# it has to. Since D-708 nothing falls back: an app that has not been told which
-# storage model to use is UNDECIDED and publishes nothing. The harness uses the
-# matching declaration to construct this leg's substrate.
+# CASSINI_STORAGE_MODE is the one CASSINI_* variable this job declares, on the
+# two legs that declare one: the harness builds the matching substrate, and the
+# declaration is what the operator is then asserted to have recorded.
+#
+# The `resolve` leg declares NOTHING, which is the whole point of it. A
+# production install has no such variable, so what it starts from is an empty
+# settings file and a Nextcloud — and since D-753 that is enough: the enabled
+# edge reads the archive and decides. Passing the variable here would test the
+# harness instead.
+declare -a storage_mode_env=()
+if (( DECLARE_STORAGE_MODE )); then
+  storage_mode_env=(-e "CASSINI_STORAGE_MODE=$STORAGE_MODE")
+fi
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \
   --name "$CONTAINER_NAME" \
@@ -146,7 +265,7 @@ docker run -d \
   -e AA_VERSION=5.0.0 \
   -e CASSINI_APPAPI_REQUIRED=true \
   -e NEXTCLOUD_URL="$NEXTCLOUD_URL_INTERNAL" \
-  -e "CASSINI_STORAGE_MODE=$STORAGE_MODE" \
+  "${storage_mode_env[@]}" \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" >/dev/null
 
@@ -373,13 +492,52 @@ log "OK   /status: provisioned, expected GPU readiness, sink=$sink, admin_user=$
 # the model CI declared, rather than merely falling into a compatible shape.
 storage_status_body="$LOG_DIR/operator-storage.json"
 storage_status=$(curl -sS -u "admin:admin" -o "$storage_status_body" -w '%{http_code}' "$SUBSTRATE_PROXY/operator/storage")
-if [[ "$storage_status" != "200" ]] || ! jq -e --arg mode "$STORAGE_MODE" '
-  .mode == $mode and .mode_confirmed == true and .awaiting_choice == false and .ok == true
+if [[ "$storage_status" != "200" ]] || ! jq -e --arg mode "$STORAGE_MODE" --arg source "$EXPECTED_MODE_SOURCE" '
+  .mode == $mode and .mode_source == $source
+  and .mode_confirmed == true and .awaiting_choice == false and .ok == true
 ' "$storage_status_body" >/dev/null; then
   log "operator/storage: $(cat "$storage_status_body" 2>/dev/null || true)"
-  fail "operator/storage did not record the declared $STORAGE_MODE mode"
+  fail "operator/storage did not record $STORAGE_MODE from $EXPECTED_MODE_SOURCE"
 fi
-log "OK   /storage: declared $STORAGE_MODE mode is resolved and confirmed"
+log "OK   /storage: $STORAGE_MODE mode, source=$EXPECTED_MODE_SOURCE, confirmed, nothing awaiting a choice"
+
+# --- 7a-bis. The upgrade: resolved, adopted, untouched --------------------
+#
+# Three claims, and they are the merge condition for this phase rather than a
+# nicety. An install that was access-controlled before the upgrade must come up
+# access-controlled (asserted above, through mode_source), its recordings must
+# be exactly where they were, and it must be able to record — the failure D-753
+# removes is an upgrading instance where every Talk recording is refused until
+# an administrator answers a wizard.
+if (( SEED_TEAM_FOLDER )); then
+  archive_now="$(team_folder_archive_listing)"
+  if [[ "$archive_now" != "$SEEDED_ARCHIVE_LISTING" ]]; then
+    log "archive before the enabled edge:"; printf '%s\n' "$SEEDED_ARCHIVE_LISTING" | sed 's/^/    /'
+    log "archive after the enabled edge:";  printf '%s\n' "$archive_now" | sed 's/^/    /'
+    fail "the enabled edge changed the archive it adopted; adopting moves nothing"
+  fi
+  log "OK   the seeded archive is byte-for-byte where it was: $(printf '%s' "$archive_now" | head -c 120 | tr '\n' ' ')"
+
+  # And nothing was carried into the other model's root. A copy there would be
+  # the same recordings readable by every account on this Nextcloud, which is
+  # the one outcome an upgrade may never produce.
+  # shellcheck disable=SC2016  # expanded in the container, see above
+  default_root_files=$(compose exec -T \
+    -e DEFAULT_ROOT="$NEXTCLOUD_DATA_DIR/cassini/files/CassiniNoACL" nextcloud \
+    sh -c 'ls -1 "$DEFAULT_ROOT/Recordings/meetings" 2>/dev/null | wc -l' | tr -d ' \r')
+  [[ "${default_root_files:-0}" == "0" ]] \
+    || fail "$default_root_files file(s) reached CassiniNoACL/Recordings on an upgrade; the archive was widened"
+  log "OK   CassiniNoACL/Recordings holds nothing: no recording was widened"
+
+  # The recording gate. recordingRefusal() refuses only on a recorded
+  # `unavailable` verdict, so this IS the value the Talk start path reads — and
+  # `storage_mode_undecided` used to be one of the reasons it carried.
+  access_state=$(substrate_field state)
+  access_step=$(substrate_field step)
+  [[ "$access_state" == "provisioned" && -z "$access_step" ]] \
+    || fail "recordings_access is $access_state/$access_step on an adopted upgrade; a recording would be refused"
+  log "OK   recordings_access: provisioned with no outstanding step, so a recording is not refused"
+fi
 
 # The USER-readable half of the same verdict. This is the only route that lets
 # someone who is NOT an administrator find out that an install was never
