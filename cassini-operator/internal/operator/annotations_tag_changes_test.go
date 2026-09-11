@@ -165,6 +165,35 @@ func TestTagRenameRewritesOnlyTheCallersRecordings(t *testing.T) {
 	}
 }
 
+// A rename that failed on one recording leaves the vocabulary showing the new
+// label, since most recordings carry it; running it again must still find the
+// one it missed.
+func TestTagRenameAgainFindsTheRecordingItMissed(t *testing.T) {
+	store := newTestAnnotationStore(t)
+	for i, label := range []string{"Recruiting", "Recruiting", "hiring"} {
+		recordMarks(t, store, fmt.Sprintf("M%d.opus", i), annotatedFile(t, fmt.Sprintf("c%d", i), testTagNamespaceA,
+			[]testTag{{"tag_hiring", label}}, meetingMark("m1", "tag_hiring")))
+	}
+	ctx := context.Background()
+	all := []string{"M0.opus", "M1.opus", "M2.opus"}
+	tags, err := store.Vocabulary(ctx, all)
+	if err != nil || len(tags) != 1 || tags[0].Label != "Recruiting" {
+		t.Fatalf("vocabulary = %+v, %v; want the majority label Recruiting", tags, err)
+	}
+	for _, tc := range []struct {
+		visible []string
+		want    bool
+	}{
+		{all, true},
+		{all[:2], false},
+	} {
+		got, err := store.tagLabelledOtherwise(ctx, "tag_hiring", "Recruiting", tc.visible)
+		if err != nil || got != tc.want {
+			t.Errorf("tagLabelledOtherwise(%v) = %v, %v; want %v", tc.visible, got, err, tc.want)
+		}
+	}
+}
+
 func TestTagMergeAttributesTheTargetAndDropsAStyleNobodyCarries(t *testing.T) {
 	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
 	bin := fakeCassini(t, annTestCLIPrints(tagChangeResult(t, testTag{"tag_hiring", "hiring"})))

@@ -701,6 +701,24 @@ func (s *annotationStore) TagVisible(ctx context.Context, tagID string, visible 
 	return len(names) > 0, err
 }
 
+// tagLabelledOtherwise reports whether one of visible carries tagID under a
+// label other than label.
+func (s *annotationStore) tagLabelledOtherwise(ctx context.Context, tagID, label string, visible []string) (bool, error) {
+	var one int
+	switch err := s.db.QueryRowContext(ctx, `
+SELECT 1
+  FROM annotation_tag t
+  JOIN json_each(?3) v ON v.value = t.opus_name
+ WHERE t.tag_id = ?1 AND t.label != ?2
+ LIMIT 1`, tagID, label, namesJSON(visible)).Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("look up a tag's labels: %w", err)
+	}
+	return true, nil
+}
+
 // labelOwner is a tag other than except that one of visible labels label.
 func (s *annotationStore) labelOwner(ctx context.Context, label, except string, visible []string) (string, bool, error) {
 	var tagID string

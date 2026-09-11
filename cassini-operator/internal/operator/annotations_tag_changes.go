@@ -230,8 +230,19 @@ func (s *annotationService) changeTag(w http.ResponseWriter, r *http.Request, ca
 // job for a new label.
 func (s *annotationService) editTag(w http.ResponseWriter, r *http.Request, scope tagScope, tag tagVocabularyEntry, edit tagEdit) {
 	rename := ""
-	if edit.Label != nil && strings.TrimSpace(*edit.Label) != tag.Label {
-		rename = strings.TrimSpace(*edit.Label)
+	if edit.Label != nil {
+		// Judged per recording, not by the vocabulary's one label, so running a
+		// partly failed rename again still reaches the recordings it missed.
+		stale, err := scope.store.tagLabelledOtherwise(r.Context(), tag.TagID, strings.TrimSpace(*edit.Label), scope.visible)
+		if err != nil {
+			s.tagIndexFailed(w, scope.caller, err)
+			return
+		}
+		if stale {
+			rename = strings.TrimSpace(*edit.Label)
+		}
+	}
+	if rename != "" {
 		// Among the caller's meetings only: a wider check would say the label
 		// is in use somewhere they cannot read (design doc §3).
 		owner, taken, err := scope.store.labelOwner(r.Context(), rename, tag.TagID, scope.visible)
