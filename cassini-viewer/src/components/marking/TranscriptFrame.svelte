@@ -13,21 +13,21 @@
     type WordSpan,
   } from "../../core/marking";
   import { keyboardEventTargetsControl } from "../../core/wordInteraction";
-  import { moveStretchOps, timeRange, type AnnotationRequest, type VocabularyTag } from "../../viewer/annotations";
-  import MarkBrackets from "./MarkBrackets.svelte";
+  import {
+    markRequest,
+    moveStretchOps,
+    removeRequest,
+    timeRange,
+    type AnnotationRequest,
+    type TagPick,
+    type VocabularyTag,
+  } from "../../viewer/annotations";
+  import MarkBrackets, { BRACKET_STEP_NARROW } from "./MarkBrackets.svelte";
   import MarkingRail from "./MarkingRail.svelte";
   import MarksList from "./MarksList.svelte";
   import StretchToolbar from "./StretchToolbar.svelte";
   import TranscriptToolbar from "./TranscriptToolbar.svelte";
-  import {
-    markRequest,
-    pickColor,
-    removeRequest,
-    viewMarks,
-    type MarksSession,
-    type PlacedMark,
-    type TagPick,
-  } from "./session";
+  import { pickColor, viewMarks, type MarksSession, type PlacedMark } from "./session";
 
   // The transcript column: its toolbar, and while marks are loaded the rail on
   // the left and the brackets on the right. Words are decorated through their
@@ -53,6 +53,7 @@
   let textCell: HTMLElement;
   let toolbar: TranscriptToolbar;
   let stretchToolbar: StretchToolbar | undefined;
+  let rail: MarkingRail | undefined;
   let width = 0;
   let barHeight = 0;
   let selection: Selection | null = null;
@@ -71,6 +72,7 @@
   $: marking = $session.status === "ready";
   $: view = marking ? viewMarks($session, vocabulary) : null;
   $: wide = width >= 720;
+  $: bracketColumns = Math.max(0, ...(view?.placed.map((mark) => mark.column) ?? [])) + 1;
   $: indexById = new Map(words.map((word, index) => [word.id, index]));
   $: range = selection ? rangeOfSpan(words, selection) : null;
   $: selectedMark = view?.placed.find((mark) => mark.item.id === selection?.itemId) ?? null;
@@ -85,6 +87,7 @@
       armed,
       vocabulary,
       busy: $session.busy,
+      error: $session.errorFrom === "stretch" ? $session.error : "",
     };
 
   let seenWords = words;
@@ -256,7 +259,15 @@
   }
 
   async function write(request: AnnotationRequest) {
-    if (await session.write(request)) selection = null;
+    if (await session.write(request, "stretch")) void clearSelection();
+  }
+
+  // The toolbar and the pins go with the selection; focus left with nowhere to be goes to the rail.
+  async function clearSelection() {
+    selection = null;
+    await tick();
+    const active = (root.getRootNode() as Document | ShadowRoot).activeElement;
+    if (!active || active === document.body) rail?.focus();
   }
   const tagStretch = (event: CustomEvent<TagPick>) =>
     range && write(markRequest(event.detail, timeRange(range.startMs, range.endMs)));
@@ -279,7 +290,7 @@
     const inField = path.some((node) => node instanceof HTMLElement && node.matches("input, textarea, select, [role='dialog']"));
     if (!marking || inField) return;
     if (event.key === "Escape") {
-      if (selection) selection = null;
+      if (selection) void clearSelection();
       else if (marksOpen) marksOpen = false;
       else if (armed) armed = null;
       else return;
@@ -323,13 +334,17 @@
       <MarksList marks={view.placed} on:jump={(event) => jump(event.detail)} />
     {/if}
     {#if stretchProps && !wide}
-      <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={() => (selection = null)} />
+      <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
     {/if}
   </div>
 
   <div
     class="mt-3 grid"
-    style:grid-template-columns={marking ? (wide ? "64px minmax(0,1fr) 196px" : "34px minmax(0,1fr) 26px") : "minmax(0,1fr)"}
+    style:grid-template-columns={marking
+      ? wide
+        ? "64px minmax(0,1fr) 196px"
+        : `34px minmax(0,1fr) ${Math.max(26, bracketColumns * BRACKET_STEP_NARROW + 2)}px`
+      : "minmax(0,1fr)"}
     style:--sel="var(--tag-bg)"
     style:--sel-edge="var(--tag)"
     data-tag-color={selColor}
@@ -338,6 +353,7 @@
       <div>
         <div class="sticky" style:top="{stickTop + barHeight + 12}px" style:height="{Math.max(160, viewHeight - barHeight - 28)}px">
           <MarkingRail
+            bind:this={rail}
             {durationMs}
             {playheadMs}
             marks={view?.placed ?? []}
@@ -390,7 +406,7 @@
         <MarkBrackets {brackets} selectedId={selection?.itemId} bind:hoverId labels={wide} on:select={(event) => selectMark(event.detail)} />
         {#if stretchProps && wide}
           <div class="absolute right-0" style:top="{pins ? pins.to.y + pins.to.h + 6 : 0}px">
-            <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={() => (selection = null)} />
+            <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
           </div>
         {/if}
       </div>

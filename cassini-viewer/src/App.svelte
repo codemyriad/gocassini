@@ -39,7 +39,14 @@
     type BrowseTypeFilter,
     type InsightRecord,
   } from "./viewer/insights";
-  import { tagsByMeeting, type AnnotationRequest, type TagVocabulary } from "./viewer/annotations";
+  import {
+    describeAnnotationError,
+    tagsByMeeting,
+    type AnnotationRequest,
+    type MeetingAnnotations,
+    type TagPick,
+    type TagVocabulary,
+  } from "./viewer/annotations";
   import {
     applyEach,
     bulkReport,
@@ -48,9 +55,9 @@
     filterByTags,
     planBulkTag,
     wholeTagState,
+    withMeetingResult,
     type MeetingTags,
     type TagMatch,
-    type TagPick,
   } from "./viewer/listTags";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
@@ -167,7 +174,6 @@
   let tagMatch: TagMatch = "any";
   let tagNotice = "";
   let tagReport = "";
-  // The tag manager mounts on this.
   let tagManagerOpen = false;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
@@ -345,16 +351,21 @@
 
   const queueTagWrite = createWriteQueue(() => refreshTags(true));
 
+  function applied(result: MeetingAnnotations) {
+    if (tagVocabulary) {
+      tagVocabulary = withMeetingResult(tagVocabulary, result);
+    }
+  }
+
   // Both plan from what the picker showed when it was clicked.
   function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
     const { remove, request } = planBulkTag([meeting], meetingTags, pick);
     tagNotice = "";
     void queueTagWrite(async () => {
       try {
-        await dataProvider.applyAnnotationOps!(meeting, request);
+        applied(await dataProvider.applyAnnotationOps!(meeting, request));
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        tagNotice = `Could not ${remove ? "untag" : "tag"} “${meeting.title}”: ${reason}`;
+        tagNotice = `Could not ${remove ? "untag" : "tag"} “${meeting.title}”: ${describeAnnotationError(error)}`;
       }
     });
   }
@@ -362,7 +373,9 @@
   function tagSelection(pick: TagPick) {
     const plan = planBulkTag(pickedMeetings, meetingTags, pick);
     void queueTagWrite(async () => {
-      const { done } = await applyEach(plan.targets, (entry) => dataProvider.applyAnnotationOps!(entry, plan.request));
+      const { done } = await applyEach(plan.targets, async (entry) =>
+        applied(await dataProvider.applyAnnotationOps!(entry, plan.request)),
+      );
       tagReport = bulkReport(plan.remove, done, plan.targets.length);
     });
   }
@@ -1108,7 +1121,7 @@
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}
             applyAnnotations={annotationCalls.apply}
-            on:tagsChanged={() => refreshTags(true)}
+            on:tagsChanged={(event) => (applied(event.detail), refreshTags(true))}
           />
         {/if}
       </aside>

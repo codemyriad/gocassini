@@ -3,17 +3,16 @@
   import { fade } from "svelte/transition";
   import { Ellipsis, X } from "@lucide/svelte";
 
-  import type { TagUpdate, VocabularyTag } from "../../viewer/annotations";
-  import type { DataProvider } from "../../viewer/dataProvider";
-  import { changedLine, confirmLine, countsLine, createJobTracker, jobStatus, type TagAction } from "../../viewer/tagManager";
+  import { plural, type TagPick, type TagUpdate, type VocabularyTag } from "../../viewer/annotations";
+  import { changedLine, confirmLine, countsLine, createJobTracker, jobStatus, type TagAction, type TagProvider } from "../../viewer/tagManager";
   import { colorFor } from "../../viewer/tagPalette";
   import TagIcon from "./TagIcon.svelte";
   import TagPicker from "./TagPicker.svelte";
   import TagEditor from "./manager/TagEditor.svelte";
-  import { anchored, isOutside, stepIndex } from "./popover";
+  import { popover, stepIndex } from "./popover";
 
   export let tags: VocabularyTag[] = [];
-  export let provider: Pick<DataProvider, "updateTag" | "mergeTag" | "deleteTag" | "loadTagJob">;
+  export let provider: TagProvider;
   export let open = false;
 
   const MENU = [["rename", "Rename"], ["color", "Change colour"], ["merge", "Merge into…"], ["delete", "Delete…"]] as const;
@@ -40,7 +39,7 @@
     else editing = { tagId: tag.tagId, choosing: id === "color" ? "color" : null, conflict: null };
   }
 
-  function pickInto({ detail }: CustomEvent<{ tagId: string; label: string } | { label: string }>) {
+  function pickInto({ detail }: CustomEvent<TagPick>) {
     if (!merging || !("tagId" in detail)) return;
     const { tag } = merging;
     merging = null;
@@ -87,10 +86,7 @@
       }
     } else if (event.key === "Escape" && !event.defaultPrevented) {
       event.preventDefault();
-      if (menu) {
-        menu.anchor.focus();
-        menu = null;
-      } else if (editing || confirming) dismiss();
+      if (editing || confirming) dismiss();
       else dispatch("close");
     }
   }
@@ -117,8 +113,6 @@
   };
 </script>
 
-<svelte:window on:pointerdown={(event) => menu && isOutside(event, menuEl, menu.anchor) && (menu = null)} />
-
 {#if open}
   <button type="button" tabindex="-1" class="absolute inset-0 z-41 cursor-pointer bg-black/55" aria-label="Close Manage tags"
     transition:fade={{ duration: 150 }} on:click={() => dispatch("close")}></button>
@@ -127,7 +121,7 @@
     class="absolute inset-y-0 right-0 z-42 flex w-[min(560px,100%)] flex-col border-base-300 bg-base-100 shadow-2xl min-[721px]:border-l max-[720px]:top-auto max-[720px]:h-[92%] max-[720px]:w-full max-[720px]:rounded-t-box max-[720px]:border-t">
     <header class="flex items-center gap-2.5 border-b border-base-300 px-5 pb-3 pt-4 max-[720px]:px-4">
       <h2 id="tag-manager-title" class="flex flex-1 items-center gap-2.5 text-[17px] font-semibold">
-        Manage tags <span class="badge badge-outline badge-sm font-mono uppercase">{tags.length} {tags.length === 1 ? "tag" : "tags"}</span>
+        Manage tags <span class="badge badge-outline badge-sm font-mono uppercase">{plural(tags.length, "tag")}</span>
       </h2>
       <button type="button" data-close class="btn btn-square btn-ghost btn-sm" aria-label="Close" on:click={() => dispatch("close")}><X size={16} /></button>
     </header>
@@ -180,8 +174,8 @@
       </ul>
     </div>
     {#if menu}
-      <div bind:this={menuEl} use:anchored={menu.anchor} role="menu" tabindex="-1" aria-label={`Actions for ${menu.tag.label}`}
-        class="z-50 grid w-44 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg" on:keydown={onMenuKeydown}>
+      <div bind:this={menuEl} use:popover={{ anchor: menu.anchor, close: () => (menu = null) }} role="menu" tabindex="-1"
+        aria-label={`Actions for ${menu.tag.label}`} class="tag-popover grid w-44 p-1" on:keydown={onMenuKeydown}>
         {#each MENU as [id, text], index (id)}
           <button type="button" role="menuitem" use:focus={index === 0} disabled={id === "merge" && tags.length < 2} class:text-error={id === "delete"}
             class="rounded-field px-2.5 py-1.5 text-left text-sm hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none disabled:opacity-40"

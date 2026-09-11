@@ -1,10 +1,17 @@
 <script lang="ts">
   import { Plus, TriangleAlert } from "@lucide/svelte";
 
-  import type { VocabularyTag } from "../../viewer/annotations";
+  import {
+    WHOLE_MEETING,
+    markRequest,
+    plural,
+    removeRequest,
+    untagMeetingRequest,
+    type VocabularyTag,
+  } from "../../viewer/annotations";
   import TagChip from "../tags/TagChip.svelte";
   import TagPicker from "../tags/TagPicker.svelte";
-  import { markRequest, removeRequest, untagMeetingRequest, viewMarks, type MarksSession } from "./session";
+  import { viewMarks, type MarksSession } from "./session";
 
   // The meeting header's tags: on the whole meeting, and what went wrong with any.
   export let session: MarksSession;
@@ -44,13 +51,13 @@
       {#if lost > 0}
         <span class="inline-flex items-center gap-1.5 rounded-field bg-warning/15 px-2 py-0.5">
           <TriangleAlert size={12} class="text-warning" aria-hidden="true" />
-          {lost === 1 ? "1 mark" : `${lost} marks`} can't be placed on this recording
+          {plural(lost, "mark")} can't be placed on this recording
           <button type="button" class="link" disabled={$session.busy} on:click={() => session.write(removeRequest(view.lost.map((item) => item.id)))}>
             Remove {lost === 1 ? "it" : "them"}
           </button>
         </span>
       {/if}
-      {#if $session.error}
+      {#if $session.error && $session.errorFrom === "meeting"}
         <span class="text-error" role="alert">{$session.error}</span>
       {/if}
     {:else if $session.status === "preparing"}
@@ -65,7 +72,7 @@
     tags={vocabulary}
     label="Tag the whole meeting"
     anchor={addButton}
-    on:pick={(event) => ((adding = false), session.write(markRequest(event.detail, { kind: "meeting" })))}
+    on:pick={(event) => ((adding = false), session.write(markRequest(event.detail, WHOLE_MEETING)))}
     on:close={() => (adding = false)}
   />
 {/if}

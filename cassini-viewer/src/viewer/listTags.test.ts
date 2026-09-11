@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AnnotationError, tagsByMeeting, type TagVocabulary, type VocabularyTag } from "./annotations";
+import {
+  AnnotationError,
+  retryDelay,
+  tagsByMeeting,
+  type MeetingAnnotations,
+  type TagVocabulary,
+  type VocabularyTag,
+} from "./annotations";
 import { filterMeetingCatalogEntries, type MeetingCatalogEntry } from "./catalog";
 import {
   applyEach,
@@ -9,9 +16,8 @@ import {
   createWriteQueue,
   filterByTags,
   planBulkTag,
-  tagRetryDelay,
-  wholeTagRequest,
   wholeTagState,
+  withMeetingResult,
 } from "./listTags";
 import { filterMeetingsByRoom } from "./rooms";
 
@@ -68,22 +74,33 @@ describe("filterByTags", () => {
   });
 });
 
-describe("whole-meeting tag requests", () => {
-  it("marks an existing tag by id, unmarks it by tag, and colours a new one in the same request", () => {
-    expect(wholeTagRequest({ tagId: "t_h", label: "hiring" }, false)).toEqual({
-      ops: [{ op: "mark", tag: { id: "t_h", label: "hiring" }, target: { kind: "meeting" } }],
-    });
-    expect(wholeTagRequest({ tagId: "t_h", label: "hiring" }, true)).toEqual({
-      ops: [{ op: "unmark-tag", tagId: "t_h", target: { kind: "meeting" } }],
-    });
-    expect(wholeTagRequest({ label: "legal", color: "teal", icon: "" }, false)).toEqual({
-      ops: [{ op: "mark", tag: { label: "legal" }, target: { kind: "meeting" } }],
-      tagStyles: [{ label: "legal", color: "teal", icon: "" }],
-    });
-  });
-
+describe("whole-meeting tags", () => {
   it("ticks the tags on every selected meeting and half-ticks the ones on some", () => {
     expect(wholeTagState(byMeeting, ["m1", "m3"])).toEqual({ selected: ["t_h"], mixed: ["t_b"] });
+  });
+
+  it("takes a meeting's tags from a write's answer, before the vocabulary reloads", () => {
+    const answer: MeetingAnnotations = {
+      meetingId: "m1",
+      revision: 4,
+      resolved: true,
+      annotations: {
+        format: "cassini.annotations.v1",
+        revision: 4,
+        audioOpusSha256: "",
+        tagNamespace: "ns",
+        tags: [
+          { id: "t_h", label: "hiring" },
+          { id: "t_b", label: "budget" },
+        ],
+        items: [
+          { id: "i1", tagId: "t_b", target: { kind: "meeting" }, createdAtUtc: "", actor: { kind: "user", id: "ana" }, operationId: "op" },
+        ],
+      },
+    };
+    const next = tagsByMeeting(withMeetingResult(vocabulary, answer));
+    expect(next.get("m1")?.map(({ tag, whole }) => [tag.tagId, whole])).toEqual([["t_b", true]]);
+    expect(next.get("m3")).toEqual(byMeeting.get("m3"));
   });
 });
 
@@ -171,12 +188,12 @@ describe("loading the vocabulary", () => {
   });
 
   it("retries while the index builds or the budget is spent, backing off, and gives up on anything else", async () => {
-    expect([0, 1, 2, 10].map((attempt) => tagRetryDelay(new AnnotationError(503, ""), attempt))).toEqual([
+    expect([0, 1, 2, 10].map((attempt) => retryDelay(new AnnotationError(503, ""), attempt))).toEqual([
       2_000, 4_000, 8_000, 60_000,
     ]);
-    expect(tagRetryDelay(new AnnotationError(429, ""), 0)).toBe(2_000);
-    expect(tagRetryDelay(new AnnotationError(502, ""), 0)).toBeNull();
-    expect(tagRetryDelay(new Error("offline"), 0)).toBeNull();
+    expect(retryDelay(new AnnotationError(429, ""), 0)).toBe(2_000);
+    expect(retryDelay(new AnnotationError(502, ""), 0)).toBeNull();
+    expect(retryDelay(new Error("offline"), 0)).toBeNull();
 
     vi.useFakeTimers();
     const load = vi.fn().mockRejectedValueOnce(new AnnotationError(503, "")).mockResolvedValue(vocabulary);

@@ -100,7 +100,7 @@ export type AnnotationOp =
   | { op: "merge-tag"; tagId: string; into: AnnotationTag }
   | { op: "undo-operation"; operationId: string };
 
-export interface TagStyle {
+interface TagStyle {
   label: string;
   color: TagColorId;
   icon?: TagIconId | "";
@@ -163,18 +163,6 @@ export function groupByTag(doc: AnnotationsDocument | null): TagMarks[] {
   return result;
 }
 
-// A tag can be in both lists: on the whole meeting and on stretches of it.
-export function splitByTarget(doc: AnnotationsDocument | null): {
-  whole: TagMarks[];
-  stretches: TagMarks[];
-} {
-  const groups = groupByTag(doc);
-  return {
-    whole: groups.filter((group) => group.whole),
-    stretches: groups.filter((group) => group.stretches.length > 0),
-  };
-}
-
 function rangeOf(item: AnnotationItem): [number, number] {
   return item.target.kind === "time-range" ? [item.target.startMs, item.target.endMs] : [0, 0];
 }
@@ -185,7 +173,7 @@ export interface MeetingTag {
   stretches: number;
 }
 
-// Look a catalog entry up by its id. Whole-meeting tags come first, then by label.
+// Each meeting's tags, by meeting id. Whole-meeting tags come first, then by label.
 export function tagsByMeeting(vocabulary: TagVocabulary): Map<string, MeetingTag[]> {
   const byId = new Map(vocabulary.tags.map((tag) => [tag.tagId, tag]));
   const result = new Map<string, MeetingTag[]>();
@@ -201,7 +189,7 @@ export function tagsByMeeting(vocabulary: TagVocabulary): Map<string, MeetingTag
 }
 
 // The operator matches labels trimmed and case-insensitively, so the picker does too.
-function labelKey(label: string): string {
+export function labelKey(label: string): string {
   return label.trim().toLowerCase();
 }
 
@@ -244,3 +232,50 @@ export function moveStretchOps(
     { op: "mark", tag: { id: tag.id, label: tag.label }, target: timeRange(startMs, endMs) },
   ];
 }
+
+// What TagPicker hands back: a tag that exists, or a new one with its colour.
+export type TagPick = { tagId: string; label: string } | { label: string; color: TagColorId; icon: "" };
+
+export const WHOLE_MEETING: AnnotationTarget = { kind: "meeting" };
+
+// A new tag carries its colour in the same write.
+export function markRequest(pick: TagPick, target: AnnotationTarget): AnnotationRequest {
+  if ("tagId" in pick) {
+    return { ops: [{ op: "mark", tag: { id: pick.tagId, label: pick.label }, target }] };
+  }
+  return {
+    ops: [{ op: "mark", tag: { label: pick.label }, target }],
+    tagStyles: [{ label: pick.label, color: pick.color, icon: "" }],
+  };
+}
+
+export const untagMeetingRequest = (tagId: string): AnnotationRequest => ({
+  ops: [{ op: "unmark-tag", tagId, target: WHOLE_MEETING }],
+});
+
+export const removeRequest = (itemIds: readonly string[]): AnnotationRequest => ({
+  ops: itemIds.map((itemId) => ({ op: "unmark", itemId })),
+});
+
+// 503 while the operator first indexes the archive, 429 once the caller's
+// search budget is spent: both mean try again later.
+export function retryDelay(error: unknown, attempt: number): number | null {
+  if (!(error instanceof AnnotationError) || (error.status !== 503 && error.status !== 429)) {
+    return null;
+  }
+  return Math.min(2_000 * 2 ** attempt, 60_000);
+}
+
+const ERROR_MESSAGES: Record<string, string> = {
+  unresolved: "Remove the marks that can't be placed first.",
+  busy: "Tags are being changed elsewhere. Try again in a moment.",
+};
+
+export function describeAnnotationError(error: unknown): string {
+  if (error instanceof AnnotationError) {
+    return ERROR_MESSAGES[error.code] ?? error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

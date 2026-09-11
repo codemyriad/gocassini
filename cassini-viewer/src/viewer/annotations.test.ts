@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AnnotationError,
+  WHOLE_MEETING,
+  describeAnnotationError,
   findByLabel,
   groupByTag,
+  markRequest,
   matchTags,
   moveStretchOps,
-  splitByTarget,
+  plural,
+  removeRequest,
   tagsByMeeting,
   timeRange,
+  untagMeetingRequest,
   type AnnotationItem,
   type AnnotationTarget,
   type AnnotationsDocument,
@@ -58,14 +64,6 @@ describe("groupByTag", () => {
 
   it("reads a meeting with no annotations as no tags", () => {
     expect(groupByTag(null)).toEqual([]);
-  });
-});
-
-describe("splitByTarget", () => {
-  it("lists a tag under both when it marks the whole meeting and stretches of it", () => {
-    const { whole, stretches } = splitByTarget(doc);
-    expect(whole.map((group) => group.tag.label)).toEqual(["hiring"]);
-    expect(stretches.map((group) => group.tag.label)).toEqual(["budget", "hiring"]);
   });
 });
 
@@ -122,5 +120,42 @@ describe("timeRange and moveStretchOps", () => {
         target: { kind: "time-range", startMs: 1500, endMs: 2500 },
       },
     ]);
+  });
+});
+
+describe("requests", () => {
+  it("marks with a tag that exists by id, and sends a new tag's colour in the same request", () => {
+    expect(markRequest({ tagId: "tag_h", label: "hiring" }, timeRange(1200.4, 5400))).toEqual({
+      ops: [{ op: "mark", tag: { id: "tag_h", label: "hiring" }, target: { kind: "time-range", startMs: 1200, endMs: 5400 } }],
+    });
+    expect(markRequest({ label: "risk", color: "red", icon: "" }, WHOLE_MEETING)).toEqual({
+      ops: [{ op: "mark", tag: { label: "risk" }, target: { kind: "meeting" } }],
+      tagStyles: [{ label: "risk", color: "red", icon: "" }],
+    });
+  });
+
+  it("untags the whole meeting by tag, and removes marks by item", () => {
+    expect(untagMeetingRequest("tag_b")).toEqual({ ops: [{ op: "unmark-tag", tagId: "tag_b", target: { kind: "meeting" } }] });
+    expect(removeRequest(["mk_1", "mk_3"])).toEqual({
+      ops: [
+        { op: "unmark", itemId: "mk_1" },
+        { op: "unmark", itemId: "mk_3" },
+      ],
+    });
+  });
+});
+
+describe("describeAnnotationError", () => {
+  it("says what to do about the refusals a person can act on, and passes the rest through", () => {
+    expect(describeAnnotationError(new AnnotationError(409, "unresolved"))).toBe("Remove the marks that can't be placed first.");
+    expect(describeAnnotationError(new AnnotationError(409, "busy"))).toMatch(/Try again in a moment/);
+    expect(describeAnnotationError(new AnnotationError(500, ""))).toBe("HTTP 500");
+    expect(describeAnnotationError(new Error("offline"))).toBe("offline");
+  });
+});
+
+describe("plural", () => {
+  it("counts in the singular only for one", () => {
+    expect([0, 1, 2].map((n) => plural(n, "meeting"))).toEqual(["0 meetings", "1 meeting", "2 meetings"]);
   });
 });

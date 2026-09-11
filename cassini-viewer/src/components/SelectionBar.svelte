@@ -1,8 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { Tag, X } from "@lucide/svelte";
-  import type { VocabularyTag } from "../viewer/annotations";
-  import type { TagPick } from "../viewer/listTags";
+  import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import TagPicker from "./tags/TagPicker.svelte";
 
   // The selection bar (D-626). Presentational: the shell owns the selection and
@@ -92,7 +91,7 @@
     {#if tags && tagging}
       <TagPicker
         {tags}
-        label={count === 1 ? "Tag 1 meeting" : `Tag ${count} meetings`}
+        label={`Tag ${plural(count, "meeting")}`}
         multiple
         selected={tagSelected}
         mixed={tagMixed}

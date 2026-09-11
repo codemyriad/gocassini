@@ -1,7 +1,11 @@
+<script module lang="ts">
+  export const BRACKET_STEP_NARROW = 8;
+</script>
+
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
 
-  import TagIcon from "../tags/TagIcon.svelte";
+  import TagChip from "../tags/TagChip.svelte";
   import { describeMark, type PlacedMark } from "./session";
 
   export let brackets: readonly { mark: PlacedMark; top: number; height: number }[] = [];
@@ -9,10 +13,11 @@
   export let hoverId: string | null = null;
   export let labels = true;
 
-  const COLUMN_PX = 12;
   const dispatch = createEventDispatcher<{ select: PlacedMark }>();
 
-  $: labelLeft = (Math.max(0, ...brackets.map(({ mark }) => mark.column)) + 1) * COLUMN_PX + 4;
+  // Tighter without labels, where the margin is narrow.
+  $: step = labels ? 12 : BRACKET_STEP_NARROW;
+  $: labelLeft = (Math.max(0, ...brackets.map(({ mark }) => mark.column)) + 1) * step + 4;
 </script>
 
 {#each brackets as { mark, top, height } (mark.item.id)}
@@ -25,7 +30,7 @@
     data-tag-color={mark.color}
     style:top="{top}px"
     style:height="{height}px"
-    style:left="{mark.column * COLUMN_PX}px"
+    style:left="{mark.column * step}px"
     aria-label={describeMark(mark)}
     title={labels ? undefined : describeMark(mark)}
     on:pointerenter={() => (hoverId = mark.item.id)}
@@ -35,14 +40,8 @@
     on:click={() => dispatch("select", mark)}
   ></button>
   {#if labels && on}
-    <span
-      class="pointer-events-none absolute inline-flex max-w-[calc(100%-20px)] items-center gap-1 rounded-full border border-(--tag-border) bg-(--tag-bg) px-1.5 py-px text-[11px] font-semibold whitespace-nowrap text-(--tag)"
-      data-tag-color={mark.color}
-      style:top="{top}px"
-      style:left="{labelLeft}px"
-      aria-hidden="true"
-    >
-      <TagIcon icon={mark.icon} /><span class="truncate">{mark.tag.label}</span>
+    <span class="pointer-events-none absolute flex max-w-[calc(100%-20px)]" style:top="{top}px" style:left="{labelLeft}px" aria-hidden="true">
+      <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} />
     </span>
   {/if}
 {/each}

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
 
-  import { TAG_COLORS, colorName, type TagColorId } from "../../viewer/tagPalette";
-  import { anchored, isOutside, stepIndex } from "./popover";
+  import { TAG_COLORS, styleName, type TagColorId } from "../../viewer/tagPalette";
+  import { popover, stepIndex } from "./popover";
 
   export let value: TagColorId;
   export let label = "Tag colour";
@@ -11,20 +11,12 @@
 
   const COLUMNS = 6;
   const dispatch = createEventDispatcher<{ select: TagColorId; close: void }>();
-  let root: HTMLElement;
   let buttons: HTMLButtonElement[] = [];
   let focused = Math.max(0, TAG_COLORS.indexOf(value));
 
   onMount(() => buttons[focused]?.focus());
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      anchor?.focus();
-      dispatch("close");
-      return;
-    }
     const next = stepIndex(focused, event.key, TAG_COLORS.length, COLUMNS);
     if (next !== null) {
       event.preventDefault();
@@ -33,17 +25,20 @@
   }
 </script>
 
-<svelte:window on:pointerdown={(event) => isOutside(event, root, anchor) && dispatch("close")} />
-
-<div bind:this={root} use:anchored={anchor} class="swatch-picker" role="radiogroup" aria-label={label}>
+<div
+  use:popover={{ anchor, close: () => dispatch("close") }}
+  class="tag-popover swatch-picker"
+  role="radiogroup"
+  aria-label={label}
+>
   {#each TAG_COLORS as color, index (color)}
     <button
       bind:this={buttons[index]}
       type="button"
       role="radio"
       aria-checked={color === value}
-      aria-label={colorName(color)}
-      title={colorName(color)}
+      aria-label={styleName(color)}
+      title={styleName(color)}
       tabindex={index === focused ? 0 : -1}
       data-tag-color={color}
       on:click={() => dispatch("select", color)}
@@ -57,17 +52,10 @@
 
 <style>
   .swatch-picker {
-    z-index: 50;
     display: grid;
     grid-template-columns: repeat(6, 28px);
     gap: 4px;
     padding: 8px;
-    background: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-box, 0.5rem);
-    box-shadow:
-      0 2px 6px oklch(0% 0 0 / 0.1),
-      0 12px 32px oklch(0% 0 0 / 0.16);
   }
   button {
     display: grid;
