@@ -88,6 +88,7 @@
   // than about anything the browse surface is showing, and because the only
   // route that carries it is the one the shell already calls at mount.
   let setupFeatures: SetupFeatures | null = null;
+  let recordingNeedsAction = false;
 
   // The unconfigured state the browse surface can meet: a selection of meetings
   // on a deployment with no endpoint to ask. It rides into the viewing layer
@@ -212,6 +213,7 @@
       // and accuse a working deployment of being unconfigured.
       if (health) {
         setupFeatures = health.features;
+        recordingNeedsAction = health.recordingState === "needs_action";
       }
     } catch (error) {
       // Degrade, but not silently — the same rule the mount path follows.
@@ -261,6 +263,7 @@
       operatorAvailable = probe.available;
       operatorClient = probe.available ? new OperatorClient(operatorBasePath) : null;
       setupFeatures = health?.features ?? null;
+      recordingNeedsAction = health?.recordingState === "needs_action";
       // Which setup message you get is decided by the SAME probe that decides
       // whether the operator surface exists — being able to read the ADMIN-gated
       // /status IS being an administrator, so there is no second notion of admin
@@ -332,6 +335,16 @@
   });
 </script>
 
+{#if recordingNeedsAction && surface !== "setup"}
+  <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
+    Recording setup needs an administrator’s attention. Existing recordings remain available.
+    {#if operatorAvailable}
+      <button class="btn btn-sm ml-2" on:click={() => selectSurface("setup")}>Open Setup</button>
+    {:else}
+      <a class="link ml-2" href="#surface=setup">Share this page’s Setup link with your administrator</a>
+    {/if}
+  </div>
+{/if}
 {#if operatorAvailable}
   <div class="cassini-shell">
     <nav class="cassini-shell-nav" data-theme={themeMode} aria-label="Cassini surfaces">

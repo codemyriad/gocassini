@@ -20,6 +20,7 @@ var errStatusSubstrateProbe = errors.New("groupfolders app not enabled")
 
 func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
+	t.Setenv(envTalkSignalingInternalSecret, "")
 	defer cleanup()
 	t.Setenv("APP_VERSION", "9.9.9")
 	// These image/process values are deliberately stale. Build execution is
@@ -986,8 +987,8 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	// recordings is a DECISION rather than a fault, which is what a
 	// non-administrator needs in order to be told the right thing (D-708). It
 	// names no account, no path and no folder id.
-	if len(fields) != 4 {
-		t.Fatalf("setup must answer with ok+state+awaiting_choice+features only, got %#v", fields)
+	if len(fields) != 5 {
+		t.Fatalf("setup must answer with ok+state+awaiting_choice+features+recording_state only, got %#v", fields)
 	}
 	if _, isBool := fields["awaiting_choice"].(bool); !isBool {
 		t.Fatalf("setup did not carry awaiting_choice as a boolean: %#v", fields)

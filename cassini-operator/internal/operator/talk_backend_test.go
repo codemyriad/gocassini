@@ -129,6 +129,7 @@ func TestValidateTalkRequest(t *testing.T) {
 
 func TestValidateTalkRequestRejectsMissingSecret(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
+	rt.cfg.TalkSharedSecret = ""
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/token", strings.NewReader(`{}`))

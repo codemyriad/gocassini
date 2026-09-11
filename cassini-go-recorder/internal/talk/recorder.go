@@ -831,7 +831,7 @@ func (r *Recorder) hello(ctx context.Context) error {
 				return errors.New("hello response missing signaling sessionid")
 			}
 			if r.talkAuthMode() == config.TalkAuthModeHPBInternal && !helloResponseHasFeature(resp, "mcu") {
-				return errors.New("signaling server did not advertise MCU/HPB support")
+				return errHPBUnsupported
 			}
 			log.Printf("hello ok (version %s)", version)
 			return nil
@@ -855,10 +855,10 @@ func (r *Recorder) explainHelloError(resp map[string]any) error {
 	code, message := signalingErrorCodeMessage(resp)
 	switch code {
 	case "invalid_client_type":
-		return errors.New("internal clients are not supported by the signaling server; check that the signaling server internalsecret is configured")
+		return errInternalUnsupported
 	case "invalid_token", "auth_failed":
 		if r.talkAuthMode() == config.TalkAuthModeHPBInternal {
-			return fmt.Errorf("internal signaling auth failed: code=%s message=%s", code, message)
+			return fmt.Errorf("%w: code=%s message=%s", errInternalAuthFailed, code, message)
 		}
 	}
 	return r.explainSignalingError("signaling hello failed", resp)

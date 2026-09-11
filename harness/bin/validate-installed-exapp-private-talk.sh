@@ -647,10 +647,46 @@ scaffold_args=(--scaffold-only --nextcloud-host "$NEXTCLOUD_HOST")
   > >(tee "$LOG_DIR/scaffold.log") \
   2> >(tee "$LOG_DIR/scaffold.err" >&2)
 
+# Optional readiness vertical: two real Talk recordings separated by an
+# installed ExApp + Nextcloud restart. Kept opt-in for historical image tests.
+prepare_readiness_test() {
+  local label="$1" token instance_url body code
+  token="$(jq -er --arg conversation "$CONVERSATION" '.conversations[$conversation].token' "$REPO_ROOT/harness/runtime/play-private-scaffold.json")"
+  instance_url="$(docker exec nc_app_gocassini printenv NEXTCLOUD_URL)"
+  body="$(jq -nc --arg room "${instance_url%/}/call/$token" '{test_room_url:$room,action:"arm_test"}')"
+  curl -fsS "${AUTH[@]}" -X PUT -H 'Content-Type: application/json' --data "$body" \
+    "$PROXY_URL/operator/talk/setup" >"$LOG_DIR/readiness-armed-$label.json"
+  curl -fsS "${AUTH[@]}" -X POST "$PROXY_URL/operator/readiness/check" >"$LOG_DIR/readiness-check-$label.json"
+  jq -e 'any(.checks[]; .code == "hpb_authenticated" and .state == "passed")' \
+    "$LOG_DIR/readiness-check-$label.json" >/dev/null || fail "HPB probe failed for $label"
+  code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/readiness")"
+  [[ "$code" == 403 ]] || fail "readiness admin route returned $code for an ordinary user"
+  code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -X PUT -H 'Content-Type: application/json' --data '{"internal_secret":"must-not-save"}' -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/talk/setup")"
+  [[ "$code" == 403 ]] || fail "secret configuration route returned $code for an ordinary user"
+}
+
 new_job_ids=()
 for run in $(seq 1 "$RUN_COUNT"); do
+  if [[ "${CASSINI_VALIDATE_READINESS:-0}" == 1 ]]; then
+    if (( run > 1 )); then
+      "${COMPOSE[@]}" restart nextcloud >/dev/null
+      docker restart nc_app_gocassini >/dev/null
+      for ((attempt=0; attempt<60; attempt++)); do
+        if curl -fsS "${AUTH[@]}" "$PROXY_URL/operator/readiness" >"$LOG_DIR/readiness-restarted.json" 2>/dev/null; then break; fi
+        sleep 2
+      done
+      jq -e 'all(.checks[]; .id != "talk.handoff" or .state != "passed") and .test.started_at != null' \
+        "$LOG_DIR/readiness-restarted.json" >/dev/null || fail "restart reused live handoff evidence or lost test history"
+    fi
+    prepare_readiness_test "job${run}"
+  fi
   run_private_job "job${run}"
   new_job_ids+=("$RUN_JOB_ID")
+  if [[ "${CASSINI_VALIDATE_READINESS:-0}" == 1 ]]; then
+    fetch_json "$PROXY_URL/operator/readiness" "$LOG_DIR/readiness-published-job${run}.json" false
+    jq -e --arg id "$RUN_JOB_ID" '.test.job_id == $id and .test.published == true and .test.playback_verified_at == null' \
+      "$LOG_DIR/readiness-published-job${run}.json" >/dev/null || fail "test did not follow the Talk job to publication, or claimed unconfirmed playback"
+  fi
 done
 
 final_catalog="$LOG_DIR/catalog-final.json"

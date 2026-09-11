@@ -42,7 +42,7 @@ const (
 	signalingInternalSecretHint = "Talk recording needs CASSINI_TALK_SIGNALING_INTERNAL_SECRET " +
 		"(the Talk signaling server's [clients] internalsecret). On Nextcloud AIO, read it with " +
 		"`docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the " +
-		"[clients] internalsecret in the signaling server config. Set it in the External Apps deploy " +
+		"[clients] internalsecret in the signaling server config. Save it in Cassini Setup → Talk authentication, or set it in the External Apps deploy " +
 		"options, or with `occ app_api:app:register <app> <daemon> --env " +
 		"CASSINI_TALK_SIGNALING_INTERNAL_SECRET=<value>`. See docs/exapp-install.md."
 
@@ -161,8 +161,9 @@ type statusTalk struct {
 
 // signalingInternalSecretConfigured reports whether the Talk signaling internal
 // secret (required for invisible HPB-internal recording) is set.
-func signalingInternalSecretConfigured() bool {
-	return strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != ""
+func (rt *Runtime) signalingInternalSecretConfigured() bool {
+	secret, _ := rt.signalingSecret()
+	return secret != ""
 }
 
 type statusCheck struct {
@@ -201,7 +202,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 		},
 		Talk: statusTalk{
 			SecretConfigured:                  strings.TrimSpace(rt.cfg.TalkSharedSecret) != "",
-			SignalingInternalSecretConfigured: signalingInternalSecretConfigured(),
+			SignalingInternalSecretConfigured: rt.signalingInternalSecretConfigured(),
 			BackendURLOverrideConfigured:      strings.TrimSpace(rt.cfg.TalkBackendURL) != "",
 			SecretSource:                      rt.cfg.TalkSecretSource,
 			RecordingBackendURL:               rt.cfg.TalkRecordingBackendURL,
@@ -258,6 +259,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 // nothing an unprivileged caller could not have guessed from the app failing in
 // front of them.
 type setupResponse struct {
+	RecordingState string `json:"recording_state,omitempty"`
 	// OK is false whenever recordings cannot be served, for any reason.
 	OK bool `json:"ok"`
 	// State is the recordings_access state verbatim (provisioned / degraded /
@@ -347,6 +349,7 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// and "the step is on" is not the same fact as "the step will run".
 	llm := rt.currentLLMSettings().view()
 	writeJSON(w, http.StatusOK, setupResponse{
+		RecordingState: rt.publicRecordingState(),
 		OK:             access.OK,
 		State:          access.State,
 		AwaitingChoice: storageAwaitingChoice(access.Step),

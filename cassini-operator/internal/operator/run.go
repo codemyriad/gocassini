@@ -87,7 +87,8 @@ type Config struct {
 }
 
 type Runtime struct {
-	ctx context.Context
+	recordingSetup recordingSetup
+	ctx            context.Context
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
@@ -397,6 +398,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer listener.Close()
+	if exappCfg.Active {
+		runtime.workerWG.Add(1)
+		go func() { defer runtime.workerWG.Done(); runtime.checkRecordingReadiness(runtime.ctx) }()
+	}
 
 	fmt.Fprintf(stdout, "listening -> http://%s\n", listener.Addr().String())
 	logger.Printf("base_path -> %s", cfg.BasePath)
@@ -417,7 +422,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// (invisible HPB-internal recording authenticates with it). Surface its
 	// absence loudly at startup — not silently at record time — so an admin
 	// learns of it before the first recording fails (see docs/exapp-install.md).
-	if signalingInternalSecretConfigured() {
+	if runtime.signalingInternalSecretConfigured() {
 		logger.Printf("talk_signaling_internal_secret_set -> true")
 	} else {
 		logger.Printf("WARNING: talk_signaling_internal_secret_set -> false: %s", signalingInternalSecretHint)
@@ -849,6 +854,9 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/settings/", rt.llmSettingsHandler)
 	api.Handle("/storage", exappCfg.storageHandler(rt))
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
+	api.HandleFunc("/readiness", rt.readinessHandler)
+	api.HandleFunc("/readiness/check", rt.readinessHandler)
+	api.HandleFunc("/talk/setup", rt.recordingSetupHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are
@@ -1103,6 +1111,9 @@ func (rt *Runtime) acceptRecordJob(ctx context.Context, provider, requestBody st
 // Talk room binding, keyed by job ID — do so between prepare and start, so a
 // fast-failing job can never race past a not-yet-bound room entry (D-364).
 func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody string, req TriggerRequest) (createJobResponse, func(), error) {
+	if refusal := rt.recordingConfigurationRefusal(req); refusal != "" {
+		return createJobResponse{}, nil, fmt.Errorf("%w: %s", errRecordingSetup, refusal)
+	}
 	select {
 	case rt.recordSlots <- struct{}{}:
 	default:

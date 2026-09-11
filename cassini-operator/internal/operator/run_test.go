@@ -2483,6 +2483,7 @@ func newCLITestRuntime(t *testing.T) (*Runtime, func(), string, string) {
 }
 
 func newCLITestRuntimeWithContext(t *testing.T, ctx context.Context) (*Runtime, func(), string, string) {
+	t.Setenv(envTalkSignalingInternalSecret, "test-internal-secret")
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
@@ -2607,6 +2608,7 @@ esac
 		CassiniBin:       cassiniBin,
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
+		TalkSharedSecret: "test-recording-secret",
 	}, logger, ioDiscard{}, ioDiscard{})
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
 		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
@@ -2635,6 +2637,8 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 
 func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func()) {
 	t.Helper()
+	// Recording-capable fixture. Tests of missing credentials explicitly unset it.
+	t.Setenv(envTalkSignalingInternalSecret, "test-internal-secret")
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
 	// A test that wants a different capability must set it AFTER this helper —
@@ -2656,6 +2660,7 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 		CassiniBin:       filepath.Join(repoRoot, "bin", "cassini"),
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
+		TalkSharedSecret: "test-recording-secret",
 	}, logger, ioDiscard{}, ioDiscard{})
 	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
 		runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)

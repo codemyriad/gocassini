@@ -192,6 +192,20 @@ got=$(curl_with_headers GET '/viewer/some/spa/route' \
   -H "EX-APP-VERSION: ${APP_VERSION}")
 assert_status "GET /viewer/<spa-route> (SPA fallback)" 200 "${got}"
 
+# These checks exercise transport authentication. ADMIN-vs-USER authorization
+# is enforced by the real AppAPI proxy and tested by the installed vertical.
+assert_status "GET readiness without AppAPI authentication" 401 "$(curl_with_headers GET /operator/readiness)"
+assert_status "PUT Talk setup without AppAPI authentication" 401 "$(curl_with_headers PUT /operator/talk/setup)"
+body=$(curl -fsS -X PUT -H "$(auth_header admin)" \
+  -H "EX-APP-ID: ${APP_ID}" -H "EX-APP-VERSION: ${APP_VERSION}" \
+  -H 'Content-Type: application/json' --data '{"internal_secret":"readiness-container-test"}' \
+  "http://127.0.0.1:${PORT}/operator/talk/setup")
+jq -e '.secret_configured == true and .secret_source == "setup"' <<<"$body" >/dev/null
+if grep -qF 'readiness-container-test' <<<"$body"; then
+  log 'FAIL readiness response exposed the internal credential'; exit 1
+fi
+log 'OK   saved recording setup is redacted'
+
 # --- Lifecycle state persistence after restart ---
 
 log "restarting container; lifecycle state should survive only if the data path is persistent"
@@ -216,5 +230,11 @@ got=$(curl_with_headers GET /operator/jobs \
   -H "EX-APP-ID: ${APP_ID}" \
   -H "EX-APP-VERSION: ${APP_VERSION}")
 assert_status "GET /operator/jobs after restart" 200 "${got}"
+
+body=$(curl -fsS -H "$(auth_header admin)" \
+  -H "EX-APP-ID: ${APP_ID}" -H "EX-APP-VERSION: ${APP_VERSION}" \
+  "http://127.0.0.1:${PORT}/operator/readiness")
+jq -e '.secret_configured == true and .secret_source == "setup" and all(.checks[]; .id != "talk.handoff" or .state != "passed")' <<<"$body" >/dev/null
+log 'OK   saved internal credential survives restart without inventing handoff evidence'
 
 log "e2e test passed"

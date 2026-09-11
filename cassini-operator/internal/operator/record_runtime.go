@@ -330,6 +330,8 @@ const talkRecordingSecretEnv = "CASSINI_TALK_RECORDING_SECRET"
 // it came from the environment the two are the same value.
 func (rt *Runtime) recordChildEnv() []string {
 	env := rt.childEnv()
+	internal, _ := rt.signalingSecret()
+	env = setEnvKey(env, envTalkSignalingInternalSecret, internal)
 	secret := strings.TrimSpace(rt.cfg.TalkSharedSecret)
 	if secret == "" {
 		return env
@@ -873,6 +875,9 @@ var jsonMarshal = func(v any) ([]byte, error) {
 var errRecordBusy = errors.New("max record workers exceeded")
 
 func recordAcceptError(err error) (status int, message string) {
+	if errors.Is(err, errRecordingSetup) {
+		return http.StatusConflict, err.Error()
+	}
 	if errors.Is(err, errRecordBusy) {
 		return http.StatusServiceUnavailable, errRecordBusy.Error()
 	}

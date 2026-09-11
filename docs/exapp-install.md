@@ -20,6 +20,10 @@ occ (e.g. `sudo -u www-data php occ …` or
 The standalone Docker Compose bundle under `deployment/` is **not** the app
 install — see [Standalone operator (dev/staging only)](#standalone-operator-devstaging-only).
 
+After installation, **Cassini → Setup** diagnoses missing configuration and
+helps you verify a short recording. See [Recording readiness](recording-readiness.md)
+for the guided flow, AIO-specific setup, and restart persistence.
+
 ## Prerequisites
 
 - Nextcloud **32 or newer** (the manifest's `min-version`; Cassini targets and
@@ -46,8 +50,8 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   sharing pickers; see
   [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
-  Without them Cassini still records and publishes — in its **default** storage
-  mode, where recordings live in the `cassini` account's own
+  Without them Cassini can still record and publish after you explicitly choose
+  its **default** storage mode, where recordings live in the `cassini` account's own
   `CassiniNoACL/Recordings` and everyone who can open the app can read all of
   them. Each mode has its own root and neither can shadow the other (see
   [Where recordings live](#where-recordings-live)). Which mode an instance is
@@ -73,6 +77,13 @@ docker-deployed ExApp and the operator stores all durable data under it
 (see [Persistent storage](#persistent-storage)).
 
 ## Step 1 — Register a deploy daemon (HaRP)
+
+**AIO:** enable its HaRP component, start the containers, and run Test deploy
+against its automatically registered daemon. Reuse this integration rather than
+launching the generic HaRP container below. Also enable AIO's Talk component for
+HPB. See [AIO restart persistence](recording-readiness.md#aio-restart-persistence)
+before handing recording over to Cassini.
+
 
 Use a **HaRP** daemon. Upstream AppAPI recommends HaRP; the older Docker
 Socket Proxy daemon is deprecated and scheduled for removal in Nextcloud 35.
@@ -145,7 +156,7 @@ CI publishes to `ghcr.io/codemyriad/gocassini`:
 
 | Tag | What it is |
 |---|---|
-| `X.Y.Z` | Portable capture image. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, while operator-managed transcription immediately enters `build/blocked` instead of using CPU ASR. |
+| `X.Y.Z` | Portable capture image. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records and transcribes on CPU; no GPU is required. |
 | `X.Y.Z-cuda` | CUDA release build (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
 | `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
 | `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit, for pinning a specific build |
@@ -169,12 +180,11 @@ The tag push publishes `0.2.0`, `0.2.0-cuda`, and `0.2.0-rocm`. CI refuses to
 publish when the git tag and the manifest version disagree, or when
 `<image-tag>` drifts from `<version>`.
 
-You don't select the `-cuda` tag by hand: when the deploy daemon's compute
-device is CUDA, AppAPI automatically tries `<image-tag>-cuda` first and falls
-back to the plain tag. Cassini detects that fallback: the plain image remains
-available for capture, `/operator/status` reports CUDA unavailable, and build
-jobs immediately enter `build/blocked` with instructions to install the matching
-`-cuda` image instead of decoding on CPU.
+When the deploy daemon's compute device is CUDA, AppAPI tries
+`<image-tag>-cuda` first and can fall back to the plain image. Cassini's Auto
+policy uses CUDA when its runtime and device are usable, and CPU otherwise.
+Setup reports the selected processing device. An explicit CUDA override on a
+host without usable CUDA blocks processing until corrected.
 
 The checked-in manifest already pins the current release; to install a
 different build, download `appinfo/info.xml`, set `<image-tag>` to the
@@ -195,6 +205,10 @@ CASSINI_SECRET="$(openssl rand -hex 32)"
 ```
 
 #### Finding the signaling internal secret
+
+You may save the internal secret in **Setup → Talk authentication** after
+installation instead of supplying a deployment environment variable. The
+environment variable, when supplied, takes precedence.
 
 `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` must equal your Talk signaling / HPB
 server's `[clients] internalsecret`. It is the **one** value Cassini cannot
@@ -746,7 +760,9 @@ operator's ADMIN-only provisioning endpoint returns the ready-to-apply
 `recording_servers` value (including the self-generated secret), so you never
 copy a secret by hand.
 
-**Back up the current backend first**, then switch:
+**Back up the current backend first**, then switch. Setup → Connect Talk generates
+these commands for your instance. AIO users must also follow the
+[restart persistence instructions](recording-readiness.md#aio-restart-persistence).
 
 ```bash
 # 0. Back up (empty output = no recording backend configured)
@@ -829,11 +845,11 @@ needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/dat
 verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
 on that engine before registering the app.
 
-There is no CPU transcription fallback. A plain portable image is a permanent
-inference mismatch: recording finishes, but the build immediately enters
-`build/blocked` with no `build_retry_not_before`; `/operator/status` answers 503
-with an actionable `stt.detail`. Install/redeploy the matching `-cuda` image,
-then use **Rerun** in Cassini Admin to process the preserved recording.
+CPU transcription is supported. The portable image bundles the Balanced CPU
+model. Auto selects usable CUDA or falls back to CPU; administrators can also
+pin CPU. Explicitly pinning unavailable CUDA blocks processing with an
+actionable error. Change the device in Transcription settings, then rerun any
+blocked recording. Other quality tiers may need a one-time model download.
 
 On a CUDA-capable image, temporary RAM or VRAM pressure is different. The
 operator keeps the build queued, records `build_retry_not_before`, and retries
