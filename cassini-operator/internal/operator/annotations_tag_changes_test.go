@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,7 +38,7 @@ func seedTagChanges(t *testing.T) *annotationStore {
 // tag-styles.json; store may be nil for "no index".
 func tagChangeService(t *testing.T, ncURL, bin string, store *annotationStore) (*annotationService, http.Handler) {
 	t.Helper()
-	rt := &Runtime{}
+	rt := &Runtime{ctx: context.Background()}
 	rt.cfg.CassiniBin = bin
 	rt.cfg.DBPath = filepath.Join(t.TempDir(), "jobs.sqlite3")
 	if store != nil {
@@ -82,18 +83,17 @@ func tagChangeResult(t *testing.T, tags ...testTag) string {
 
 func waitTagJob(t *testing.T, s *annotationService, caller string) *tagJob {
 	t.Helper()
-	s.jobs.mu.Lock()
-	job := s.jobs.last[caller]
-	s.jobs.mu.Unlock()
-	if job == nil {
-		t.Fatalf("%s has no job", caller)
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		job := s.jobs.snapshot(caller)
+		switch {
+		case job == nil:
+			t.Fatalf("%s has no job", caller)
+		case job.State != tagJobRunning:
+			return job
+		case time.Now().After(deadline):
+			t.Fatalf("%s's job did not finish", caller)
+		}
 	}
-	select {
-	case <-job.done:
-	case <-time.After(30 * time.Second):
-		t.Fatalf("%s's job did not finish", caller)
-	}
-	return s.jobs.snapshot(caller)
 }
 
 func decodeTagEdit(t *testing.T, rec *httptest.ResponseRecorder) (tagVocabularyEntry, *tagJob) {
@@ -200,7 +200,8 @@ func TestTagDeleteKeepsTheStyleWhileAnotherRoomCarriesTheTag(t *testing.T) {
 	decodeTagEdit(t, tagCall(h, http.MethodPost, "/tag_hiring", "alice", `{"color":"red","icon":"flag"}`))
 	decodeTagEdit(t, tagCall(h, http.MethodPost, "/tag_hiring", "alice", `{"icon":""}`))
 
-	if started := decodeStartedJob(t, tagCall(h, http.MethodPost, "/tag_hiring/delete", "alice", `{}`)); started.Total != 1 {
+	// Delete takes no fields, so no body at all is fine.
+	if started := decodeStartedJob(t, tagCall(h, http.MethodPost, "/tag_hiring/delete", "alice", "")); started.Total != 1 {
 		t.Fatalf("job = %+v, want one recording", started)
 	}
 	if job := waitTagJob(t, s, "alice"); job.State != tagJobFinished || len(job.Failed) != 0 {
@@ -319,7 +320,9 @@ func TestTagChangeRefusals(t *testing.T) {
 		{"a long label", http.MethodPost, "/tag_x", `{"label":"` + strings.Repeat("x", 65) + `"}`, http.StatusBadRequest},
 		{"delete takes nothing", http.MethodPost, "/tag_x/delete", `{"label":"x"}`, http.StatusBadRequest},
 		{"merge takes only into", http.MethodPost, "/tag_x/merge", `{"into":"tag_y","label":"x"}`, http.StatusBadRequest},
-		{"no body", http.MethodPost, "/tag_x/delete", "", http.StatusBadRequest},
+		{"merge without into", http.MethodPost, "/tag_x/merge", "", http.StatusBadRequest},
+		{"anything after the object", http.MethodPost, "/tag_x", `{"color":"red"} {}`, http.StatusBadRequest},
+		{"a body too large", http.MethodPost, "/tag_x", `{"label":"` + strings.Repeat("x", 5000) + `"}`, http.StatusRequestEntityTooLarge},
 		{"an unknown action", http.MethodPost, "/tag_x/rename", `{}`, http.StatusNotFound},
 		{"too deep", http.MethodPost, "/tag_x/merge/more", `{}`, http.StatusNotFound},
 		{"not a tag id", http.MethodPost, "/-x", `{}`, http.StatusNotFound},
@@ -388,6 +391,39 @@ func TestAnnotationsMeetingPOSTColoursOnlyTheTagsItCreates(t *testing.T) {
 	}
 	if annTestRuns(t, bin) != runs {
 		t.Error("a refused style still ran the CLI")
+	}
+}
+
+// A mark naming a tag id none of alice's meetings carries is resolved by its
+// label, as if it named none. Honouring the id would bring a hidden tag into her
+// vocabulary with its colour, and so say that meetings she cannot read carry it.
+func TestAnnotationsMeetingPOSTResolvesAHiddenTagIDByLabel(t *testing.T) {
+	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
+	bin := fakeCassini(t, annTestCLIPrints(annTestApplied))
+	_, h := tagChangeService(t, nc.url, bin, seedTagChanges(t))
+
+	rec := annTestCall(h, http.MethodPost, "MEETING1", "alice", `{"ops":[
+		{"op":"mark","tag":{"id":"tag_layoffs","label":"Layoffs"},"target":{"kind":"meeting"}},
+		{"op":"mark","tag":{"id":"tag_layoffs","label":"HIRING"},"target":{"kind":"meeting"}},
+		{"op":"mark","tag":{"id":"tag_budget","label":"Money"},"target":{"kind":"meeting"}}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
+	}
+	var sent struct {
+		Ops []struct {
+			Tag map[string]string `json:"tag"`
+		} `json:"ops"`
+	}
+	if err := json.Unmarshal([]byte(annTestRead(t, bin+".stdin")), &sent); err != nil {
+		t.Fatal(err)
+	}
+	const want = "[map[label:Layoffs] map[id:tag_hiring label:HIRING] map[id:tag_budget label:Money]]"
+	var got []map[string]string
+	for _, op := range sent.Ops {
+		got = append(got, op.Tag)
+	}
+	if fmt.Sprint(got) != want {
+		t.Errorf("tags sent = %v, want %s: a hidden id dropped, a visible one kept", got, want)
 	}
 }
 

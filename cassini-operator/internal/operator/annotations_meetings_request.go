@@ -135,18 +135,29 @@ func (s *annotationService) resolveVocabulary(ctx context.Context, ops []json.Ra
 	}
 	resolved := make([]json.RawMessage, len(ops))
 	for i, op := range ops {
-		label, ok := unresolvedMarkLabel(op)
-		if !ok {
-			resolved[i] = op
+		resolved[i] = op
+		id, label, ok := markOpTag(op)
+		if !ok || label == "" {
 			continue
+		}
+		if id != "" {
+			// An id none of the caller's meetings carries is resolved as its
+			// label: honouring it would show them that tag's colour, and whether
+			// meetings they cannot read carry it.
+			known, err := index.TagVisible(ctx, id, visible)
+			if err != nil {
+				return nil, "", fmt.Errorf("check the tag id of op %d: %w", i, err)
+			}
+			if known {
+				continue
+			}
 		}
 		tagID, found, err := index.ResolveLabel(ctx, label, visible)
 		if err != nil {
 			// The label is user content, so the error is reported by position.
 			return nil, "", fmt.Errorf("resolve the label of op %d: %w", i, err)
 		}
-		if !found {
-			resolved[i] = op
+		if !found && id == "" {
 			continue
 		}
 		if resolved[i], err = withMarkTagID(op, tagID); err != nil {
@@ -159,17 +170,8 @@ func (s *annotationService) resolveVocabulary(ctx context.Context, ops []json.Ra
 	return document, namespace, err
 }
 
-// unresolvedMarkLabel reports the label of a `mark` op that names no tag id.
-// Anything else, a malformed op included, passes through for the CLI to judge.
-func unresolvedMarkLabel(op json.RawMessage) (string, bool) {
-	id, label, ok := markOpTag(op)
-	if !ok || id != "" || label == "" {
-		return "", false
-	}
-	return label, true
-}
-
-// markOpTag reports the trimmed tag id and label a `mark` op names.
+// markOpTag reports the trimmed tag id and label a `mark` op names. Anything
+// else, a malformed op included, passes through for the CLI to judge.
 func markOpTag(op json.RawMessage) (id, label string, ok bool) {
 	var probe struct {
 		Op  string `json:"op"`
@@ -184,21 +186,24 @@ func markOpTag(op json.RawMessage) (id, label string, ok bool) {
 	return strings.TrimSpace(probe.Tag.ID), strings.TrimSpace(probe.Tag.Label), true
 }
 
-// withMarkTagID sets tag.id on one mark op, keeping every other field as sent.
+// withMarkTagID sets tag.id on one mark op, or removes it for "", keeping every
+// other field as sent.
 func withMarkTagID(op json.RawMessage, tagID string) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(op, &fields); err != nil {
+	err := json.Unmarshal(op, &fields)
+	if err != nil {
 		return nil, err
 	}
 	var tag map[string]json.RawMessage
 	if err := json.Unmarshal(fields["tag"], &tag); err != nil {
 		return nil, err
 	}
-	id, err := json.Marshal(tagID)
-	if err != nil {
-		return nil, err
+	delete(tag, "id")
+	if tagID != "" {
+		if tag["id"], err = json.Marshal(tagID); err != nil {
+			return nil, err
+		}
 	}
-	tag["id"] = id
 	if fields["tag"], err = json.Marshal(tag); err != nil {
 		return nil, err
 	}

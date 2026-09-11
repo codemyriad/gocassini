@@ -107,16 +107,8 @@ func (s *tagStyleStore) update(change func(map[string]tagStyle)) error {
 	if err != nil {
 		return fmt.Errorf("encode tag styles: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("mkdir tag styles dir: %w", err)
-	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
+	if err := writeFileAtomic(s.path, append(data, '\n'), 0o644); err != nil {
 		return fmt.Errorf("write tag styles: %w", err)
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("replace tag styles: %w", err)
 	}
 	return nil
 }
