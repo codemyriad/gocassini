@@ -103,10 +103,11 @@ describe("choosing the other option", () => {
     expect(panelSource).toContain("when sharing files in other apps too, not only in Cassini.");
   });
 
-  // Cassini's own steps are one sentence, not a checklist: the administrator is
-  // not being asked to do any of them.
-  it("does not itemise the steps Cassini performs itself", () => {
-    expect(panelSource).toContain("Cassini does the rest itself while the switch runs:");
+  // Cassini's own steps are not described at all: the administrator is not
+  // being asked to do any of them, and the sentence that listed them was cut
+  // (D-751) — it answered a question nobody asked.
+  it("does not describe the steps Cassini performs itself", () => {
+    expect(panelSource).not.toContain("Cassini does the rest itself while the switch runs:");
     expect(panelSource).not.toContain("{#each pending.setup");
     expect(panelSource).not.toContain("{#each option.setup");
   });
@@ -226,6 +227,54 @@ describe("while the switch runs", () => {
   });
 });
 
+describe("a switch this page did not start", () => {
+  // watchRunningSwitch draws the progress of a move that was already running
+  // when the page opened. Everything that could start a SECOND one, or finish
+  // this one early, has to be dead while it runs: a concurrent PUT, or
+  // finish_migration mid-move, is the one thing this section must not make
+  // reachable.
+  it("counts as busy, so nothing on the page can act during it", () => {
+    const busy = panelSource.slice(
+      panelSource.indexOf("$: busy ="),
+      panelSource.indexOf("</script>"),
+    );
+    expect(busy).toContain("migration !== null");
+    // The two audiences, Resume, recheck and the confirm button all read it.
+    const options = panelSource.slice(
+      panelSource.indexOf('role="radiogroup"'),
+      panelSource.indexOf("{#if existingLine}"),
+    );
+    expect(options).toContain("disabled={busy}");
+    const confirm = panelSource.slice(
+      panelSource.indexOf('{#if flow === "confirm"}'),
+      panelSource.indexOf("on:click={confirmSwitch}"),
+    );
+    expect(confirm).toContain("disabled={busy}");
+    const resume = panelSource.slice(
+      panelSource.indexOf("A switch didn't finish."),
+      panelSource.indexOf("on:click={resume}"),
+    );
+    expect(resume).toContain("disabled={busy}");
+    expect(panelSource).toContain("disabled={loading || busy || !operatorClient}");
+    const recheck = panelSource.slice(
+      panelSource.indexOf("async function recheck()"),
+      panelSource.indexOf("function choose(mode: AccessMode)"),
+    );
+    expect(recheck).toContain("if (!operatorClient || busy)");
+  });
+
+  // …and it must not outlive the switch: a count left behind would go on
+  // disabling the section after the move that set it has finished.
+  it("clears the progress whatever the switch did", () => {
+    const confirm = panelSource.slice(
+      panelSource.indexOf("async function confirmSwitch()"),
+      panelSource.indexOf("async function resume()"),
+    );
+    const tail = confirm.slice(confirm.indexOf("} finally {"));
+    expect(tail).toContain("migration = null;");
+  });
+});
+
 describe("an interrupted switch", () => {
   // The archive is COMPLETE at the mode in force — the operator copies before
   // it flips, and only clears afterwards — so this is a tidy-up with one
@@ -266,6 +315,8 @@ describe("details for administrators", () => {
   it("links the full report at the operator's own status route", () => {
     expect(panelSource).toContain("`${loadConfig().operatorBasePath}/status`");
     expect(panelSource).toContain(">Full report</a");
+    // The health row is one line: the verdict, the separator, the link.
+    expect(panelSource).toContain('<span class="text-base-content/40">·</span>');
   });
 
   it("says what the service account is for, and offers the one password action", () => {
@@ -338,7 +389,13 @@ describe("the rest of the app", () => {
   it("builds what a mode needs through the shared sequence rather than its own", () => {
     expect(panelSource).toContain('from "./operator/runModeSetup"');
     expect(panelSource).toContain("runModeSetup(operatorClient, option, (message)");
-    expect(panelSource).not.toContain("runSetupPlan(");
+    // The one direct runSetupPlan is the account row's, and it runs the plan
+    // the first-run dialog runs: a mode's plan can also carry the Team folder
+    // and its ACLs, which is not what that button offers to do.
+    const plans = panelSource.match(/runSetupPlan\(/g) ?? [];
+    expect(plans).toHaveLength(1);
+    expect(panelSource).toContain("await runSetupPlan(accountPlan, {");
+    expect(panelSource).toContain('import { accountSteps } from "./operator/firstRun"');
   });
 
   it("decides nothing a unit test could not read back", () => {
@@ -347,5 +404,130 @@ describe("the rest of the app", () => {
     expect(panelSource).toContain('from "./operator/recordingAccess"');
     expect(panelSource).not.toMatch(/recordings\.length/);
     expect(panelSource).not.toContain("archive.meetings");
+  });
+});
+
+// The browser writes to Nextcloud itself before the operator is asked to move
+// anything, and closing the tab THERE aborts it. The page must not be offering
+// to be closed until the work is the operator's (D-751 review).
+describe("the two halves of a switch", () => {
+  const confirm = panelSource.slice(
+    panelSource.indexOf("async function confirmSwitch()"),
+    panelSource.indexOf("async function resume()"),
+  );
+
+  it("does the browser's half first, in a panel of its own", () => {
+    expect(confirm).toContain('flow = "preparing";');
+    expect(confirm.indexOf('flow = "preparing";')).toBeLessThan(confirm.indexOf("runModeSetup("));
+    expect(panelSource).toContain('{#if flow === "preparing"}');
+    expect(panelSource).toContain("{preparingTitle(target)}");
+  });
+
+  it("only then says the switch carries on without this page", () => {
+    // runModeSetup is awaited before the switching panel, its poll and the PUT.
+    expect(confirm.indexOf("await runModeSetup(")).toBeLessThan(
+      confirm.indexOf('flow = "switching";'),
+    );
+    expect(confirm.indexOf('flow = "switching";')).toBeLessThan(
+      confirm.indexOf("stopPoll = pollMigration(null)"),
+    );
+    expect(confirm.indexOf("stopPoll = pollMigration(null)")).toBeLessThan(
+      confirm.indexOf("operatorClient.putStorage("),
+    );
+    // The sentence itself is switchingLead's, and it is rendered only by the
+    // panel the PUT phase opens.
+    const preparing = panelSource.slice(
+      panelSource.indexOf('{#if flow === "preparing"}'),
+      panelSource.indexOf('{#if flow === "switching"}'),
+    );
+    expect(preparing).not.toContain("switchingLead");
+  });
+
+  it("never mints a credential out of a switch", () => {
+    // runModeSetup returns the account's password when its run created one.
+    // Nothing reads it: the operator signs in through AppAPI's act-as-user
+    // header, so a password shown once here was made out of a value nothing
+    // uses. PasswordReveal stays for "Set a password", which is asked for.
+    expect(confirm).not.toContain("credential =");
+    expect(confirm).not.toContain("result.password");
+    const reset = panelSource.slice(
+      panelSource.indexOf("async function setPassword()"),
+      panelSource.indexOf("// --- Progress"),
+    );
+    expect(reset).toContain("credential = { user, password: await resetServiceAccountPassword(user) };");
+  });
+});
+
+describe("the alertdialog panels", () => {
+  // Both are inline and render further down the page than the control that
+  // opened them, so a panel nothing focuses is one a keyboard reader is told
+  // about and cannot reach.
+  it("take the focus when they open", () => {
+    expect(panelSource).toContain("bind:this={prereqsFocus}");
+    expect(panelSource).toContain("bind:this={confirmFocus}");
+    expect(panelSource).toContain(
+      '(next === "prereqs" ? prereqsFocus : confirmFocus)?.focus();',
+    );
+    expect(panelSource).toContain('void openPanel(needsPrerequisites(status, mode) ? "prereqs" : "confirm");');
+    expect(panelSource).toContain('void openPanel("confirm");');
+    // After the DOM the panel is in exists.
+    const open = panelSource.slice(
+      panelSource.indexOf("async function openPanel("),
+      panelSource.indexOf("// createAccount"),
+    );
+    expect(open).toContain("await tick();");
+  });
+
+  // The checked option is not disabled: a radio that cannot be focused is a
+  // radiogroup a keyboard reader cannot read.
+  it("leaves the current option focusable", () => {
+    expect(panelSource).not.toContain("disabled={busy || option.current}");
+    expect(panelSource).toContain("function choose(mode: AccessMode)");
+    const choose = panelSource.slice(
+      panelSource.indexOf("function choose(mode: AccessMode)"),
+      panelSource.indexOf("// openPanel shows"),
+    );
+    expect(choose).toContain("status.mode === mode");
+  });
+});
+
+// The dialog's other button acknowledges and creates nothing, and in settings
+// the mode in force is the one option that cannot be chosen — so without this
+// row the only remaining way to create the `cassini` account is a switch to
+// Meeting participants, which is a different decision entirely.
+describe("the account row", () => {
+  it("offers to create the account whenever the operator says it is missing", () => {
+    expect(panelSource).toContain(
+      "status !== null && status.service_account.known && !status.service_account.exists",
+    );
+    expect(panelSource).toContain("{#if needsAccount}");
+    expect(panelSource).toContain("Cassini needs a Nextcloud account to keep recordings in.");
+    expect(panelSource).toContain("Create the account");
+    expect(panelSource).toContain("on:click={createAccount}");
+    // Above the two audiences: it is what makes either of them work.
+    expect(panelSource.indexOf("{#if needsAccount}")).toBeLessThan(
+      panelSource.indexOf('role="radiogroup"'),
+    );
+  });
+
+  it("runs the dialog's own two steps, and looks again afterwards", () => {
+    expect(panelSource).toContain("$: accountPlan = accountSteps(status);");
+    const create = panelSource.slice(
+      panelSource.indexOf("async function createAccount()"),
+      panelSource.indexOf("// confirmSwitch is the only thing"),
+    );
+    expect(create.indexOf("runSetupPlan(accountPlan")).toBeLessThan(
+      create.indexOf("operatorClient.recheckStorage()"),
+    );
+    expect(create).toContain("notifySetupChanged();");
+    // The password it mints is dropped, exactly as the dialog drops it.
+    expect(create).not.toContain("credential");
+    expect(create).not.toContain("password");
+  });
+
+  it("does not offer a button this build cannot honour", () => {
+    expect(panelSource).toContain(
+      "disabled={busy || !setupAvailable || accountPlan.length === 0}",
+    );
   });
 });
