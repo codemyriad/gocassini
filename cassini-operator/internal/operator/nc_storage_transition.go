@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Moving an existing archive between the two storage models (D-616 followups).
@@ -85,6 +86,126 @@ var errTransitionNotReady = errors.New("the target storage mode is not ready")
 
 // errOverwriteConfirmationRequired is returned before any destination write.
 var errOverwriteConfirmationRequired = errors.New("the destination contains recordings that must be confirmed for overwrite")
+
+// The phases a switch reports while it is running. They are the steps of the
+// state machine below, collapsed to the four an administrator can tell apart by
+// what is happening to their recordings.
+const (
+	// storageMigrationCopying covers steps 2-4: the destination tree, the
+	// meetings, and the catalog. `done` counts recordings copied.
+	storageMigrationCopying = "copying"
+	// storageMigrationVerifying is step 5, the proof that licenses the flip.
+	// `done` counts source recordings found at the destination.
+	storageMigrationVerifying = "verifying"
+	// storageMigrationSwitching is step 6, the flip itself — one settings write,
+	// with every recording already across.
+	storageMigrationSwitching = "switching"
+	// storageMigrationClearing is step 7, emptying the source. `done` counts
+	// recordings removed from it.
+	storageMigrationClearing = "clearing"
+)
+
+// storageMigrationProgress is how far a running mode switch has got. It is the
+// `migration` field of every /storage response, and null when nothing is
+// running.
+//
+// It exists because the switch is a single blocking HTTP request that holds
+// provisionMu for its whole duration — minutes, on a real archive — so the only
+// thing that can tell an administrator anything is a CONCURRENT reader. Counts
+// are recordings, which is the unit the same UI already renders everywhere else.
+type storageMigrationProgress struct {
+	Active bool   `json:"active"`
+	Phase  string `json:"phase"`
+	Done   int    `json:"done"`
+	Total  int    `json:"total"`
+}
+
+// ncStorageMigrationState is that record, behind its OWN mutex.
+//
+// Emphatically not provisionMu: the switch holds that one from the first write
+// to the last, so a reader that took it would block until the thing it is
+// reporting on had finished. This lock is only ever held for a field assignment,
+// so a GET /storage during a copy is as cheap as one on an idle instance.
+type ncStorageMigrationState struct {
+	mu     sync.RWMutex
+	active bool
+	phase  string
+	done   int
+	total  int
+}
+
+var ncStorageMigration ncStorageMigrationState
+
+// begin opens the window. Everything else here is a no-op outside it, which is
+// what keeps the two callers that copy archives WITHOUT switching modes — the
+// legacy adoption on the preflight path, and the pre-copy clear of a confirmed
+// destination — from reporting a migration nobody asked for.
+func (s *ncStorageMigrationState) begin() {
+	s.mu.Lock()
+	s.active = true
+	s.phase = storageMigrationCopying
+	s.done = 0
+	s.total = 0
+	s.mu.Unlock()
+}
+
+func (s *ncStorageMigrationState) end() {
+	s.mu.Lock()
+	s.active = false
+	s.phase = ""
+	s.done = 0
+	s.total = 0
+	s.mu.Unlock()
+}
+
+// enter moves to a phase with a known total. `done` is passed rather than reset
+// because the flip enters with the work already finished.
+func (s *ncStorageMigrationState) enter(phase string, done, total int) {
+	s.mu.Lock()
+	if s.active {
+		s.phase = phase
+		s.done = done
+		s.total = total
+	}
+	s.mu.Unlock()
+}
+
+// advanceTo moves from one phase to the next, and only from the one named. It
+// is how a shared helper reports the phase it is performing without having to
+// know whether this particular call is part of a switch: clearArchiveContents
+// empties a confirmed DESTINATION during the copy as well as the source at the
+// end, and only the second of those is the clearing phase.
+func (s *ncStorageMigrationState) advanceTo(from, phase string, total int) {
+	s.mu.Lock()
+	if s.active && s.phase == from {
+		s.phase = phase
+		s.done = 0
+		s.total = total
+	}
+	s.mu.Unlock()
+}
+
+// progressed counts one recording, but only while the record is in the phase
+// the caller belongs to. The guard is what lets the shared copy and clear
+// helpers report progress without having to know whether this particular call
+// is part of a switch.
+func (s *ncStorageMigrationState) progressed(phase string) {
+	s.mu.Lock()
+	if s.active && s.phase == phase {
+		s.done++
+	}
+	s.mu.Unlock()
+}
+
+// snapshot renders the record for /storage, or nil when nothing is running.
+func (s *ncStorageMigrationState) snapshot() *storageMigrationProgress {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.active {
+		return nil
+	}
+	return &storageMigrationProgress{Active: true, Phase: s.phase, Done: s.done, Total: s.total}
+}
 
 // storageTransitionResult is what one transition did, so the UI can say more
 // than "ok".
@@ -277,6 +398,15 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	source := recordingsRootFor(!enableAccessControl)
 	destination := recordingsRootFor(enableAccessControl)
 
+	// Open the progress window before the first write and close it whatever
+	// happens, so a switch that dies half way stops reporting itself as running
+	// (D-755). The window is this function rather than switchStorageMode because
+	// this is where an archive actually starts moving: the paths that only adopt
+	// a root, confirm the mode already in force, or refuse are not migrations
+	// and must not render as one.
+	ncStorageMigration.begin()
+	defer ncStorageMigration.end()
+
 	// The mode the dirty mark names, and its provenance. NOT the user's choice:
 	// they chose the target, and writing `user` here would confirm a decision in
 	// the direction they are switching away from.
@@ -313,6 +443,10 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	//    recordings". Memory first, then disk: a running operator that kept
 	//    believing the old mode would write the next recording into the tree
 	//    that is about to be emptied.
+	//
+	//    Entered with done == total: every recording is across and verified, and
+	//    what remains is one settings write.
+	ncStorageMigration.enter(storageMigrationSwitching, result.MeetingsMoved, result.MeetingsMoved)
 	ncStorage.set(enableAccessControl, storageModeSourceUser, false)
 	result.Mode = storageModeName(enableAccessControl)
 	if err := c.recordStorageMode(enableAccessControl, storageModeSourceUser, false, logger); err != nil {
@@ -334,6 +468,11 @@ func (c ExAppConfig) migrateStorageLocked(ctx context.Context, client *http.Clie
 	// 7. Empty the source. Its collections stay: an empty `meetings` directory is
 	//    what a re-opt-in writes into, and deleting a directory to recreate it a
 	//    moment later is a chance to fail for nothing.
+	//
+	//    The clearing phase is entered inside clearArchiveContents, once it has
+	//    listed what it will remove — only ever out of the switching phase, so
+	//    the same helper clearing a confirmed DESTINATION during the copy stays
+	//    inside the copying phase where it belongs.
 	if err := c.clearArchiveContents(ctx, client, source, logger); err != nil {
 		result.LeftoverSource = source
 		logger.Printf("nc storage: %s still holds a copy of the archive: %v", source, err)
@@ -507,6 +646,8 @@ func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcD
 	if !visible {
 		return 0, nil
 	}
+	// The first instant a switch knows how much there is to do.
+	ncStorageMigration.enter(storageMigrationCopying, 0, len(names))
 
 	for _, name := range names {
 		src := srcDir + "/" + name
@@ -520,6 +661,7 @@ func (c ExAppConfig) copyMeetings(ctx context.Context, client *http.Client, srcD
 			}
 		}
 		copied++
+		ncStorageMigration.progressed(storageMigrationCopying)
 		if logger != nil {
 			logger.Printf("nc storage: copied %s -> %s", src, dst)
 		}
@@ -543,6 +685,10 @@ func (c ExAppConfig) verifyArchiveCopied(ctx context.Context, client *http.Clien
 	if !visible || len(want) == 0 {
 		return nil
 	}
+	// Entered before the destination is listed, not after: the listing is a
+	// round trip to Nextcloud, and a reader watching a switch has to be told
+	// what it is doing WHILE it does it (D-755).
+	ncStorageMigration.enter(storageMigrationVerifying, 0, len(want))
 	got, _, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, destination+"/meetings")
 	if err != nil {
 		return fmt.Errorf("verify %s: %w", destination, err)
@@ -555,7 +701,9 @@ func (c ExAppConfig) verifyArchiveCopied(ctx context.Context, client *http.Clien
 	for _, name := range want {
 		if !present[name] {
 			missing = append(missing, name)
+			continue
 		}
+		ncStorageMigration.progressed(storageMigrationVerifying)
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%d of %d recording(s) did not reach %s (%s)", len(missing), len(want), destination, strings.Join(clip(missing, 3), ", "))
@@ -583,12 +731,14 @@ func (c ExAppConfig) clearArchiveContents(ctx context.Context, client *http.Clie
 	if err != nil {
 		return fmt.Errorf("list %s: %w", root+"/meetings", err)
 	}
+	ncStorageMigration.advanceTo(storageMigrationSwitching, storageMigrationClearing, len(names))
 	if visible {
 		for _, name := range names {
 			rel := root + "/meetings/" + name
 			if err := c.davDelete(ctx, client, ncRecordingsOwner, rel); err != nil {
 				return fmt.Errorf("remove %s: %w", rel, err)
 			}
+			ncStorageMigration.progressed(storageMigrationClearing)
 			if logger != nil {
 				logger.Printf("nc storage: removed %s", rel)
 			}

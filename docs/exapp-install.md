@@ -520,6 +520,14 @@ and `stranded_root` / `stranded_recordings` when an archive is sitting in the
 mode that is *not* in force — the state whose symptom is "my recordings are
 gone" and whose cause is a mode nobody switched.
 
+Every `/operator/storage` response also carries two fields about the install
+rather than about the archive:
+
+| Field | Means |
+|---|---|
+| `first_run` | The one-time dialog naming who will be able to read recordings has not been answered on this install. `POST /operator/storage {"action":"acknowledge_first_run"}` sets it false and answers with the whole status; it is idempotent, and it changes nothing else. The flag lives in `storage_settings.json`, so it is answered once per **install** rather than once per browser or per administrator. It is already false, without anybody answering anything, on an install that has a recorded mode *and* recordings — that install has had its first run, whichever release it happened under. |
+| `migration` | `null` unless a mode switch is running, and `{"active":true,"phase":"copying"\|"verifying"\|"switching"\|"clearing","done":12,"total":134}` while one is. Counts are recordings. See [Switching storage modes](#switching-storage-modes). |
+
 ### Switching storage modes
 
 The Setup tab is where a mode changes; `PUT /operator/storage` with
@@ -543,6 +551,14 @@ request with `"confirm_overwrite": true` to replace them.
   7. delete the source's contents  (the directories themselves stay)
   8. record {mode: target, migration_clean: true}
 ```
+
+The switch is one request that holds the provisioning lock for its whole
+duration, so it reports its progress to somebody else: a concurrent
+`GET /operator/storage` answers `migration` with the phase (`copying`,
+`verifying`, `switching`, `clearing`) and how many recordings of the total that
+phase has got through. It is `null` again the moment the switch returns, whether
+it finished or failed — the recorded mode, not this field, is what a failure is
+recovered from.
 
 The invariant is one sentence: **whichever mode is recorded, that root holds a
 complete archive.** A container killed at any step above leaves it true, so
@@ -600,13 +616,19 @@ read it is what makes you an administrator here.
 | Everyone else | That Cassini is not set up, that it is not their account, and a link to this Cassini page to hand to an administrator — who, opening it, gets the row above. Nothing names an app, a step or a command. |
 
 The verdict behind this comes from `GET /operator/setup`, which is USER-level
-and carries `ok`, `state` and two capability bits:
+and carries `ok`, `state`, the storage mode and two capability bits:
 
 ```bash
 curl -sS -u alice:<pass> \
   "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/setup"
-# {"ok":false,"state":"unavailable","features":{"summaries":false,"insights":false}}
+# {"ok":false,"state":"unavailable","mode":"","features":{"summaries":false,"insights":false}}
 ```
+
+`mode` is `default`, `access_controlled`, or empty before one is resolved. It is
+here so the audience line — who can see a recording — renders for the people it
+is about, and it is the name of a model and nothing more: no root, no counts, no
+provenance, no service account. Where the recordings live, and how to move them,
+stay on the ADMIN route.
 
 `features.summaries` is true when a published meeting will actually be
 summarised — the step is on *and* still resolves to an endpoint — and
@@ -977,8 +999,8 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
 | `/operator/settings` | ADMIN | STT-quality settings (read + update) |
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
-| `/operator/storage` | ADMIN | Storage mode: which one is active, what the other needs, and the switch (`PUT` copies the archive into the other mode's root and then empties the old one; `POST` re-checks, previews a switch, installs the native apps, or finishes an interrupted switch) |
-| `/operator/setup` | USER | Whether recordings can be served at all, whether the one thing missing is a storage-model decision, and two AI capability bits — `{"ok":…,"state":…,"awaiting_choice":…,"features":{"summaries":…,"insights":…}}` and nothing else |
+| `/operator/storage` | ADMIN | Storage mode: which one is active, what the other needs, whether the first-run dialog is still owed, how far a running switch has got, and the switch itself (`PUT` copies the archive into the other mode's root and then empties the old one; `POST` re-checks, previews a switch, installs the native apps, finishes an interrupted switch, or acknowledges the first run) |
+| `/operator/setup` | USER | Whether recordings can be served at all, whether the one thing missing is a storage-model decision, which storage model is in force, and two AI capability bits — `{"ok":…,"state":…,"awaiting_choice":…,"mode":…,"features":{"summaries":…,"insights":…}}` and nothing else |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
 | `/insights` | USER | Insight runs: create one (`POST`), list the caller's own (`GET`) |

@@ -959,6 +959,10 @@ func TestSetupReportsTheSameVerdictAsStatusWithoutTheDiagnosis(t *testing.T) {
 func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	ncAccessSubstrate.reset()
 	t.Cleanup(ncAccessSubstrate.reset)
+	// A mode IS in force, so the one admin-shaped field this route now carries
+	// is actually populated while the assertions below run — an empty string
+	// would pass this test without ever testing it.
+	setStorageMode(t, true)
 	ncAccessSubstrate.markApplicable()
 	ncAccessSubstrate.setAdminUser("ops-root")
 	ncAccessSubstrate.setPrerequisites([]ncPrerequisiteStatus{
@@ -981,16 +985,31 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
 		t.Fatalf("decode setup response: %v", err)
 	}
-	// ok + state + awaiting_choice + features. The third is a bit, not a detail:
-	// it says whether the thing standing between this instance and working
-	// recordings is a DECISION rather than a fault, which is what a
+	// ok + state + awaiting_choice + mode + features. The third is a bit, not a
+	// detail: it says whether the thing standing between this instance and
+	// working recordings is a DECISION rather than a fault, which is what a
 	// non-administrator needs in order to be told the right thing (D-708). It
 	// names no account, no path and no folder id.
-	if len(fields) != 4 {
-		t.Fatalf("setup must answer with ok+state+awaiting_choice+features only, got %#v", fields)
+	if len(fields) != 5 {
+		t.Fatalf("setup must answer with ok+state+awaiting_choice+mode+features only, got %#v", fields)
 	}
 	if _, isBool := fields["awaiting_choice"].(bool); !isBool {
 		t.Fatalf("setup did not carry awaiting_choice as a boolean: %#v", fields)
+	}
+	// The mode is the NAME of a model and nothing else (D-755): it is what the
+	// audience chip renders, and a non-administrator reading it learns who can
+	// see recordings without learning where any of them are kept.
+	mode, isString := fields["mode"].(string)
+	if !isString {
+		t.Fatalf("setup mode = %#v, want a string", fields["mode"])
+	}
+	if mode != storageModeAccessControlled {
+		t.Fatalf("setup mode = %q, want the recorded %q", mode, storageModeAccessControlled)
+	}
+	for _, leak := range []string{ncRecordingsMount, ncDefaultRecordingsRoot, ncRecordingsOwner, "stranded", "meetings", "mode_source", "migration"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("setup leaked storage detail %q alongside the mode: %s", leak, body)
+		}
 	}
 	features, ok := fields["features"].(map[string]any)
 	if !ok {
@@ -1005,6 +1024,52 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 		if _, isBool := features[name].(bool); !isBool {
 			t.Fatalf("setup features[%q] = %#v, want a boolean", name, features[name])
 		}
+	}
+}
+
+// The audience chip needs the mode, and the chip is for everybody (D-755). The
+// empty string is a real answer here — an install nothing has decided for yet —
+// and it is not the same as `default`, so the UI can tell them apart.
+func TestSetupReportsTheStorageModeForTheAudienceChip(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func(t *testing.T)
+		want    string
+	}{
+		{
+			name:    "nothing decided",
+			arrange: func(t *testing.T) { resetStorageMode(t) },
+			want:    "",
+		},
+		{
+			name:    "recordings are readable by every account",
+			arrange: func(t *testing.T) { setStorageMode(t, false) },
+			want:    storageModeDefault,
+		},
+		{
+			name:    "recordings are readable by the meeting",
+			arrange: func(t *testing.T) { setStorageMode(t, true) },
+			want:    storageModeAccessControlled,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ncAccessSubstrate.reset()
+			t.Cleanup(ncAccessSubstrate.reset)
+			ncAccessSubstrate.markApplicable()
+			tc.arrange(t)
+			rt, cleanup := newTestRuntime(t)
+			defer cleanup()
+
+			rec := httptest.NewRecorder()
+			rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+			var resp setupResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode setup response: %v", err)
+			}
+			if resp.Mode != tc.want {
+				t.Fatalf("setup mode = %q, want %q", resp.Mode, tc.want)
+			}
+		})
 	}
 }
 

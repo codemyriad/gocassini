@@ -275,6 +275,20 @@ type setupResponse struct {
 	// their time in a different way. It names no account, no path and no folder
 	// id — it is a bit, and it is the same bit an administrator sees.
 	AwaitingChoice bool `json:"awaiting_choice"`
+	// Mode is the storage model in force — `default`, `access_controlled`, or
+	// empty before one is resolved (D-755).
+	//
+	// It is here so the audience chip — "Visible to anyone with a Nextcloud
+	// account" / "Visible to meeting participants" — renders for the people the
+	// sentence is ABOUT. Everyone can see a recording's audience in the app;
+	// only an administrator could find out what it was, because the mode lived
+	// on an ADMIN route.
+	//
+	// The name of a model and nothing else: no root, no counts, no provenance,
+	// no service account. A non-administrator learns who can read recordings,
+	// which is a fact about their own recordings, and not one thing about where
+	// they are kept or how to move them.
+	Mode string `json:"mode"`
 	// Features is the readiness signal behind every "not configured yet" state
 	// in the app (D-722). It rides here rather than on a route of its own
 	// because a NEW route only reaches AppAPI at registration time, and whether
@@ -346,10 +360,18 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// than off the stored struct: the two answers must not be able to drift,
 	// and "the step is on" is not the same fact as "the step will run".
 	llm := rt.currentLLMSettings().view()
+	// The RECORDED mode, from the same singleton /storage reads, rather than the
+	// preflight snapshot the two fields above come from. The two are the same
+	// answer on any instance that has been enabled; they come apart on a bare
+	// container restart, where the file still names a mode and no enabled edge
+	// has re-run yet. The chip should say who can read recordings there too —
+	// and it has to agree with the admin surface, which is reading this.
+	mode, _ := ncStorage.snapshot()
 	writeJSON(w, http.StatusOK, setupResponse{
 		OK:             access.OK,
 		State:          access.State,
 		AwaitingChoice: storageAwaitingChoice(access.Step),
+		Mode:           mode,
 		Features: setupFeatures{
 			Summaries: llm.Effective.Summary != nil,
 			Insights:  llm.Effective.Insight != nil,

@@ -66,6 +66,11 @@ type transitionMock struct {
 	failCopyOf string
 	// putChecksums records the content identity submitted with each final PUT.
 	putChecksums map[string]string
+	// observe, when set, runs at the start of every request the transition
+	// makes — on the SERVER's goroutine, while the transition itself is blocked
+	// waiting for this response and holding provisionMu. It is how a test reads
+	// what a running switch is reporting (D-755).
+	observe func()
 }
 
 func newTransitionMock() *transitionMock {
@@ -145,6 +150,11 @@ func (m *transitionMock) server(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
+		if m.observe != nil {
+			// Before the mock's own lock: the observer reads the operator, not
+			// this mock, and must not be able to deadlock against it.
+			m.observe()
+		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
@@ -1551,5 +1561,131 @@ func TestSwitchRunsAfterAFailedCleanupWouldHaveRefused(t *testing.T) {
 	}
 	if !ncStorage.migrationClean() {
 		t.Fatal("the switch left the instance unsettled")
+	}
+}
+
+// Progress, read by somebody else while the switch is running (D-755).
+//
+// The switch is ONE blocking request that holds provisionMu from the first
+// write to the last — minutes, on a real archive — so the only thing that can
+// tell an administrator anything is a concurrent reader. This test is that
+// reader: every request the transition makes to Nextcloud is answered on the
+// server's goroutine, with the transition blocked on it and the lock still held,
+// and each one takes the opportunity to GET /storage.
+func TestSwitchReportsItsProgressToAConcurrentReader(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addDir(ncRecordingsMount, ncACLRecordingsRoot, ncACLRecordingsRoot+"/meetings")
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m2.opus", "audio-2")
+	mock.addFile(ncDefaultRecordingsRoot+"/catalog.json", catalogWith("m1", "m2"))
+
+	srv := mock.server(t)
+	cfg := testExAppConfig(srv.URL)
+
+	var mu sync.Mutex
+	var seen []storageMigrationProgress
+	mock.observe = func() {
+		rec := httptest.NewRecorder()
+		cfg.storageHandler(rt).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/storage", nil))
+		if rec.Code != http.StatusOK {
+			// Errorf, not Fatalf: this runs off the test's own goroutine.
+			t.Errorf("a GET /storage during a switch = %d, want 200", rec.Code)
+			return
+		}
+		var body storageStatusResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Errorf("decode /storage during a switch: %v", err)
+			return
+		}
+		if body.Migration == nil {
+			return
+		}
+		mu.Lock()
+		seen = append(seen, *body.Migration)
+		mu.Unlock()
+	}
+
+	result, err := cfg.switchStorageMode(context.Background(), true, true, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("switchStorageMode(true) error = %v", err)
+	}
+	if result.MeetingsMoved != 2 {
+		t.Fatalf("copied %d recordings, want 2", result.MeetingsMoved)
+	}
+
+	mu.Lock()
+	observed := append([]storageMigrationProgress(nil), seen...)
+	mu.Unlock()
+	if len(observed) == 0 {
+		t.Fatal("a switch that copied two recordings reported no progress to anybody")
+	}
+
+	phases := map[string]bool{}
+	for _, p := range observed {
+		if !p.Active {
+			t.Fatalf("a reported migration was not active: %+v", p)
+		}
+		if p.Done > p.Total {
+			t.Fatalf("progress ran past its own total: %+v", p)
+		}
+		phases[p.Phase] = true
+	}
+	// Every phase the four steps go through, each one seen by the reader rather
+	// than asserted about the code.
+	for _, want := range []string{storageMigrationCopying, storageMigrationVerifying, storageMigrationSwitching, storageMigrationClearing} {
+		if !phases[want] {
+			t.Errorf("the %q phase was never visible to a concurrent reader; saw %+v", want, observed)
+		}
+	}
+	// The counts are recordings, and they get as far as the archive does.
+	for _, want := range []struct{ phase string }{{storageMigrationCopying}, {storageMigrationVerifying}, {storageMigrationClearing}} {
+		var best storageMigrationProgress
+		for _, p := range observed {
+			if p.Phase == want.phase && p.Done >= best.Done {
+				best = p
+			}
+		}
+		if best.Total != 2 {
+			t.Errorf("the %q phase reported a total of %d, want the 2 recordings", want.phase, best.Total)
+		}
+	}
+
+	// And it stops when the switch does: a finished migration is null, not an
+	// idle object, or the UI would show a progress bar forever.
+	if body := getStorage(t, cfg, rt); body.Migration != nil {
+		t.Fatalf("migration is still reported after the switch finished: %+v", body.Migration)
+	}
+}
+
+// A switch that dies half way must stop reporting itself as running. The
+// progress record is not part of the on-disk state machine and has nothing to
+// recover from — the recorded mode does that — so the only correct thing for it
+// to say afterwards is nothing.
+func TestFailedSwitchStopsReportingProgress(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addDir(ncRecordingsMount, ncACLRecordingsRoot, ncACLRecordingsRoot+"/meetings")
+	mock.addFile(ncDefaultRecordingsRoot+"/meetings/m1.opus", "audio-1")
+	mock.failCopyOf = ncDefaultRecordingsRoot + "/meetings/m1.opus"
+
+	cfg := testExAppConfig(mock.server(t).URL)
+	if _, err := cfg.switchStorageMode(context.Background(), true, true, log.New(io.Discard, "", 0)); err == nil {
+		t.Fatal("switchStorageMode() returned nil error on a failed copy")
+	}
+	if got := ncStorageMigration.snapshot(); got != nil {
+		t.Fatalf("a failed switch is still reporting progress: %+v", got)
 	}
 }
