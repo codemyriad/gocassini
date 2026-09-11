@@ -39,4 +39,4 @@
     aria-label={`${part.text} — seek to ${formatClockTime(part.startMs)}, ${speakerLabel}`}
     title={part.alignment === "interpolated" ? "Estimated word timing" : undefined}
     on:click={() => seek(part.startMs!)}
-  >{part.text}</button>{:else}<span>{part.text}</span>{/if}{/each}
+  >{part.text}</button>{:else}<span data-word-id={part.id}>{part.text}</span>{/if}{/each}

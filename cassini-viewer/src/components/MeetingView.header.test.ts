@@ -39,6 +39,42 @@ describe("MeetingView header", () => {
   });
 });
 
+describe("MeetingView tagging", () => {
+  it("works unwired: every tagging prop has a default, and no loader means no tagging", () => {
+    expect(meetingViewSource).toContain("export let tagVocabulary: VocabularyTag[] = [];");
+    expect(meetingViewSource).toContain(
+      "export let loadAnnotations: (() => Promise<MeetingAnnotations>) | null = null;",
+    );
+    expect(meetingViewSource).toContain(
+      "export let applyAnnotations: ((request: AnnotationRequest) => Promise<AnnotationResult>) | null = null;",
+    );
+    // A null loader leaves the session off, and an off session draws nothing
+    // (marking.components.test.ts renders both states).
+    expect(meetingViewSource).toContain('$: marksFor = loadAnnotations ? (meeting?.id ?? "") : null;');
+    expect(meetingViewSource).toContain("void marks.open(loadAnnotations, applyAnnotations);");
+  });
+
+  it("says the tags changed after every write that succeeded", () => {
+    expect(meetingViewSource).toContain(
+      'const marks = createMarksSession((result) => dispatch("tagsChanged", result));',
+    );
+  });
+
+  it("keeps whole-meeting tags in the header and wraps the transcript in the marking frame", () => {
+    const header = meetingViewSource.slice(
+      meetingViewSource.indexOf('<header class="sticky'),
+      meetingViewSource.indexOf("</header>"),
+    );
+    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
+    const frameAt = meetingViewSource.indexOf("<TranscriptFrame");
+    expect(frameAt).toBeGreaterThan(-1);
+    expect(meetingViewSource.indexOf("{#each transcriptRows as row (row.key)}")).toBeGreaterThan(frameAt);
+    expect(meetingViewSource.indexOf("</TranscriptFrame>")).toBeGreaterThan(
+      meetingViewSource.indexOf("{#each transcriptRows as row (row.key)}"),
+    );
+  });
+});
+
 describe("MeetingView linked insights", () => {
   it("shows what a meeting was used for under its summary, not under its transcript", () => {
     // It was a strip pinned to the bottom of the sheet, below the whole
