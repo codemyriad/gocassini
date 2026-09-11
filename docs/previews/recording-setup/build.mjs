@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const entry = fileURLToPath(new URL('./main.ts', import.meta.url));
 const result = await build({
   configFile:false,
+  esbuild:{supported:{"template-literal":false}},
   plugins:[tailwindcss(),svelte()],
   define:{__CASSINI_OPERATOR_BASE_PATH__:JSON.stringify('/operator')},
   build:{write:false, minify:true, cssCodeSplit:false, lib:{entry,name:'CassiniSetupPreview',formats:['iife']},rollupOptions:{output:{inlineDynamicImports:true}}},

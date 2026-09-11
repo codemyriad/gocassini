@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, stateLabels, readinessTitle, handoffScript, readinessHealthKey, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, stateLabels, readinessTitle, handoffScript, readinessHealthKey, readinessRows, rowActions, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
   let report: RecordingReadiness | null = null;
@@ -10,6 +10,8 @@
   let busy = false;
   let error = "";
   let panel = "";
+  let panelOwner = "";
+  $: rows = report ? readinessRows(report) : [];
   let aio = true;
   let provisioningURL = "";
   let alive = true;
@@ -38,10 +40,12 @@
     } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
   }
-  async function action(name: string) {
+  async function action(name: string, owner: string) {
     if (name === "recheck") { await load(true); return; }
     if (name === "setup_storage") { document.getElementById("recording-storage")?.scrollIntoView({ behavior: "smooth" }); return; }
-    panel = name;
+    const closing = panel === name && panelOwner === owner;
+    panelOwner = owner;
+    panel = closing ? "" : name;
     if (name === "connect_talk") {
       // Derive from the current operator URL, preserving installations under a subdirectory.
       const base = new URL((await import("./operator/config")).loadConfig().operatorBasePath, window.location.href);
@@ -83,25 +87,22 @@
   {#if error}<p role="alert" class="mt-3 text-error">{error}</p>{/if}
   {#if report}
     <ul class="mt-4 divide-y divide-base-300">
-      {#each report.checks as check}
-        <li class="flex flex-wrap items-start justify-between gap-3 py-3">
-          <div class="min-w-0 flex-1">
-            <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal">{stateLabels[check.state]}</span></p>
-            <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
-            {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50">Checked {new Date(check.checked_at).toLocaleString()}</p>{/if}
+      {#each rows as check, index}
+        <li class="py-3" data-check-id={check.id}>
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal">{stateLabels[check.state]}</span></p>
+              <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
+              {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50">Checked {new Date(check.checked_at).toLocaleString()}</p>{/if}
+            </div>
+            <div class="flex flex-wrap gap-2">
+              {#each rowActions(check) as item}
+                <button class="btn btn-sm btn-outline" disabled={busy || polling} aria-expanded={item.action === "recheck" || item.action === "setup_storage" ? undefined : panel === item.action && panelOwner === check.id} on:click={() => action(item.action, check.id)}>{item.label}</button>
+              {/each}
+            </div>
           </div>
-          {#if check.action}<button class="btn btn-sm btn-outline" disabled={busy} on:click={() => action(check.action ?? "")}>{check.action === "recheck" ? "Check again" : check.action === "test_recording" ? "Test a recording" : check.action === "connect_talk" ? "Connect Talk" : check.action === "setup_storage" ? "Set up storage" : "Configure"}</button>{/if}
-        </li>
-      {/each}
-    </ul>
-    <div class="mt-4 flex flex-wrap gap-2">
-      <button class="btn btn-sm" on:click={() => panel = "configure_talk"}>Talk authentication</button>
-      <button class="btn btn-sm" on:click={() => panel = "test_room"}>Test room</button>
-      <button class="btn btn-sm" on:click={() => action("connect_talk")}>Connect Talk</button>
-      <button class="btn btn-sm" on:click={() => panel = "test_recording"}>Test a recording</button>
-    </div>
-    {#if panel}
-      <div class="mt-5 rounded-box bg-base-200 p-4">
+    {#if panel && panelOwner === check.id && rows.findIndex(row => row.id === check.id) === index}
+      <div class="mt-3 rounded-box bg-base-200 p-4">
         {#if panel === "configure_talk"}
           <h3 class="font-semibold">Connect to Talk’s signaling server</h3>
           <p class="my-2 text-sm">Use the signaling server’s internal client secret. This is different from the recording-backend secret, which Cassini generates itself.</p>
@@ -145,7 +146,7 @@
           </ol>
           <button class="btn btn-primary btn-sm" disabled={busy || !report.test_room_url} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
           {#if report.test_room_url}<a class="btn btn-sm ml-2" href={report.test_room_url} target="_blank" rel="noreferrer">Open test room</a>{/if}
-          {#if !report.test_room_url}<button class="btn btn-sm ml-2" on:click={() => panel = "test_room"}>Choose test room</button>{/if}
+          {#if !report.test_room_url}<button class="btn btn-sm ml-2" on:click={() => action("test_room", "talk.discovery")}>Choose test room</button>{/if}
           {#if report.test.started_at}
             <p class="mt-3 text-sm" role="status">{report.test.state === "waiting_for_talk" ? "Waiting for a recording started through Talk. If none arrives, check the handoff above." : `${report.test.stage ?? "Test"}: ${report.test.state}`}</p>
             {#if report.test.job_id}<p class="mt-1 text-xs">Recording {report.test.job_id}</p>{/if}
@@ -162,6 +163,9 @@
         <button class="btn btn-ghost btn-sm mt-4" on:click={() => { panel = ""; secret = ""; }}>Close</button>
       </div>
     {/if}
+        </li>
+      {/each}
+    </ul>
     {#if report.test.playback_verified_at}<p class="mt-4 text-sm">Last test playback confirmed {new Date(report.test.playback_verified_at).toLocaleString()}. Connection checks expire after five minutes; test history does not replace current checks.</p>{/if}
   {/if}
 </section>

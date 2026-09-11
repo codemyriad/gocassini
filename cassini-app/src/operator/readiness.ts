@@ -79,3 +79,29 @@ export function readinessHealthKey(report: RecordingReadiness | null): string {
   return JSON.stringify([report.state, report.secret_configured,
     report.checks.map(c => [c.id, c.state, c.code])]);
 }
+
+// Keep configuration reachable from its own row even after its check passes.
+export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
+  const rows = [...report.checks];
+  if (!rows.some(c => c.id === "talk.authentication")) {
+    const at = rows.findIndex(c => c.id.startsWith("talk."));
+    rows.splice(at < 0 ? rows.length : at, 0, {
+      id: "talk.authentication", state: report.secret_configured ? "passed" : "needs_action",
+      code: "internal_secret_configuration", message: report.secret_source === "env"
+        ? "The internal secret is managed by deployment configuration."
+        : report.secret_configured ? "An internal secret is saved. HPB authentication is checked separately."
+        : "Enter the internal secret from your Talk signaling server.",
+    });
+  }
+  if (!rows.some(c => c.id === "test")) rows.push({ id: "test", state: report.test.playback_verified_at ? "passed" : "not_verified",
+    code: "test_playback", message: report.test.playback_verified_at ? "Playback was confirmed for the published test recording." : "Record a short test through Talk, then confirm playback." });
+  return rows;
+}
+
+export function rowActions(check: ReadinessCheck): { action: string; label: string }[] {
+  const labels: Record<string, string> = { configure_talk:"Talk authentication", test_room:"Test room", connect_talk:"Connect Talk", test_recording:"Test a recording", recheck:"Check again", setup_storage:"Set up storage" };
+  const actions = check.action ? [check.action] : [];
+  const persistent: Record<string,string> = { "talk.authentication":"configure_talk", "talk.discovery":"test_room", "talk.handoff":"connect_talk", test:"test_recording" };
+  if (persistent[check.id] && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
+  return actions.map(action => ({ action, label:labels[action] ?? "Configure" }));
+}

@@ -173,3 +173,33 @@ claims human playback confirmation. It requires a dedicated Docker environment
 because the existing harness uses fixed HaRP/ExApp names. The normal installed
 CPU CI job runs this check. Its Nextcloud restart is not an AIO mastercontainer
 restart; validate the AIO-specific persistence settings on your deployment too.
+
+## Proposed follow-up: environment-aware repair guidance
+
+The current implementation checks recording prerequisites; it does not yet
+reliably classify every Nextcloud installation. Before replacing generic handoff
+instructions, gather authoritative deployment evidence where the administrator's
+API permissions expose it. Report the evidence and its confidence. Cassini's own
+container environment is not proof of how Nextcloud is installed, and an absent
+marker is not proof that a deployment type is absent.
+
+Use detected capabilities to show only relevant repair paths. If deployment type
+or administrator access remains unknown, ask for the installation method and
+whether the person can access the server. Include a provider-managed/unknown
+choice. Never choose host-specific commands based on a weak hostname heuristic.
+
+Every unresolved check should explain:
+
+- What is missing and what capability it enables.
+- Exactly what value, permission or component is needed.
+- Where it can be obtained for the confirmed deployment type.
+- Who can supply it when the current administrator lacks access.
+- How to recheck after the repair.
+
+For example, explain that the signaling server's internal-client secret is
+needed, distinguish it from the recording-backend secret, and provide the
+confirmed platform's retrieval instructions or a shareable request to its
+administrator. For a missing deploy daemon, explain the AppAPI deployment
+requirement in the installation guide: Cassini cannot show an in-app diagnosis
+before its own installation succeeds. Provider requests should contain safe
+findings and required changes, never saved secrets.
