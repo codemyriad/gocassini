@@ -6,7 +6,7 @@
   import { colorFor, colorName, leastUsedColor, type TagColorId } from "../../viewer/tagPalette";
   import ColorSwatchPicker from "./ColorSwatchPicker.svelte";
   import TagIcon from "./TagIcon.svelte";
-  import { isOutside, stepIndex } from "./popover";
+  import { anchored, isOutside, stepIndex } from "./popover";
 
   export let tags: readonly VocabularyTag[] = [];
   export let label = "Tag";
@@ -86,7 +86,7 @@
 
 <svelte:window on:pointerdown={(event) => isOutside(event, root, anchor) && dispatch("close")} />
 
-<div bind:this={root} class="tag-picker" role="dialog" aria-label={label}>
+<div bind:this={root} use:anchored={anchor} class="tag-picker" role="dialog" aria-label={label}>
   <input
     bind:this={input}
     bind:value={query}
@@ -184,6 +184,7 @@
 <style>
   .tag-picker {
     position: relative;
+    z-index: 50;
     display: flex;
     flex-direction: column;
     width: 300px;

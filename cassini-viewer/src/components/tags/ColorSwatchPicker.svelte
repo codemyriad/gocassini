@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
 
   import { TAG_COLORS, colorName, type TagColorId } from "../../viewer/tagPalette";
-  import { isOutside, stepIndex } from "./popover";
+  import { anchored, isOutside, stepIndex } from "./popover";
 
   export let value: TagColorId;
   export let label = "Tag colour";
@@ -35,7 +35,7 @@
 
 <svelte:window on:pointerdown={(event) => isOutside(event, root, anchor) && dispatch("close")} />
 
-<div bind:this={root} class="swatch-picker" role="radiogroup" aria-label={label}>
+<div bind:this={root} use:anchored={anchor} class="swatch-picker" role="radiogroup" aria-label={label}>
   {#each TAG_COLORS as color, index (color)}
     <button
       bind:this={buttons[index]}
@@ -57,6 +57,7 @@
 
 <style>
   .swatch-picker {
+    z-index: 50;
     display: grid;
     grid-template-columns: repeat(6, 28px);
     gap: 4px;

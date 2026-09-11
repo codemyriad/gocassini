@@ -14,6 +14,37 @@ export function stepIndex(index: number, key: string, count: number, columns = 1
   return (((index + step) % count) + count) % count;
 }
 
+// Pins a popover under its anchor — above it when there is no room below — and
+// keeps it inside the viewport, so no screen positions a popover itself.
+export function anchored(node: HTMLElement, anchor: HTMLElement | null) {
+  let current = anchor;
+  const place = () => {
+    if (!current) {
+      return;
+    }
+    const box = current.getBoundingClientRect();
+    const gap = 4;
+    const height = node.offsetHeight;
+    const fitsBelow = box.bottom + gap + height <= window.innerHeight || box.top - gap - height < 0;
+    node.style.position = "fixed";
+    node.style.top = `${fitsBelow ? box.bottom + gap : box.top - gap - height}px`;
+    node.style.left = `${Math.max(gap, Math.min(box.left, window.innerWidth - node.offsetWidth - gap))}px`;
+  };
+  place();
+  window.addEventListener("resize", place);
+  window.addEventListener("scroll", place, true);
+  return {
+    update(next: HTMLElement | null) {
+      current = next;
+      place();
+    },
+    destroy() {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    },
+  };
+}
+
 // composedPath, because inside Nextcloud's shadow root a window listener sees
 // the shadow host as the target of every click.
 export function isOutside(event: Event, ...inside: (Element | null | undefined)[]): boolean {
