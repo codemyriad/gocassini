@@ -37,6 +37,14 @@ type annotateWriteRequest struct {
 	ExpectRevision *int              `json:"expectRevision"`
 	ActorKind      string            `json:"actorKind"`
 	OperationID    string            `json:"operationId"`
+	// TagStyles colour the tags this batch creates, and nothing else.
+	TagStyles []annotateTagStyle `json:"tagStyles"`
+}
+
+type annotateTagStyle struct {
+	Label string `json:"label"`
+	Color string `json:"color"`
+	Icon  string `json:"icon"`
 }
 
 // badAnnotateRequest describes the caller's own body, so it is safe to return.
@@ -83,6 +91,19 @@ func readAnnotateWriteRequest(w http.ResponseWriter, r *http.Request) (annotateW
 	}
 	if request.ExpectRevision != nil && *request.ExpectRevision < 0 {
 		return request, badAnnotateRequest("expectRevision cannot be negative")
+	}
+	if len(request.TagStyles) > maxAnnotateOps {
+		return request, badAnnotateRequest("tagStyles holds at most %d entries, got %d", maxAnnotateOps, len(request.TagStyles))
+	}
+	for i, style := range request.TagStyles {
+		switch {
+		case strings.TrimSpace(style.Label) == "":
+			return request, badAnnotateRequest("tagStyles[%d].label is required", i)
+		case !tagColors[style.Color]:
+			return request, badAnnotateRequest("tagStyles[%d].color is not a palette colour", i)
+		case !tagIcons[style.Icon]:
+			return request, badAnnotateRequest("tagStyles[%d].icon is not an icon id", i)
+		}
 	}
 	return request, nil
 }
@@ -141,6 +162,15 @@ func (s *annotationService) resolveVocabulary(ctx context.Context, ops []json.Ra
 // unresolvedMarkLabel reports the label of a `mark` op that names no tag id.
 // Anything else, a malformed op included, passes through for the CLI to judge.
 func unresolvedMarkLabel(op json.RawMessage) (string, bool) {
+	id, label, ok := markOpTag(op)
+	if !ok || id != "" || label == "" {
+		return "", false
+	}
+	return label, true
+}
+
+// markOpTag reports the trimmed tag id and label a `mark` op names.
+func markOpTag(op json.RawMessage) (id, label string, ok bool) {
 	var probe struct {
 		Op  string `json:"op"`
 		Tag *struct {
@@ -149,12 +179,9 @@ func unresolvedMarkLabel(op json.RawMessage) (string, bool) {
 		} `json:"tag"`
 	}
 	if err := json.Unmarshal(op, &probe); err != nil || probe.Op != "mark" || probe.Tag == nil {
-		return "", false
+		return "", "", false
 	}
-	if strings.TrimSpace(probe.Tag.ID) != "" || strings.TrimSpace(probe.Tag.Label) == "" {
-		return "", false
-	}
-	return probe.Tag.Label, true
+	return strings.TrimSpace(probe.Tag.ID), strings.TrimSpace(probe.Tag.Label), true
 }
 
 // withMarkTagID sets tag.id on one mark op, keeping every other field as sent.

@@ -419,6 +419,11 @@ type tagVocabularyEntry struct {
 	Label    string `json:"label"`
 	Meetings int    `json:"meetings"`
 	Marks    int    `json:"marks"`
+	// The rest is tag-styles.json's, "" where it has none (withStyles).
+	Color        string `json:"color"`
+	Icon         string `json:"icon"`
+	ChangedBy    string `json:"changedBy"`
+	ChangedAtUTC string `json:"changedAtUtc"`
 }
 
 func (s *annotationStore) Coverage(ctx context.Context, visible []string) (annotationCoverage, error) {
@@ -500,6 +505,43 @@ SELECT m.namespace, t.tag_id, t.label, COUNT(*)
 		return out[i].Namespace < out[j].Namespace
 	})
 	return out, nil
+}
+
+// meetingTagMarks is how one meeting carries one tag.
+type meetingTagMarks struct {
+	TagID     string `json:"tagId"`
+	Whole     bool   `json:"whole"`
+	Stretches int    `json:"stretches"`
+}
+
+// meetingTags is, per visible meeting whose marks are resolved, the tags it
+// carries: on the whole meeting, and on how many stretches.
+func (s *annotationStore) meetingTags(ctx context.Context, visible []string) (map[string][]meetingTagMarks, error) {
+	out := map[string][]meetingTagMarks{}
+	names := uniqueNames(visible)
+	if len(names) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT i.opus_name, i.tag_id, MAX(i.kind = ?3), SUM(i.kind = ?4)
+  FROM annotation_item i
+  JOIN json_each(?1) v       ON v.value = i.opus_name
+  JOIN meeting_annotations m ON m.opus_name = i.opus_name AND m.state = ?2 AND m.resolved = 1
+ GROUP BY i.opus_name, i.tag_id
+ ORDER BY i.opus_name, i.tag_id`, namesJSON(names), annotationsStateIndexed, annotationsTargetMeeting, annotationsTargetTimeRange)
+	if err != nil {
+		return nil, fmt.Errorf("read meeting tags: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		var entry meetingTagMarks
+		if err := rows.Scan(&name, &entry.TagID, &entry.Whole, &entry.Stretches); err != nil {
+			return nil, fmt.Errorf("scan meeting tags: %w", err)
+		}
+		out[name] = append(out[name], entry)
+	}
+	return out, rows.Err()
 }
 
 func mostCommonLabel(labels map[string]int) string {
@@ -627,6 +669,62 @@ SELECT m.opus_name, i.tag_id, t.label, i.start_ms, i.end_ms
 		})
 	}
 	return out, nil
+}
+
+// --- changing a tag ---------------------------------------------------------
+
+// tagCarriers is the recordings among visible that carry tagID.
+func (s *annotationStore) tagCarriers(ctx context.Context, tagID string, visible []string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT DISTINCT t.opus_name
+  FROM annotation_tag t
+  JOIN json_each(?2) v ON v.value = t.opus_name
+ WHERE t.tag_id = ?1
+ ORDER BY t.opus_name`, tagID, namesJSON(visible))
+	if err != nil {
+		return nil, fmt.Errorf("read the recordings carrying a tag: %w", err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan a recording carrying a tag: %w", err)
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+// labelOwner is a tag other than except that one of visible labels label.
+func (s *annotationStore) labelOwner(ctx context.Context, label, except string, visible []string) (string, bool, error) {
+	var tagID string
+	switch err := s.db.QueryRowContext(ctx, `
+SELECT t.tag_id
+  FROM annotation_tag t
+  JOIN json_each(?3) v ON v.value = t.opus_name
+ WHERE t.label_folded = ?1 AND t.tag_id != ?2
+ ORDER BY t.tag_id
+ LIMIT 1`, foldTagLabel(label), except, namesJSON(visible)).Scan(&tagID); {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", false, nil
+	case err != nil:
+		return "", false, fmt.Errorf("look up a tag label: %w", err)
+	}
+	return tagID, true, nil
+}
+
+// tagInUse reports whether any indexed recording, whoever may read it, carries
+// tagID. It only ever decides what happens to the tag's style.
+func (s *annotationStore) tagInUse(ctx context.Context, tagID string) (bool, error) {
+	var one int
+	switch err := s.db.QueryRowContext(ctx, `SELECT 1 FROM annotation_tag WHERE tag_id = ? LIMIT 1`, tagID).Scan(&one); {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("look up a tag: %w", err)
+	}
+	return true, nil
 }
 
 // --- rebuild support --------------------------------------------------------
