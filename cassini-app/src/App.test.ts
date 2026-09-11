@@ -91,4 +91,12 @@ describe("the shell's setup features", () => {
     expect(appSource).toMatch(/if \(health\) \{\s*setupFeatures = health\.features;/);
     expect(appSource).toContain("the setup re-check failed.");
   });
+
+  it("re-reads them each time the Prepare panel opens, at every mount of the viewer", () => {
+    // A non-admin never leaves the operator surface, so the return-leg refresh
+    // never fires for them; the panel opening is the moment the readiness card
+    // is looked at (D-749).
+    const refreshed = appSource.match(/on:prepareOpen=\{\(\) => void refreshSetupFeatures\(\)\}/g) ?? [];
+    expect(refreshed).toHaveLength(3);
+  });
 });

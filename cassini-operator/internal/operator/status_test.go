@@ -971,6 +971,11 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	rec := httptest.NewRecorder()
 	rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
 
+	// AppAPI caches a proxied GET for an hour; the viewer re-asks this on
+	// every Prepare, so a cached answer would pin "no AI endpoint" (D-749).
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
 	body := rec.Body.String()
 	for _, leak := range []string{"ops-root", "app_missing", ncAppGroupFolders, "occ", rt.cfg.SiteRoot} {
 		if strings.Contains(body, leak) {

@@ -346,6 +346,11 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// than off the stored struct: the two answers must not be able to drift,
 	// and "the step is on" is not the same fact as "the step will run".
 	llm := rt.currentLLMSettings().view()
+	// no-store because the answer changes the moment an administrator
+	// registers an endpoint, and AppAPI caches a proxied GET for an hour: the
+	// viewer re-asks when the Prepare panel opens, and a cached "no AI
+	// endpoint" would defeat that (D-749).
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, setupResponse{
 		OK:             access.OK,
 		State:          access.State,

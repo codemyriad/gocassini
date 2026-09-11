@@ -127,4 +127,25 @@ describe("PreparePanel", () => {
     expect(preparePanelSource).not.toContain("fetch(");
     expect(preparePanelSource).not.toContain("administrator");
   });
+
+  it("stamps the bundle with the selection it was assembled for, not the one it landed in", () => {
+    // The list is live behind the panel. The key is read before the await and
+    // the bytes are discarded if the selection moved under them (D-749).
+    const ensure = preparePanelSource.slice(
+      preparePanelSource.indexOf("async function ensureBundle"),
+      preparePanelSource.indexOf("function describeError"),
+    );
+    expect(ensure.indexOf("const key = selectionKey;")).toBeLessThan(ensure.indexOf("await loadBundle()"));
+    expect(ensure).toContain("bundleKey = key;");
+    expect(ensure).not.toContain("bundleKey = selectionKey;");
+    expect(ensure).toContain("if (key !== selectionKey) {");
+  });
+
+  it("withholds every action above the operator's cap", () => {
+    // Copy, Download and the generate slot are all refused server-side above
+    // twenty; the gap sentence says why, and the controls follow it.
+    expect(preparePanelSource).toContain("$: overCap = entries.length > MAX_SELECTED_MEETINGS;");
+    expect(preparePanelSource.match(/disabled=\{busy \|\| overCap\}/g) ?? []).toHaveLength(2);
+    expect(preparePanelSource).toContain("{#if !overCap}\n      <slot name=\"generate\" {entries} />");
+  });
 });

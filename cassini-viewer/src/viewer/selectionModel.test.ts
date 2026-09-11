@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MeetingCatalogEntry } from "./catalog";
 import {
   EMPTY_SELECTION,
+  MAX_SELECTED_MEETINGS,
   acknowledgeDropped,
   clearSelection,
   countHiddenByView,
@@ -344,5 +345,31 @@ describe("describeSelectionGaps", () => {
   it("does not call a wholly unmeasured total a floor — there is no total to floor", () => {
     const totals = summarizeSelection([meeting({ id: "a", hasSummary: true })]);
     expect(describeSelectionGaps(totals)).toEqual([]);
+  });
+});
+
+describe("the meeting cap", () => {
+  it("is the operator's twenty", () => {
+    // published_context.go: maxContextMeetings = 20, shared by the insight
+    // route. A viewer that allowed more would learn the number from a 400.
+    expect(MAX_SELECTED_MEETINGS).toBe(20);
+  });
+
+  it("is said first, and only above the cap", () => {
+    const atCap = summarizeSelection(
+      Array.from({ length: MAX_SELECTED_MEETINGS }, (_, i) => meeting({ id: `m${i}` })),
+    );
+    expect(describeSelectionGaps(atCap).some((gap) => gap.includes("at most"))).toBe(false);
+
+    const over = summarizeSelection(
+      Array.from({ length: MAX_SELECTED_MEETINGS + 2 }, (_, i) =>
+        meeting({ id: `m${i}`, hasSummary: false }),
+      ),
+    );
+    const gaps = describeSelectionGaps(over);
+    expect(gaps[0]).toBe(
+      "A bundle holds at most 20 meetings, and 22 are picked. Unpick 2 to prepare or generate.",
+    );
+    expect(gaps.length).toBeGreaterThan(1);
   });
 });

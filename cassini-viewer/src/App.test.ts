@@ -59,3 +59,10 @@ describe("the shell's answer to a created insight", () => {
     );
   });
 });
+
+describe("the shell's Prepare panel", () => {
+  it("announces each opening, so the shell around it can re-read what fills the panel", () => {
+    expect(appSource).toContain('const dispatch = createEventDispatcher<{ prepareOpen: void }>();');
+    expect(appSource).toContain('$: if (prepareOpen) {\n    dispatch("prepareOpen");\n  }');
+  });
+});

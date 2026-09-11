@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
@@ -113,6 +113,15 @@
   // next click — and a selection is a thing you are doing, not a place you are.
   let selection: MeetingSelection = EMPTY_SELECTION;
   let prepareOpen = false;
+  // Said to whoever mounts this shell, each time Prepare opens: the panel's
+  // readiness slot is filled from a fact only the shell around it has (whether
+  // this deployment has an AI endpoint), and that fact is read once at mount.
+  // A reader who was told "no endpoint" and comes back after an administrator
+  // configured one is otherwise told it again until they reload (D-749).
+  const dispatch = createEventDispatcher<{ prepareOpen: void }>();
+  $: if (prepareOpen) {
+    dispatch("prepareOpen");
+  }
   // What the list is actually showing, reported by MeetingList: its text filter
   // is list-local, so this is the only way the shell can say how many picked
   // meetings the current narrowing hides.
