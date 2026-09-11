@@ -197,8 +197,13 @@
           [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-base-300"
       >{@html documentHtml}</div>
     {:else}
+      <!-- A succeeded run always has a path — the operator refuses to record
+           a success without one — so an empty document here means the file
+           is not where it was written, not that the model wrote nothing. It
+           is the requester's own file; they may have moved or deleted it. -->
       <p class="ins-note" role="status">
-        This run succeeded but its document is empty.
+        This run succeeded, but its document is no longer at
+        <code>{insight.documentPath}</code> in your Nextcloud files.
       </p>
     {/if}
 

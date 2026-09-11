@@ -480,7 +480,9 @@ func (s *insightService) read(w http.ResponseWriter, r *http.Request, caller, id
 			// The run succeeded and the row says so; the file is the requester's
 			// own and they may have moved it. That is a fact about the document,
 			// not a failure of the run, so the run is still served — with an empty
-			// document, which is what the card renders as "no longer here".
+			// document. The viewer's document sheet reads an empty document on a
+			// succeeded run as "no longer at documentPath", which is the only
+			// honest reading: a succeeded run always has a path.
 			s.logf("insights: read document for run=%s caller=%s: %v", id, caller, err)
 		}
 		response.Document = document
