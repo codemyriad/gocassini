@@ -1,6 +1,6 @@
 import { writable } from "svelte/store";
 
-import { AnnotationError, type TagJob, type TagUpdate, type VocabularyTag } from "./annotations";
+import { AnnotationError, plural, type TagJob, type TagUpdate, type VocabularyTag } from "./annotations";
 import type { DataProvider } from "./dataProvider";
 import { colorFor, type TagColorId, type TagIconId } from "./tagPalette";
 
@@ -15,7 +15,6 @@ export type JobStatus = { text: string; failed: string[]; rerun: TagAction | nul
 
 export const BUSY = "You already have a change running.";
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export const countsLine = (tag: VocabularyTag) => `${plural(tag.meetings, "meeting")} · ${plural(tag.marks, "mark")}`;
 
 export function confirmLine(meetings: number): string {

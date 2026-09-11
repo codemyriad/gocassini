@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { Sun, Moon, Search, PanelLeft, Tag, X } from "@lucide/svelte";
-  import type { VocabularyTag } from "../viewer/annotations";
-  import { wholeTagState, type MeetingTags, type TagPick } from "../viewer/listTags";
+  import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
+  import { wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
   import TagChip from "./tags/TagChip.svelte";
   import TagPicker from "./tags/TagPicker.svelte";
@@ -186,9 +186,7 @@
       >
         <PanelLeft size={15} aria-hidden="true" />
         <span
-          >{selectedRoomName ?? "All"}{tagFilterCount > 0
-            ? ` · ${tagFilterCount} ${tagFilterCount === 1 ? "tag" : "tags"}`
-            : ""}</span
+          >{selectedRoomName ?? "All"}{tagFilterCount > 0 ? ` · ${plural(tagFilterCount, "tag")}` : ""}</span
         >
       </button>
 

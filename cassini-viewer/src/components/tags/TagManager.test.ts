@@ -70,11 +70,11 @@ describe("TagEditor", () => {
 
 describe("IconGrid", () => {
   it("offers no icon, the default, and the sixteen icons", () => {
-    const grid = html(IconGrid, { value: "", color: "teal" });
+    const grid = html(IconGrid, { value: "" });
     expect(grid.match(/role="radio"/g)).toHaveLength(17);
     expect(grid).toMatch(/role="radio" aria-checked="true"[^>]*>[\s\S]*?No icon/);
     expect(grid.match(/aria-checked="true"/g)).toHaveLength(1);
-    expect(html(IconGrid, { value: "star", color: "teal" })).toMatch(/aria-checked="true" aria-label="Star"/);
+    expect(html(IconGrid, { value: "star" })).toMatch(/aria-checked="true" aria-label="Star"/);
   });
 });
 

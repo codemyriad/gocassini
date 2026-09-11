@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, tick } from "svelte";
   import { ChevronDown, ChevronUp, Search, Tag } from "@lucide/svelte";
 
-  import type { VocabularyTag } from "../../viewer/annotations";
+  import type { TagPick, VocabularyTag } from "../../viewer/annotations";
   import TagChip from "../tags/TagChip.svelte";
   import TagPicker from "../tags/TagPicker.svelte";
-  import { pickColor, type TagPick } from "./session";
+  import { pickColor } from "./session";
 
   export let query = "";
   export let onlyMatching = false;
@@ -28,6 +28,14 @@
   export function focusFind() {
     field.focus();
     field.select();
+  }
+
+  // The button that opened the picker gives way to the armed tag's; focus follows.
+  async function arm(pick: TagPick) {
+    armed = pick;
+    picking = false;
+    await tick();
+    armButton?.focus();
   }
 
   function onKeydown(event: KeyboardEvent) {
@@ -101,7 +109,7 @@
         tags={vocabulary}
         label="Mark with a tag"
         anchor={armButton}
-        on:pick={(event) => ((armed = event.detail), (picking = false))}
+        on:pick={(event) => arm(event.detail)}
         on:close={() => (picking = false)}
       />
     {/if}

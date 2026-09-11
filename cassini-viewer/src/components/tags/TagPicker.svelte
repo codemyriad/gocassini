@@ -2,11 +2,11 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { Check, Minus } from "@lucide/svelte";
 
-  import { findByLabel, matchTags, type VocabularyTag } from "../../viewer/annotations";
-  import { colorFor, colorName, leastUsedColor, type TagColorId } from "../../viewer/tagPalette";
+  import { findByLabel, matchTags, plural, type TagPick, type VocabularyTag } from "../../viewer/annotations";
+  import { colorFor, leastUsedColor, styleName, type TagColorId } from "../../viewer/tagPalette";
   import ColorSwatchPicker from "./ColorSwatchPicker.svelte";
   import TagIcon from "./TagIcon.svelte";
-  import { anchored, isOutside, stepIndex } from "./popover";
+  import { popover, stepIndex } from "./popover";
 
   export let tags: readonly VocabularyTag[] = [];
   export let label = "Tag";
@@ -20,10 +20,7 @@
   // Off to choose among existing tags only, as a merge target does.
   export let creatable = true;
 
-  const dispatch = createEventDispatcher<{
-    pick: { tagId: string; label: string } | { label: string; color: TagColorId; icon: "" };
-    close: void;
-  }>();
+  const dispatch = createEventDispatcher<{ pick: TagPick; close: void }>();
   const uid = `tag-picker-${Math.random().toString(36).slice(2, 8)}`;
   let root: HTMLElement;
   let input: HTMLInputElement;
@@ -55,25 +52,17 @@
     choosingColor = false;
   }
 
-  function close() {
-    anchor?.focus();
-    dispatch("close");
-  }
-
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close();
-    } else if (event.key === "Enter" && event.target === input) {
+    if (event.key === "Enter") {
       event.preventDefault();
       pick(active);
-    } else if (event.target === input) {
-      const next = stepIndex(active, event.key, count);
-      if (next !== null) {
-        event.preventDefault();
-        active = next;
-        root.querySelector(`#${uid}-${next}`)?.scrollIntoView({ block: "nearest" });
-      }
+      return;
+    }
+    const next = stepIndex(active, event.key, count);
+    if (next !== null) {
+      event.preventDefault();
+      active = next;
+      root.querySelector(`#${uid}-${next}`)?.scrollIntoView({ block: "nearest" });
     }
   }
 
@@ -86,9 +75,13 @@
   const keepFocus = (event: Event) => event.preventDefault();
 </script>
 
-<svelte:window on:pointerdown={(event) => isOutside(event, root, anchor) && dispatch("close")} />
-
-<div bind:this={root} use:anchored={anchor} class="tag-picker" role="dialog" aria-label={label}>
+<div
+  bind:this={root}
+  use:popover={{ anchor, close: () => dispatch("close") }}
+  class="tag-popover tag-picker"
+  role="dialog"
+  aria-label={label}
+>
   <input
     bind:this={input}
     bind:value={query}
@@ -135,7 +128,7 @@
         {/if}
         <span class="mark"><TagIcon icon={tag.icon} /></span>
         <span class="name">{tag.label}</span>
-        <span class="uses">{tag.meetings === 1 ? "1 meeting" : `${tag.meetings} meetings`}</span>
+        <span class="uses">{plural(tag.meetings, "meeting")}</span>
       </li>
     {/each}
   </ul>
@@ -158,24 +151,21 @@
         type="button"
         class="swatch"
         data-tag-color={newColor}
-        aria-label={`Colour: ${colorName(newColor)}`}
+        aria-label={`Colour: ${styleName(newColor)}`}
         aria-haspopup="true"
         aria-expanded={choosingColor}
         on:click={() => (choosingColor = !choosingColor)}
-        on:keydown={onKeydown}
       >
         <span aria-hidden="true"></span>
       </button>
       {#if choosingColor}
-        <div class="swatches">
-          <ColorSwatchPicker
-            value={newColor}
-            anchor={swatchButton}
-            label={`Colour for “${draft}”`}
-            on:select={chooseColor}
-            on:close={() => (choosingColor = false)}
-          />
-        </div>
+        <ColorSwatchPicker
+          value={newColor}
+          anchor={swatchButton}
+          label={`Colour for “${draft}”`}
+          on:select={chooseColor}
+          on:close={() => (choosingColor = false)}
+        />
       {/if}
     </div>
   {:else if tags.length === 0}
@@ -185,18 +175,10 @@
 
 <style>
   .tag-picker {
-    position: relative;
-    z-index: 50;
     display: flex;
     flex-direction: column;
     width: 300px;
     max-width: calc(100vw - 24px);
-    background: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-box, 0.5rem);
-    box-shadow:
-      0 2px 6px oklch(0% 0 0 / 0.1),
-      0 12px 32px oklch(0% 0 0 / 0.16);
   }
   input {
     margin: 10px 10px 8px;
@@ -307,12 +289,6 @@
   .swatch:focus-visible,
   .swatch[aria-expanded="true"] {
     border-color: var(--tag);
-  }
-  .swatches {
-    position: absolute;
-    right: 6px;
-    bottom: 40px;
-    z-index: 1;
   }
   .empty {
     padding: 0 12px 12px;

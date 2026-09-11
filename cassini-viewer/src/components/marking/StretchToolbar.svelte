@@ -2,10 +2,10 @@
   import { createEventDispatcher } from "svelte";
 
   import { formatPreciseTime } from "../../core/marking";
-  import type { VocabularyTag } from "../../viewer/annotations";
+  import type { TagPick, VocabularyTag } from "../../viewer/annotations";
   import TagChip from "../tags/TagChip.svelte";
   import TagPicker from "../tags/TagPicker.svelte";
-  import { pickColor, type PlacedMark, type TagPick } from "./session";
+  import { pickColor, type PlacedMark } from "./session";
 
   export let startMs: number;
   export let endMs: number;
@@ -15,9 +15,11 @@
   export let armed: TagPick | null = null;
   export let vocabulary: readonly VocabularyTag[] = [];
   export let busy = false;
+  // Why the last write from here failed.
+  export let error = "";
 
   const dispatch = createEventDispatcher<{ tag: TagPick; save: void; remove: void; clear: void }>();
-  let root: HTMLElement;
+  let tagButton: HTMLButtonElement;
   let picking = false;
 
   // Enter: nothing is ever saved on release, only here.
@@ -35,7 +37,7 @@
   }
 </script>
 
-<div bind:this={root} class="grid w-44 gap-1 rounded-box border border-base-300 bg-base-100 p-1.5 text-xs shadow-md" role="toolbar" aria-label="This stretch">
+<div class="grid w-44 gap-1 rounded-box border border-base-300 bg-base-100 p-1.5 text-xs shadow-md" role="toolbar" aria-label="This stretch">
   <p class="px-1 font-mono tabular-nums text-base-content/70">
     <b class="text-base-content">{formatPreciseTime(startMs)}</b> → <b class="text-base-content">{formatPreciseTime(endMs)}</b>
   </p>
@@ -53,6 +55,7 @@
     </button>
   {:else}
     <button
+      bind:this={tagButton}
       type="button"
       class="btn btn-xs justify-between {armed ? 'armed' : 'btn-neutral'}"
       data-tag-color={armed ? pickColor(armed, vocabulary) : undefined}
@@ -65,12 +68,15 @@
     </button>
     <button type="button" class="btn btn-ghost btn-xs justify-between" on:click={() => dispatch("clear")}>Clear <kbd class="kbd kbd-xs">Esc</kbd></button>
   {/if}
+  {#if error}
+    <p class="px-1 text-error" role="alert">{error}</p>
+  {/if}
 </div>
 {#if picking}
   <TagPicker
     tags={vocabulary}
     label="Tag this stretch"
-    anchor={root}
+    anchor={tagButton}
     on:pick={(event) => ((picking = false), dispatch("tag", event.detail))}
     on:close={() => (picking = false)}
   />

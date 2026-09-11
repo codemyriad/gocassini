@@ -503,3 +503,14 @@ body {
   --tag-bg: color-mix(in oklab, var(--tag) var(--tag-tint-mix), var(--color-base-100));
   --tag-border: color-mix(in oklab, var(--tag) var(--tag-edge-mix), var(--color-base-100));
 }
+
+/* The surface of every tag popover: the picker, the swatches, the icons, the manager's menu. */
+.tag-popover {
+  z-index: 50;
+  background: var(--color-base-100);
+  border: 1px solid var(--color-base-300);
+  border-radius: var(--radius-box, 0.5rem);
+  box-shadow:
+    0 2px 6px oklch(0% 0 0 / 0.1),
+    0 12px 32px oklch(0% 0 0 / 0.16);
+}

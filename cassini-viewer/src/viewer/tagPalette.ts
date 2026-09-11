@@ -40,12 +40,13 @@ export const TAG_ICON_PATHS = {
 export type TagIconId = keyof typeof TAG_ICON_PATHS;
 export const TAG_ICONS = Object.keys(TAG_ICON_PATHS) as TagIconId[];
 
-export function isTagColor(value: unknown): value is TagColorId {
+function isTagColor(value: unknown): value is TagColorId {
   return TAG_COLORS.includes(value as TagColorId);
 }
 
-export function colorName(color: TagColorId): string {
-  return color.charAt(0).toUpperCase() + color.slice(1);
+// "teal" → "Teal", for a colour or an icon.
+export function styleName(id: TagColorId | TagIconId): string {
+  return id.charAt(0).toUpperCase() + id.slice(1);
 }
 
 type TagColorSource = { tagId: string; color?: string } | { id: string; color?: string };

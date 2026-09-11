@@ -4,7 +4,7 @@
 
   import type { TagUpdate, VocabularyTag } from "../../../viewer/annotations";
   import { confirmLine, tagUpdate } from "../../../viewer/tagManager";
-  import { colorFor, colorName, type TagColorId, type TagIconId } from "../../../viewer/tagPalette";
+  import { colorFor, styleName, type TagColorId, type TagIconId } from "../../../viewer/tagPalette";
   import ColorSwatchPicker from "../ColorSwatchPicker.svelte";
   import TagIcon from "../TagIcon.svelte";
   import IconGrid from "./IconGrid.svelte";
@@ -48,11 +48,11 @@
 
 <div class="flex flex-wrap items-center gap-1.5" data-tag-color={color}>
   <button bind:this={swatch} type="button" class="btn btn-square btn-ghost btn-sm border-base-300" title="Colour"
-    aria-label={`Colour: ${colorName(color)}`} aria-haspopup="true" aria-expanded={choosing === "color"} on:click={() => toggle("color")}>
+    aria-label={`Colour: ${styleName(color)}`} aria-haspopup="true" aria-expanded={choosing === "color"} on:click={() => toggle("color")}>
     <span class="size-3.5 rounded-full bg-(--tag)" aria-hidden="true"></span>
   </button>
   <button bind:this={iconButton} type="button" class="btn btn-square btn-ghost btn-sm border-base-300 text-(--tag)" class:border-dashed={!icon}
-    title="Icon" aria-label={icon ? `Icon: ${icon}` : "Add an icon"} aria-haspopup="true" aria-expanded={choosing === "icon"} on:click={() => toggle("icon")}>
+    title="Icon" aria-label={icon ? `Icon: ${styleName(icon)}` : "Add an icon"} aria-haspopup="true" aria-expanded={choosing === "icon"} on:click={() => toggle("icon")}>
     {#if icon}<TagIcon {icon} size={15} />{:else}<Plus size={14} class="text-base-content/50" />{/if}
   </button>
   <input bind:this={input} bind:value={label} type="text" maxlength="64" autocomplete="off" spellcheck="false" aria-label="Tag name"
@@ -71,7 +71,7 @@
     <ColorSwatchPicker value={color} anchor={swatch} label={`Colour for “${tag.label}”`} on:close={() => (choosing = null)}
       on:select={(event) => ((color = event.detail), (choosing = null), swatch.focus())} />
   {:else if choosing === "icon"}
-    <IconGrid value={icon} {color} anchor={iconButton} on:close={() => (choosing = null)}
+    <IconGrid value={icon} anchor={iconButton} on:close={() => (choosing = null)}
       on:select={(event) => ((icon = event.detail), (choosing = null), iconButton.focus())} />
   {/if}
 </div>

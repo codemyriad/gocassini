@@ -1,12 +1,19 @@
 import type { MeetingCatalogEntry } from "./catalog";
-import { AnnotationError, type AnnotationRequest, type MeetingTag, type TagVocabulary } from "./annotations";
-import type { TagColorId } from "./tagPalette";
+import {
+  WHOLE_MEETING,
+  groupByTag,
+  markRequest,
+  plural,
+  retryDelay,
+  untagMeetingRequest,
+  type MeetingAnnotations,
+  type MeetingTag,
+  type TagPick,
+  type TagVocabulary,
+} from "./annotations";
 
 export type TagMatch = "any" | "all";
-export type TagPick = { tagId: string; label: string } | { label: string; color: TagColorId; icon: "" };
 export type MeetingTags = ReadonlyMap<string, readonly MeetingTag[]>;
-
-const WHOLE_MEETING = { kind: "meeting" } as const;
 
 export function filterByTags<T extends { id: string }>(
   meetings: T[],
@@ -45,25 +52,29 @@ export function wholeTagState(byMeeting: MeetingTags, meetingIds: readonly strin
   };
 }
 
-export function wholeTagRequest(pick: TagPick, remove: boolean): AnnotationRequest {
-  if (!("tagId" in pick)) {
-    return {
-      ops: [{ op: "mark", tag: { label: pick.label }, target: WHOLE_MEETING }],
-      tagStyles: [{ label: pick.label, color: pick.color, icon: "" }],
-    };
-  }
-  return remove
-    ? { ops: [{ op: "unmark-tag", tagId: pick.tagId, target: WHOLE_MEETING }] }
-    : { ops: [{ op: "mark", tag: { id: pick.tagId, label: pick.label }, target: WHOLE_MEETING }] };
-}
-
 // A tag on every meeting comes off them all; otherwise it goes on the ones without it.
 export function planBulkTag(entries: readonly MeetingCatalogEntry[], byMeeting: MeetingTags, pick: TagPick) {
   const remove =
     "tagId" in pick && entries.length > 0 && entries.every((entry) => hasWholeTag(byMeeting, entry.id, pick.tagId));
   const targets =
     "tagId" in pick ? entries.filter((entry) => hasWholeTag(byMeeting, entry.id, pick.tagId) === remove) : [...entries];
-  return { remove, targets, request: wholeTagRequest(pick, remove) };
+  const request = "tagId" in pick && remove ? untagMeetingRequest(pick.tagId) : markRequest(pick, WHOLE_MEETING);
+  return { remove, targets, request };
+}
+
+// A write answers with the meeting's document, so its row and the picker's
+// ticks need not wait for the vocabulary to reload. A tag the vocabulary does
+// not know yet appears with that reload.
+export function withMeetingResult(vocabulary: TagVocabulary, result: MeetingAnnotations): TagVocabulary {
+  const tags = groupByTag(result.annotations).map(({ tag, whole, stretches }) => ({
+    tagId: tag.id,
+    whole: whole !== null,
+    stretches: stretches.length,
+  }));
+  return {
+    ...vocabulary,
+    meetings: [...vocabulary.meetings.filter(({ meetingId }) => meetingId !== result.meetingId), { meetingId: result.meetingId, tags }],
+  };
 }
 
 // One at a time: each request rewrites a recording, and the operator serialises them anyway.
@@ -82,10 +93,7 @@ export async function applyEach<T>(targets: readonly T[], apply: (target: T) => 
 
 export function bulkReport(remove: boolean, done: number, total: number): string {
   const verb = remove ? "Untagged" : "Tagged";
-  if (done === total) {
-    return `${verb} ${total} ${total === 1 ? "meeting" : "meetings"}`;
-  }
-  return `${verb} ${done} of ${total} — ${total - done} failed`;
+  return done === total ? `${verb} ${plural(total, "meeting")}` : `${verb} ${done} of ${total} — ${total - done} failed`;
 }
 
 // Writes run in the order they were picked, never two at once and never dropped;
@@ -106,14 +114,6 @@ export function createWriteQueue(drained: () => void) {
       });
     return tail;
   };
-}
-
-// 503 while the operator first indexes the archive, 429 once the caller's search budget is spent.
-export function tagRetryDelay(error: unknown, attempt: number): number | null {
-  if (!(error instanceof AnnotationError) || (error.status !== 503 && error.status !== 429)) {
-    return null;
-  }
-  return Math.min(2_000 * 2 ** attempt, 60_000);
 }
 
 // Each load spends one of the caller's searches, so only one is in flight. A
@@ -147,7 +147,7 @@ export function createTagLoader(
         loaded(vocabulary);
       }
     } catch (error) {
-      const delay = tagRetryDelay(error, attempt);
+      const delay = retryDelay(error, attempt);
       attempt += 1;
       if (!stopped) {
         loaded(null);

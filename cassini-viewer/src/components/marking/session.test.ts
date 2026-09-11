@@ -3,23 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AnnotationError,
+  removeRequest,
   type AnnotationItem,
   type AnnotationRequest,
   type AnnotationResult,
   type AnnotationsDocument,
   type MeetingAnnotations,
   type VocabularyTag,
-  timeRange,
 } from "../../viewer/annotations";
-import {
-  createMarksSession,
-  markRequest,
-  PREPARING_RETRY_MS,
-  removeRequest,
-  untagMeetingRequest,
-  viewMarks,
-  type MarksState,
-} from "./session";
+import { createMarksSession, viewMarks, type MarksState } from "./session";
 
 const item = (id: string, tagId: string, target: AnnotationItem["target"]): AnnotationItem => ({
   id,
@@ -73,41 +65,6 @@ const vocab = (tagId: string, label: string, color: VocabularyTag["color"]): Voc
   changedAtUtc: "",
 });
 
-describe("the requests a meeting view sends", () => {
-  it("marks a stretch with a tag that exists", () => {
-    expect(markRequest({ tagId: "t-hiring", label: "hiring" }, timeRange(1200.4, 5400))).toEqual({
-      ops: [
-        { op: "mark", tag: { id: "t-hiring", label: "hiring" }, target: { kind: "time-range", startMs: 1200, endMs: 5400 } },
-      ],
-    });
-  });
-
-  it("sends a new tag's colour in the same request", () => {
-    expect(markRequest({ label: "risk", color: "red", icon: "" }, timeRange(0, 900))).toEqual({
-      ops: [{ op: "mark", tag: { label: "risk" }, target: { kind: "time-range", startMs: 0, endMs: 900 } }],
-      tagStyles: [{ label: "risk", color: "red", icon: "" }],
-    });
-  });
-
-  it("removes marks by item", () => {
-    expect(removeRequest(["i1", "i2"])).toEqual({
-      ops: [
-        { op: "unmark", itemId: "i1" },
-        { op: "unmark", itemId: "i2" },
-      ],
-    });
-  });
-
-  it("tags and untags the whole meeting", () => {
-    expect(markRequest({ tagId: "t-budget", label: "budget" }, { kind: "meeting" })).toEqual({
-      ops: [{ op: "mark", tag: { id: "t-budget", label: "budget" }, target: { kind: "meeting" } }],
-    });
-    expect(untagMeetingRequest("t-budget")).toEqual({
-      ops: [{ op: "unmark-tag", tagId: "t-budget", target: { kind: "meeting" } }],
-    });
-  });
-});
-
 describe("a meeting's marks session", () => {
   afterEach(() => vi.useRealTimers());
 
@@ -145,6 +102,18 @@ describe("a meeting's marks session", () => {
     expect(changed).not.toHaveBeenCalled();
   });
 
+  it("says where a refused write came from, so its error shows there", async () => {
+    const session = createMarksSession(() => {});
+    await session.open(async () => meeting(), async () => {
+      throw new AnnotationError(409, "busy");
+    });
+    await session.write(removeRequest(["i1"]), "stretch");
+    expect(get(session)).toMatchObject({
+      error: "Tags are being changed elsewhere. Try again in a moment.",
+      errorFrom: "stretch",
+    });
+  });
+
   it("refuses a second write while one is in flight, so an older answer never lands last", async () => {
     let finish: (value: AnnotationResult) => void = () => {};
     const sent: AnnotationRequest[] = [];
@@ -170,7 +139,7 @@ describe("a meeting's marks session", () => {
     const session = createMarksSession(() => {});
     await session.open(load, null);
     expect(get(session)).toMatchObject({ status: "preparing", error: "" });
-    await vi.advanceTimersByTimeAsync(PREPARING_RETRY_MS);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(get(session).status).toBe("ready");
   });
 
@@ -190,6 +159,7 @@ describe("what the view draws", () => {
     status: "ready",
     annotations,
     error: "",
+    errorFrom: "meeting",
     busy: false,
     newColors,
   });

@@ -10,6 +10,7 @@ import TagIcon from "./TagIcon.svelte";
 import TagPicker from "./TagPicker.svelte";
 import pickerSource from "./TagPicker.svelte?raw";
 import { isOutside, stepIndex } from "./popover";
+import popoverSource from "./popover.ts?raw";
 
 // Server-rendered, because the suite runs in node with no DOM. Keyboard and
 // pointer behaviour lives in popover.ts, which is tested directly.
@@ -59,10 +60,6 @@ describe("ColorSwatchPicker", () => {
     expect(grid).toMatch(/aria-checked="true" aria-label="Teal"[^>]*tabindex="0"/);
     expect(grid.match(/tabindex="0"/g)).toHaveLength(1);
   });
-
-  it("closes itself alone on Esc and hands focus back", () => {
-    expect(swatchSource).toMatch(/"Escape"\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*anchor\?\.focus\(\);/);
-  });
 });
 
 describe("TagPicker", () => {
@@ -104,12 +101,16 @@ describe("TagPicker", () => {
     expect(pickerSource).toContain('dispatch("pick", { label: draft, color: newColor, icon: "" })');
   });
 
-  it("closes on Esc and hands focus back to what opened it", () => {
-    expect(pickerSource).toMatch(/function close\(\) \{\s*anchor\?\.focus\(\);\s*dispatch\("close"\);/);
-  });
 });
 
-describe("popover keys", () => {
+describe("popover", () => {
+  it("is what the picker and the swatches are, closing alone on Esc and handing focus back", () => {
+    for (const source of [pickerSource, swatchSource]) {
+      expect(source).toContain("use:popover={{ anchor, close: () => dispatch(\"close\") }}");
+    }
+    expect(popoverSource).toMatch(/"Escape"\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*anchor\?\.focus\(\);\s*close\(\);/);
+  });
+
   it("moves through a list with Up and Down, wrapping, and leaves Left and Right to the caret", () => {
     expect(stepIndex(0, "ArrowDown", 3)).toBe(1);
     expect(stepIndex(0, "ArrowUp", 3)).toBe(2);

@@ -26,6 +26,10 @@
   // A handle drags one end with the other as the anchor, so crossing it swaps them.
   let drag: { anchorMs: number; y0: number; moved: boolean; handle: boolean } | null = null;
 
+  export function focus() {
+    track.focus({ preventScroll: true });
+  }
+
   const pct = (ms: number) => `${(Math.min(Math.max(ms / durationMs, 0), 1) * 100).toFixed(3)}%`;
 
   function msAt(event: PointerEvent): number {
