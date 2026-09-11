@@ -613,6 +613,19 @@
     }
   }
 
+  // handleInsightCreated is what Generate does once the operator has answered
+  // (D-749): the new record goes to the top of the list, where every insight
+  // is shown, and the Prepare panel closes — the question has been asked, and
+  // the panel's subject was the set it was asked of. Optimistic, so the card
+  // is on screen before the shared refresh tick; the refresh that follows
+  // replaces it with the operator's own listing. dropMissingInsight cannot
+  // close a sheet over it: nothing is open, and the listing will carry it.
+  function handleInsightCreated(record: InsightRecord) {
+    insights = [record, ...insights.filter((row) => row.id !== record.id)];
+    prepareOpen = false;
+    void refreshInsights();
+  }
+
   // ensureInsightDocument fetches the open insight's answer once per attempt.
   // Only a succeeded run has one: a queued, running or failed run has nothing
   // to fetch, and asking for it would turn "not finished" into an error.
@@ -1051,7 +1064,7 @@
                this panel is describing, and `let:` is what carries a slot prop
                across the two levels. -->
           <svelte:fragment slot="generate" let:entries>
-            <slot name="prepare-generate" {entries} />
+            <slot name="prepare-generate" {entries} onInsightCreated={handleInsightCreated} />
           </svelte:fragment>
         </PreparePanel>
       </aside>

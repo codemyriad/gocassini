@@ -93,7 +93,9 @@ describe("PreparePanel", () => {
   // renders nothing.
   it("has its generate slot forwarded by the App that mounts it", () => {
     expect(appSource).toContain('<svelte:fragment slot="generate" let:entries>');
-    expect(appSource).toContain('<slot name="prepare-generate" {entries} />');
+    expect(appSource).toContain(
+      '<slot name="prepare-generate" {entries} onInsightCreated={handleInsightCreated} />',
+    );
     // The readiness slot beside it, so a change that drops one is visible here
     // rather than as a card that silently stops appearing.
     expect(appSource).toContain('<slot name="prepare-readiness" slot="readiness" />');

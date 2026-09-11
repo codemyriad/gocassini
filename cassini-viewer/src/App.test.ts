@@ -37,3 +37,25 @@ describe("the shell's insight retry", () => {
     expect(appSource).toContain('if (!provider.retryInsight || retryingInsightId !== "") {');
   });
 });
+
+describe("the shell's answer to a created insight", () => {
+  it("puts the record at the top of the list, closes Prepare, and re-reads", () => {
+    // The panel's subject was the set the question was asked of; once asked,
+    // the answer belongs where every insight is shown (D-749).
+    const handler = appSource.slice(
+      appSource.indexOf("function handleInsightCreated"),
+      appSource.indexOf("// ensureInsightDocument fetches"),
+    );
+    expect(handler).toContain(
+      "insights = [record, ...insights.filter((row) => row.id !== record.id)];",
+    );
+    expect(handler).toContain("prepareOpen = false;");
+    expect(handler).toContain("void refreshInsights();");
+  });
+
+  it("hands the callback down the generate slot for the shell's card to call", () => {
+    expect(appSource).toContain(
+      '<slot name="prepare-generate" {entries} onInsightCreated={handleInsightCreated} />',
+    );
+  });
+});

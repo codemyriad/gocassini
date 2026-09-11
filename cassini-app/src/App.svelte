@@ -398,9 +398,14 @@
                panel hands down the meetings it is describing; whether there is an
                endpoint to ask, and whether this reader may pick a template, are
                the shell's to know and neither is a fact the viewing layer has. -->
-          <svelte:fragment slot="prepare-generate" let:entries>
+          <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
             {#if insightsReady}
-              <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+              <GenerateCard
+                {entries}
+                {operatorClient}
+                on:open={handleOpenPanel}
+                on:created={(event) => onInsightCreated(event.detail)}
+              />
             {/if}
           </svelte:fragment>
         </ViewerApp>
@@ -454,9 +459,14 @@
     <div class="cassini-shell-surface">
       <ViewerApp {ncMode} {dataProvider}>
         <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
-        <svelte:fragment slot="prepare-generate" let:entries>
+        <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
           {#if insightsReady}
-            <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+            <GenerateCard
+              {entries}
+              {operatorClient}
+              on:open={handleOpenPanel}
+              on:created={(event) => onInsightCreated(event.detail)}
+            />
           {/if}
         </svelte:fragment>
       </ViewerApp>
@@ -465,9 +475,14 @@
 {:else}
   <ViewerApp {ncMode} {dataProvider}>
     <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
-    <svelte:fragment slot="prepare-generate" let:entries>
+    <svelte:fragment slot="prepare-generate" let:entries let:onInsightCreated>
       {#if insightsReady}
-        <GenerateCard {entries} {operatorClient} on:open={handleOpenPanel} />
+        <GenerateCard
+          {entries}
+          {operatorClient}
+          on:open={handleOpenPanel}
+          on:created={(event) => onInsightCreated(event.detail)}
+        />
       {/if}
     </svelte:fragment>
   </ViewerApp>
