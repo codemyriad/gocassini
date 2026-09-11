@@ -40,6 +40,9 @@ func TestSeedLLMSettingsFromKeylessEndpoint(t *testing.T) {
 	if !s.Summary.Enabled || s.Summary.Provider != "default" || s.Summary.Model != "qwen3-30b" {
 		t.Fatalf("summary = %+v, want enabled on default with qwen3-30b", s.Summary)
 	}
+	if !s.SummaryAutoEnabled {
+		t.Fatal("the seed is the first endpoint; the first-save rule must not get a later chance")
+	}
 }
 
 func TestSeedLLMSettingsKeyAloneImpliesOpenRouter(t *testing.T) {
@@ -754,6 +757,9 @@ func TestFirstProviderSwitchesSummarisingOn(t *testing.T) {
 	if !got.Summary.Enabled || got.Summary.Provider != "p-1" {
 		t.Fatalf("summary = %+v, want enabled against p-1", got.Summary)
 	}
+	if !got.SummaryAutoEnabled {
+		t.Fatal("the one shot was fired and not recorded, so it would fire again")
+	}
 }
 
 // And at most once in a deployment's life. Every one of these is somebody who
@@ -764,6 +770,15 @@ func TestSummarisingIsNotSwitchedBackOn(t *testing.T) {
 		name          string
 		before, after LLMSettings
 	}{
+		{
+			// Every endpoint removed, then one added back. The transition from
+			// none to some happens a second time, and the removal cleared the
+			// step's provider — so without the persisted shot this fired again
+			// on an administrator who had switched summarising off (D-740).
+			name:   "the last endpoint removed and one re-added",
+			before: LLMSettings{SummaryAutoEnabled: true},
+			after:  LLMSettings{Providers: existing, SummaryAutoEnabled: true},
+		},
 		{
 			// The second endpoint, added by an administrator who deliberately
 			// switched summarising off after the first.
@@ -802,7 +817,52 @@ func TestFirstProviderDoesNotOverruleAnExplicitChoice(t *testing.T) {
 		Providers: []LLMProvider{{ID: "p-1", BaseURL: openRouterBaseURL}},
 		Summary:   LLMStep{Enabled: false, Provider: "p-1"},
 	}
-	if got := enableSummaryOnFirstProvider(before, after); got.Summary.Enabled {
+	got := enableSummaryOnFirstProvider(before, after)
+	if got.Summary.Enabled {
 		t.Fatalf("summary = %+v, want left off — the request named a provider and said no", got.Summary)
+	}
+	// The shot is spent by the decision, not by the flip: the administrator
+	// answered, and the rule must not get a second chance later.
+	if !got.SummaryAutoEnabled {
+		t.Fatal("an explicit first-save answer did not spend the one shot")
+	}
+}
+
+// The same rule through the API, across the saves an administrator actually
+// makes: register, switch off, remove everything, register again. The last
+// save must not switch summarising back on.
+func TestPutLLMSettingsDoesNotReEnableSummarisingAfterRemoveAndReAdd(t *testing.T) {
+	clearLLMEnv(t)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	put := func(body string) llmSettingsResponse {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodPut, "/settings/llm", strings.NewReader(body)))
+		return decodeLLMSettings(t, rec)
+	}
+	const provider = `{"id":"p-1","name":"Hosted","base_url":"https://openrouter.ai/api/v1"}`
+
+	if out := put(`{"providers":[` + provider + `]}`); !out.Summary.Enabled || out.Summary.Provider != "p-1" {
+		t.Fatalf("first endpoint: summary = %+v, want switched on against it", out.Summary)
+	}
+	if out := put(`{"summary":{"enabled":false,"provider":"p-1"}}`); out.Summary.Enabled {
+		t.Fatalf("switching off: summary = %+v", out.Summary)
+	}
+	if out := put(`{"providers":[]}`); out.Summary.Enabled || len(out.Providers) != 0 {
+		t.Fatalf("removing everything: %+v", out)
+	}
+	if out := put(`{"providers":[` + provider + `]}`); out.Summary.Enabled {
+		t.Fatalf("re-adding: summary = %+v, want left off — the administrator already switched it off", out.Summary)
+	}
+
+	// And the shot survives a reload from disk, which is where a restart reads
+	// it from.
+	reloaded, err := LoadOrInitLLMSettings(rt.llmSettingsPath, llmGetenv(nil))
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.SummaryAutoEnabled {
+		t.Fatal("the one shot was not persisted")
 	}
 }

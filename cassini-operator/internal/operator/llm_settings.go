@@ -40,6 +40,12 @@ type LLMSettings struct {
 	// insights off is removing the endpoint, exactly as it is for the summary
 	// (D-719).
 	Insight LLMStep `json:"insight"`
+	// SummaryAutoEnabled records that the first-endpoint rule has had its one
+	// chance (enableSummaryOnFirstProvider). Persisted, because the rule is
+	// "once in a deployment's life" and a rule keyed on the transition alone
+	// fires again after every endpoint is removed and one is re-added. Not
+	// served: it is bookkeeping, not policy.
+	SummaryAutoEnabled bool `json:"summary_auto_enabled,omitempty"`
 }
 
 // LLMProvider is one OpenAI-compatible chat-completions endpoint.
@@ -198,6 +204,10 @@ func SeedLLMSettings(getenv func(string) string) LLMSettings {
 		summaryModel = strings.TrimSpace(getenv(envLLMModel))
 	}
 	s.Summary = LLMStep{Enabled: !envBoolFrom(getenv, envSummaryDisabled), Provider: provider.ID, Model: summaryModel}
+	// The seed IS the first endpoint, and the environment has already said
+	// whether summarising runs on it; the first-save rule has nothing left to
+	// decide for this deployment.
+	s.SummaryAutoEnabled = true
 	return s
 }
 
@@ -491,19 +501,24 @@ func (s LLMSettings) appendStepEnv(out []string, name string, p LLMProvider, mod
 // is reachable in one go rather than in two, which is what the design prototype
 // does when its first endpoint lands.
 //
-// Only on the transition from NO providers to some, and only when the step is
-// not already enabled and names nothing. Those guards are the whole safety of
-// it: an administrator who deliberately switched summarising off must not have
-// it switched back on by adding a second endpoint, or by any later save. It can
-// therefore fire at most once in a deployment's life, on the save that takes it
-// from having no endpoint to having one.
+// The rule is ONE-SHOT, and the shot is recorded: SummaryAutoEnabled is set on
+// the first save that takes the deployment from no endpoint to one, whether the
+// step was switched on by it or the save had already decided, and the rule
+// never fires again once it is set. The transition alone was not enough —
+// removing every endpoint and adding one back is a second transition, and
+// normalisation clears the step's dangling provider on the removal, so an
+// administrator who had switched summarising off found it switched back on by
+// re-registering an endpoint (D-740). The other guards stay: a second endpoint
+// never fires it, and a save that already enabled the step or named a provider
+// for it is left alone.
 //
 // docs/privacy.md carries this: registering the first endpoint is the opt-in,
 // not a step you separately arm afterwards.
 func enableSummaryOnFirstProvider(before, after LLMSettings) LLMSettings {
-	if len(before.Providers) > 0 || len(after.Providers) == 0 {
+	if before.SummaryAutoEnabled || len(before.Providers) > 0 || len(after.Providers) == 0 {
 		return after
 	}
+	after.SummaryAutoEnabled = true
 	if after.Summary.Enabled || strings.TrimSpace(after.Summary.Provider) != "" {
 		return after
 	}
