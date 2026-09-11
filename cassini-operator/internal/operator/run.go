@@ -361,13 +361,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	} else if raw != "" {
 		// Refused at startup rather than only on the enabled edge, because this
 		// is where a deploy option's typo is cheapest to notice.
-		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and no storage mode will be chosen for this install", envStorageMode, raw, storageModeEnvValues)
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and the mode will be resolved from this install's own recordings instead", envStorageMode, raw, storageModeEnvValues)
 	} else {
 		// Nothing recorded, nothing declared. Say so here rather than leaving an
-		// administrator to infer it from silence: this is the line that precedes
-		// every refusal to publish on a fresh install, and the Setup tab is what
-		// ends it.
-		logger.Printf("storage_mode -> undecided (nothing recorded, nothing declared by %s). Cassini does not choose a storage model on its own; publishing and recording are refused until an administrator picks one in the Setup tab", envStorageMode)
+		// administrator to infer it from silence — and say what happens next,
+		// because since D-753 something does: the enabled edge resolves the mode
+		// from the archive this install already has.
+		logger.Printf("storage_mode -> not recorded yet (nothing recorded, nothing declared by %s); the next enabled edge resolves it from the recordings this install already has", envStorageMode)
 	}
 
 	// The preflight remains tied to the AppAPI enabled edge, but not to the

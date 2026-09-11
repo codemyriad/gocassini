@@ -492,16 +492,111 @@ func (p ncStorageProbe) strandedArchiveMeetings(accessControlled bool) int {
 	return p.ACLArchive.Meetings()
 }
 
-// storageStepModeUndecided means nobody has chosen a storage model, so Cassini
-// will not publish. It is not a failure and nothing is missing — it is a
-// question with no answer yet, and it is the one state the setup wizard exists
-// to end (D-708).
+// storageStepModeUndecided and storageStepModeUnconfirmed are no longer
+// emitted (D-753). They were the two states in which an install refused to
+// record and to publish because nobody had answered the setup wizard: nothing
+// was recorded, or something was recorded that nobody had chosen. The enabled
+// edge now resolves the mode from the archive it finds (storageModeFromProbe)
+// and keeps any recorded one, so neither state is reachable.
+//
+// They are named here rather than deleted because /status still maps them to
+// `awaiting_choice` for a client that has not been rebuilt, and because a
+// monitor keyed on either will now see nothing — which is the correct outcome
+// and an alarming one to discover.
 const storageStepModeUndecided = "storage_mode_undecided"
 
-// storageStepModeUnconfirmed means a mode is in force that nobody chose: a
-// fallback from an older build, an interrupted first decision, or a settings
-// file this operator could not parse. It governs, and it does not publish.
 const storageStepModeUnconfirmed = "storage_mode_unconfirmed"
+
+// storageStepModeUnresolved means the probe could not say what this install
+// already holds, so no mode was resolved on this edge.
+//
+// Recorded as DEGRADED rather than unavailable, and the difference is the whole
+// point: nothing is missing, an answer simply did not arrive. Recording goes
+// ahead (recordingRefusal), publishing waits, and the next enabled edge looks
+// again. Writing an archive under a mode nobody could establish is the one step
+// here that cannot be taken back.
+const storageStepModeUnresolved = "storage_mode_unresolved"
+
+// storageModeFromProbe resolves the storage model of an install that has
+// recorded none and declared none, from what the read-only probe found (D-753).
+// `ok` is false when the probe could not answer; `why` is the evidence, for the
+// log and for /status.
+//
+// One rule underneath every branch: Cassini never widens an existing archive on
+// its own. Every answer either keeps the audience the recordings already have,
+// or starts an empty archive open.
+//
+//	recordings in the MOUNTED Team folder  access controlled. Adopted — the
+//	                                       archive stays exactly where it is, and
+//	                                       anything in the default root is
+//	                                       reported as stranded rather than moved.
+//	recordings at Cassini/Recordings with  default. With nothing mounted there
+//	no Team folder mounted                 that path is the service account's OWN
+//	                                       directory, which is where a pre-split
+//	                                       install keeps its default-mode
+//	                                       archive; adoptLegacyDefaultArchive
+//	                                       carries it into the split root.
+//	recordings in the default root only    default. Adopted.
+//	nothing in either root                 default. An empty archive starts open.
+//	no service account                     default. Every recording is written and
+//	                                       read as that account, so an install
+//	                                       without one has no archive to keep.
+//
+// It replaces the wizard the enabled edge used to wait for (D-708), which
+// refused every recording on the instance until an administrator answered it —
+// the cost of a question the instance can answer, charged to every call made
+// before anybody saw it. What it does NOT replace is sanity(): a resolved mode
+// is still checked against the instance before anything is written under it.
+func storageModeFromProbe(p ncStorageProbe) (accessControlled, ok bool, why string) {
+	switch {
+	case !p.FolderProbed:
+		// `Cassini/Recordings` is the Team folder on one install and the service
+		// account's own pre-split directory on another, and the folder list is
+		// the only thing that tells them apart. Answering without it would adopt
+		// one as the other.
+		return false, false, fmt.Sprintf(
+			"Cassini could not tell whether a %q Team folder is mounted, which is what distinguishes an access-controlled archive from a pre-split one at the same path",
+			ncRecordingsMount)
+	case !p.ServiceAccount:
+		if p.FolderPresent {
+			// A Team folder that may hold an archive nothing here can read: the
+			// probe reads both roots AS the service account, and there is not
+			// one. Resolving `default` would strand it.
+			return false, false, fmt.Sprintf(
+				"the %q service account does not exist, so Cassini cannot read what the %q Team folder holds",
+				ncRecordingsOwner, ncRecordingsMount)
+		}
+		return false, true, fmt.Sprintf(
+			"the %q service account does not exist yet and there is no %q Team folder, so this install has no archive",
+			ncRecordingsOwner, ncRecordingsMount)
+	case !p.ArchivesComparable():
+		return false, false, fmt.Sprintf(
+			"Cassini could not read both recordings roots (%s: %t, %s: %t)",
+			ncDefaultRecordingsRoot, p.DefaultArchive.Probed, ncACLRecordingsRoot, p.ACLArchive.Probed)
+	case p.ACLArchive.Populated() && p.FolderMounted:
+		return true, true, fmt.Sprintf(
+			"%d recording(s) are in the %q Team folder",
+			p.ACLArchive.Meetings(), ncRecordingsMount)
+	case p.ACLArchive.Populated():
+		return false, true, fmt.Sprintf(
+			"%d recording(s) are at %s, which with no Team folder mounted is the %q account's own directory",
+			p.ACLArchive.Meetings(), ncACLRecordingsRoot, ncRecordingsOwner)
+	case p.DefaultArchive.Populated():
+		return false, true, fmt.Sprintf(
+			"%d recording(s) are in %s", p.DefaultArchive.Meetings(), ncDefaultRecordingsRoot)
+	default:
+		return false, true, fmt.Sprintf(
+			"there are no recordings in %s or %s", ncACLRecordingsRoot, ncDefaultRecordingsRoot)
+	}
+}
+
+// storageModeUnresolvedDetail is the sentence the container log and /status both
+// carry when the probe could not answer what this install holds.
+func storageModeUnresolvedDetail(why string) string {
+	return fmt.Sprintf(
+		"Cassini could not work out where this install already keeps its recordings, so it has recorded no storage mode: %s. Recording is not refused for it, publishing waits, and the next time the app is enabled Cassini looks again",
+		why)
+}
 
 // storageStepDeclaredConflict means CASSINI_STORAGE_MODE named a model this
 // instance does not match. See declaredModeConflicts.

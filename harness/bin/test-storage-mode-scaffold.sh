@@ -185,6 +185,17 @@ grep -qF -- '-e "CASSINI_STORAGE_MODE=$STORAGE_MODE"' "$INSTALL_E2E" \
 grep -qF 'CASSINI_E2E_STORAGE_MODE: default' "$PUBLISH_WORKFLOW" \
   || fail "publish-exapp-image.yml does not run the manual-install default-mode leg"
 
+# The upgrade leg (D-753) is the one that declares NOTHING: an access-controlled
+# stack whose Team folder already holds recordings, with no mode recorded, so
+# the operator has to resolve one on the enabled edge. Both halves are pinned
+# here because either one silently reverting makes the leg vacuous rather than
+# red — a `resolve` run that still exports CASSINI_STORAGE_MODE asserts the
+# declaration path a second time and proves nothing about the resolution.
+grep -qF 'CASSINI_E2E_STORAGE_MODE: resolve' "$PUBLISH_WORKFLOW" \
+  || fail "publish-exapp-image.yml does not run the manual-install upgrade leg"
+grep -qF 'if (( DECLARE_STORAGE_MODE )); then' "$INSTALL_E2E" \
+  || fail "ci-e2e-install-exapp.sh declares CASSINI_STORAGE_MODE unconditionally; the resolve leg needs it omitted"
+
 # The deploy option is documented as development and CI only (D-708). It cannot
 # be removed from the manifest — AppAPI silently drops undeclared keys, so the
 # harness's own --env would stop arriving — so the demotion is copy, and copy

@@ -325,10 +325,22 @@ func ncStorageServesAsOwner() bool {
 //	             here — and it is very probably fine. Refusing every recording
 //	             until somebody re-enables the app would turn a reboot into an
 //	             outage.
+//
+// Two steps that once landed here are not missing prerequisites at all: nobody
+// had chosen a storage model, or a recorded model had not been confirmed. They
+// refused every recording on the instance until an administrator answered the
+// setup wizard — a call spent, and a moderator told only that "the recording
+// failed" — for a question Cassini now answers from the instance on the enabled
+// edge (D-753, storageModeFromProbe). Neither step is emitted any more, and the
+// guard stays so that re-introducing either cannot silently stop every
+// recording again.
 func (s *ncAccessSubstrateStatus) recordingRefusal() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.applicable || s.state != ncSubstrateUnavailable {
+		return ""
+	}
+	if s.step == storageStepModeUndecided || s.step == storageStepModeUnconfirmed {
 		return ""
 	}
 	if s.detail != "" {

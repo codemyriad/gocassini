@@ -120,14 +120,19 @@ type storageStatusResponse struct {
 	// as "default", and the UI has to be able to tell them apart.
 	Mode       string `json:"mode"`
 	ModeSource string `json:"mode_source,omitempty"`
-	// ModeConfirmed says a PERSON (or a dev/CI deploy option) chose this mode,
-	// as opposed to a build recording one on its own or an interrupted first
-	// decision leaving one behind. False is what puts the Setup tab into its
-	// wizard rather than its settled panel.
+	// ModeConfirmed says a mode is settled: recorded, and not going to be
+	// re-taken. It is true for every recorded mode since D-753, the enabled
+	// edge's own resolution included, and false only while nothing is resolved.
+	// Where the mode came from is ModeSource's job, not this one's.
 	ModeConfirmed bool `json:"mode_confirmed"`
-	// AwaitingChoice says nothing is recorded at all. It is not the same as
-	// `Mode == ""`, which also happens before any preflight has run — the UI has
-	// to tell "nobody has chosen" apart from "nobody has looked yet".
+	// AwaitingChoice is always false (D-753) and kept in the shape so a client
+	// built against the first pass still parses this response.
+	//
+	// It used to say that nothing was recorded at all, which was the state the
+	// setup wizard existed to end. Nothing waits for an answer now: the enabled
+	// edge resolves the mode from the archive it finds, and an edge that could
+	// not read the archive reports that through State/Step — a fault to look at,
+	// not a question to answer.
 	AwaitingChoice bool `json:"awaiting_choice"`
 	// FirstRun says the one-time dialog that tells an administrator who will be
 	// able to read recordings has not been answered on this install (D-755).
@@ -469,13 +474,13 @@ func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionRes
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
 	mode, source := ncStorage.snapshot()
 	clean := ncStorage.migrationClean()
-	_, resolved := ncStorage.mode()
 	probe, probed := ncAccessSubstrate.lastProbe()
+	_, resolved := ncStorage.mode()
 	resp := storageStatusResponse{
 		Mode:           mode,
 		ModeSource:     source,
 		ModeConfirmed:  ncStorage.confirmedMode(),
-		AwaitingChoice: !resolved,
+		AwaitingChoice: false,
 		FirstRun:       storageFirstRun(ncStorage.acknowledgedFirstRun(), resolved, probed, probe),
 		Migration:      ncStorageMigration.snapshot(),
 		ServiceAccount: storageServiceAccount{

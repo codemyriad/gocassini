@@ -219,68 +219,294 @@ func readPersistedMode(t *testing.T, path string) StorageSettings {
 	return settings
 }
 
-// The mode is NEVER inferred from the instance, and since D-708 it is never
-// fallen back to either. A Nextcloud carrying the entire access-controlled
-// substrate, with nothing recorded and nothing declared, is UNDECIDED — it
-// publishes nothing and it writes nothing down, until somebody says.
-//
-// The first pass fell back to the deps-free model here and recorded that on the
-// first healthy enable. It is a quieter version of the inference it replaced:
-// `default` is the model in which every account can read every recording, and
-// nobody had asked for it. An upgrade latch caught the one shape where the
-// mistake would have been obvious; nothing caught the rest.
-func TestPreflightLeavesACompleteSubstrateUndecided(t *testing.T) {
-	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true, aclArchive: []string{"m1.opus", "m2.opus"}}
-	_, path := runStoragePreflight(t, mock, io.Discard)
-
-	if _, resolved := ncStorage.mode(); resolved {
-		t.Fatal("a complete substrate decided the mode; nothing may choose who can read the archive")
-	}
-	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
-	if snap.OK {
-		t.Fatalf("substrate = %+v, want unusable: nobody has chosen a storage model", snap)
-	}
-	if snap.Step != storageStepModeUndecided {
-		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUndecided)
-	}
-	// The detail has to name both models, because the whole remedy is a choice
-	// between them.
-	for _, want := range []string{storageModeDefault, storageModeAccessControlled, ncDefaultRecordingsRoot, ncRecordingsMount} {
-		if !strings.Contains(snap.Detail, want) {
-			t.Fatalf("detail %q never mentions %q", snap.Detail, want)
+// sawMethod reports whether the instance was asked to do something of this
+// kind at all, whatever the path. The resolution's whole claim is that it moves
+// nothing, and COPY/MOVE/DELETE are the three verbs that could.
+func (m *storageMock) sawMethod(method string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.reqs {
+		if strings.HasPrefix(r, method+" ") {
+			return true
 		}
 	}
-	if readPersistedMode(t, path).Configured() {
-		t.Fatalf("%s recorded a mode nobody chose", storageSettingsFileName)
+	return false
+}
+
+// The enable-time resolution table (D-753), one case per row.
+//
+// An install that has recorded no mode is no longer UNDECIDED — a state in
+// which D-708 refused every recording on the instance until an administrator
+// answered the setup wizard. The enabled edge reads the archive that is already
+// there and answers for them, under one rule: Cassini never widens an existing
+// archive on its own. Each row either keeps the audience the recordings already
+// have or starts an empty archive open, and every one of them ADOPTS — the
+// choice is recorded, nothing is moved.
+func TestPreflightResolvesTheStorageModeOnEnable(t *testing.T) {
+	completeACLInstance := func(aclArchive, defaultArchive []string) *storageMock {
+		return &storageMock{
+			serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(),
+			recordingsRoot: true, aclArchive: aclArchive, defaultArchive: defaultArchive,
+		}
 	}
-	// Both roots are on the probe, under no mode at all — that symmetry is what
-	// the setup wizard's first screen renders.
-	probe, probed := ncAccessSubstrate.lastProbe()
-	if !probed || probe.ACLArchive.Meetings() != 2 || !probe.DefaultArchive.Probed {
-		t.Fatalf("probe did not describe both roots: %+v", probe)
+	cases := []struct {
+		name         string
+		mock         *storageMock
+		setup        func(t *testing.T, path string)
+		wantMode     string
+		wantSource   string
+		wantStranded int
+		wantOK       bool
+		wantRefusal  bool
+	}{{
+		// Row 1, as a fresh install actually arrives: no apps, no account,
+		// nothing anywhere. The mode is resolved and recorded at once; the
+		// account is the one prerequisite still missing, and it is what the
+		// status names and what refuses a recording until it exists.
+		name:        "nothing anywhere",
+		mock:        &storageMock{apps: []string{}},
+		wantMode:    storageModeDefault,
+		wantSource:  storageModeSourceResolved,
+		wantRefusal: true,
+	}, {
+		// Row 1 again, on an instance that has the whole access-controlled
+		// substrate and has never used it — which is also what a completed
+		// opt-out leaves behind, the emptied Team folder still mounted.
+		name:       "nothing anywhere, with an empty Team folder mounted",
+		mock:       completeACLInstance(nil, nil),
+		wantMode:   storageModeDefault,
+		wantSource: storageModeSourceResolved,
+		wantOK:     true,
+	}, {
+		// Row 2. The upgrade this whole phase exists for: adopted silently, no
+		// dialog, nothing moved.
+		name:       "recordings in the Team folder only",
+		mock:       completeACLInstance([]string{"m1.opus", "m2.opus"}, nil),
+		wantMode:   storageModeAccessControlled,
+		wantSource: storageModeSourceResolved,
+		wantOK:     true,
+	}, {
+		// Row 3. Access control wins, and the recordings in the OTHER root are
+		// reported through the fields that already exist for it rather than
+		// being carried across on Cassini's own initiative.
+		name:         "recordings in both roots",
+		mock:         completeACLInstance([]string{"m1.opus"}, []string{"d1.opus", "d2.opus"}),
+		wantMode:     storageModeAccessControlled,
+		wantSource:   storageModeSourceResolved,
+		wantStranded: 2,
+		wantOK:       true,
+	}, {
+		// Row 4, on the instance that shape belongs to: no Team folder, no
+		// third-party apps, one service account and a private archive.
+		name:       "recordings in the default root only",
+		mock:       &storageMock{apps: []string{}, serviceAccount: true, defaultArchive: []string{"d1.opus"}},
+		wantMode:   storageModeDefault,
+		wantSource: storageModeSourceResolved,
+		wantOK:     true,
+	}, {
+		// Row 5. A mode an older build recorded on its own: kept as it is, and
+		// no longer asked about. D-708 stopped here with
+		// `storage_mode_unconfirmed` and published nothing.
+		name: "a mode is recorded",
+		mock: completeACLInstance([]string{"m1.opus", "m2.opus"}, nil),
+		setup: func(t *testing.T, path string) {
+			t.Helper()
+			if err := SaveStorageSettings(path, false, storageModeSourceDefault, true); err != nil {
+				t.Fatalf("SaveStorageSettings() error = %v", err)
+			}
+		},
+		wantMode:   storageModeDefault,
+		wantSource: storageModeSourceDefault,
+		// The recordings the recorded mode does not read are the thing an
+		// administrator most needs told — the symptom is "my recordings are
+		// gone" — but they are still not moved.
+		wantStranded: 2,
+		wantOK:       true,
+	}, {
+		// Row 6. The deploy option keeps its precedence over the probe: it is
+		// read before anything looks at the instance, and it is recorded with
+		// its own provenance once the gates agree.
+		name: "CASSINI_STORAGE_MODE declared",
+		mock: completeACLInstance([]string{"m1.opus"}, nil),
+		setup: func(t *testing.T, _ string) {
+			t.Helper()
+			t.Setenv(envStorageMode, storageModeAccessControlled)
+		},
+		wantMode:   storageModeAccessControlled,
+		wantSource: storageModeSourceEnv,
+		wantOK:     true,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetProvisioningUser(t)
+			resetSubstrateRecord(t)
+			resetStorageMode(t)
+			path := filepath.Join(t.TempDir(), storageSettingsFileName)
+			ncStorage.setPath(path)
+			if tc.setup != nil {
+				tc.setup(t, path)
+			}
+			cfg := testExAppConfig(tc.mock.server(t).URL)
+			cfg.preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+			snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+			if snap.Mode != tc.wantMode || snap.ModeSource != tc.wantSource {
+				t.Fatalf("mode = (%q, %q), want (%q, %q)", snap.Mode, snap.ModeSource, tc.wantMode, tc.wantSource)
+			}
+			// A resolved mode is a settled one: nothing asks about it, and
+			// nothing branches on it having been chosen by a person.
+			if !snap.ModeConfirmed {
+				t.Fatalf("mode_confirmed = false for a %s mode; the resolution is the decision", tc.wantSource)
+			}
+			if snap.OK != tc.wantOK {
+				t.Fatalf("substrate = %+v, want ok=%t", snap, tc.wantOK)
+			}
+			// The publish gate: a resolved mode publishes exactly like a chosen
+			// one. Nothing downstream asks who decided.
+			if ncAccessSubstrate.usable() != tc.wantOK {
+				t.Fatalf("usable() = %t, want %t — publishing must not wait on a mode that is settled", ncAccessSubstrate.usable(), tc.wantOK)
+			}
+			// Recording is refused only for a prerequisite that is genuinely
+			// missing. "Nobody has chosen" is not one of those any more.
+			if refused := ncAccessSubstrate.recordingRefusal() != ""; refused != tc.wantRefusal {
+				t.Fatalf("recordingRefusal() = %q, want refused=%t", ncAccessSubstrate.recordingRefusal(), tc.wantRefusal)
+			}
+			settings := readPersistedMode(t, path)
+			if !settings.Configured() || settings.Mode() != tc.wantMode || settings.Source != tc.wantSource {
+				t.Fatalf("%s = %+v, want mode %q from %q", storageSettingsFileName, settings, tc.wantMode, tc.wantSource)
+			}
+			if !settings.Clean() {
+				t.Fatalf("%s reports an unfinished migration; nothing was migrated", storageSettingsFileName)
+			}
+
+			rt, cleanup := newTestRuntime(t)
+			defer cleanup()
+			status := cfg.storageStatus(rt, nil)
+			if status.AwaitingChoice {
+				t.Fatal("awaiting_choice is true after the mode was resolved; nothing is waiting for an answer")
+			}
+			if status.StrandedRecordings != tc.wantStranded {
+				t.Fatalf("stranded = %d at %q, want %d", status.StrandedRecordings, status.StrandedRoot, tc.wantStranded)
+			}
+			if tc.wantStranded > 0 && status.StrandedRoot != recordingsRootFor(tc.wantMode != storageModeAccessControlled) {
+				t.Fatalf("stranded root = %q, want the root the resolved mode does not read", status.StrandedRoot)
+			}
+			// The adopt path: the choice is recorded and the archive is left
+			// exactly where it is, in BOTH roots.
+			for _, verb := range []string{"COPY", "MOVE", http.MethodDelete} {
+				if tc.mock.sawMethod(verb) {
+					t.Fatalf("the resolution issued a %s; it must record the mode and move nothing: %v", verb, tc.mock.reqs)
+				}
+			}
+		})
 	}
 }
 
-// A Nextcloud with neither prerequisite app and no service account is undecided
-// too, and its status names the decision rather than the missing account: there
-// is no mode yet whose prerequisites could be missing.
-func TestPreflightLeavesADepsFreeInstanceUndecided(t *testing.T) {
-	mock := &storageMock{apps: []string{}}
-	var logs strings.Builder
-	_, path := runStoragePreflight(t, mock, &logs)
+// The row that is not in the table because it is a spelling of another one: a
+// pre-split archive at `Cassini/Recordings` with no Team folder mounted is the
+// DEFAULT model's archive, not the access-controlled one. The two are the same
+// path and only the folder list tells them apart — so the folder question is
+// answered before the archive is read, and an unanswered one resolves nothing.
+func TestStorageModeFromProbeReadsTheArchiveRatherThanThePath(t *testing.T) {
+	probed := func(p ncStorageProbe) ncStorageProbe {
+		p.FolderProbed = true
+		p.ServiceAccount = true
+		p.ACLArchive.Probed = true
+		p.ACLArchive.Root = ncACLRecordingsRoot
+		p.DefaultArchive.Probed = true
+		p.DefaultArchive.Root = ncDefaultRecordingsRoot
+		return p
+	}
+	entries := []davEntry{{Name: "m1.opus"}}
+
+	cases := []struct {
+		name            string
+		probe           ncStorageProbe
+		wantOK          bool
+		wantAccessCtrl  bool
+		wantWhyMentions string
+	}{{
+		name:            "a mounted Team folder holding recordings",
+		probe:           probed(ncStorageProbe{FolderPresent: true, FolderMounted: true, ACLArchive: ncArchiveFacts{Entries: entries}}),
+		wantOK:          true,
+		wantAccessCtrl:  true,
+		wantWhyMentions: ncRecordingsMount,
+	}, {
+		// The same path, the same listing, no Team folder: the service
+		// account's own directory, which is where a pre-split install kept its
+		// default-mode archive. Adopting it as access-controlled would claim an
+		// audience for it that nothing enforces.
+		name:            "the same path with no Team folder mounted",
+		probe:           probed(ncStorageProbe{ACLArchive: ncArchiveFacts{Entries: entries}}),
+		wantOK:          true,
+		wantAccessCtrl:  false,
+		wantWhyMentions: ncRecordingsOwner,
+	}, {
+		name:            "nobody could say whether a Team folder is mounted",
+		probe:           ncStorageProbe{ServiceAccount: true},
+		wantOK:          false,
+		wantWhyMentions: ncRecordingsMount,
+	}, {
+		// No service account, but a Team folder that may hold an archive: both
+		// roots are read AS that account, so there is no way to find out. Fail
+		// closed and record nothing; the next edge, after the account exists,
+		// can answer.
+		name:            "no service account and a Team folder that might hold one",
+		probe:           ncStorageProbe{FolderProbed: true, FolderPresent: true},
+		wantOK:          false,
+		wantWhyMentions: ncRecordingsOwner,
+	}, {
+		name:            "no service account and no Team folder",
+		probe:           ncStorageProbe{FolderProbed: true},
+		wantOK:          true,
+		wantAccessCtrl:  false,
+		wantWhyMentions: ncRecordingsOwner,
+	}, {
+		name:            "a root that could not be listed",
+		probe:           ncStorageProbe{FolderProbed: true, ServiceAccount: true, DefaultArchive: ncArchiveFacts{Probed: true}},
+		wantOK:          false,
+		wantWhyMentions: ncACLRecordingsRoot,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			accessControlled, ok, why := storageModeFromProbe(tc.probe)
+			if ok != tc.wantOK || (ok && accessControlled != tc.wantAccessCtrl) {
+				t.Fatalf("storageModeFromProbe() = (%t, %t), want (%t, %t): %s", accessControlled, ok, tc.wantAccessCtrl, tc.wantOK, why)
+			}
+			if !strings.Contains(why, tc.wantWhyMentions) {
+				t.Fatalf("why = %q, which never mentions %q — the evidence is what makes the record honest", why, tc.wantWhyMentions)
+			}
+		})
+	}
+}
+
+// A probe that could not read the archive records NOTHING, and says so as a
+// degradation rather than as a missing prerequisite: nothing is absent, an
+// answer simply did not arrive. Recording goes ahead — the alternative is
+// losing a call to a WebDAV timeout — and publishing waits.
+func TestPreflightRecordsNoModeWhenTheProbeCannotAnswer(t *testing.T) {
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), failPropfindAll: true}
+	cfg, path := runStoragePreflight(t, mock, io.Discard)
 
 	if _, resolved := ncStorage.mode(); resolved {
-		t.Fatal("an empty instance decided its own mode")
+		t.Fatal("a mode was resolved from half the evidence")
 	}
 	if readPersistedMode(t, path).Configured() {
-		t.Fatalf("%s recorded a mode nobody chose", storageSettingsFileName)
+		t.Fatalf("%s recorded a mode the probe could not establish", storageSettingsFileName)
 	}
 	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
-	if snap.OK {
-		t.Fatal("substrate reported healthy with no storage model chosen")
+	if snap.OK || snap.State != string(ncSubstrateDegraded) || snap.Step != storageStepModeUnresolved {
+		t.Fatalf("substrate = %+v, want degraded/%s", snap, storageStepModeUnresolved)
 	}
-	if snap.Step != storageStepModeUndecided {
-		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUndecided)
+	if ncAccessSubstrate.recordingRefusal() != "" {
+		t.Fatalf("a recording was refused because a PROPFIND failed: %q", ncAccessSubstrate.recordingRefusal())
+	}
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	if cfg.storageStatus(rt, nil).AwaitingChoice {
+		t.Fatal("awaiting_choice is true; nobody is being asked for a decision here")
 	}
 }
 
@@ -390,19 +616,23 @@ func TestPreflightKeepsAccessControlWhenTheSettingsFileIsUnreadable(t *testing.T
 	if !strings.Contains(logs.String(), "keeping access control ON") {
 		t.Fatalf("the refusal was not explained in the log:\n%s", logs.String())
 	}
-	// And it is UNCONFIRMED, so the Setup tab offers a decision rather than
-	// presenting one: writing a mode is how an administrator leaves this state.
-	// (The step here is the missing prerequisite rather than the unconfirmed
-	// mode, because sanity runs first — a named prerequisite is the more
-	// actionable of the two, and the wizard reports both regardless.)
-	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.ModeConfirmed {
-		t.Fatalf("a mode nobody could read was reported as one somebody chose: %+v", snap)
+	// The step is the missing prerequisite, because sanity runs first and a
+	// named prerequisite is the more actionable of the two things wrong here.
+	// The mode itself is not a question: nothing asks an administrator to
+	// confirm a file Cassini could not read, it simply keeps the safe model and
+	// says so in the log (D-753).
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepServiceAccount && !strings.HasPrefix(snap.Step, "app_missing:") {
+		t.Fatalf("step = %q, want the missing prerequisite named: %+v", snap.Step, snap)
 	}
 }
 
-// The same file, on an instance the assumed mode CAN run: the refusal is then
-// the unconfirmed mode itself, which is what the Setup tab keys on.
-func TestPreflightRefusesToPublishUnderAModeNobodyChose(t *testing.T) {
+// The same file, on an instance the assumed mode CAN run: it publishes.
+//
+// D-708 refused here, with `storage_mode_unconfirmed`, until an administrator
+// confirmed the mode in the Setup tab. A mode that is recorded is a mode that is
+// settled now (D-753), whatever wrote it — including a file this operator could
+// not parse, where the recorded model is the safe one by construction.
+func TestPreflightPublishesUnderAModeNobodyChose(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
@@ -416,18 +646,23 @@ func TestPreflightRefusesToPublishUnderAModeNobodyChose(t *testing.T) {
 	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
 
 	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
-	if snap.OK {
-		t.Fatalf("substrate = %+v, want unusable: the mode governs but nobody chose it", snap)
+	if !snap.OK || snap.Mode != storageModeAccessControlled {
+		t.Fatalf("substrate = %+v, want a usable %s install", snap, storageModeAccessControlled)
 	}
-	if snap.Step != storageStepModeUnconfirmed {
-		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUnconfirmed)
+	if !snap.ModeConfirmed {
+		t.Fatal("a mode in force was reported as one still awaiting an answer")
+	}
+	if ncAccessSubstrate.recordingRefusal() != "" {
+		t.Fatalf("a recording was refused because nobody had confirmed the mode: %q", ncAccessSubstrate.recordingRefusal())
 	}
 	if !mock.saw("PROPFIND", "/"+ncACLRecordingsRoot+"/meetings") {
-		t.Fatal("the probe did not read the archive an administrator has to decide about")
+		t.Fatal("the probe did not read the archive the mode names")
 	}
-	// Nothing was arranged on the strength of a decision nobody took.
-	if mock.saw("PROPPATCH", "/"+ncRecordingsMount) {
-		t.Fatal("the container ACL was rewritten under an unconfirmed mode")
+	// The unreadable file is not overwritten: writing a mode over one nobody
+	// could read is how a bad byte becomes a decision.
+	raw, err := os.ReadFile(path)
+	if err != nil || string(raw) != "{broken" {
+		t.Fatalf("%s = %q (err %v), want the unreadable file untouched", storageSettingsFileName, raw, err)
 	}
 }
 
@@ -628,13 +863,11 @@ func TestPreflightNeverReconsidersARecordedMode(t *testing.T) {
 	if snap.ModeSource != storageModeSourceDefault {
 		t.Fatalf("mode source = %q, want %q — the recorded provenance is carried through, not flattened to \"configured\"", snap.ModeSource, storageModeSourceDefault)
 	}
-	// And a mode an older build recorded on its own is not a decision: it
-	// governs, and it does not publish, until somebody confirms it (D-708).
-	if snap.ModeConfirmed {
-		t.Fatal("a fallback recorded by an earlier build was reported as an administrator's choice")
-	}
-	if snap.Step != storageStepModeUnconfirmed {
-		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUnconfirmed)
+	// And it is not asked about either (D-753): a mode an older build recorded
+	// on its own still governs, and confirming it would be asking an
+	// administrator to agree with a fact.
+	if !snap.ModeConfirmed || snap.Step != "" {
+		t.Fatalf("substrate = %+v, want a settled install with nothing outstanding", snap)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -829,8 +1062,10 @@ func TestPreflightHonoursADeclaredAccessControlOnAnEmptyInstance(t *testing.T) {
 	}
 }
 
-// A misspelt deploy option leaves the install undecided and says so loudly —
-// the value is the operator's typo, not a mode.
+// A misspelt deploy option decides nothing and says so loudly — the value is
+// the operator's typo, not a mode. The install is then resolved exactly as one
+// that declared nothing: from the archive it already has (D-753), which is what
+// this mock's mounted, populated Team folder is.
 func TestPreflightIgnoresAnUnrecognisedDeclaredMode(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
@@ -843,16 +1078,17 @@ func TestPreflightIgnoresAnUnrecognisedDeclaredMode(t *testing.T) {
 	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(&logs, "", 0))
 
 	// A typo is not a mode. It leaves the install exactly as an unset variable
-	// would — it does NOT become access control because the instance happens to
-	// look access-controlled, which is the inference that was removed.
-	if _, resolved := ncStorage.mode(); resolved {
-		t.Fatalf("a rejected value still decided a mode:\n%s", logs.String())
-	}
+	// would, and the provenance recorded says so: the instance answered, the
+	// deploy option did not.
 	if !strings.Contains(logs.String(), "acl_enabld") {
 		t.Fatalf("the rejected value was not named in the log:\n%s", logs.String())
 	}
-	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepModeUndecided {
-		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUndecided)
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.ModeSource != storageModeSourceResolved {
+		t.Fatalf("mode source = %q, want %q — a rejected value must not read back as a declaration:\n%s", snap.ModeSource, storageModeSourceResolved, logs.String())
+	}
+	if snap.Mode != storageModeAccessControlled {
+		t.Fatalf("mode = %q, want the archive in the Team folder adopted", snap.Mode)
 	}
 }
 
@@ -903,14 +1139,16 @@ func TestPreflightRecordsADeclaredModeOnlyOnceItSurvivesTheGates(t *testing.T) {
 	}
 }
 
-// An undecided install is not stuck: the Setup tab's switch is what decides, and
-// it decides from a state where nothing is recorded at all.
+// The upgrade path, end to end: an access-controlled install with nothing
+// recorded comes up on this build, keeps its mode, and is then left alone.
 //
-// This is the recovery path an access-controlled install upgrading into this
-// build walks. The first pass walked it by setting a deploy option, because the
-// fallback had already recorded a mode that shadowed everything else; there is
-// no fallback to shadow anything now.
-func TestAnUndecidedInstanceIsDecidedByTheSwitch(t *testing.T) {
+// The second half is the part worth pinning. The resolution records a settled,
+// clean instance, so the switch an administrator can still reach — the same PUT
+// the Settings section uses — treats a request for the mode already in force as
+// the no-op it is. D-708 reached a CONFIRMATION there instead, because the mode
+// it had resolved was not a decision yet; a second copy of an archive is not a
+// thing to leave one enable edge away.
+func TestAnUnrecordedInstanceIsResolvedAndThenLeftAlone(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	resetStorageMode(t)
@@ -928,26 +1166,35 @@ func TestAnUndecidedInstanceIsDecidedByTheSwitch(t *testing.T) {
 	}
 	cfg := testExAppConfig(mock.server(t).URL)
 
-	// Run 1: nothing recorded, nothing declared. Undecided, and nothing written.
+	// Run 1: nothing recorded, nothing declared. The Team folder holds the
+	// archive, so that is the mode, recorded on the spot.
 	cfg.preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
-	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepModeUndecided {
-		t.Fatalf("step = %q, want %q", snap.Step, storageStepModeUndecided)
-	}
-
-	// The administrator picks access control in the Setup tab.
-	if _, err := cfg.switchStorageMode(context.Background(), true, true, log.New(io.Discard, "", 0)); err != nil {
-		t.Fatalf("switchStorageMode() error = %v", err)
-	}
-
 	if accessControlled, resolved := ncStorage.mode(); !resolved || !accessControlled {
-		t.Fatalf("mode() = (%t, %t), want access control chosen", accessControlled, resolved)
+		t.Fatalf("mode() = (%t, %t), want the Team-folder archive adopted", accessControlled, resolved)
 	}
 	settings := readPersistedMode(t, path)
-	if settings.Source != storageModeSourceUser || !settings.Confirmed() {
-		t.Fatalf("recorded source = %q (confirmed %t), want %q", settings.Source, settings.Confirmed(), storageModeSourceUser)
+	if settings.Source != storageModeSourceResolved || !settings.Confirmed() || !settings.Clean() {
+		t.Fatalf("recorded settings = %+v, want a clean %q resolution", settings, storageModeSourceResolved)
 	}
 	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); !snap.OK {
-		t.Fatalf("substrate = %+v, want usable once a mode has been chosen", snap)
+		t.Fatalf("substrate = %+v, want usable once the mode is resolved", snap)
+	}
+
+	// The administrator opens Settings and asks for the mode it is already in.
+	result, err := cfg.switchStorageMode(context.Background(), true, true, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("switchStorageMode() error = %v", err)
+	}
+	if result.Mode != "" {
+		t.Fatalf("transition = %+v, want the zero result: there is nothing to do", result)
+	}
+	if got := readPersistedMode(t, path); got.Source != storageModeSourceResolved {
+		t.Fatalf("recorded source = %q after a no-op, want %q untouched", got.Source, storageModeSourceResolved)
+	}
+	for _, verb := range []string{"COPY", "MOVE", http.MethodDelete} {
+		if mock.sawMethod(verb) {
+			t.Fatalf("the upgrade issued a %s; an adopted archive is not moved: %v", verb, mock.reqs)
+		}
 	}
 }
 

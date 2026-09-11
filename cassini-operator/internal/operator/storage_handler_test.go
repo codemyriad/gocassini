@@ -439,8 +439,10 @@ func TestStorageFirstRunAcknowledgementDoesNotDecideAMode(t *testing.T) {
 	if body.FirstRun {
 		t.Fatalf("first_run is still true after acknowledging it: %+v", body)
 	}
-	if body.Mode != "" || !body.AwaitingChoice {
-		t.Fatalf("the acknowledgement decided a mode: mode=%q awaiting_choice=%t", body.Mode, body.AwaitingChoice)
+	// awaiting_choice is a literal false since D-753 (nothing asks any more), so
+	// the mode field and the persisted record are what prove no decision was made.
+	if body.Mode != "" {
+		t.Fatalf("the acknowledgement decided a mode: mode=%q", body.Mode)
 	}
 	persisted := readPersistedMode(t, settings)
 	if !persisted.FirstRunAcknowledged || persisted.Configured() {

@@ -1341,11 +1341,11 @@ func TestFirstChoiceAdoptsAnExistingAccessControlledArchive(t *testing.T) {
 	}
 }
 
-// A mode an earlier build recorded still governs reads, but it must not become
-// a user choice until an administrator confirms it. Choosing that same mode is
-// intentionally not a migration: no archive is copied, cleared, or asked for
-// overwrite confirmation.
-func TestSwitchConfirmsTheModeAlreadyInForceWhenItWasUnconfirmed(t *testing.T) {
+// A mode an earlier build recorded on its own governs like any other (D-753),
+// so asking for it again is a no-op rather than the confirmation D-708 needed.
+// Either way the one thing that must not happen is a migration: no archive
+// copied, cleared, or asked about for overwrite.
+func TestSwitchToARecordedModeNobodyChoseMigratesNothing(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	settings := setUnconfirmedStorageMode(t, false)
@@ -1357,20 +1357,22 @@ func TestSwitchConfirmsTheModeAlreadyInForceWhenItWasUnconfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("switchStorageMode(false) error = %v", err)
 	}
-	if !result.Confirmed || !ncStorage.confirmedMode() {
-		t.Fatalf("transition = %+v, confirmed mode = %t; want an explicit confirmation", result, ncStorage.confirmedMode())
+	if result.Mode != "" {
+		t.Fatalf("transition = %+v, want the zero result: the mode asked for is the one in force", result)
 	}
-	if got := readPersistedMode(t, settings); got.Source != storageModeSourceUser || !got.Clean() {
-		t.Fatalf("persisted settings = %+v, want a clean user choice", got)
+	// The provenance is left as it was. Recording `user` over it would claim a
+	// decision out of a button press that did nothing.
+	if got := readPersistedMode(t, settings); got.Source != storageModeSourceDefault || !got.Clean() {
+		t.Fatalf("persisted settings = %+v, want the recorded %q provenance untouched", got, storageModeSourceDefault)
 	}
 	if !mock.has(ncDefaultRecordingsRoot + "/meetings/m1.opus") {
-		t.Fatal("confirmation removed a recording from the mode already in force")
+		t.Fatal("a no-op removed a recording from the mode already in force")
 	}
 	mock.mu.Lock()
 	deletes, copies := len(mock.deleted), len(mock.copies)
 	mock.mu.Unlock()
 	if deletes != 0 || copies != 0 {
-		t.Fatalf("confirmation made %d delete(s) and %d copy/copies, want no migration", deletes, copies)
+		t.Fatalf("a no-op made %d delete(s) and %d copy/copies, want no migration", deletes, copies)
 	}
 }
 
