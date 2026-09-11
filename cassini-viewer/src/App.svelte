@@ -56,6 +56,7 @@
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
   import PreparePanel from "./components/PreparePanel.svelte";
+  import TagManager from "./components/tags/TagManager.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
 
@@ -1144,6 +1145,17 @@
           </svelte:fragment>
         </PreparePanel>
       </aside>
+    {/if}
+
+    <!-- Kept mounted while closed, so a job started before closing still reports. -->
+    {#if dataProvider.updateTag}
+      <TagManager
+        tags={vocabularyTags}
+        provider={dataProvider}
+        open={tagManagerOpen}
+        on:close={() => (tagManagerOpen = false)}
+        on:changed={() => refreshTags(true)}
+      />
     {/if}
   </div>
 {/if}
