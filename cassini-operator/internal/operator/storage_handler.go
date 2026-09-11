@@ -367,15 +367,21 @@ func (c ExAppConfig) attemptAppInstalls(ctx context.Context, logger *log.Logger)
 // acknowledgeStorageFirstRun writes the acknowledgement down and mirrors it into
 // this process.
 //
-// It takes no lock and touches no Nextcloud: the flag is not part of the mode
-// state machine, and SaveStorageSettings carries it across every step of one,
-// so there is nothing here for a concurrent switch to race with.
+// It touches no Nextcloud, but it does take provisionMu: the write is a
+// read-modify-write of the WHOLE storage_settings.json, and a mode switch
+// rewrites the same file under that lock. Without it, an acknowledgement that
+// loaded the file before a switch flipped the mode would write the stale mode
+// back on top of it, which is the one field in there nobody may lose. The cost
+// is that dismissing the dialog waits for a running switch, which is a wait, not
+// a failure.
 //
 // A missing settings path is not an error, for the same reason it is not one in
 // recordStorageMode: an operator without a persistent volume still runs, it just
 // cannot outlive its container — and refusing to dismiss a dialog there would
 // leave that deployment showing it forever.
 func acknowledgeStorageFirstRun(logger *log.Logger) error {
+	provisionMu.Lock()
+	defer provisionMu.Unlock()
 	path := ncStorage.settingsPath()
 	if path == "" {
 		ncStorage.setFirstRunAcknowledged(true)
