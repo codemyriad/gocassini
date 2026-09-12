@@ -8,6 +8,7 @@
     type MeetingCatalogEntry,
   } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
+  import { formatClockTime } from "../core/transcript";
   import {
     ALL_BROWSE_TYPES,
     buildBrowseFeed,
@@ -17,6 +18,7 @@
     type InsightRecord,
   } from "../viewer/insights";
   import InsightCard from "./InsightCard.svelte";
+  import type { MeetingSearchHit } from "../viewer/meetingSearch";
 
   // The browse list (D-420 V1, room-grouped in D-654, insights folded in for
   // D-721). Presentational: the shell owns the catalog, the insights, the room
@@ -83,6 +85,27 @@
   // two components reading one filter cannot each keep their own copy of it.
   export let types: BrowseTypeFilter = ALL_BROWSE_TYPES;
 
+  // Cross-meeting search (D-736). Owned by the shell, like insights: this
+  // component renders what came back and says which state it is in, but never
+  // makes the request — the visible set behind it is resolved per request from
+  // Nextcloud and that is not a presentational concern.
+  //
+  // searchOffered is false for a build with no operator (a standalone export),
+  // where the box narrows names and dates and claims nothing about transcripts.
+  export let searchOffered = false;
+  // "idle" | "searching" | "ok" | "rateLimited" | "indexUnavailable" | "failed"
+  //
+  // Each failure is its own state ON PURPOSE. Folding any of them into an empty
+  // result would tell the reader that nothing was said about what they asked,
+  // which is the opposite of the truth when the archive is simply unreachable.
+  export let searchState: string = "idle";
+  export let searchMessage = "";
+  // Matched moments, by meeting id, in the server's rank order.
+  export let transcriptHits: ReadonlyMap<string, readonly MeetingSearchHit[]> = new Map();
+  // Meetings that matched ONLY on what was said — they are not in the local
+  // name/date filter's output, so the list has to add them.
+  export let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
+
   const dispatch = createEventDispatcher<{
     select: MeetingCatalogEntry;
     pick: MeetingCatalogEntry;
@@ -92,13 +115,32 @@
     clearRoom: void;
     openRooms: void;
     toggleTheme: void;
+    // What was typed. The shell debounces it and asks the operator.
+    query: string;
+    // Open a meeting AT a matched moment, carrying the query so the meeting
+    // view's own in-meeting filter (D-623 slice 7) can show the matching lines
+    // in full — the words are fetched there as the caller, so Nextcloud still
+    // re-checks the ACL on the bytes.
+    openMoment: { entry: MeetingCatalogEntry; startMs: number; query: string };
   }>();
 
-  // Title and date, as it has been since D-420 — the ticket's "keep the
-  // existing date/name filter working inside a room". It deliberately does NOT
-  // reach into transcript text: a hit the list cannot show is a hit that looks
-  // like a bug.
-  $: visibleMeetings = filterMeetingCatalogEntries(meetings, filter);
+  // Title and date, as it has been since D-420. It still does NOT reach into
+  // transcript text: that question is answered by the operator, because the
+  // words are not in this array — which is also what finally makes the old
+  // comment's worry ("a hit the list cannot show") moot, since a hit now
+  // arrives WITH the quote that justifies it.
+  $: nameMatches = filterMeetingCatalogEntries(meetings, filter);
+  // Name/date matches keep the catalog's order and come first; meetings that
+  // matched only on what was said follow, in the server's rank order.
+  $: visibleMeetings = filter.trim() === "" ? nameMatches : [...nameMatches, ...transcriptOnlyMeetings];
+  // The shell owns the request; this only says what was typed.
+  $: dispatch("query", filter);
+  $: isSearching = searchState === "searching";
+  // A failure the reader has to be able to tell from "nothing matched".
+  $: searchProblem =
+    searchState === "rateLimited" || searchState === "indexUnavailable" || searchState === "failed"
+      ? searchMessage || "Search is unavailable right now."
+      : "";
   // Both kinds are narrowed by the same search box, and both counts are
   // computed whether or not their kind is being shown: the count is what
   // answers "is there anything behind that switch?".
@@ -173,10 +215,17 @@
              Meetings toggle is off. -->
         <input
           type="search"
-          placeholder={`Search ${matchNounPlural} by name or date`}
-          aria-label={`Search ${matchNounPlural} by name or date`}
+          placeholder={searchOffered
+            ? `Search ${matchNounPlural} and what was said in them`
+            : `Search ${matchNounPlural} by name or date`}
+          aria-label={searchOffered
+            ? `Search ${matchNounPlural} and what was said in them`
+            : `Search ${matchNounPlural} by name or date`}
           bind:value={filter}
         />
+        {#if isSearching}
+          <span class="search-status" aria-live="polite">Searching…</span>
+        {/if}
       </label>
 
       {#if !ncMode}
@@ -364,12 +413,48 @@
                   </span>
                 {/if}
               </button>
+              <!-- OUTSIDE row-open on purpose: each moment is its own button,
+                   and a button inside a button is invalid markup that browsers
+                   resolve by dropping one of them. -->
+              {#if (transcriptHits.get(meeting.id) ?? []).length > 0}
+                <div class="row-moments">
+                  {#each transcriptHits.get(meeting.id) ?? [] as moment (moment.segmentId + moment.startMs)}
+                    <button
+                      type="button"
+                      class="row-moment"
+                      title={moment.snippet}
+                      on:click={() =>
+                        dispatch("openMoment", {
+                          entry: meeting,
+                          startMs: moment.startMs,
+                          query: filter,
+                        })}
+                    >
+                      <span class="row-moment-at">{formatClockTime(moment.startMs)}</span>
+                      <span class="row-snippet">{moment.snippet || "matched here"}</span>
+                      {#if moment.matched === "alias"}
+                        <!-- Finding "casino" is not the same as finding
+                             "cassini", and a row that hides the difference is
+                             lying by omission. -->
+                        <span class="row-moment-alias" title="Matched a known mistranscription">~</span>
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             </div>
           {/if}
         {/each}
       {/each}
     {/if}
   </div>
+
+  <!-- A search failure is NOT an empty result, and must not read as one: the
+       list below may be showing name matches only, and the reader has to know
+       that the transcript half of their question went unanswered. -->
+  {#if searchProblem && filter.trim() !== ""}
+    <div class="search-problem" role="status">{searchProblem}</div>
+  {/if}
 
   <!-- Sticky footer: load note (only renders when there's an error) -->
   {#if errorMessage && !selectedMeetingId}
@@ -389,6 +474,70 @@
      a hairline rule and three interlocking states (hover, open, group heading),
      which is shorter and easier to keep coherent here than as utility stacks
      on every row. */
+  .search-status {
+    flex: none;
+    font-size: 0.6875rem;
+    color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+    white-space: nowrap;
+  }
+
+  .search-problem {
+    flex: none;
+    margin: 0 1.25rem 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: var(--color-warning-content, inherit);
+    background-color: color-mix(in oklab, var(--color-warning) 18%, transparent);
+    border: 1px solid color-mix(in oklab, var(--color-warning) 40%, transparent);
+  }
+
+  /* The matched moments under a row. `speaker: quote` is the mock's
+     .row-snippet; the timestamps are what make each one reachable. */
+  .row-moments {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-top: 0.25rem;
+  }
+
+  .row-moment {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    padding: 0.1rem 0;
+    background: none;
+    border: 0;
+    font: inherit;
+    font-size: 0.75rem;
+    text-align: left;
+    color: color-mix(in oklab, var(--color-base-content) 75%, transparent);
+    cursor: pointer;
+  }
+
+  .row-moment:hover .row-snippet {
+    color: var(--color-base-content);
+  }
+
+  .row-moment-at {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  }
+
+  .row-snippet {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .row-moment-alias {
+    flex: none;
+    font-size: 0.6875rem;
+    opacity: 0.7;
+  }
+
   .searchbar {
     z-index: 5;
     padding: 1rem 1.25rem 0.75rem;

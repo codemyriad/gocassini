@@ -27,11 +27,16 @@ import {
 } from "./catalog";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import type { InsightRecord } from "./insights";
+import {
+  searchMeetingTranscripts,
+  type MeetingSearchOptions,
+  type MeetingSearchOutcome,
+} from "./meetingSearch";
 
 // Re-exported so a provider implemented outside this package (cassini-app's,
 // which has an operator behind it) can type its methods without reaching past
 // the viewing layer's published entry points.
-export type { MeetingCatalogEntry, InsightRecord };
+export type { MeetingCatalogEntry, InsightRecord, MeetingSearchOptions, MeetingSearchOutcome };
 
 // DataProvider mirrors ONLY what App.svelte actually calls. Every method is
 // keyed off a MeetingCatalogEntry (or nothing) so the caller never has to know
@@ -91,6 +96,19 @@ export interface DataProvider {
   // document is a coherent state — the cards still appear, and the sheet says
   // it cannot show the answer here rather than showing an empty page.
   loadInsightDocument?(id: string): Promise<string>;
+
+  // OPTIONAL (D-736): what was SAID across the meetings this caller can read —
+  // `GET published/search`.
+  //
+  // Optional for the same reason the two above are: a standalone export has no
+  // operator, so there is nothing to ask, and the absence of this method is how
+  // the shell knows to keep offering the local title/date filter alone rather
+  // than a transcript search that can only ever answer nothing.
+  //
+  // The outcome is a tagged union rather than a hit array precisely because
+  // "the archive is unreachable" and "nothing was said about that" must not
+  // arrive here as the same value.
+  searchMeetings?(query: string, options?: MeetingSearchOptions): Promise<MeetingSearchOutcome>;
 }
 
 // resolvePublishedUrl locates a file in the operator's published archive.
@@ -133,6 +151,13 @@ export class StaticCatalogProvider implements DataProvider {
 
   loadCatalog(): Promise<MeetingCatalog | null> {
     return loadMeetingCatalog();
+  }
+
+  // Offered unconditionally: the module itself answers `unsupported` when there
+  // is no operator base to resolve, which is the same answer this method would
+  // have to give and keeps the decision in one place.
+  searchMeetings(query: string, options?: MeetingSearchOptions): Promise<MeetingSearchOutcome> {
+    return searchMeetingTranscripts(query, options);
   }
 
   async loadMeetingForEntry(entry: MeetingCatalogEntry): Promise<LoadedArtifact> {
