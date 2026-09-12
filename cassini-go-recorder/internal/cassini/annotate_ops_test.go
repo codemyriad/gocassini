@@ -356,6 +356,65 @@ func TestAnnotationOpsRejectInvalidOps(t *testing.T) {
 	}
 }
 
+func TestAnnotationOpsMergeTag(t *testing.T) {
+	merge := `{"ops":[{"op":"merge-tag","tagId":"tag_hiring","into":{"id":"tag_budget","label":"Budget"}}]}`
+
+	// Into a tag the file has: every mark moves, keeping its id, and the source goes.
+	outcome := applyTestOps(t, annotateTestDoc(), merge)
+	if !slices.Equal(annotateTagIDs(outcome.Doc), []string{"tag_budget"}) || !outcome.Changed {
+		t.Fatalf("tags = %v, want only the target", annotateTagIDs(outcome.Doc))
+	}
+	for _, item := range outcome.Doc.Items {
+		if item.TagID != "tag_budget" {
+			t.Fatalf("mark %s still carries %s", item.ID, item.TagID)
+		}
+	}
+	if len(outcome.Doc.Items) != 3 || len(outcome.Added) != 0 || len(outcome.Removed) != 0 {
+		t.Fatalf("items=%v added=%v removed=%v; a move keeps every mark", annotateItemIDs(outcome.Doc), outcome.Added, outcome.Removed)
+	}
+
+	// Into a tag the file lacks: it is defined from the op.
+	outcome = applyTestOps(t, annotateTestDoc(), `{"ops":[{"op":"merge-tag","tagId":"tag_budget","into":{"id":"tag_money","label":" Money "}}]}`)
+	if !slices.Contains(outcome.Doc.Tags, portable.AnnotationTag{ID: "tag_money", Label: "Money"}) || slices.Contains(annotateTagIDs(outcome.Doc), "tag_budget") {
+		t.Fatalf("tags = %+v, want tag_money defined and tag_budget gone", outcome.Doc.Tags)
+	}
+
+	// A mark on a target the destination already covers is a duplicate.
+	outcome = applyTestOps(t, annotateTestDoc(), `{"ops":[
+		{"op":"mark","tag":{"id":"tag_budget"},"target":{"kind":"meeting"}},
+		{"op":"merge-tag","tagId":"tag_hiring","into":{"id":"tag_budget","label":"Budget"}}]}`)
+	if !slices.Equal(outcome.Removed, []string{"mk_1"}) || len(outcome.Doc.Items) != 3 {
+		t.Fatalf("removed=%v items=%v; want mk_1 dropped as a duplicate", outcome.Removed, annotateItemIDs(outcome.Doc))
+	}
+
+	// Again, or on a file without the source: nothing changes.
+	again := applyTestOps(t, outcome.Doc, merge)
+	if again.Changed || !slices.Equal(again.NotFound, []string{"tag_hiring"}) {
+		t.Fatalf("a repeated merge: changed=%v notFound=%v", again.Changed, again.NotFound)
+	}
+}
+
+func TestAnnotationOpsMergeTagRefusals(t *testing.T) {
+	for name, raw := range map[string]string{
+		"no source":       `{"op":"merge-tag","into":{"id":"tag_x","label":"x"}}`,
+		"no destination":  `{"op":"merge-tag","tagId":"tag_hiring"}`,
+		"no label":        `{"op":"merge-tag","tagId":"tag_hiring","into":{"id":"tag_x"}}`,
+		"into itself":     `{"op":"merge-tag","tagId":"tag_hiring","into":{"id":"tag_hiring","label":"hiring"}}`,
+		"another's label": `{"op":"merge-tag","tagId":"tag_hiring","into":{"id":"tag_x","label":"BUDGET"}}`,
+	} {
+		ops, err := parseAnnotateOps([]byte(`{"ops":[` + raw + `]}`))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", name, err)
+		}
+		if _, err := applyAnnotationOps(annotateTestDoc(), ops, annotateTestDurationMS, annotateTestStamp()); annotateExitCodeFor(err) != annotateExitInvalid {
+			t.Errorf("%s: want exit 4, got %v", name, err)
+		}
+	}
+	if _, err := parseAnnotateOps([]byte(`{"ops":[{"op":"merge-tag","tagId":"tag_hiring","into":{"id":"tag_x","label":"x","color":"red"}}]}`)); annotateExitCodeFor(err) != annotateExitInvalid {
+		t.Errorf("an unknown member of into must be refused, got %v", err)
+	}
+}
+
 func TestParseAnnotateOpsIsStrict(t *testing.T) {
 	cases := []struct {
 		name string

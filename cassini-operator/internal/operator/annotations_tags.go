@@ -38,9 +38,16 @@ func parseTagParam(query url.Values) (string, error) {
 // tagVocabularyResponse is GET annotations/tags.
 type tagVocabularyResponse struct {
 	Tags []tagVocabularyEntry `json:"tags"`
+	// Meetings is each visible meeting with a resolved mark, by catalog id.
+	Meetings []meetingTagsEntry `json:"meetings"`
 	// Coverage: Indexed below Visible means some meetings' marks could not be
 	// read, and the counts are partial.
 	Coverage annotationCoverage `json:"coverage"`
+}
+
+type meetingTagsEntry struct {
+	MeetingID string            `json:"meetingId"`
+	Tags      []meetingTagMarks `json:"tags"`
 }
 
 // serveTags answers GET annotations/tags: the tag vocabulary across the caller's
@@ -81,5 +88,18 @@ func (s *annotationService) serveTags(w http.ResponseWriter, r *http.Request, ca
 		writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
 		return
 	}
-	writeJSON(w, http.StatusOK, tagVocabularyResponse{Tags: tags, Coverage: coverage})
+	byMeeting, err := store.meetingTags(r.Context(), visible)
+	if err != nil {
+		s.logf("annotations tags: meeting tags caller=%s: %v", caller, err)
+		writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
+		return
+	}
+	meetings := []meetingTagsEntry{}
+	for _, entry := range entries {
+		if marks := byMeeting[entry.opusName]; len(marks) > 0 {
+			meetings = append(meetings, meetingTagsEntry{MeetingID: entry.id, Tags: marks})
+		}
+	}
+	s.withStyles(tags)
+	writeJSON(w, http.StatusOK, tagVocabularyResponse{Tags: tags, Meetings: meetings, Coverage: coverage})
 }

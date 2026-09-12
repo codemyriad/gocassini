@@ -27,6 +27,12 @@
     type JudgedDisplaySegment,
   } from "../core/transcript";
   import TranscriptWords from "./TranscriptWords.svelte";
+  import MeetingTags from "./marking/MeetingTags.svelte";
+  import TranscriptFrame from "./marking/TranscriptFrame.svelte";
+  import { createMarksSession, type ApplyAnnotations, type LoadAnnotations } from "./marking/session";
+  import { findStops } from "../core/find";
+  import { wordsByTime } from "../core/marking";
+  import type { AnnotationResult, VocabularyTag } from "../viewer/annotations";
   import { createWordHighlighter } from "../core/wordHighlight";
   import {
     keyboardEventTargetsControl,
@@ -101,11 +107,23 @@
   // absent, and a count is a disclosure that it existed.
   export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
 
+  // Tags and marks (D-746), bound by the shell to the current meeting. Without a
+  // loader, as in the standalone export, there is no tagging here at all.
+  export let tagVocabulary: VocabularyTag[] = [];
+  export let loadAnnotations: LoadAnnotations | null = null;
+  export let applyAnnotations: ApplyAnnotations | null = null;
+
   const dispatch = createEventDispatcher<{
     back: void;
     enriched: MeetingCatalogEntry;
     openInsight: InsightRecord;
+    tagsChanged: AnnotationResult;
   }>();
+  const marks = createMarksSession((result) => dispatch("tagsChanged", result));
+  let openedMarksFor: string | null = null;
+  let headerHeight = 0;
+  let scrollHeight = 0;
+  let playerHeight = 0;
 
   type DisplaySegment = JudgedDisplaySegment;
 
@@ -797,6 +815,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
     stopPlaybackClock();
+    void marks.close();
   });
 
   // Reactive `bundled`: the shell can flip this at any time — an embedded
@@ -834,6 +853,12 @@
     errorMessage = "";
   }
 
+  $: marksFor = loadAnnotations ? (meeting?.id ?? "") : null;
+  $: if (marksFor !== openedMarksFor) {
+    openedMarksFor = marksFor;
+    void marks.open(loadAnnotations, applyAnnotations);
+  }
+
   $: summaryHtml = renderSummaryHtml(summaryMarkdown);
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
   // Reading order, then EFFECTIVE timings, then overlap. The order matters:
@@ -844,6 +869,7 @@
   // loaded artifact keeps its canonical times and every word keeps its original
   // START — seek targets never move.
   let transcriptQuery = "";
+  let onlyMatching = false;
 
   $: displaySegments = transcriptIndex
     ? sortBlocksInReadingOrder(
@@ -856,12 +882,10 @@
   // The seam this was always for. The filter lives in core/transcript.ts
   // because the interesting half is the mapping from matched canonical segments
   // to rendered blocks, and that deserves a test that does not need a DOM.
-  $: visibleSegments = filterDisplaySegmentsByQuery(
-    transcriptIndex,
-    displaySegments,
-    transcriptQuery,
-  );
-  $: isFiltering = Boolean(transcriptIndex) && transcriptQuery.trim().length > 0;
+  // Hiding what does not match is opt-in; find itself only highlights.
+  $: visibleSegments = onlyMatching
+    ? filterDisplaySegmentsByQuery(transcriptIndex, displaySegments, transcriptQuery)
+    : displaySegments;
   // Rows are TURNS, not blocks: the producer flushes a segment at every speaker
   // change, so one sentence spoken over somebody else arrives as a dozen
   // fragments and only the turn they came from is worth reading (D-693).
@@ -870,6 +894,8 @@
   // a lookup, so covering blocks that are currently hidden costs a few map
   // entries, while missing one a row still renders would drop its words (D-734).
   $: wordPartsByBlock = new Map(displaySegments.map((block) => [block.id, transcriptWordParts(block)]));
+  $: timedWords = wordsByTime([...wordPartsByBlock.values()].flat());
+  $: findStopList = findStops(transcriptIndex, transcriptRows, wordPartsByBlock, transcriptQuery);
   $: activeFollowRowKey = followRowKeyForBlocks(transcriptRows, activeSegments);
   $: continuationKeys = continuationRowKeys(transcriptRows);
   // Highlight membership runs on the same effective audible spans the overlap
@@ -918,7 +944,7 @@
        even when the (absolutely positioned) player overlaps the scroll.
        `scrollbar-gutter: stable` reserves the scrollbar gutter persistently
        so content width never shifts as scrollbar appears/disappears. -->
-  <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
+  <div bind:clientHeight={scrollHeight} class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
     <!-- Sticky header — the meeting's identity, and the transcript flows under
          it. It used to be a strip of status badges with the title in a second,
          SCROLLING header below, so the one thing that says which meeting you
@@ -928,7 +954,7 @@
          Opaque rather than translucent: this panel sits over the browse list,
          and a blurred header with a meeting list showing through it reads as
          two pages at once. -->
-    <header class="sticky top-0 z-20 flex-none min-h-12 px-4 py-3 min-[981px]:px-8 bg-base-200 border-b border-base-300">
+    <header class="sticky top-0 z-20 flex-none min-h-12 px-4 py-3 min-[981px]:px-8 bg-base-200 border-b border-base-300" bind:offsetHeight={headerHeight}>
     <div class="flex items-center gap-2 min-w-0">
     {#if !isDesktop && !inSheet}
       <button
@@ -1042,6 +1068,7 @@
           </span>
         {/if}
       </div>
+      <MeetingTags session={marks} vocabulary={tagVocabulary} />
     {/if}
   </header>
 
@@ -1133,33 +1160,31 @@
       </div>
     </div>
 
-    {#if displaySegments.length > 0}
-      <label class="flex items-center gap-2">
-        <span class="sr-only">Find in this transcript</span>
-        <input
-          bind:value={transcriptQuery}
-          class="input input-sm w-full border-base-300 shadow-none"
-          placeholder="Find in this transcript"
-          type="search"
-        />
-        {#if isFiltering}
-          <span class="whitespace-nowrap text-xs text-base-content/70">
-            {visibleSegments.length} of {displaySegments.length}
-          </span>
-        {/if}
-      </label>
-    {/if}
-
     {#if displaySegments.length === 0}
       <p class="text-base-content/70 text-sm leading-normal">No transcript loaded yet.</p>
-    {:else if visibleSegments.length === 0}
+    {:else}
+      <TranscriptFrame
+        session={marks}
+        vocabulary={tagVocabulary}
+        words={timedWords}
+        rows={transcriptRows}
+        stops={findStopList}
+        bind:query={transcriptQuery}
+        bind:onlyMatching
+        durationMs={clampedDurationMs}
+        playheadMs={clampedCurrentTimeMs}
+        seek={seekTo}
+        stickTop={headerHeight}
+        viewHeight={scrollHeight - headerHeight - playerHeight}
+      >
+      {#if visibleSegments.length === 0}
       <!-- Distinct from the line above on purpose: "no transcript" and "nothing
            matched what you typed" are different facts, and the first one read as
            an answer to a search would say the meeting has no words in it. -->
       <p class="text-base-content/70 text-sm leading-normal">
         Nothing in this transcript matches “{transcriptQuery.trim()}”.
       </p>
-    {:else}
+      {:else}
       <div
         bind:this={transcriptPane}
         aria-label="Transcript"
@@ -1254,8 +1279,10 @@
           </article>
         {/each}
       </div>
+      {/if}
+      </TranscriptFrame>
 
-      {#if transcriptIndex && (timingPrecision || artifactMetadata)}
+      {#if visibleSegments.length > 0 && transcriptIndex && (timingPrecision || artifactMetadata)}
         <section class="grid gap-3 mt-8">
           <div class="border-b border-base-300 pb-3">
             <p class="text-lg font-medium text-base-content">
@@ -1359,6 +1386,7 @@
   <!-- right-[15px] matches the scrollbar gutter on the sibling scroll
        container so the player aligns with transcript content's right edge. -->
   <footer
+    bind:offsetHeight={playerHeight}
     class="absolute bottom-0 left-0 right-0 min-[981px]:right-[15px] z-30 p-2 min-[981px]:px-4 min-[981px]:pb-4 pointer-events-none [will-change:opacity]"
     transition:fade={playerFadeConfig()}
   >
@@ -1467,6 +1495,14 @@
     <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 items-baseline">
       <dt><kbd class="kbd kbd-sm">Space</kbd></dt>
       <dd class="text-base-content/80">Play / pause audio</dd>
+      <dt><kbd class="kbd kbd-sm">Ctrl</kbd> <kbd class="kbd kbd-sm">F</kbd></dt>
+      <dd class="text-base-content/80">Find in this meeting; Enter and Shift+Enter step through</dd>
+      {#if $marks.status === "ready"}
+        <dt><kbd class="kbd kbd-sm">Enter</kbd> / <kbd class="kbd kbd-sm">Esc</kbd></dt>
+        <dd class="text-base-content/80">Tag the selected stretch / clear it</dd>
+        <dt><kbd class="kbd kbd-sm">←</kbd> <kbd class="kbd kbd-sm">→</kbd></dt>
+        <dd class="text-base-content/80">Move a stretch's marker a word; with Shift, to the next pause</dd>
+      {/if}
     </dl>
     <div class="modal-action">
       <form method="dialog">

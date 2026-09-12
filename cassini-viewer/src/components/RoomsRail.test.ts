@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { render } from "svelte/server";
 
+import type { VocabularyTag } from "../viewer/annotations";
+import RoomsRail from "./RoomsRail.svelte";
 import roomsRailSource from "./RoomsRail.svelte?raw";
 
 describe("RoomsRail Show filter", () => {
@@ -48,5 +51,48 @@ describe("RoomsRail Show filter", () => {
     // are showing and derives every count here.
     expect(roomsRailSource).toContain('dispatch("toggleType", "meetings")');
     expect(roomsRailSource).not.toContain("toggleBrowseType");
+  });
+});
+
+describe("RoomsRail tag filter", () => {
+  const tag = (tagId: string, meetings: number, color: VocabularyTag["color"]): VocabularyTag => ({
+    tagId,
+    namespace: "ns",
+    label: tagId,
+    meetings,
+    marks: meetings,
+    color,
+    icon: "",
+    changedBy: "",
+    changedAtUtc: "",
+  });
+  const tags = [tag("budget", 2, "teal"), tag("hiring", 5, "red")];
+  const html = (props: Record<string, unknown>) =>
+    render(RoomsRail as never, { props: { tagsOffered: true, tags, ...props } } as never).body;
+
+  it("lists every tag in its colour with its meeting count, most used first, none ticked", () => {
+    const rail = html({});
+    expect(rail).toMatch(/data-tag-color="red"[\s\S]*>hiring<[\s\S]*>5<[\s\S]*data-tag-color="teal"[\s\S]*>budget</);
+    expect(rail).not.toContain(" checked");
+    expect(rail).toContain("Manage tags");
+  });
+
+  it("offers any or all only once two tags are ticked", () => {
+    expect(html({ selectedTagIds: ["hiring"] })).not.toContain("of them");
+    expect(html({ selectedTagIds: ["hiring", "budget"] })).toMatch(/aria-pressed="true"[^>]*>any of them/);
+  });
+
+  it("says quietly when tags are unavailable", () => {
+    expect(html({ tags: null, tagsFailed: true })).toContain("Tags are unavailable right now.");
+  });
+
+  it("offers no tag filter where the build cannot tag", () => {
+    const rail = render(RoomsRail as never, { props: {} } as never).body;
+    expect(rail).not.toContain(">Tags</h2>");
+    expect(rail).not.toContain("Manage tags");
+  });
+
+  it("asks the shell to open the tag manager", () => {
+    expect(roomsRailSource).toContain('dispatch("manageTags")');
   });
 });

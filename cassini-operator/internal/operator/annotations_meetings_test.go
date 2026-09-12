@@ -230,6 +230,10 @@ func (f *fakeAnnotationIndex) ResolveLabel(_ context.Context, label string, _ []
 	return id, ok, nil
 }
 
+func (f *fakeAnnotationIndex) TagVisible(context.Context, string, []string) (bool, error) {
+	return true, nil
+}
+
 func (f *fakeAnnotationIndex) Namespace(context.Context) (string, error) {
 	return annTestNamespace, nil
 }

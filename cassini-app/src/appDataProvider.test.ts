@@ -181,3 +181,94 @@ describe("AppDataProvider insights", () => {
     );
   });
 });
+
+describe("AppDataProvider annotations", () => {
+  const job = {
+    id: "job_1",
+    kind: "merge",
+    tagId: "tag_a",
+    into: "tag_b",
+    state: "running",
+    total: 3,
+    done: 0,
+    failed: [],
+    actor: "alice",
+    startedAtUtc: "2026-09-11T10:00:00Z",
+  };
+  const calls = (fetchMock: ReturnType<typeof respondWith>) =>
+    (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(([url, init]) => ({
+      path: url.replace(PROXY_BASE, ""),
+      method: init.method ?? "GET",
+      body: init.body,
+      cache: init.cache,
+    }));
+
+  it("reads the vocabulary beside the published archive, past the proxy's cache", async () => {
+    const fetchMock = respondWith(JSON.stringify({ tags: [], meetings: [], coverage: { visible: 0, indexed: 0 } }));
+
+    await new AppDataProvider().loadTagVocabulary();
+
+    expect(calls(fetchMock)).toEqual([
+      { path: "annotations/tags", method: "GET", body: undefined, cache: "no-store" },
+    ]);
+  });
+
+  it("reads and writes one meeting's marks by its catalog id", async () => {
+    const fetchMock = respondWith(JSON.stringify({ meetingId: "m 1", revision: 1, annotations: null, resolved: null }));
+    const provider = new AppDataProvider();
+    const request = { ops: [{ op: "unmark" as const, itemId: "mk_1" }], expectRevision: 1 };
+
+    await provider.loadMeetingAnnotations(entry("m 1"));
+    await provider.applyAnnotationOps(entry("m 1"), request);
+
+    expect(calls(fetchMock)).toEqual([
+      { path: "annotations/meetings/m%201", method: "GET", body: undefined, cache: "no-store" },
+      { path: "annotations/meetings/m%201", method: "POST", body: JSON.stringify(request), cache: "no-store" },
+    ]);
+  });
+
+  it("changes a tag across the archive and hands back the job doing it", async () => {
+    const fetchMock = respondWith(JSON.stringify({ tag: {}, job }));
+    const provider = new AppDataProvider();
+
+    await provider.updateTag("tag_a", { color: "red" });
+    await expect(provider.mergeTag("tag_a", "tag_b")).resolves.toEqual(job);
+    await expect(provider.deleteTag("tag_a")).resolves.toEqual(job);
+
+    expect(calls(fetchMock).map(({ path, method, body }) => [path, method, body])).toEqual([
+      ["annotations/tags/tag_a", "POST", '{"color":"red"}'],
+      ["annotations/tags/tag_a/merge", "POST", '{"into":"tag_b"}'],
+      ["annotations/tags/tag_a/delete", "POST", "{}"],
+    ]);
+  });
+
+  it("polls the tag job, and reads no job as null", async () => {
+    const fetchMock = respondWith(JSON.stringify({ job: null }));
+
+    await expect(new AppDataProvider().loadTagJob()).resolves.toBeNull();
+    expect(calls(fetchMock)).toEqual([
+      { path: "annotations/tags/job", method: "GET", body: undefined, cache: "no-store" },
+    ]);
+  });
+
+  it("carries the operator's error code, and the tag a label already belongs to", async () => {
+    respondWith(JSON.stringify({ error: "label-exists", tagId: "tag_b" }), { status: 409 });
+
+    await expect(new AppDataProvider().updateTag("tag_a", { label: "budget" })).rejects.toMatchObject({
+      name: "AnnotationError",
+      status: 409,
+      code: "label-exists",
+      tagId: "tag_b",
+    });
+  });
+
+  it("keeps the status when the refusal is not JSON", async () => {
+    respondWith("404 page not found\n", { status: 404 });
+
+    await expect(new AppDataProvider().loadTagVocabulary()).rejects.toMatchObject({
+      name: "AnnotationError",
+      status: 404,
+      code: "",
+    });
+  });
+});

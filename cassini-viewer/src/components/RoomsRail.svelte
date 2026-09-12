@@ -2,6 +2,10 @@
   import { createEventDispatcher } from "svelte";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
+  import { matchTags, type VocabularyTag } from "../viewer/annotations";
+  import type { TagMatch } from "../viewer/listTags";
+  import { colorFor } from "../viewer/tagPalette";
+  import TagIcon from "./tags/TagIcon.svelte";
 
   // The rooms nav (D-654), and under it the two kinds the list holds.
   //
@@ -34,11 +38,24 @@
   export let meetingCount = 0;
   export let insightCount = 0;
 
+  export let tagsOffered = false;
+  // Null until the vocabulary loads; the operator answers 503 while it first indexes.
+  export let tags: readonly VocabularyTag[] | null = null;
+  export let tagsFailed = false;
+  export let selectedTagIds: readonly string[] = [];
+  export let tagMatch: TagMatch = "any";
+
   const dispatch = createEventDispatcher<{
     select: string | null;
     close: void;
     toggleType: BrowseType;
+    toggleTag: string;
+    tagMatch: TagMatch;
+    manageTags: void;
   }>();
+
+  const TAG_MATCHES: TagMatch[] = ["any", "all"];
+  $: tagRows = tags ? matchTags(tags, "") : null;
 
   function select(key: string | null) {
     dispatch("select", key);
@@ -75,6 +92,49 @@
       </button>
     {/each}
   </div>
+
+  {#if tagsOffered}
+    <div class="rail-head rail-head-sub rail-head-row">
+      <h2>Tags</h2>
+      <button type="button" class="manage-tags" on:click={() => dispatch("manageTags")}>
+        Manage tags
+      </button>
+    </div>
+    {#if tagRows}
+      <div class="rail-list" role="group" aria-label="Filter by tag">
+        {#each tagRows as tag (tag.tagId)}
+          <label class="type-row" data-tag-color={colorFor(tag)}>
+            <input
+              type="checkbox"
+              class="tag-box"
+              checked={selectedTagIds.includes(tag.tagId)}
+              on:change={() => dispatch("toggleTag", tag.tagId)}
+            />
+            <span class="tag-mark"><TagIcon icon={tag.icon} /></span>
+            <span class="room-name">{tag.label}</span>
+            <span class="room-count">{tag.meetings}</span>
+          </label>
+        {:else}
+          <p class="rail-note">No tags yet.</p>
+        {/each}
+      </div>
+      {#if selectedTagIds.length >= 2}
+        <div class="join mx-4 mt-1.5" role="group" aria-label="Show meetings with">
+          {#each TAG_MATCHES as mode}
+            <button
+              type="button"
+              class="btn btn-xs join-item flex-1"
+              class:btn-active={tagMatch === mode}
+              aria-pressed={tagMatch === mode}
+              on:click={() => dispatch("tagMatch", mode)}>{mode} of them</button
+            >
+          {/each}
+        </div>
+      {/if}
+    {:else if tagsFailed}
+      <p class="rail-note">Tags are unavailable right now.</p>
+    {/if}
+  {/if}
 
   {#if insightsOffered}
     <h2 class="rail-head rail-head-sub">Show</h2>
@@ -211,6 +271,42 @@
   .type-row input[data-type="insights"]:checked::after {
     border-color: var(--color-secondary-content);
   }
+  .type-row input.tag-box:checked {
+    background-color: var(--tag);
+    border-color: var(--tag);
+  }
+  .type-row input.tag-box:checked::after {
+    border-color: var(--color-base-100);
+  }
+  .tag-mark {
+    display: inline-flex;
+    color: var(--tag);
+  }
+
+  .rail-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .manage-tags {
+    padding: 0;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    font-size: 0.75rem;
+    letter-spacing: normal;
+    text-transform: none;
+    color: inherit;
+  }
+  .manage-tags:hover {
+    color: var(--color-base-content);
+  }
+  .rail-note {
+    padding: 4px 16px;
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+
   .type-row input[type="checkbox"]:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;

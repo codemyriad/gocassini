@@ -451,6 +451,7 @@ hint=undo this batch's marks with {"op": "undo-operation", "operationId": "op_�
 | `unmark-tag` | Removes every mark of one `tagId` on this meeting, or only those with a given `target` |
 | `undo-operation` | Removes every mark one batch added, by its `operationId` |
 | `relabel` | Renames a tag on this meeting only |
+| `merge-tag` | Moves every mark of one `tagId` on this meeting to `into` (`{"id": …, "label": …}`), dropping any that would duplicate one `into` already has |
 
 Before an agent writes marks, know that:
 

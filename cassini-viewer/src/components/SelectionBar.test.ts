@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { render } from "svelte/server";
 
+import SelectionBar from "./SelectionBar.svelte";
 import selectionBarSource from "./SelectionBar.svelte?raw";
 
 // The viewer's suite runs in node with no DOM to render a component into, so
@@ -51,5 +53,23 @@ describe("SelectionBar", () => {
     expect(selectionBarSource).toContain('dispatch("clear")');
     expect(selectionBarSource).toContain('dispatch("prepare")');
     expect(selectionBarSource).not.toContain("let selection");
+  });
+});
+
+describe("SelectionBar tagging", () => {
+  const html = (props: Record<string, unknown>) =>
+    render(SelectionBar as never, { props: { count: 5, ...props } } as never).body;
+
+  it("offers Tag only where tagging is", () => {
+    expect(html({})).not.toContain("selbar-tag");
+    expect(html({ tags: [] })).toMatch(/class="selbar-tag[^"]*"[^>]*aria-haspopup="dialog"/);
+  });
+
+  it("opens the picker over every selected meeting, ticked and half-ticked", () => {
+    expect(selectionBarSource).toMatch(/multiple\s+selected=\{tagSelected\}\s+mixed=\{tagMixed\}\s+anchor=\{tagButton\}/);
+  });
+
+  it("says plainly how a bulk tag went", () => {
+    expect(html({ tags: [], tagReport: "Tagged 4 of 5 — 1 failed" })).toContain("Tagged 4 of 5 — 1 failed");
   });
 });

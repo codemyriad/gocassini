@@ -188,6 +188,21 @@ describe("StaticCatalogProvider", () => {
     expect(provider.loadInsightDocument).toBeUndefined();
   });
 
+  it("does not offer tags, because only an operator writes marks", () => {
+    const provider: Record<string, unknown> = new StaticCatalogProvider() as never;
+    for (const method of [
+      "loadTagVocabulary",
+      "loadMeetingAnnotations",
+      "applyAnnotationOps",
+      "updateTag",
+      "mergeTag",
+      "deleteTag",
+      "loadTagJob",
+    ]) {
+      expect(provider[method], method).toBeUndefined();
+    }
+  });
+
   it("gives each provider instance its own store so cache state is not shared", async () => {
     const providerA = new StaticCatalogProvider();
     const providerB = new StaticCatalogProvider();

@@ -6,18 +6,28 @@ import (
 )
 
 // writeFileAtomic writes body to path through a temp file in the same
-// directory followed by a rename, so a crash or failed write mid-update never
-// leaves a truncated or partially written file at path.
+// directory, synced and then renamed, so a crash or failed write mid-update
+// never leaves a truncated or partially written file at path.
 func writeFileAtomic(path string, body []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, body, mode); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	_, err = f.Write(body)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
 		_ = os.Remove(tmp)
-		return err
 	}
-	return nil
+	return err
 }
 
 func validateExecutable(path string) error {

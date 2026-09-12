@@ -39,10 +39,31 @@
     type BrowseTypeFilter,
     type InsightRecord,
   } from "./viewer/insights";
+  import {
+    describeAnnotationError,
+    tagsByMeeting,
+    type AnnotationRequest,
+    type MeetingAnnotations,
+    type TagPick,
+    type TagVocabulary,
+  } from "./viewer/annotations";
+  import {
+    applyEach,
+    bulkReport,
+    createTagLoader,
+    createWriteQueue,
+    filterByTags,
+    planBulkTag,
+    wholeTagState,
+    withMeetingResult,
+    type MeetingTags,
+    type TagMatch,
+  } from "./viewer/listTags";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
   import PreparePanel from "./components/PreparePanel.svelte";
+  import TagManager from "./components/tags/TagManager.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
 
@@ -145,6 +166,15 @@
   let insightDocumentKey = "";
   let insightDocumentError = "";
   let insightDocumentLoading = false;
+
+  // Tags (D-746). A failed reload keeps the last vocabulary that loaded.
+  let tagVocabulary: TagVocabulary | null = null;
+  let tagsFailed = false;
+  let selectedTagIds: string[] = [];
+  let tagMatch: TagMatch = "any";
+  let tagNotice = "";
+  let tagReport = "";
+  let tagManagerOpen = false;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
@@ -291,6 +321,7 @@
   // open, while the room chip changes, and while the search narrows past it.
   function handlePick(event: CustomEvent<MeetingCatalogEntry>) {
     selection = toggleSelected(selection, event.detail.id);
+    tagReport = "";
     if (selection.ids.length === 0) {
       // Nothing left to prepare; the panel would be describing an empty set.
       prepareOpen = false;
@@ -300,6 +331,77 @@
   function handleClearSelection() {
     selection = clearSelection();
     prepareOpen = false;
+    tagReport = "";
+  }
+
+  const tagLoader = createTagLoader(
+    () => dataProvider.loadTagVocabulary!(),
+    (vocabulary) => {
+      tagVocabulary = vocabulary ?? tagVocabulary;
+      tagsFailed = !vocabulary;
+    },
+  );
+
+  // On open, on return to the tab and after writes; not on the catalog's timer.
+  function refreshTags(fresh = false) {
+    if (dataProvider.loadTagVocabulary) {
+      void tagLoader.reload(fresh);
+    }
+  }
+
+  const queueTagWrite = createWriteQueue(() => refreshTags(true));
+
+  function applied(result: MeetingAnnotations) {
+    if (tagVocabulary) {
+      tagVocabulary = withMeetingResult(tagVocabulary, result);
+    }
+  }
+
+  // Both plan from what the picker showed when it was clicked.
+  function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
+    const { remove, request } = planBulkTag([meeting], meetingTags, pick);
+    tagNotice = "";
+    void queueTagWrite(async () => {
+      try {
+        applied(await dataProvider.applyAnnotationOps!(meeting, request));
+      } catch (error) {
+        tagNotice = `Could not ${remove ? "untag" : "tag"} “${meeting.title}”: ${describeAnnotationError(error)}`;
+      }
+    });
+  }
+
+  function tagSelection(pick: TagPick) {
+    const plan = planBulkTag(pickedMeetings, meetingTags, pick);
+    void queueTagWrite(async () => {
+      const { done } = await applyEach(plan.targets, async (entry) =>
+        applied(await dataProvider.applyAnnotationOps!(entry, plan.request)),
+      );
+      tagReport = bulkReport(plan.remove, done, plan.targets.length);
+    });
+  }
+
+  function toggleTagFilter(tagId: string) {
+    selectedTagIds = activeTagIds.includes(tagId)
+      ? activeTagIds.filter((id) => id !== tagId)
+      : [...activeTagIds, tagId];
+  }
+
+  // Bound to an id rather than the entry, so a catalog refresh does not hand the meeting view new functions.
+  function bindAnnotations(provider: DataProvider, meetingId: string) {
+    if (!meetingId || !provider.loadMeetingAnnotations || !provider.applyAnnotationOps) {
+      return { load: null, apply: null };
+    }
+    const entry = async () => {
+      const found = catalogMeetings.find((meeting) => meeting.id === meetingId);
+      if (!found) {
+        throw new Error(`Meeting not found in catalog: ${meetingId}`);
+      }
+      return found;
+    };
+    return {
+      load: async () => provider.loadMeetingAnnotations!(await entry()),
+      apply: async (request: AnnotationRequest) => provider.applyAnnotationOps!(await entry(), request),
+    };
   }
 
   // syncSelectionToCatalog is called from a reactive statement rather than
@@ -614,6 +716,15 @@
     }
   }
 
+  // Tags reload on return rather than on the timer: each load spends one of the
+  // caller's searches (annotations/tags shares search's rate budget).
+  function refreshOnReturn() {
+    refreshCatalogWhenVisible();
+    if (document.visibilityState === "visible") {
+      refreshTags();
+    }
+  }
+
   $: roomBuckets = buildRoomBuckets(catalogMeetings);
   // A room the catalog no longer describes (its last meeting was removed, or a
   // refresh re-tagged it) must not leave the list narrowed to nothing with no
@@ -627,7 +738,24 @@
   $: selectedRoomName =
     roomBuckets.find((bucket: RoomBucket) => bucket.key === selectedRoomKey)?.name ??
     null;
-  $: roomMeetings = filterMeetingsByRoom(catalogMeetings, selectedRoomKey);
+  $: canTag =
+    typeof dataProvider.loadTagVocabulary === "function" &&
+    typeof dataProvider.applyAnnotationOps === "function";
+  $: vocabularyTags = canTag ? (tagVocabulary?.tags ?? null) : null;
+  $: meetingTags = (tagVocabulary ? tagsByMeeting(tagVocabulary) : new Map()) as MeetingTags;
+  // A tag deleted or merged away must not leave the list narrowed by a box that is gone.
+  $: activeTagIds = selectedTagIds.filter((id) => vocabularyTags?.some((tag) => tag.tagId === id));
+  $: if (activeTagIds.length < 2) {
+    tagMatch = "any";
+  }
+  $: roomMeetings = filterByTags(
+    filterMeetingsByRoom(catalogMeetings, selectedRoomKey),
+    meetingTags,
+    activeTagIds,
+    tagMatch,
+  );
+  $: bulkTagState = wholeTagState(meetingTags, selection.ids);
+  $: annotationCalls = bindAnnotations(dataProvider, selectedMeetingId);
 
   // A picked meeting can leave the archive under a 15-second refresh; run this
   // against every catalog the shell observes.
@@ -671,7 +799,8 @@
   $: insightSourceCounts = new Map(
     [...insightSources].map(([id, sources]) => [id, sources.length]),
   );
-  $: roomInsights = filterInsightsByRoom(insights, selectedRoomKey);
+  // An insight carries no tags, so a tag filter leaves none of them.
+  $: roomInsights = activeTagIds.length > 0 ? [] : filterInsightsByRoom(insights, selectedRoomKey);
   // Called from a reactive statement rather than being one, for the reason
   // syncSelectionToCatalog is: it writes the id that `selectedInsight` is
   // derived from, and a `$:` doing both would be a cycle.
@@ -729,8 +858,8 @@
       // entry appears without a hard browser reload. Gated on `embedded`, not
       // ncMode: an ExApp with Theming off still needs this, and it is the only
       // thing that recovers a catalog that was absent at mount (D-543).
-      window.addEventListener("focus", refreshCatalogWhenVisible);
-      document.addEventListener("visibilitychange", refreshCatalogWhenVisible);
+      window.addEventListener("focus", refreshOnReturn);
+      document.addEventListener("visibilitychange", refreshOnReturn);
       catalogRefreshTimer = window.setInterval(
         refreshCatalogWhenVisible,
         CATALOG_REFRESH_INTERVAL_MS,
@@ -750,6 +879,7 @@
     // Independent of the catalog load below, and started beside it: the two
     // lists come from two places and neither is a precondition for the other.
     void refreshInsights();
+    refreshTags();
 
     const initialMeetingId = currentViewerHash().meeting || null;
     const viewerConfig = window as typeof window & {
@@ -801,8 +931,9 @@
     destroyed = true;
     window.removeEventListener("popstate", handlePopState);
     window.removeEventListener("hashchange", handlePopState);
-    window.removeEventListener("focus", refreshCatalogWhenVisible);
-    document.removeEventListener("visibilitychange", refreshCatalogWhenVisible);
+    window.removeEventListener("focus", refreshOnReturn);
+    document.removeEventListener("visibilitychange", refreshOnReturn);
+    tagLoader.stop();
     if (catalogRefreshTimer !== undefined) {
       window.clearInterval(catalogRefreshTimer);
     }
@@ -861,6 +992,14 @@
       on:select={handleRoomSelect}
       on:close={() => (railOpen = false)}
       on:toggleType={(event) => (browseTypes = toggleBrowseType(browseTypes, event.detail as BrowseType))}
+      tagsOffered={canTag}
+      tags={vocabularyTags}
+      {tagsFailed}
+      selectedTagIds={activeTagIds}
+      {tagMatch}
+      on:toggleTag={(event) => toggleTagFilter(event.detail)}
+      on:tagMatch={(event) => (tagMatch = event.detail)}
+      on:manageTags={() => (tagManagerOpen = true)}
     />
 
     <MeetingList
@@ -890,6 +1029,13 @@
       on:clearRoom={() => (selectedRoomKey = null)}
       on:openRooms={() => (railOpen = true)}
       on:toggleTheme={toggleTheme}
+      {meetingTags}
+      tags={vocabularyTags}
+      tagFilterCount={activeTagIds.length}
+      {tagNotice}
+      on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
+      on:clearTags={() => (selectedTagIds = [])}
+      on:dismissTagNotice={() => (tagNotice = "")}
     />
 
     {#if selectionBarUp}
@@ -901,6 +1047,11 @@
           on:clear={handleClearSelection}
           on:prepare={() => (prepareOpen = true)}
           on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
+          tags={vocabularyTags}
+          tagSelected={bulkTagState.selected}
+          tagMixed={bulkTagState.mixed}
+          {tagReport}
+          on:tag={(event) => tagSelection(event.detail)}
         />
       </div>
     {/if}
@@ -930,7 +1081,11 @@
         transition:fade={scrimFade()}
         on:click={closeSheet}
       ></button>
-      <aside class="meeting-sheet" transition:sheetSlide={{}}>
+      <aside
+        class="meeting-sheet"
+        class:tagging={!selectedInsight && Boolean(dataProvider.loadMeetingAnnotations)}
+        transition:sheetSlide={{}}
+      >
         {#if selectedInsight}
           <InsightDocument
             insight={selectedInsight}
@@ -963,6 +1118,10 @@
             on:back={handleBackToList}
             on:enriched={handleEnriched}
             on:openInsight={(event) => openInsight(event.detail)}
+            tagVocabulary={vocabularyTags ?? []}
+            loadAnnotations={annotationCalls.load}
+            applyAnnotations={annotationCalls.apply}
+            on:tagsChanged={(event) => (applied(event.detail), refreshTags(true))}
           />
         {/if}
       </aside>
@@ -999,6 +1158,17 @@
           </svelte:fragment>
         </PreparePanel>
       </aside>
+    {/if}
+
+    <!-- Kept mounted while closed, so a job started before closing still reports. -->
+    {#if dataProvider.updateTag}
+      <TagManager
+        tags={vocabularyTags}
+        provider={dataProvider}
+        open={tagManagerOpen}
+        on:close={() => (tagManagerOpen = false)}
+        on:changed={() => refreshTags(true)}
+      />
     {/if}
   </div>
 {/if}
@@ -1053,6 +1223,10 @@
     background-color: var(--color-base-200);
     border-left: 1px solid var(--color-base-300);
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
+  }
+  /* Room for the marking rail on the left and the brackets on the right (D-746). */
+  .meeting-sheet.tagging {
+    width: min(940px, 100%);
   }
 
   /* The selection bar floats over the list it belongs to — inset past the rail

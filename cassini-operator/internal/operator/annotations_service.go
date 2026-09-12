@@ -20,6 +20,8 @@ type annotationService struct {
 	bin    string
 	client *http.Client
 	logger *log.Logger
+	styles *tagStyleStore
+	jobs   tagJobs
 }
 
 // newAnnotationService returns nil where no mark can be served, as
@@ -42,6 +44,7 @@ func newAnnotationService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *a
 		// As the read proxy: recordings stream, so the request context governs.
 		client: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
 		logger: logger,
+		styles: newTagStyleStore(rt.cfg),
 	}
 }
 
@@ -55,16 +58,12 @@ func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, annotationsURLPath), "/")
 	resource, id, _ := strings.Cut(rest, "/")
 	switch {
-	case resource == "tags" && id == "":
+	case resource == "tags":
 		caller, ok := s.caller(w, r)
 		if !ok {
 			return
 		}
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, http.MethodGet)
-			return
-		}
-		s.serveTags(w, r, caller)
+		s.routeTags(w, r, caller, id)
 	case resource == "meetings" && id != "" && !strings.Contains(id, "/"):
 		if !isPlainMeetingID(id) {
 			// A statement about the id, not about what exists.

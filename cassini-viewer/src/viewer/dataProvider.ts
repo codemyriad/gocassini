@@ -27,6 +27,15 @@ import {
 } from "./catalog";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import type { InsightRecord } from "./insights";
+import type {
+  AnnotationRequest,
+  AnnotationResult,
+  MeetingAnnotations,
+  TagJob,
+  TagUpdate,
+  TagVocabulary,
+  VocabularyTag,
+} from "./annotations";
 
 // Re-exported so a provider implemented outside this package (cassini-app's,
 // which has an operator behind it) can type its methods without reaching past
@@ -91,6 +100,23 @@ export interface DataProvider {
   // document is a coherent state — the cards still appear, and the sheet says
   // it cannot show the answer here rather than showing an empty page.
   loadInsightDocument?(id: string): Promise<string>;
+
+  // OPTIONAL (D-746): tags and marks. The operator writes them into the
+  // recordings, so a standalone export has none of these and hides tagging.
+  // Each rejects with an AnnotationError when the operator refuses.
+  loadTagVocabulary?(): Promise<TagVocabulary>;
+  loadMeetingAnnotations?(entry: MeetingCatalogEntry): Promise<MeetingAnnotations>;
+  applyAnnotationOps?(
+    entry: MeetingCatalogEntry,
+    request: AnnotationRequest,
+  ): Promise<AnnotationResult>;
+
+  // OPTIONAL (D-746): managing a tag across every recording that carries it.
+  // A rename, merge or delete runs as a job; loadTagJob polls it.
+  updateTag?(tagId: string, update: TagUpdate): Promise<{ tag: VocabularyTag; job: TagJob | null }>;
+  mergeTag?(tagId: string, intoTagId: string): Promise<TagJob>;
+  deleteTag?(tagId: string): Promise<TagJob>;
+  loadTagJob?(): Promise<TagJob | null>;
 }
 
 // resolvePublishedUrl locates a file in the operator's published archive.
@@ -128,6 +154,8 @@ export function resolvePublishedUrl(path: string): string {
 // insights failed to load are different states (D-721), and the way this one
 // says which it is, is by not offering the capability at all — so the type
 // filter is absent rather than reading "Insights 0".
+//
+// Nor does it implement the tag methods: only an operator writes marks.
 export class StaticCatalogProvider implements DataProvider {
   private readonly portableStore = new PortableMeetingStore();
 
