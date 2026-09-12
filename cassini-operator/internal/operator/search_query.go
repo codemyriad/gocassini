@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -60,10 +61,23 @@ type searchRequest struct {
 	// package variable so an operator's edit takes effect on the next search
 	// rather than the next restart.
 	AliasIndex map[string][]string
+	// PerMeeting caps how many hits one meeting may contribute, so a single
+	// meeting cannot crowd every other one out of the page. Zero means no cap,
+	// which is what the CLI's flat chronological list wants; the meeting list
+	// sets it, because there a crowded-out meeting is a meeting the user is
+	// told does not match.
+	PerMeeting int
 }
 
-// searchHit is a reference, never content. There is no text field, so a bug in
-// a handler cannot turn this into a disclosure of what was said.
+// searchHit is a reference plus the words that matched.
+//
+// It carried no text until D-736: the meeting list has to say WHY a meeting
+// matched, and a row that cannot show its hit reads as a bug. The text is not a
+// new disclosure at rest — fts5vocab already reconstructs it verbatim from the
+// contentless postings (spike §1.6) — but it does mean a handler bug can now
+// disclose words rather than only existence. What stands between the two is the
+// visibility join in match(): json_each + INNER JOIN, so an empty visible set
+// yields no rows even if the MATCH clause were removed entirely.
 type searchHit struct {
 	// rowID is the index row this hit came from. Internal: it is how the
 	// exact-vs-alias label is resolved on precisely these rows rather than by a
@@ -78,6 +92,10 @@ type searchHit struct {
 	// mistranscription of them. A reader deserves to know the difference
 	// between finding "cassini" and finding "casino".
 	Matched string `json:"matched"`
+	// Text is the segment's words, from which the endpoint cuts a bounded
+	// snippet. Internal: the wire carries the snippet, never the whole segment,
+	// so one over-long segment cannot turn one hit into a transcript dump.
+	Text string `json:"-"`
 }
 
 const (
@@ -142,14 +160,14 @@ func (s *searchStore) Search(ctx context.Context, req searchRequest) (searchResu
 
 	// Strict first: every group must appear. A turn containing all of what was
 	// asked is a better answer than one containing any of it.
-	hits, err := s.match(ctx, buildMatchExpression(groups, true), visible, req.SpeakerID, fetch)
+	hits, err := s.match(ctx, buildMatchExpression(groups, true), visible, req.SpeakerID, fetch, req.PerMeeting)
 	if err != nil {
 		return searchResults{}, err
 	}
 	if len(hits) == 0 && len(groups) > 1 {
 		// Widen rather than return nothing, and say so. A question rarely has
 		// one segment containing all of it.
-		hits, err = s.match(ctx, buildMatchExpression(groups, false), visible, req.SpeakerID, fetch)
+		hits, err = s.match(ctx, buildMatchExpression(groups, false), visible, req.SpeakerID, fetch, req.PerMeeting)
 		if err != nil {
 			return searchResults{}, err
 		}
@@ -199,26 +217,52 @@ func (s *searchStore) Search(ctx context.Context, req searchRequest) (searchResu
 
 // match runs the statement. The visible set is bound as JSON and inner-joined,
 // so it bounds the result set before LIMIT rather than after.
-func (s *searchStore) match(ctx context.Context, expression string, visible []byte, speakerID string, limit int) ([]searchHit, error) {
+func (s *searchStore) match(ctx context.Context, expression string, visible []byte, speakerID string, limit, perMeeting int) ([]searchHit, error) {
 	if strings.TrimSpace(expression) == "" {
 		return nil, nil
 	}
-	query := `
-SELECT r.rowid_, r.opus_name, r.segment_id, r.start_ms, r.end_ms, r.speaker_id
+	inner := `
+SELECT r.rowid_, r.opus_name, r.segment_id, r.start_ms, r.end_ms, r.speaker_id, r.text, f.rank AS rnk
   FROM segment_fts f
   JOIN segment_ref r    ON r.rowid_ = f.rowid
   JOIN json_each(?1) v  ON v.value = r.opus_name
  WHERE segment_fts MATCH ?2`
 	args := []any{string(visible), expression}
 	if speaker := strings.TrimSpace(speakerID); speaker != "" {
-		query += ` AND r.speaker_id = ?3
- ORDER BY rank
- LIMIT ?4`
-		args = append(args, speaker, limit)
+		inner += ` AND r.speaker_id = ?3`
+		args = append(args, speaker)
+	}
+
+	var query string
+	if perMeeting > 0 {
+		// The per-meeting cap belongs HERE, not in a Go pass over the result.
+		//
+		// One meeting with sixty strong hits otherwise fills the whole page and
+		// every other meeting the caller can read is absent — invisible in the
+		// CLI's flat list, wrong in a per-meeting UI, which is what D-736
+		// builds. Capping after a ranked fetch would not fix it either: those
+		// sixty rows would already have consumed the fetch budget before any
+		// second meeting was read. That is the same defect as filtering a
+		// rank-truncated page, which the spike (§4) struck down for visibility.
+		//
+		// So rank, cap and limit all resolve inside one statement: the window
+		// numbers each meeting's hits by rank, the outer WHERE drops the tail,
+		// and LIMIT then applies to what survives BOTH.
+		query = `
+SELECT rowid_, opus_name, segment_id, start_ms, end_ms, speaker_id, text FROM (
+  SELECT rowid_, opus_name, segment_id, start_ms, end_ms, speaker_id, text, rnk,
+         ROW_NUMBER() OVER (PARTITION BY opus_name ORDER BY rnk) AS per_meeting
+    FROM (` + inner + `)
+)
+ WHERE per_meeting <= ?` + strconv.Itoa(len(args)+1) + `
+ ORDER BY rnk
+ LIMIT ?` + strconv.Itoa(len(args)+2)
+		args = append(args, perMeeting, limit)
 	} else {
-		query += `
- ORDER BY rank
- LIMIT ?3`
+		query = `
+SELECT rowid_, opus_name, segment_id, start_ms, end_ms, speaker_id, text FROM (` + inner + `)
+ ORDER BY rnk
+ LIMIT ?` + strconv.Itoa(len(args)+1)
 		args = append(args, limit)
 	}
 
@@ -230,7 +274,7 @@ SELECT r.rowid_, r.opus_name, r.segment_id, r.start_ms, r.end_ms, r.speaker_id
 	var hits []searchHit
 	for rows.Next() {
 		var hit searchHit
-		if err := rows.Scan(&hit.rowID, &hit.OpusName, &hit.SegmentID, &hit.StartMS, &hit.EndMS, &hit.SpeakerID); err != nil {
+		if err := rows.Scan(&hit.rowID, &hit.OpusName, &hit.SegmentID, &hit.StartMS, &hit.EndMS, &hit.SpeakerID, &hit.Text); err != nil {
 			return nil, fmt.Errorf("scan search hit: %w", err)
 		}
 		hits = append(hits, hit)
@@ -397,4 +441,113 @@ SELECT f.rowid
 		out[id] = true
 	}
 	return out, rows.Err()
+}
+
+const (
+	// searchSnippetRunes bounds what one hit may put on the wire. A segment is
+	// normally a sentence or two, but a word-derived row or a producer that
+	// segments coarsely can be much longer, and the response should not scale
+	// with that. This is the cap the "bounded snippet, not the whole segment"
+	// condition on D-736 asks for.
+	searchSnippetRunes = 160
+	// searchSnippetLead is how much context to keep BEFORE the match when the
+	// segment has to be cut. A match with no lead-in reads as a fragment; a
+	// match centred exactly reads as a quotation.
+	searchSnippetLead = 48
+)
+
+// snippetAround cuts a bounded window out of text, centred on the first term
+// that matched.
+//
+// Cutting on rune boundaries rather than bytes keeps a multi-byte character
+// from being split into mojibake, and cutting at spaces keeps the window from
+// starting or ending mid-word. Both are cosmetic; the cap is not.
+//
+// terms are the caller's own tokens, already stripped by buildMatchExpression.
+// The search is case-insensitive and prefix-aware, matching how unicode61
+// tokenises, so the snippet lands on the word the index actually hit rather
+// than on a coincidental substring elsewhere in the segment.
+func snippetAround(text string, terms []string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= searchSnippetRunes {
+		return trimmed
+	}
+
+	start := 0
+	if idx := firstTermRuneIndex(runes, terms); idx > searchSnippetLead {
+		start = idx - searchSnippetLead
+	}
+	if start+searchSnippetRunes > len(runes) {
+		start = len(runes) - searchSnippetRunes
+	}
+	end := start + searchSnippetRunes
+
+	// Grow to the nearest space so neither edge lands mid-word. Bounded by a
+	// few runes each way: a segment with no spaces at all must still be cut.
+	for i := 0; i < 12 && start > 0 && !unicode.IsSpace(runes[start-1]); i++ {
+		start--
+	}
+	for i := 0; i < 12 && end < len(runes) && !unicode.IsSpace(runes[end]); i++ {
+		end++
+	}
+
+	out := strings.TrimSpace(string(runes[start:end]))
+	if start > 0 {
+		out = "…" + out
+	}
+	if end < len(runes) {
+		out += "…"
+	}
+	return out
+}
+
+// firstTermRuneIndex is where the earliest matching term starts, or -1.
+func firstTermRuneIndex(runes []rune, terms []string) int {
+	lowered := []rune(strings.ToLower(string(runes)))
+	best := -1
+	for _, term := range terms {
+		needle := strings.ToLower(strings.TrimSpace(term))
+		if needle == "" {
+			continue
+		}
+		if at := runeIndex(lowered, []rune(needle)); at >= 0 && (best < 0 || at < best) {
+			best = at
+		}
+	}
+	return best
+}
+
+// runeIndex is strings.Index over runes, so the result is a rune offset rather
+// than a byte offset.
+func runeIndex(haystack, needle []rune) int {
+	if len(needle) == 0 || len(needle) > len(haystack) {
+		return -1
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		found := true
+		for j := range needle {
+			if haystack[i+j] != needle[j] {
+				found = false
+				break
+			}
+		}
+		if found {
+			return i
+		}
+	}
+	return -1
+}
+
+// flattenSearchGroups is every term that was searched for, alias expansions
+// included, so a snippet can be centred on whichever of them actually hit.
+func flattenSearchGroups(groups [][]string) []string {
+	var terms []string
+	for _, group := range groups {
+		terms = append(terms, group...)
+	}
+	return terms
 }

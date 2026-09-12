@@ -126,15 +126,41 @@ describe("MeetingList insights", () => {
     );
   });
 
-  it("names the search box after the kinds it is narrowing", () => {
+  it("names the search box after the kinds it is narrowing, and after what it can reach", () => {
     // It narrows insights too, and narrows insights ALONE when the Meetings
-    // toggle is off.
+    // toggle is off — so the kinds stay in the label.
+    //
+    // What changed in D-736 is the second half: with an operator behind it the
+    // box also searches what was SAID, and the placeholder has to say so or the
+    // reader never learns the capability exists. Without one (a standalone
+    // export) it must NOT say so, because there is nothing to ask and the
+    // promise would be empty.
     expect(meetingListSource).toContain(
-      "placeholder={`Search ${matchNounPlural} by name or date`}",
+      "`Search ${matchNounPlural} and what was said in them`",
     );
     expect(meetingListSource).toContain(
-      "aria-label={`Search ${matchNounPlural} by name or date`}",
+      "`Search ${matchNounPlural} by name or date`",
     );
+    expect(meetingListSource).toContain("searchOffered");
+  });
+
+  // A failure must never be rendered as an empty result: "nothing was said
+  // about that" and "the archive is unreachable" are opposite answers.
+  it("keeps a search failure visually distinct from nothing matching", () => {
+    expect(meetingListSource).toContain("searchProblem");
+    expect(meetingListSource).toContain('searchState === "rateLimited"');
+    expect(meetingListSource).toContain('searchState === "indexUnavailable"');
+    expect(meetingListSource).toContain('searchState === "failed"');
+  });
+
+  // A button inside a button is invalid markup browsers resolve by dropping
+  // one, so the moments sit outside the row's own open button.
+  it("renders matched moments outside the row open button", () => {
+    const openButton = meetingListSource.indexOf('class="row-open"');
+    const moments = meetingListSource.indexOf('class="row-moments"');
+    const openButtonEnd = meetingListSource.indexOf("</button>", openButton);
+    expect(openButton).toBeGreaterThan(-1);
+    expect(moments).toBeGreaterThan(openButtonEnd);
   });
 
   it("counts an insight's sources with a number the shell resolved", () => {

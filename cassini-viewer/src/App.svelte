@@ -4,10 +4,16 @@
   import { fade } from "svelte/transition";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
   import {
+    filterMeetingCatalogEntries,
     sortMeetingCatalogEntries,
     type MeetingCatalogEntry,
   } from "./viewer/catalog";
   import { StaticCatalogProvider, type DataProvider } from "./viewer/dataProvider";
+  import {
+    groupHitsByMeeting,
+    isAbortError,
+    type MeetingSearchHit,
+  } from "./viewer/meetingSearch";
   import { isEmbeddedViewer } from "./viewer/appBase";
   import { resolveCatalogSelection } from "./viewer/catalogSelection";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
@@ -124,6 +130,25 @@
   // come back at least once, `insightsError` says the last one did not, and
   // neither of them is "there are no insights". The list is told all three
   // because "we could not ask" and "there are none" look identical otherwise.
+  // Cross-meeting search (D-736). The shell owns it because it is a request,
+  // and because the list is presentational.
+  let searchQuery = "";
+  let searchState: "idle" | "searching" | "ok" | "rateLimited" | "indexUnavailable" | "failed" = "idle";
+  let searchMessage = "";
+  let transcriptHits: ReadonlyMap<string, readonly MeetingSearchHit[]> = new Map();
+  let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
+  let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+  // Only the newest query may write the results. Without this a slow earlier
+  // request can land after a faster later one and repaint the list with answers
+  // to a question the user has already moved on from.
+  let searchRun = 0;
+  let searchAbort: AbortController | undefined;
+  // Carried into MeetingView when a moment is opened from a search result, so
+  // the meeting lands already filtered to the lines that matched. Cleared on
+  // any ordinary open, because a meeting opened from the list is not a search
+  // result and should show the whole transcript.
+  let transcriptQueryForMeeting = "";
+
   let insights: InsightRecord[] = [];
   let insightsLoaded = false;
   let insightsError = "";
@@ -375,10 +400,123 @@
     }
   }
 
+  // SEARCH_DEBOUNCE_MS: long enough that typing a word is one request rather
+  // than six, short enough that the list does not feel stuck. Each search costs
+  // the operator a whole-archive PROPFIND as the caller, which is also why the
+  // endpoint rate-limits: this is the client-side half of not doing that.
+  const SEARCH_DEBOUNCE_MS = 220;
+  // A meeting contributes at most this many moments to the list. The server
+  // caps it so one talkative meeting cannot crowd every other one out of the
+  // page; this is the number the rows have room to show.
+  const SEARCH_HITS_PER_MEETING = 3;
+
+  $: searchOffered = typeof dataProvider.searchMeetings === "function";
+
+  function handleSearchQuery(query: string) {
+    searchQuery = query;
+    clearTimeout(searchDebounce);
+    // Abort whatever is in flight: its answer is about the previous question.
+    searchAbort?.abort();
+    searchAbort = undefined;
+
+    if (query.trim() === "" || !dataProvider.searchMeetings) {
+      searchRun += 1;
+      searchState = "idle";
+      searchMessage = "";
+      transcriptHits = new Map();
+      transcriptOnlyMeetings = [];
+      return;
+    }
+    searchState = "searching";
+    searchDebounce = setTimeout(() => void runSearch(query), SEARCH_DEBOUNCE_MS);
+  }
+
+  async function runSearch(query: string) {
+    const search = dataProvider.searchMeetings;
+    if (!search) {
+      return;
+    }
+    const run = ++searchRun;
+    const controller = new AbortController();
+    searchAbort = controller;
+
+    let outcome;
+    try {
+      outcome = await search(query, {
+        perMeeting: SEARCH_HITS_PER_MEETING,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        // Superseded by a later keystroke. Saying anything here would overwrite
+        // the newer request's state with the older one's.
+        return;
+      }
+      if (run === searchRun) {
+        searchState = "failed";
+        searchMessage = "Could not search the meetings.";
+      }
+      return;
+    }
+    if (run !== searchRun) {
+      return;
+    }
+
+    if (outcome.status === "unsupported") {
+      // No operator behind this build. The box still narrows names and dates;
+      // it simply never claimed to search transcripts.
+      searchState = "idle";
+      searchMessage = "";
+      transcriptHits = new Map();
+      transcriptOnlyMeetings = [];
+      return;
+    }
+    if (outcome.status !== "ok") {
+      // Keep whatever moments are on screen: they were true for this query a
+      // moment ago, and blanking them would look like "nothing matched" —
+      // which is the one thing this state must not be confused with.
+      searchState = outcome.status;
+      searchMessage = outcome.message;
+      return;
+    }
+
+    searchState = "ok";
+    searchMessage = "";
+    const grouped = groupHitsByMeeting(outcome.hits);
+    transcriptHits = new Map(grouped.map((match) => [match.meetingId, match.hits]));
+    // Meetings the name/date filter will not produce, in the server's rank
+    // order. The list concatenates them after its own matches.
+    const known = new Map(catalogMeetings.map((meeting) => [meeting.id, meeting]));
+    const nameMatched = new Set(
+      filterMeetingCatalogEntries(roomMeetings, query).map((meeting) => meeting.id),
+    );
+    transcriptOnlyMeetings = grouped
+      .filter((match) => !nameMatched.has(match.meetingId))
+      .map((match) => known.get(match.meetingId))
+      .filter((meeting): meeting is MeetingCatalogEntry => Boolean(meeting));
+  }
+
+  // Open a meeting AT a matched moment, carrying the query through so the
+  // meeting view's own filter shows the matching lines in full. The words are
+  // fetched there as the caller, so Nextcloud re-checks the ACL on the bytes —
+  // which is why the list can show a short quote and the meeting can show the
+  // whole line without those being the same disclosure.
+  function openSearchMoment(detail: { entry: MeetingCatalogEntry; startMs: number; query: string }) {
+    notFoundMessage = "";
+    window.history.pushState(
+      {},
+      "",
+      viewerHref(buildViewerHash({ meeting: detail.entry.id, timeMs: detail.startMs })),
+    );
+    selectedMeetingId = detail.entry.id;
+    transcriptQueryForMeeting = detail.query;
+  }
+
   function loadCatalogMeeting(meeting: MeetingCatalogEntry) {
     notFoundMessage = "";
     pushMeetingUrl(meeting.id);
     selectedMeetingId = meeting.id;
+    transcriptQueryForMeeting = "";
   }
 
   // MeetingView reports the real speaker/segment/duration counts once a meeting
@@ -836,6 +974,7 @@
        IS the page, so it keeps the full-bleed layout it has always had. -->
   <div class="grid grid-cols-1 grid-rows-1 h-full bg-base-200 overflow-x-clip">
     <MeetingView
+      initialQuery={transcriptQueryForMeeting}
       {dataProvider}
       meeting={selectedMeeting}
       bundled={true}
@@ -882,6 +1021,13 @@
       {ncMode}
       {themeMode}
       errorMessage={listError}
+      {searchOffered}
+      {searchState}
+      {searchMessage}
+      {transcriptHits}
+      {transcriptOnlyMeetings}
+      on:query={(event) => handleSearchQuery(event.detail)}
+      on:openMoment={(event) => openSearchMoment(event.detail)}
       on:select={(event) => loadCatalogMeeting(event.detail)}
       on:pick={handlePick}
       on:openInsight={(event) => openInsight(event.detail)}
@@ -950,6 +1096,7 @@
                than the artifact's — what a meeting was used FOR is not part of
                the recording — so it is handed down rather than looked up. -->
           <MeetingView
+            initialQuery={transcriptQueryForMeeting}
             {dataProvider}
             meeting={selectedMeeting}
             bundled={false}
