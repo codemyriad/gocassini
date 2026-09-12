@@ -1215,6 +1215,9 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           PACKAGE: gocassini
           KEEP: 10
+          # Grace period to protect child manifests of in-progress multi-arch
+          # uploads before their parent index is pushed.
+          UNTAGGED_GRACE_SECONDS: 7200
         run: |
           set -euo pipefail
           tmp=$(mktemp -d)
@@ -1301,7 +1304,11 @@ jobs:
               "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
           done
 
-          # 4. Prune untagged child manifests that are not referenced by ANY retained tag.
+          # 4. Prune untagged child manifests that are not referenced by ANY retained tag,
+          # and are older than UNTAGGED_GRACE_SECONDS to protect in-progress uploads.
+          now=$(date +%s)
+          cutoff=$((now - UNTAGGED_GRACE_SECONDS))
+
           jq -r -s '
             add // []
             | .[]
@@ -1313,6 +1320,11 @@ jobs:
             [[ -z "$id" ]] && continue
             if grep -qxF "${digest}" "$tmp/protected.txt"; then
               echo "SKIP   untagged id=${id} digest=${digest} — referenced by a retained tag"
+              continue
+            fi
+            created_sec=$(date -u -d "${created}" +%s 2>/dev/null || echo 0)
+            if [ "${created_sec}" -gt "${cutoff}" ]; then
+              echo "SKIP   untagged id=${id} digest=${digest} created=${created} — within upload grace period"
               continue
             fi
             echo "DELETE untagged id=${id} digest=${digest} created=${created} (unreferenced manifest)"
