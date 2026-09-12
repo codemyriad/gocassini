@@ -51,8 +51,7 @@ installation path.
 Once eligible, follow [the installation guide](exapp-install.md), then use Cassini
 Setup to check credentials, storage, processing, and a real Talk recording. The
 [recording setup guide](recording-readiness.md) explains the checks and restart
-behavior. Storage onboarding must follow D-708's automatic simple-mode direction
-when that work is integrated; access disclosure is not another recording prerequisite.
+behavior.
 
 ## Request for the administrator or provider
 

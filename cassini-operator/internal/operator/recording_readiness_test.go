@@ -154,8 +154,8 @@ func TestReadinessAdmissionAndPublicResponse(t *testing.T) {
 		t.Fatal("no public guidance")
 	}
 	rt.recordingSetup.checkedAt = time.Now().Add(-2 * readinessTTL)
-	if rt.publicRecordingState() != "not_verified" {
-		t.Fatal("expired results are not unknown")
+	if got, want := rt.publicRecordingState(context.Background()), rt.readiness(context.Background()).State; got != want || got == "passed" {
+		t.Fatalf("public status=%s admin=%s; expired results must not pass", got, want)
 	}
 }
 
@@ -197,34 +197,32 @@ func TestReadinessTestRequiresTalkPublicationAndPlayback(t *testing.T) {
 	}
 }
 
-func TestReadinessAdmissionUsesOnlyCurrentDefinitiveFailures(t *testing.T) {
+func TestReadinessCachedNetworkFindingsNeverVetoRepairedConfiguration(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
 	putRecordingSetup(t, rt, `{"internal_secret":"internal","test_room_url":"https://cloud.test/call/testroom"}`, 200)
 	req := TriggerRequest{TalkAuthMode: talkAuthModeHPBInternal, URL: "https://cloud.test/call/anotherroom"}
-	rt.recordingSetup.checkedAt = time.Now()
-	rt.recordingSetup.checks = []readinessCheck{{State: "needs_action", Code: "signaling_auth_failed", Message: "Rejected internal credential."}}
-	if got := rt.recordingConfigurationRefusal(req); !strings.Contains(got, "Rejected internal credential") {
-		t.Fatalf("refusal=%s", got)
+	for _, code := range []string{"hpb_missing", "hpb_unsupported", "signaling_auth_failed", "internal_clients_disabled", "recording_auth_rejected", "signaling_backend_rejected"} {
+		rt.recordingSetup.checkedAt = time.Now()
+		rt.recordingSetup.checks = []readinessCheck{{State: "needs_action", Code: code, Message: "Earlier diagnostic failed."}}
+		if got := rt.recordingConfigurationRefusal(req); got != "" {
+			t.Fatalf("cached %s vetoed possibly repaired setup: %s", code, got)
+		}
 	}
-	// A pasted browser hostname cannot extend cached vetoes to another backend.
-	rt.recordingSetup.state.TestRoomURL = "https://other.test/index.php/call/testroom"
-	foreign := TriggerRequest{TalkAuthMode: talkAuthModeHPBInternal, URL: "https://other.test/call/anotherroom"}
-	if got := rt.recordingConfigurationRefusal(foreign); got != "" {
-		t.Fatalf("foreign backend vetoed: %s", got)
+}
+
+func TestReadinessUnreadableSetupDoesNotClaimMissingSecret(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.recordingSetup.loaded = true
+	rt.recordingSetup.loadFailed = true
+	if got := rt.recordingConfigurationRefusal(TriggerRequest{TalkAuthMode: talkAuthModeHPBInternal}); !strings.Contains(got, "could not read") {
+		t.Fatalf("misleading refusal: %s", got)
 	}
-	foreign.TalkConnectURL = "https://cloud.test"
-	if got := rt.recordingConfigurationRefusal(foreign); got == "" {
-		t.Fatal("explicit trusted connection missed cached failure")
-	}
-	rt.recordingSetup.checkedAt = time.Now().Add(-2 * readinessTTL)
-	if got := rt.recordingConfigurationRefusal(req); got != "" {
-		t.Fatalf("stale finding vetoed recording: %s", got)
-	}
-	rt.recordingSetup.checkedAt = time.Now()
-	rt.recordingSetup.checks = []readinessCheck{{State: "not_verified", Code: "signaling_unreachable", Message: "Temporary network error."}}
-	if got := rt.recordingConfigurationRefusal(req); got != "" {
-		t.Fatalf("transient finding vetoed recording: %s", got)
+	for _, c := range rt.readiness(context.Background()).Checks {
+		if c.Code == "internal_secret_missing" {
+			t.Fatal("unreadable credential reported as absent")
+		}
 	}
 }
 
@@ -291,14 +289,14 @@ func TestReadinessPublicLinksNeverSelectProbeHost(t *testing.T) {
 func TestReadinessPublicStatePrioritizesActionRegardlessOfOrder(t *testing.T) {
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
-	putRecordingSetup(t, rt, `{"internal_secret":"internal"}`, 200)
+	putRecordingSetup(t, rt, `{"internal_secret":"internal","test_room_url":"https://cloud.test/call/testroom"}`, 200)
 	rt.recordingSetup.checkedAt = time.Now()
 	for _, checks := range [][]readinessCheck{
 		{{State: "not_verified"}, {State: "needs_action"}},
 		{{State: "needs_action"}, {State: "not_verified"}},
 	} {
 		rt.recordingSetup.checks = checks
-		if rt.publicRecordingState() != "needs_action" {
+		if rt.publicRecordingState(context.Background()) != "needs_action" {
 			t.Fatal("masked action with unknown status")
 		}
 	}
@@ -322,4 +320,55 @@ func TestReadinessExpiredHandoffOffersTestWithoutInventingPass(t *testing.T) {
 		}
 	}
 	t.Fatal("missing handoff check")
+}
+
+func TestReadinessStorageClaimsRequireFreshApplicableEvidence(t *testing.T) {
+	resetSubstrateRecord(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	ncAccessSubstrate.mu.Lock()
+	ncAccessSubstrate.applicable = false
+	ncAccessSubstrate.mu.Unlock()
+	storage := func() readinessCheck {
+		for _, c := range rt.readiness(context.Background()).Checks {
+			if c.ID == "storage" {
+				return c
+			}
+		}
+		t.Fatal("missing storage check")
+		return readinessCheck{}
+	}
+	if c := storage(); c.State != "not_verified" || c.Code != "storage_not_probed" {
+		t.Fatalf("inapplicable check claimed storage readiness: %+v", c)
+	}
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.record(ncSubstrateProvisioned, "test preflight", nil)
+	if c := storage(); c.State != "passed" || c.CheckedAt == "" {
+		t.Fatalf("fresh preflight missing timestamp: %+v", c)
+	}
+	ncAccessSubstrate.mu.Lock()
+	ncAccessSubstrate.checkedAtUTC = time.Now().Add(-2 * readinessTTL).UTC().Format(time.RFC3339)
+	ncAccessSubstrate.mu.Unlock()
+	if c := storage(); c.State != "not_verified" || c.Code != "storage_check_expired" {
+		t.Fatalf("expired storage check claimed readiness: %+v", c)
+	}
+}
+
+func TestReadinessKeepsCurrentStorageAdmissionBlockActionable(t *testing.T) {
+	resetSubstrateRecord(t)
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	ncAccessSubstrate.record(ncSubstrateUnavailable, "storage prerequisite", nil)
+	ncAccessSubstrate.mu.Lock()
+	ncAccessSubstrate.checkedAtUTC = time.Now().Add(-2 * readinessTTL).UTC().Format(time.RFC3339)
+	ncAccessSubstrate.mu.Unlock()
+	for _, c := range rt.readiness(context.Background()).Checks {
+		if c.ID == "storage" {
+			if c.State != "needs_action" || c.Code != "storage_admission_blocked" {
+				t.Fatalf("hidden admission block: %+v", c)
+			}
+			return
+		}
+	}
+	t.Fatal("missing storage check")
 }

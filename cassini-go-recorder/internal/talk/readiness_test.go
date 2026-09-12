@@ -18,15 +18,16 @@ func TestProbeConnectionNeverJoinsOrCaptures(t *testing.T) {
 		name      string
 		status    int
 		server    bool
-		authError bool
+		authError string
 		mcu       bool
 		code      string
 	}{
-		{"healthy", 200, true, false, true, "hpb_authenticated"},
-		{"missing HPB", 200, false, false, false, "hpb_missing"},
-		{"wrong recording credential", 403, false, false, false, "recording_auth_rejected"},
-		{"wrong internal credential", 200, true, true, true, "signaling_auth_failed"},
-		{"no media backend", 200, true, false, false, "hpb_unsupported"},
+		{"healthy", 200, true, "", true, "hpb_authenticated"},
+		{"missing HPB", 200, false, "", false, "hpb_missing"},
+		{"wrong recording credential", 403, false, "", false, "recording_auth_rejected"},
+		{"wrong internal credential", 200, true, "auth_failed", true, "signaling_auth_failed"},
+		{"backend identity rejected", 200, true, "invalid_backend", true, "signaling_backend_rejected"},
+		{"no media backend", 200, true, "", false, "hpb_unsupported"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var hello atomic.Int32
@@ -54,8 +55,8 @@ func TestProbeConnectionNeverJoinsOrCaptures(t *testing.T) {
 						if asString(auth["url"]) != "https://public.invalid/nc/ocs/v2.php/apps/spreed/api/v3/signaling/backend" {
 							unexpected.Add(1)
 						}
-						if tc.authError {
-							_ = conn.WriteJSON(map[string]any{"id": msg["id"], "type": "error", "error": map[string]any{"code": "auth_failed", "message": "private upstream detail"}})
+						if tc.authError != "" {
+							_ = conn.WriteJSON(map[string]any{"id": msg["id"], "type": "error", "error": map[string]any{"code": tc.authError, "message": "private upstream detail"}})
 							continue
 						}
 						features := []string{}

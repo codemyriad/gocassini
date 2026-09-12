@@ -33,7 +33,7 @@ export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
   processing: "Speech processing",
-  "talk.authentication": "Talk authentication",
+  "talk.authentication": "Internal credential",
   "talk.discovery": "Talk connection",
   "talk.hpb": "High-performance backend",
   "talk.handoff": "Recording connection",
@@ -44,7 +44,7 @@ export const stateLabels: Record<CheckState, string> = {
 };
 export function readinessTitle(report: RecordingReadiness): string {
   const count = report.checks.filter(c => c.state === "needs_action").length;
-  if (count) return `Recording needs ${count === 1 ? "one more step" : `${count} more steps`}`;
+  if (count) return `${count === 1 ? "One recording check needs" : `${count} recording checks need`} attention`;
   if (report.state !== "passed") return "Recording setup needs verification";
   return "Recording checks passed";
 }
@@ -58,18 +58,19 @@ export function readinessHealthKey(report: RecordingReadiness | null): string {
 // Keep configuration reachable from its own row even after its check passes.
 export function readinessRows(report: RecordingReadiness): ReadinessCheck[] {
   const rows = [...report.checks];
-  if (!rows.some(c => c.id === "talk.authentication")) {
+  const unreadable = rows.some(c => c.code === "setup_store_unreadable");
+  if (!unreadable && !rows.some(c => c.id === "talk.authentication")) {
     const at = rows.findIndex(c => c.id.startsWith("talk."));
     rows.splice(at < 0 ? rows.length : at, 0, {
       id: "talk.authentication", state: report.secret_configured ? "passed" : "needs_action",
       code: "internal_secret_configuration", message: report.secret_source === "env"
-        ? "The internal secret is managed by deployment configuration."
+        ? "The internal secret is managed by deployment configuration. HPB authentication is checked separately."
         : report.secret_configured ? "An internal secret is saved. HPB authentication is checked separately."
         : "Enter the internal secret from your Talk signaling server.",
     });
   }
   if (!rows.some(c => c.id === "test")) rows.push({ id: "test", state: report.test.playback_verified_at ? "passed" : "not_verified",
-    code: "test_playback", message: report.test.playback_verified_at ? "Playback was confirmed for the published test recording." : "Record a short test through Talk, then confirm playback." });
+    code: "test_playback", checked_at: report.test.playback_verified_at, message: report.test.playback_verified_at ? "Playback was previously confirmed for this published test recording. This is historical evidence, not a current connection test." : "Record a short test through Talk, then confirm playback." });
   return rows;
 }
 
@@ -79,4 +80,10 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   const persistent: Record<string,string> = { "talk.authentication":"configure_talk", "talk.discovery":"test_room", "talk.handoff":"connect_talk", test:"test_recording" };
   if (persistent[check.id] && !actions.includes(persistent[check.id])) actions.push(persistent[check.id]);
   return actions.map(action => ({ action, label:labels[action] ?? "Configure" }));
+}
+
+export function checkStateLabel(check: ReadinessCheck): string {
+  if (check.code === "internal_secret_configuration" && check.state === "passed") return "Configured";
+  if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
+  return stateLabels[check.state];
 }

@@ -349,7 +349,7 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// and "the step is on" is not the same fact as "the step will run".
 	llm := rt.currentLLMSettings().view()
 	writeJSON(w, http.StatusOK, setupResponse{
-		RecordingState: rt.publicRecordingState(),
+		RecordingState: rt.publicRecordingState(r.Context()),
 		OK:             access.OK,
 		State:          access.State,
 		AwaitingChoice: storageAwaitingChoice(access.Step),

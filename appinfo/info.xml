@@ -17,7 +17,7 @@ check the connection, choose storage, connect Talk and test a recording.
 Who may read a published recording is an administrator's choice between two
 storage modes, made in the app's Setup tab. A fresh install requires that choice before recording. In the default mode the archive lives
 in a dedicated "cassini" service account's own folder and everyone who can open
-Cassini can read every recording; it needs no extra Nextcloud apps, after the administrator selects it. In the access-controlled mode the archive lives
+Cassini can read every recording. After the administrator selects simple mode, it needs no extra Nextcloud apps for storage. In the access-controlled mode the archive lives
 in a Cassini Team folder and each private recording is readable only by the
 people who had access to the Talk room (its attendee list) when it was published,
 enforced by Nextcloud's own advanced file ACLs; that mode additionally needs the

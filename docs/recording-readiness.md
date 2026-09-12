@@ -61,8 +61,7 @@ checking. Do not change proxy routing solely because an icon is absent.
 1. Choose a storage mode and let the existing storage workflow create the
    service account and, if selected, the access-controlled Team folder.
    Cassini does not choose who may read recordings for you.
-2. Open **Talk authentication**. Supply the signaling server's `[clients]
-   internalsecret. An AIO host administrator retrieves it with
+2. Open **Talk authentication**. Supply the signaling server's `[clients] internalsecret`. An AIO host administrator retrieves it with
    `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. This is different
    from the recording-backend secret, which Cassini generates itself.
 3. Choose a dedicated **Test room** on this Nextcloud. The URL is stored so
@@ -72,17 +71,19 @@ checking. Do not change proxy routing solely because an icon is absent.
    (`CASSINI_TALK_BACKEND_URL`, falling back to `NEXTCLOUD_URL`); the pasted
    hostname is retained as the public identity in the HPB handshake, but is never
    dialed by Cassini. Use a room from this instance.
-   The connection check authenticates
-   but never joins the call or records media.
+   The connection check authenticates using that public identity but never joins
+   the call or records media. Talk supplies its own backend identity when starting
+   a recording; only a real test verifies that path.
 4. Open **Connect Talk**. Identify the installation method and who can change
    its server configuration. Use the administrator request if you lack host
    access. For a confirmed command path, review the advanced commands and
    acknowledge that they replace the previous recorder. They save the previous
    `recording_servers` value to a private, uniquely named backup and prompt for
    an administrator app password. Keep that backup for rollback.
-5. Press **Check again**. A rejected recording credential means the handoff
-   needs checking; it is not evidence that HPB is absent. Missing permissions,
-   network errors, unavailable rooms, and absent HPB have distinct findings.
+5. Press **Check again**. A denied settings request means the recording credential, access rules and
+   backend configuration need checking; it does not identify which one caused
+   the denial or establish that HPB is absent. A missing signaling address is
+   reported separately from network and authentication failures.
 
 The internal secret is saved atomically with mode 0600 in
 `recording-setup.json`, next to the operator database on its persistent volume.
@@ -109,7 +110,12 @@ check the selected room, moderator permission, and recording-backend handoff.
 Do not prepare another test while your intended test is already recording.
 
 Live check results expire after five minutes and are discarded on restart.
-The last test's playback confirmation is retained as historical evidence.
+The last test's playback confirmation is retained as historical evidence while
+its published job remains in Cassini. Removing that job removes the confirmation
+from the readiness report. Storage preflight results also expire, but a local storage admission block stays
+actionable until cleared. A destination
+not covered by the Nextcloud preflight is reported as unverified. Speech
+processing checks establish prerequisites, not a successful transcription.
 **Check again** refreshes outbound connectivity and storage. It cannot verify
 that Talk can still call Cassini: the expired incoming-connection check offers
 **Test a recording**, while the previous playback confirmation remains visible. An expired result is
@@ -199,8 +205,10 @@ The installed-stack check is `IMAGE_REF=<built-image>
 ./harness/bin/ci-e2e-recording-readiness.sh`. It runs two real Talk/CPU/publish
 cycles separated by a Nextcloud and ExApp restart, verifies the new ADMIN route
 boundary and current HPB authentication, and asserts that no automated check
-claims human playback confirmation. It requires a dedicated Docker environment
-because the existing harness uses fixed HaRP/ExApp names. The normal installed
+claims human playback confirmation. It requires a dedicated Docker environment with no GPU exposed to the ExApp
+because this is the CPU validation path. The harness uses fixed HaRP/ExApp names
+and refuses to start if they already exist. On a dedicated CI runner, inspect
+and remove only confirmed leftovers from a failed run before retrying. The normal installed
 CPU CI job runs this check. Its Nextcloud restart is not an AIO mastercontainer
 restart; validate the AIO-specific persistence settings on your deployment too.
 
@@ -244,3 +252,11 @@ an in-app Talk configuration operation remain future work. Neither is claimed
 by this UI. The [pre-install guide](before-installing.md) explains eligibility
 before Cassini can run, including actual AppAPI test deployment, recorder-target
 architecture, HPB and provider involvement.
+
+Diagnostic network findings are advisory and do not reject new recordings: an
+administrator may have repaired Nextcloud or HPB since the check. The recorder
+validates the actual connection. Missing local credentials and storage admission
+requirements still refuse recording early. The ordinary-user attention banner
+reflects current actionable evidence only; its disappearance after evidence
+expires does not establish that a problem was repaired. Setup reports that state
+as not verified.

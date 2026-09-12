@@ -17,7 +17,7 @@
     { id:'handoff_aio', title:'Confirmed AIO host', detail:'AIO instructions name the target host, explain persistence, and require review before copying replacement commands.', panel:'Connect Talk', access:'host', installation:'aio' },
     { id:'handoff_compose', title:'Confirmed Compose host', detail:'The Nextcloud service, its web-server user, and the occ path must be supplied. None is guessed.', panel:'Connect Talk', access:'host', installation:'compose' },
     { id:'handoff_host', title:'Confirmed host installation', detail:'Host installations require their own web-server user and absolute occ path. Docker is not assumed.', panel:'Connect Talk', access:'host', installation:'host' },
-    { id:'rejected', title:'Wrong internal secret', detail:'A definite authentication failure offers the relevant correction instead of creating a doomed recording.', panel:'Talk authentication' },
+    { id:'rejected', title:'Authentication rejected', detail:'An authentication failure offers configuration guidance. The actual recorder checks the live connection, since the administrator may have repaired it after this diagnostic.', panel:'Talk authentication' },
     { id:'waiting', title:'Waiting for Talk', detail:'The test is armed. A real user starts and stops recording in Talk; an operator-created job does not count.', panel:'Test a recording' },
     { id:'processing', title:'Processing the test', detail:'The matching Talk recording is being processed. Publication and playback have not been verified.', panel:'Test a recording' },
     { id:'published', title:'Confirm playback', detail:'Publishing succeeded. A person must open the result and confirm the audio and transcript.', panel:'Test a recording' },
@@ -27,10 +27,10 @@
     { id:'broken', title:'Saved configuration damaged', detail:'A damaged configuration store is reported explicitly. Cassini does not silently replace credentials.', panel:'Configure' },
   ];
   const check = (id:string,state:ReadinessCheck['state'],code:string,message:string,action?:string):ReadinessCheck => ({id,state,code,message,action});
-  const readyStorage = () => check('storage','passed','storage_ready','Recording storage is ready.');
-  const processingReady = () => check('processing','passed','processing_ready','Speech processing is available on cpu.');
+  const readyStorage = () => check('storage','passed','storage_ready','The Nextcloud storage preflight passed. A test recording verifies publication and playback.');
+  const processingReady = () => check('processing','passed','processing_ready','Speech-processing prerequisites passed for cpu.');
   const discovery = () => check('talk.discovery','passed','recording_auth_verified',"Talk accepted Cassini's recording credential.");
-  const hpb = () => check('talk.hpb','passed','hpb_authenticated','HPB authenticated Cassini and advertised media support.');
+  const hpb = () => check('talk.hpb','passed','hpb_authenticated','HPB authenticated Cassini using the test-room URL’s backend identity and advertised media support. A Talk recording verifies the actual call path.');
   const incoming = () => check('talk.handoff','not_verified','handoff_not_verified','No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.','test_recording');
   const testNeeded = () => check('test','not_verified','test_not_verified','Record a short test through Talk, then open it and confirm playback.','test_recording');
   const roomURL = 'https://cloud.example.com/index.php/call/setuproom';
@@ -46,7 +46,7 @@
     if(id==='managed') r.secret_source='env';
     if(id==='room') { r.test_room_url=''; r.checks.splice(2,2,check('talk.discovery','not_verified','test_room_required','Choose a dedicated Talk room to verify the connection without recording it.','test_room')); }
     if(id==='hpb') r.checks[3]=check('talk.hpb','needs_action','hpb_missing','Talk has no standalone signaling server configured. Enable its high-performance backend.','setup_hpb');
-    if(id==='rejected') r.checks[3]=check('talk.hpb','needs_action','signaling_auth_failed','HPB rejected the internal secret. Enter the internal client secret configured on that server.','configure_talk');
+    if(id==='rejected') r.checks[3]=check('talk.hpb','needs_action','signaling_auth_failed','HPB rejected internal-client authentication. Check the internal secret and server authentication configuration.','configure_talk');
     if(id==='network') r.checks.splice(2,2,check('talk.discovery','not_verified','nextcloud_unreachable','Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.','recheck'));
     if(['waiting','processing','published','passed','expired'].includes(id)) r.test={started_at:now,state:'waiting_for_talk',published:false};
     if(['processing','published','passed','expired'].includes(id)) {

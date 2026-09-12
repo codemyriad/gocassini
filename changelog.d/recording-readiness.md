@@ -24,3 +24,10 @@ requests, confirmed AIO/Docker/Compose/host/Snap command paths, explicit executi
 details, preflight tool checks, and a pre-install eligibility guide. Refresh the
 offline walkthrough with 19 screens. Automatic environment classification and
 in-app Talk configuration remain future work.
+
+Truthfulness review (Claude Opus and local review): distinguish saved credentials
+and historical playback from current verification; expire storage checks and
+refresh idle screens; use the same admin/public aggregate. Network diagnostics
+are advisory so repaired deployments are not refused using cached errors.
+Report unreadable setup and rejected backend identities explicitly, narrow
+processing and storage claims, and clarify deployment and CPU-test instructions.

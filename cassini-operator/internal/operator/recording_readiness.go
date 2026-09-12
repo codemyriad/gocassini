@@ -273,19 +273,26 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 		add("configuration", "needs_action", "setup_store_unreadable", "Cassini could not read its saved recording setup. Check the persistent volume and restore recording-setup.json.", "repair_configuration")
 	}
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
-	if access.OK {
-		add("storage", "passed", "storage_ready", "Recording storage is ready.", "")
+	storageChecked, storageTimeErr := time.Parse(time.RFC3339, access.CheckedAt)
+	if !access.Applicable {
+		add("storage", "not_verified", "storage_not_probed", "The Nextcloud storage check does not apply to this publish destination. Verify storage with a test recording.", "test_recording")
+	} else if ncAccessSubstrate.recordingRefusal() != "" {
+		add("storage", "needs_action", "storage_admission_blocked", "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", "setup_storage")
+	} else if storageTimeErr != nil || time.Since(storageChecked) > readinessTTL {
+		add("storage", "not_verified", "storage_check_expired", "There is no recent Nextcloud storage check. Check again to refresh it.", "recheck")
+	} else if access.OK {
+		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "The Nextcloud storage preflight passed. A test recording verifies publication and playback.", CheckedAt: access.CheckedAt})
 	} else {
-		add("storage", "needs_action", "storage_incomplete", "Complete or repair recording storage below.", "setup_storage")
+		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "The Nextcloud storage preflight did not pass. Review the storage details below.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
 	settings := rt.currentSettings()
 	device := rt.effectiveFor(settings).Device
 	if ok, detail := rt.effectiveComputeStatus(settings, device); ok {
-		add("processing", "passed", "processing_ready", "Speech processing is available on "+device+".", "")
+		add("processing", "passed", "processing_ready", "Speech-processing prerequisites passed for "+device+".", "")
 	} else {
 		add("processing", "needs_action", "processing_unavailable", detail, "settings")
 	}
-	if secret == "" {
+	if secret == "" && !failed {
 		add("talk.authentication", "needs_action", "internal_secret_missing", "Enter the internal secret from your Talk signaling server.", "configure_talk")
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
@@ -298,7 +305,9 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	} else {
 		resp.Checks = append(resp.Checks, probes...)
 	}
-	if !inbound.IsZero() && time.Since(inbound) < readinessTTL {
+	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
+		// The actionable handoff row above already describes the missing credential.
+	} else if !inbound.IsZero() && time.Since(inbound) < readinessTTL {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "talk.handoff", State: "passed", Code: "talk_request_received", Message: "Talk recently sent an authenticated recording request to Cassini.", CheckedAt: inbound.UTC().Format(time.RFC3339)})
 	} else {
 		add("talk.handoff", "not_verified", "handoff_not_verified", "No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.", "test_recording")
@@ -428,7 +437,11 @@ func (rt *Runtime) recordingSetupHandler(w http.ResponseWriter, r *http.Request)
 		next.PlaybackVerifiedAt = ""
 	}
 	if body.Action == "confirm_playback" {
+		// checkMu keeps setup edits serialized; the database need not block
+		// incoming Talk requests or credential reads on mu.
+		s.mu.Unlock()
 		test := rt.readinessTest(r.Context(), next)
+		s.mu.Lock()
 		if !test.Published || body.JobID == "" || test.JobID != body.JobID {
 			s.mu.Unlock()
 			writeJSONError(w, 409, "The selected Talk test recording has not finished publishing.")
@@ -461,65 +474,30 @@ func (rt *Runtime) recordingConfigurationRefusal(req TriggerRequest) string {
 		return refusal
 	}
 	secret, _ := rt.signalingSecret()
+	rt.recordingSetup.mu.Lock()
+	unreadable := rt.recordingSetup.loadFailed
+	rt.recordingSetup.mu.Unlock()
+	if unreadable && secret == "" {
+		return "Cassini could not read its saved recording setup. Ask an administrator to restore recording-setup.json and restart Cassini."
+	}
 	if secret == "" {
 		return "Talk recording needs its signaling internal secret. Open Cassini → Setup to configure it."
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		return "Talk recording credentials are unavailable. Open Cassini → Setup."
 	}
-	// Only definitive, current configuration failures veto a new recording.
-	// Network failures and stale evidence are validated by the actual recorder.
-	rt.recordingSetup.mu.Lock()
-	defer rt.recordingSetup.mu.Unlock()
-	if time.Since(rt.recordingSetup.checkedAt) <= readinessTTL {
-		backend, _ := url.Parse(rt.readinessBackendURL())
-		connect := rt.recordConnectURL(req)
-		if connect == "" {
-			connect = strings.TrimSuffix(strings.Split(req.effectiveCallURL(), "/call/")[0], "/index.php")
-		}
-		target, _ := url.Parse(connect)
-		// Cached evidence belongs to the probed backend, not the pasted browser link.
-		if backend != nil && target != nil && backend.Host != "" && backend.Scheme == target.Scheme && strings.EqualFold(backend.Host, target.Host) && strings.TrimRight(backend.Path, "/") == strings.TrimRight(target.Path, "/") {
-			for _, check := range rt.recordingSetup.checks {
-				switch check.Code {
-				case "hpb_missing", "hpb_unsupported", "signaling_auth_failed", "internal_clients_disabled", "recording_auth_rejected":
-					if check.State == "needs_action" {
-						return check.Message + " Open Cassini → Setup and check again after repairing it."
-					}
-				}
-			}
-		}
-	}
+	// Diagnostic results are advisory: the administrator may have repaired
+	// Nextcloud or HPB since the probe. The recorder validates the live path.
+
 	return ""
 }
 
 // Public callers receive one coarse state. No network calls, account names,
 // room URLs, secret source, job ids, or diagnostic details leave this boundary.
-func (rt *Runtime) publicRecordingState() string {
-	secret, _ := rt.signalingSecret()
-	if secret == "" || strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
-		return "needs_action"
-	}
-	rt.recordingSetup.mu.Lock()
-	defer rt.recordingSetup.mu.Unlock()
-	s := &rt.recordingSetup
-	if s.loadFailed {
-		return "needs_action"
-	}
-	if time.Since(s.checkedAt) > readinessTTL || len(s.checks) == 0 {
-		return "not_verified"
-	}
-	hasUnverified := false
-	for _, check := range s.checks {
-		if check.State == "needs_action" {
-			return "needs_action"
-		}
-		if check.State != "passed" {
-			hasUnverified = true
-		}
-	}
-	if hasUnverified || time.Since(s.inboundAt) > readinessTTL || s.state.PlaybackVerifiedAt == "" {
-		return "not_verified"
-	}
-	return "passed"
+func (rt *Runtime) publicRecordingState(ctx context.Context) string {
+	// Use the same aggregate as the admin report, including storage, compute,
+	// and the current published test job. Return only the coarse state.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return rt.readiness(ctx).State
 }

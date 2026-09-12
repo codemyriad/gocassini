@@ -18,7 +18,7 @@
 </script>
 
 <div class="mt-3 space-y-4">
-  <p class="text-sm"><strong>What Cassini knows:</strong> the checks above report available capabilities. The Nextcloud installation method and your server access have not been detected. Your choices below guide these instructions; they are not verified configuration.</p>
+  <p class="text-sm"><strong>What Cassini knows:</strong> the checks above report the evidence collected so far. The Nextcloud installation method and your server access have not been detected. Your choices below guide these instructions; they are not verified configuration.</p>
   <label class="form-control block text-sm">Who can change the server configuration?
     <select class="select select-bordered mt-1 w-full" bind:value={environment.access}>
       <option value="unknown">I’m not sure</option><option value="host">I can use a terminal on the Nextcloud host</option><option value="container">I only have a container or appliance console</option><option value="provider">A provider or another administrator manages it</option>
@@ -48,9 +48,9 @@
       <p class="text-sm">On the Docker host running AIO’s Talk container, run the command below. Paste the value into the Internal secret field above. The value is sensitive; do not include it in a support ticket.</p>
       <pre class="overflow-auto rounded bg-base-100 p-3 text-xs">docker exec nextcloud-aio-talk printenv INTERNAL_SECRET</pre>
     {:else}
-      <p class="text-sm">Ask whoever manages Talk’s signaling server for its <code>[clients] internalsecret</code> in <code>server.conf</code>. It may be on a different host from Nextcloud or Cassini. Ask them to enter it directly in Setup if you cannot access that server.</p>
+      <p class="text-sm">Ask whoever manages Talk’s signaling server for its <code>[clients] internalsecret</code> in its signaling configuration (often <code>server.conf</code>). It may be on a different host from Nextcloud or Cassini. Ask them to enter it directly in Setup if you cannot access that server.</p>
     {/if}
-    <p class="text-sm">If no HPB is configured, there is no secret to retrieve yet. Resolve the High-performance backend check first. Once saved, use Test connection to verify authentication.</p>
+    <p class="text-sm">If no signaling server exists yet, arrange one first. If one exists but Talk is not connected to it, ask its administrator to configure that connection. Choose a test room and use Test connection after saving the secret.</p>
   {:else}
     <h4 class="font-semibold">What needs changing</h4>
     <p class="text-sm">Talk must use Cassini as its recording backend. This replaces its current recorder. Cassini cannot apply this Nextcloud configuration change from this page; an administrator must review and apply it.</p>
@@ -69,7 +69,7 @@
       {#if environment.installation === 'aio'}<p class="text-sm">For HaRP deployments, /exapps/* on the public Nextcloud address must reach the correct HaRP service. Current integrated AIO can route this internally; a separately deployed HaRP or a proxy that bypasses AIO’s frontend needs an explicit route. Ask the proxy administrator to verify the actual path rather than adding a second route blindly.</p><p class="text-sm">Keep AIO’s Talk component enabled, disable Talk Recording, and configure <code>NEXTCLOUD_KEEP_DISABLED_APPS=true</code> on the mastercontainer. This also changes cleanup of other disabled optional apps. Follow the persistence guide before applying the handoff, then test again after restarting.</p>{/if}
       {#if script}
         <details><summary class="cursor-pointer text-sm font-medium">Advanced: review the host commands</summary>
-          <p class="my-2 text-sm">Requires Bash, curl and jq on the host, plus Docker or sudo for the selected method. The script checks these tools and Nextcloud before changing settings. Missing tools should be installed by the host administrator using that system’s package manager.</p>
+          <p class="my-2 text-sm">Requires Bash, curl and jq on the host, plus Docker or sudo for the selected method. At curl’s password prompt, enter a Nextcloud administrator app password, created in Personal settings → Security. Run from a private directory: the backup contains the previous recorder’s credential. The occ command also briefly exposes the new credential in process arguments to accounts able to inspect those processes. The script checks these tools and Nextcloud before changing settings. Missing tools should be installed by the host administrator using that system’s package manager.</p>
           <pre class="my-3 overflow-auto rounded bg-base-100 p-3 text-xs">{script}</pre>
           <label class="flex items-start gap-2 text-sm"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={reviewed} />I have confirmed the target installation and intend to replace its recording backend.</label>
           <button class="btn btn-sm mt-3" disabled={!reviewed} on:click={()=>copy(script ?? '', 'commands')}>{copied === 'commands' ? 'Copied' : 'Copy reviewed commands'}</button>

@@ -3,7 +3,7 @@
   import { initialEnvironment } from './operator/deploymentGuidance';
   import { onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, stateLabels, readinessTitle, readinessHealthKey, readinessRows, rowActions, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, readinessTitle, readinessHealthKey, readinessRows, rowActions, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
   let report: RecordingReadiness | null = null;
@@ -11,9 +11,10 @@
   let room = "";
   let busy = false;
   let error = "";
+  let stale = false;
   let panel = "";
   let panelOwner = "";
-  $: rows = report ? readinessRows(report) : [];
+  $: rows = report ? readinessRows(report).map(check => stale ? { ...check, state: "not_verified" as const, message: "Could not refresh this check. Check again for its current status." } : check) : [];
   let environment = initialEnvironment();
   let provisioningURL = "";
   let alive = true;
@@ -26,10 +27,10 @@
       const next = check ? await operatorClient.checkReadiness() : await operatorClient.getReadiness();
       if (!alive) return;
       const changed = readinessHealthKey(report) !== readinessHealthKey(next);
-      report = next;
+      report = next; stale = false; error = "";
       if (changed) notifySetupChanged();
       if (!room) room = next.test_room_url;
-    } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
+    } catch (e) { if (alive) { stale = true; error = e instanceof Error ? e.message : String(e); } }
     finally { busy = false; }
   }
   async function save(payload: RecordingSetupUpdate) {
@@ -37,7 +38,7 @@
     busy = true; error = "";
     try {
       const next = await operatorClient.updateRecordingSetup(payload);
-      if (alive) { report = next; secret = ""; notifySetupChanged(); }
+      if (alive) { report = next; stale = false; error = ""; secret = ""; notifySetupChanged(); }
     } catch (e) { if (alive) error = e instanceof Error ? e.message : String(e); }
     finally { busy = false; }
   }
@@ -58,17 +59,17 @@
     void load(true);
     const unsubscribe = onSetupChanged(() => void load(true));
     const timer = window.setInterval(async () => {
-      if (busy || polling || !report?.test.started_at || document.hidden) return;
+      if (busy || polling || !report || document.hidden) return;
       polling = true;
       try {
         const next = await operatorClient.getReadiness();
         if (alive) {
           const changed = readinessHealthKey(report) !== readinessHealthKey(next);
-          report = next;
+          report = next; stale = false; error = "";
           if (changed) notifySetupChanged();
         }
       }
-      catch { if (alive) error = "Could not refresh the test recording. Check the connection and try again."; }
+      catch { if (alive) { stale = true; error = "Could not refresh recording checks. Check the connection and try again."; } }
       finally { polling = false; }
     }, 5000);
     return () => { alive = false; secret = ""; unsubscribe(); window.clearInterval(timer); };
@@ -77,7 +78,7 @@
 
 <section class="rounded-box border border-base-300 bg-base-100 p-5 shadow-sm" aria-labelledby="recording-readiness-title" aria-busy={busy}>
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 id="recording-readiness-title" class="text-lg font-semibold">{report ? readinessTitle(report) : "Check recording setup"}</h2>
+    <h2 id="recording-readiness-title" class="text-lg font-semibold">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
     <button class="btn btn-sm" disabled={busy || polling} on:click={() => load(true)}>{busy ? "Checking…" : "Check again"}</button>
   </div>
   <p class="mt-2 text-sm text-base-content/70">Check the connection, choose recording storage, then verify a short recording through Talk.</p>
@@ -88,9 +89,9 @@
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal">{stateLabels[check.state]}</span></p>
+              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal">{checkStateLabel(check)}</span></p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
-              {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50">Checked {new Date(check.checked_at).toLocaleString()}</p>{/if}
+              {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50">{check.code === "test_playback" ? "Confirmed" : "Checked"} {new Date(check.checked_at).toLocaleString()}</p>{/if}
             </div>
             <div class="flex flex-wrap gap-2">
               {#each rowActions(check) as item}

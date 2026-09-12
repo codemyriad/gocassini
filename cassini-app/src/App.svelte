@@ -337,7 +337,7 @@
 
 {#if recordingNeedsAction && surface !== "setup"}
   <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
-    Recording setup needs an administrator’s attention. Existing recordings remain available.
+    Recording setup needs an administrator’s attention.
     {#if operatorAvailable}
       <button class="btn btn-sm ml-2" on:click={() => selectSurface("setup")}>Open Setup</button>
     {:else}

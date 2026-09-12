@@ -854,6 +854,8 @@ func (r *Recorder) hello(ctx context.Context) error {
 func (r *Recorder) explainHelloError(resp map[string]any) error {
 	code, message := signalingErrorCodeMessage(resp)
 	switch code {
+	case "invalid_backend":
+		return errInternalBackendRejected
 	case "invalid_client_type":
 		return errInternalUnsupported
 	case "invalid_token", "auth_failed":
