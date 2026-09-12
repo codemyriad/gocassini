@@ -325,10 +325,22 @@ func ncStorageServesAsOwner() bool {
 //	             here — and it is very probably fine. Refusing every recording
 //	             until somebody re-enables the app would turn a reboot into an
 //	             outage.
+//
+// Two steps that once landed here are not missing prerequisites at all: nobody
+// had chosen a storage model, or a recorded model had not been confirmed. They
+// refused every recording on the instance until an administrator answered the
+// setup wizard — a call spent, and a moderator told only that "the recording
+// failed" — for a question Cassini now answers from the instance on the enabled
+// edge (D-753, storageModeFromProbe). Neither step is emitted any more, and the
+// guard stays so that re-introducing either cannot silently stop every
+// recording again.
 func (s *ncAccessSubstrateStatus) recordingRefusal() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.applicable || s.state != ncSubstrateUnavailable {
+		return ""
+	}
+	if s.step == storageStepModeUndecided || s.step == storageStepModeUnconfirmed {
 		return ""
 	}
 	if s.detail != "" {
@@ -366,10 +378,15 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		State:       string(s.state),
 		Step:        s.step,
 		Detail:      s.detail,
-		AdminUser:   s.adminUser,
-		Mode:        s.mode,
-		ModeSource:  s.modeSource,
-		CheckedAt:   s.checkedAtUTC,
+		// The same failure in one plain sentence (D-759). Derived from the step
+		// rather than stored beside it, so a step recorded anywhere in this
+		// package gets its sentence without every recorder having to remember
+		// to pass one.
+		Cause:      storageCauseFor(s.step),
+		AdminUser:  s.adminUser,
+		Mode:       s.mode,
+		ModeSource: s.modeSource,
+		CheckedAt:  s.checkedAtUTC,
 	}
 	out.ModeConfirmed = ncStorage.confirmedMode()
 	if s.mode != "" {
@@ -388,6 +405,7 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		out.OK = true
 		out.Detail = "recordings are not served from Nextcloud Files; no substrate is expected"
 		out.Step = ""
+		out.Cause = ""
 		return out
 	}
 	if s.checkedAtUTC == "" {

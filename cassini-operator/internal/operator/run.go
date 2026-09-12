@@ -273,6 +273,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer store.Close()
+	// The enabled edge asks this when Nextcloud cannot be believed about what
+	// the install already holds: an operator that has published nothing has no
+	// archive an open storage mode could strand (D-753, storageModeFromProbe).
+	// Registered here because the preflight runs from an ExAppConfig, which has
+	// no Store in it.
+	setDeliveredRecordingsCounter(store.CountDeliveredRecordings)
+	defer setDeliveredRecordingsCounter(nil)
 	interruptedAt := nowUTCString()
 	interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
 	if err != nil {
@@ -328,17 +335,21 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// for the edge (nc_access_status.go), because a recorded mode is a decision,
 	// not evidence that the storage behind it is still there.
 	ncStorage.setPath(storageSettingsPath(cfg))
-	if settings, err := LoadStorageSettings(ncStorage.settingsPath()); err != nil {
+	settings, err := LoadStorageSettings(ncStorage.settingsPath())
+	// The first-run acknowledgement rides in the same file (D-755) and is
+	// mirrored here whatever the mode turns out to be — including on the error
+	// branch below, where the zero value is the honest answer: a file nothing
+	// could read is not evidence that anybody has seen the dialog.
+	ncStorage.setFirstRunAcknowledged(err == nil && settings.FirstRunAcknowledged)
+	if err != nil {
 		logger.Printf("ERROR: storage_settings load failed (%v); access control stays on until the preflight can re-read it", err)
 		// Clean: an unreadable file is not evidence of a half-done migration.
-		// Unconfirmed: writing a mode is how an administrator gets out of this.
 		ncStorage.set(true, storageModeSourceConfigured, true)
 	} else if settings.Configured() {
 		// The RECORDED source, carried through rather than flattened to
 		// "configured". It is what tells an administrator's click apart from a
 		// deploy option, and both apart from a mode a previous build wrote down
-		// on its own — which is the question the Setup tab now has to answer
-		// before it presents a decision as made (D-708).
+		// on its own.
 		source := settings.Source
 		if source == "" {
 			source = storageModeSourceConfigured
@@ -354,13 +365,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	} else if raw != "" {
 		// Refused at startup rather than only on the enabled edge, because this
 		// is where a deploy option's typo is cheapest to notice.
-		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and no storage mode will be chosen for this install", envStorageMode, raw, storageModeEnvValues)
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and the mode will be resolved from this install's own recordings instead", envStorageMode, raw, storageModeEnvValues)
 	} else {
 		// Nothing recorded, nothing declared. Say so here rather than leaving an
-		// administrator to infer it from silence: this is the line that precedes
-		// every refusal to publish on a fresh install, and the Setup tab is what
-		// ends it.
-		logger.Printf("storage_mode -> undecided (nothing recorded, nothing declared by %s). Cassini does not choose a storage model on its own; publishing and recording are refused until an administrator picks one in the Setup tab", envStorageMode)
+		// administrator to infer it from silence — and say what happens next,
+		// because since D-753 something does: the enabled edge resolves the mode
+		// from the archive this install already has.
+		logger.Printf("storage_mode -> not recorded yet (nothing recorded, nothing declared by %s); the next enabled edge resolves it from the recordings this install already has", envStorageMode)
 	}
 
 	// The preflight remains tied to the AppAPI enabled edge, but not to the

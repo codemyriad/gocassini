@@ -121,37 +121,22 @@ func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *h
 	if err := c.ensureGroup(ctx, client, ncRecordingsOwnerGroup); err != nil {
 		return fmt.Errorf("ensure owner group %q: %w", ncRecordingsOwnerGroup, err)
 	}
-	password, err := randomPassword()
-	if err != nil {
-		return fmt.Errorf("generate service account password: %w", err)
-	}
-	status, body, err := c.apiPostForm(ctx, client, c.ocsURL("/cloud/users"), url.Values{
-		"userid":      {ncRecordingsOwner},
-		"password":    {password},
-		"displayname": {"Cassini recordings"},
-		// "groups[]", not "groups". OCS decodes this field as a PHP array, and
-		// a scalar makes Nextcloud answer a bare 400 with an empty body — so
-		// the account is never created, every act-as-cassini call 401s, and
-		// nothing downstream can be provisioned. Verified against a live
-		// Nextcloud 32: "groups=" -> 400, "groups[]=" -> 200.
-		"groups[]": {ncRecordingsOwnerGroup},
-	})
-	if err != nil {
-		return fmt.Errorf("create service account: %w", err)
-	}
+	// The create itself lives in nc_owner_account.go, so this path and the
+	// enabled edge's own attempt judge an answer the same way: on the OCS
+	// envelope, where a refusal can arrive wearing an HTTP 200.
+	created, refusal := c.createRecordingsOwner(ctx, client)
 	switch {
-	case status/100 == 2 && ocsStatusCode(body) != 102:
-		if logger != nil {
+	case refusal == "":
+		// Created, or already there. Membership is still re-asserted below
+		// because the group may have been created after an existing account.
+		if created && logger != nil {
 			logger.Printf("nc provision: created recordings service account %q", ncRecordingsOwner)
 		}
-	case ocsStatusCode(body) == 102 || strings.Contains(strings.ToLower(string(body)), "already exists"):
-		// Membership is still re-asserted below because the group may have been
-		// created after an existing account.
 	default:
 		if exists, ferr := c.userExists(ctx, client, ncRecordingsOwner); ferr == nil && exists {
 			break
 		}
-		return fmt.Errorf("create service account -> %d: %s — "+fmt.Sprintf(manualSetupHint, ncRecordingsOwnerGroup, ncRecordingsOwner), status, snippet(body))
+		return fmt.Errorf("create service account -> %s — "+fmt.Sprintf(manualSetupHint, ncRecordingsOwnerGroup, ncRecordingsOwner), refusal)
 	}
 	return c.ensureOwnerGroupMembership(ctx, client)
 }
@@ -903,11 +888,8 @@ func (c ExAppConfig) folderPostExpectOK(ctx context.Context, client *http.Client
 // ensureGroup creates an ordinary group, treating "already exists" as success.
 // It is used only for the narrow owner group; `everyone` must remain virtual.
 func (c ExAppConfig) ensureGroup(ctx context.Context, client *http.Client, group string) error {
-	status, body, err := c.apiPostForm(ctx, client, c.ocsURL("/cloud/groups"), url.Values{"groupid": {group}})
-	if err != nil {
-		return err
-	}
-	if status/100 == 2 || ocsStatusCode(body) == 102 || strings.Contains(strings.ToLower(string(body)), "group exists") {
+	_, refusal := c.createOCSGroup(ctx, client, group)
+	if refusal == "" {
 		return nil
 	}
 	// The create was refused. Ask once more whether the group is there anyway:
@@ -916,7 +898,7 @@ func (c ExAppConfig) ensureGroup(ctx context.Context, client *http.Client, group
 	if exists, ferr := c.groupExists(ctx, client, group); ferr == nil && exists {
 		return nil
 	}
-	return fmt.Errorf("create group -> %d: %s — "+fmt.Sprintf(manualSetupHint, group, ncRecordingsOwner), status, snippet(body))
+	return fmt.Errorf("create group -> %s — "+fmt.Sprintf(manualSetupHint, group, ncRecordingsOwner), refusal)
 }
 
 // Reading before writing is what makes a manually prepared Nextcloud usable.

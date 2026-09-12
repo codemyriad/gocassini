@@ -203,7 +203,8 @@ export interface LLMModel {
 
 // StorageMode mirrors the operator's storage_settings.json vocabulary (D-616).
 // "" is a third answer, not a missing one: it means no preflight has resolved a
-// mode yet, which the Setup tab has to be able to tell apart from "default".
+// mode yet, which the settings section has to be able to tell apart from
+// "default".
 export type StorageMode = "" | "default" | "access_controlled";
 
 // StorageModeOption is one of the two models as GET <basePath>/storage
@@ -225,9 +226,9 @@ export interface StorageModeOption {
   // that is already available.
   setup: StorageSetupStep[];
   // root is where this model keeps recordings, and archive is what is in it
-  // right now. Both are reported for BOTH models, always — the question the
-  // setup wizard is built around is answered by what is already in each of them
-  // (D-708).
+  // right now. Both are reported for BOTH models, always — the count the
+  // settings section states before a switch is taken from what is already in
+  // each of them (D-708).
   root: string;
   archive: StorageArchiveFacts;
 }
@@ -304,11 +305,12 @@ export interface StorageStatus {
   mode: StorageMode;
   mode_source: string;
   // mode_confirmed says a person (or a dev/CI deploy option) chose this mode,
-  // as opposed to a build recording one on its own. False is what puts the
-  // Setup tab into its wizard rather than its settled panel (D-708).
+  // as opposed to a build recording one on its own. Since D-756 a mode the
+  // operator resolved on enable counts as confirmed: "unconfirmed" is no
+  // longer a state the UI knows about.
   mode_confirmed: boolean;
-  // awaiting_choice says nothing is recorded at all. Not the same as
-  // `mode === ""`, which also happens before any preflight has run.
+  // awaiting_choice said nothing was recorded at all. It stays in the shape for
+  // compatibility and is always false after D-753; nothing branches on it.
   awaiting_choice: boolean;
   service_account: StorageServiceAccount;
   // migration_clean is false when a mode switch stopped before it finished
@@ -334,6 +336,12 @@ export interface StorageStatus {
   // preview is present only on the response to a preview request. Nothing has
   // happened when it is set.
   preview: StorageTransitionPreview | null;
+  // first_run is true until an administrator acknowledges the first-run dialog.
+  // It is per INSTALL, in the operator's settings store, not per browser: a
+  // second administrator opening Cassini must not be asked again (D-757).
+  first_run: boolean;
+  // migration is a mode switch that is RUNNING, and null at every other moment.
+  migration: StorageMigration | null;
 }
 
 // StorageTransitionPreview is what a mode switch WOULD do, before it does any
@@ -398,4 +406,18 @@ export interface InsightWorkflow {
   // The system prompt with its template already spliced in: the exact bytes
   // sent to the model, not a description of them.
   instruction: string;
+}
+
+// --- D-757: what GET /storage gained for "Who can see recordings" -------------
+
+// StorageMigration is a mode switch that is RUNNING. Null at every other
+// moment. The phases are the operator's own order — copy, verify, flip the
+// mode, clear the old root — which is what lets an interrupted switch be
+// described honestly: whichever phase it stopped at, a complete archive exists
+// somewhere. Counts are recordings.
+export interface StorageMigration {
+  active: boolean;
+  phase: "copying" | "verifying" | "switching" | "clearing";
+  done: number;
+  total: number;
 }

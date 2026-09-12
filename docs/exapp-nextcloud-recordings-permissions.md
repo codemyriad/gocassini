@@ -11,15 +11,17 @@ advanced-permissions UI.
 
 ## Two storage modes (D-616)
 
-Access control is one of **two** storage modes, chosen in the Cassini app's
-**Setup** tab. The rest of this document describes the access-controlled one.
+Who can see a recording is one setting in the Cassini app, **Operator ›
+Settings › Who can see recordings**, with two answers. The rest of this document
+describes the second one.
 
-| | Default | Access controlled |
+| | Everyone with a Nextcloud account | Meeting participants |
 |---|---|---|
+| Who can see a recording | anyone with an account on this Nextcloud | only the people who were in the call |
 | Where recordings live | the `cassini` account's own `CassiniNoACL/Recordings` | `Cassini/Recordings`, inside the `Cassini` Team folder |
-| Who can read one | everyone who can open the Cassini app | the people who were in the meeting |
 | Nextcloud apps needed | none | Team folders + Everyone Group |
 | Other prerequisites | a `cassini` service account | a `cassini` service account, an `everyone` group, and a mapped, ACL-enabled `Cassini` Team folder |
+| On the wire | `"mode": "default"` | `"mode": "access_controlled"` |
 
 **Each mode has its own root, and neither can shadow the other.** Both addressed
 `Cassini/Recordings` until D-616's followups. That was cheap for writes and
@@ -56,16 +58,16 @@ first segment differs, and it is chosen once per delivery and once per read.
                                 │
           ┌─────────────────────┴─────────────────────┐
           ▼                                           ▼
-      DEFAULT                                  ACCESS CONTROLLED
+   ANYONE WITH AN ACCOUNT                     MEETING PARTICIPANTS
   root:  CassiniNoACL/Recordings           root:  Cassini/Recordings
   write: PUT, no ACLs                      write: reserve → deny → PUT → audience
   read:  as `cassini`, whole archive       read:  as the CALLER, Nextcloud decides
   needs: the service account               needs: both apps + the Team folder
 ```
 
-**Which one an install gets: somebody says.** Cassini does not choose, and since
-D-708 it does not fall back either. The mode is resolved on the AppAPI enabled
-edge, in one order, from two places and then nowhere:
+**Which one an install gets.** Cassini resolves it on the AppAPI enabled edge,
+from what is already on the instance, and records what it resolved. Nothing is
+asked, and no install waits to be told:
 
 ```text
   storage_settings.json records one   ─▶ use it verbatim. Nothing re-opens it,
@@ -74,41 +76,51 @@ edge, in one order, from two places and then nowhere:
                                          deployment, and only where the instance
                                          matches it. Written down after the
                                          gates, not before.
-  neither                             ─▶ UNDECIDED. Nothing is written, nothing
-                                         is published, nothing is recorded. The
-                                         Setup tab asks.
+  recordings in `Cassini/Recordings`  ─▶ MEETING PARTICIPANTS, adopted. Nothing
+  (with or without an archive in the     moves, and an archive in the other root
+   other root)                           is reported as `stranded_recordings`.
+  anything else                       ─▶ ANYONE WITH A NEXTCLOUD ACCOUNT. A
+                                         fresh install records from the moment
+                                         the `cassini` account exists.
 ```
 
-There used to be a third branch: fall back to `default` and write that down on
-the first healthy enable. `default` is the model in which every account can read
-every recording, and nobody had asked for it — which is a quieter version of the
-inference it replaced. An upgrade latch caught the one shape where the mistake
-would have been obvious (a `Cassini` Team folder still holding recordings) and
-nothing caught the rest. Both are gone.
+**Cassini never widens an existing archive on its own.** That is the whole of
+the safety argument above: every branch either keeps the audience the recordings
+already have, or starts an empty archive at the audience a fresh install gets.
+Widening is an administrator's deliberate act, in the settings section, and it
+says how many recordings it is about to make visible to everyone.
+
+The earlier build fell back to `default` and wrote that down on the first healthy
+enable, whatever it found: that made "anyone with an account can see every
+recording" a decision nobody had taken, on an instance whose Team folder was
+full of recordings that nobody could see before. The branch above is the narrow
+version — it reads the archive that exists rather than guessing from the
+presence of a folder.
 
 **"Recorded" and "chosen" are different things.** `storage_settings.json` carries
 a `source` field, and it is what tells them apart:
 
 | `source` | Chosen? | What it means |
 |---|---|---|
-| `user` | yes | An administrator picked it in the Setup tab |
+| `user` | yes | An administrator picked it in **Operator › Settings › Who can see recordings** |
+| `resolved_on_enable` | yes | Cassini resolved it when the app was enabled, from the archive the instance already held |
 | `env` | yes | `CASSINI_STORAGE_MODE` declared it and the instance matched |
 | `migrating` | no | A switch was interrupted; this is where the recordings are, not what anybody wanted |
 | `default` / `derived` | no | An older version decided on its own |
 | absent | no | Written before the field existed |
 
-An **unconfirmed** mode governs — the archive really is at that root, and reads
-work — and refuses to publish or record until somebody agrees to it. Every
+An **unconfirmed** mode still governs — the archive really is at that root, and
+reads and writes both work — and it no longer refuses anything. The distinction
+is provenance, kept so the audit trail says which build wrote the file; every
 earlier release reported all of these as `configured`, so a fallback and a click
-were indistinguishable on the wire; the Setup tab's whole premise is being able
-to tell them apart.
+were indistinguishable on the wire, and that is what the field exists to end.
 
 A settings file that exists but cannot be parsed is **not** "no decision": Cassini
 keeps access control on, says so in the log, and writes nothing over a file it
-could not read. One bad byte falling through to the open mode would publish the
-next recording where every account can read it. It is reported as unconfirmed, so
-the Setup tab offers a decision rather than presenting one — writing a mode is
-how an administrator leaves that state.
+could not read. One bad byte falling through to the open model would publish the
+next recording where every account can read it. It is reported as unconfirmed,
+and an administrator leaves that state by picking an audience in the settings
+section, which writes the file afresh.
 
 **The deploy option is for development and CI.** It is believed only where it
 fits: a declared mode whose prerequisites are missing, or that meets recordings
@@ -121,8 +133,8 @@ reconsidered. The first pass wrote it down before any gate, so that an
 administrator could read back what they had declared; that was the right trade
 for a production affordance and the wrong one for this.
 
-**Switching.** The Setup tab relocates the archive both ways, and it does it by
-**copying** into the other mode's root and emptying the source afterwards —
+**Switching.** The settings section relocates the archive both ways, and it does
+it by **copying** into the other mode's root and emptying the source afterwards —
 never by moving. A copy means that at every instant the recorded mode names a
 root holding a complete archive, including the instant the container is killed
 mid-switch. Opting in
@@ -138,22 +150,24 @@ recordings](#switching-modes-on-an-instance-that-already-has-recordings).
 
 Normally the destination is empty and the switch copies the source, flips the
 mode, then clears the source. If the destination contains recordings or a
-catalog, Cassini stops before writing, lists those artefacts in the Setup tab,
-and requires the administrator to explicitly confirm their overwrite. Once
-confirmed, it clears the destination, copies the complete source archive, and
-then clears the source. There is no keep, skip, merge, or newest-copy mode.
-Selecting the mode already in force only records the administrator's explicit
-choice; it does not move or overwrite the archive already at that root.
+catalog, Cassini stops before writing and the request is refused until it comes
+back with `confirm_overwrite: true`; it then clears the destination, copies the
+complete source archive, and clears the source. There is no keep, skip, merge,
+or newest-copy mode. The app does not reach that guard: recordings in both roots
+are resolved before a switch is offered, by the banner that counts them and
+offers to move them in. Asking for the audience already in force only records
+it; it moves and overwrites nothing.
 
 The operator repeats this guard under its provisioning lock: a `PUT /storage`
 request without `confirm_overwrite: true` is refused if the destination contains
 artefacts, even when an earlier preview was empty or stale.
 
-> **Cassini can set most of this up for you (D-671).** The Setup tab lists what
-> is missing and offers to make it: the `cassini` group and account, the Team
-> folder, its group mappings, advanced ACL, and the ACL-manager delegation. It
-> performs them **as you**, from your browser, after Nextcloud's own password
-> dialog — Cassini never sees, holds or transmits your password.
+> **Cassini can set most of this up for you (D-671).** Picking **Meeting
+> participants** in the settings section lists what is missing and offers to make
+> it: the `cassini` group and account, the Team folder, its group mappings,
+> advanced ACL, and the ACL-manager delegation. It performs them **as you**, from
+> your browser, after Nextcloud's own password dialog — Cassini never sees, holds
+> or transmits your password.
 >
 > The exception is installing the two Nextcloud apps. Those routes require your
 > password on the request itself, which Cassini will not handle, so it tries via
@@ -293,11 +307,13 @@ group with `ALL` and gives `everyone` only `READ`.
 - **Everyone Group** (`group_everyone`) installed and enabled. Use a release
   compatible with the installed Nextcloud major version. It creates the fixed
   virtual group ID `everyone`.
-- Cassini deployed through AppAPI, with the access-controlled mode either
-  recorded, chosen in the Setup tab, or — on a development or CI stack —
-  declared by `CASSINI_STORAGE_MODE=access_controlled`. It was unconditional
-  between D-554 and D-616; it is now one of two modes, and neither is a default:
-  an install that has not been told does not publish at all.
+- Cassini deployed through AppAPI, with **Meeting participants** in force:
+  already recorded, picked in the settings section, resolved when the app was
+  enabled because the `Cassini` Team folder already held recordings, or — on a
+  development or CI stack — declared by
+  `CASSINI_STORAGE_MODE=access_controlled`. It was unconditional between D-554
+  and D-616; it is now one of two audiences, and an install nobody has told
+  records as **anyone with a Nextcloud account**.
 
 Both native apps must be enabled before Cassini's enabled lifecycle callback.
 Cassini checks that `everyone` exists and refuses to create the recording ACL
@@ -315,11 +331,12 @@ accordingly.
 
 ## Setup: what you do, and what Cassini does
 
-Open **Cassini → Setup** and press *Set up access controlled*. Cassini lists
-every change first, asks Nextcloud to confirm your password, and then makes them
+Open **Cassini**, then **Operator › Settings › Who can see recordings**, and
+pick **Meeting participants**. Cassini checks the two apps first, lists every change
+it is about to make, asks Nextcloud to confirm your password, and then makes them
 as you. It cannot install the two apps — see below — and will say so.
 
-The same recipe by hand, in the order the Setup tab lists whatever is missing:
+The same recipe by hand, in the order Cassini lists whatever is missing:
 
 ```bash
 occ group:add cassini
@@ -333,8 +350,8 @@ occ groupfolders:permissions <id> --enable
 occ groupfolders:permissions <id> -m --user cassini
 ```
 
-The Setup tab prints only the lines this instance still needs, so it is usually
-shorter than the block above.
+Cassini prints only the lines this instance still needs, under **Details for
+administrators**, so it is usually shorter than the block above.
 
 ### Why Cassini can do all of that except install an app
 
@@ -355,7 +372,8 @@ Nextcloud 32.x, 33.0.0–33.0.5 and 34.0.0, and on any release where an
 administrator has set `allowed_no_password_confirmation_ranges`.
 
 Then disable and re-enable the app (setup runs on the AppAPI **enabled** edge,
-not on start), and switch the mode in the Setup tab if it is not already on.
+not on start), and pick **Meeting participants** in the settings section if it
+is not already in force.
 
 On that edge Cassini probes the instance read-only, resolves the storage mode,
 and — only once every prerequisite above is confirmed present — arranges its own
@@ -384,7 +402,8 @@ If any check fails, none of the writes below it run. The step is recorded, the
 app shows it with the command that fixes it, and publishing is refused — rather
 than half-building a substrate that later reads as healthy.
 
-In the **default** mode this whole sequence collapses to two things: MKCOL
+When recordings are visible to anyone with a Nextcloud account, this whole
+sequence collapses to two things: MKCOL
 `CassiniNoACL/Recordings/meetings` in the service account's own home, and a
 one-time adoption of any archive left at the pre-split path by an older version
 (see [Upgrading an install from before the roots were
@@ -437,17 +456,20 @@ broken prerequisite and fails closed with an empty catalog.
 
 ## Is it on?
 
-Open **Cassini → Setup**. The mode in force carries a "Current" badge; the other
-one is either offered as a switch or shows what it is still missing.
+Open **Cassini**, then **Operator › Settings › Who can see recordings**. The
+audience in force is marked **Current**; the other one is either offered as a
+switch or shows what it is still missing. Everyone else sees it without the
+settings page: the meeting list carries a chip reading "Visible to anyone with a
+Nextcloud account" or "Visible to meeting participants".
 
 Over HTTP, `GET /operator/storage` answers the same question with the mode, its
 source (`configured` when it was read from the settings file, `env` when
-`CASSINI_STORAGE_MODE` declared it on an install that had recorded nothing,
-`default` when nothing said otherwise), and per-mode availability. The file
-itself records a little more — `user` when somebody switched modes in the Setup
-tab, `derived` on installs from the build that inferred the mode — but anything
-read back off disk reports as `configured`, because that is what it now is. It
-also reports what is happening at the *other* root:
+`CASSINI_STORAGE_MODE` declared it, `resolved_on_enable` when Cassini resolved it
+from the archive it found), and per-mode availability. The file itself records a
+little more — `user` when an administrator switched in the settings section,
+`derived` on installs from the build that inferred the mode — but anything read
+back off disk reports as `configured`, because that is what it now is. It also
+reports what is happening at the *other* root:
 
 | Field | Meaning |
 |---|---|
@@ -494,7 +516,7 @@ which constant goes with which mode. `migration_clean: false` is deliberately
 **not** a health failure and does not make `/status` answer 503: the archive is
 complete at `root`, publishing and recording are unaffected, and the only
 consequence is a stale copy at the other root that nothing reads. It is here so a
-monitor notices; the Setup tab has the button.
+monitor notices; the settings section has the **Resume** button.
 
 `state` distinguishes the two things an administrator does differently:
 **`unavailable`** means a named thing is absent — install it, or set it —
@@ -517,22 +539,16 @@ it rather than matching prose.
 "step": "mode_mismatch:default_root_shadowed"   // something IS mounted there
 "step": "mode_mismatch:default_root_unknown"    // nobody could say (writes only)
                                        → a Team folder is mounted at CassiniNoACL,
-                                         which is where the default mode keeps its
-                                         recordings; unmap or rename it, or turn
-                                         access control on in the Setup tab
-"step": "storage_mode_undecided"       → nobody has chosen a storage model. The
-                                         ordinary state of a fresh install and of
-                                         every upgrade. Choose one in the Setup tab
-"step": "storage_mode_unconfirmed"     → a mode is in force that nobody chose: an
-                                         older version recorded one, a switch was
-                                         interrupted, or the settings file could not
-                                         be parsed. Confirm it in the Setup tab, or
-                                         pick the other one
+                                         which is where recordings visible to
+                                         anyone with an account are kept; unmap or
+                                         rename it, or switch the audience to
+                                         meeting participants in the settings
 "step": "storage_mode_declared_conflict"
                                        → CASSINI_STORAGE_MODE named a model this
                                          instance does not match. Nothing was
                                          written down. Fix the stack, or remove the
-                                         variable and choose in the Setup tab
+                                         variable and let the enabled edge resolve
+                                         the audience
 "step": "acl_enable"                   → a call failed; read the nc storage:
                                          and nc provision: log lines
 ```
@@ -572,13 +588,15 @@ The full state table and worked examples are in
 [the install guide](./exapp-install.md#verifying-the-recordings-substrate).
 
 You do not have to curl for it. Whenever the state is not `provisioned` or
-`not_applicable`, opening **Cassini** shows an administrator what stopped — the
-missing app and its `occ` lines where there is one, the log to read where there
-is not — along with the operator's own `detail` sentence, and shows everyone
-else that Cassini is not set up plus a link to hand to an administrator. For
-`unavailable` and `degraded` that message takes the place of the meeting list;
-for `unknown` the list stays, because a restarted container can still serve
-every recording it already has. See [What people see when setup is not
+`not_applicable`, opening **Cassini** tells an administrator in one sentence that
+recordings cannot be saved right now, names the cause in words, and offers **Try
+again** and **Show details** — the missing app and its `occ` lines where there is
+one, the log to read where there is not, and the operator's own `detail`
+sentence, all inside the details disclosure. Everyone else gets the same first
+sentence and no buttons. For `unavailable` and `degraded` that message takes the
+place of the meeting list; for `unknown` the list stays, because a restarted
+container can still serve every recording it already has. See [What people see
+when setup is not
 finished](./exapp-install.md#what-people-see-when-setup-is-not-finished).
 
 Provisioning does not block startup, but it does gate **delivery**. A
@@ -633,9 +651,9 @@ Access is frozen at publish and remains editable in Nextcloud:
       empty.
 
   [ ] Kill the container mid-switch, then restart it:
-      the mode on /status still names a root that lists every meeting, the Setup
-      tab offers "Finish the switch", and pressing it changes nothing anyone can
-      see.
+      the mode on /status still names a root that lists every meeting, the
+      settings section says "A switch didn't finish" and offers Resume, and
+      pressing it changes nothing anyone can see.
 ```
 
 If alice sees an EMPTY list, her per-caller scan cannot traverse the folder:
@@ -648,17 +666,20 @@ degrades to "no meetings", never to "everyone's meetings".
 
 ## Switching modes on an instance that already has recordings
 
-The Setup tab does it, in one synchronous request, and it is a **copy**: every
+The settings section does it, in one synchronous request, and it is a **copy**: every
 recording the destination does not already have is copied into the other mode's
 root, the mode is flipped only once the copy has been verified, and the source is
 emptied last. Nothing is moved and nothing is deleted before the destination
 provably holds the archive.
 
-Before it runs, the button asks the operator what the switch *would* do and shows
-the answer: how many recordings would be copied, how many are already at the
-destination, whether the source could be read at all, and — for an opt-in — that
-every copied recording will be readable by every account. A source it could not
-read is reported as exactly that, never as "there is nothing to move".
+Before it runs, the app asks the operator what the switch *would* do: how many
+recordings would be copied, how many are already at the destination, whether the
+source could be read at all. The confirmation states the outcome in three
+sentences — what it means for new recordings, that the existing ones stay
+visible to everyone who can see them today, and that recording pauses while the
+switch runs — and the direction that widens the audience carries the number of
+recordings in its own button. A source it could not read is reported as exactly
+that, never as "there is nothing to move".
 
 ### The invariant, and the state machine that keeps it
 
@@ -727,7 +748,7 @@ are already claimed by the recovery.
 
 The switch, the preview, the recovery and the enabled-edge preflight all take the
 same lock, so none of them can interleave, and the switch re-runs the preflight
-inside its own critical section — `/status`, the Setup tab and the publish gate
+inside its own critical section — `/status`, the settings section and the publish gate
 describe the archive as it is *now* rather than as it was before. What the lock
 does not cover is a publish that slipped in before it was taken, which is what
 step 5 is for: it lists both trees again and refuses to flip if the source grew.
@@ -776,9 +797,9 @@ Cassini while access control is in force.
 Three doors, one action behind them:
 
 ```text
-  Setup tab                POST /storage           PUT /storage
-  "A storage switch        {"action":              {"access_control_enabled":
-   did not finish."         "finish_migration"}     <the mode already in force>}
+  Settings section         POST /storage           PUT /storage
+  "A switch didn't         {"action":              {"access_control_enabled":
+   finish." · Resume        "finish_migration"}     <the mode already in force>}
         │                        │                          │
         └────────────────────────┴──────────────────────────┘
                                  ▼
@@ -794,7 +815,7 @@ Three doors, one action behind them:
 ```
 
 The stale root is simply the one the recorded mode does **not** name — no
-discovery, no regex, no branch. The Setup tab's banner says where the recordings
+discovery, no regex, no branch. The settings section says where the recordings
 *are* before it offers to clear anything, because this is a tidy-up and the
 alarming reading is data loss.
 
@@ -914,40 +935,42 @@ an interrupted adoption only while its destination remains empty; it refuses to
 overwrite any artefacts it finds there.
 
 **What an upgrade meets.** An install that upgrades into this build has nothing
-recorded, so it is **undecided**: publishing and recording are refused, and the
-Setup tab asks.
+recorded, so the enabled edge resolves an audience from the archive it finds, and
+records it. Nothing is asked and nothing is refused.
 
 ```text
   nothing recorded, nothing declared
                               │
                               ▼
-      state: unavailable, step: storage_mode_undecided
-      (publishing AND recording are refused while this stands;
-       READING is not — an access-controlled archive is still
-       readable by the people it belongs to)
-                              │
-                              ▼
-      the Setup tab shows both folders and what is in each,
-      and one click records the answer
+      recordings in Cassini/Recordings?
+              │                        │
+             yes                       no
+              ▼                        ▼
+      MEETING PARTICIPANTS      ANYONE WITH A NEXTCLOUD ACCOUNT
+      adopted, nothing moves    recorded, and an empty archive
+      (an archive in the        starts open
+       other root is reported
+       as stranded)
 ```
 
-An earlier build fell back to `default` here and caught the obvious mistake with
-a latch — `mode_mismatch:access_controlled_archive`, which fired when the
-`Cassini` Team folder was mounted and still held recordings. That is gone, and a
-monitor keyed on it will now see nothing. It caught one shape; the refusal above
-covers every shape, because it does not depend on noticing anything.
+An earlier build fell back to `default` here whatever it found, and caught the
+obvious mistake with a latch — `mode_mismatch:access_controlled_archive`, which
+fired when the `Cassini` Team folder was mounted and still held recordings. Both
+are gone, and a monitor keyed on that step will now see nothing. The latch caught
+one shape; reading the archive itself covers every shape, and it never widens an
+archive that already exists.
 
-Choosing access control from the Setup tab is a switch like any other: it checks
-the destination first. If the private archive is not empty, it lists the files
-that will be overwritten and waits for the administrator's confirmation before
-replacing that archive, flipping the mode, and recording it.
+Picking **Meeting participants** in the settings section is a switch like any
+other: it checks the destination first. If the private archive is not empty, the
+operator refuses until the request comes back with `confirm_overwrite: true`,
+then replaces that archive, flips the mode, and records it.
 
 A **recorded** or **declared** `default` on an instance whose Team folder still
 holds recordings is an administrator's decision plus a tidy-up, not a
 misconfiguration: `/storage` reports it as `stranded_root` /
-`stranded_recordings`, the Setup tab says how many and where, and nothing is
-refused. Switching to the mode that holds them makes them the active archive;
-switching back afterwards carries them into the other root. A mounted but
+`stranded_recordings`, Cassini says how many there are and offers to move them
+in, and nothing is refused. Switching to the mode that holds them makes them the
+active archive; switching back afterwards carries them into the other root. A mounted but
 **empty** `Cassini` folder is never stranded — that is exactly what a completed
 opt-out leaves behind.
 
@@ -964,10 +987,11 @@ removed (D-613). Run the migration explicitly instead, once:
 ./scripts/backfill-nc-files.sh
 ```
 
-It applies to the **access-controlled** mode only, and writes into
-`Cassini/Recordings/` — the Team folder's root. On an instance running the
-default mode it reads nothing and writes nothing, and says so: switch modes in the
-Setup tab instead, which is what relocates an archive that is already published.
+It applies only where recordings are visible to **meeting participants**, and
+writes into `Cassini/Recordings/` — the Team folder's root. On an instance whose
+recordings are visible to anyone with a Nextcloud account it reads nothing and
+writes nothing, and says so: switch the audience in the settings section instead,
+which is what relocates an archive that is already published.
 It also changes nothing when `Cassini/Recordings/` already holds recordings, or
 when there is no older archive on the volume, so it is safe to run when you are
 unsure whether it is needed. Migrated recordings are readable only by the
@@ -984,26 +1008,24 @@ restore the org-wide readability a pre-access-control archive had. See
 | `state=unavailable`, `step=administrator` | No probed account is an administrator Cassini may act as | Set `CASSINI_NC_ADMIN_USER` to one, then re-enable Cassini |
 | `state=unknown` | No preflight has completed in this process. An install with a recorded mode re-proves it at startup (D-669), so a restart clears this by itself within seconds; it sticks only when nothing has ever been recorded | Look again after a few seconds. If it stays, disable and re-enable Cassini |
 | Publishes fail with "the recordings storage is not ready" | Deliberate: writing somewhere the read path is not looking would leave recordings nobody can open | Fix the state above, or set `CASSINI_PUBLISH_SINK=local` to keep recordings on the app's own volume |
-| A recording is refused in Talk, with "The recording failed" | A prerequisite of the selected mode is missing, so the call would be captured and then not publishable | Open Cassini → Setup; the missing thing and its command are there |
+| A recording is refused in Talk, with "The recording failed" | A prerequisite of the audience in force is missing, so the call would be captured and then not publishable | Open Cassini as an administrator; the notice names the cause, and **Show details** carries the missing thing and its command |
 | `state=unavailable`, `step=owner_account` | The `cassini` service account does not exist | `occ group:add cassini` and `occ user:add --group=cassini cassini`, then re-enable Cassini |
 | `state=unavailable`, `step=mode_mismatch:default_root_unknown` | Nobody could say whether anything is mounted at `CassiniNoACL`. Publishing is refused, because the default mode's safety argument is that this tree is private and nothing confirmed it. **Reading is unaffected** — the archive still lists — which is the deliberate asymmetry: an unconfirmed write puts recordings somewhere they may not belong, an unconfirmed read serves a tree that in this mode is open by design | Check that Nextcloud is answering (this usually means the apps list or the Team-folder list failed), then disable and re-enable Cassini |
-| `state=unavailable`, `step=mode_mismatch:default_root_shadowed` | A Team folder is mounted at `CassiniNoACL`, which is where the default mode keeps recordings. A mounted folder wins that path, so writes would land in a shared folder and owner-identity reads would serve it to everyone mapped there | `occ groupfolders:list`, then `occ groupfolders:group <id> <group> --delete` to unmap it (or rename the folder) — or turn access control on in Cassini → Setup if that is what this instance was meant to be |
-| `state=unavailable`, `step=storage_mode_undecided` | Nobody has told Cassini which storage model to use. The ordinary state of a fresh install and of every upgrade into this release. Publishing and recording are refused; **reading is not** | Open Cassini → Setup and choose. It shows what is in both folders first |
-| `state=unavailable`, `step=storage_mode_unconfirmed` | A mode is in force that nobody chose — an older version recorded one, a first switch was interrupted, or `storage_settings.json` could not be parsed. The archive is where the mode says and reads work | Confirm it in Cassini → Setup, or pick the other one |
-| `state=unavailable`, `step=storage_mode_declared_conflict` | `CASSINI_STORAGE_MODE` named a model this instance does not match: recordings in both folders, the same recording in both, or a folder that could not be read. Nothing was written down | Fix the stack, or remove the variable and choose in Cassini → Setup. It is a development and CI option |
-| The Setup tab says "A storage switch did not finish" | `migration_clean` is false: a switch stopped between copying and tidying up. The archive is complete at the mode shown; the other root holds a copy nothing reads | Press **Finish the switch** (or `POST /operator/storage {"action":"finish_migration"}`). It refuses only if the leftovers are not also at the active root |
+| `state=unavailable`, `step=mode_mismatch:default_root_shadowed` | A Team folder is mounted at `CassiniNoACL`, which is where the default mode keeps recordings. A mounted folder wins that path, so writes would land in a shared folder and owner-identity reads would serve it to everyone mapped there | `occ groupfolders:list`, then `occ groupfolders:group <id> <group> --delete` to unmap it (or rename the folder) — or switch the audience to meeting participants in **Operator › Settings › Who can see recordings** if that is what this instance was meant to be |
+| `state=unavailable`, `step=storage_mode_declared_conflict` | `CASSINI_STORAGE_MODE` named a model this instance does not match: recordings in both folders, the same recording in both, or a folder that could not be read. Nothing was written down | Fix the stack, or remove the variable and let the enabled edge resolve the audience. It is a development and CI option |
+| The settings section says "A switch didn't finish" | `migration_clean` is false: a switch stopped between copying and tidying up. The archive is complete at the audience shown; the other root holds a copy nothing reads | Press **Resume** (or `POST /operator/storage {"action":"finish_migration"}`). It refuses only if the leftovers are not also at the active root |
 | Finishing the switch refuses with "those recordings are not in …" | The active root does not hold everything the stale one does — an adoption of a pre-split archive that has not finished carrying it across | Re-enable Cassini (or switch modes) to finish the copy first; nothing was deleted |
-| The Setup tab says N recordings are in the other storage mode | The instance is settled, but the mode that is *not* in force still has an archive. Publishing and reading work; those recordings are simply not read | Switch modes in Cassini → Setup, which copies them across; or leave them, they are not at risk |
+| Cassini says N recordings aren't shown yet | The instance is settled, but the root the audience in force does *not* name still has an archive. Publishing and reading work; those recordings are simply not read | Press **Move them in**, which copies them across; or leave them, they are not at risk |
 | Log says required universal group `everyone` is unavailable | Everyone Group app missing/disabled | Install/enable `group_everyone`, then re-enable Cassini |
 | The probe cannot see an account or folder you created | Administrator discovery picked the wrong account, so the admin-gated reads answer 401/403 | Inspect `nc storage:` logs; set `CASSINI_NC_ADMIN_USER` to the correct administrator and re-enable Cassini |
-| `step=group_folder` | There is no `Cassini` Team folder. The operator's own backend cannot create one — its requests carry no login token | Press *Set up access controlled* in Cassini → Setup, which creates it and maps it **as you**, from your browser; or run `occ groupfolders:create Cassini`, map its groups and enable its ACL (see Setup), then re-enable Cassini |
+| `step=group_folder` | There is no `Cassini` Team folder. The operator's own backend cannot create one — its requests carry no login token | Pick **Meeting participants** in **Operator › Settings › Who can see recordings**, which creates it and maps it **as you**, from your browser; or run `occ groupfolders:create Cassini`, map its groups and enable its ACL (see Setup), then re-enable Cassini |
 | Fresh user has no Cassini mount | `group_everyone` disabled or Team-folder mapping missing | Confirm `occ user:info <user>` includes `everyone` and `groupfolders:list` assigns `everyone:1` |
 | Root becomes owner-only after upgrade, or after a failed opt-in | Legacy leaf/catalog ACL migration failed, or an opt-in stopped between narrowing the container to owner-only and widening it again | Inspect the `nc provision:` / `nc storage:` logs, correct the DAV/ACL error, then re-enable Cassini or ask for the switch again — either re-applies both ends |
 | Everyone sees a private meeting | Leaf lacks an explicit `everyone` deny or ACLs were disabled | Re-enable Cassini to run protection; inspect the leaf's Advanced permissions |
 | Granted user sees an empty list | Caller cannot traverse or leaf ACL was not applied | Confirm advanced ACL, `everyone:1` mount, root read, and the participant allow |
 | Meeting visible to nobody | Non-Talk job or private room with only non-local participants | Share the `.opus` manually |
 | Viewer returns 502 | Nextcloud Files is unreachable | Check ExApp-to-Nextcloud DAV connectivity and owner identity |
-| Cassini shows "Cassini is not set up yet" instead of the meeting list | `state` is `unavailable` or `degraded`; the app now says so in the UI rather than failing the archive fetch | Open Cassini **as an administrator** — the same page names what stopped and the commands. See [What people see when setup is not finished](./exapp-install.md#what-people-see-when-setup-is-not-finished) |
+| Cassini says it can't save recordings right now, instead of listing meetings | `state` is `unavailable` or `degraded`; the app says so in the UI rather than failing the archive fetch | Open Cassini **as an administrator** — the same page names the cause in words, and **Show details** carries the step and the commands. See [What people see when setup is not finished](./exapp-install.md#what-people-see-when-setup-is-not-finished) |
 | Cassini shows "Cassini has not finished setting itself up" above a working meeting list | `state` is `unknown` — no preflight has completed in this process. Reads are fine; publishing is refused | Reload after a few seconds: a restart re-proves a recorded mode on its own (D-669). If it persists, nothing has ever been recorded — disable and re-enable Cassini |
 
 ## Related
@@ -1015,7 +1037,9 @@ restore the org-wide readability a pre-access-control archive had. See
 - **D-554** — made this the only mode and added the `/status` substrate report.
 - **D-529** — the underlying Nextcloud Files delivery this builds on.
 - **D-552** — authenticated account-wide access for public Talk recordings.
-- **D-616** — the storage-mode opt-in: two modes, the settings file, the Setup
-  tab, and its followups — one root per mode, the copy-based switch, and the
-  recovery.
+- **D-616** — the storage-mode opt-in: two modes, the settings file, and its
+  followups — one root per mode, the copy-based switch, and the recovery.
+- **D-751** — the audience resolved when the app is enabled, the one-time
+  dialog, and **Operator › Settings › Who can see recordings** in place of the
+  Setup tab.
 - **D-660** — the bench that measured the mount/home collision quoted above.

@@ -29,15 +29,29 @@ import type { OperatorPanel } from "../surfaceRouting";
 export interface SetupHealth {
   ok: boolean;
   state: string;
-  // awaitingChoice says the one thing missing is a DECISION: nobody has told
-  // Cassini which storage model this Nextcloud should use (D-708).
+  // mode is the storage model in force: "default", "access_controlled", or ""
+  // when the operator did not say — an install predating D-755, or a build
+  // serving no operator at all (D-756).
   //
-  // It changes what BOTH audiences are told. Every other reason recordings
-  // cannot be served reads as "something is broken"; this one reads as "somebody
-  // has to decide", and the two need different sentences and different next
-  // steps. It is a bit, not a detail — it names no account, no path and no
-  // folder id, which is why it is safe on the user-readable half.
-  awaitingChoice: boolean;
+  // It is on the USER-readable half deliberately. Who can see a recording is
+  // not administrator detail: it is the one fact every reader of the meeting
+  // list needs, and the audience chip renders it for everybody. It names no
+  // account, no path and no folder id, which is what makes it safe here.
+  //
+  // The enum names stop at this file. recordingAudience() below turns them into
+  // the audience the viewing layer knows about, so no component ever sees
+  // `access_controlled`.
+  mode: string;
+  // cause is why recordings cannot be served, in one plain sentence, or "" when
+  // they can be — and also "" when the operator has one but it cannot be told
+  // at this level. The operator's table (storage_causes.go) decides that, and
+  // withholds every sentence that would name an account, a path or an app.
+  //
+  // It is read here rather than composed here for the same reason the step is
+  // not: the operator is the only side that knows which check stopped, and a
+  // sentence assembled from a step name on this side would be this file
+  // guessing at the operator's diagnosis all over again.
+  cause: string;
   // What this deployment's AI configuration allows, or null when the operator
   // did not say — an install older than D-722, or a build serving no operator
   // at all. Null is a THIRD state and not a default: silence must read as
@@ -66,7 +80,16 @@ export interface RecordingsAccess {
   ok: boolean;
   state: string;
   step: string;
+  // detail is the operator's sentence for whoever is going to FIX this: it
+  // quotes Nextcloud, names the folder id and carries the command to run. It
+  // belongs in the details block, and nowhere else.
   detail: string;
+  // cause is the same failure in one plain sentence, from the operator's own
+  // table (storage_causes.go): no command, no path, no enum name. It is what
+  // the notice opens with. Empty when this operator is older than the table, or
+  // has nothing to say about the step it recorded — the notice falls back to
+  // its own sentence rather than to silence.
+  cause: string;
   // mode is the storage model this archive is under (D-616): "default",
   // "access_controlled", or "" when no preflight has resolved one. It decides
   // which prerequisite is worth naming — the default model needs no Nextcloud
@@ -84,12 +107,24 @@ export interface SetupNoticeStep {
   label: string;
   // Shell lines to run, verbatim. Empty when the step is not a command.
   commands: string[];
-  // action turns a step into something to PRESS rather than to find. "setup"
-  // opens the Setup tab, which since D-708 is the only sanctioned route to a
-  // storage decision — telling an administrator to go and look for a tab is a
-  // step they have to perform on the app's behalf.
-  action?: "setup";
+  // action turns a step into something to PRESS rather than to find.
+  // "settings" opens Operator › Settings, where "Who can see recordings" and
+  // the service-account controls live since D-757 — telling an administrator to
+  // go and look for it is a navigation they have to perform on the app's
+  // behalf. The Setup tab this used to name is gone (D-756).
+  action?: "settings";
 }
+
+// The two tones a notice can be drawn in. They are decided HERE, with the
+// words, because they say the same thing the words do:
+//
+//	warning  something is broken and recordings are failing now.
+//	neutral  nothing is broken as far as anybody knows; a check has not run.
+//
+// A warning triangle over "a check has not run yet" is the shell shouting about
+// a state that is ordinary after every container restart, which is what taught
+// administrators to read past this notice.
+export type SetupNoticeTone = "warning" | "neutral";
 
 // SetupNotice is everything the panel renders. The copy lives HERE, not in the
 // component, because this is the part worth testing — a wrong instruction is a
@@ -100,11 +135,26 @@ export interface SetupNotice {
   // for the meeting list. Advisory means setup is unproven but reads still work,
   // and the list must stay: see blocksBrowsing.
   blocking: boolean;
+  tone: SetupNoticeTone;
   title: string;
+  // summary is the CONSEQUENCE, in one sentence: what this costs the person
+  // reading it. It is the same sentence for every fault, and the same sentence
+  // for both audiences, because the consequence does not depend on which check
+  // failed and a non-administrator is owed exactly this much (D-759).
   summary: string;
+  // cause is why, in one sentence, and it is the operator's own words wherever
+  // the operator has them. Empty for everyone who is not an administrator: the
+  // verdict is not private, the diagnosis is.
+  cause: string;
+  // steps are the technical remedy, and they live INSIDE the details block with
+  // the commands. An administrator who wants them opens it; an administrator
+  // who wants to press Try again never has to read a command line.
   steps: SetupNoticeStep[];
-  // detail is the operator's own sentence, shown to an administrator so the
-  // panel and the container log read the same. Empty for everyone else.
+  // detail is the operator's own sentence, shown to an administrator inside the
+  // details block so the panel and the container log read the same. It falls
+  // back to the state and the step when the operator sent no sentence, because
+  // those are what a bug report needs and the opening sentences no longer carry
+  // them. Empty for everyone else.
   detail: string;
   // note qualifies the commands (how occ is invoked here). Empty when there are
   // no commands.
@@ -152,26 +202,45 @@ const SERVICE_ACCOUNT_SETUP: SetupNoticeStep = {
 // setup, as the administrator, using Nextcloud's own password confirmation — so
 // the first thing to say is "there is a button", and the commands become the
 // alternative rather than the only way.
-const SETUP_TAB_OFFER: SetupNoticeStep = {
+//
+// It names Operator › Settings, not the Setup tab: the tab is gone (D-756) and
+// the controls it carried are a section of the operator's own settings now.
+const SETTINGS_OFFER: SetupNoticeStep = {
   label:
-    "Open the Setup tab. Cassini can make these changes for you — Nextcloud will ask you " +
-    "to confirm your password, and Cassini never sees it",
+    "Open Operator › Settings. Cassini can make these changes for you, and Nextcloud will ask you " +
+    "to confirm your password. Cassini never sees it",
   commands: [],
-  action: "setup",
+  action: "settings",
 };
 
-// The decision, which is a different offer from the setup one: nothing is
-// missing and nothing is broken, and the button is the whole remedy.
-const CHOOSE_STORAGE_OFFER: SetupNoticeStep = {
-  label: "Open the Setup tab and choose where recordings are kept",
+// The rule, which is a different offer from the setup one: nothing is missing
+// and nothing is broken, and the section is the whole remedy.
+const CHOOSE_AUDIENCE_OFFER: SetupNoticeStep = {
+  label: "Open Operator › Settings and check who should be able to see recordings",
   commands: [],
-  action: "setup",
+  action: "settings",
 };
 
-// Machine-readable steps for the two states that are a question rather than a
-// fault (D-708). Keyed rather than matched on prose, like every other step here.
-const MODE_UNDECIDED_STEP = "storage_mode_undecided";
-const MODE_UNCONFIRMED_STEP = "storage_mode_unconfirmed";
+// --- The two sentences every notice opens with (D-759) ---
+//
+// One on the consequence, one on the cause, and the title says which of the two
+// kinds of trouble this is. Everything else — the step, the command, the
+// operator's own log line, the address of the full report — is behind "Show
+// details", where it was always the right content and never the right opening.
+
+// A fault: recordings are failing right now. There is no "not set up yet" any
+// more (D-756): a fresh install resolves a mode on enable and records, so every
+// blocking notice this file produces means something broke.
+const BLOCKING_TITLE = "Cassini can't save recordings right now";
+const BLOCKING_CONSEQUENCE =
+  "Calls will still run, but their recordings will fail until this is fixed.";
+
+// Not a fault: the check has not run. Provisioning runs on the AppAPI enabled
+// edge and never at start (D-541), so this is the state of every container that
+// has been restarted, and the archive underneath it is fine.
+const ADVISORY_TITLE = "Cassini hasn't checked that it can save recordings";
+const ADVISORY_CONSEQUENCE =
+  "Recordings that are already here still open, but new ones will fail until this check runs.";
 
 const RERUN_SETUP: SetupNoticeStep = {
   // Provisioning is driven by the AppAPI enabled callback, so re-running it
@@ -225,15 +294,38 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
   if (!isRecord(body) || typeof body.ok !== "boolean" || typeof body.state !== "string") {
     return null;
   }
-  // Absent reads as false, which is the right degrade for an operator that
-  // predates the field: it had already chosen a mode on its own, so the notice
-  // it produces is the ordinary "something is broken" one.
+  // An absent mode reads as "" — nobody said — and the chip renders nothing.
+  // Guessing one would put a sentence about who can see recordings on screen on
+  // the strength of a question that was never answered.
   return {
     ok: body.ok,
     state: body.state,
-    awaitingChoice: body.awaiting_choice === true,
+    mode: typeof body.mode === "string" ? body.mode : "",
+    cause: typeof body.cause === "string" ? body.cause : "",
     features: readSetupFeatures(body.features),
   };
+}
+
+// RecordingAudience is who can see a recording, in the terms the viewing layer
+// renders: the two audience names this whole change is about, plus "" for an
+// answer nobody gave.
+//
+// It exists so the storage enum stops here. `default` and `access_controlled`
+// are the operator's words for where the bytes live; "everyone with a Nextcloud
+// account" and "meeting participants" are what that means to a person, and the
+// chip in the meeting list is a viewing-layer control that must not have to
+// know either enum.
+export type RecordingAudience = "" | "everyone" | "participants";
+
+export function recordingAudience(health: SetupHealth | null): RecordingAudience {
+  switch (health?.mode) {
+    case "default":
+      return "everyone";
+    case "access_controlled":
+      return "participants";
+    default:
+      return "";
+  }
 }
 
 // readSetupFeatures insists on both booleans or neither. A half-answer is an
@@ -270,6 +362,7 @@ export function readRecordingsAccess(body: unknown): RecordingsAccess | null {
     state: access.state,
     step: typeof access.step === "string" ? access.step : "",
     detail: typeof access.detail === "string" ? access.detail : "",
+    cause: typeof access.cause === "string" ? access.cause : "",
     mode: typeof access.mode === "string" ? access.mode : "",
     modeConfirmed: access.mode_confirmed === true,
     prerequisites,
@@ -307,50 +400,35 @@ export function buildSetupNotice(options: {
   if (!verdict || verdict.ok) {
     return null;
   }
-  // A decision nobody has taken is not a broken install, and saying it is
-  // sends both audiences after the wrong thing (D-708). The administrator has
-  // nothing to fix and one button to press; the person who is not an
-  // administrator is not looking at a fault they should report as one.
-  const awaitingChoice = isAwaitingChoice(health, access);
-  // …and it does not blank the meeting list, which is the difference between an
-  // unmade decision and a broken substrate.
-  //
-  // Every deployed installation upgrades into this state, and in it the operator
-  // has touched nothing: reads are exactly what they were, so an
-  // access-controlled archive still lists for the people it belongs to and a
-  // recorded-but-unconfirmed default one still lists for everybody. Standing in
-  // for the list there would blank a working archive on every existing instance
-  // to report something that is not wrong with it. On a fresh install the list
-  // is empty anyway, so the strip sits above nothing.
-  const blocking = !awaitingChoice && blocksBrowsing(verdict.state);
-  const title = awaitingChoice
-    ? "Cassini needs to be told where recordings are kept"
-    : blocking
-      ? "Cassini is not set up yet"
-      : "Cassini has not finished setting itself up";
+  // There is no "somebody has to decide" state any more (D-756). The operator
+  // resolves the mode when it is enabled and records from then on, so every
+  // notice this file produces is now a fault: something is missing or something
+  // is broken. A fresh install shows no notice at all.
+  const blocking = blocksBrowsing(verdict.state);
+  const title = blocking ? BLOCKING_TITLE : ADVISORY_TITLE;
+  const summary = blocking ? BLOCKING_CONSEQUENCE : ADVISORY_CONSEQUENCE;
+  const tone: SetupNoticeTone = blocking ? "warning" : "neutral";
   if (!isAdmin) {
+    // The same first sentence an administrator gets, and nothing else. The
+    // consequence is not privileged — it is what this person is living with —
+    // and every word after it is either a diagnosis they may not see or an
+    // instruction they cannot act on.
+    //
+    // The link survives, because it is not an instruction: it is the whole of
+    // the remedy available to them, and opening it as an administrator is what
+    // shows the diagnosis to somebody who can use it.
     return {
       blocking,
+      tone,
       title,
-      summary: awaitingChoice
-        ? "Cassini keeps meeting recordings in Nextcloud, and an administrator has to choose " +
-          "which of two ways it does that — the choice decides who can read a recording, so " +
-          "Cassini does not make it on its own. There is nothing wrong with your account, and " +
-          "nothing for you to fix."
-        : blocking
-          ? "Recordings cannot be shown until an administrator finishes setting Cassini up on " +
-            "this Nextcloud. There is nothing wrong with your account, and nothing for you to fix."
-          : "New recordings will not appear until an administrator finishes setting Cassini up on " +
-            "this Nextcloud. Anything already published is still listed below, and there is " +
-            "nothing wrong with your account.",
+      summary,
+      cause: "",
       steps: [],
       detail: "",
       note: "",
-      shareLabel: awaitingChoice
-        ? "Send this link to an administrator. Opening it as an administrator shows them the " +
-          "choice and lets them make it."
-        : "Send this link to an administrator. Opening it as an administrator shows them " +
-          "exactly what is missing and how to fix it.",
+      shareLabel:
+        "Send this link to an administrator. Opening it as an administrator shows them " +
+        "exactly what is missing and how to fix it.",
       shareUrl: appUrl,
       reference: "",
     };
@@ -358,15 +436,40 @@ export function buildSetupNotice(options: {
   const admin = adminNotice(verdict.state, access);
   return {
     blocking,
+    tone,
     title,
-    summary: admin.summary,
+    summary,
+    // The operator's own sentence first, in both its forms, and this file's
+    // fallback last. Whichever check stopped, the operator is the only side that
+    // knows it — a sentence chosen here from a step name is this file guessing,
+    // and it guesses only when the operator carried nothing (an install older
+    // than the cause table, or a step that build has no copy for).
+    cause: access?.cause || health?.cause || admin.cause,
     steps: admin.steps,
-    detail: access?.detail ?? "",
+    detail: technicalDetail(verdict.state, access),
     note: admin.steps.some((step) => step.commands.length > 0) ? OCC_NOTE : "",
     shareLabel: "",
     shareUrl: "",
     reference: STATUS_REFERENCE,
   };
+}
+
+// technicalDetail is the line inside the details block that ties this notice to
+// the container log and to /status: the operator's own sentence when there is
+// one, and the state and step verbatim when there is not.
+//
+// The state and step USED to be in the summary, which is how an administrator
+// came to be greeted by `storage_mode_undecided`. They are facts worth keeping
+// — a monitor keys on them and so does a bug report — so they moved rather than
+// went away (D-759).
+function technicalDetail(state: string, access: RecordingsAccess | null): string {
+  if (access?.detail) {
+    return access.detail;
+  }
+  const step = access?.step ?? "";
+  return step
+    ? `The operator reported the state ${state || "unknown"} and stopped at ${step}.`
+    : `The operator reported the state ${state || "unknown"}.`;
 }
 
 // blocksBrowsing decides whether the panel stands in for the meeting list or
@@ -388,9 +491,6 @@ export function buildSetupNotice(options: {
 //	unavailable   NOT READABLE. Nothing was provisioned, or the app supplying
 //	              the mount is gone; the per-caller scan finds no mount and the
 //	              catalog fails closed to empty.
-//	              The ONE exception is carved out by the caller rather than here:
-//	              an unmade storage decision reports `unavailable`, and in that
-//	              state the operator has touched nothing — see buildSetupNotice.
 //	degraded      NOT READABLE. The steps that abort (migration, catalog
 //	              migration, root ACL) all run after the mount root has been
 //	              narrowed to owner-only, so nobody can traverse to the
@@ -402,49 +502,24 @@ function blocksBrowsing(state: string): boolean {
   return state !== "unknown";
 }
 
-// isAwaitingChoice reads the bit off whichever half answered.
-//
-// /setup carries it explicitly for everybody; /status carries the step, which is
-// the fallback for an install whose manifest predates the route. Both are
-// checked because an administrator can be reading either.
-function isAwaitingChoice(health: SetupHealth | null, access: RecordingsAccess | null): boolean {
-  if (health?.awaitingChoice) {
-    return true;
-  }
-  const step = access?.step ?? "";
-  return step === MODE_UNDECIDED_STEP || step === MODE_UNCONFIRMED_STEP;
-}
-
 function adminNotice(
   state: string,
   access: RecordingsAccess | null,
-): { summary: string; steps: SetupNoticeStep[] } {
-  // The decision comes first, before every "something is missing" branch.
+): { cause: string; steps: SetupNoticeStep[] } {
+  // Two things per branch, and no more: why this happened, in words, and the
+  // technical remedy behind the disclosure (D-759). The consequence sentence is
+  // the same for every branch and is written once, in buildSetupNotice — what
+  // differs between a missing app and a refused ACL is the cause, not the cost.
   //
-  // It has to: an instance with no chosen mode very often ALSO has a missing
-  // prerequisite for one of the two models, and sending an administrator to
-  // install an app before they have said which model they want is sending them
-  // after something they may not need at all — the deps-free model needs no
-  // Nextcloud app whatsoever.
-  if (access?.step === MODE_UNDECIDED_STEP) {
-    return {
-      summary:
-        "Cassini keeps recordings in Nextcloud in one of two ways, and they differ in who can " +
-        "read a recording — so it will not choose for you. Nothing is published or recorded " +
-        "until you pick one, and you can change your mind afterwards.",
-      steps: [CHOOSE_STORAGE_OFFER],
-    };
-  }
-  if (access?.step === MODE_UNCONFIRMED_STEP) {
-    return {
-      summary:
-        "Cassini is keeping recordings under one of its two storage models, but nobody chose it — " +
-        "an earlier version recorded it without asking, or a switch was interrupted. Confirm it, " +
-        "or pick the other one. Recordings already published are unaffected and still readable. " +
-        (access.detail || ""),
-      steps: [CHOOSE_STORAGE_OFFER],
-    };
-  }
+  // The cause here is a FALLBACK. The operator carries its own sentence per step
+  // (storage_causes.go) and buildSetupNotice prefers it; these are what an
+  // install older than that table shows, and they are held to the same rule: no
+  // command, no path, no enum name.
+  //
+  // There is no undecided and no unconfirmed mode to branch on any more
+  // (D-756): the operator resolves one when it is enabled, and a resolved mode
+  // counts as confirmed. Every branch below is a fault.
+  //
   // The service account is the one prerequisite BOTH storage models need:
   // every recording is written and read as it, in a Team folder and in a
   // private home alike. It is checked first because in the default model it is
@@ -453,34 +528,31 @@ function adminNotice(
   // (D-616).
   if (access?.step === SERVICE_ACCOUNT_STEP) {
     return {
-      summary:
-        "Cassini stores every recording as a dedicated Nextcloud service account, and that " +
-        "account does not exist on this instance. Nothing can be published or read until it does.",
-      steps: [SETUP_TAB_OFFER, SERVICE_ACCOUNT_SETUP, RERUN_SETUP],
+      cause:
+        `Nextcloud is not letting the ${SERVICE_ACCOUNT} account write to its files. This usually ` +
+        "means the account was removed or its group changed.",
+      steps: [SETTINGS_OFFER, SERVICE_ACCOUNT_SETUP, RERUN_SETUP],
     };
   }
   if (access?.step === "storage_mode_declared_conflict") {
     return {
-      summary:
-        "Cassini's storage mode was set by a deploy option, and this Nextcloud does not match it. " +
-        "That option is for development and CI, where the stack knows what it built — so a " +
-        "disagreement is refused rather than recorded, and nothing has been written down. " +
-        (access.detail || ""),
-      steps: [CHOOSE_STORAGE_OFFER, RERUN_SETUP],
+      cause:
+        "A deploy option names a rule for who can see recordings that this Nextcloud does not " +
+        "match, so nothing was written down.",
+      steps: [CHOOSE_AUDIENCE_OFFER, RERUN_SETUP],
     };
   }
   if (access?.step.startsWith(MODE_MISMATCH_STEP)) {
     return {
-      summary:
-        "Cassini's storage mode and this Nextcloud disagree about where recordings live, so it " +
-        "will not publish into a place the read side is not looking. " +
-        (access.detail || ""),
+      cause:
+        "The rule for who can see recordings and the way this Nextcloud is set up disagree, so " +
+        "Cassini will not write a recording into a place the reading side is not looking.",
       steps: [
         {
           label:
-            "Open the Setup tab and pick the storage mode you want. Switching carries the recordings that are already published, and nothing is removed until they have arrived",
+            "Open Operator › Settings and pick who should be able to see recordings. Switching carries the recordings that are already published, and nothing is removed until they have arrived",
           commands: [],
-          action: "setup",
+          action: "settings",
         },
       ],
     };
@@ -488,12 +560,11 @@ function adminNotice(
   const missing = missingNativeApps(access);
   if (missing.length > 0 && access?.mode !== "default") {
     return {
-      summary:
-        "Cassini keeps recordings in Nextcloud Files and shows each person only the meetings " +
-        "they were in. It needs two Nextcloud apps to do that, and an external app cannot " +
-        "install them for itself. Until they are enabled, recordings reach nobody.",
+      cause:
+        "A Nextcloud app that Cassini needs to show each person only their own recordings is " +
+        "switched off, and an external app cannot install it.",
       steps: [
-        SETUP_TAB_OFFER,
+        SETTINGS_OFFER,
         {
           // Installing an app is the one step Cassini may not be able to take:
           // Nextcloud demands the administrator's password on that request
@@ -508,9 +579,9 @@ function adminNotice(
   }
   if (access?.step === "administrator") {
     return {
-      summary:
-        "Cassini could not find a Nextcloud administrator account to run its one-time setup " +
-        "as, so the recordings folder and its permissions were never created.",
+      cause:
+        "Cassini could not find a Nextcloud administrator account to act as, so the recordings " +
+        "folder and its permissions were never created.",
       steps: [
         {
           label:
@@ -523,40 +594,36 @@ function adminNotice(
   }
   if (state === "unknown") {
     return {
-      summary:
-        "Cassini has not verified its setup since it last restarted. Setup runs when the app " +
-        "is enabled, and the app has not been enabled since — so nothing has confirmed where " +
-        "recordings would land. Existing recordings are unaffected and still readable, but " +
-        "publishing is refused until setup has run.",
+      cause:
+        "Cassini checks this Nextcloud when the app is enabled, and it has not been enabled " +
+        "since this server started.",
       steps: [RERUN_SETUP],
     };
   }
   if (state === "degraded") {
     return {
-      summary:
-        "A setup step failed, so Cassini cannot prove that recordings would reach the people " +
-        "in the meeting. Nothing is missing that you can install — the call itself did not " +
-        "succeed.",
+      cause:
+        "A setup step failed while Cassini was talking to Nextcloud, so nothing here can prove " +
+        "a recording would reach the people in the meeting.",
       steps: [
         {
           label:
             "Read the nc provision: lines in the Cassini container log, which name the step and what Nextcloud answered, and fix the cause",
           commands: [],
         },
-        SETUP_TAB_OFFER,
+        SETTINGS_OFFER,
         RERUN_SETUP,
       ],
     };
   }
   // unavailable with a step that is not one of the above, or a state this build
-  // does not know. Name what the operator named and stop guessing.
+  // does not know. Say that, and no more: the operator's state and step are
+  // facts worth keeping, and technicalDetail keeps them where they belong.
   return {
-    summary:
-      "Cassini's setup did not complete, so recordings cannot be served. The operator " +
-      "reported the state as " +
-      (state || "unknown") +
-      (access?.step ? ` and stopped at ${access.step}.` : "."),
-    steps: [SETUP_TAB_OFFER, RERUN_SETUP],
+    cause:
+      "Cassini's last check of this Nextcloud did not finish, and it did not name a reason " +
+      "this version of the app understands.",
+    steps: [SETTINGS_OFFER, RERUN_SETUP],
   };
 }
 

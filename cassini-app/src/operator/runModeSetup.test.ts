@@ -5,10 +5,10 @@ import { runModeSetup } from "./runModeSetup";
 import type { StorageModeOption, StorageStatus, StorageSetupStep } from "./types";
 
 // The sequence that builds one storage model's prerequisites, from the
-// administrator's browser (D-671), shared by the setup wizard and the settled
-// panel (D-708).
+// administrator's browser (D-671), shared by the first-run dialog and the
+// settings section (D-708).
 //
-// It used to live inside StoragePanel and was asserted by reading that
+// It used to live inside the storage panel and was asserted by reading that
 // component's source. Two components need it now, and its ORDER is load-bearing
 // in a way that is easy to get wrong twice — so it is a module with behavioural
 // tests instead.

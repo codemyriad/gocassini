@@ -94,6 +94,13 @@ type statusRecordingsAccess struct {
 	// "administrator", "mount_mapping:everyone".
 	Step   string `json:"step,omitempty"`
 	Detail string `json:"detail,omitempty"`
+	// Cause is the same failure said in one plain sentence, with no command, no
+	// path and no enum name in it (D-759, storage_causes.go). Detail stays as it
+	// was: it is the sentence to act on, and it is what the details block of a
+	// notice shows. This is what the notice OPENS with, so the first thing an
+	// administrator reads is what is wrong rather than which step recorded it.
+	// Empty when this build has no sentence for the step.
+	Cause string `json:"cause,omitempty"`
 	// AdminUser is the account provisioning resolved and acted as. Its absence
 	// is itself the diagnosis when Step is "administrator".
 	AdminUser string `json:"admin_user,omitempty"`
@@ -275,6 +282,32 @@ type setupResponse struct {
 	// their time in a different way. It names no account, no path and no folder
 	// id — it is a bit, and it is the same bit an administrator sees.
 	AwaitingChoice bool `json:"awaiting_choice"`
+	// Mode is the storage model in force — `default`, `access_controlled`, or
+	// empty before one is resolved (D-755).
+	//
+	// It is here so the audience chip — "Visible to anyone with a Nextcloud
+	// account" / "Visible to meeting participants" — renders for the people the
+	// sentence is ABOUT. Everyone can see a recording's audience in the app;
+	// only an administrator could find out what it was, because the mode lived
+	// on an ADMIN route.
+	//
+	// The name of a model and nothing else: no root, no counts, no provenance,
+	// no service account. A non-administrator learns who can read recordings,
+	// which is a fact about their own recordings, and not one thing about where
+	// they are kept or how to move them.
+	Mode string `json:"mode"`
+	// Cause is why recordings cannot be served, in one plain sentence (D-759).
+	// Empty whenever they can, and empty whenever the honest cause cannot be
+	// told without naming an account, a path or an app — the same rule the rest
+	// of this struct follows. storage_causes.go holds the table and decides
+	// which causes are safe to say here; this route repeats one and adds
+	// nothing.
+	//
+	// A non-administrator is not being asked to fix anything. What the sentence
+	// buys them is the difference between "the app is broken" and "somebody is
+	// going to have to switch something back on", which is what they will pass
+	// on to whoever can act.
+	Cause string `json:"cause"`
 	// Features is the readiness signal behind every "not configured yet" state
 	// in the app (D-722). It rides here rather than on a route of its own
 	// because a NEW route only reaches AppAPI at registration time, and whether
@@ -314,17 +347,6 @@ type setupFeatures struct {
 	Insights bool `json:"insights"`
 }
 
-// storageAwaitingChoice reports whether the reason recordings cannot be served
-// is that nobody has chosen a storage model.
-//
-// Keyed on the STEP rather than on the mode record, because /setup is answered
-// from the same snapshot /status is and must not reach past it into
-// process-wide state that could have moved in between — the two would then
-// disagree about the same instant.
-func storageAwaitingChoice(step string) bool {
-	return step == storageStepModeUndecided || step == storageStepModeUnconfirmed
-}
-
 // setupHandler answers GET <base>/setup for any logged-in Nextcloud user.
 //
 // Deliberately 200 even when OK is false. /status answers 503 because a monitor
@@ -346,10 +368,25 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// than off the stored struct: the two answers must not be able to drift,
 	// and "the step is on" is not the same fact as "the step will run".
 	llm := rt.currentLLMSettings().view()
+	// The RECORDED mode, from the same singleton /storage reads, rather than the
+	// preflight snapshot the two fields above come from. The two are the same
+	// answer on any instance that has been enabled; they come apart on a bare
+	// container restart, where the file still names a mode and no enabled edge
+	// has re-run yet. The chip should say who can read recordings there too —
+	// and it has to agree with the admin surface, which is reading this.
+	mode, _ := ncStorage.snapshot()
 	writeJSON(w, http.StatusOK, setupResponse{
-		OK:             access.OK,
-		State:          access.State,
-		AwaitingChoice: storageAwaitingChoice(access.Step),
+		OK:    access.OK,
+		State: access.State,
+		// Always false, like /storage's copy of it (D-753): the two steps it
+		// used to be keyed on are not emitted any more, because nothing asks an
+		// administrator to choose a storage model. Kept in the shape so a client
+		// that has not been rebuilt still parses this response.
+		AwaitingChoice: false,
+		Mode:           mode,
+		// The user-safe half of the cause table, which is empty for every step
+		// whose honest sentence would name an account or a path.
+		Cause: storageUserCauseFor(access.Step),
 		Features: setupFeatures{
 			Summaries: llm.Effective.Summary != nil,
 			Insights:  llm.Effective.Insight != nil,

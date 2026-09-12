@@ -3,7 +3,7 @@ import { runSetupPlan } from "./ncSetup";
 import type { StorageModeOption, StorageStatus } from "./types";
 
 // Building one storage model's prerequisites, from the administrator's browser
-// (D-671), shared by the setup wizard and the settled panel (D-708).
+// (D-671), shared by the first-run dialog and the settings section (D-708).
 //
 // It lives here rather than in either component because both need it and the
 // ORDER inside it is load-bearing in a way that is easy to get wrong twice:

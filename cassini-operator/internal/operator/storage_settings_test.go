@@ -26,11 +26,10 @@ func resetStorageMode(t *testing.T) {
 // about reading has to arrange both — see setUsableStorageMode.
 // setStorageMode puts the process in a mode an administrator CHOSE.
 //
-// `user` rather than `configured`, because since D-708 the two behave
-// differently in the one place most of these tests care about: a PUT for the
-// mode already in force is a no-op for a chosen mode and a CONFIRMATION for one
-// nobody chose, which is the only way out of the unconfirmed state.
-// setUnconfirmedStorageMode is the other half.
+// `user` rather than `configured`, so the provenance these tests read back is
+// the one a click leaves. setSelfRecordedStorageMode is the other half: a mode
+// an older build recorded on its own, which since D-753 governs and publishes
+// exactly like this one and differs only in what /storage says wrote it.
 func setStorageMode(t *testing.T, accessControlled bool) string {
 	t.Helper()
 	resetStorageMode(t)
@@ -40,9 +39,11 @@ func setStorageMode(t *testing.T, accessControlled bool) string {
 	return path
 }
 
-// setUnconfirmedStorageMode is a mode that GOVERNS and that nobody chose — a
+// setSelfRecordedStorageMode is a mode that GOVERNS and that nobody chose — a
 // fallback an older build recorded, or a settings file of unknown provenance.
-func setUnconfirmedStorageMode(t *testing.T, accessControlled bool) string {
+// It is CONFIRMED like every other recorded mode (D-753); only its provenance
+// differs, which is why the name no longer says "unconfirmed".
+func setSelfRecordedStorageMode(t *testing.T, accessControlled bool) string {
 	t.Helper()
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
@@ -314,35 +315,35 @@ func TestUnresolvedStorageModeReportsSettled(t *testing.T) {
 	}
 }
 
-// "A mode is recorded" and "somebody chose this mode" are different facts, and
-// until D-708 the file could not tell them apart — every resolver flattened the
-// provenance to "configured" on the way out, so an administrator's click, a
-// deploy option and the old `default` fallback were indistinguishable
-// downstream. The setup wizard's whole premise is being able to tell them apart.
-func TestConfirmedDistinguishesAChoiceFromARecording(t *testing.T) {
-	cases := []struct {
-		source string
-		want   bool
-	}{
-		{storageModeSourceUser, true},
-		{storageModeSourceEnv, true},
-		// A build that decided on its own. Not a decision, whatever it wrote.
-		{storageModeSourceDefault, false},
-		{storageModeSourceDerived, false},
-		// A switch interrupted before the flip, on an install that had never
-		// chosen. It says where the recordings are, not what anybody wanted.
-		{storageModeSourceMigrating, false},
-		// Unknown provenance, from a build predating the field. Asking once is
-		// cheap; assuming consent is what this whole change removes.
-		{"", false},
-		{storageModeSourceConfigured, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.source, func(t *testing.T) {
+// Every recorded mode is a settled one, whatever wrote it (D-753).
+//
+// D-708 read the provenance as consent: only `user` and `env` counted, and an
+// install carrying any other source was asked to confirm the mode it already
+// had before it would record or publish anything. The enabled edge resolves the
+// mode from the archive now, so a recorded mode is either that resolution or
+// something more explicit still, and re-asking would be asking an administrator
+// to confirm a fact. The provenance is still carried through and still shown; it
+// gates nothing.
+func TestConfirmedIsAboutARecordedModeRatherThanAChoice(t *testing.T) {
+	for _, source := range []string{
+		storageModeSourceUser,
+		storageModeSourceEnv,
+		storageModeSourceResolved,
+		// A build that decided on its own, and the inference before it.
+		storageModeSourceDefault,
+		storageModeSourceDerived,
+		// A switch interrupted before the flip. It says where the recordings
+		// are; `migration_clean` is what says the tidy-up is unfinished.
+		storageModeSourceMigrating,
+		// Unknown provenance, from a build predating the field.
+		"",
+		storageModeSourceConfigured,
+	} {
+		t.Run(source, func(t *testing.T) {
 			enabled := true
-			settings := StorageSettings{AccessControlEnabled: &enabled, Source: tc.source}
-			if got := settings.Confirmed(); got != tc.want {
-				t.Fatalf("Confirmed() with source %q = %t, want %t", tc.source, got, tc.want)
+			settings := StorageSettings{AccessControlEnabled: &enabled, Source: source}
+			if !settings.Confirmed() {
+				t.Fatalf("Confirmed() with source %q = false; a recorded mode is settled", source)
 			}
 		})
 	}

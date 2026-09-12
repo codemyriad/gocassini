@@ -78,7 +78,91 @@ describe("the shell's setup features", () => {
     // fetchSetupHealth answers null for a failed or unparseable check, and
     // null is "nobody said" rather than "no". Assigning it would retract what
     // mount established and tell a working deployment it is unconfigured.
-    expect(appSource).toMatch(/if \(health\) \{\s*setupFeatures = health\.features;/);
+    expect(appSource).toMatch(
+      /if \(health\) \{\s*setupHealth = health;\s*setupFeatures = health\.features;/,
+    );
     expect(appSource).toContain("the setup re-check failed.");
+  });
+});
+
+// D-756: the Setup tab and its wizard are gone, and two things take their
+// place — a dialog shown once per install, and a chip that says who can see
+// recordings on every browse surface in the shell.
+describe("the shell after the Setup tab", () => {
+  it("has two tabs, and no way to reach a surface that no longer exists", () => {
+    expect(appSource).toContain(">\n        Browse\n      </button>");
+    expect(appSource).toContain(">\n        Operator\n      </button>");
+    expect(appSource).not.toContain('selectSurface("setup")');
+    expect(appSource).not.toContain('surface === "setup"');
+    expect(appSource).not.toContain("Setup.svelte");
+  });
+
+  it("sends the setup notice's own button somewhere that exists", () => {
+    // The broken-install branches carry a step with `action: "settings"` since
+    // D-759, and it opens the operator surface, where "Who can see recordings"
+    // and the service-account controls live (D-757).
+    expect(appSource).toContain('on:navigate={() => selectSurface("operator")}');
+  });
+
+  // "Try again" on the notice is the operator's own re-check (D-759), not
+  // another read of the verdict: the verdict is the last recorded outcome of a
+  // preflight, so re-reading it would render the same answer and teach an
+  // administrator that the button does nothing.
+  it("re-runs the operator's check when the notice asks, then re-reads the answer", () => {
+    expect(appSource).toContain("on:retry={retrySetupCheck}");
+    expect(appSource).toContain("await operatorClient?.recheckStorage();");
+    expect(appSource).toMatch(/async function retrySetupCheck[\s\S]{0,900}await readInstanceState\(\);/);
+    // The notice says which tone to draw itself in, and the shell says whether
+    // the request it asked for is still running.
+    expect(appSource).toContain("tone={setupNotice.tone}");
+    expect(appSource).toContain("busy={setupRetryBusy}");
+  });
+
+  it("shows the first-run dialog only to an administrator the operator answered for", () => {
+    // operatorAvailable is the same probe that gates the operator surface, and
+    // firstRunPlan returns null for everything else — a non-admin, an
+    // unreadable /storage, an install already acknowledged.
+    expect(appSource).toContain("isAdmin: operatorAvailable,");
+    expect(appSource).toContain("setupAvailable: isSetupAvailable(),");
+    expect(appSource).toContain("{#if firstRun && operatorClient}");
+  });
+
+  // "Change who can see first" names the audience control, which is a section
+  // of a settings panel. The operator's default panel is the run console, so
+  // selecting the surface alone lands an administrator a click short of the
+  // thing the button they pressed named.
+  it("sends the dialog's other button to the panel that holds the control", () => {
+    expect(appSource).toContain('const RECORDING_ACCESS_PANEL: OperatorPanel = "pipeline";');
+    expect(appSource).toContain("on:settings={openRecordingAccess}");
+    const open = appSource.slice(
+      appSource.indexOf("function openRecordingAccess()"),
+      appSource.indexOf("// readInstanceState asks the operator"),
+    );
+    expect(open).toContain(
+      'applyPanel(applySurface(window.location.hash, "operator"), RECORDING_ACCESS_PANEL)',
+    );
+    // Pushed, then announced once — the same mechanism handleOpenPanel uses, so
+    // the surface, the operator's nav and the viewer read one address.
+    expect(open.indexOf("window.history.pushState")).toBeLessThan(
+      open.indexOf('new PopStateEvent("popstate")'),
+    );
+    expect(open).toContain("firstRunClosed = true;");
+  });
+
+  it("never lets a failed storage read take the operator surface away", () => {
+    // Everything else the shell shows is independent of that answer. No answer
+    // means no dialog, not a shell that decided it is not an administrator.
+    expect(appSource).toMatch(
+      /async function readStorageStatus\([\s\S]{0,400}catch \(error\) \{[\s\S]{0,200}return null;/,
+    );
+  });
+
+  it("gives every browse surface the audience the chip renders", () => {
+    // Three call sites — with the operator tab, under an advisory setup strip,
+    // and bare — and the chip is for every user, so a reader must not get a
+    // different answer depending on which of them drew their list.
+    const mounts = appSource.match(/<ViewerApp \{ncMode\} \{dataProvider\} \{audience\}>/g) ?? [];
+    expect(mounts).toHaveLength(3);
+    expect(appSource).toContain("$: audience = recordingAudience(setupHealth);");
   });
 });

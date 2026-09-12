@@ -676,7 +676,7 @@ func TestBackfillRefusesOutsideTheAccessControlledMode(t *testing.T) {
 			name:     "the default model",
 			write:    func(t *testing.T, path string) { mustSaveMode(t, path, false) },
 			wantCode: backfillExitNothingToDo,
-			wantSays: []string{storageModeDefault, storageModeAccessControlled, "Setup tab", "nothing was written"},
+			wantSays: []string{storageModeDefault, storageModeAccessControlled, "Who can see recordings", "nothing was written"},
 		},
 		{
 			name:     "no mode recorded yet",

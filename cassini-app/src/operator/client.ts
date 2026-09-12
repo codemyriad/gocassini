@@ -14,6 +14,7 @@ import type {
   SettingsUpdate,
   AppInstallOutcome,
   StorageArchiveFacts,
+  StorageMigration,
   StorageMode,
   StorageModeOption,
   StorageServiceAccount,
@@ -162,8 +163,12 @@ export class OperatorClient {
   // putStorage switches the storage model, which MOVES every published
   // recording. It is one call and it blocks for the length of the move: the
   // operator holds its provisioning lock for the whole transition and re-runs
-  // its preflight before answering, so there is no half-switched state to poll
-  // for and nothing useful this client could do with one.
+  // its preflight before answering.
+  //
+  // Its answer is the authoritative status. Progress, while it is out, is read
+  // by a SECOND reader calling getStorage() — `migration` on that response is
+  // the move as the operator sees it (D-755) — because this promise says
+  // nothing until the whole move is done.
   async putStorage(accessControlEnabled: boolean, confirmOverwrite = false): Promise<StorageStatus> {
     return normalizeStorage(
       await this.#request<unknown>("/storage", {
@@ -182,9 +187,9 @@ export class OperatorClient {
   // recheckStorage makes the operator look at Nextcloud again.
   //
   // The setup writes happen in the browser (D-671), so the operator cannot see
-  // them until it re-probes — without this the Setup tab would go on reporting
-  // what was missing before the administrator fixed it. It is also what a plan
-  // is RECOMPUTED from: the operator cannot see a Team folder until
+  // them until it re-probes — without this the settings section would go on
+  // reporting what was missing before the administrator fixed it. It is also
+  // what a plan is RECOMPUTED from: the operator cannot see a Team folder until
   // `groupfolders` is enabled, so a plan built before the apps went in is stale
   // about everything after them.
   async recheckStorage(): Promise<StorageStatus> {
@@ -248,6 +253,23 @@ export class OperatorClient {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "install_apps" }),
+      }),
+    );
+  }
+
+  // acknowledgeFirstRun records that an administrator has seen the first-run
+  // dialog. It is kept in the operator's settings store, per install, so the
+  // dialog is shown once for this Nextcloud rather than once per browser.
+  //
+  // On the existing POST /storage, like every other action here: AppAPI learns
+  // an ExApp's routes when it is REGISTERED, so a new route would 404 on every
+  // installation that updated in place.
+  async acknowledgeFirstRun(): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "acknowledge_first_run" }),
       }),
     );
   }
@@ -436,7 +458,7 @@ function normalizeStorage(raw: unknown): StorageStatus {
     mode_source: asString(value.mode_source),
     // Absent reads as UNCONFIRMED and NOT awaiting a choice, which is the pair
     // an operator predating these fields produces: it had already recorded a
-    // mode, and the wizard asking about it once is the safe direction.
+    // mode, and treating it as unconfirmed is the safe direction.
     mode_confirmed: value.mode_confirmed === true,
     awaiting_choice: value.awaiting_choice === true,
     service_account: normalizeServiceAccount(value.service_account),
@@ -447,7 +469,7 @@ function normalizeStorage(raw: unknown): StorageStatus {
     checked_at: asString(value.checked_at),
     // Absent reads as SETTLED, matching the operator's own absent-means-clean
     // rule. An older operator that does not send the field must not make the
-    // Setup tab offer a cleanup that DELETES from a root.
+    // settings section offer a cleanup that DELETES from a root.
     migration_clean: value.migration_clean !== false,
     pending_cleanup: asString(value.pending_cleanup),
     stranded_root: asString(value.stranded_root),
@@ -456,6 +478,8 @@ function normalizeStorage(raw: unknown): StorageStatus {
     transition: normalizeStorageTransition(value.transition),
     installs: normalizeInstalls(value.installs),
     preview: normalizeStoragePreview(value.preview),
+    // D-757: see normalizeRecordingAccess at the end of this file.
+    ...normalizeRecordingAccess(value),
   };
 }
 
@@ -662,4 +686,61 @@ function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {
       instruction: asString(item.instruction),
     }))
     .filter((item) => item.id !== "" && item.sha256 !== "");
+}
+
+// --- D-757: the fields GET /storage gained for "Who can see recordings" -------
+//
+// A block of its own at the end of the file, spliced into normalizeStorage by
+// one line, so a branch adding other fields to the same response does not
+// collide with this one.
+
+// normalizeRecordingAccess reads the two fields the settings section needs.
+//
+// Absent reads as "not the first run" and "no switch is running", which is what
+// an operator predating these fields produces: it has been serving recordings
+// for a while, and it has no switch in flight it could tell us about. The safe
+// direction for both — a first-run dialog shown to an install that has been
+// running for months, or a progress panel for a move nobody started, would each
+// be a claim made from a missing field.
+function normalizeRecordingAccess(value: Record<string, unknown>): {
+  first_run: boolean;
+  migration: StorageMigration | null;
+} {
+  return {
+    first_run: value.first_run === true,
+    migration: normalizeMigration(value.migration),
+  };
+}
+
+// normalizeMigration keeps `null` meaning "no switch is running". A row that is
+// present but not active means the same thing and is normalised to null here,
+// so the UI has one test rather than two.
+function normalizeMigration(value: unknown): StorageMigration | null {
+  if (value == null || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  if (row.active !== true) {
+    return null;
+  }
+  return {
+    active: true,
+    phase: normalizeMigrationPhase(row.phase),
+    done: asCount(row.done),
+    total: asCount(row.total),
+  };
+}
+
+const MIGRATION_PHASES: readonly StorageMigration["phase"][] = [
+  "copying",
+  "verifying",
+  "switching",
+  "clearing",
+];
+
+// A phase this build has never heard of reads as the FIRST one. The steps are
+// ordered and a switch only ever moves forward through them, so the earliest is
+// the one guess that cannot claim work is finished when it is not.
+function normalizeMigrationPhase(value: unknown): StorageMigration["phase"] {
+  return MIGRATION_PHASES.find((phase) => phase === value) ?? "copying";
 }
