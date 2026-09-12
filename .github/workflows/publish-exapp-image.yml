@@ -189,11 +189,15 @@ jobs:
               --format '{{ json .Image }}' 2>/dev/null \
               | jq -r '
                   if .config? then
-                    [.config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty]
+                    .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty
                   else
-                    [.[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty] | unique
+                    [ .[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] ]
+                    | if length > 0 and all(. != null and . != "") and (unique | length == 1) then
+                        .[0]
+                      else
+                        empty
+                      end
                   end
-                  | if length == 1 then .[0] else empty end
                 ' || true)"
             case "${validated}" in
               "" | latest | *[!0-9.]* | .* | *..* | *.)
@@ -1287,6 +1291,10 @@ jobs:
           # 3. Prune tagged versions beyond the newest $KEEP.
           tail -n +$((KEEP + 1)) "$tmp/candidates-tagged.tsv" | while IFS=$'\t' read -r id digest created tags; do
             [[ -z "$id" ]] && continue
+            if grep -qxF "${digest}" "$tmp/protected.txt"; then
+              echo "SKIP   tagged id=${id} digest=${digest} — referenced by a retained tag"
+              continue
+            fi
             echo "DELETE tagged id=${id} digest=${digest} created=${created} tags=${tags}"
             gh api -X DELETE \
               -H "Accept: application/vnd.github+json" \
