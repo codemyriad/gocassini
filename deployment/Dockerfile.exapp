@@ -18,7 +18,7 @@
 
 ARG FRP_VERSION=0.61.1
 ARG FFMPEG_VERSION=latest
-ARG FFMPEG_BUILD_JOBS=2
+ARG FFMPEG_BUILD_JOBS=4
 
 # The model this image bakes: the one its default quality tier loads. A CPU host
 # runs "balanced" by default, so the portable image carries the 0.6B int8 model
