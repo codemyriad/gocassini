@@ -27,6 +27,7 @@ import type { OperatorPanel } from "../surfaceRouting";
 
 // SetupHealth is GET <base>/setup — readable by any logged-in Nextcloud user.
 export interface SetupHealth {
+  recordingState?: "passed" | "needs_action" | "not_verified";
   ok: boolean;
   state: string;
   // awaitingChoice says the one thing missing is a DECISION: nobody has told
@@ -229,6 +230,7 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
   // predates the field: it had already chosen a mode on its own, so the notice
   // it produces is the ordinary "something is broken" one.
   return {
+    ...(body.recording_state === "passed" || body.recording_state === "needs_action" || body.recording_state === "not_verified" ? { recordingState: body.recording_state } : {}),
     ok: body.ok,
     state: body.state,
     awaitingChoice: body.awaiting_choice === true,

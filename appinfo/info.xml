@@ -3,17 +3,21 @@
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
   <id>gocassini</id>
   <name>Cassini</name>
-  <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
+  <summary>Record Talk meetings (AppAPI ExApp + Talk HPB required).</summary>
   <description><![CDATA[Cassini records a Nextcloud Talk call without joining as a participant, then
 transcribes and publishes a readable archive in Nextcloud Files. Optionally, it
 can also summarize each meeting when you configure an OpenAI-compatible LLM
 endpoint. Recording control and job history live in the admin-only control panel.
 
+Requires a working AppAPI deployment daemon and Nextcloud Talk HPB with its
+internal client secret. Published images target Linux amd64. CPU transcription
+is supported; a GPU is optional. Open Cassini Setup after installation to
+check the connection, choose storage, connect Talk and test a recording.
+
 Who may read a published recording is an administrator's choice between two
-storage modes, made in the app's Setup tab. In the default mode the archive lives
+storage modes, made in the app's Setup tab. A fresh install requires that choice before recording. In the default mode the archive lives
 in a dedicated "cassini" service account's own folder and everyone who can open
-Cassini can read every recording; it needs no extra Nextcloud apps, and it is
-what a fresh install starts in. In the access-controlled mode the archive lives
+Cassini can read every recording. After the administrator selects simple mode, it needs no extra Nextcloud apps for storage. In the access-controlled mode the archive lives
 in a Cassini Team folder and each private recording is readable only by the
 people who had access to the Talk room (its attendee list) when it was published,
 enforced by Nextcloud's own advanced file ACLs; that mode additionally needs the
@@ -80,7 +84,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name>
         <display-name>Talk signaling internal secret</display-name>
-        <description>Shared internal secret for standalone Nextcloud Talk signaling / HPB. Must match the signaling server's [clients] internalsecret. Required for HPB-internal recording (the invisible recorder used for private, group, and one-to-one calls) — it cannot be auto-generated. How to find it: on Nextcloud All-in-One run `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the [clients] internalsecret in the signaling server config. See docs/exapp-install.md.</description>
+        <description>Shared internal secret for standalone Nextcloud Talk signaling / HPB. Must match the signaling server's [clients] internalsecret. Alternatively, leave this unset and save the secret in Cassini Setup after installation. Required for HPB-internal recording (the invisible recorder used for private, group, and one-to-one calls) — it cannot be auto-generated. How to find it: on Nextcloud All-in-One run `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the [clients] internalsecret in the signaling server config. See docs/exapp-install.md.</description>
       </variable>
       <variable>
         <name>CASSINI_TALK_BACKEND_URL</name>
@@ -95,7 +99,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>CASSINI_PUBLISH_SINK</name>
         <display-name>Where published recordings are stored</display-name>
-        <description>Selects the publish destination: "nextcloud-files" stores recordings in the "cassini" service account's Nextcloud Files (the default for an installed app), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. Under nextcloud-files, WHO can read a recording is a separate choice made in the app's Setup tab, and each storage mode keeps its archive in its own place: the default mode stores recordings in that account's own CassiniNoACL/Recordings, needs nothing but the account, and lets everyone who can open Cassini read every recording; access-controlled mode stores them in Cassini/Recordings inside a Cassini Team folder, restricts each recording to the people who were in the meeting, and additionally needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps. The two paths are separate so that neither can shadow the other, and switching modes copies the archive across rather than moving it. Cassini installs neither app and creates no account — it reports what is missing and the command that fixes it. See docs/exapp-nextcloud-recordings-permissions.md.</description>
+        <description>Selects the publish destination: "nextcloud-files" stores recordings in the "cassini" service account's Nextcloud Files (the default for an installed app), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. Under nextcloud-files, WHO can read a recording is a separate choice made in the app's Setup tab, and each storage mode keeps its archive in its own place: the default mode stores recordings in that account's own CassiniNoACL/Recordings, needs nothing but the account, and lets everyone who can open Cassini read every recording; access-controlled mode stores them in Cassini/Recordings inside a Cassini Team folder, restricts each recording to the people who were in the meeting, and additionally needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps. The two paths are separate so that neither can shadow the other, and switching modes copies the archive across rather than moving it. Cassini Setup offers service-account and folder creation through the administrator’s browser session, and guides installation of missing native apps. See docs/exapp-nextcloud-recordings-permissions.md.</description>
       </variable>
       <variable>
         <name>CASSINI_STORAGE_MODE</name>
@@ -155,6 +159,21 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
     </environment-variables>
 
     <routes>
+      <route>
+        <url>^operator\/readiness$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/readiness\/check$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/talk\/setup$</url>
+        <verb>PUT</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!--
         Route URL patterns are interpreted by AppAPI as PCRE expressions
         wrapped with `/.../i` delimiters (see ExAppProxyController.php

@@ -1,3 +1,4 @@
+import type { RecordingReadiness, RecordingSetupUpdate } from "./readiness";
 import type {
   InsightWorkflow,
   Job,
@@ -68,6 +69,20 @@ export class OperatorClient {
 
   constructor(baseUrl: string) {
     this.#baseUrl = baseUrl.replace(/\/+$/, "");
+  }
+
+  async getReadiness(): Promise<RecordingReadiness> {
+    return this.#request<RecordingReadiness>("/readiness");
+  }
+
+  async checkReadiness(): Promise<RecordingReadiness> {
+    return this.#request<RecordingReadiness>("/readiness/check", { method: "POST" });
+  }
+
+  async updateRecordingSetup(payload: RecordingSetupUpdate): Promise<RecordingReadiness> {
+    return this.#request<RecordingReadiness>("/talk/setup", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
   }
 
   async listJobs(): Promise<Job[]> {

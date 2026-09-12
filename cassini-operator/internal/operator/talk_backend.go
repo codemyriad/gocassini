@@ -236,6 +236,9 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 		return
 	}
 
+	rt.recordingSetup.mu.Lock()
+	rt.recordingSetup.inboundAt = time.Now()
+	rt.recordingSetup.mu.Unlock()
 	publicBaseURL := strings.TrimRight(auth.BackendURL, "/")
 	operatorBaseURL := rt.operatorTalkBackendURL(publicBaseURL)
 	roomKey := talkRoomKey(publicBaseURL, token)
@@ -245,7 +248,7 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 	// moderator believes it is being captured, and the failure only surfaces
 	// after everyone has hung up. Placed above reserveTalkRoom so there is no
 	// claim to release on the way out.
-	if refusal := ncAccessSubstrate.recordingRefusal(); refusal != "" {
+	if refusal := rt.recordingConfigurationRefusal(TriggerRequest{TalkAuthMode: talkAuthModeHPBInternal, BaseURL: publicBaseURL, RoomToken: token, TalkConnectURL: operatorBaseURL}); refusal != "" {
 		rt.refuseTalkRecording(w, operatorBaseURL, token, refusal)
 		return
 	}

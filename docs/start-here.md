@@ -6,6 +6,15 @@ If you are new to Cassini, the easiest way to think about it is:
 
 You do **not** need to understand WebRTC, RTP, codecs, or transcript formats before you start. Those details matter later, but they are not the first thing you need.
 
+## Install on your Nextcloud
+
+Start with [Before installing Cassini](before-installing.md), then follow the
+[production installation guide](exapp-install.md). After installation, open
+Cassini → Setup to check the prerequisites and verify a short recording.
+If this is your first external app, use the [first ExApp walkthrough](first-exapp.md)
+to prepare and test the deployment service first.
+The local harness walkthrough below is for development.
+
 ## The short version
 
 Cassini has three core stages:

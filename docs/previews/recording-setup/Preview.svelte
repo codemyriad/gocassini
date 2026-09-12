@@ -1,0 +1,151 @@
+<script lang="ts">
+  import { tick } from 'svelte';
+  import RecordingSetup from '../../../cassini-app/src/RecordingSetup.svelte';
+  import type { OperatorClient } from '../../../cassini-app/src/operator/client';
+  import type { RecordingReadiness, RecordingSetupUpdate, ReadinessCheck } from '../../../cassini-app/src/operator/readiness';
+
+  type Scene = { id: string; title: string; detail: string; panel?: string; access?: string; installation?: string };
+  const scenes: Scene[] = [
+    { id:'new', title:'First visit', detail:'Storage and Talk authentication need attention. CPU processing is already available.' },
+    { id:'hpb', title:'Missing HPB', detail:'Talk accepted the recording credential, but no standalone signaling server is configured.', panel:'Configure' },
+    { id:'secret', title:'Enter the internal secret', detail:'An administrator can save the signaling secret from Setup. It is never returned by the API.', panel:'Talk authentication' },
+    { id:'managed', title:'Deployment-managed secret', detail:'A secret supplied through deployment configuration takes precedence over one saved in Setup.', panel:'Talk authentication' },
+    { id:'room', title:'Choose a test room', detail:'Public URLs and index.php links are accepted. Diagnostic requests use the configured backend.', panel:'Test room' },
+    { id:'handoff', title:'Identify the environment', detail:'No deployment type or shell access is assumed. Confirm what the diagnostics cannot establish.', panel:'Connect Talk' },
+    { id:'handoff_provider', title:'Ask the provider', detail:'A person without host access gets a safe, copyable administrator request instead of Docker commands.', panel:'Connect Talk', access:'provider' },
+    { id:'handoff_console', title:'Container console only', detail:'A container or NAS console does not establish access to the host where configuration commands must run.', panel:'Connect Talk', access:'container', installation:'other' },
+    { id:'handoff_aio', title:'Confirmed AIO host', detail:'AIO instructions name the target host, explain persistence, and require review before copying replacement commands.', panel:'Connect Talk', access:'host', installation:'aio' },
+    { id:'handoff_compose', title:'Confirmed Compose host', detail:'The Nextcloud service, its web-server user, and the occ path must be supplied. None is guessed.', panel:'Connect Talk', access:'host', installation:'compose' },
+    { id:'handoff_host', title:'Confirmed host installation', detail:'Host installations require their own web-server user and absolute occ path. Docker is not assumed.', panel:'Connect Talk', access:'host', installation:'host' },
+    { id:'rejected', title:'Authentication rejected', detail:'An authentication failure offers configuration guidance. The actual recorder checks the live connection, since the administrator may have repaired it after this diagnostic.', panel:'Talk authentication' },
+    { id:'waiting', title:'Waiting for Talk', detail:'The test is armed. A real user starts and stops recording in Talk; an operator-created job does not count.', panel:'Test a recording' },
+    { id:'processing', title:'Processing the test', detail:'The matching Talk recording is being processed. Publication and playback have not been verified.', panel:'Test a recording' },
+    { id:'published', title:'Confirm playback', detail:'Publishing succeeded. A person must open the result and confirm the audio and transcript.', panel:'Test a recording' },
+    { id:'passed', title:'Checks passed', detail:'Current connection checks passed, Talk recently called Cassini, and test playback was confirmed.' },
+    { id:'expired', title:'After a restart or expiry', detail:'Historical playback confirmation remains visible. Check again refreshes outbound connectivity; a new Talk recording proves the incoming connection.' },
+    { id:'network', title:'Connection unavailable', detail:'A timeout is not proof of incorrect configuration. Retry is offered and the result stays unverified.' },
+    { id:'broken', title:'Saved configuration damaged', detail:'A damaged configuration store is reported explicitly. Cassini does not silently replace credentials.', panel:'Configure' },
+  ];
+  const check = (id:string,state:ReadinessCheck['state'],code:string,message:string,action?:string):ReadinessCheck => ({id,state,code,message,action});
+  const readyStorage = () => check('storage','passed','storage_ready','The Nextcloud storage preflight passed. A test recording verifies publication and playback.');
+  const processingReady = () => check('processing','passed','processing_ready','Speech-processing prerequisites passed for cpu.');
+  const discovery = () => check('talk.discovery','passed','recording_auth_verified',"Talk accepted Cassini's recording credential.");
+  const hpb = () => check('talk.hpb','passed','hpb_authenticated','HPB authenticated Cassini using the test-room URL’s backend identity and advertised media support. A Talk recording verifies the actual call path.');
+  const incoming = () => check('talk.handoff','not_verified','handoff_not_verified','No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.','test_recording');
+  const testNeeded = () => check('test','not_verified','test_not_verified','Record a short test through Talk, then open it and confirm playback.','test_recording');
+  const roomURL = 'https://cloud.example.com/index.php/call/setuproom';
+  const now = new Date().toISOString();
+  function fixture(id:string):RecordingReadiness {
+    const r:RecordingReadiness = {state:'not_verified',checks:[readyStorage(),processingReady(),discovery(),hpb(),incoming(),testNeeded()],secret_configured:true,secret_source:'setup',test_room_url:roomURL,test:{state:'not_started',published:false}};
+    if (['new','secret'].includes(id)) {
+      r.secret_configured=false; r.secret_source='unset';
+      r.checks.splice(2,2,check('talk.authentication','needs_action','internal_secret_missing','Enter the internal secret from your Talk signaling server.','configure_talk'),check('talk.discovery','not_verified','test_room_required','Choose a dedicated Talk room to verify the connection without recording it.','test_room'));
+      r.test_room_url='';
+      if(id==='new') r.checks[0]=check('storage','needs_action','storage_incomplete','Complete or repair recording storage below.','setup_storage');
+    }
+    if(id==='managed') r.secret_source='env';
+    if(id==='room') { r.test_room_url=''; r.checks.splice(2,2,check('talk.discovery','not_verified','test_room_required','Choose a dedicated Talk room to verify the connection without recording it.','test_room')); }
+    if(id==='hpb') r.checks[3]=check('talk.hpb','needs_action','hpb_missing','Talk has no standalone signaling server configured. Enable its high-performance backend.','setup_hpb');
+    if(id==='rejected') r.checks[3]=check('talk.hpb','needs_action','signaling_auth_failed','HPB rejected internal-client authentication. Check the internal secret and server authentication configuration.','configure_talk');
+    if(id==='network') r.checks.splice(2,2,check('talk.discovery','not_verified','nextcloud_unreachable','Could not read Talk settings. Check Nextcloud connectivity and TLS, then try again.','recheck'));
+    if(['waiting','processing','published','passed','expired'].includes(id)) r.test={started_at:now,state:'waiting_for_talk',published:false};
+    if(['processing','published','passed','expired'].includes(id)) {
+      r.test={...r.test,job_id:'example-talk-test',stage:'build',state:'running'};
+      r.checks[4]=check('talk.handoff','passed','talk_request_received','Talk recently sent an authenticated recording request to Cassini.');
+    }
+    if(['published','passed','expired'].includes(id)) r.test={...r.test,stage:'done',state:'succeeded',published:true,viewer_url:'#meeting=example-talk-test'};
+    if(['passed','expired'].includes(id)) {r.test.playback_verified_at=now;r.checks=r.checks.filter(c=>c.id!=='test');}
+    if(id==='expired') {
+      r.checks.splice(2,2,check('talk.discovery','not_verified','connection_not_verified','Check the Talk connection. Previous results have expired or this process restarted.','recheck'));
+      r.checks[r.checks.length-1]=incoming();
+    }
+    if(id==='broken') r.checks.unshift(check('configuration','needs_action','setup_store_unreadable','Cassini could not read its saved recording setup. Check the persistent volume and restore recording-setup.json.','repair_configuration'));
+    r.state=r.checks.some(c=>c.state==='needs_action')?'needs_action':r.checks.some(c=>c.state==='not_verified')?'not_verified':'passed';
+    return r;
+  }
+  let selected=0;
+  let revision=0;
+  let report=fixture(scenes[0].id);
+  let notice='';
+  let frame:HTMLElement;
+  const copy=()=>structuredClone(report);
+  const client = {
+    async getReadiness(){return copy()},
+    async checkReadiness(){return copy()},
+    async updateRecordingSetup(payload:RecordingSetupUpdate){
+      if(payload.internal_secret){report.secret_configured=true;report.secret_source='setup';report.checks=report.checks.filter(c=>c.id!=='talk.authentication');notice='Example secret saved in memory for this preview. No request was sent.';}
+      if(payload.test_room_url){report.test_room_url=payload.test_room_url;notice='Example room saved in memory. Select another scenario to explore connection results.';}
+      if(payload.action==='arm_test'){report.test={started_at:now,state:'waiting_for_talk',published:false};notice='Test armed. Use the preview controls below to simulate the events that would arrive from Talk.';}
+      if(payload.action==='confirm_playback'){report=fixture('passed');notice='Playback confirmation simulated. In production this records your own observation.';}
+      report.state=report.checks.some(c=>c.state==='needs_action')?'needs_action':report.checks.some(c=>c.state==='not_verified')?'not_verified':'passed';
+      return copy();
+    }
+  } as unknown as OperatorClient;
+  async function select(index:number){
+    selected=index;report=fixture(scenes[index].id);revision++;notice='';
+    await tick();
+  }
+  function autoOpen(node:HTMLElement, scene:Scene){
+    let opened=false;
+    let configured=false;
+    const open=()=>{
+      if(!scene.panel)return;
+      if(!opened){
+        const button=Array.from(node.querySelectorAll('button')).find(b=>b.textContent?.trim()===scene.panel);
+        if(button&&!button.disabled){opened=true;button.click();}
+      }
+      if(opened&&!configured&&scene.access){
+        const selects=node.querySelectorAll('select');
+        if(selects.length>=2){
+          configured=true;
+          selects[0].value=scene.access;selects[0].dispatchEvent(new Event('change',{bubbles:true}));
+          if(scene.installation){selects[1].value=scene.installation;selects[1].dispatchEvent(new Event('change',{bubbles:true}));}
+        }
+      }
+    };
+    const observer=new MutationObserver(open);observer.observe(node,{childList:true,subtree:true,attributes:true});open();
+    return {destroy(){observer.disconnect()}};
+  }
+  function simulate(id:string){void select(scenes.findIndex(s=>s.id===id));}
+  function handleClick(event:MouseEvent){
+    const link=(event.target as HTMLElement).closest('a');
+    if(link && (link.getAttribute('href')?.startsWith('#meeting') || link.href.includes('cloud.example.com'))){event.preventDefault();notice='Preview only: this would open Talk or the published recording in the live installation.';}
+  }
+</script>
+
+<svelte:head><title>Cassini · Recording setup walkthrough</title></svelte:head>
+<div class="walkthrough">
+  <aside class="rail">
+    <div class="brand"><span class="orbit">◉</span> cassini</div>
+    <p class="eyebrow">PRODUCT WALKTHROUGH</p>
+    <h1>From installation<br>to a verified recording.</h1>
+    <p class="intro">Explore the implemented Setup screens, with example states and simulated actions.</p>
+    <nav aria-label="Example screens">
+      {#each scenes as scene,i}<button class:chosen={selected===i} aria-current={selected===i?'step':undefined} on:click={()=>select(i)}><span class="number">{String(i+1).padStart(2,'0')}</span>{scene.title}</button>{/each}
+    </nav>
+    <p class="rail-note">Offline preview · No server connection<br>Rendered from RecordingSetup.svelte</p>
+  </aside>
+  <main>
+    <header class="scene-heading">
+      <div><p class="eyebrow">SCREEN {String(selected+1).padStart(2,'0')} / {scenes.length}</p><h2>{scenes[selected].title}</h2><p>{scenes[selected].detail}</p></div>
+      <div class="pager"><button disabled={selected===0} on:click={()=>select(selected-1)} aria-label="Previous screen">←</button><button disabled={selected===scenes.length-1} on:click={()=>select(selected+1)} aria-label="Next screen">→</button></div>
+    </header>
+    <div class="app-frame" bind:this={frame} on:click={handleClick} role="presentation">
+      <div class="app-bar"><span>Cassini</span><div><span>Browse</span><span>Operator</span><strong>Setup</strong></div><span class="admin">Administrator</span></div>
+      <div class="screen-body">
+        {#key revision}<div use:autoOpen={scenes[selected]}><RecordingSetup operatorClient={client}/></div>{/key}
+        <div id="recording-storage" class="storage-context"><strong>Recording storage</strong><p>The existing storage wizard appears here in the live app. This walkthrough focuses on the new recording checks and configuration panels.</p></div>
+      </div>
+    </div>
+    <div class="simulation"><div><strong>Preview controls</strong><p>Simulate events that normally happen outside Cassini.</p></div><div class="simulation-buttons"><button on:click={()=>simulate('waiting')}>Talk test armed</button><button on:click={()=>simulate('processing')}>Recording stopped</button><button on:click={()=>simulate('published')}>Publishing finished</button><button on:click={()=>simulate('expired')}>Restart / expire</button></div></div>
+    {#if notice}<p class="notice" role="status">{notice}</p>{/if}
+    <footer>Example data only. “Check again” preserves the selected scenario. Use the sidebar to explore success and failure results. Secrets entered here remain in this page’s memory.</footer>
+  </main>
+</div>
+
+<style>
+  :global(body){margin:0;background:#f3f5f8;color:#202c39;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .walkthrough{display:grid;grid-template-columns:285px minmax(0,1fr);min-height:100vh}.rail{background:#142c35;color:#edf4f5;padding:30px 23px;position:sticky;top:0;height:100vh;overflow:auto}.brand{font-size:27px;font-weight:650;letter-spacing:-1px;display:flex;align-items:center;gap:9px;margin-bottom:30px}.orbit{color:#a5ddd0;font-size:35px}.eyebrow{font-size:10px;letter-spacing:1.8px;font-weight:750;margin:0 0 10px}.rail .eyebrow{color:#92b9bd}h1{font-size:22px;line-height:1.3;font-weight:550;letter-spacing:-.5px;margin:0 0 12px}.intro{font-size:12px;color:#afc3c8;line-height:1.6;margin-bottom:25px}nav{display:grid;gap:3px}nav button{border:0;background:transparent;color:#c6d6db;display:flex;align-items:center;text-align:left;gap:11px;padding:10px 9px;border-radius:7px;font-size:12px;cursor:pointer}nav button:hover{background:#ffffff0a}nav button.chosen{background:#d6ece6;color:#153a35;font-weight:650}.number{font-size:10px;opacity:.65;font-variant-numeric:tabular-nums}.rail-note{font-size:10px;line-height:1.7;color:#93aeb5;margin-top:28px}main{padding:40px clamp(20px,4vw,65px);max-width:1320px;width:100%;margin:auto}.scene-heading{display:flex;justify-content:space-between;gap:20px;margin-bottom:28px}.scene-heading .eyebrow{color:#5a827e}.scene-heading h2{font-size:29px;font-weight:620;letter-spacing:-.8px;margin:0 0 9px}.scene-heading p:last-child{color:#61717d;font-size:13px;line-height:1.6;max-width:720px}.pager{display:flex;gap:7px;align-items:start}.pager button{background:white;border:1px solid #dbe2e8;border-radius:50%;width:36px;height:36px;cursor:pointer}.pager button:disabled{opacity:.35;cursor:default}.app-frame{border:1px solid #d9e1e6;border-radius:13px;overflow:hidden;background:white;box-shadow:0 9px 30px #142c3509}.app-bar{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid #e4e8ec;font-size:12px}.app-bar>span:first-child{font-size:17px;font-weight:650}.app-bar>div{display:flex;gap:22px;align-items:center;color:#72818c}.app-bar strong{color:#19675b;background:#e8f3ef;padding:6px 12px;border-radius:6px;font-weight:600}.admin{color:#88939b;font-size:10px}.screen-body{padding:25px;background:#fafbfc}.storage-context{border:1px dashed #d6dee4;border-radius:9px;margin-top:17px;padding:16px 20px;color:#72818c;font-size:11px}.storage-context strong{font-size:12px;color:#596a75}.storage-context p{margin:5px 0 0;line-height:1.6}.simulation{margin-top:22px;padding:18px 0;border-top:1px solid #dae2e7;display:flex;justify-content:space-between;align-items:center;gap:15px}.simulation strong{font-size:12px}.simulation p{font-size:11px;color:#74828c;margin:5px 0}.simulation-buttons{display:flex;flex-wrap:wrap;gap:6px}.simulation button{background:#fff;border:1px solid #d6dfe5;border-radius:6px;padding:8px 10px;font-size:10px;cursor:pointer;color:#526774}.simulation button:hover{border-color:#668d85}.notice{background:#e1efea;color:#24574e;padding:13px 17px;font-size:12px;border-radius:7px}footer{font-size:10px;line-height:1.7;color:#85919b;margin-top:15px}button:focus-visible{outline:2px solid #71b3a6;outline-offset:3px}
+  @media(max-width:850px){.walkthrough{grid-template-columns:1fr}.rail{height:auto;position:static;padding:20px}.brand{margin-bottom:12px}.rail h1,.intro,.rail-note{display:none}nav{display:flex;overflow:auto;padding-bottom:5px}nav button{white-space:nowrap}.rail .eyebrow{margin-bottom:13px}main{padding:25px 15px}.scene-heading h2{font-size:24px}.screen-body{padding:12px}.admin{display:none}.app-bar{padding:12px}.simulation{display:block}.simulation-buttons{margin-top:10px}}
+  @media print{.rail{position:static;height:auto}.pager,.simulation{display:none}main{padding:20px}.app-frame{box-shadow:none}}
+</style>

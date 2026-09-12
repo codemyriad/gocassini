@@ -129,6 +129,7 @@ func TestValidateTalkRequest(t *testing.T) {
 
 func TestValidateTalkRequestRejectsMissingSecret(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
+	rt.cfg.TalkSharedSecret = ""
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/token", strings.NewReader(`{}`))
@@ -155,12 +156,16 @@ func TestValidateTalkRequestRejectsInvalidChecksum(t *testing.T) {
 	}
 }
 
-func TestTalkRoomStartAcceptsAuthenticatedRequest(t *testing.T) {
+func TestTalkRoomStartAcceptsAuthenticatedRequestDespiteEarlierProbeFailure(t *testing.T) {
 	rt, cleanup, logPath, _ := newCLITestRuntime(t)
 	defer cleanup()
 	rt.cfg.TalkSharedSecret = "secret-123"
 	fakeTalk := newFakeTalkServer(t)
 	defer fakeTalk.Close()
+
+	rt.cfg.TalkBackendURL = fakeTalk.server.URL
+	rt.recordingSetup.checkedAt = time.Now()
+	rt.recordingSetup.checks = []readinessCheck{{ID: "talk.discovery", State: "needs_action", Code: "recording_auth_rejected", Message: "Earlier credentials were rejected."}}
 
 	reqBody := `{"type":"start","start":{"owner":"chima","actor":{"type":"users","id":"chima"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(reqBody))
@@ -173,6 +178,13 @@ func TestTalkRoomStartAcceptsAuthenticatedRequest(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
+	rt.recordingSetup.mu.Lock()
+	inbound := rt.recordingSetup.inboundAt
+	rt.recordingSetup.mu.Unlock()
+	if inbound.IsZero() {
+		t.Fatal("authenticated handoff was not observed")
+	}
+
 	jobs, err := rt.store.ListJobs(req.Context())
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)

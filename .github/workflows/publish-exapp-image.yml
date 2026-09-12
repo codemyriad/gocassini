@@ -402,7 +402,7 @@ jobs:
         if: needs.classify-changes.outputs.relevant == 'true'
         run: docker compose -f harness/compose.yml --profile full pull
 
-      - name: Run one faithful AppAPI/HaRP-installed Talk recording
+      - name: Verify recording readiness and Talk publication before and after restart
         if: needs.classify-changes.outputs.relevant == 'true'
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
@@ -413,7 +413,7 @@ jobs:
           # also asserts the operator reported device=cpu, so a runner that
           # quietly had a GPU could not pass this off as the CPU path.
           CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
-        run: ./harness/bin/ci-e2e-installed-exapp-talk.sh
+        run: ./harness/bin/ci-e2e-recording-readiness.sh
 
       - name: Upload faithful check evidence
         if: always() && needs.classify-changes.outputs.relevant == 'true'

@@ -115,6 +115,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "help", "-h", "--help":
 		printRootUsage(stdout)
 		return 0
+	case "talk-check":
+		return runTalkCheck(ctx, args[1:], stdout, stderr)
 	case "doctor":
 		return runDoctor(args[1:], stdout, stderr)
 	case "build":

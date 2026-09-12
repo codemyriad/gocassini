@@ -7,6 +7,7 @@
   import type { StorageStatus } from "./operator/types";
   import SetupWizard from "./SetupWizard.svelte";
   import StoragePanel from "./StoragePanel.svelte";
+  import RecordingSetup from "./RecordingSetup.svelte";
 
   // The Setup surface (D-616 first pass): instance-level configuration, as
   // opposed to the operator surface's runs and the browse surface's meetings.
@@ -68,6 +69,10 @@
 
 <div class="flex min-h-full flex-col bg-base-200 text-base-content">
   <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col gap-4 px-4 pt-4 pb-10">
+    {#if operatorClient}
+      <RecordingSetup {operatorClient} />
+    {/if}
+    <div id="recording-storage"></div>
     {#if configError}
       <section class="alert alert-error">
         <TriangleAlert size={16} aria-hidden="true" />
