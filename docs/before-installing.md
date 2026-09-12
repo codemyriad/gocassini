@@ -5,6 +5,11 @@ This guide is for the person evaluating an installation and the administrator or
 provider who can configure its services. These are things to verify, not automatic
 detection results.
 
+**New to ExApps, or unsure whether they work here?** Follow
+[Is Cassini your first external app?](first-exapp.md). It takes you through
+AppAPI's Test deploy and back to Cassini installation. If you already have a
+working deployment service, reuse it and check the Cassini requirements below.
+
 ## Identify who can make the changes
 
 Nextcloud administrator access does not necessarily include a host terminal or

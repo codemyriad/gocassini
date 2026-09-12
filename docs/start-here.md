@@ -8,9 +8,11 @@ You do **not** need to understand WebRTC, RTP, codecs, or transcript formats bef
 
 ## Install on your Nextcloud
 
-Start with [recording setup](recording-readiness.md), then follow the
+Start with [Before installing Cassini](before-installing.md), then follow the
 [production installation guide](exapp-install.md). After installation, open
 Cassini → Setup to check the prerequisites and verify a short recording.
+If this is your first external app, use the [first ExApp walkthrough](first-exapp.md)
+to prepare and test the deployment service first.
 The local harness walkthrough below is for development.
 
 ## The short version

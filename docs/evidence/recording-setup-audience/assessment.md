@@ -139,3 +139,23 @@ boundary have been verified.
 The evidence supports prioritizing and testing distinct paths. It does not yet
 support a credible percentage of Nextcloud users who can install Cassini or run
 the current handoff script successfully.
+
+## Follow-up: first ExApp installation boundary (2026-09-12)
+
+The [first ExApp walkthrough](../../first-exapp.md) adds a bounded preparation
+path: reuse the intended daemon, complete AppAPI Test deploy through Enabled,
+then return to Cassini installation. It links upstream for deployment-service
+provisioning and keeps Talk/storage verification in Cassini Setup.
+
+The [host administrator's questions](https://help.nextcloud.com/t/247991/5)
+about Docker mounts and connection addresses support explaining this handoff.
+A [HaRP report](https://help.nextcloud.com/t/233446/16) describes a successful
+daemon connection and healthy test container followed by an initialization
+certificate failure; [the follow-up](https://help.nextcloud.com/t/233446/17)
+reports a fix. These justify identifying the failed stage rather than treating
+a connection check as installation success. They do not establish that Cassini
+has the same failure.
+
+This amendment is documentation and routing through the guides, not an
+automated preflight or a newly validated deployment recipe. Live AIO and other
+deployment validation remains outstanding.

@@ -131,8 +131,11 @@ Inspect any primary Cassini artifact:
 
 ## Installing On Nextcloud
 
-The production install path is the Nextcloud AppAPI ExApp — registration,
-Talk recording handoff, verification checklist, and GPU setup are covered in:
+Start with [Before installing Cassini](docs/before-installing.md). If Cassini
+is your first external app, the [first ExApp walkthrough](docs/first-exapp.md)
+helps you prepare Nextcloud's deployment service and return to Cassini setup.
+
+Registration, Talk recording handoff and verification are covered in:
 
 - [docs/exapp-install.md](docs/exapp-install.md)
 

@@ -82,6 +82,13 @@ docker-deployed ExApp and the operator stores all durable data under it
 
 ## Step 1 — Register a deploy daemon (HaRP)
 
+**Already have a working HaRP daemon for the intended Cassini host?** Reuse it.
+With a recent successful Test deploy and unchanged configuration, continue to
+[Step 2](#step-2--pick-an-image-tag). Otherwise run Test deploy first.
+**First ExApp, no daemon, or a failed test?** Follow the
+[first ExApp walkthrough](first-exapp.md), then return to Step 2 once the test
+passes. The provisioning example below is for a new standalone HaRP service.
+
 **AIO:** check the installed version's available components and registered
 daemon. Start integrated HaRP where provided and run Test deploy. Older/custom
 versions may need migration or separate provisioning. Reuse a working integrated
@@ -89,10 +96,12 @@ service rather than launching a second HaRP. Enable AIO's Talk component for HPB
 before handing recording over to Cassini.
 
 
-Use a **HaRP** daemon. Upstream AppAPI recommends HaRP; the older Docker
-Socket Proxy daemon is deprecated and scheduled for removal in Nextcloud 35.
+Use a **HaRP** daemon for this installation guide, following
+[upstream's recommended setup](https://docs.nextcloud.com/server/latest/admin_manual/exapps_management/AppAPIAndExternalApps.html#harp).
+If you already use Docker Socket Proxy, follow the upstream migration guidance
+for your version before choosing this HaRP installation path.
 
-Run HaRP next to a Docker engine (full options in the
+For a new standalone service, run HaRP next to a Docker engine (full options in the
 [HaRP README](https://github.com/nextcloud/HaRP)):
 
 ```bash
@@ -108,9 +117,11 @@ docker run \
 ```
 
 Then register it in Nextcloud → Administration settings → AppAPI →
-**Register Daemon** (template "HaRP Proxy"), and run **Test deploy** from the
-daemon's three-dot menu before going further. `occ app_api:daemon:list` should
-show it afterwards.
+**Register Daemon** using the HaRP template matching your deployment.
+`occ app_api:daemon:list` should show the registered daemon. Complete the routing
+in Step 1b, then run **Test deploy** from the daemon's three-dot menu. Continue
+to Step 2 only after all test stages through Enabled succeed. If a stage fails,
+use the [first ExApp troubleshooting steps](first-exapp.md#if-the-test-fails).
 
 ### Step 1b — Route `/exapps/*` to HaRP at your reverse proxy
 
