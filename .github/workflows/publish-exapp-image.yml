@@ -202,7 +202,7 @@ jobs:
             case "${validated}" in
               "" | latest | *[!0-9.]* | .* | *..* | *.)
                 echo "::warning::${main_image} carries no validated FFmpeg version" \
-                  "(got '\''${validated:-none}'\''); falling back to resolving upstream"
+                  "(got '${validated:-none}'); falling back to resolving upstream"
                 ;;
               *)
                 echo "Pinning FFmpeg ${validated}, as already gated by the current main image"
