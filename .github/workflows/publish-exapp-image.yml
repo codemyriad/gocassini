@@ -186,8 +186,19 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             main_image="${REGISTRY}/${IMAGE}:branch-main"
             validated="$(docker buildx imagetools inspect "$main_image" \
-              --format '{{ json .Image.Config.Labels }}' 2>/dev/null \
-              | jq -r '."io.gocassini.ffmpeg.requested-version" // empty' || true)"
+              --format '{{ json .Image }}' 2>/dev/null \
+              | jq -r '
+                  if .config? then
+                    .config.Labels?["io.gocassini.ffmpeg.requested-version"] // empty
+                  else
+                    [ .[] | .config.Labels?["io.gocassini.ffmpeg.requested-version"] ]
+                    | if length > 0 and all(. != null and . != "") and (unique | length == 1) then
+                        .[0]
+                      else
+                        empty
+                      end
+                  end
+                ' || true)"
             case "${validated}" in
               "" | latest | *[!0-9.]* | .* | *..* | *.)
                 echo "::warning::${main_image} carries no validated FFmpeg version" \
@@ -210,9 +221,12 @@ jobs:
     needs: [classify-changes, validate-manifest, resolve-ffmpeg]
     outputs:
       image_ref: ${{ steps.meta.outputs.tags }}
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.build-push.outputs.digest || steps.build-pr.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -275,12 +289,11 @@ jobs:
           # Primary tag used by the smoke job (PR builds use the sha tag too).
           echo "primary=${TAGS[0]}" >> "$GITHUB_OUTPUT"
 
-      # Build always loads the image into the local docker daemon so the
-      # downstream smoke/e2e jobs can restore it from a tarball artifact —
-      # works uniformly for push, pull_request, and workflow_dispatch
-      # events without relying on registry pull from private ghcr.
-      - name: Build image (local load)
-        id: build
+      # PR builds build linux/amd64 and load it locally so downstream smoke/e2e
+      # jobs can restore it from the tarball artifact without pushing to ghcr.
+      - name: Build image (local load, PR)
+        if: github.event_name == 'pull_request'
+        id: build-pr
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -291,18 +304,28 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            FFMPEG_BUILD_JOBS=4
+          cache-from: type=gha,scope=build-image
+          cache-to: type=gha,mode=max,scope=build-image
 
-      - name: Push image tags to ghcr (non-PR)
+      # Non-PR builds (push, release tags, workflow_dispatch) build multi-arch
+      # images (linux/amd64,linux/arm64) and push the multi-arch manifest list
+      # directly to ghcr.io. Downstream jobs pull the primary ref via ghcr.
+      - name: Build and push multi-arch image (non-PR)
         if: github.event_name != 'pull_request'
-        run: |
-          set -euo pipefail
-          while IFS= read -r tag; do
-            [[ -z "${tag}" ]] && continue
-            echo "Pushing ${tag}"
-            docker push "${tag}"
-          done <<<"${{ steps.meta.outputs.tags }}"
+        id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+            FFMPEG_BUILD_JOBS=4
+          cache-from: type=gha,scope=build-image
+          cache-to: type=gha,mode=max,scope=build-image
 
       # PR builds can't reach ghcr (push step is skipped), so they still
       # need the artifact-based handoff. Push builds skip the artifact —
@@ -558,6 +581,76 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           CASSINI_SMOKE_MODELS_ONLY: '1'
         run: ./harness/bin/ci-transcribe-smoke-exapp.sh
+
+  smoke-arm64:
+    name: Smoke test ARM64 image (runtime + transcription)
+    runs-on: ubuntu-latest
+    needs: [classify-changes, resolve-ffmpeg]
+    if: needs.classify-changes.outputs.relevant == 'true'
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ARM64 ExApp image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: gocassini:arm64-smoke
+          build-args: |
+            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+            FFMPEG_BUILD_JOBS=4
+          cache-from: |
+            type=gha,scope=smoke-arm64
+            type=gha,scope=build-image
+          cache-to: type=gha,mode=max,scope=smoke-arm64
+
+      - name: Validate environment in ARM64 container
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 --entrypoint /bin/sh gocassini:arm64-smoke -c "
+            uname -m | grep -qx aarch64
+            /usr/local/bin/cassini doctor
+          "
+
+      - name: Smoke-transcribe with bundled Parakeet on ARM64
+        run: |
+          set -euo pipefail
+          out_dir="${RUNNER_TEMP}/smoke-arm64"
+          mkdir -p "${out_dir}"
+          docker run --rm --platform linux/arm64 \
+            -v "${GITHUB_WORKSPACE}/harness/media:/media:ro" \
+            -v "${out_dir}:/out" \
+            --entrypoint /bin/sh gocassini:arm64-smoke -c '
+              set -eu
+              /usr/local/bin/cassini build /media/parakeet-smoke.mkv --out /out/smoke.opus
+            '
+          if [ ! -s "${out_dir}/smoke.opus" ] || [ "$(stat -c%s "${out_dir}/smoke.opus")" -le 50000 ]; then
+            echo "::error::ARM64 transcription failed to produce valid opus meeting" >&2
+            exit 1
+          fi
+
+          words=$(docker run --rm --platform linux/arm64 \
+            -v "${out_dir}:/out:ro" \
+            --entrypoint /bin/sh gocassini:arm64-smoke -c '
+              /usr/local/bin/cassini inspect --transcript /out/smoke.opus
+            ' | jq '[.segments[]?.words[]?] | length')
+
+          echo "ARM64 transcribed ${words} word(s) from parakeet-smoke.mkv"
+          if [ "${words}" -lt 40 ]; then
+            echo "::error::ARM64 transcription produced only ${words} words (expected >= 40)" >&2
+            exit 1
+          fi
 
   build-cuda-base:
     name: Build CUDA base image (model + CUDA libs)
@@ -1127,6 +1220,9 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           PACKAGE: gocassini
           KEEP: 10
+          # Grace period to protect child manifests of in-progress multi-arch
+          # uploads before their parent index is pushed.
+          UNTAGGED_GRACE_SECONDS: 7200
         run: |
           set -euo pipefail
           tmp=$(mktemp -d)
@@ -1141,33 +1237,58 @@ jobs:
           # Protect manifests referenced BY a kept tag. A multi-arch index is
           # itself tagged, but the per-platform manifests it points at are
           # untagged — so a tag-only keep rule happily deletes the actual
-          # image out from under a tag it just decided to keep forever. That
-          # is what emptied every -cuda tag. The CUDA build no longer pushes
-          # an index, but any future multi-arch push must not re-break this.
-          echo "${GH_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin >/dev/null 2>&1 || true
+          # image out from under a tag it just decided to keep forever.
+          # We must protect child manifests of both keep-forever tags AND
+          # the rolling $KEEP retained SHA tags so multi-arch images remain pullable.
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin >/dev/null
           : > "$tmp/protected.txt"
-          # This is the keep-forever tag set. Persist it under RUNNER_TEMP so the
+
+          # 1. Keep-forever tag set. Persist it under RUNNER_TEMP so the
           # verify step below asserts pullability over exactly the tags this step
           # decided to keep, instead of a second hardcoded list that can drift
           # from this predicate (D-567).
-          jq -r '
-            .[] | .metadata.container.tags[]?
+          jq -r -s '
+            add // []
+            | .[] | .metadata.container.tags[]?
             | select(. == "latest" or . == "latest-cuda" or . == "latest-rocm"
                      or . == "cuda" or startswith("v")
                      or test("^[0-9]+\\.[0-9]+\\.[0-9]+"))
           ' "$tmp/versions.json" | sort -u > "${RUNNER_TEMP}/keep-tags.txt"
+
+          # 2. Candidate tagged versions for rolling retention: tagged with sha-*, branch-*, etc.
+          # Sort newest -> oldest by creation time across all pages.
+          jq -r -s '
+            add // []
+            | sort_by(.created_at) | reverse
+            | .[]
+            | select(.metadata.container.tags | length > 0)
+            | select(
+                (.metadata.container.tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or . == "cuda" or startswith("v") or test("^[0-9]+\\.[0-9]+\\.[0-9]+"))) | not
+              )
+            | "\(.id)\t\(.name)\t\(.created_at)\t\(.metadata.container.tags | join(","))"
+          ' "$tmp/versions.json" > "$tmp/candidates-tagged.tsv"
+
+          # Retain the newest $KEEP tagged versions, and collect tags to protect their child manifests.
+          head -n "${KEEP}" "$tmp/candidates-tagged.tsv" | awk -F'\t' '{print $4}' | tr ',' '\n' | grep -v '^$' > "$tmp/retained-rolling-tags.txt" || true
+
+          # Combine keep-forever tags and retained rolling tags for manifest protection.
+          cat "${RUNNER_TEMP}/keep-tags.txt" "$tmp/retained-rolling-tags.txt" | sort -u > "$tmp/all-retained-tags.txt"
+
           while read -r tag; do
-            docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${PACKAGE}:${tag}" 2>/dev/null \
-              | jq -r '.manifests[]?.digest' >> "$tmp/protected.txt" || true
-          done < "${RUNNER_TEMP}/keep-tags.txt"
+            [[ -z "$tag" ]] && continue
+            if ! raw="$(docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${PACKAGE}:${tag}")"; then
+              echo "::error::Failed to inspect retained tag ghcr.io/${OWNER}/${PACKAGE}:${tag}; aborting prune to protect manifests" >&2
+              exit 1
+            fi
+            echo "$raw" | jq -r '.manifests[]?.digest // empty' >> "$tmp/protected.txt"
+          done < "$tmp/all-retained-tags.txt"
           sort -u -o "$tmp/protected.txt" "$tmp/protected.txt"
           echo "Protected $(wc -l < "$tmp/protected.txt") child manifest(s) referenced by kept tags."
 
-          # Versions worth keeping outright (any named tag). Release tags
-          # X.Y.Z[-cuda|-rocm] must survive forever — they are the
-          # reproducible install pins referenced by appinfo/info.xml.
-          jq -r '
-            .[]
+          # Versions worth keeping outright (any named keep-forever tag).
+          jq -r -s '
+            add // []
+            | .[]
             | .metadata.container.tags as $tags
             | select(
                 ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or . == "cuda" or startswith("v") or test("^[0-9]+\\.[0-9]+\\.[0-9]+")))
@@ -1175,36 +1296,47 @@ jobs:
             | "KEEP \(.id) tags=\($tags | join(","))"
           ' "$tmp/versions.json" | tee "$tmp/keep.log" || true
 
-          # Candidate versions for pruning: tagged only with sha-* (or untagged).
-          # Sort newest -> oldest, skip the first $KEEP, delete the rest.
-          jq -r '
-            sort_by(.created_at) | reverse
-            | .[]
-            | .metadata.container.tags as $tags
-            | select(
-                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or . == "cuda" or startswith("v") or test("^[0-9]+\\.[0-9]+\\.[0-9]+"))) | not
-              )
-            | "\(.id)\t\(.name)\t\(.created_at)\t\($tags | join(","))"
-          ' "$tmp/versions.json" > "$tmp/candidates.tsv"
-
-          total=$(wc -l < "$tmp/candidates.tsv")
-          echo "Found ${total} sha-only / untagged versions; will keep newest ${KEEP}"
-
-          if [[ "${total}" -le "${KEEP}" ]]; then
-            echo "Nothing to prune."
-            exit 0
-          fi
-
-          tail -n +$((KEEP + 1)) "$tmp/candidates.tsv" | while IFS=$'\t' read -r id digest created tags; do
+          # 3. Prune tagged versions beyond the newest $KEEP.
+          tail -n +$((KEEP + 1)) "$tmp/candidates-tagged.tsv" | while IFS=$'\t' read -r id digest created tags; do
+            [[ -z "$id" ]] && continue
             if grep -qxF "${digest}" "$tmp/protected.txt"; then
-              echo "SKIP   id=${id} digest=${digest} — referenced by a kept tag"
+              echo "SKIP   tagged id=${id} digest=${digest} — referenced by a retained tag"
               continue
             fi
-            echo "DELETE id=${id} digest=${digest} created=${created} tags=${tags}"
+            echo "DELETE tagged id=${id} digest=${digest} created=${created} tags=${tags}"
             gh api -X DELETE \
               -H "Accept: application/vnd.github+json" \
               "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
           done
+
+          # 4. Prune untagged child manifests that are not referenced by ANY retained tag,
+          # and are older than UNTAGGED_GRACE_SECONDS to protect in-progress uploads.
+          now=$(date +%s)
+          cutoff=$((now - UNTAGGED_GRACE_SECONDS))
+
+          jq -r -s '
+            add // []
+            | .[]
+            | select(.metadata.container.tags | length == 0)
+            | "\(.id)\t\(.name)\t\(.created_at)"
+          ' "$tmp/versions.json" > "$tmp/untagged-manifests.tsv"
+
+          while IFS=$'\t' read -r id digest created; do
+            [[ -z "$id" ]] && continue
+            if grep -qxF "${digest}" "$tmp/protected.txt"; then
+              echo "SKIP   untagged id=${id} digest=${digest} — referenced by a retained tag"
+              continue
+            fi
+            created_sec=$(date -u -d "${created}" +%s 2>/dev/null || echo 0)
+            if [ "${created_sec}" -gt "${cutoff}" ]; then
+              echo "SKIP   untagged id=${id} digest=${digest} created=${created} — within upload grace period"
+              continue
+            fi
+            echo "DELETE untagged id=${id} digest=${digest} created=${created} (unreferenced manifest)"
+            gh api -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
+          done < "$tmp/untagged-manifests.tsv"
 
       # The CUDA base package (D-375) is content-hash-tagged only — no
       # keep-forever named tags. Base rebuilds are rare (only on a model/sherpa/

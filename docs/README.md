@@ -117,15 +117,16 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 
 ### CPU vs GPU image choice
 
-- **Portable**: tag `X.Y.Z`. Captures, transcribes and publishes on a host with
-  no GPU. It bakes the model of its default tier (0.6B int8, "Balanced"). Fast
+- **Portable**: tag `X.Y.Z`. Multi-arch (`linux/amd64`, `linux/arm64`). Captures,
+  transcribes and publishes on a host with no GPU (supporting x86_64 and 64-bit
+  ARM servers). It bakes the model of its default tier (0.6B int8, "Balanced"). Fast
   and Best download once into the model cache on the persistent volume when an
   administrator selects them, so the image stays small and every tier still
   runs. Best on a CPU is slower than the meeting it transcribes, which is why
   Balanced is the default. Moving to the `-cuda` image later is a device change,
   not a data migration: use **Rerun** in Cassini Admin to re-transcribe an
   existing recording on the GPU.
-- **GPU/CUDA**: tag `X.Y.Z-cuda`. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
+- **GPU/CUDA**: tag `X.Y.Z-cuda`. x86_64 only. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
   `CASSINI_STT_DEVICE=cuda` baked in. Set the deploy daemon's **Compute device**
   to CUDA and AppAPI pulls the `-cuda` image automatically — the device is a
   property of the _daemon_, so a CPU and a GPU install differ by that one

@@ -18,7 +18,7 @@
 
 ARG FRP_VERSION=0.61.1
 ARG FFMPEG_VERSION=latest
-ARG FFMPEG_BUILD_JOBS=2
+ARG FFMPEG_BUILD_JOBS=4
 
 # The model this image bakes: the one its default quality tier loads. A CPU host
 # runs "balanced" by default, so the portable image carries the 0.6B int8 model
@@ -121,7 +121,7 @@ RUN npm run build:all -w cassini-app
 
 FROM debian:bookworm-slim AS frpc-fetcher
 ARG FRP_VERSION
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl tar \
  && rm -rf /var/lib/apt/lists/*
@@ -130,7 +130,7 @@ RUN set -eux; \
    amd64) frp_arch=amd64 ;; \
    arm64) frp_arch=arm64 ;; \
    arm)   frp_arch=arm ;; \
-   *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+   *) echo "unsupported TARGETARCH: ${TARGETARCH:-amd64}" >&2; exit 1 ;; \
  esac; \
  curl -fSL "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_${frp_arch}.tar.gz" -o /tmp/frp.tgz; \
  mkdir -p /out; \
