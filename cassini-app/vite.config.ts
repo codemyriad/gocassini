@@ -52,7 +52,11 @@ function createOperatorProxy(operatorBasePath: string, operatorProxyTarget: stri
   // /published/, because that is where appinfo/info.xml declares them. A dev
   // proxy that forwarded only operatorBasePath would therefore 404 every
   // Generate against CASSINI_OPERATOR_URL, in both shapes.
-  const insights = { "/insights": directOperatorProxy(operatorProxyTarget) };
+  // /annotations sits beside it for the same reason (D-737).
+  const insights = {
+    "/insights": directOperatorProxy(operatorProxyTarget),
+    "/annotations": directOperatorProxy(operatorProxyTarget),
+  };
 
   if (operatorBasePath === "/") {
     return {

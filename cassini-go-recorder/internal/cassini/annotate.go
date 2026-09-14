@@ -138,6 +138,7 @@ apply takes {"ops":[...]}, applied in order as one batch and written once:
   {"op":"unmark-tag","tagId":"tag_..."}            (optionally with "target")
   {"op":"undo-operation","operationId":"op_..."}
   {"op":"relabel","tagId":"tag_...","label":"new name"}
+  {"op":"merge-tag","tagId":"tag_...","into":{"id":"tag_...","label":"its name"}}
 A mark finds its tag by id, else by label (trimmed, case-insensitive), else
 defines it. Marking what is already marked, or removing what is already gone,
 changes nothing, so a batch can safely be sent twice. --out defaults to the

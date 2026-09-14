@@ -1,0 +1,193 @@
+import { get } from "svelte/store";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  AnnotationError,
+  removeRequest,
+  type AnnotationItem,
+  type AnnotationRequest,
+  type AnnotationResult,
+  type AnnotationsDocument,
+  type MeetingAnnotations,
+  type VocabularyTag,
+} from "../../viewer/annotations";
+import { createMarksSession, viewMarks, type MarksState } from "./session";
+
+const item = (id: string, tagId: string, target: AnnotationItem["target"]): AnnotationItem => ({
+  id,
+  tagId,
+  target,
+  createdAtUtc: "2026-09-11T10:00:00Z",
+  actor: { kind: "user", id: "ana" },
+  operationId: "op",
+});
+
+const doc: AnnotationsDocument = {
+  format: "cassini.annotations.v1",
+  revision: 3,
+  audioOpusSha256: "",
+  tagNamespace: "",
+  tags: [
+    { id: "t-hiring", label: "hiring" },
+    { id: "t-budget", label: "budget" },
+  ],
+  items: [
+    item("i1", "t-hiring", { kind: "time-range", startMs: 5000, endMs: 9000 }),
+    item("i2", "t-budget", { kind: "time-range", startMs: 1000, endMs: 6000 }),
+    item("i3", "t-budget", { kind: "meeting" }),
+  ],
+};
+
+const meeting = (resolved: boolean | null = true, annotations: AnnotationsDocument | null = doc): MeetingAnnotations => ({
+  meetingId: "m1",
+  revision: 3,
+  annotations,
+  resolved,
+});
+
+const result = (annotations = doc): AnnotationResult => ({
+  ...meeting(true, annotations),
+  operationId: "op2",
+  added: [],
+  removed: [],
+  notFound: [],
+});
+
+const vocab = (tagId: string, label: string, color: VocabularyTag["color"]): VocabularyTag => ({
+  tagId,
+  namespace: "",
+  label,
+  meetings: 1,
+  marks: 1,
+  color,
+  icon: "",
+  changedBy: "",
+  changedAtUtc: "",
+});
+
+describe("a meeting's marks session", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("is off without a loader", async () => {
+    const session = createMarksSession(() => {});
+    await session.open(null, null);
+    expect(get(session).status).toBe("off");
+    expect(await session.write(removeRequest(["i1"]))).toBe(false);
+  });
+
+  it("loads, writes, takes the answer's marks and says the tags changed", async () => {
+    const changed: AnnotationResult[] = [];
+    const sent: AnnotationRequest[] = [];
+    const session = createMarksSession((next) => changed.push(next));
+    const answer = result({ ...doc, items: doc.items.slice(1) });
+    await session.open(async () => meeting(), async (request) => (sent.push(request), answer));
+    expect(get(session).status).toBe("ready");
+
+    expect(await session.write(removeRequest(["i1"]))).toBe(true);
+    expect(sent).toEqual([removeRequest(["i1"])]);
+    expect(changed).toEqual([answer]);
+    expect(get(session).annotations).toBe(answer);
+    expect(get(session).busy).toBe(false);
+  });
+
+  it("shows a refused write inline and keeps the marks it had", async () => {
+    const changed = vi.fn();
+    const session = createMarksSession(changed);
+    await session.open(async () => meeting(), async () => {
+      throw new AnnotationError(409, "unresolved");
+    });
+    expect(await session.write(removeRequest(["i1"]))).toBe(false);
+    expect(get(session)).toMatchObject({ error: "Remove the marks that can't be placed first.", busy: false });
+    expect(get(session).annotations?.annotations).toBe(doc);
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("says where a refused write came from, so its error shows there", async () => {
+    const session = createMarksSession(() => {});
+    await session.open(async () => meeting(), async () => {
+      throw new AnnotationError(409, "busy");
+    });
+    await session.write(removeRequest(["i1"]), "stretch");
+    expect(get(session)).toMatchObject({
+      error: "Tags are being changed elsewhere. Try again in a moment.",
+      errorFrom: "stretch",
+    });
+  });
+
+  it("refuses a second write while one is in flight, so an older answer never lands last", async () => {
+    let finish: (value: AnnotationResult) => void = () => {};
+    const sent: AnnotationRequest[] = [];
+    const session = createMarksSession(() => {});
+    await session.open(
+      async () => meeting(),
+      (request) => (sent.push(request), new Promise((resolve) => (finish = resolve))),
+    );
+    const first = session.write(removeRequest(["i1"]));
+    expect(await session.write(removeRequest(["i2"]))).toBe(false);
+    finish(result());
+    expect(await first).toBe(true);
+    expect(sent).toEqual([removeRequest(["i1"])]);
+    expect(get(session).busy).toBe(false);
+  });
+
+  it("says tags are being prepared on a 503, and tries again", async () => {
+    vi.useFakeTimers();
+    const load = vi
+      .fn<() => Promise<MeetingAnnotations>>()
+      .mockRejectedValueOnce(new AnnotationError(503, ""))
+      .mockResolvedValueOnce(meeting());
+    const session = createMarksSession(() => {});
+    await session.open(load, null);
+    expect(get(session)).toMatchObject({ status: "preparing", error: "" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(get(session).status).toBe("ready");
+  });
+
+  it("ignores an answer for a meeting it has since left", async () => {
+    let finish: (value: MeetingAnnotations) => void = () => {};
+    const session = createMarksSession(() => {});
+    const first = session.open(() => new Promise((resolve) => (finish = resolve)), null);
+    await session.open(async () => meeting(true, null), null);
+    finish(meeting());
+    await first;
+    expect(get(session).annotations?.annotations).toBeNull();
+  });
+});
+
+describe("what the view draws", () => {
+  const state = (annotations: MeetingAnnotations, newColors = {}): MarksState => ({
+    status: "ready",
+    annotations,
+    error: "",
+    errorFrom: "meeting",
+    busy: false,
+    newColors,
+  });
+
+  it("places stretches by time, side by side where they overlap, in the tag's colour", () => {
+    const view = viewMarks(state(meeting()), [vocab("t-hiring", "hiring", "teal")]);
+    expect(view.placed.map((mark) => [mark.item.id, mark.column, mark.startMs, mark.endMs])).toEqual([
+      ["i2", 0, 1000, 6000],
+      ["i1", 1, 5000, 9000],
+    ]);
+    expect(view.placed[1]!.color).toBe("teal");
+    expect(view.whole.map((look) => look.tag.label)).toEqual(["budget"]);
+    expect(view.lost).toEqual([]);
+  });
+
+  it("uses a new tag's chosen colour until the vocabulary has it", () => {
+    const view = viewMarks(state(meeting(), { hiring: "pink" }), []);
+    expect(view.placed.find((mark) => mark.tag.label === "hiring")!.color).toBe("pink");
+  });
+
+  it("never places marks made against other audio, and keeps the whole-meeting tags", () => {
+    const view = viewMarks(state(meeting(false)), []);
+    expect(view.placed).toEqual([]);
+    expect(view.lost.map((lost) => lost.id).sort()).toEqual(["i1", "i2"]);
+    expect(view.whole).toHaveLength(1);
+  });
+
+  it("draws nothing for a meeting with no marks yet", () => {
+    expect(viewMarks(state(meeting(null, null)), [])).toEqual({ whole: [], placed: [], lost: [] });
+  });
+});

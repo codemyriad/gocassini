@@ -258,7 +258,8 @@ Apply a batch of ops to one meeting's marks, as one commit. The ops file is the
     {"op": "unmark", "itemId": "mk_..."},
     {"op": "unmark-tag", "tagId": "tag_..."},
     {"op": "undo-operation", "operationId": "op_..."},
-    {"op": "relabel", "tagId": "tag_...", "label": "recruiting"}
+    {"op": "relabel", "tagId": "tag_...", "label": "recruiting"},
+    {"op": "merge-tag", "tagId": "tag_...", "into": {"id": "tag_...", "label": "hiring"}}
   ]}
 
 Every new mark is attributed to the account you authenticate as. A mark that

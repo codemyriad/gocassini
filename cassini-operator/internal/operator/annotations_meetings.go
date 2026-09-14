@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path"
@@ -148,16 +149,11 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	result, err := s.commitMeeting(ctx, meetingID, relPath, visible, caller, request)
+	result, err := s.commitAndRecord(ctx, meetingID, relPath, visible, caller, request)
 	if err != nil {
-		var failure *annotateFailure
-		if errors.As(err, &failure) && failure.committed {
-			s.markUnavailable(ctx, path.Base(relPath), "the committed write could not be verified")
-		}
 		s.answerFailure(w, r, "write meeting="+meetingID, err)
 		return
 	}
-	s.recordCommitted(ctx, meetingID, relPath, result)
 	writeJSON(w, http.StatusOK, annotationsWriteResponse{
 		MeetingID:   meetingID,
 		Revision:    result.Revision,
@@ -168,6 +164,62 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 		Annotations: result.Annotations,
 		Resolved:    result.Resolved,
 	})
+}
+
+// commitAndRecord is the one write path, for a batch of marks and a tag job
+// alike: commit the batch, keep the colours of tags it created, index it.
+func (s *annotationService) commitAndRecord(ctx context.Context, meetingID, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
+	result, err := s.commitMeeting(ctx, meetingID, relPath, visible, caller, request)
+	if err != nil {
+		var failure *annotateFailure
+		if errors.As(err, &failure) && failure.committed {
+			s.markUnavailable(ctx, path.Base(relPath), "the committed write could not be verified")
+		}
+		return result, err
+	}
+	// Before recording, while the index still says which tags existed.
+	s.styleNewTags(ctx, request, result)
+	s.recordCommitted(ctx, meetingID, relPath, result)
+	return result, nil
+}
+
+// styleNewTags keeps the colour a batch chose for each tag it created: one no
+// indexed recording carried before. An existing tag keeps the one it has.
+func (s *annotationService) styleNewTags(ctx context.Context, request annotateWriteRequest, result annotateResult) {
+	store := s.rt.annotationReads()
+	if len(request.TagStyles) == 0 || store == nil {
+		return
+	}
+	marked := map[string]bool{}
+	for _, op := range request.Ops {
+		if _, label, ok := markOpTag(op); ok {
+			marked[foldTagLabel(label)] = true
+		}
+	}
+	ids := map[string]string{}
+	for _, tag := range projectAnnotations(result.Annotations, result.Resolved, "").tags {
+		ids[foldTagLabel(tag.label)] = tag.id
+	}
+	chosen := map[string]tagStyle{}
+	for _, style := range request.TagStyles {
+		label := foldTagLabel(style.Label)
+		if id := ids[label]; marked[label] && id != "" {
+			inUse, err := store.tagInUse(ctx, id)
+			if err != nil {
+				s.logf("annotations: keep the colours of new tags: %v", err)
+				return
+			}
+			if !inUse {
+				chosen[id] = tagStyle{Color: style.Color, Icon: style.Icon}
+			}
+		}
+	}
+	if len(chosen) == 0 {
+		return
+	}
+	if err := s.styles.update(func(styles map[string]tagStyle) { maps.Copy(styles, chosen) }); err != nil {
+		s.logf("annotations: keep the colours of new tags: %v", err)
+	}
 }
 
 // commitMeeting applies one batch and commits it, re-reading on every 412.

@@ -338,6 +338,9 @@ try {
 
       if (url.pathname.endsWith("/catalog.json")) return json(catalog);
       if (url.pathname === "/insights") return json({ insights: [] });
+      if (url.pathname === "/annotations/tags") {
+        return json({ tags: [], meetings: [], coverage: { visible: 2, indexed: 2 } });
+      }
 
       if (["fetch", "xhr"].includes(request.resourceType()) || url.pathname.startsWith("/operator/")) {
         unexpectedRequests.push(`${name}: ${request.method()} ${url.pathname}`);
