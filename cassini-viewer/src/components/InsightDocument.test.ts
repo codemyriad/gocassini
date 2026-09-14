@@ -119,8 +119,9 @@ describe("InsightDocument", () => {
         props: { insight: failedRun("provider-refused: HTTP 401 Unauthorized") },
       }).body;
       const text = plainText(html);
-      expect(text).toContain("The endpoint rejected the request");
-      expect(text).toContain("The operator reported: HTTP 401 Unauthorized");
+      expect(text).toContain("The endpoint refused the request");
+      expect(text).toContain("HTTP 401 Unauthorized");
+      expect(text).not.toContain("The operator reported");
       expect(text).not.toContain("provider-refused");
     });
 
@@ -129,7 +130,6 @@ describe("InsightDocument", () => {
         props: { insight: failedRun("model-failed: timeout"), canRetry: true },
       }).body;
       expect(withRetry).toMatch(/<button[^>]*>\s*Retry\s*<\/button>/);
-      expect(plainText(withRetry)).toContain("Runs again on the endpoint this insight asked for.");
 
       const without = render(InsightDocument, {
         props: { insight: failedRun("model-failed: timeout"), canRetry: false },

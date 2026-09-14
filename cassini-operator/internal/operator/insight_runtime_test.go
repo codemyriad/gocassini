@@ -398,7 +398,7 @@ func TestExplainInsightExitGivesEachCodeItsOwnAction(t *testing.T) {
 	// A cancelled context outranks whatever the killed child reported.
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if !strings.Contains(explainInsightExit(cancelled, 5), "longer than") {
+	if !strings.Contains(explainInsightExit(cancelled, 5), "Stopped after") {
 		t.Error("a run stopped by its own timeout must say so, not blame the model")
 	}
 }
@@ -553,7 +553,7 @@ func TestPerformCallsAnUnreadableMeetingListAnOutageAndNotADenial(t *testing.T) 
 	if outcome.Status != insightStatusFailed {
 		t.Fatalf("status = %q, want failed", outcome.Status)
 	}
-	if !strings.Contains(outcome.Error, "could not read your meeting list") {
+	if !strings.Contains(outcome.Error, "meeting list could not be read") {
 		t.Errorf("error = %q, want it to name the outage", outcome.Error)
 	}
 	if strings.Contains(outcome.Error, "available to you") {

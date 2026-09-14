@@ -328,7 +328,7 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 	staging, err := os.MkdirTemp("", "cassini-insight-*")
 	if err != nil {
 		s.logf("insights: create staging directory for run=%s: %v", run.ID, err)
-		return insightFailure("Cassini could not prepare the meetings on its own disk. An administrator can check the app's storage.")
+		return insightFailure("Cassini could not stage the meetings on disk. Check the app's storage.")
 	}
 	// Every path, including a cancelled one: the directory holds whole
 	// recordings, and one leaked per abandoned run is an archive on the ExApp
@@ -361,7 +361,7 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 			Status:   insightStatusFailed,
 			Provider: provider.id,
 			Model:    model,
-			Error:    "The insight was written but could not be saved into your Nextcloud files. Check that you have space, then try again.",
+			Error:    "The insight could not be saved to your Nextcloud files. Check your space, then retry.",
 		}
 	}
 	return InsightOutcome{
@@ -391,13 +391,13 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 		// a card that keeps asserting a permission change nobody made, and says
 		// it again on every retry.
 		s.logf("insights: run=%s caller=%s has no readable meetings (ok=%t) — failing as an outage rather than a denial", run.ID, run.CreatedBy, ok)
-		return "", insightFailure("Cassini could not read your meeting list from Nextcloud. Try again in a moment."), false
+		return "", insightFailure("Your meeting list could not be read from Nextcloud. Retry in a moment."), false
 	}
 
 	catalogPath := filepath.Join(staging, "catalog.json")
 	if err := os.WriteFile(catalogPath, catalog, 0o600); err != nil {
 		s.logf("insights: stage catalog for run=%s: %v", run.ID, err)
-		return "", insightFailure("Cassini could not prepare the meetings on its own disk. An administrator can check the app's storage."), false
+		return "", insightFailure("Cassini could not stage the meetings on disk. Check the app's storage."), false
 	}
 
 	budget := int64(maxContextStagedBytes)
@@ -409,7 +409,7 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 			// they are one answer here: the run says the meeting is no longer
 			// available to it, and the log says which case it was.
 			s.logf("insights: run=%s caller=%s asked for id=%s, which is not in their readable set", run.ID, run.CreatedBy, id)
-			return "", insightFailure("One of these meetings is no longer available to you, so the insight was not run."), false
+			return "", insightFailure("One of these meetings is no longer available to you."), false
 		}
 		destPath := filepath.Join(staging, id+".opus")
 		status, err := s.exapp.stageMeetingForContext(ctx, s.client, run.CreatedBy, source, destPath, &budget)
@@ -417,10 +417,10 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 		case err == nil:
 		case status == http.StatusNotFound || status == http.StatusUnauthorized || status == http.StatusForbidden:
 			s.logf("insights: run=%s caller=%s denied id=%s at fetch -> %d", run.ID, run.CreatedBy, id, status)
-			return "", insightFailure("One of these meetings is no longer available to you, so the insight was not run."), false
+			return "", insightFailure("One of these meetings is no longer available to you."), false
 		default:
 			s.logf("insights: run=%s stage id=%s for caller=%s: %v", run.ID, id, run.CreatedBy, err)
-			return "", insightFailure("Cassini could not download one of these meetings from Nextcloud. Try again in a moment."), false
+			return "", insightFailure("One of these meetings could not be downloaded from Nextcloud. Retry in a moment."), false
 		}
 		staged = append(staged, destPath)
 	}
@@ -430,7 +430,7 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 	// The bundle is the same document published/meetings-context serves over the
 	// same recordings, so it gets that endpoint's bound.
 	if _, err := s.runCassini(ctx, args, contextChildEnv(s.rt.childEnv()), bundlePath, "context bundle", maxContextDocumentBytes, run.ID); err != nil {
-		return "", insightFailure("Cassini could not assemble these meetings into one document. An administrator can check the app log."), false
+		return "", insightFailure("The meetings could not be assembled into one document. Check the app log."), false
 	}
 	return bundlePath, InsightOutcome{}, true
 }
@@ -470,21 +470,21 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 // message is reworded, which is the failure this avoids.
 func explainInsightExit(ctx context.Context, code int) string {
 	if ctx.Err() != nil {
-		return fmt.Sprintf("The insight took longer than %d minutes and was stopped. A smaller selection, or a faster endpoint, will finish.", int(insightRunTimeout.Minutes()))
+		return fmt.Sprintf("Stopped after %d minutes. Retry with fewer meetings or a faster endpoint.", int(insightRunTimeout.Minutes()))
 	}
 	switch code {
 	case 1:
-		return "The insight was produced but Cassini could not write it down. An administrator can check the app's storage."
+		return "The insight was produced but could not be written to disk. Check the app's storage."
 	case 2:
-		return insightReasonBadRequest + ": This insight could not be run as it was asked for. An administrator can check the app log."
+		return insightReasonBadRequest + ": Cassini could not run this request. Check the app log."
 	case 3:
-		return insightReasonNoProvider + ": No AI endpoint is configured, so there was nothing to ask. An administrator can add one in Cassini's AI settings."
+		return insightReasonNoProvider + ": No AI endpoint is configured. Add one under AI providers."
 	case 4:
-		return insightReasonProviderRefused + ": The AI endpoint refused the request — its key, its quota, or the model name. An administrator can fix it in Cassini's AI settings."
+		return insightReasonProviderRefused + ": The AI endpoint refused the request. Check its key, quota or model name under AI providers."
 	case 5:
-		return insightReasonModelFailed + ": The model did not answer. Trying again is a reasonable response to this one."
+		return insightReasonModelFailed + ": The model did not answer. Retry, or pick fewer meetings."
 	default:
-		return "The insight run stopped unexpectedly. An administrator can check the app log."
+		return "The run stopped unexpectedly. Check the app log."
 	}
 }
 

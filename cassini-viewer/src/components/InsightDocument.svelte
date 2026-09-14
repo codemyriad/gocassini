@@ -57,8 +57,7 @@
   $: pending = insight.status === "queued" || insight.status === "running";
   $: failed = insight.status === "failed";
   // Never `insight.error` raw: it starts with the operator's reason token,
-  // which is for software. The sentences are the viewing layer's, shared with
-  // the app's Generate card.
+  // which is for software. A title by reason, then the operator's own line.
   $: failure = failed ? describeInsightFailure(insight) : null;
 
   // The mock files an insight under one room. A real one can span them —
@@ -174,10 +173,7 @@
     {:else if failure}
       <div class="ins-note ins-note-error" role="status">
         <p class="ins-failure-title">{failure.title}</p>
-        <p>{failure.summary}</p>
-        {#if failure.detail}
-          <p class="ins-failure-detail">The operator reported: {failure.detail}</p>
-        {/if}
+        <p>{failure.line}</p>
         {#if canRetry}
           <!-- Retry from where the failure is seen, not only from the panel
                that started the run — which is gone by the time most people
@@ -188,7 +184,6 @@
             <button type="button" disabled={retrying} on:click={() => dispatch("retry")}>
               {retrying ? "Retrying…" : "Retry"}
             </button>
-            <span>Runs again on the endpoint this insight asked for.</span>
           </div>
           {#if retryError}
             <p class="ins-failure-detail">{retryError}</p>

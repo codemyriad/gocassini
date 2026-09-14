@@ -489,12 +489,11 @@ ORDER BY attempt_number DESC`, runID)
 // when nothing is stranded. sweepStranded owns the choice of cutoff and the
 // reasoning behind it.
 //
-// One message for the two causes it covers, and it names both rather than
-// asserting either: from the row alone, an operator that restarted mid-run and
-// an attempt that stopped writing are the same evidence, and a sentence that
-// picked one of them would be a guess printed on somebody's card.
+// One message for the two causes it covers: from the row alone, an operator
+// that restarted mid-run and an attempt that stopped writing are the same
+// evidence.
 func (s *insightStore) MarkInterruptedRunsFailed(ctx context.Context, startedBefore time.Time) (int64, error) {
-	const message = "Cassini stopped before this insight finished — it restarted, or the run stopped making progress. Retry it."
+	const message = "Cassini restarted before this insight finished. Retry it."
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

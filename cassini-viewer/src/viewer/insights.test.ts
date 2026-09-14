@@ -451,15 +451,15 @@ describe("what a failed run says (D-749)", () => {
 
   it("never repeats the token, and keeps what the operator said after it", () => {
     const said = describeInsightFailure(failed("provider-refused: HTTP 401 Unauthorized"));
-    expect(said.title).toBe("The endpoint rejected the request");
-    expect(said.detail).toBe("HTTP 401 Unauthorized");
-    expect(`${said.title} ${said.summary} ${said.detail}`).not.toContain("provider-refused");
+    expect(said.title).toBe("The endpoint refused the request");
+    expect(said.line).toBe("HTTP 401 Unauthorized");
+    expect(`${said.title} ${said.line}`).not.toContain("provider-refused");
   });
 
-  it("has a sentence for a failure the operator did not classify", () => {
+  it("has a title for a failure the operator did not classify, and a line when it said nothing", () => {
     const said = describeInsightFailure(failed("the disk was full"));
     expect(said.title).toBe("The insight failed");
-    expect(said.detail).toBe("the disk was full");
-    expect(describeInsightFailure(failed("")).detail).toBe("");
+    expect(said.line).toBe("the disk was full");
+    expect(describeInsightFailure(failed("")).line).toBe("The run did not finish.");
   });
 });

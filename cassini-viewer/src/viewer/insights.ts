@@ -56,11 +56,10 @@ export interface InsightRecord {
 // The operator classifies a failure with a reason token at the front of
 // `error` — `no-provider: …`, `provider-refused: …`, `model-failed: …`,
 // `bad-request: …` — for the four failures it can name. The token is for
-// software; the sentences below are for the person reading the card. They live
-// in the viewing layer so the browse list, the document sheet and the app's
-// own Generate card say the same thing about the same failure, and cassini-app
-// imports them from here (`cassini-viewer/insights`) rather than keeping a
-// second table (D-749).
+// software; the titles below are for the person reading the sheet. They live
+// in the viewing layer, and cassini-app classifies on the same token by
+// importing from here (`cassini-viewer/insights`) rather than keeping a second
+// table (D-749).
 
 export type InsightFailureReason =
   | "no-provider"
@@ -88,57 +87,18 @@ export function classifyInsightError(error: string): InsightFailureReason {
   return "unknown";
 }
 
-// fixable means "a setting in AI providers is what changes the outcome", which
-// is what decides whether an administrator is offered a link there. A bad
-// request is the one failure no endpoint configuration repairs.
-export const INSIGHT_FAILURE_COPY: Record<
-  InsightFailureReason,
-  { title: string; summary: string; fixable: boolean }
-> = {
-  "no-provider": {
-    title: "No AI endpoint is configured",
-    summary:
-      "This insight never reached a model, because this deployment has no AI endpoint it can " +
-      "use. Retry runs on whichever endpoint the deployment has when it is pressed, so " +
-      "configuring one first is what makes a retry work.",
-    fixable: true,
-  },
-  "provider-refused": {
-    title: "The endpoint rejected the request",
-    summary:
-      "The AI endpoint answered and refused — usually a missing or rejected key, or a quota. " +
-      "Retry runs on the same endpoint with its key and model as they stand at that moment, " +
-      "so fixing the credential first is what makes a retry work.",
-    fixable: true,
-  },
-  "model-failed": {
-    title: "The model did not answer",
-    summary:
-      "The endpoint was reached but produced no usable answer — a timeout, an unreachable host, " +
-      "or a server error. This is the failure a straight Retry is a sensible response to; if it " +
-      "keeps timing out, the endpoint's request timeout is the setting that governs it.",
-    fixable: true,
-  },
-  "bad-request": {
-    title: "Cassini could not run that request",
-    summary:
-      "The run was refused before anything was sent to a model — an unknown template, or a " +
-      "selection this deployment will not assemble. Changing the AI configuration will not " +
-      "change the answer; changing the template or the meetings will.",
-    fixable: false,
-  },
-  unknown: {
-    title: "The insight failed",
-    summary: "The run did not finish, and nothing was written to your files.",
-    // Not fixable, for the reason bad-request is not: the operator classifies
-    // only the four failures it can name, and this is the one it deliberately
-    // left unclassified. Offering "Open AI providers" for it would send an
-    // administrator to a panel nobody said would change the outcome. The
-    // operator's own sentence, repeated in `detail`, still carries everything
-    // known.
-    fixable: false,
-  },
+// One title per reason. The line under it is the operator's own stored
+// sentence with its token stripped, or the fallback when the record carries
+// none.
+export const INSIGHT_FAILURE_TITLES: Record<InsightFailureReason, string> = {
+  "no-provider": "No AI endpoint",
+  "provider-refused": "The endpoint refused the request",
+  "model-failed": "The model did not answer",
+  "bad-request": "This request could not be run",
+  unknown: "The insight failed",
 };
+
+const INSIGHT_FAILURE_FALLBACK = "The run did not finish.";
 
 // insightFailureDetail is what the operator said after the token: the part a
 // reader can act on, without the part that was for software.
@@ -146,17 +106,19 @@ export function insightFailureDetail(error: string): string {
   return error.replace(/^\s*(no-provider|provider-refused|model-failed|bad-request)\s*:?\s*/i, "").trim();
 }
 
-// describeInsightFailure is what a failed run's card and sheet render: never
-// `error` raw, which starts with a token nobody outside the operator should be
-// asked to read.
+// describeInsightFailure is what a failed run's sheet renders: a title and one
+// line. Never `error` raw, which starts with a token nobody outside the
+// operator should be asked to read.
 export function describeInsightFailure(record: InsightRecord): {
   title: string;
-  summary: string;
-  detail: string;
+  line: string;
 } {
-  const reason = classifyInsightError(record.error ?? "");
-  const { title, summary } = INSIGHT_FAILURE_COPY[reason];
-  return { title, summary, detail: insightFailureDetail(record.error ?? "") };
+  const error = record.error ?? "";
+  const detail = insightFailureDetail(error);
+  return {
+    title: INSIGHT_FAILURE_TITLES[classifyInsightError(error)],
+    line: detail === "" ? INSIGHT_FAILURE_FALLBACK : detail,
+  };
 }
 
 // Which kinds of thing the browse list is showing. Both true is the default;
