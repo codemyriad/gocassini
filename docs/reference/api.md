@@ -252,7 +252,10 @@ Content-Type: application/json
 
 {
   "meetingIds": ["..."],
-  "workflow": "summarise"
+  "workflow": "summarise",
+  "question": "",
+  "provider": "",
+  "model": ""
 }
 ```
 
@@ -264,9 +267,16 @@ Behavior:
 - `question` belongs only to a workflow that has somewhere to put one, and is
   refused **both ways**: sent to a workflow that takes none it would be dropped
   without being asked, and withheld from one that needs it the prompt would go
-  out with its placeholder still in it. Either mistake is a `400`. No workflow
-  this image ships takes a question yet, so today `question` must be absent or
-  empty
+  out with its placeholder still in it. Either mistake is a `400`. The shipped
+  `ask` workflow ("Ask your own question") takes one and requires it; every
+  other shipped workflow asks its own
+- `provider` is optional — the id of one of the configured AI endpoints
+  (`GET /operator/ai/providers` lists them). Absent, the deployment's
+  configured insight endpoint answers; an unknown id is a `400`
+- `model` is optional and needs `provider` (a model with no provider is a
+  `400`). Absent or empty, the run asks for that endpoint's default model — the
+  one set on the provider in AI providers. The app never sends one today; the
+  field stays so a per-run override can return without a wire change
 - returns `201` with the run
 
 ### List the caller's runs
@@ -293,7 +303,10 @@ POST /insights/:id/retry
 ```
 
 Valid only for a run in `failed`. The id is stable across attempts; each retry
-increments `attemptNumber`.
+increments `attemptNumber`. A retry replays the request as it was made — the
+same workflow, meetings, question and the endpoint the caller picked — and
+falls back to the deployment's configured endpoint only when the request named
+none, or named one that has since been removed.
 
 ### The run object
 
@@ -302,12 +315,45 @@ increments `attemptNumber`.
   "createdBy": "alice", "attemptNumber": 1,
   "workflowId": "summarise", "workflowVersion": "v0", "workflowSha256": "...",
   "meetingIds": ["..."], "roomIds": ["..."], "question": "",
-  "provider": "", "model": "", "documentPath": "", "error": "",
+  "requestedProvider": "", "requestedModel": "",
+  "provider": "", "model": "", "documentPath": "",
+  "reason": "", "error": "",
   "createdAt": "RFC3339", "updatedAt": "RFC3339" }
 ```
 
+`requestedProvider` and `requestedModel` are what the caller asked for (the
+create body's `provider` and `model`); `provider` and `model` are what the latest
+attempt actually reached, and are empty until an attempt has resolved them.
+
 `status` is `queued`, `running`, `succeeded` or `failed` — the same four words
 the `cassini insight` CLI uses, deliberately not the job pipeline's five.
+
+`reason` says why a `failed` run failed, as one token; it is `""` on any other
+status. The operator stores only the token — the sentence a reader sees for it
+is the app's, so a run that failed months ago reads in the current words. The
+technical detail (the child's stderr, an HTTP status) is in the operator log,
+never on the run.
+
+| `reason` | Meaning |
+|---|---|
+| `bad-request` | `cassini insight run` refused the request (exit 2) |
+| `no-provider` | no AI endpoint is configured (exit 3) |
+| `provider-refused` | the endpoint refused the call: key, quota, model name (exit 4) |
+| `model-failed` | the model did not answer (exit 5) |
+| `write-failed` | the answer was produced but could not be written (exit 1) |
+| `deliver-failed` | the document could not be PUT into the caller's Nextcloud files |
+| `timeout` | the attempt hit the run timeout |
+| `staging-failed` | the staging directory or catalog could not be written |
+| `catalog-failed` | the caller's meeting list could not be read, or was empty |
+| `meeting-unavailable` | a picked meeting is not readable by the caller (401/403/404) |
+| `download-failed` | a recording could not be fetched from Nextcloud |
+| `assemble-failed` | `cassini meetings context` could not build the bundle |
+| `interrupted` | the operator shut down or restarted, or the attempt stopped, before the run finished |
+| `unknown` | an exit code the contract does not name |
+
+`error` carries the same token for one release, for an app built against the
+old field. Runs that failed before tokens existed still carry a sentence there,
+prefixed with one of the first four tokens.
 
 ### Status codes
 

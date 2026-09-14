@@ -33,8 +33,10 @@
     TextAlignStart,
     TriangleAlert,
   } from "@lucide/svelte";
+  import ModelCombobox from "./ModelCombobox.svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import type {
+    LLMModel,
     LLMProviderUpdate,
     LLMProviderView,
     LLMSettings,
@@ -68,17 +70,29 @@
     timeoutSec: number | null;
     maxTokens: number | null;
     advanced: boolean;
+    // The endpoint's default model — the one thing every step on it, and
+    // every insight run that picks it, will ask for unless a step names its
+    // own (D-749).
+    model: string;
   }
   let draft: ProviderDraft | null = null;
+
+  // The endpoint Remove was pressed on, awaiting confirmation. Removing is the
+  // one action here that cannot be undone from this panel: the stored key is
+  // destroyed with the row and cannot be read back, and a step that ran on
+  // the endpoint is switched off with it. One click was too little for that.
+  let pendingRemoval: LLMProviderView | null = null;
 
   // What each saved endpoint answered when asked for its models. It doubles as
   // the mock's verified tick: "we listed 41 models from this URL with this key"
   // is a fact, where a tick that only means "a row exists" is decoration. A
   // failure here is reported as itself and never as a broken endpoint — the
   // list may 404 on a server that answers completions perfectly well.
+  // The listing itself is kept, not only its count: it is what the default
+  // model field offers when a saved endpoint is edited.
   type ProbeState =
     | { status: "checking" }
-    | { status: "ok"; count: number }
+    | { status: "ok"; count: number; models: LLMModel[] }
     | { status: "failed"; message: string };
   let probes: Record<string, ProbeState> = {};
 
@@ -130,7 +144,7 @@
     probes = { ...probes, [providerId]: { status: "checking" } };
     try {
       const models = await operatorClient.listProviderModels(providerId);
-      probes = { ...probes, [providerId]: { status: "ok", count: models.length } };
+      probes = { ...probes, [providerId]: { status: "ok", count: models.length, models } };
     } catch (error) {
       probes = { ...probes, [providerId]: { status: "failed", message: asMessage(error) } };
     }
@@ -154,6 +168,7 @@
       timeoutSec: null,
       maxTokens: null,
       advanced: false,
+      model: "",
     };
   }
 
@@ -169,7 +184,42 @@
       timeoutSec: provider.timeout_sec > 0 ? provider.timeout_sec : null,
       maxTokens: provider.max_tokens > 0 ? provider.max_tokens : null,
       advanced: provider.timeout_sec > 0 || provider.max_tokens > 0,
+      model: provider.model,
     };
+  }
+
+  // What the default-model field can offer for the draft. A saved endpoint's
+  // listing is the probe's; an unsaved one has no id the operator can ask on
+  // its behalf, and the field says so rather than showing an empty list that
+  // would read as an endpoint with no models.
+  $: draftModels =
+    draft && probes[draft.id]?.status === "ok" ? probeModelsOf(probes[draft.id]) : [];
+  $: draftModelsLoading = draft !== null && probes[draft.id]?.status === "checking";
+  $: draftModelsError = draft
+    ? draft.existing
+      ? modelListUnavailable(probeErrorOf(probes[draft.id]))
+      : "Save the provider first to list its models."
+    : "";
+
+  // One wording for a listing that failed, on the card and in the combobox.
+  function modelListUnavailable(detail: string): string {
+    return detail === "" ? "" : `Model list unavailable: ${detail.replace(/\.$/, "")}.`;
+  }
+
+  function probeModelsOf(state: ProbeState | undefined): LLMModel[] {
+    return state?.status === "ok" ? state.models : [];
+  }
+
+  function probeErrorOf(state: ProbeState | undefined): string {
+    return state?.status === "failed" ? state.message : "";
+  }
+
+  // Opening the field on a saved endpoint whose listing failed is a retry;
+  // on one that listed, it is free.
+  function reprobeDraft() {
+    if (draft?.existing && probes[draft.id]?.status === "failed") {
+      void probe(draft.id);
+    }
   }
 
   // A URL is the only field a request cannot be made without. A key is not:
@@ -177,6 +227,28 @@
   // panel against exactly the self-hosted endpoints the privacy story is built
   // around.
   $: draftReady = (draft?.baseUrl ?? "").trim() !== "";
+
+  // OpenRouter keys start with "sk-or-v1-". One pasted without the prefix
+  // saves fine and then fails every run with a 401, and the placeholder that
+  // showed the prefix is the likely reason it was left off. Said under the
+  // field, never enforced: only OpenRouter's keys have a known shape.
+  $: keyPrefixWarning =
+    draft && hostOf(draft.baseUrl) === "openrouter.ai" && looksUnprefixed(draft.key)
+      ? "OpenRouter keys start with sk-or-v1-. Check the paste."
+      : "";
+
+  function hostOf(url: string): string {
+    try {
+      return new URL(url.trim()).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+
+  function looksUnprefixed(key: string): boolean {
+    const typed = key.trim();
+    return typed !== "" && !typed.startsWith("sk-or-");
+  }
 
   // Every provider, with the draft's edits standing in for the row it is
   // editing: PUT replaces the whole list, so a save has to send the untouched
@@ -188,6 +260,7 @@
       base_url: provider.base_url,
       timeout_sec: provider.timeout_sec,
       max_tokens: provider.max_tokens,
+      model: provider.model,
       // api_key omitted: the server keeps the stored key for an id it is not
       // told about, which is the only way a list it never serves can survive a
       // round trip.
@@ -198,6 +271,7 @@
       base_url: current.baseUrl.trim(),
       timeout_sec: current.timeoutSec ?? 0,
       max_tokens: current.maxTokens ?? 0,
+      model: current.model.trim(),
     };
     if (current.keyCleared) {
       edited.api_key = "";
@@ -235,6 +309,23 @@
     }
   }
 
+  // Which steps run on this endpoint, for the confirmation to name. The
+  // insight step is not shown in this panel, but a deployment that set it by
+  // hand still loses it here, and the prompt should say so.
+  function stepsRunningOn(provider: LLMProviderView): string[] {
+    if (!settings) {
+      return [];
+    }
+    const names: string[] = [];
+    if (settings.summary.enabled && settings.summary.provider === provider.id) {
+      names.push("meeting summaries");
+    }
+    if (settings.insight.enabled && settings.insight.provider === provider.id) {
+      names.push("insights");
+    }
+    return names;
+  }
+
   async function removeProvider(provider: LLMProviderView) {
     if (!settings || saving) {
       return;
@@ -242,6 +333,7 @@
     const current = settings;
     saving = true;
     saveError = "";
+    pendingRemoval = null;
     try {
       apply(
         await settingsClient().putLLMSettings({
@@ -253,6 +345,7 @@
               base_url: row.base_url,
               timeout_sec: row.timeout_sec,
               max_tokens: row.max_tokens,
+              model: row.model,
             })),
           // A step still pointing at the removed endpoint would be rejected —
           // the operator refuses an enabled step with an unknown provider —
@@ -306,9 +399,172 @@
 
   function providerName(id: string): string {
     const provider = providers.find((row) => row.id === id);
-    return provider ? provider.name || provider.base_url || provider.id : id;
+    return provider ? providerLabel(provider) : id;
+  }
+
+  // What a card and its in-place edit form call the endpoint: the name when
+  // there is one, else the URL, else the id — the same fallback everywhere.
+  function providerLabel(provider: LLMProviderView): string {
+    return provider.name || provider.base_url || provider.id;
   }
 </script>
+
+<!-- The add/edit form, as one piece of markup rendered in two places: in
+     place of the card being edited, or under the list for a new provider.
+     Editing used to open this under the whole list too, which read as
+     adding a second endpoint rather than changing the one just clicked.
+     The heading is the other half of that fix: the form says which it is. -->
+{#snippet providerForm(heading: string)}
+  {#if draft}
+    <!-- Keyed on the draft's id so a form that survives a draft swap — a
+         fresh install's automatic draft replaced by another — resets its
+         inputs rather than carrying the first draft's text into the second. -->
+    {#key draft.id}
+      <section class="grid gap-3">
+        <h3 class="text-sm font-semibold">{heading}</h3>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="flex w-full flex-col gap-1">
+            <span class="text-xs font-medium text-base-content/70">Provider</span>
+            <input
+              bind:value={draft.name}
+              type="text"
+              class="input input-sm w-full border-base-300 shadow-none"
+              placeholder="OpenRouter, local Qwen…"
+            />
+          </label>
+          <label class="flex w-full flex-col gap-1">
+            <span class="text-xs font-medium text-base-content/70">Base URL</span>
+            <input
+              bind:value={draft.baseUrl}
+              type="url"
+              class="input input-sm w-full border-base-300 shadow-none"
+              placeholder="https://openrouter.ai/api/v1 or http://your-host:8000/v1"
+            />
+          </label>
+        </div>
+        <label class="flex w-full flex-col gap-1">
+          <span class="text-xs font-medium text-base-content/70">
+            API key
+            {#if draft.keyConfigured && !draft.keyCleared}
+              <span class="badge badge-success badge-outline badge-xs align-middle">
+                stored
+              </span>
+            {:else if draft.keyCleared}
+              <span class="badge badge-warning badge-outline badge-xs align-middle">
+                will be removed
+              </span>
+            {/if}
+          </span>
+          <input
+            bind:value={draft.key}
+            type="password"
+            autocomplete="off"
+            class="input input-sm w-full border-base-300 shadow-none"
+            placeholder={draft.keyConfigured && !draft.keyCleared
+              ? "leave blank to keep the stored key"
+              : "Paste the full key, sk-or-v1-… for OpenRouter. Self-hosted servers usually need none."}
+          />
+          {#if keyPrefixWarning}
+            <p class="text-xs text-warning">{keyPrefixWarning}</p>
+          {/if}
+          {#if draft.keyConfigured}
+            <button
+              class="link link-hover self-start text-xs text-base-content/60"
+              type="button"
+              on:click={() => {
+                if (draft) {
+                  draft.keyCleared = !draft.keyCleared;
+                  if (draft.keyCleared) {
+                    draft.key = "";
+                  }
+                }
+              }}
+            >
+              {draft.keyCleared ? "Keep the stored key" : "Remove the stored key"}
+            </button>
+          {/if}
+        </label>
+
+        <!-- One model per endpoint (D-749). Summaries and insights ask
+             for this unless a step names its own; a person creating an
+             insight picks an endpoint and gets this model with it. Free
+             text over the endpoint's own listing, for the reason the
+             combobox gives: the registry of models is the endpoint's. -->
+        <ModelCombobox
+          bind:value={draft.model}
+          label="Default model"
+          models={draftModels}
+          loading={draftModelsLoading}
+          error={draftModelsError}
+          placeholder="e.g. openai/gpt-4o-mini or qwen3-30b"
+          on:open={reprobeDraft}
+        />
+
+        <!-- Behind a disclosure rather than dropped: these describe the
+             HOST, and a CPU-bound local model needs a longer leash than a
+             hosted API does. Nobody adding their first endpoint needs to
+             decide either. -->
+        <details bind:open={draft.advanced}>
+          <summary class="cursor-pointer text-xs text-base-content/60">
+            Request bounds
+          </summary>
+          <div class="mt-2 grid gap-3 sm:grid-cols-2">
+            <label class="flex w-full flex-col gap-1">
+              <span class="text-xs font-medium text-base-content/70">
+                Request timeout (s)
+              </span>
+              <input
+                bind:value={draft.timeoutSec}
+                type="number"
+                min="1"
+                class="input input-sm w-full border-base-300 shadow-none"
+                placeholder="900 (default)"
+              />
+            </label>
+            <label class="flex w-full flex-col gap-1">
+              <span class="text-xs font-medium text-base-content/70">
+                Response token limit
+              </span>
+              <input
+                bind:value={draft.maxTokens}
+                type="number"
+                min="1"
+                class="input input-sm w-full border-base-300 shadow-none"
+                placeholder="4096 (default)"
+              />
+            </label>
+          </div>
+        </details>
+
+        <div class="flex items-center gap-2">
+          <button
+            class="btn btn-primary btn-sm text-sm"
+            type="button"
+            disabled={!draftReady || saving}
+            on:click={saveProvider}
+          >
+            {#if saving}
+              <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              Saving…
+            {:else}
+              Save provider
+            {/if}
+          </button>
+          {#if providers.length > 0}
+            <button
+              class="btn btn-ghost btn-sm text-sm"
+              type="button"
+              disabled={saving}
+              on:click={() => (draft = null)}
+            >
+              Cancel
+            </button>
+          {/if}
+        </div>
+      </section>
+    {/key}
+  {/if}
+{/snippet}
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
   <header class="flex items-start justify-between gap-3 px-4 py-3">
@@ -384,9 +640,8 @@
             </div>
           </div>
           <p class="text-xs leading-relaxed text-base-content/70">
-            Recording and transcription run entirely on your own infrastructure. This is the
-            only step that sends data to a third party. Without an endpoint you still get the
-            transcript, just no summary or insights.
+            Recording and transcription run on your own infrastructure. An endpoint is only
+            needed for summaries and insights.
           </p>
           <!-- Said before the save, not discovered after it. Registering the
                first endpoint switches summarising on — which is what a fresh
@@ -394,224 +649,171 @@
                one go — and that is a decision about what leaves this
                deployment, so it is not a surprise worth saving for later. -->
           <p class="text-xs leading-relaxed text-base-content/70">
-            Saving your first endpoint switches meeting summaries on, so every recording's
-            transcript is sent to it. You can turn that off again in Publish pipeline.
+            Saving your first endpoint switches summaries on for every meeting. Turn that off
+            under Publish pipeline.
           </p>
         </section>
       {:else}
         <ul class="grid gap-2">
           {#each providers as provider (provider.id)}
             <li class="rounded-box border border-base-300 bg-base-200 p-3">
-              <div class="flex flex-wrap items-start justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-sm font-semibold">
-                      {provider.name || provider.base_url || provider.id}
-                    </span>
-                    <!-- The tick is a listing that came back, not a row that
-                         exists. A failure says so in its own words: an endpoint
-                         with no /models route still answers completions, and
-                         calling that broken would be wrong. -->
-                    {#if probes[provider.id]?.status === "ok"}
-                      <CircleCheck
-                        size={14}
-                        class="text-success"
-                        aria-label="This endpoint answered with its model list"
-                      />
-                    {:else if probes[provider.id]?.status === "failed"}
-                      <TriangleAlert
-                        size={14}
-                        class="text-warning"
-                        aria-label="This endpoint did not list its models"
-                      />
-                    {/if}
-                  </div>
-                  <div
-                    class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60"
-                  >
-                    <code class="font-mono">{provider.base_url}</code>
-                    <span>
-                      {provider.api_key_configured ? "Key stored" : "No key"}
-                    </span>
-                    {#if probes[provider.id]?.status === "ok"}
-                      {@const state = probes[provider.id]}
+              {#if draft?.existing && draft.id === provider.id}
+                <!-- Edited where it stands, so the form is unmistakably
+                     this endpoint's and not a second one being added. -->
+                {@render providerForm(`Editing ${providerLabel(provider)}`)}
+              {:else}
+                <!-- Facts left, actions right, and the row never wraps: a
+                     failure message long enough to fill the card used to push
+                     Edit and Remove onto a line of their own beneath it. The
+                     message has its own full-width line below instead. -->
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-sm font-semibold">{providerLabel(provider)}</span>
+                      <!-- The tick is a listing that came back, not a row that
+                           exists. A failure says so in its own words: an endpoint
+                           with no /models route still answers completions, and
+                           calling that broken would be wrong. -->
+                      {#if probes[provider.id]?.status === "ok"}
+                        <CircleCheck
+                          size={14}
+                          class="text-success"
+                          aria-label="This endpoint answered with its model list"
+                        />
+                      {:else if probes[provider.id]?.status === "failed"}
+                        <TriangleAlert
+                          size={14}
+                          class="text-warning"
+                          aria-label="This endpoint did not list its models"
+                        />
+                      {/if}
+                    </div>
+                    <div
+                      class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60"
+                    >
+                      <code class="font-mono">{provider.base_url}</code>
                       <span>
-                        {state.status === "ok" ? state.count : 0}
-                        {state.status === "ok" && state.count === 1 ? "model" : "models"}
+                        {provider.api_key_configured ? "Key stored" : "No key"}
                       </span>
-                    {:else if probes[provider.id]?.status === "checking"}
-                      <span>listing models…</span>
-                    {/if}
-                    {#if provider.timeout_sec > 0}
-                      <span>{provider.timeout_sec}s timeout</span>
-                    {/if}
-                    {#if provider.max_tokens > 0}
-                      <span>{provider.max_tokens} token limit</span>
-                    {/if}
+                      <!-- The model every step on this endpoint asks for. Not
+                           having one is worth seeing: the recorder then falls
+                           back to its own default, which a local endpoint has
+                           probably never heard of. -->
+                      <span class:text-warning={!provider.model}>
+                        {provider.model ? `Model ${provider.model}` : "No default model"}
+                      </span>
+                      {#if probes[provider.id]?.status === "ok"}
+                        {@const state = probes[provider.id]}
+                        <span>
+                          {state.status === "ok" ? state.count : 0}
+                          {state.status === "ok" && state.count === 1 ? "model" : "models"}
+                        </span>
+                      {:else if probes[provider.id]?.status === "checking"}
+                        <span>listing models…</span>
+                      {/if}
+                      {#if provider.timeout_sec > 0}
+                        <span>{provider.timeout_sec}s timeout</span>
+                      {/if}
+                      {#if provider.max_tokens > 0}
+                        <span>{provider.max_tokens} token limit</span>
+                      {/if}
+                    </div>
                   </div>
-                  {#if probes[provider.id]?.status === "failed"}
-                    {@const state = probes[provider.id]}
-                    <p class="mt-1 text-xs text-warning">
-                      Its model list could not be read: {state.status === "failed"
-                        ? state.message
-                        : ""} Summaries and insights may still work — a model can always be
-                      named by hand.
-                    </p>
-                  {/if}
+                  <div class="flex flex-none items-center gap-1">
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      type="button"
+                      disabled={saving}
+                      on:click={() => (draft = editDraft(provider))}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      type="button"
+                      disabled={saving}
+                      aria-expanded={pendingRemoval?.id === provider.id}
+                      on:click={() => (pendingRemoval = provider)}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
-                <div class="flex flex-none items-center gap-1">
-                  <button
-                    class="btn btn-ghost btn-xs"
-                    type="button"
-                    disabled={saving}
-                    on:click={() => (draft = editDraft(provider))}
+                {#if probes[provider.id]?.status === "failed"}
+                  {@const state = probes[provider.id]}
+                  <p class="mt-1 text-xs break-words text-warning">
+                    {modelListUnavailable(state.status === "failed" ? state.message : "")}
+                    You can still type a model ID.
+                  </p>
+                {/if}
+                {#if pendingRemoval?.id === provider.id}
+                  <!-- Inline, like StoragePanel's: the app runs inside a shadow
+                       root on Nextcloud's page, where a top-layer <dialog> does
+                       not reliably follow its styling or focus. It names the
+                       endpoint and says what is lost, because neither can be
+                       recovered from here: the key is not readable back, and a
+                       step switched off here has to be switched on again in
+                       Publish pipeline. -->
+                  <div
+                    class="mt-3 grid gap-2 rounded-box border border-error bg-error/10 p-3"
+                    role="alertdialog"
+                    aria-label="Confirm removing this endpoint"
                   >
-                    Edit
-                  </button>
-                  <button
-                    class="btn btn-ghost btn-xs text-error"
-                    type="button"
-                    disabled={saving}
-                    on:click={() => void removeProvider(provider)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
+                    <div class="flex items-start gap-2">
+                      <TriangleAlert size={18} class="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+                      <div class="grid gap-1">
+                        <p class="text-sm font-semibold">
+                          Remove {provider.name || provider.base_url || provider.id}?
+                        </p>
+                        <p class="text-xs break-words text-base-content/80">
+                          <code class="font-mono">{provider.base_url}</code>
+                        </p>
+                        <ul class="grid gap-1 text-xs text-base-content/80">
+                          {#if provider.api_key_configured}
+                            <li>The stored key is destroyed. Cassini cannot show it to you first.</li>
+                          {/if}
+                          {#if stepsRunningOn(provider).length > 0}
+                            <li>
+                              It stops {stepsRunningOn(provider).join(" and ")}: nothing will run
+                              them until an endpoint is chosen again in Publish pipeline.
+                            </li>
+                          {/if}
+                          <li>Meetings already published keep their summaries.</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <button
+                        class="btn btn-sm btn-error"
+                        type="button"
+                        disabled={saving}
+                        on:click={() => void removeProvider(provider)}
+                      >
+                        Yes, remove it
+                      </button>
+                      <button
+                        class="btn btn-sm btn-ghost"
+                        type="button"
+                        disabled={saving}
+                        on:click={() => (pendingRemoval = null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                {/if}
+              {/if}
             </li>
           {/each}
         </ul>
       {/if}
 
-      {#if draft}
-        <!-- Keyed on the draft's id so switching from one row's Edit straight to
-             another's resets the inputs rather than carrying the first row's
-             text into the second. -->
-        {#key draft.id}
-          <section class="grid gap-3 rounded-box border border-base-300 bg-base-200 p-3">
-            <div class="grid gap-3 sm:grid-cols-2">
-              <label class="flex w-full flex-col gap-1">
-                <span class="text-xs font-medium text-base-content/70">Provider</span>
-                <input
-                  bind:value={draft.name}
-                  type="text"
-                  class="input input-sm w-full border-base-300 shadow-none"
-                  placeholder="OpenRouter, local Qwen…"
-                />
-              </label>
-              <label class="flex w-full flex-col gap-1">
-                <span class="text-xs font-medium text-base-content/70">Base URL</span>
-                <input
-                  bind:value={draft.baseUrl}
-                  type="url"
-                  class="input input-sm w-full border-base-300 shadow-none"
-                  placeholder="https://openrouter.ai/api/v1 or http://your-host:8000/v1"
-                />
-              </label>
-            </div>
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">
-                API key
-                {#if draft.keyConfigured && !draft.keyCleared}
-                  <span class="badge badge-success badge-outline badge-xs align-middle">
-                    stored
-                  </span>
-                {:else if draft.keyCleared}
-                  <span class="badge badge-warning badge-outline badge-xs align-middle">
-                    will be removed
-                  </span>
-                {/if}
-              </span>
-              <input
-                bind:value={draft.key}
-                type="password"
-                autocomplete="off"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder={draft.keyConfigured && !draft.keyCleared
-                  ? "leave blank to keep the stored key"
-                  : "sk-or-v1-… — self-hosted servers usually need none"}
-              />
-              {#if draft.keyConfigured}
-                <button
-                  class="link link-hover self-start text-xs text-base-content/60"
-                  type="button"
-                  on:click={() => {
-                    if (draft) {
-                      draft.keyCleared = !draft.keyCleared;
-                      if (draft.keyCleared) {
-                        draft.key = "";
-                      }
-                    }
-                  }}
-                >
-                  {draft.keyCleared ? "Keep the stored key" : "Remove the stored key"}
-                </button>
-              {/if}
-            </label>
-
-            <!-- Behind a disclosure rather than dropped: these describe the
-                 HOST, and a CPU-bound local model needs a longer leash than a
-                 hosted API does. Nobody adding their first endpoint needs to
-                 decide either. -->
-            <details bind:open={draft.advanced}>
-              <summary class="cursor-pointer text-xs text-base-content/60">
-                Request bounds
-              </summary>
-              <div class="mt-2 grid gap-3 sm:grid-cols-2">
-                <label class="flex w-full flex-col gap-1">
-                  <span class="text-xs font-medium text-base-content/70">
-                    Request timeout (s)
-                  </span>
-                  <input
-                    bind:value={draft.timeoutSec}
-                    type="number"
-                    min="1"
-                    class="input input-sm w-full border-base-300 shadow-none"
-                    placeholder="900 (default)"
-                  />
-                </label>
-                <label class="flex w-full flex-col gap-1">
-                  <span class="text-xs font-medium text-base-content/70">
-                    Response token limit
-                  </span>
-                  <input
-                    bind:value={draft.maxTokens}
-                    type="number"
-                    min="1"
-                    class="input input-sm w-full border-base-300 shadow-none"
-                    placeholder="4096 (default)"
-                  />
-                </label>
-              </div>
-            </details>
-
-            <div class="flex items-center gap-2">
-              <button
-                class="btn btn-primary btn-sm text-sm"
-                type="button"
-                disabled={!draftReady || saving}
-                on:click={saveProvider}
-              >
-                {#if saving}
-                  <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-                  Saving…
-                {:else}
-                  Save provider
-                {/if}
-              </button>
-              {#if providers.length > 0}
-                <button
-                  class="btn btn-ghost btn-sm text-sm"
-                  type="button"
-                  disabled={saving}
-                  on:click={() => (draft = null)}
-                >
-                  Cancel
-                </button>
-              {/if}
-            </div>
-          </section>
-        {/key}
+      {#if draft && !draft.existing}
+        <!-- Only a NEW provider's form lives here, under the list; editing
+             happens on the card itself. -->
+        <section class="rounded-box border border-base-300 bg-base-200 p-3">
+          {@render providerForm("New endpoint")}
+        </section>
       {/if}
 
       {#if effectiveInsight}
@@ -626,10 +828,9 @@
              endpoint on this page is one somebody's transcripts can be sent to,
              and removing them all is still the off switch. -->
         <p class="text-xs text-base-content/60">
-          Anyone creating an insight chooses which of these answers it; one that chooses none
-          runs on <span class="font-medium">{insightEndpointLabel}</span>. Every endpoint listed
-          here is one an insight may reach, and removing them all is how insights are switched
-          off.
+          Insights run on the endpoint the asker picks, or
+          <span class="font-medium">{insightEndpointLabel}</span> if none. Remove every endpoint
+          to switch insights off.
         </p>
       {/if}
 

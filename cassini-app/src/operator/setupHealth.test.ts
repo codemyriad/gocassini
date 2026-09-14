@@ -278,10 +278,8 @@ describe("buildFeatureNotice", () => {
       isAdmin: true,
     });
     expect(summaries?.title).not.toBe(insights?.title);
-    // Both promise the local half is unaffected, because it is: transcription
-    // needs no endpoint, and docs/privacy.md is the claim being upheld here.
-    expect(summaries?.summary).toContain("Transcripts are unaffected");
-    expect(insights?.summary).toContain("Recording and transcription are unaffected");
+    expect(summaries?.summary).toContain("summarise step");
+    expect(insights?.summary).toContain("this deployment has none");
   });
 });
 

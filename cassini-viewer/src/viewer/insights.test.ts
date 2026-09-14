@@ -4,6 +4,9 @@ import { NO_ROOM_KEY, UNDATED_MONTH_LABEL } from "./rooms";
 import {
   ALL_BROWSE_TYPES,
   buildBrowseFeed,
+  describeInsightFailure,
+  INSIGHT_FAILURE_COPY,
+  insightReasonOf,
   filterInsights,
   filterInsightsByRoom,
   formatInsightStatus,
@@ -43,6 +46,7 @@ function insight(overrides: Partial<InsightRecord> & { id: string }): InsightRec
     provider: "",
     model: "",
     documentPath: "",
+    reason: "",
     error: "",
     createdAt: "2026-08-20T09:00:00Z",
     updatedAt: "2026-08-20T09:01:00Z",
@@ -413,5 +417,70 @@ describe("stripInsightFrontMatter", () => {
   it("survives CRLF and a byte-order mark", () => {
     const crlf = "﻿---\r\nversion: \"v1\"\r\n---\r\n\r\nThe answer.\r\n";
     expect(stripInsightFrontMatter(crlf).trim()).toBe("The answer.");
+  });
+});
+
+describe("what a failed run says (D-749)", () => {
+  function failed(reason: string, error = reason): InsightRecord {
+    return {
+      id: "ins_0123456789abcdef",
+      status: "failed",
+      createdBy: "alice",
+      attemptNumber: 1,
+      workflowId: "summarise",
+      workflowVersion: "v0",
+      workflowSha256: "abc",
+      meetingIds: ["m1"],
+      roomIds: ["r1"],
+      question: "",
+      provider: "hosted",
+      model: "",
+      documentPath: "",
+      reason,
+      error,
+      createdAt: "2026-09-03T10:00:00Z",
+      updatedAt: "2026-09-03T10:00:00Z",
+    };
+  }
+
+  it("reads the operator's reason token, and says nothing the operator said", () => {
+    // The operator stores a token; every word is this build's (decided 14
+    // September). `error` carries the same token and is not read when
+    // `reason` is set.
+    const said = describeInsightFailure(failed("provider-refused"));
+    expect(said).toEqual(INSIGHT_FAILURE_COPY["provider-refused"]);
+    expect(said.title).toBe("The endpoint refused the request");
+    expect(said.line).toBe("Check its key, quota or model name under AI providers.");
+    expect(describeInsightFailure(failed("interrupted")).title).toBe(
+      "Cassini restarted before this insight finished",
+    );
+  });
+
+  it("classifies a run stored before tokens existed by the prefix of its sentence", () => {
+    // `reason` is empty on a row the old operator wrote; the sentence it
+    // stored is ignored except for the token it started with.
+    expect(insightReasonOf(failed("", "model-failed: The model did not answer."))).toBe(
+      "model-failed",
+    );
+    expect(insightReasonOf(failed("", "No-Provider: nothing configured"))).toBe("no-provider");
+    const said = describeInsightFailure(failed("", "provider-refused: HTTP 401 Unauthorized"));
+    expect(said.title).toBe("The endpoint refused the request");
+    expect(said.line).not.toContain("HTTP 401");
+  });
+
+  it("falls back to unknown for a token it does not know, and for nothing at all", () => {
+    expect(insightReasonOf(failed("something-new"))).toBe("unknown");
+    expect(insightReasonOf(failed("", "the disk was full"))).toBe("unknown");
+    expect(insightReasonOf(failed(""))).toBe("unknown");
+    expect(describeInsightFailure(failed("")).title).toBe("The insight failed");
+  });
+
+  it("gives every reason a title and a line that do not repeat each other", () => {
+    for (const [reason, copy] of Object.entries(INSIGHT_FAILURE_COPY)) {
+      expect(copy.title, reason).not.toBe("");
+      expect(copy.line, reason).not.toBe("");
+      expect(copy.title, reason).not.toBe(copy.line);
+      expect(`${copy.title} ${copy.line}`, reason).not.toContain(reason);
+    }
   });
 });

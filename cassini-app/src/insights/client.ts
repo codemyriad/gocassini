@@ -13,15 +13,11 @@
 // routes, and a POST hidden inside a GET declaration would hide the change that
 // matters.
 //
-// Everything a reader is told about a run lives HERE rather than in
+// What a reader is told about a request that failed lives HERE rather than in
 // GenerateCard.svelte, for the reason setupHealth.ts gives: the copy is the
-// part worth testing, and a wrong sentence about why an insight failed is a
-// worse failure than a missing one. The card renders decisions it did not make.
+// part worth testing. The card renders decisions it did not make.
 
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
-
-import type { FeatureNotice } from "../operator/setupHealth";
-import type { OperatorPanel } from "../surfaceRouting";
 
 // The status vocabulary is fixed by internal/insight's package doc, and this is
 // a reading of it rather than a second copy: a build that invented a fifth
@@ -60,6 +56,13 @@ export interface InsightRun {
   // Where the document landed in the requester's own Nextcloud files. Empty
   // until the run succeeds; a failed run wrote nothing.
   documentPath: string;
+  // Why the latest attempt failed, as one of the operator's reason tokens
+  // ("" while it has not). The words for each token live in the viewing
+  // layer (cassini-viewer/insights, INSIGHT_FAILURE_COPY), so the browse card
+  // and the document sheet describe one failure one way (D-749).
+  reason: string;
+  // The same token, kept for one release; a run from before tokens existed
+  // carries a sentence here, which nothing in this app reads any more.
   error: string;
   createdAt: string;
   updatedAt: string;
@@ -86,12 +89,15 @@ export interface CreateInsightRequest {
 }
 
 // AIProviderChoice is one endpoint as somebody choosing between them sees it:
-// `GET operator/ai/providers`, USER-readable. An id and a name, and nothing
-// else — the base URL, the key and the request bounds stay on the ADMIN
-// settings surface.
+// `GET operator/ai/providers`, USER-readable. An id, a name and the default
+// model the endpoint answers with — choosing an endpoint is choosing that
+// model (D-749) — and nothing else: the base URL, the key and the request
+// bounds stay on the ADMIN settings surface. The same shape reads a models
+// listing, where `model` is simply absent.
 export interface AIProviderChoice {
   id: string;
   name: string;
+  model?: string;
 }
 
 // listAIProviders and listAIProviderModels are the picker's data, for everyone.
@@ -132,7 +138,14 @@ function readChoices(payload: unknown): AIProviderChoice[] {
   const choices: AIProviderChoice[] = [];
   for (const entry of payload) {
     if (isRecord(entry) && typeof entry.id === "string" && entry.id !== "") {
-      choices.push({ id: entry.id, name: typeof entry.name === "string" ? entry.name : entry.id });
+      const choice: AIProviderChoice = {
+        id: entry.id,
+        name: typeof entry.name === "string" ? entry.name : entry.id,
+      };
+      if (typeof entry.model === "string" && entry.model !== "") {
+        choice.model = entry.model;
+      }
+      choices.push(choice);
     }
   }
   return choices;
@@ -153,9 +166,25 @@ async function sendAI(
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new InsightRequestError(response.status, `AI providers could not be read (HTTP ${response.status}).`);
+    throw new InsightRequestError(
+      response.status,
+      describeAIFailure(path, response.status, await readServedMessage(response)),
+    );
   }
   return response.json();
+}
+
+// describeAIFailure names which of the two AI reads failed, and repeats what
+// the operator said about it. The operator's sentence is the diagnosis — a
+// models listing that failed says which endpoint and what it answered — and
+// the generic "AI providers could not be read (HTTP 502)" it used to be
+// replaced with told the reader neither which request nor why.
+export function describeAIFailure(path: string, status: number, served: string): string {
+  const subject =
+    path === "providers"
+      ? "The AI endpoints could not be listed"
+      : "This endpoint's model list could not be read";
+  return served !== "" ? `${subject}: ${served}` : `${subject} (HTTP ${status}).`;
 }
 
 
@@ -180,10 +209,10 @@ const QUESTION_PLACEHOLDER = "{{QUESTION}}";
 // control the server refuses every use of is worse than no control, so the card
 // asks this before it offers the box (D-700).
 //
-// No workflow this image ships carries the placeholder — internal/insight/
-// workflows/workflows.go says so in as many words — so today this is false for
-// everything and the box is simply absent. The day one ships, it appears on its
-// own rather than waiting for this file to be edited.
+// One shipped workflow carries the placeholder — `ask`, "Ask your own question",
+// registered in internal/insight/workflows/workflows.go — so the box appears for
+// it and for nothing else. A workflow added later that takes a question shows
+// the box on its own rather than waiting for this file to be edited.
 export function workflowTakesQuestion(workflow: { instruction?: string } | null): boolean {
   return (workflow?.instruction ?? "").includes(QUESTION_PLACEHOLDER);
 }
@@ -357,6 +386,7 @@ export function readRun(value: unknown): InsightRun {
     provider: asString(value.provider),
     model: asString(value.model),
     documentPath: asString(value.documentPath),
+    reason: asString(value.reason),
     error: asString(value.error),
     createdAt: asString(value.createdAt),
     updatedAt: asString(value.updatedAt),
@@ -379,137 +409,6 @@ export function pollDelayMs(round: number): number {
   const delay = FIRST_POLL_DELAY_MS * Math.pow(1.5, Math.max(0, round));
   return Math.min(Math.round(delay), MAX_POLL_DELAY_MS);
 }
-
-// describeRunProgress is what an unfinished run says while you watch it. The
-// prototype showed 900ms of "Generating…"; the honest version names the wait,
-// because a person who is not told a local model takes minutes reads a slow run
-// as a broken one and presses Generate again.
-export function describeRunProgress(run: InsightRun): string {
-  const meetings = countMeetings(run.meetingIds.length);
-  switch (run.status) {
-    case "queued":
-      return "Queued. Nothing has been sent to a model yet.";
-    case "running":
-      return (
-        `Running. Cassini is reading ${meetings} and waiting for the model — on a model hosted ` +
-        `on this deployment that is minutes, not seconds.`
-      );
-    case "succeeded":
-      return `Ready, from ${meetings}.`;
-    default:
-      return "";
-  }
-}
-
-// The four kinds of failure internal/insight classifies, because the answers
-// differ. They are matched on the operator's own reason token rather than on a
-// sentence: a sentence changes whenever someone improves it.
-export type InsightFailureReason =
-  | "no-provider"
-  | "provider-refused"
-  | "model-failed"
-  | "bad-request"
-  | "unknown";
-
-export function classifyRunError(error: string): InsightFailureReason {
-  const text = error.toLowerCase();
-  for (const reason of ["no-provider", "provider-refused", "model-failed", "bad-request"] as const) {
-    if (text.includes(reason)) {
-      return reason;
-    }
-  }
-  return "unknown";
-}
-
-// The one panel behind every AI failure: the endpoint, its key, its model and
-// its request bounds are all edited in AI providers (Settings.svelte maps
-// `endpoints` -> LLMSettingsPanel), which is also where buildFeatureNotice
-// sends an administrator. Same panel, same words, deliberately — it is the same
-// trip.
-const AI_PANEL: OperatorPanel = "endpoints";
-const ADMIN_ACTION = "Open AI providers";
-
-const NOT_YOURS_TO_FIX =
-  " Only a Nextcloud administrator can change this deployment's AI configuration, and there is " +
-  "nothing wrong with your account.";
-
-// buildRunFailureNotice turns a failed run into the NeedsSetupCard the app
-// already renders for every other "this deployment cannot do that yet" state.
-// A spinner that stops is not an error message, so every branch names the cause
-// and — where an administrator could act on it — the panel that fixes it.
-//
-// A non-admin is never offered the link: that panel is ADMIN at the proxy and
-// its PUT would 403, so offering the control would be offering a way to fail.
-export function buildRunFailureNotice(options: {
-  run: InsightRun;
-  isAdmin: boolean;
-}): FeatureNotice | null {
-  const { run, isAdmin } = options;
-  if (run.status !== "failed") {
-    return null;
-  }
-  const reason = classifyRunError(run.error);
-  const { title, summary, fixable } = FAILURE_COPY[reason];
-  const reported = run.error.trim() === "" ? "" : ` The operator reported: ${run.error.trim()}`;
-  const remediable = fixable && isAdmin;
-  return {
-    title,
-    summary: summary + (fixable && !isAdmin ? NOT_YOURS_TO_FIX : "") + reported,
-    panel: remediable ? AI_PANEL : "",
-    actionLabel: remediable ? ADMIN_ACTION : "",
-  };
-}
-
-// fixable means "a setting in AI providers is what changes the outcome", which
-// is what decides whether an administrator is offered a link. A bad request is
-// the one failure no endpoint configuration repairs.
-const FAILURE_COPY: Record<
-  InsightFailureReason,
-  { title: string; summary: string; fixable: boolean }
-> = {
-  "no-provider": {
-    title: "No AI endpoint is configured",
-    summary:
-      "This insight never reached a model, because this deployment has no AI endpoint it can " +
-      "use. Retry re-resolves the endpoint and model from the settings as they stand at that " +
-      "moment, so configuring one first is what makes a retry work.",
-    fixable: true,
-  },
-  "provider-refused": {
-    title: "The endpoint rejected the request",
-    summary:
-      "The AI endpoint answered and refused — usually a missing or rejected key, or a quota. " +
-      "Retry re-resolves the endpoint, its key and its model from the settings as they stand at " +
-      "that moment, so fixing the credential first is what makes a retry work.",
-    fixable: true,
-  },
-  "model-failed": {
-    title: "The model did not answer",
-    summary:
-      "The endpoint was reached but produced no usable answer — a timeout, an unreachable host, " +
-      "or a server error. This is the failure a straight Retry is a sensible response to; if it " +
-      "keeps timing out, the endpoint's request timeout is the setting that governs it.",
-    fixable: true,
-  },
-  "bad-request": {
-    title: "Cassini could not run that request",
-    summary:
-      "The run was refused before anything was sent to a model — an unknown template, or a " +
-      "selection this deployment will not assemble. Changing the AI configuration will not " +
-      "change the answer; changing the template or the meetings will.",
-    fixable: false,
-  },
-  unknown: {
-    title: "The insight failed",
-    summary: "The run did not finish, and nothing was written to your files.",
-    // Not fixable, for the reason bad-request is not: the operator classifies
-    // only the four failures it can name, and this is the one it deliberately
-    // left unclassified. Offering "Open AI providers" for it would send an
-    // administrator to a panel nobody said would change the outcome. The
-    // operator's own sentence, repeated below, still carries everything known.
-    fixable: false,
-  },
-};
 
 // --- Request failures, as opposed to run failures ---
 
@@ -546,19 +445,18 @@ export function describeRequestFailure(
           return "One of these meetings is not available to you, or this deployment cannot create insights.";
         case "list":
           // A caller's own list always exists, so the only thing a 404 can mean
-          // here is an operator that does not serve these routes — an install
-          // older than them, or one registered before they were declared. That
-          // is not "you have no insights", and it must not read as it.
-          return "This deployment cannot create insights yet.";
+          // here is an operator that does not serve these routes. That is not
+          // "you have no insights", and it must not read as it.
+          return "Insights could not be listed.";
         default:
           return "That insight is not available to you, or this deployment cannot create insights.";
       }
     case 409:
-      // Not a failure: the run is already moving, which is what the caller
-      // wanted. The card re-reads it rather than painting an error.
-      return "That insight is already running — retrying does nothing until it stops.";
+      // The operator says which state refused the retry: still running, or
+      // already answered. Its sentence is the answer, so it is repeated.
+      return served || "This insight is already running.";
     case 502:
-      return "Cassini could not read these meetings from Nextcloud.";
+      return `Cassini could not ${VERBS[action]}.`;
     default:
       return `Could not ${VERBS[action]} (HTTP ${status}).`;
   }
@@ -590,10 +488,6 @@ async function readServedMessage(response: Response): Promise<string> {
     return body;
   }
   return "";
-}
-
-function countMeetings(count: number): string {
-  return count === 1 ? "one meeting" : `${count} meetings`;
 }
 
 function asString(value: unknown): string {

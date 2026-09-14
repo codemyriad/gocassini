@@ -44,11 +44,116 @@ export interface InsightRecord {
   provider: string;
   model: string;
   documentPath: string;
+  // Why the latest attempt failed, as one of the operator's reason tokens;
+  // "" for a run that did not fail. See InsightReason.
+  reason: string;
+  // The same token, kept for one release. A record written before tokens
+  // existed carries a sentence here; only its token prefix is read.
   error: string;
   // RFC3339. Unlike a meeting's dateLabel these name a real instant, with a
   // zone — see formatInsightCreated.
   createdAt: string;
   updatedAt: string;
+}
+
+// --- What a failed run says ---
+//
+// The operator records WHY a run failed as one reason token on `reason`, and
+// nothing else: no sentence, no stderr, no status code (D-749, decided 14
+// September). Every word a reader sees for a failure is written here, so the
+// wording can improve without touching a stored row, and a run that failed
+// last month reads in this month's words. `error` carries the same token for
+// one release; before that it carried a sentence with a token prefix, which
+// insightReasonOf still classifies on.
+
+export type InsightReason =
+  | "bad-request"
+  | "no-provider"
+  | "provider-refused"
+  | "model-failed"
+  | "write-failed"
+  | "deliver-failed"
+  | "timeout"
+  | "staging-failed"
+  | "catalog-failed"
+  | "meeting-unavailable"
+  | "download-failed"
+  | "assemble-failed"
+  | "interrupted"
+  | "unknown";
+
+// One entry per reason: the title says what happened, the line says what to
+// do, and neither repeats the other. Plain and short on purpose — these are
+// the first words, not the last.
+export const INSIGHT_FAILURE_COPY: Record<InsightReason, { title: string; line: string }> = {
+  "bad-request": { title: "This request could not be run", line: "Check the app log." },
+  "no-provider": { title: "No AI endpoint", line: "Add one under AI providers." },
+  "provider-refused": {
+    title: "The endpoint refused the request",
+    line: "Check its key, quota or model name under AI providers.",
+  },
+  "model-failed": { title: "The model did not answer", line: "Retry, or pick fewer meetings." },
+  "write-failed": {
+    title: "The insight could not be written to disk",
+    line: "Check the app's storage.",
+  },
+  "deliver-failed": {
+    title: "The insight could not be saved to your Nextcloud files",
+    line: "Check your space, then retry.",
+  },
+  timeout: {
+    title: "Stopped after an hour",
+    line: "Retry with fewer meetings or a faster endpoint.",
+  },
+  "staging-failed": { title: "The meetings could not be staged", line: "Check the app's storage." },
+  "catalog-failed": { title: "Your meeting list could not be read", line: "Retry in a moment." },
+  "meeting-unavailable": {
+    title: "One of these meetings is no longer available to you",
+    line: "Unpick it and ask again.",
+  },
+  "download-failed": {
+    title: "A meeting could not be downloaded from Nextcloud",
+    line: "Retry in a moment.",
+  },
+  "assemble-failed": {
+    title: "The meetings could not be assembled into one document",
+    line: "Check the app log.",
+  },
+  interrupted: { title: "Cassini restarted before this insight finished", line: "Retry it." },
+  unknown: { title: "The insight failed", line: "Retry, or check the app log." },
+};
+
+function isInsightReason(value: string): value is InsightReason {
+  return Object.prototype.hasOwnProperty.call(INSIGHT_FAILURE_COPY, value);
+}
+
+// The four tokens the operator used to put on the front of a stored sentence.
+// A run that failed before D-749 still carries one, and it is the only part of
+// that sentence still read.
+const LEGACY_ERROR_PREFIX = /^\s*(bad-request|no-provider|provider-refused|model-failed)\s*:/i;
+
+// insightReasonOf is the reason a failed run carries: `reason` when the
+// operator set one, else the token prefix of the old `error` sentence, else
+// unknown. Whatever prose is left in `error` is ignored — it is a sentence
+// from whichever release stored it, and the words are this build's to choose.
+export function insightReasonOf(record: Pick<InsightRecord, "reason" | "error">): InsightReason {
+  const reason = record.reason?.trim() ?? "";
+  if (isInsightReason(reason)) {
+    return reason;
+  }
+  const legacy = LEGACY_ERROR_PREFIX.exec(record.error ?? "");
+  if (legacy) {
+    return legacy[1].toLowerCase() as InsightReason;
+  }
+  return "unknown";
+}
+
+// describeInsightFailure is what a failed run's sheet renders: a title and one
+// line, from the table above and from nowhere else.
+export function describeInsightFailure(
+  record: Pick<InsightRecord, "reason" | "error">,
+): { title: string; line: string } {
+  return INSIGHT_FAILURE_COPY[insightReasonOf(record)];
 }
 
 // Which kinds of thing the browse list is showing. Both true is the default;

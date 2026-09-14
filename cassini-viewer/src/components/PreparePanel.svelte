@@ -3,6 +3,7 @@
   import { Copy, Download, FileText, TriangleAlert, X } from "@lucide/svelte";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import {
+    MAX_SELECTED_MEETINGS,
     formatSelectionWordCount,
     formatWordCount,
     lacksPortableAudio,
@@ -54,6 +55,10 @@
     bundleText = null;
     status = null;
   }
+  // The list is live behind this panel, so a set can grow past the operator's
+  // cap while it is open. Every action below is refused above it — the gap
+  // sentence says so — and the controls follow (D-749).
+  $: overCap = entries.length > MAX_SELECTED_MEETINGS;
 
   $: downloadName = `cassini-context-${new Date().toISOString().slice(0, 10)}.md`;
 
@@ -61,9 +66,18 @@
     if (bundleText !== null && bundleKey === selectionKey) {
       return bundleText;
     }
+    // The key is read BEFORE the await and stamped after it. Reading it after
+    // would stamp bytes assembled for one selection with the key of whatever
+    // the selection had become while the operator was assembling them, and
+    // "Copied 12,000 characters" would then describe a set nobody asked for
+    // (D-749).
+    const key = selectionKey;
     const text = await loadBundle();
+    if (key !== selectionKey) {
+      throw new Error("The selection changed while the bundle was being prepared — press again.");
+    }
     bundleText = text;
-    bundleKey = selectionKey;
+    bundleKey = key;
     return text;
   }
 
@@ -219,11 +233,16 @@
     <!-- Two equal outputs directly under the set: the same bytes either way,
          and the way out on a deployment with no model configured at all. -->
     <section class="prep-section prep-actions">
-      <button type="button" class="prep-action" disabled={busy} on:click={handleCopy}>
+      <button type="button" class="prep-action" disabled={busy || overCap} on:click={handleCopy}>
         <Copy size={14} aria-hidden="true" />
         Copy
       </button>
-      <button type="button" class="prep-action" disabled={busy} on:click={handleDownload}>
+      <button
+        type="button"
+        class="prep-action"
+        disabled={busy || overCap}
+        on:click={handleDownload}
+      >
         <Download size={14} aria-hidden="true" />
         Download
       </button>
@@ -257,7 +276,9 @@
          rather than the viewport: this app mounts into a shadow root inside
          Nextcloud's page, where viewport-anchored chrome escapes the app and
          covers Nextcloud's own (see App.svelte). -->
-    <slot name="generate" {entries} />
+    {#if !overCap}
+      <slot name="generate" {entries} />
+    {/if}
   </div>
 </aside>
 
