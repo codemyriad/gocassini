@@ -35,7 +35,8 @@
 #
 # This is the manual-install known-content quality roundtrip. All nine phases
 # are implemented and gated; AppAPI is real, but the test starts the ExApp and
-# injects its environment itself, so this does not exercise manifest gating.
+# injects its environment itself. It then registers that running container so
+# AppAPI knows the same identity and secret Cassini uses for room lookups.
 
 set -euo pipefail
 
@@ -229,6 +230,13 @@ export PROJECT_NAME
   || { tail -n 40 "$LOG_DIR/stack-up.log"; fail "cassini dev stack up failed"; }
 log "OK stack up + bootstrap (Talk + signaling configured) at $NC_URL_HOST"
 
+# Nextcloud and Talk run inside the compose network while the GPU-enabled
+# operator uses the host network. Both AppAPI and Talk reach it through this
+# bridge address and the run's operator port.
+BRIDGE_GATEWAY=$(docker network inspect "${PROJECT_NAME}_default" \
+  -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
+[[ -n "$BRIDGE_GATEWAY" ]] || fail "could not resolve compose-network gateway"
+
 # ============================================================================
 # Phase 2: install + enable AppAPI (needed for ExApp install)
 # ============================================================================
@@ -238,12 +246,14 @@ occ app:install app_api >>"$LOG_DIR/occ.log" 2>&1 || true
 occ app:enable  app_api >>"$LOG_DIR/occ.log" 2>&1
 log "OK app_api enabled"
 
-# Register a manual-install daemon pointing at our container.
+# Register a manual-install daemon pointing at the host-network container.
+# The app's dynamic host port is supplied when the running ExApp is registered
+# below.
 occ app_api:daemon:register \
     manual_install \
     "Local manual install" \
     manual-install \
-    http "$CONTAINER_NAME" "$NC_URL_INTERNAL" \
+    http "$BRIDGE_GATEWAY" "$NC_URL_INTERNAL" \
     >>"$LOG_DIR/occ.log" 2>&1 || log "WARN daemon may already be registered"
 
 # ============================================================================
@@ -279,11 +289,10 @@ if [[ "$IMAGE_REF" == *cuda* || "${TALK_E2E_USE_GPU:-0}" == "1" ]]; then
   log "GPU mode: passing --gpus all and CASSINI_STT_DEVICE=cuda"
 fi
 
-# CASSINI_PUBLISH_SINK=local below: this harness registers only an AppAPI
-# *daemon*, never the app, so the self-generated APP_SECRET is unknown to
-# Nextcloud and every act-as-user WebDAV call 401s. It is a Talk-protocol
-# test rather than a deployment, so it says so explicitly instead of letting
-# the installed-app default aim it at Nextcloud Files (D-549).
+# CASSINI_PUBLISH_SINK=local below: this harness tests Talk capture and the
+# local publishing path. The installed-ExApp job separately owns Nextcloud
+# Files delivery and access control, so declare the sink instead of letting
+# the AppAPI environment select nextcloud-files (D-549).
 docker run -d \
   --name "$CONTAINER_NAME" \
   --network host \
@@ -323,12 +332,41 @@ done
 [[ $HB_OK -eq 1 ]] || fail "cassini-exapp /heartbeat never reached 200"
 log "OK cassini-exapp heartbeat 200"
 
-# Resolve the docker bridge gateway IP for the compose network — that's
-# the address Talk (inside the compose network) uses to reach the
-# host-network operator.
-BRIDGE_GATEWAY=$(docker network inspect "${PROJECT_NAME}_default" \
-  -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
-[[ -n "$BRIDGE_GATEWAY" ]] || fail "could not resolve compose-network gateway"
+# Register the already-running container as an ExApp. Merely registering its
+# daemon does not tell Nextcloud the APP_SECRET: without this matching app row,
+# Cassini's act-as-owner Talk OCS lookup is rejected and roomName can never
+# reach the catalog even though roomId (derived locally from the token) does.
+# Keep the routes manifest-derived, as in ci-e2e-install-exapp.sh, so AppAPI
+# validates the same application identity shipped by this image.
+ROUTES_JSON="$(exapp_routes_json "$INFO_XML")"
+APP_JSON=$(jq -nc \
+  --arg secret "$APP_SECRET" \
+  --arg appid "$APP_ID" \
+  --arg version "$APP_VERSION" \
+  --argjson routes "$ROUTES_JSON" \
+  --argjson port "$OPERATOR_HOST_PORT" \
+  '{
+     appid:               $appid,
+     name:                "Cassini",
+     daemon_config_name:  "manual_install",
+     version:             $version,
+     secret:              $secret,
+     port:                $port,
+     protocol:            "http",
+     system_app:          0,
+     routes:              $routes
+   }')
+occ app_api:app:unregister "$APP_ID" --force >/dev/null 2>&1 || true
+occ app_api:app:register "$APP_ID" manual_install \
+  --json-info "$APP_JSON" \
+  --force-scopes \
+  --wait-finish \
+  >"$LOG_DIR/register.log" 2>&1 \
+  || { tail -n 40 "$LOG_DIR/register.log"; fail "AppAPI ExApp registration failed"; }
+grep -q 'heartbeat check failed' "$LOG_DIR/register.log" \
+  && fail "AppAPI registration reported heartbeat failure"
+log "OK AppAPI registered the running ExApp identity"
+
 TALK_BACKEND_URL_INTERNAL="http://${BRIDGE_GATEWAY}:${OPERATOR_HOST_PORT}"
 log "operator reachable from compose network at: $TALK_BACKEND_URL_INTERNAL"
 
