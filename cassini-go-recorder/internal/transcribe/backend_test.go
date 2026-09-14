@@ -75,6 +75,73 @@ func TestRegisteredBackendIsUsedForConstruction(t *testing.T) {
 	}
 }
 
+// sherpa-onnx builds a transducer's context graph in the recognizer
+// constructor. Its SetConfig method does not replace that implementation-owned
+// graph, so changing from one participant's vocabulary to another must create
+// a recognizer with the desired decoder and close the old one.
+func TestRecognizerForDecoderReconstructsWhenSpeakerVocabularyChanges(t *testing.T) {
+	const backendID = "test-speaker-decoders"
+	var (
+		seen    []DecoderConfig
+		created []*stubRecognizer
+	)
+	if err := RegisterRecognizerBackend(backendID, func(_ ModelPaths, _ string, _ string, _ int, decoder *DecoderConfig) (SpeechRecognizer, error) {
+		if decoder == nil {
+			t.Fatal("speaker decoder was not passed to the backend factory")
+		}
+		seen = append(seen, *decoder)
+		rec := &stubRecognizer{}
+		created = append(created, rec)
+		return rec, nil
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	t.Cleanup(func() {
+		backendMu.Lock()
+		delete(backendRegistry, backendID)
+		backendMu.Unlock()
+	})
+
+	silvioTrack := &DecoderConfig{Method: decodingModifiedBeamSearch, HotwordsFile: "without-silvio.txt", Score: 2}
+	chrisTrack := &DecoderConfig{Method: decodingModifiedBeamSearch, HotwordsFile: "without-chris.txt", Score: 2}
+	pass := passConfig{
+		Backend: backendID,
+		SpeakerDecoders: map[int]*DecoderConfig{
+			1: silvioTrack,
+			2: chrisTrack,
+		},
+		Guarantee: &wordEndGuarantee{},
+	}
+
+	var rec SpeechRecognizer
+	var current *DecoderConfig
+	var err error
+	rec, current, err = recognizerForDecoder(rec, current, pass.decoderForStream(AudioStream{Index: 1}), pass)
+	if err != nil {
+		t.Fatalf("construct Silvio-track recognizer: %v", err)
+	}
+	// The same vocabulary can reuse its recognizer.
+	rec, current, err = recognizerForDecoder(rec, current, pass.decoderForStream(AudioStream{Index: 1}), pass)
+	if err != nil {
+		t.Fatalf("reuse Silvio-track recognizer: %v", err)
+	}
+	if len(created) != 1 || created[0].closed {
+		t.Fatalf("unchanged decoder created=%d closed=%v; want one live recognizer", len(created), created[0].closed)
+	}
+
+	rec, current, err = recognizerForDecoder(rec, current, pass.decoderForStream(AudioStream{Index: 2}), pass)
+	if err != nil {
+		t.Fatalf("construct Chris-track recognizer: %v", err)
+	}
+	defer rec.Close()
+	if len(created) != 2 || !created[0].closed {
+		t.Fatalf("changed decoder created=%d firstClosed=%v; want reconstruction", len(created), created[0].closed)
+	}
+	if len(seen) != 2 || seen[0].HotwordsFile != silvioTrack.HotwordsFile || seen[1].HotwordsFile != chrisTrack.HotwordsFile {
+		t.Fatalf("backend saw decoder files %v; want [%q %q]", seen, silvioTrack.HotwordsFile, chrisTrack.HotwordsFile)
+	}
+}
+
 // Silently falling back to a different engine would make the artifact's
 // provenance a lie, so an unknown id has to fail loudly.
 func TestUnknownBackendIsAnErrorNamingWhatExists(t *testing.T) {

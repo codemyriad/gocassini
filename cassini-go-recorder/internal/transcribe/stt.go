@@ -216,19 +216,7 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	// terms with the model's own BPE vocabulary, so all four settings move
 	// together or none of them do. Setting the file without modeling_unit is
 	// the silent no-op this pairing exists to prevent.
-	cfg.DecodingMethod = decodingGreedySearch
-	if decoder != nil {
-		if decoder.Method != "" {
-			cfg.DecodingMethod = decoder.Method
-		}
-		cfg.MaxActivePaths = decoder.MaxActivePaths
-		if decoder.Biased() {
-			cfg.HotwordsFile = decoder.HotwordsFile
-			cfg.HotwordsScore = decoder.Score
-			cfg.ModelConfig.ModelingUnit = "bpe"
-			cfg.ModelConfig.BpeVocab = decoder.BpeVocabFile
-		}
-	}
+	applyDecoderConfig(&cfg, decoder)
 
 	r := sherpa.NewOfflineRecognizer(&cfg)
 	if r == nil {
@@ -244,6 +232,30 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	}
 
 	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate}, nil
+}
+
+func applyDecoderConfig(cfg *sherpa.OfflineRecognizerConfig, decoder *DecoderConfig) {
+	// Start from explicit decoder defaults so construction never inherits
+	// decoder-only fields from another configuration.
+	cfg.DecodingMethod = decodingGreedySearch
+	cfg.MaxActivePaths = 0
+	cfg.HotwordsFile = ""
+	cfg.HotwordsScore = 0
+	cfg.ModelConfig.ModelingUnit = ""
+	cfg.ModelConfig.BpeVocab = ""
+	if decoder == nil {
+		return
+	}
+	if decoder.Method != "" {
+		cfg.DecodingMethod = decoder.Method
+	}
+	cfg.MaxActivePaths = decoder.MaxActivePaths
+	if decoder.Biased() {
+		cfg.HotwordsFile = decoder.HotwordsFile
+		cfg.HotwordsScore = decoder.Score
+		cfg.ModelConfig.ModelingUnit = "bpe"
+		cfg.ModelConfig.BpeVocab = decoder.BpeVocabFile
+	}
 }
 
 // Transcribe runs ASR on the given float32 samples (16 kHz, mono, [-1,1]).
