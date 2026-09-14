@@ -562,9 +562,36 @@ curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" "$SUBSTRATE_PROXY/operator/setup" -
   || fail "could not read operator/setup as $TEST_USER"
 jq -e '.ok == true and .state == "provisioned"' "$setup_json" >/dev/null 2>&1 \
   || fail "operator/setup as $TEST_USER should mirror the provisioned verdict, got: $(cat "$setup_json")"
+#
+# The key set is asserted EXACTLY, and every key on it has to earn its place,
+# because the route is readable by every account on the Nextcloud. What a
+# non-admin may never see through it is a step name, an administrator's name, an
+# app id or a path — those live on /status, which is ADMIN at the proxy.
+#
+#	ok        the verdict. A bit.
+#	state     the same vocabulary /status uses: provisioned / degraded /
+#	          unavailable / not_applicable / unknown. No step, no detail.
+#	mode      the NAME of a storage model, "default" or "access_controlled" —
+#	          who can see a recording, which is a fact about the reader's own
+#	          recordings. No root, no counts, no provenance.
+#	cause     one plain sentence saying what kind of thing is wrong. It comes
+#	          from the user half of the operator's own table
+#	          (cassini-operator/internal/operator/storage_causes.go), which is
+#	          held by storage_causes_test.go to contain no step name, no path,
+#	          no `occ` line and no account, folder or app id — and is empty for
+#	          any step whose honest sentence would need one.
+#	features  two booleans, summaries and insights. No endpoint, no model, no key.
+#
+# `awaiting_choice` used to be here and is gone: the operator resolves the
+# storage mode when the app is enabled, so it had been a literal false, and
+# nothing in the app read it from this route.
 setup_keys=$(jq -r 'keys | join(",")' "$setup_json" 2>/dev/null || echo "")
-[[ "$setup_keys" == "ok,state" ]] \
-  || fail "operator/setup must expose ok+state only — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
+[[ "$setup_keys" == "cause,features,mode,ok,state" ]] \
+  || fail "operator/setup must expose exactly cause+features+mode+ok+state — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
+# The sentence itself, not just its presence: an accidental leak of the admin
+# half of the table would pass the key check and fail the product's contract.
+jq -e '(.cause | type) == "string" and ((.cause | test("occ |/|_")) | not)' "$setup_json" >/dev/null 2>&1 \
+  || fail "operator/setup cause is not a plain sentence — it carries a path, a command or a step name: $(jq -r '.cause' "$setup_json")"
 log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_keys)"
 
 # Access-controlled acceptance: a fresh install must produce a Team folder whose recordings can be DELETED and

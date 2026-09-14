@@ -667,13 +667,20 @@ read it is what makes you an administrator here.
 | Everyone else | The same first sentence, and no buttons. Nothing names an app, a step or a command. While storage is healthy they see no setup notice at all: the audience chip beside the meeting count is the only permanent disclosure, and it says the same thing for everybody. |
 
 The verdict behind this comes from `GET /operator/setup`, which is USER-level
-and carries `ok`, `state`, the storage mode and two capability bits:
+and carries `ok`, `state`, the storage mode, a one-sentence cause and two
+capability bits:
 
 ```bash
 curl -sS -u alice:<pass> \
   "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/setup"
-# {"ok":false,"state":"unavailable","mode":"","features":{"summaries":false,"insights":false}}
+# {"ok":false,"state":"unavailable","mode":"","cause":"A Nextcloud app that recordings depend on is switched off.","features":{"summaries":false,"insights":false}}
 ```
+
+`cause` is why recordings cannot be served, in words: no command, no path, no
+step name, and empty whenever the honest sentence would need one of those or
+when nothing is wrong. It is the user half of the operator's own cause table,
+which is also where the admin half on `/operator/status` comes from, so the two
+surfaces cannot drift into saying different things about the same failure.
 
 `mode` is `default`, `access_controlled`, or empty before one is resolved. It is
 here so the audience line — who can see a recording — renders for the people it
@@ -1052,7 +1059,7 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/settings` | ADMIN | STT-quality settings (read + update) |
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
 | `/operator/storage` | ADMIN | Storage mode: which one is active, what the other needs, whether the first-run dialog is still owed, how far a running switch has got, and the switch itself (`PUT` copies the archive into the other mode's root and then empties the old one; `POST` re-checks, previews a switch, installs the native apps, finishes an interrupted switch, or acknowledges the first run) |
-| `/operator/setup` | USER | Whether recordings can be served at all, whether the one thing missing is a storage-model decision, which storage model is in force, and two AI capability bits — `{"ok":…,"state":…,"awaiting_choice":…,"mode":…,"features":{"summaries":…,"insights":…}}` and nothing else |
+| `/operator/setup` | USER | Whether recordings can be served at all, which storage model is in force, why not in one plain sentence, and two AI capability bits — `{"ok":…,"state":…,"mode":…,"cause":…,"features":{"summaries":…,"insights":…}}` and nothing else |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
 | `/insights` | USER | Insight runs: create one (`POST`), list the caller's own (`GET`) |
@@ -1087,10 +1094,10 @@ privacy](./privacy.md#what-leaves-your-infrastructure-and-when).
 `/operator/setup` is the one deliberate exception to "the operator API is
 ADMIN", and it is USER for a reason: without it, the only thing a non-admin
 could learn about an unfinished install was the viewer failing to load. It
-carries the `recordings_access` **verdict** — `ok` and `state` — and the two
-`features` booleans, and nothing else. No step, no administrator, no paths, no
-versions, no endpoint, no model, no key; the diagnosis stays on
-`/operator/status`. See [What people see when setup is not
+carries the `recordings_access` **verdict** — `ok` and `state` — the storage
+`mode`, one plain-sentence `cause`, and the two `features` booleans, and nothing
+else. No step, no administrator, no paths, no versions, no endpoint, no model,
+no key; the diagnosis stays on `/operator/status`. See [What people see when setup is not
 finished](#what-people-see-when-setup-is-not-finished).
 
 `PUT /enabled` and `POST /init` are AppAPI **lifecycle callbacks**, not
