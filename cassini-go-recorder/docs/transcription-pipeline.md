@@ -155,8 +155,13 @@ that changed under the operator depending on whether a text box happened to be
 empty would be worse than one that is simply stable. When a vocabulary is set
 and the model can take it, `hotwords.go` writes a hotwords file into the build
 directory and the recognizer builds a context graph from the terms. A term is
-only ever emitted where the acoustics already support it, so the vocabulary
-cannot introduce a word nobody said. With non-empty terms,
+more likely to be emitted when its acoustic evidence is ambiguous. Operator
+terms use the configured score (2 by default). Participant names added
+automatically from the recording metadata are capped at 0.5: stronger scores
+made short names overwhelm weak evidence and repeat, while 0.5 kept them as a
+nudge in full-meeting comparisons. Each participant track omits its speaker's
+own name and retains the other participant names; the mixed fallback
+keeps the full set because it has no single speaker. With non-empty terms,
 `CASSINI_STT_HINTS_DISABLED=1` restores the previous `greedy_search` decoder as
 well as disabling the hints.
 

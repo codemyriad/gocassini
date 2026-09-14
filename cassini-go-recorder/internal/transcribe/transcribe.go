@@ -22,8 +22,8 @@ type BuildConfig struct {
 	Quality          STTQuality // "" = balanced; picks model/device when not explicitly set
 	// Vocabulary lists preferred spellings for names and project terms. It is
 	// biasing evidence for the decoder itself (see hotwords.go), not a
-	// post-processing rewrite: a term is only ever emitted where the acoustics
-	// already support it.
+	// post-processing rewrite. The score must stay conservative because this
+	// prior can overwhelm weak acoustic evidence.
 	Vocabulary []string
 	// Backend selects the speech decoder ("" = CASSINI_STT_BACKEND, else the
 	// bundled sherpa-onnx). See backend.go.
@@ -132,32 +132,44 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// them made it. See wordEndGuarantee in backend.go.
 	wordEnds := &wordEndGuarantee{}
 
-	// Resolve the operator's vocabulary into decoder biasing once, before any
-	// pass runs, so every pass in this build is biased identically and the
-	// manifest can state what actually happened.
+	// Resolve the vocabulary pool once before any pass runs. Each participant
+	// track derives a decoder that omits its own name; the manifest
+	// records that policy alongside the shared scores.
 	vocabulary := vocabularyForBuild(cfg.Vocabulary, streams)
-	decoder, hintsProv, err := resolveDecoder(outputDir, vocabulary, modelPaths)
+	decoder, hintsProv, err := resolveDecoderVocabulary(outputDir, vocabulary, modelPaths)
 	if err != nil {
 		return err
+	}
+	speakerDecoderMap, err := speakerDecoders(outputDir, vocabulary, streams, decoder)
+	if err != nil {
+		return err
+	}
+	if hintsProv != nil && hintsProv.Applied && len(speakerDecoderMap) > 0 {
+		hintsProv.OwnNameExcluded = true
 	}
 	fmt.Fprintf(stdout, "  decoder: %s\n", decoder.Method)
 	if hintsProv != nil {
 		if hintsProv.Applied {
-			fmt.Fprintf(stdout, "  decoder hints: %d term(s), score=%.2f\n", hintsProv.TermCount, hintsProv.Score)
+			fmt.Fprintf(stdout, "  decoder hints: %d term(s), score=%.2f; %d automatic participant name(s), score=%.2f",
+				hintsProv.TermCount, hintsProv.Score, hintsProv.ParticipantTermCount, hintsProv.ParticipantScore)
+			if hintsProv.OwnNameExcluded {
+				fmt.Fprint(stdout, ", own name omitted per participant track")
+			}
+			fmt.Fprintln(stdout)
 		} else {
 			fmt.Fprintf(stdout, "  decoder hints: %d term(s) NOT applied: %s\n",
 				hintsProv.TermCount, hintsProv.Reason)
 		}
 	}
-
 	pass := passConfig{
-		ModelPaths: modelPaths,
-		VADPath:    vadPath,
-		Backend:    backend,
-		Device:     cfg.Device,
-		NumThreads: cfg.NumThreads,
-		Decoder:    decoder,
-		Guarantee:  wordEnds,
+		ModelPaths:      modelPaths,
+		VADPath:         vadPath,
+		Backend:         backend,
+		Device:          cfg.Device,
+		NumThreads:      cfg.NumThreads,
+		Decoder:         decoder,
+		SpeakerDecoders: speakerDecoderMap,
+		Guarantee:       wordEnds,
 	}
 
 	segments, err := transcribePass(ctx, mkvPath, streams, pass, stdout)
@@ -307,8 +319,12 @@ type passConfig struct {
 	Device     string
 	NumThreads int
 	// Decoder selects the search and any hotword biasing for this pass.
-	Decoder   *DecoderConfig
-	Guarantee *wordEndGuarantee
+	Decoder *DecoderConfig
+	// SpeakerDecoders overrides Decoder for participant streams whose own
+	// label was removed. Decoder remains the configuration for a mixed fallback,
+	// which has no single speaker to exclude.
+	SpeakerDecoders map[int]*DecoderConfig
+	Guarantee       *wordEndGuarantee
 }
 
 // withThreads returns a copy running on a different thread budget, for the
@@ -320,6 +336,45 @@ func (p passConfig) withThreads(n int) passConfig {
 
 func (p passConfig) newRecognizer() (SpeechRecognizer, error) {
 	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee)
+}
+
+func (p passConfig) decoderForStream(stream AudioStream) *DecoderConfig {
+	if decoder, ok := p.SpeakerDecoders[stream.Index]; ok {
+		return decoder
+	}
+	return p.Decoder
+}
+
+func (p passConfig) withDecoder(decoder *DecoderConfig) passConfig {
+	p.Decoder = decoder
+	return p
+}
+
+func sameDecoderConfig(a, b *DecoderConfig) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// recognizerForDecoder creates the context graph together with the recognizer.
+// sherpa-onnx's transducer implementations build that graph in their
+// constructors; its public SetConfig only updates a base-class copy and cannot
+// replace the graph used by an existing recognizer. Reconstruct whenever the
+// decoder changes so the participant-specific hotword file is the one that is
+// actually decoded.
+func recognizerForDecoder(rec SpeechRecognizer, current, desired *DecoderConfig, pass passConfig) (SpeechRecognizer, *DecoderConfig, error) {
+	if rec != nil && sameDecoderConfig(current, desired) {
+		return rec, current, nil
+	}
+	if rec != nil {
+		rec.Close()
+	}
+	next, err := pass.withDecoder(desired).newRecognizer()
+	if err != nil {
+		return nil, nil, err
+	}
+	return next, desired, nil
 }
 
 func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, pass passConfig, stdout io.Writer) ([]AudioStream, []Segment, error) {
@@ -417,16 +472,18 @@ func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, 
 	return transcribeStreamsParallel(ctx, mkvPath, streams, pass, conc, stdout)
 }
 
-// transcribeStreamsSequential transcribes each speaker stream one at a time with
-// a single shared recognizer. Used when concurrency resolves to 1 (single
-// speaker, tight thread budget, or low free RAM).
+// transcribeStreamsSequential transcribes each speaker stream one at a time.
+// Participant-specific context graphs are constructor state in sherpa-onnx, so
+// the recognizer is reconstructed when the desired decoder changes.
 func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []AudioStream, pass passConfig, stdout io.Writer) ([]Segment, error) {
 	fmt.Fprintf(stdout, "  loading recognizer (device=%s)...\n", pass.Device)
-	rec, err := pass.newRecognizer()
-	if err != nil {
-		return nil, fmt.Errorf("create recognizer: %w", err)
-	}
-	defer rec.Close()
+	var rec SpeechRecognizer
+	var currentDecoder *DecoderConfig
+	defer func() {
+		if rec != nil {
+			rec.Close()
+		}
+	}()
 
 	perSpeakerSegs := make([][]Segment, len(streams))
 	for i, stream := range streams {
@@ -434,6 +491,11 @@ func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
+		}
+		var err error
+		rec, currentDecoder, err = recognizerForDecoder(rec, currentDecoder, pass.decoderForStream(stream), pass)
+		if err != nil {
+			return nil, fmt.Errorf("create recognizer for %s: %w", stream.SpeakerLabel, err)
 		}
 		fmt.Fprintf(stdout, "  transcribing %s (stream index %d)...\n", stream.SpeakerLabel, stream.Index)
 		samples, err := ExtractSpeakerFloats(mkvPath, stream)
@@ -495,14 +557,21 @@ func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []Au
 
 	worker := func() {
 		defer wg.Done()
-		rec, err := pass.withThreads(threadsPer).newRecognizer()
-		if err != nil {
-			fail(fmt.Errorf("create recognizer: %w", err))
-			return
-		}
-		defer rec.Close()
+		var rec SpeechRecognizer
+		var currentDecoder *DecoderConfig
+		defer func() {
+			if rec != nil {
+				rec.Close()
+			}
+		}()
 		for j := range jobs {
 			if gctx.Err() != nil {
+				return
+			}
+			var err error
+			rec, currentDecoder, err = recognizerForDecoder(rec, currentDecoder, pass.decoderForStream(j.stream), pass.withThreads(threadsPer))
+			if err != nil {
+				fail(fmt.Errorf("create recognizer for %s: %w", j.stream.SpeakerLabel, err))
 				return
 			}
 			logLine("  transcribing %s (stream index %d)...\n", j.stream.SpeakerLabel, j.stream.Index)
@@ -584,7 +653,12 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		extra := primary
 		extra.ModelPaths = modelPaths
 		extra.VADPath = vadPath
-		extra.Decoder, _, err = resolveDecoder(outputDir, vocabularyForBuild(cfg.Vocabulary, streams), modelPaths)
+		vocabulary := vocabularyForBuild(cfg.Vocabulary, streams)
+		extra.Decoder, _, err = resolveDecoderVocabulary(outputDir, vocabulary, modelPaths)
+		if err != nil {
+			return nil, err
+		}
+		extra.SpeakerDecoders, err = speakerDecoders(outputDir, vocabulary, streams, extra.Decoder)
 		if err != nil {
 			return nil, err
 		}

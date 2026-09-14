@@ -256,11 +256,20 @@ type provStep struct {
 // build that silently ignored the operator's vocabulary must not read like one
 // that applied it.
 type HintsProvenance struct {
-	// TermCount is how many vocabulary terms were written to the hotwords file.
+	// TermCount is the full vocabulary pool. A participant-specific file may
+	// contain one fewer term because its speaker's own name is omitted.
 	// Zero with Applied false means the vocabulary could not be used.
 	TermCount int `json:"termCount"`
 	// Score is the per-token boost handed to sherpa-onnx.
 	Score float32 `json:"score,omitempty"`
+	// ParticipantTermCount identifies the subset added automatically from the
+	// recording's participant metadata. ParticipantScore is their effective
+	// per-token boost; it can be lower than Score to avoid repetitions.
+	ParticipantTermCount int     `json:"participantTermCount,omitempty"`
+	ParticipantScore     float32 `json:"participantScore,omitempty"`
+	// OwnNameExcluded means each participant track omitted its speaker's own
+	// label while retaining the other participant names.
+	OwnNameExcluded bool `json:"ownNameExcluded,omitempty"`
 	// DecodingMethod is the search the decoder actually ran. Hotwords require
 	// modified_beam_search; an unbiased pass stays on greedy_search.
 	DecodingMethod string `json:"decodingMethod,omitempty"`
