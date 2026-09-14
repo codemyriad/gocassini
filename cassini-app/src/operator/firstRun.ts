@@ -22,6 +22,14 @@ import type { StorageSetupStep, StorageStatus } from "./types";
 //	acknowledges    the account is already there (the operator made it on
 //	                enable, or an earlier install did). One paragraph, and the
 //	                button only records that this was seen.
+//	blocked         the account is missing and there is no plan for it. Nothing
+//	                here can fix that, so the dialog says so and sends the
+//	                administrator to Operator › Settings.
+//
+// Only the first two shapes acknowledge the flag, and both do it after the
+// account exists (D-756 review). Acknowledging on the way out of a dialog that
+// created nothing spends the one showing this install gets on an install that
+// still cannot record.
 
 // The plan actions this dialog will perform, and no others.
 //
@@ -34,9 +42,14 @@ const ACCOUNT_ACTIONS: readonly string[] = ["create_group", "create_user"];
 
 export interface FirstRunPlan {
   // creates says the dialog's second paragraph is shown and its primary button
-  // makes the service account. False means the account exists (or the operator
-  // offered no way to make it) and the button only acknowledges.
+  // makes the service account. False means the account exists, or that nothing
+  // can be made here — `blocked` is which.
   creates: boolean;
+  // blocked says the account is missing and the operator handed us no way to
+  // make it. The dialog then claims nothing about being ready to record: it
+  // says what is true and points at Operator › Settings, and it acknowledges
+  // nothing, so this install is asked again until the account exists.
+  blocked: boolean;
   // steps are the operator's own browser-side steps, in its own order: the
   // group before the account that joins it.
   steps: StorageSetupStep[];
@@ -80,9 +93,16 @@ export function firstRunPlan(
   const steps = accountSteps(status);
   // The second paragraph is a promise, so it is made only where it can be kept:
   // the account is genuinely missing AND the operator gave us a way to make it.
+  const missing = !status.service_account.exists;
+  const creates = missing && steps.length > 0;
   // An operator that reports the account missing with no plan for it has
-  // something wrong with it, and that is what the setup notice is for — this
-  // dialog must not offer a button that does nothing.
-  const creates = !status.service_account.exists && steps.length > 0;
-  return { creates, steps, unavailable: creates && !options.setupAvailable };
+  // something wrong with it. That used to render as the acknowledge-only shape,
+  // which told an install that cannot record that Cassini was ready to record
+  // and then spent its one dialog saying so.
+  //
+  // `known` is what keeps this to operators that actually answered the
+  // question: an older one that reports no service account at all has not said
+  // the account is missing, and a fault is not something to infer from silence.
+  const blocked = missing && status.service_account.known && steps.length === 0;
+  return { creates, blocked, steps, unavailable: creates && !options.setupAvailable };
 }

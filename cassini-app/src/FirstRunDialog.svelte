@@ -38,17 +38,21 @@
     (primary ?? secondary)?.focus();
   });
 
-  // changeFirst leaves for the settings without creating anything, and records
-  // the dismissal on the way out.
+  // openSettings leaves for Operator › Settings without creating anything and
+  // WITHOUT acknowledging (D-756 review).
   //
-  // Best effort, and deliberately not awaited: the dialog is shown once per
-  // install, and an administrator who is on their way to change the audience
-  // must not meet it again over the page they are working on. If the call
-  // fails, the dialog comes back on the next open, which is the honest degrade.
-  function changeFirst(): void {
-    void operatorClient.acknowledgeFirstRun().catch((error: unknown) => {
-      console.warn("Cassini: the first-run acknowledgement failed.", error);
-    });
+  // It used to acknowledge on the way out, which made this the one dialog a
+  // fresh install ever gets and spent it on a button that changed nothing: the
+  // `cassini` account was still missing, so the install still could not record
+  // and nothing would ever say so again. The flag is answered where the account
+  // is made — here by `start`, and in the settings section by its own "Create
+  // the account" row — so an administrator who leaves to look at the audience
+  // first meets this dialog again until there is an account to keep recordings
+  // in.
+  //
+  // The shell hides the dialog for the rest of this page's life, so nobody is
+  // shown it twice over the page they are working on.
+  function openSettings(): void {
     dispatch("settings");
   }
 
@@ -61,6 +65,9 @@
   //	   last looked. Without it the storage record still reports the account
   //	   missing and the app still says it is not set up.
   //	3. the acknowledgement, which is what makes this dialog once per install.
+  //	   It happens HERE and in the settings section's own account row, and in
+  //	   both places only after the account exists: a flag answered by anything
+  //	   else leaves an install that cannot record with nothing left to say so.
   //
   // The password runSetupPlan mints is deliberately dropped on the floor. The
   // operator authenticates as the account through AppAPI's act-as-user header
@@ -124,14 +131,33 @@
     aria-labelledby="cassini-first-run-title"
   >
     <div class="grid gap-3">
-      <h2 id="cassini-first-run-title" class="text-lg font-bold">Cassini is ready to record</h2>
+      <!-- The title is a claim, so it is made only where it is true: an install
+           whose account is missing with no way to make it here is not ready to
+           record, and saying it was is what this dialog got wrong. -->
+      <h2 id="cassini-first-run-title" class="text-lg font-bold">
+        {plan.blocked ? "Cassini can't record yet" : "Cassini is ready to record"}
+      </h2>
 
+      <!-- Who can see recordings, before anything about how Cassini works, and
+           the rooms alongside the recordings: the room name travels with every
+           published recording, so an audience sentence that named only the
+           recordings would be describing half of what is visible (11 September
+           product decision). -->
       <p class="text-sm text-base-content/80">
-        Recordings will be visible to <strong>anyone with an account on this Nextcloud</strong>. You
+        Recordings, and the names of the rooms they came from, will be visible to
+        <strong>anyone with an account on this Nextcloud</strong>. You
         can limit them to the people in each call at any time, in Operator › Settings.
       </p>
 
-      {#if plan.creates}
+      {#if plan.blocked}
+        <!-- Nothing here can fix it: the operator says the account is missing
+             and offered no step this page could run. The settings section is
+             where the account row and the full diagnosis are. -->
+        <p class="text-sm text-base-content/80">
+          Cassini needs a Nextcloud account to keep recordings in, and this page has no way to
+          create it. Open Operator › Settings to see what is missing.
+        </p>
+      {:else if plan.creates}
         <!-- Said only where it is going to happen: an install whose account the
              operator already made is not about to make another one. -->
         <p class="text-sm text-base-content/80">
@@ -152,32 +178,45 @@
       {/if}
 
       <div class="mt-1 flex flex-wrap items-center justify-end gap-2">
-        <button
-          class="btn btn-sm btn-ghost"
-          type="button"
-          disabled={busy}
-          bind:this={secondary}
-          on:click={changeFirst}
-        >
-          Change who can see first
-        </button>
-        {#if plan.unavailable}
-          <!-- The standalone build, or a page Nextcloud's own scripts did not
-               reach. Cassini cannot act as the administrator there, so the
-               sentence stands in for a button that would be refused. -->
-          <p class="text-xs break-words text-warning">
-            This page cannot make the changes itself. Open Cassini from Nextcloud's own menu.
-          </p>
-        {:else}
+        {#if plan.blocked}
+          <!-- One way on, and it is the one that leads somewhere: a Start
+               button here would acknowledge a first run that never happened. -->
           <button
             class="btn btn-sm btn-primary"
             type="button"
-            disabled={busy}
             bind:this={primary}
-            on:click={start}
+            on:click={openSettings}
           >
-            {plan.creates ? "Create the account and start" : "Start"}
+            Open Operator › Settings
           </button>
+        {:else}
+          <button
+            class="btn btn-sm btn-ghost"
+            type="button"
+            disabled={busy}
+            bind:this={secondary}
+            on:click={openSettings}
+          >
+            Change who can see first
+          </button>
+          {#if plan.unavailable}
+            <!-- The standalone build, or a page Nextcloud's own scripts did not
+                 reach. Cassini cannot act as the administrator there, so the
+                 sentence stands in for a button that would be refused. -->
+            <p class="text-xs break-words text-warning">
+              This page cannot make the changes itself. Open Cassini from Nextcloud's own menu.
+            </p>
+          {:else}
+            <button
+              class="btn btn-sm btn-primary"
+              type="button"
+              disabled={busy}
+              bind:this={primary}
+              on:click={start}
+            >
+              {plan.creates ? "Create the account and start" : "Start"}
+            </button>
+          {/if}
         {/if}
       </div>
     </div>

@@ -228,7 +228,10 @@
            and it says the same to everybody. Hiding it from non-admins is what
            D-670 was raised to stop. -->
       {#if audience === "everyone"}
-        <span class="chip audience" title="Anyone with an account on this Nextcloud can see every recording">
+        <span
+          class="chip audience"
+          title="Anyone with an account on this Nextcloud can see every recording and the name of the room it came from"
+        >
           Visible to anyone with a Nextcloud account
         </span>
       {:else if audience === "participants"}

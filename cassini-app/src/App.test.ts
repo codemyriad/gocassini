@@ -147,6 +147,12 @@ describe("the shell after the Setup tab", () => {
       open.indexOf('new PopStateEvent("popstate")'),
     );
     expect(open).toContain("firstRunClosed = true;");
+    // Closed for this page, and nothing said to the operator: the flag is
+    // answered where the `cassini` account is actually made, so an install that
+    // still cannot record is asked again rather than never again (D-756
+    // review).
+    expect(open).not.toContain("acknowledgeFirstRun");
+    expect(appSource).not.toContain("acknowledgeFirstRun");
   });
 
   it("never lets a failed storage read take the operator surface away", () => {

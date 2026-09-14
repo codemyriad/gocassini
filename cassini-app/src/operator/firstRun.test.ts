@@ -100,16 +100,35 @@ describe("firstRunPlan", () => {
     );
     expect(plan).not.toBeNull();
     expect(plan?.creates).toBe(false);
+    expect(plan?.blocked).toBe(false);
     expect(plan?.unavailable).toBe(false);
   });
 
   it("does not promise an account it has no way to create", () => {
-    // An operator reporting the account missing with no plan for it is a fault,
-    // and the setup notice is what says so. A button that would do nothing is
-    // worse than no button.
+    // An operator reporting the account missing with no plan for it is a fault.
+    // A button that would do nothing is worse than no button — and the shape it
+    // used to fall into was the acknowledge-only one, which told an install
+    // that cannot record that Cassini was ready to record, and then spent its
+    // one dialog saying so.
     const plan = firstRunPlan(status({ modes: [mode({ setup: [] })] }), READY);
     expect(plan?.creates).toBe(false);
+    expect(plan?.blocked).toBe(true);
     expect(plan?.steps).toEqual([]);
+  });
+
+  it("reads a fault from what the operator said, never from its silence", () => {
+    // `known` false is an operator that reports no service account at all. It
+    // has not said the account is missing, so there is nothing to call broken:
+    // the ordinary acknowledge-only dialog stands.
+    const plan = firstRunPlan(
+      status({
+        service_account: { user: "", known: false, exists: false, reset_occ: "" },
+        modes: [mode({ setup: [] })],
+      }),
+      READY,
+    );
+    expect(plan?.creates).toBe(false);
+    expect(plan?.blocked).toBe(false);
   });
 
   it("says the standalone build cannot make the account, rather than offering to", () => {

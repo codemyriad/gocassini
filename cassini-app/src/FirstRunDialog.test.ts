@@ -11,7 +11,9 @@ import dialogSource from "./FirstRunDialog.svelte?raw";
 describe("the first-run dialog", () => {
   it("says who can see recordings before it says how anything works", () => {
     expect(dialogSource).toContain("Cassini is ready to record");
-    expect(dialogSource).toContain("Recordings will be visible to");
+    expect(dialogSource).toContain(
+      "Recordings, and the names of the rooms they came from, will be visible to",
+    );
     expect(dialogSource).toContain("anyone with an account on this Nextcloud");
     expect(dialogSource).toContain(
       "can limit them to the people in each call at any time, in Operator › Settings.",
@@ -19,9 +21,17 @@ describe("the first-run dialog", () => {
     // The audience sentence comes first, and the account sentence second. The
     // shipped wizard led with the mechanism, which is the whole thing this
     // change reverses.
-    expect(dialogSource.indexOf("Recordings will be visible to")).toBeLessThan(
+    expect(dialogSource.indexOf("Recordings, and the names of the rooms")).toBeLessThan(
       dialogSource.indexOf("To start, Cassini creates a Nextcloud account"),
     );
+  });
+
+  it("names the rooms as well as the recordings", () => {
+    // The room name travels with every published recording, so an audience
+    // sentence about the recordings alone describes half of what becomes
+    // visible (11 September product decision). The settings section says the
+    // same thing about the same mode, in the same words.
+    expect(dialogSource).toContain("the names of the rooms they came from");
   });
 
   it("names the account it is about to create, and what Nextcloud will ask", () => {
@@ -31,7 +41,7 @@ describe("the first-run dialog", () => {
     expect(dialogSource).toContain("Nextcloud may ask for your password.");
     // Only where it is true: an install whose account already exists is not
     // about to make another one.
-    expect(dialogSource).toContain("{#if plan.creates}");
+    expect(dialogSource).toContain("{:else if plan.creates}");
   });
 
   it("offers the audience before the account, and creating as the primary action", () => {
@@ -50,15 +60,47 @@ describe("the first-run dialog", () => {
     expect(dialogSource).not.toContain("outcome.password");
   });
 
-  it("acknowledges at the operator, so the dialog is once per install", () => {
-    // Both ways out of it: creating the account, and leaving to change the
-    // audience first. A flag in this browser would show it again to the next
-    // administrator, and again after a cleared cache.
+  it("acknowledges at the operator, and only once the account exists", () => {
+    // The flag is the operator's rather than this browser's, so the dialog is
+    // once per install rather than once per browser: a second administrator
+    // does not meet a dialog the first one answered, and a cleared cache does
+    // not bring it back.
     expect(dialogSource).toContain("await operatorClient.acknowledgeFirstRun();");
-    expect(dialogSource).toContain("void operatorClient.acknowledgeFirstRun()");
     // …and the shell re-reads the instance, so the notice and the chip agree
     // with what just happened.
     expect(dialogSource).toContain("notifySetupChanged();");
+    // Exactly one acknowledgement, inside the action that creates the account.
+    // "Change who can see first" used to fire a second one on its way out,
+    // which spent this install's one dialog on a click that created nothing and
+    // left an install that still could not record with nothing left to say so.
+    expect(dialogSource.match(/acknowledgeFirstRun\(\)/g)).toHaveLength(1);
+    const leave = dialogSource.slice(
+      dialogSource.indexOf("function openSettings()"),
+      dialogSource.indexOf("// start does the whole of the first run"),
+    );
+    expect(leave).toContain('dispatch("settings");');
+    expect(leave).not.toContain("acknowledgeFirstRun");
+  });
+
+  it("claims nothing about being ready when the account cannot be made here", () => {
+    // The operator says the account is missing and offered no step this page
+    // could run. There is nothing to start, so there is no Start button to
+    // acknowledge a first run with — one way on, to the section that holds the
+    // account row and the diagnosis.
+    expect(dialogSource).toContain(
+      `{plan.blocked ? "Cassini can't record yet" : "Cassini is ready to record"}`,
+    );
+    expect(dialogSource).toContain("{#if plan.blocked}");
+    expect(dialogSource).toContain(
+      "Cassini needs a Nextcloud account to keep recordings in, and this page has no way to",
+    );
+    expect(dialogSource).toContain("Open Operator › Settings");
+    const blocked = dialogSource.slice(
+      dialogSource.indexOf("{#if plan.blocked}", dialogSource.indexOf("mt-1 flex flex-wrap")),
+      dialogSource.indexOf("Change who can see first"),
+    );
+    expect(blocked).toContain("on:click={openSettings}");
+    expect(blocked).not.toContain("on:click={start}");
   });
 
   it("is an inline dialog over a scrim, never a <dialog>", () => {
