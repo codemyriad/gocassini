@@ -283,8 +283,8 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
     // to unpick can be found without counting.
     gaps.push(
       totals.withoutPortableAudio === 1
-        ? "One of these predates the single-file format — it is marked in the list. The bundle is read from that file, so Prepare will fail for the whole selection until you unpick it."
-        : `${totals.withoutPortableAudio} of these predate the single-file format — they are marked in the list. The bundle is read from those files, so Prepare will fail for the whole selection until you unpick them.`,
+        ? "One of these predates the single-file format (marked in the list). Unpick it to prepare."
+        : `${totals.withoutPortableAudio} of these predate the single-file format (marked in the list). Unpick them to prepare.`,
     );
   }
   if (totals.meetingsWithoutWordCount > 0 && totals.meetingsWithWordCount > 0) {

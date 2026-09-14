@@ -591,9 +591,8 @@
             </div>
           </div>
           <p class="text-xs leading-relaxed text-base-content/70">
-            Recording and transcription run entirely on your own infrastructure. This is the
-            only step that sends data to a third party. Without an endpoint you still get the
-            transcript, just no summary or insights.
+            Recording and transcription run on your own infrastructure. An endpoint is only
+            needed for summaries and insights.
           </p>
           <!-- Said before the save, not discovered after it. Registering the
                first endpoint switches summarising on — which is what a fresh
@@ -601,8 +600,8 @@
                one go — and that is a decision about what leaves this
                deployment, so it is not a surprise worth saving for later. -->
           <p class="text-xs leading-relaxed text-base-content/70">
-            Saving your first endpoint switches meeting summaries on, so every recording's
-            transcript is sent to it. You can turn that off again in Publish pipeline.
+            Saving your first endpoint switches summaries on for every meeting. Turn that off
+            under Publish pipeline.
           </p>
         </section>
       {:else}
@@ -719,10 +718,9 @@
              endpoint on this page is one somebody's transcripts can be sent to,
              and removing them all is still the off switch. -->
         <p class="text-xs text-base-content/60">
-          Anyone creating an insight chooses which of these answers it; one that chooses none
-          runs on <span class="font-medium">{insightEndpointLabel}</span>. Every endpoint listed
-          here is one an insight may reach, and removing them all is how insights are switched
-          off.
+          Insights run on the endpoint the asker picks, or
+          <span class="font-medium">{insightEndpointLabel}</span> if none. Remove every endpoint
+          to switch insights off.
         </p>
       {/if}
 

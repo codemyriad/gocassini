@@ -325,10 +325,10 @@ describe("describeSelectionGaps", () => {
       }),
     ]);
     expect(describeSelectionGaps(totals)).toEqual([
-      "One of these predates the single-file format — it is marked in the list. The bundle is read from that file, so Prepare will fail for the whole selection until you unpick it.",
+      "One of these predates the single-file format (marked in the list). Unpick it to prepare.",
     ]);
     expect(describeSelectionGaps({ ...totals, withoutPortableAudio: 2 })[0]).toContain(
-      "will fail for the whole selection until you unpick them",
+      "Unpick them to prepare.",
     );
   });
 

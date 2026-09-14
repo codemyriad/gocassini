@@ -648,9 +648,8 @@ function normalizeStorageTransition(value: unknown): StorageTransition | null {
 // answer: the endpoint never serves one (it replaces a nil registry with an
 // empty array precisely so success cannot look like absence), so this is a
 // build talking to something that is not the operator it expects. Returning []
-// would put the panel's "This build ships no templates. The registry answered,
-// and it is empty." on the screen — a positive claim about the image, made from
-// a body nobody understood.
+// would put the panel's "This build ships no templates." on the screen — a
+// positive claim about the image, made from a body nobody understood.
 function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {
   if (!Array.isArray(raw)) {
     throw new Error("the workflow registry came back in a shape this app does not understand");

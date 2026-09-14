@@ -167,8 +167,7 @@
     <!-- 3. The answer, or the honest reason there is not one yet. -->
     {#if pending}
       <p class="ins-note" role="status">
-        This run is {formatInsightStatus(insight.status).toLowerCase()}. The answer appears
-        here when it finishes — the list keeps checking.
+        {formatInsightStatus(insight.status)}. The answer appears here when it finishes.
       </p>
     {:else if failure}
       <div class="ins-note ins-note-error" role="status">

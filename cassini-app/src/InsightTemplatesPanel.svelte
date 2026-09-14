@@ -90,9 +90,7 @@
     <div>
       <h2 class="font-semibold">Insight templates</h2>
       <p class="text-xs text-base-content/60">
-        Used when creating an insight, and by the summary step in the publish pipeline. Authoring
-        your own and pulling them from shared repositories comes later — for now these ship with
-        Cassini.
+        Used by insights and by the summary step. Templates ship with Cassini for now.
       </p>
     </div>
     <button
@@ -125,10 +123,6 @@
       >
         <FileText size={20} class="text-base-content/40" aria-hidden="true" />
         <p class="text-sm font-medium">This build ships no templates.</p>
-        <p class="max-w-md text-xs text-base-content/60">
-          The registry answered, and it is empty. A template whose prompt is not compiled into this
-          image is not listed here and cannot be run, so nothing is being hidden from you.
-        </p>
       </div>
     {:else}
       <!-- Dimmed rather than hidden while there is no endpoint: the templates
@@ -157,9 +151,12 @@
             {/if}
 
             <!-- The question is the affordance: it says what the template asks,
-                 and opening it says how it asks for it. -->
+                 and opening it says how it asks for it. A template with no
+                 question of its own (the asker's) opens on a plain label. -->
             <details class="mt-2">
-              <summary class="cursor-pointer text-sm">“{workflow.question}”</summary>
+              <summary class="cursor-pointer text-sm">
+                {#if workflow.question}“{workflow.question}”{:else}Prompt{/if}
+              </summary>
               <pre
                 class="mt-2 max-h-96 overflow-auto rounded-box border border-base-300 bg-base-100 p-3 text-xs whitespace-pre-wrap">{workflow.instruction}</pre>
             </details>
