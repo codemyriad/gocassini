@@ -118,6 +118,25 @@ describe("AI providers edit placement (D-749)", () => {
   });
 });
 
+describe("AI providers card layout (D-749)", () => {
+  it("keeps Edit and Remove beside the facts whatever the model-list error says", () => {
+    // The header row is name and facts on the left, actions on the right, and
+    // it does not wrap: a long "Model list unavailable" message used to push
+    // the buttons onto their own line under the text. The message now has a
+    // full-width line of its own beneath the row.
+    const header = '<div class="flex items-start justify-between gap-2">';
+    expect(llmSettingsPanelSource).toContain(header);
+    expect(llmSettingsPanelSource).not.toContain("flex flex-wrap items-start justify-between");
+    expect(llmSettingsPanelSource).toContain('class="flex flex-none items-center gap-1"');
+    const row = llmSettingsPanelSource.indexOf(header);
+    const remove = llmSettingsPanelSource.indexOf("Remove\n                    </button>", row);
+    const warning = llmSettingsPanelSource.indexOf("{modelListUnavailable(state.status", row);
+    expect(row).toBeGreaterThan(-1);
+    expect(remove).toBeGreaterThan(row);
+    expect(warning).toBeGreaterThan(remove);
+  });
+});
+
 describe("AI providers default model (D-749)", () => {
   it("edits one default model per endpoint, on the provider draft", () => {
     // Summaries and insights ask for this model unless a step names its own,

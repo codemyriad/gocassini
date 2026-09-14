@@ -638,7 +638,11 @@
                      this endpoint's and not a second one being added. -->
                 {@render providerForm(`Editing ${providerLabel(provider)}`)}
               {:else}
-                <div class="flex flex-wrap items-start justify-between gap-2">
+                <!-- Facts left, actions right, and the row never wraps: a
+                     failure message long enough to fill the card used to push
+                     Edit and Remove onto a line of their own beneath it. The
+                     message has its own full-width line below instead. -->
+                <div class="flex items-start justify-between gap-2">
                   <div class="min-w-0">
                     <div class="flex items-center gap-1.5">
                       <span class="text-sm font-semibold">{providerLabel(provider)}</span>
@@ -690,13 +694,6 @@
                         <span>{provider.max_tokens} token limit</span>
                       {/if}
                     </div>
-                    {#if probes[provider.id]?.status === "failed"}
-                      {@const state = probes[provider.id]}
-                      <p class="mt-1 text-xs text-warning">
-                        {modelListUnavailable(state.status === "failed" ? state.message : "")} You
-                        can still type a model ID.
-                      </p>
-                    {/if}
                   </div>
                   <div class="flex flex-none items-center gap-1">
                     <button
@@ -717,6 +714,13 @@
                     </button>
                   </div>
                 </div>
+                {#if probes[provider.id]?.status === "failed"}
+                  {@const state = probes[provider.id]}
+                  <p class="mt-1 text-xs break-words text-warning">
+                    {modelListUnavailable(state.status === "failed" ? state.message : "")}
+                    You can still type a model ID.
+                  </p>
+                {/if}
               {/if}
             </li>
           {/each}
