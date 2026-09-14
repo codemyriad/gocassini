@@ -206,7 +206,7 @@ func TestCreateInsightRefusesABadRequestBeforeTouchingNextcloud(t *testing.T) {
 		{"a workflow id of the wrong shape", `{"meetingIds":["MEETING1"],"workflow":"a b/c"}`, "not a workflow id"},
 		{"a question no workflow slot holds", `{"meetingIds":["MEETING1"],"question":"why?"}`, "takes none of yours"},
 		{"a workflow with no question", `{"meetingIds":["MEETING1"],"workflow":"ask"}`, "needs a question"},
-		{"a field nobody declared", `{"meetingIds":["MEETING1"],"timestamps":true}`, "not a valid insight request"},
+		{"a field nobody declared", `{"meetingIds":["MEETING1"],"timestamps":true}`, "could not be read"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

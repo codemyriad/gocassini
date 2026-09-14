@@ -293,7 +293,9 @@ func decodeInsightCreateRequest(w http.ResponseWriter, r *http.Request) (insight
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxInsightRequestBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		return request, fmt.Errorf("the request body is not a valid insight request: %w", err)
+		// The decoder's own text names Go types and byte offsets; the card
+		// prints a 400 as written.
+		return request, errors.New("The request could not be read.")
 	}
 
 	ids := make([]string, 0, len(request.MeetingIDs))

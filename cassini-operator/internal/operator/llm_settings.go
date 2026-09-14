@@ -288,15 +288,17 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 		if p.Name == "" {
 			p.Name = llmProviderNameFor(p.BaseURL)
 		}
+		// Messages name the field by its label in AI providers, not by its wire
+		// name: they land in the panel's alert as written.
 		if p.TimeoutSec < 0 {
-			return s, fmt.Errorf("provider %q: timeout_sec must not be negative", p.ID)
+			return s, fmt.Errorf("provider %q: Request timeout must not be negative", p.ID)
 		}
 		if p.MaxTokens < 0 {
-			return s, fmt.Errorf("provider %q: max_tokens must not be negative", p.ID)
+			return s, fmt.Errorf("provider %q: Response token limit must not be negative", p.ID)
 		}
-		for _, f := range []struct{ name, value string }{{"id", p.ID}, {"name", p.Name}, {"base_url", p.BaseURL}, {"model", p.Model}} {
+		for _, f := range []struct{ label, value string }{{"Provider id", p.ID}, {"Provider name", p.Name}, {"Base URL", p.BaseURL}, {"Default model", p.Model}} {
 			if utf8.RuneCountInString(f.value) > maxLLMFieldRunes {
-				return s, fmt.Errorf("provider %q: %s exceeds %d characters", p.ID, f.name, maxLLMFieldRunes)
+				return s, fmt.Errorf("provider %q: %s is longer than %d characters", p.ID, f.label, maxLLMFieldRunes)
 			}
 		}
 		providers = append(providers, p)
@@ -317,20 +319,20 @@ func normalizeLLMStep(name string, step LLMStep, providers map[string]struct{}) 
 	step.Model = strings.TrimSpace(step.Model)
 	step.Template = strings.TrimSpace(step.Template)
 	if utf8.RuneCountInString(step.Model) > maxLLMFieldRunes {
-		return step, fmt.Errorf("%s: model exceeds %d characters", name, maxLLMFieldRunes)
+		return step, fmt.Errorf("The %s model is longer than %d characters", name, maxLLMFieldRunes)
 	}
 	if step.Template != "" && !llmTemplateIDPattern.MatchString(step.Template) {
-		return step, fmt.Errorf("%s: template %q must be letters, digits, '.', '_' or '-'", name, step.Template)
+		return step, fmt.Errorf("The %s template %q must be letters, digits, '.', '_' or '-'", name, step.Template)
 	}
 	if utf8.RuneCountInString(step.Template) > maxLLMFieldRunes {
-		return step, fmt.Errorf("%s: template exceeds %d characters", name, maxLLMFieldRunes)
+		return step, fmt.Errorf("The %s template is longer than %d characters", name, maxLLMFieldRunes)
 	}
 	if _, ok := providers[step.Provider]; !ok {
 		if step.Enabled {
 			if step.Provider == "" {
-				return step, fmt.Errorf("%s is enabled but has no provider", name)
+				return step, fmt.Errorf("The %s step is on but has no provider", name)
 			}
-			return step, fmt.Errorf("%s refers to unknown provider %q", name, step.Provider)
+			return step, fmt.Errorf("The %s step refers to an unknown provider %q", name, step.Provider)
 		}
 		// A disabled step may outlive its provider; forget the reference.
 		step.Provider = ""
@@ -340,14 +342,14 @@ func normalizeLLMStep(name string, step LLMStep, providers map[string]struct{}) 
 
 func validLLMBaseURL(raw string) error {
 	if raw == "" {
-		return errors.New("base_url must not be empty")
+		return errors.New("Base URL must not be empty")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("base_url: %w", err)
+		return errors.New("Base URL must be an http(s) URL")
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("base_url %q must be an http(s) URL", raw)
+		return errors.New("Base URL must be an http(s) URL")
 	}
 	// The recorder appends /chat/completions and the model list appends
 	// /models itself, so a base URL that already ends in one of them reaches
@@ -357,7 +359,7 @@ func validLLMBaseURL(raw string) error {
 	path := strings.TrimRight(strings.ToLower(u.Path), "/")
 	for _, suffix := range []string{"/chat/completions", "/models"} {
 		if strings.HasSuffix(path, suffix) {
-			return fmt.Errorf("base_url %q ends in %s; give the API root instead (for example https://openrouter.ai/api/v1)", raw, suffix)
+			return fmt.Errorf("Base URL ends in %s. Give the API root instead, for example https://openrouter.ai/api/v1", suffix)
 		}
 	}
 	return nil
@@ -722,12 +724,12 @@ func (rt *Runtime) handleGetLLMSettings(w http.ResponseWriter) {
 func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
+		writeJSONError(w, http.StatusBadRequest, "The request could not be read.")
 		return
 	}
 	var in llmSettingsUpdate
 	if err := json.Unmarshal(raw, &in); err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid request JSON: %v", err))
+		writeJSONError(w, http.StatusBadRequest, "The request could not be read.")
 		return
 	}
 
