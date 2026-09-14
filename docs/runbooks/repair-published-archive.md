@@ -159,7 +159,7 @@ watch one preview go green. Re-enabling it is part of closing the ticket.
 If section 3 turned up meetings with no raw recording, or the GPU time is not
 available, the alternative is to accept `exact-pcm` on the read side only:
 readers tolerate it, writers keep emitting `exact-opus-audio-v1`. That is the
-same shape as the `CASSINI_PAYLOAD_SCHEMA` tolerance in PR #281 — see
+same shape as the `CASSINI_PAYLOAD_SCHEMA` tolerance in PR #294 — see
 `portable.AcceptedPayloadSchema` and the two TypeScript readers alongside it.
 
 It reopens a decision `218c3f6b` made deliberately, so it is a call to make
