@@ -1,6 +1,5 @@
 <script lang="ts">
-  // Create an insight: ask these meetings a question, and watch the answer take
-  // the minutes it takes (D-700, D-720).
+  // Create an insight: ask these meetings a question (D-700, D-720, D-749).
   //
   // It sits in the Prepare panel's `generate` slot, under Copy and Download,
   // because asking a question of the set you have just reviewed is the next
@@ -11,44 +10,49 @@
   //
   // # What is NOT here, and why
   //
-  // A list of previous runs. It used to open on one, which put a job console in
-  // a panel whose subject is the meetings you just picked — and it was a second
-  // place insights are listed, disagreeing with the browse list behind it for
-  // as long as their two refreshes were out of step. The browse catalogue is
-  // where insights live (D-721); this card owns only the run it starts, which
-  // is feedback for a button press rather than a history.
+  // The run, once started. Generate hands the created record up as a `created`
+  // event and stops: the shell puts it at the top of the browse list and
+  // closes the panel, and the list's own refresh carries it from queued to an
+  // answer. This card used to render the run under the button and poll it,
+  // which was a second place one run was shown — disagreeing with the browse
+  // list behind it for as long as their two refreshes were out of step — and
+  // the only place a failed run could be retried, in a panel that is gone by
+  // the time most people notice. The browse catalogue is where insights live
+  // (D-721), and Retry lives on the card and the sheet there.
   //
   // # Who chooses what
   //
   // The TEMPLATE picker is admin-only, because the registry is ADMIN at the
   // proxy and a control that 403s when opened is worse than none.
   //
-  // The PROVIDER and MODEL pickers are for everybody. Choosing which of the
-  // configured endpoints answers your question is the asker's decision — it is
-  // where their own transcripts go — so `operator/ai/providers` is a USER route
-  // carrying ids and display names and nothing else. The base URL, the key and
-  // the request bounds stay on the ADMIN settings surface.
-  import { createEventDispatcher, onDestroy } from "svelte";
+  // The PROVIDER picker is for everybody. Choosing which of the configured
+  // endpoints answers your question is the asker's decision — it is where
+  // their own transcripts go — so `operator/ai/providers` is a USER route
+  // carrying ids, display names and each endpoint's default model, and nothing
+  // else. The base URL, the key and the request bounds stay on the ADMIN
+  // settings surface.
+  //
+  // The MODEL field is for everybody too, pre-filled with the chosen endpoint's
+  // default so nobody has to pick one every time, and editable for the run
+  // where the default is the wrong one (D-749). Changing the endpoint re-fills
+  // it with that endpoint's default. What is typed here affects this run only;
+  // the default itself is set in AI providers and nothing is written back.
+  // The box is never empty when the endpoint has a default, so a run cannot
+  // inherit a model chosen for a different endpoint the way an empty per-run
+  // field once let it.
+  import { createEventDispatcher } from "svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
 
   import ModelCombobox from "./ModelCombobox.svelte";
-  import NeedsSetupCard from "./NeedsSetupCard.svelte";
   import { loadConfig } from "./operator/config";
   import type { OperatorClient } from "./operator/client";
   import type { InsightWorkflow } from "./operator/types";
   import type { OperatorPanel } from "./surfaceRouting";
   import {
-    buildRunFailureNotice,
     createInsight,
-    describeRunProgress,
-    isTerminalStatus,
     listAIProviders,
     listAIProviderModels,
-    pollDelayMs,
-    readInsight,
-    retryInsight,
     workflowTakesQuestion,
-    InsightRequestError,
     type AIProviderChoice,
     type InsightRun,
   } from "./insights/client";
@@ -66,7 +70,13 @@
   // workflow, which the operator reads as "this deployment's configured one".
   export let operatorClient: OperatorClient | null = null;
 
-  const dispatch = createEventDispatcher<{ open: { panel: OperatorPanel; href: string } }>();
+  // `created` carries the run the operator answered with — a record that
+  // exists before its content does — up to the shell, which owns the list it
+  // belongs in.
+  const dispatch = createEventDispatcher<{
+    open: { panel: OperatorPanel; href: string };
+    created: InsightRun;
+  }>();
 
   // The id the publish pipeline's summary step runs when nothing names one
   // (internal/insight/workflows: SummariseID). Named here only to pick the
@@ -87,19 +97,26 @@
   let question = "";
 
   // The endpoints this deployment has, and the one this run will reach.
-  // Defaults to the first provider and its own default model, which is what
-  // somebody who does not care should get without touching anything.
+  // Defaults to the first provider, which is what somebody who does not care
+  // should get without touching anything.
   let providers: AIProviderChoice[] = [];
   let providersAsked = false;
   let providersError = "";
   let chosenProvider = "";
+  // The model this run asks for. Pre-filled with the chosen endpoint's default
+  // whenever the endpoint is chosen, and free to edit after that. An untouched
+  // box sends the default explicitly, which is the same run the operator
+  // would have resolved for itself.
   let chosenModel = "";
 
-  // Fetched when the model field is opened rather than on load: it is a call
-  // out to the endpoint, and most runs never touch the model.
+  // What each endpoint said it serves, asked for when the model field opens
+  // and kept per endpoint so a second opening is free. Loading and failure are
+  // keyed per endpoint too, never held in one in-flight marker: one slow
+  // listing must not make another endpoint's field say it listed nothing
+  // (D-740).
   let modelsByProvider: Record<string, AIProviderChoice[]> = {};
+  let modelsLoadingByProvider: Record<string, boolean> = {};
   let modelsErrorByProvider: Record<string, string> = {};
-  let loadingModelsFor = "";
 
   // The operator base is the same one every other call in this app resolves,
   // and it is a pure read of the injected config — no client, so it works for
@@ -115,25 +132,6 @@
 
   let creating = false;
   let createError = "";
-
-  // The run this card started, and nothing else. Null until Generate is
-  // pressed; it survives the panel being scrolled but not reopened, which is
-  // right — a run you started five minutes ago is a card in the browse list by
-  // then, not an item of this panel's business.
-  let run: InsightRun | null = null;
-  let document = "";
-  // A poll that failed is not a run that failed: the run is still whatever the
-  // operator says it is, and the only honest thing to report is that the
-  // question could not be asked this time.
-  let pollError = "";
-  let retrying = false;
-
-  let pollTimer: ReturnType<typeof setTimeout> | null = null;
-  let pollRound = 0;
-  // Set on destroy, and checked after every await. Clearing the timer alone
-  // would still let an in-flight poll reschedule itself after the panel closed,
-  // which is a request loop with no component behind it.
-  let stopped = false;
 
   $: meetingIds = entries.map((entry) => entry.id);
   // "Generate insight", as the design has it. The count is already on the rows
@@ -152,8 +150,6 @@
   $: if (operatorBasePath !== "" && !providersAsked) {
     void loadProviders();
   }
-  $: chosenModels = modelsByProvider[chosenProvider] ?? [];
-
   $: chosenWorkflowEntry = workflows.find((workflow) => workflow.id === chosenWorkflow) ?? null;
 
   // Whether this run may carry a question of your own, decided against the
@@ -168,11 +164,6 @@
   // A workflow with a slot for a question cannot run without one, so Generate
   // waits for it rather than sending a request the operator will refuse.
   $: questionMissing = questionAccepted && question.trim() === "";
-
-  onDestroy(() => {
-    stopped = true;
-    clearPollTimer();
-  });
 
   async function loadWorkflows() {
     if (!operatorClient) {
@@ -202,7 +193,7 @@
     try {
       providers = await listAIProviders(operatorBasePath);
       if (chosenProvider === "" && providers.length > 0) {
-        chosenProvider = providers[0].id;
+        chooseProvider(providers[0].id);
       }
     } catch (error) {
       // Narrows the card rather than blocking it: with no list, the run carries
@@ -212,16 +203,27 @@
     }
   }
 
+  // Choosing an endpoint chooses its default model with it. A model typed for
+  // the old endpoint is not carried across: it would name one the new endpoint
+  // may never have heard of.
+  function chooseProvider(id: string) {
+    chosenProvider = id;
+    chosenModel = defaultModelOf(id);
+  }
+
+  function defaultModelOf(providerId: string): string {
+    return providers.find((provider) => provider.id === providerId)?.model ?? "";
+  }
+
   async function loadModels(providerId: string) {
     if (
-      operatorBasePath === "" ||
       providerId === "" ||
       modelsByProvider[providerId] ||
-      loadingModelsFor !== ""
+      modelsLoadingByProvider[providerId]
     ) {
       return;
     }
-    loadingModelsFor = providerId;
+    modelsLoadingByProvider = { ...modelsLoadingByProvider, [providerId]: true };
     modelsErrorByProvider = { ...modelsErrorByProvider, [providerId]: "" };
     try {
       modelsByProvider = {
@@ -231,16 +233,8 @@
     } catch (error) {
       modelsErrorByProvider = { ...modelsErrorByProvider, [providerId]: describe(error) };
     } finally {
-      loadingModelsFor = "";
+      modelsLoadingByProvider = { ...modelsLoadingByProvider, [providerId]: false };
     }
-  }
-
-  function chooseProvider(id: string) {
-    // The model belonged to the old endpoint. Carried across it would name a
-    // model the new one may never have heard of, and the operator refuses a
-    // model with no provider to run it on.
-    chosenProvider = id;
-    chosenModel = "";
   }
 
   async function generate() {
@@ -262,13 +256,10 @@
         provider: chosenProvider,
         model: chosenModel,
       });
-      // On screen before anything has happened to it, which is the whole point
-      // of a record that exists before its content does: a local model over
-      // five meetings is minutes, and a button that goes quiet for minutes
-      // reads as a button that did nothing.
-      run = started;
-      document = "";
-      schedulePoll({ reset: true });
+      // Handed up and done. The record exists before its content does, and
+      // the shell shows it where every insight is shown — at the top of the
+      // browse list, with the panel closed — rather than under this button.
+      dispatch("created", started);
     } catch (error) {
       createError = describe(error);
     } finally {
@@ -276,110 +267,8 @@
     }
   }
 
-  async function retry() {
-    if (!run || retrying) {
-      return;
-    }
-    const id = run.id;
-    retrying = true;
-    pollError = "";
-    try {
-      run = await retryInsight(id);
-      schedulePoll({ reset: true });
-    } catch (error) {
-      if (error instanceof InsightRequestError && error.status === 409) {
-        // The status is the lock, and 409 means the run is already moving —
-        // which is what the reader wanted. Re-read it rather than paint an
-        // error over a run that is doing the right thing.
-        pollError = "";
-        void refresh(id);
-      } else {
-        pollError = describe(error);
-      }
-    } finally {
-      retrying = false;
-    }
-  }
-
-  async function refresh(id: string) {
-    try {
-      const fresh = await readInsight(id);
-      if (stopped) {
-        return;
-      }
-      run = fresh.run;
-      if (fresh.document !== "") {
-        document = fresh.document;
-      }
-      schedulePoll({ reset: true });
-    } catch (error) {
-      if (!stopped) {
-        pollError = describe(error);
-      }
-    }
-  }
-
-  function clearPollTimer() {
-    if (pollTimer !== null) {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-  }
-
-  function schedulePoll(options: { reset?: boolean } = {}) {
-    clearPollTimer();
-    if (stopped) {
-      return;
-    }
-    if (options.reset) {
-      pollRound = 0;
-    }
-    // No timer at all once the run has finished. Polling stops because there is
-    // nothing left to ask about, not because a counter ran out.
-    if (!run || isTerminalStatus(run.status)) {
-      return;
-    }
-    pollTimer = setTimeout(() => {
-      pollTimer = null;
-      void poll();
-    }, pollDelayMs(pollRound));
-  }
-
-  async function poll() {
-    const pending = run;
-    if (stopped || !pending || isTerminalStatus(pending.status)) {
-      return;
-    }
-    try {
-      const { run: fresh, document: doc } = await readInsight(pending.id);
-      if (stopped) {
-        return;
-      }
-      const moved = fresh.status !== pending.status || fresh.attemptNumber !== pending.attemptNumber;
-      run = fresh;
-      if (doc !== "") {
-        document = doc;
-      }
-      pollError = "";
-      // A run that moved is asked about promptly again; one that has not is
-      // asked about less and less, up to the cap.
-      pollRound = moved ? 0 : pollRound + 1;
-    } catch (error) {
-      if (stopped) {
-        return;
-      }
-      pollError = describe(error);
-      pollRound += 1;
-    }
-    schedulePoll();
-  }
-
   function describe(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
-  }
-
-  function handleOpenPanel(event: CustomEvent<{ panel: OperatorPanel; href: string }>) {
-    dispatch("open", event.detail);
   }
 </script>
 
@@ -435,10 +324,7 @@
       </div>
 
       {#if workflowsError}
-        <p class="text-xs text-warning">
-          The template list could not be read, so this runs the template your deployment has
-          configured. {workflowsError}
-        </p>
+        <p class="text-xs text-warning">Templates could not be listed. The configured one runs.</p>
       {/if}
     {:else}
       <!-- The template registry is ADMIN at the proxy, so there is no picker to
@@ -449,14 +335,10 @@
       </p>
     {/if}
 
-    <!-- Where this question goes, and on which model. Offered to EVERYBODY, not
-         only administrators: it is the asker's own transcripts being sent, so
-         the choice is theirs. Absent only where there is nothing to choose
-         between — one endpoint, or a list that could not be read. -->
-    <!-- Where this question goes, and on which model. Offered to EVERYBODY, not
-         only administrators: it is the asker's own transcripts being sent, so
-         the choice is theirs. Absent only where there is nothing to choose —
-         no endpoint at all, or a list that could not be read. -->
+    <!-- Where this question goes. Offered to EVERYBODY, not only
+         administrators: it is the asker's own transcripts being sent, so the
+         choice is theirs. Absent only where there is nothing to choose — no
+         endpoint at all, or a list that could not be read. -->
     {#if providers.length > 0}
       <div class="ins-endpoint">
         <label class="tpl-field">
@@ -471,23 +353,22 @@
             {/each}
           </select>
         </label>
-        <!-- Empty is the endpoint's own default, which is what somebody who
-             does not care should get without touching anything. Opening the
-             field fetches what this endpoint serves. -->
+        <!-- Pre-filled with the endpoint's default, editable for this run.
+             Opening the field lists what the endpoint serves; the list narrows
+             what you type and never gates it. -->
         <ModelCombobox
           bind:value={chosenModel}
-          models={chosenModels}
-          loading={loadingModelsFor === chosenProvider}
+          label="Model"
+          models={modelsByProvider[chosenProvider] ?? []}
+          loading={modelsLoadingByProvider[chosenProvider] === true}
           error={modelsErrorByProvider[chosenProvider] ?? ""}
+          placeholder="endpoint default"
           on:open={() => void loadModels(chosenProvider)}
         />
       </div>
     {/if}
     {#if providersError}
-      <p class="ins-card-note">
-        The AI endpoints could not be listed, so this runs on the one your deployment has
-        configured. {providersError}
-      </p>
+      <p class="ins-card-note">{providersError}</p>
     {/if}
 
     <div class="ins-card-foot">
@@ -505,90 +386,15 @@
         </p>
       {/if}
 
-      <!-- The instance's key pays for this, so a run is attributable to the
-           deployment rather than to the person who asked. Said here rather than
-           discovered from a bill (D-700). -->
+      <!-- Where the transcripts go and where the answer lands, said before
+           the run rather than discovered after it (D-700). -->
       <p class="ins-card-note">
-        The transcripts of these meetings are sent to this deployment's configured AI endpoint,
-        and the insight is written into your own Nextcloud files.
+        Transcripts go to the endpoint you pick. The answer is saved to your Nextcloud files.
       </p>
     </div>
 
     {#if createError}
       <p class="text-xs text-error" role="alert">{createError}</p>
-    {/if}
-
-    <!-- The run this card started. Not a list: what happened to it is the
-         answer to the button, and every insight — this one included — is a card
-         in the browse list as soon as it exists. -->
-    {#if run}
-      <div class="rounded-box border border-base-300 bg-base-100 p-2.5">
-        <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-          <span class="min-w-0 truncate text-xs font-medium">
-            {run.question.trim() !== ""
-              ? `“${run.question.trim()}”`
-              : (chosenWorkflowEntry?.name ?? "This insight")}
-          </span>
-          <span class="badge badge-sm" data-status={run.status}>{run.status}</span>
-        </div>
-
-        {#if run.attemptNumber > 1}
-          <p class="mt-1 text-xs text-base-content/60">Attempt {run.attemptNumber}.</p>
-        {/if}
-
-        {#if run.status !== "failed"}
-          <p class="mt-1 text-xs text-base-content/70">{describeRunProgress(run)}</p>
-        {/if}
-
-        {#if run.status === "succeeded"}
-          {#if run.documentPath}
-            <p class="mt-1 font-mono text-xs break-all text-base-content/60">
-              {run.documentPath}
-            </p>
-          {/if}
-          {#if document}
-            <details class="mt-1">
-              <summary class="cursor-pointer text-xs">Read it here</summary>
-              <pre
-                class="mt-1 max-h-72 overflow-auto rounded-box border border-base-300 bg-base-200 p-2 text-xs whitespace-pre-wrap">{document}</pre>
-            </details>
-          {/if}
-        {/if}
-
-        {#if run.status === "failed"}
-          <div class="mt-1.5 grid gap-1.5">
-            <!-- The same card, and the same route-preserving deep link, that
-                 every other "this deployment cannot do that yet" state renders.
-                 Its words come from buildRunFailureNotice, where a test can
-                 reach them. -->
-            <NeedsSetupCard notice={buildRunFailureNotice({ run, isAdmin })} on:open={handleOpenPanel} />
-            <div class="flex items-center gap-2">
-              <button
-                class="btn btn-outline btn-xs"
-                type="button"
-                disabled={retrying}
-                on:click={retry}
-              >
-                {retrying ? "Retrying…" : "Retry"}
-              </button>
-              <!-- Retry re-runs the REQUEST: the endpoint chosen when this
-                   insight was asked for. It falls back to the deployment's own
-                   only when that endpoint has since been removed, which is what
-                   keeps "configure an endpoint, then retry" a fix. -->
-              <span class="text-xs text-base-content/60">
-                Runs again on the endpoint you chose.
-              </span>
-            </div>
-          </div>
-        {/if}
-
-        {#if pollError}
-          <!-- Deliberately not an error on the run: the run is whatever the
-               operator says it is, and this says only that it could not be
-               asked. -->
-          <p class="mt-1 text-xs text-warning" role="status">{pollError}</p>
-        {/if}
-      </div>
     {/if}
   </section>
 {/if}
@@ -651,8 +457,7 @@
 
   .ins-endpoint {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 12px;
+    gap: 6px;
   }
 
   .ins-card-foot {
@@ -664,25 +469,5 @@
     font-size: 12px;
     line-height: 1.5;
     color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
-  }
-
-  /* Status colours by name rather than by position, so a status this build does
-     not colour still renders as a plain badge instead of inheriting the wrong
-     one. daisyUI tokens, like the rest of the shell. */
-  .badge[data-status="queued"] {
-    background-color: var(--color-base-300);
-    border-color: var(--color-base-300);
-  }
-  .badge[data-status="running"] {
-    background-color: color-mix(in oklch, var(--color-primary) 22%, transparent);
-    border-color: color-mix(in oklch, var(--color-primary) 40%, transparent);
-  }
-  .badge[data-status="succeeded"] {
-    background-color: color-mix(in oklch, var(--color-success, oklch(70% 0.15 150)) 24%, transparent);
-    border-color: color-mix(in oklch, var(--color-success, oklch(70% 0.15 150)) 45%, transparent);
-  }
-  .badge[data-status="failed"] {
-    background-color: color-mix(in oklch, var(--color-error, oklch(62% 0.2 25)) 22%, transparent);
-    border-color: color-mix(in oklch, var(--color-error, oklch(62% 0.2 25)) 45%, transparent);
   }
 </style>

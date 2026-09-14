@@ -382,8 +382,9 @@ func (s *insightService) claim(id string, attempt int) (InsightRun, error) {
 
 // perform does one attempt and says how it ended. It never returns an error:
 // every way this can fail is a fact about the run that the person who asked has
-// to be able to read off the card, so it comes back as an outcome rather than as
-// something a caller must decide how to render.
+// to be able to read off the card, so it comes back as an outcome — a reason
+// token from insight_reasons.go — rather than as something a caller must decide
+// how to render. What the app says for each token is the app's own.
 func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOutcome {
 	// The endpoint this attempt will reach, read now rather than after the fact.
 	// The run row records which of the configured providers answered — never its
@@ -394,7 +395,7 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 	staging, err := os.MkdirTemp("", "cassini-insight-*")
 	if err != nil {
 		s.logf("insights: create staging directory for run=%s: %v", run.ID, err)
-		return insightFailure("Cassini could not prepare the meetings on its own disk. An administrator can check the app's storage.")
+		return insightFailure(insightReasonStagingFailed)
 	}
 	// Every path, including a cancelled one: the directory holds whole
 	// recordings, and one leaked per abandoned run is an archive on the ExApp
@@ -427,7 +428,7 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 			Status:   insightStatusFailed,
 			Provider: provider.id,
 			Model:    model,
-			Error:    "The insight was written but could not be saved into your Nextcloud files. Check that you have space, then try again.",
+			Error:    insightReasonDeliverFailed,
 		}
 	}
 	return InsightOutcome{
@@ -452,18 +453,18 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 	if !ok || len(readable) == 0 {
 		// An empty readable set is the shape a FAILED scan takes, because
 		// serveFilteredCatalog fails closed (see the same guard in
-		// insight_handlers.go). Reading it as a denial would write "one of these
-		// meetings is no longer available to you" permanently onto the run row —
-		// a card that keeps asserting a permission change nobody made, and says
-		// it again on every retry.
+		// insight_handlers.go). Reading it as a denial would write
+		// meeting-unavailable permanently onto the run row — a card that keeps
+		// asserting a permission change nobody made, and says it again on every
+		// retry.
 		s.logf("insights: run=%s caller=%s has no readable meetings (ok=%t) — failing as an outage rather than a denial", run.ID, run.CreatedBy, ok)
-		return "", insightFailure("Cassini could not read your meeting list from Nextcloud. Try again in a moment."), false
+		return "", insightFailure(insightReasonCatalogFailed), false
 	}
 
 	catalogPath := filepath.Join(staging, "catalog.json")
 	if err := os.WriteFile(catalogPath, catalog, 0o600); err != nil {
 		s.logf("insights: stage catalog for run=%s: %v", run.ID, err)
-		return "", insightFailure("Cassini could not prepare the meetings on its own disk. An administrator can check the app's storage."), false
+		return "", insightFailure(insightReasonStagingFailed), false
 	}
 
 	budget := int64(maxContextStagedBytes)
@@ -472,10 +473,10 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 		source, permitted := readable[id]
 		if !permitted {
 			// Denied and absent are one answer everywhere else in this archive and
-			// they are one answer here: the run says the meeting is no longer
-			// available to it, and the log says which case it was.
+			// they are one answer here: the run says the meeting is unavailable to
+			// it, and the log says which case it was.
 			s.logf("insights: run=%s caller=%s asked for id=%s, which is not in their readable set", run.ID, run.CreatedBy, id)
-			return "", insightFailure("One of these meetings is no longer available to you, so the insight was not run."), false
+			return "", insightFailure(insightReasonMeetingUnavailable), false
 		}
 		destPath := filepath.Join(staging, id+".opus")
 		status, err := s.exapp.stageMeetingForContext(ctx, s.client, run.CreatedBy, source, destPath, &budget)
@@ -483,10 +484,10 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 		case err == nil:
 		case status == http.StatusNotFound || status == http.StatusUnauthorized || status == http.StatusForbidden:
 			s.logf("insights: run=%s caller=%s denied id=%s at fetch -> %d", run.ID, run.CreatedBy, id, status)
-			return "", insightFailure("One of these meetings is no longer available to you, so the insight was not run."), false
+			return "", insightFailure(insightReasonMeetingUnavailable), false
 		default:
 			s.logf("insights: run=%s stage id=%s for caller=%s: %v", run.ID, id, run.CreatedBy, err)
-			return "", insightFailure("Cassini could not download one of these meetings from Nextcloud. Try again in a moment."), false
+			return "", insightFailure(insightReasonDownloadFailed), false
 		}
 		staged = append(staged, destPath)
 	}
@@ -496,7 +497,8 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 	// The bundle is the same document published/meetings-context serves over the
 	// same recordings, so it gets that endpoint's bound.
 	if _, err := s.runCassini(ctx, args, contextChildEnv(s.rt.childEnv()), bundlePath, "context bundle", maxContextDocumentBytes, run.ID); err != nil {
-		return "", insightFailure("Cassini could not assemble these meetings into one document. An administrator can check the app log."), false
+		// runCassini has already logged the exit code and stderr.
+		return "", insightFailure(insightReasonAssembleFailed), false
 	}
 	return bundlePath, InsightOutcome{}, true
 }
@@ -522,65 +524,10 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 	// or picked one that has since been removed. See endpointFor.
 	code, err := s.runCassini(ctx, args, s.insightChildEnvFor(endpoint), documentPath, "insight", maxInsightDocumentBytes, run.ID)
 	if err != nil {
-		return "", "", InsightOutcome{Status: insightStatusFailed, Error: explainInsightExit(ctx, code)}, false
+		return "", "", insightFailure(insightExitReason(ctx, code)), false
 	}
 	return documentPath, recordPath, InsightOutcome{}, true
 }
-
-// explainInsightExit turns `cassini insight run`'s exit code into a sentence the
-// person who asked can act on.
-//
-// The code space is the contract — it is documented in the command's own help
-// precisely so a caller need not read the message — so this switches on it and
-// never on the text. A message-derived classification changes silently whenever a
-// message is reworded, which is the failure this avoids.
-func explainInsightExit(ctx context.Context, code int) string {
-	// Two ways the context ends, and they are different advice. The deadline is
-	// the run's own 60-minute bound, and a smaller selection is the fix; a
-	// cancellation is the operator shutting down under the run, and nothing
-	// about the request was wrong — retrying it as it was is the fix (D-740).
-	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return fmt.Sprintf("The insight took longer than %d minutes and was stopped. A smaller selection, or a faster endpoint, will finish.", int(insightRunTimeout.Minutes()))
-	case ctx.Err() != nil:
-		return "Cassini restarted before this insight finished — retry it."
-	}
-	switch code {
-	case 1:
-		return "The insight was produced but Cassini could not write it down. An administrator can check the app's storage."
-	case 2:
-		return insightReasonBadRequest + ": This insight could not be run as it was asked for. An administrator can check the app log."
-	case 3:
-		return insightReasonNoProvider + ": No AI endpoint is configured, so there was nothing to ask. An administrator can add one in Cassini's AI settings."
-	case 4:
-		return insightReasonProviderRefused + ": The AI endpoint refused the request — its key, its quota, or the model name. An administrator can fix it in Cassini's AI settings."
-	case 5:
-		return insightReasonModelFailed + ": The model did not answer. Trying again is a reasonable response to this one."
-	default:
-		return "The insight run stopped unexpectedly. An administrator can check the app log."
-	}
-}
-
-// The four words `internal/insight` classifies a failure with, carried on the
-// front of the sentence the exit code produced.
-//
-// The token is there for the app, which reads it to decide WHICH failure this
-// is — "no endpoint configured" and "the endpoint rejected the key" are two
-// different things to do next, and only one of them is worth offering an
-// administrator a link for. It is deliberately not a second field on {run}: the
-// contract's run object is fixed, and a classification carried beside the
-// sentence it classifies is a second thing that can disagree with it.
-//
-// Only the codes insight.Reason actually names are tagged. Exit 1 (produced but
-// unwritable), a run stopped on its own deadline and an unrecognised code are
-// none of the four, and inventing a token for them would let the app show a
-// confident cause for a failure nobody classified.
-const (
-	insightReasonBadRequest      = "bad-request"
-	insightReasonNoProvider      = "no-provider"
-	insightReasonProviderRefused = "provider-refused"
-	insightReasonModelFailed     = "model-failed"
-)
 
 // deliver PUTs the document into the requester's own Nextcloud home and returns
 // the path it was written to.
@@ -877,32 +824,50 @@ func (s *insightService) endpointFor(run InsightRun) insightProviderRef {
 // Layered over insightChildEnv rather than replacing it, so everything that
 // environment already decides — the STT policy, the operator's own secrets
 // being withheld — keeps deciding it, and only the endpoint moves.
+//
+// The SUMMARY_* set is removed as well. The recorder layers INSIGHT_* over
+// SUMMARY_*, so any INSIGHT_ variable left unset would be filled in from the
+// summary endpoint — a model, a leash or a token budget chosen for one host
+// arriving at another. The model was the case that bit (D-740 P0): an insight
+// with no model of its own ran the summary model against whichever endpoint
+// the asker had picked. INSIGHT_MODEL is therefore always emitted here, from
+// the run's own choice, else the chosen endpoint's default, else the model the
+// insight step is configured with when that step resolves to this same
+// endpoint (D-749).
 func (s *insightService) insightChildEnvFor(ref insightProviderRef) []string {
 	base := s.insightChildEnv()
 	if ref.id == "" {
 		return base
 	}
+	settings := s.rt.currentLLMSettings()
 	var chosen *LLMProvider
-	for _, p := range s.rt.currentLLMSettings().Providers {
-		if p.ID == ref.id {
-			chosen = &p
+	for i := range settings.Providers {
+		if settings.Providers[i].ID == ref.id {
+			chosen = &settings.Providers[i]
 			break
 		}
 	}
 	if chosen == nil {
 		return base
 	}
+	model := modelFor(*chosen, ref.model)
+	if model == "" {
+		if step, stepModel, ok := settings.insightEndpoint(); ok && step.ID == chosen.ID {
+			model = stepModel
+		}
+	}
+	drop := map[string]bool{}
+	for _, step := range []string{llmStepSummary, llmStepInsight} {
+		b, k, m, t, n := llmStepEnv(step)
+		drop[b], drop[k], drop[m], drop[t], drop[n] = true, true, true, true, true
+	}
+	out := withoutEnv(base, drop)
 	baseKey, keyKey, modelKey, timeoutKey, tokensKey := llmStepEnv(llmStepInsight)
-	out := withoutEnv(base, map[string]bool{
-		baseKey: true, keyKey: true, modelKey: true, timeoutKey: true, tokensKey: true,
-	})
 	out = append(out, baseKey+"="+chosen.BaseURL)
 	if chosen.APIKey != "" {
 		out = append(out, keyKey+"="+chosen.APIKey)
 	}
-	if ref.model != "" {
-		out = append(out, modelKey+"="+ref.model)
-	}
+	out = append(out, modelKey+"="+model)
 	if chosen.TimeoutSec > 0 {
 		out = append(out, timeoutKey+"="+strconv.Itoa(chosen.TimeoutSec))
 	}
@@ -952,11 +917,11 @@ func (s *insightService) readRunRecord(recordPath, runID string) string {
 
 // --- helpers ------------------------------------------------------------------
 
-// insightFailure is a terminal outcome carrying a sentence the requester can act
-// on. Nothing built here names a provider or a model, because these are the
-// failures that happen before or instead of the model call.
-func insightFailure(message string) InsightOutcome {
-	return InsightOutcome{Status: insightStatusFailed, Error: message}
+// insightFailure is a terminal outcome carrying one reason token from
+// insight_reasons.go. Nothing built here names a provider or a model, because
+// these are the failures that happen before or instead of the model call.
+func insightFailure(reason string) InsightOutcome {
+	return InsightOutcome{Status: insightStatusFailed, Error: reason}
 }
 
 func (s *insightService) logf(format string, args ...any) {

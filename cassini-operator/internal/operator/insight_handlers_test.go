@@ -127,7 +127,7 @@ func (f *fakeInsightStore) BeginAttempt(_ context.Context, id string) (InsightRu
 		run.AttemptNumber++
 	}
 	run.Status = insightStatusRunning
-	run.Provider, run.Model, run.DocumentPath, run.Error = "", "", "", ""
+	run.Provider, run.Model, run.DocumentPath, run.Error, run.Reason = "", "", "", "", ""
 	f.runs[id] = run
 	return run, nil
 }
@@ -159,6 +159,7 @@ func (f *fakeInsightStore) FinishAttempt(_ context.Context, id string, outcome I
 	}
 	run.Status = outcome.Status
 	run.Provider, run.Model, run.DocumentPath, run.Error = outcome.Provider, outcome.Model, outcome.DocumentPath, outcome.Error
+	run.Reason = insightReasonOf(run.Status, run.Error)
 	f.runs[id] = run
 	return nil
 }
@@ -232,7 +233,7 @@ func TestCreateInsightRefusesABadRequestBeforeTouchingNextcloud(t *testing.T) {
 		{"a workflow id of the wrong shape", `{"meetingIds":["MEETING1"],"workflow":"a b/c"}`, "not a workflow id"},
 		{"a question no workflow slot holds", `{"meetingIds":["MEETING1"],"question":"why?"}`, "takes none of yours"},
 		{"a workflow with no question", `{"meetingIds":["MEETING1"],"workflow":"ask"}`, "needs a question"},
-		{"a field nobody declared", `{"meetingIds":["MEETING1"],"timestamps":true}`, "not a valid insight request"},
+		{"a field nobody declared", `{"meetingIds":["MEETING1"],"timestamps":true}`, "could not be read"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -506,7 +507,7 @@ func TestRetryStartsAnotherAttemptOnAFailedRun(t *testing.T) {
 		InsightRun{
 			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusFailed,
 			MeetingIDs: []string{"MEETING1"}, AttemptNumber: 1,
-			Provider: "gone", Model: "gone", Error: "No AI endpoint is configured.",
+			Provider: "gone", Model: "gone", Error: insightReasonNoProvider, Reason: insightReasonNoProvider,
 		},
 	)
 	w := harness.do(t, http.MethodPost, "/insights/ins_00000000000000a1/retry", "alice", "")
@@ -523,8 +524,8 @@ func TestRetryStartsAnotherAttemptOnAFailedRun(t *testing.T) {
 	// The previous attempt's endpoint must not survive: the next one re-resolves
 	// from current settings, and a stale provider on the card would describe a
 	// run that is no longer happening.
-	if run.Provider != "" || run.Model != "" || run.Error != "" {
-		t.Errorf("run still carries the last attempt: provider=%q model=%q error=%q", run.Provider, run.Model, run.Error)
+	if run.Provider != "" || run.Model != "" || run.Error != "" || run.Reason != "" {
+		t.Errorf("run still carries the last attempt: provider=%q model=%q error=%q reason=%q", run.Provider, run.Model, run.Error, run.Reason)
 	}
 	if len(harness.launched) != 1 {
 		t.Errorf("launched = %v, want one attempt", harness.launched)
@@ -568,6 +569,30 @@ func TestInsightCollectionAnswersWithOrWithoutATrailingSlash(t *testing.T) {
 	}
 }
 
+// A failed run is served with `reason`, the token the app turns into words,
+// and `error` carries the same token for one release (D-749). Neither is a
+// sentence: the wording is the app's, and a sentence stored on the row would
+// outlive the release that wrote it.
+func TestAFailedRunIsServedWithItsReasonToken(t *testing.T) {
+	harness := newInsightHandlerHarness(t,
+		InsightRun{
+			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusFailed,
+			MeetingIDs: []string{"MEETING1"}, AttemptNumber: 1, Error: insightReasonNoProvider, Reason: insightReasonNoProvider,
+		},
+	)
+	w := harness.do(t, http.MethodGet, "/insights/ins_00000000000000a1", "alice", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d (%s)", w.Code, w.Body.String())
+	}
+	var served map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &served); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if served["reason"] != insightReasonNoProvider || served["error"] != insightReasonNoProvider {
+		t.Errorf("reason=%v error=%v, want both %q", served["reason"], served["error"], insightReasonNoProvider)
+	}
+}
+
 // Every insight answer is uncacheable, the way the archive's other per-caller
 // reads are. Two failures ride on this one header, and the second is the one
 // that would survive every other test on this file: these bodies are per-caller
@@ -578,7 +603,7 @@ func TestInsightAnswersAreNeverCached(t *testing.T) {
 	harness := newInsightHandlerHarness(t,
 		InsightRun{
 			ID: "ins_00000000000000a1", CreatedBy: "alice", Status: insightStatusFailed,
-			MeetingIDs: []string{"MEETING1"}, AttemptNumber: 1, Error: "No AI endpoint is configured.",
+			MeetingIDs: []string{"MEETING1"}, AttemptNumber: 1, Error: insightReasonNoProvider, Reason: insightReasonNoProvider,
 		},
 	)
 	cases := []struct{ method, target, body string }{

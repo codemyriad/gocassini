@@ -190,14 +190,17 @@ func TestInsightStoreRetryIsAnotherAttemptOnTheSameRun(t *testing.T) {
 		Status:   insightStatusFailed,
 		Provider: "openrouter",
 		Model:    "anthropic/claude",
-		Error:    "the provider returned 401",
+		Error:    insightReasonProviderRefused,
 	}); err != nil {
 		t.Fatalf("FinishAttempt(failed) error = %v", err)
 	}
 
 	failed := mustGetInsightRun(t, store, "ins_0123456789abcdef")
-	if failed.Status != insightStatusFailed || failed.Error != "the provider returned 401" {
-		t.Fatalf("failed run = %#v, want a failure a user can act on", failed)
+	if failed.Status != insightStatusFailed || failed.Error != insightReasonProviderRefused {
+		t.Fatalf("failed run = %#v, want the reason token stored", failed)
+	}
+	if failed.Reason != insightReasonProviderRefused {
+		t.Fatalf("failed run reason = %q, want the same token served under `reason`", failed.Reason)
 	}
 	if failed.Provider != "openrouter" || failed.Model != "anthropic/claude" {
 		t.Fatalf("failed run endpoint = %s/%s, want the one the attempt resolved", failed.Provider, failed.Model)
@@ -215,7 +218,7 @@ func TestInsightStoreRetryIsAnotherAttemptOnTheSameRun(t *testing.T) {
 	}
 	// The endpoint is re-resolved from current settings, so nothing the failed
 	// attempt used may still be showing while the retry runs.
-	if retried.Provider != "" || retried.Model != "" || retried.Error != "" || retried.DocumentPath != "" {
+	if retried.Provider != "" || retried.Model != "" || retried.Error != "" || retried.Reason != "" || retried.DocumentPath != "" {
 		t.Fatalf("retry still carries the failed attempt's results: %#v", retried)
 	}
 	if retried.WorkflowID != failed.WorkflowID || retried.Question != failed.Question ||
@@ -353,7 +356,7 @@ func TestInsightStoreBeginAttemptStartsExactlyOnceUnderConcurrency(t *testing.T)
 	}
 	if err := store.FinishAttempt(ctx, "ins_0123456789abcdef", InsightOutcome{
 		Status: insightStatusFailed,
-		Error:  "the provider returned 401",
+		Error:  insightReasonProviderRefused,
 	}); err != nil {
 		t.Fatalf("FinishAttempt() error = %v", err)
 	}
@@ -421,6 +424,10 @@ func TestInsightStoreFinishAttemptRefusesAnUnusableOutcome(t *testing.T) {
 		"queued as an outcome":      {Status: insightStatusQueued},
 		"success without the bytes": {Status: insightStatusSucceeded},
 		"failure without a reason":  {Status: insightStatusFailed, Error: "   "},
+		// The sentence is the app's to write (D-749): a row that stored one
+		// would carry that release's wording for ever.
+		"failure with a sentence":   {Status: insightStatusFailed, Error: "The model did not answer. Retry, or pick fewer meetings."},
+		"failure with a tagged one": {Status: insightStatusFailed, Error: "model-failed: The model did not answer."},
 	}
 	for name, outcome := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -491,8 +498,8 @@ func TestInsightStoreFailsRunsAnOperatorRestartStranded(t *testing.T) {
 	}
 	for _, id := range []string{"ins_00000000000000a1", "ins_00000000000000a2"} {
 		run := mustGetInsightRun(t, store, id)
-		if run.Status != insightStatusFailed || !strings.Contains(run.Error, "restarted") {
-			t.Fatalf("%s = %s/%q, want a failure that says to retry it", id, run.Status, run.Error)
+		if run.Status != insightStatusFailed || run.Error != insightReasonInterrupted || run.Reason != insightReasonInterrupted {
+			t.Fatalf("%s = %s/%q/%q, want it failed as %q", id, run.Status, run.Error, run.Reason, insightReasonInterrupted)
 		}
 	}
 	if run := mustGetInsightRun(t, store, "ins_00000000000000a3"); run.Status != insightStatusSucceeded {

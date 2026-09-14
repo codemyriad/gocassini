@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
@@ -113,6 +113,15 @@
   // next click — and a selection is a thing you are doing, not a place you are.
   let selection: MeetingSelection = EMPTY_SELECTION;
   let prepareOpen = false;
+  // Said to whoever mounts this shell, each time Prepare opens: the panel's
+  // readiness slot is filled from a fact only the shell around it has (whether
+  // this deployment has an AI endpoint), and that fact is read once at mount.
+  // A reader who was told "no endpoint" and comes back after an administrator
+  // configured one is otherwise told it again until they reload (D-749).
+  const dispatch = createEventDispatcher<{ prepareOpen: void }>();
+  $: if (prepareOpen) {
+    dispatch("prepareOpen");
+  }
   // What the list is actually showing, reported by MeetingList: its text filter
   // is list-local, so this is the only way the shell can say how many picked
   // meetings the current narrowing hides.
@@ -568,6 +577,64 @@
     }
   }
 
+  // retryInsightRun asks the provider to retry a failed run and puts the
+  // record it answers with — queued again, attempt incremented — in the list
+  // in place of the failed one, from wherever the reader pressed Retry: the
+  // browse card or the document sheet (D-749). A refresh follows so the card
+  // keeps moving on the shared tick. One retry at a time: the button is the
+  // lock on this side, as the run's status is on the operator's.
+  let retryingInsightId = "";
+  let insightRetryError: { id: string; message: string } | null = null;
+
+  async function retryInsightRun(record: InsightRecord) {
+    const provider = dataProvider;
+    if (!provider.retryInsight || retryingInsightId !== "") {
+      return;
+    }
+    retryingInsightId = record.id;
+    insightRetryError = null;
+    try {
+      const updated = await provider.retryInsight(record.id);
+      if (destroyed) {
+        return;
+      }
+      insights = insights.map((row) => (row.id === updated.id ? updated : row));
+    } catch (error) {
+      if (destroyed) {
+        return;
+      }
+      // Whatever the provider said — a 409 "already running" included, which
+      // is an answer rather than a failure and is followed by the refresh that
+      // shows the run moving.
+      insightRetryError = {
+        id: record.id,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      retryingInsightId = "";
+    }
+    void refreshInsights();
+  }
+
+  function retrySelectedInsight() {
+    if (selectedInsight) {
+      void retryInsightRun(selectedInsight);
+    }
+  }
+
+  // handleInsightCreated is what Generate does once the operator has answered
+  // (D-749): the new record goes to the top of the list, where every insight
+  // is shown, and the Prepare panel closes — the question has been asked, and
+  // the panel's subject was the set it was asked of. Optimistic, so the card
+  // is on screen before the shared refresh tick; the refresh that follows
+  // replaces it with the operator's own listing. dropMissingInsight cannot
+  // close a sheet over it: nothing is open, and the listing will carry it.
+  function handleInsightCreated(record: InsightRecord) {
+    insights = [record, ...insights.filter((row) => row.id !== record.id)];
+    prepareOpen = false;
+    void refreshInsights();
+  }
+
   // ensureInsightDocument fetches the open insight's answer once per attempt.
   // Only a succeeded run has one: a queued, running or failed run has nothing
   // to fetch, and asking for it would turn "not finished" into an error.
@@ -663,6 +730,9 @@
     browseTypes = ALL_BROWSE_TYPES;
   }
   $: canLoadInsightDocument = typeof dataProvider.loadInsightDocument === "function";
+  // Retry is offered exactly where something can perform it: the card and the
+  // sheet render the control only when the provider has the method.
+  $: canRetryInsight = typeof dataProvider.retryInsight === "function";
   // Resolved against the WHOLE catalog, not the room-narrowed list: an insight
   // spanning rooms names sources in each of them, and counting only the ones in
   // the room being looked at would make the same insight claim a different
@@ -873,6 +943,9 @@
       {insightsLoaded}
       {insightsError}
       {insightSourceCounts}
+      insightsRetryable={canRetryInsight}
+      {retryingInsightId}
+      {insightRetryError}
       {selectedInsightId}
       {selectedRoomName}
       {selectedMeetingId}
@@ -885,6 +958,7 @@
       on:select={(event) => loadCatalogMeeting(event.detail)}
       on:pick={handlePick}
       on:openInsight={(event) => openInsight(event.detail)}
+      on:retryInsight={(event) => void retryInsightRun(event.detail)}
       on:visible={(event) => (visibleMeetings = event.detail)}
       on:counts={(event) => (browseCounts = event.detail)}
       on:clearRoom={() => (selectedRoomKey = null)}
@@ -939,8 +1013,12 @@
             documentError={insightDocumentError}
             documentLoading={insightDocumentLoading}
             canLoadDocument={canLoadInsightDocument}
+            canRetry={canRetryInsight}
+            retrying={retryingInsightId === selectedInsight.id}
+            retryError={insightRetryError?.id === selectedInsight.id ? insightRetryError.message : ""}
             on:close={closeSheet}
             on:openSource={openInsightSource}
+            on:retry={retrySelectedInsight}
           />
         {:else}
           <!-- The other direction (D-721): a meeting says which insights read
@@ -995,7 +1073,7 @@
                this panel is describing, and `let:` is what carries a slot prop
                across the two levels. -->
           <svelte:fragment slot="generate" let:entries>
-            <slot name="prepare-generate" {entries} />
+            <slot name="prepare-generate" {entries} onInsightCreated={handleInsightCreated} />
           </svelte:fragment>
         </PreparePanel>
       </aside>

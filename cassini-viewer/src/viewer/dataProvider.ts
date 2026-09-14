@@ -91,6 +91,17 @@ export interface DataProvider {
   // document is a coherent state — the cards still appear, and the sheet says
   // it cannot show the answer here rather than showing an empty page.
   loadInsightDocument?(id: string): Promise<string>;
+
+  // OPTIONAL (D-749): retry a FAILED run — `POST insights/<id>/retry` — and
+  // return the run as it now stands. The operator answers 409 for a run that
+  // is not failed, which the implementation reports as its own sentence.
+  //
+  // Optional for the same reason the two above are: a retry is an operator
+  // doing work, and a build with no operator offers no Retry control rather
+  // than one that fails. The browse card and the document sheet both render it
+  // when this exists, so a failed run is recoverable from wherever it is seen
+  // rather than only from the panel that started it.
+  retryInsight?(id: string): Promise<InsightRecord>;
 }
 
 // resolvePublishedUrl locates a file in the operator's published archive.

@@ -134,10 +134,7 @@
       {:else if models.length === 0}
         <li class="model-note">This endpoint listed no models. Type a model ID.</li>
       {:else if visible.length === 0}
-        <li class="model-note">
-          No model matches “{$inputValue}”. It is still accepted — the list is the
-          endpoint's, not a limit on what you may send.
-        </li>
+        <li class="model-note">No match for “{$inputValue}”. It will be sent as typed.</li>
       {:else}
         {#each visible as model (model.id)}
           {@const opt = $option({ value: model.id, label: model.id })}
