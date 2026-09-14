@@ -418,6 +418,25 @@ CALL_URL="$NC_URL_HOST/call/$ROOM_TOKEN"
 log "room token: $ROOM_TOKEN"
 log "call URL:   $CALL_URL"
 
+# Prove that the identity registered in phase 3 can make the same act-as-owner
+# lookup the operator performs asynchronously at recording start. OCS can wrap
+# an authentication error in HTTP 200, so inspect both its status and payload;
+# otherwise this only fails much later as a catalog entry with no roomName.
+APPAPI_AUTH=$(printf 'admin:%s' "$APP_SECRET" | base64 | tr -d '\n')
+ROOM_LOOKUP=$(curl -sf \
+  -H "AUTHORIZATION-APP-API: $APPAPI_AUTH" \
+  -H "EX-APP-ID: $APP_ID" \
+  -H "EX-APP-VERSION: $APP_VERSION" \
+  -H "OCS-APIRequest: true" \
+  -H "Accept: application/json" \
+  "$NC_URL_HOST/ocs/v2.php/apps/spreed/api/v4/room/$ROOM_TOKEN" \
+  || fail "registered ExApp could not request the Talk room")
+jq -e --arg name "$ROOM_NAME" \
+  '.ocs.meta.status == "ok" and ((.ocs.data.displayName // .ocs.data.name // "") == $name)' \
+  <<<"$ROOM_LOOKUP" >/dev/null \
+  || fail "registered ExApp could not resolve the Talk room name"
+log "OK registered ExApp resolves the Talk room as its owner"
+
 # Stream scenario audio into the call. The synthetic-meeting streamer
 # launches go-talk-rotator bots (one per scenario participant) that
 # join the call as guests and play their pre-rendered OGG track.
