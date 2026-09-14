@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +39,10 @@ type fakeNCFiles struct {
 	// failGET answers a path with the given status and a JSON body, which is
 	// what a gateway in front of Nextcloud does and what Sabre never does.
 	failGET map[string]int
+	// etags counts PUTs per path; the leaf's ETag is that count, quoted, the way
+	// Nextcloud quotes its own. putIfMatch records every If-Match a PUT sent.
+	etags      map[string]int
+	putIfMatch []string
 }
 
 // ncFilesOp is one mutating request the fake saw.
@@ -54,6 +59,7 @@ func newFakeNCFiles() *fakeNCFiles {
 		failPUT:     map[string]int{},
 		truncatePUT: map[string]int{},
 		failGET:     map[string]int{},
+		etags:       map[string]int{},
 	}
 }
 
@@ -61,12 +67,25 @@ func newFakeNCFiles() *fakeNCFiles {
 // including the separate 404 propstat Nextcloud emits for a property the
 // resource does not carry.
 func leafMultistatus(href string, size int, rules []aclRule) string {
+	return leafMultistatusETag(href, size, rules, "")
+}
+
+// etagFor is path's current ETag. Call with f.mu held.
+func (f *fakeNCFiles) etagFor(path string) string {
+	return fmt.Sprintf("%q", strconv.Itoa(f.etags[path]))
+}
+
+// leafMultistatusETag is leafMultistatus carrying a getetag, when etag is set.
+func leafMultistatusETag(href string, size int, rules []aclRule, etag string) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:response><d:href>`)
 	b.WriteString(href)
 	b.WriteString(`</d:href><d:propstat><d:prop><d:getcontentlength>`)
 	fmt.Fprintf(&b, "%d", size)
 	b.WriteString(`</d:getcontentlength>`)
+	if etag != "" {
+		b.WriteString(`<d:getetag>` + etag + `</d:getetag>`)
+	}
 	if len(rules) > 0 {
 		b.WriteString(`<nc:acl-list>`)
 		for _, r := range rules {
@@ -220,7 +239,7 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 			}
 			w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 			w.WriteHeader(http.StatusMultiStatus)
-			_, _ = io.WriteString(w, leafMultistatus(r.URL.Path, len(body), f.acls[rel]))
+			_, _ = io.WriteString(w, leafMultistatusETag(r.URL.Path, len(body), f.acls[rel], f.etagFor(rel)))
 		case http.MethodDelete:
 			f.ops = append(f.ops, ncFilesOp{method: http.MethodDelete, path: rel})
 			if _, ok := f.files[rel]; !ok {
@@ -239,6 +258,14 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 				w.WriteHeader(http.StatusInsufficientStorage)
 				return
 			}
+			if im := r.Header.Get("If-Match"); im != "" {
+				f.putIfMatch = append(f.putIfMatch, im)
+				if _, ok := f.files[rel]; !ok || im != f.etagFor(rel) {
+					_, _ = io.Copy(io.Discard, r.Body)
+					w.WriteHeader(http.StatusPreconditionFailed)
+					return
+				}
+			}
 			body, _ := io.ReadAll(r.Body)
 			_, existed := f.files[rel]
 			if n, ok := f.truncatePUT[rel]; ok && n < len(body) {
@@ -247,6 +274,8 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 			f.files[rel] = body
 			f.order = append(f.order, rel)
 			f.ops = append(f.ops, ncFilesOp{method: http.MethodPut, path: rel, body: string(body)})
+			f.etags[rel]++
+			w.Header().Set("ETag", f.etagFor(rel))
 			if existed {
 				w.WriteHeader(http.StatusNoContent)
 			} else {
