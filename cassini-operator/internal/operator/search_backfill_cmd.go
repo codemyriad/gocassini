@@ -119,7 +119,7 @@ Flags:
 		return backfillSearchExitNotStarted
 	}
 	if !storage.Configured() {
-		fmt.Fprintf(stderr, "no storage mode is recorded for this install; finish the Setup tab first\nnothing was read or written\n")
+		fmt.Fprintf(stderr, "no storage mode is recorded for this install; enable the app so it can resolve one, or choose who can see recordings in Operator › Settings\nnothing was read or written\n")
 		return backfillSearchExitNotStarted
 	}
 	storageSource := storage.Source
