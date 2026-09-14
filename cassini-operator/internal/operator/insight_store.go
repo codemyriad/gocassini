@@ -65,24 +65,32 @@ var insightSweep struct {
 // and a retry of their insight is a retry of the thing they asked for, not of
 // whatever the deployment happens to be pointed at by then.
 type InsightRun struct {
-	ID                string    `json:"id"`
-	CreatedBy         string    `json:"createdBy"`
-	Status            string    `json:"status"`
-	WorkflowID        string    `json:"workflowId"`
-	WorkflowVersion   string    `json:"workflowVersion"`
-	WorkflowSHA256    string    `json:"workflowSha256"`
-	MeetingIDs        []string  `json:"meetingIds"`
-	RoomIDs           []string  `json:"roomIds"`
-	Question          string    `json:"question"`
-	RequestedProvider string    `json:"requestedProvider"`
-	RequestedModel    string    `json:"requestedModel"`
-	Provider          string    `json:"provider"`
-	Model             string    `json:"model"`
-	DocumentPath      string    `json:"documentPath"`
-	Error             string    `json:"error"`
-	AttemptNumber     int       `json:"attemptNumber"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                string   `json:"id"`
+	CreatedBy         string   `json:"createdBy"`
+	Status            string   `json:"status"`
+	WorkflowID        string   `json:"workflowId"`
+	WorkflowVersion   string   `json:"workflowVersion"`
+	WorkflowSHA256    string   `json:"workflowSha256"`
+	MeetingIDs        []string `json:"meetingIds"`
+	RoomIDs           []string `json:"roomIds"`
+	Question          string   `json:"question"`
+	RequestedProvider string   `json:"requestedProvider"`
+	RequestedModel    string   `json:"requestedModel"`
+	Provider          string   `json:"provider"`
+	Model             string   `json:"model"`
+	DocumentPath      string   `json:"documentPath"`
+	// Reason is why the latest attempt failed, as one token from
+	// insight_reasons.go, and "" while the run is anything but failed. The app
+	// owns the words for each token (D-749).
+	Reason string `json:"reason"`
+	// Error is the same token, kept on the wire for one release so an app built
+	// against the old field still classifies a failure. Not a sentence any more;
+	// the sentences the operator used to store are gone, and a row written
+	// before then is served as it is.
+	Error         string    `json:"error"`
+	AttemptNumber int       `json:"attemptNumber"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 // InsightRunAttempt is one try at answering an InsightRun, kept after the run
@@ -102,9 +110,10 @@ type InsightRunAttempt struct {
 }
 
 // InsightOutcome is how an attempt ended. A succeeded outcome must name the
-// document it wrote and a failed one must carry an error a user can act on:
-// "the provider returned 401 -> Add a key" is the point of the failed card, and
-// a blank message renders as a spinner that merely stopped.
+// document it wrote and a failed one must carry a reason token from
+// insight_reasons.go in Error: the token is what the app turns into "what
+// happened, what to do", and a blank one renders as a spinner that merely
+// stopped.
 type InsightOutcome struct {
 	Status       string
 	Provider     string
@@ -379,8 +388,11 @@ func (s *insightStore) FinishAttempt(ctx context.Context, id string, outcome Ins
 			return errors.New("insight run succeeded without a document path")
 		}
 	case insightStatusFailed:
-		if strings.TrimSpace(outcome.Error) == "" {
-			return errors.New("insight run failed without an error a user could act on")
+		if !isInsightReason(outcome.Error) {
+			// A sentence here is exactly what D-749 removed: it would outlive the
+			// wording it was written in, and the app would print it beside a title
+			// of its own that says the same thing.
+			return fmt.Errorf("insight run failed with %q, want one reason token from insight_reasons.go", outcome.Error)
 		}
 	default:
 		return fmt.Errorf("insight outcome status %q is neither %q nor %q", outcome.Status, insightStatusSucceeded, insightStatusFailed)
@@ -489,11 +501,11 @@ ORDER BY attempt_number DESC`, runID)
 // when nothing is stranded. sweepStranded owns the choice of cutoff and the
 // reasoning behind it.
 //
-// One message for the two causes it covers: from the row alone, an operator
+// One reason for the two causes it covers: from the row alone, an operator
 // that restarted mid-run and an attempt that stopped writing are the same
 // evidence.
 func (s *insightStore) MarkInterruptedRunsFailed(ctx context.Context, startedBefore time.Time) (int64, error) {
-	const message = "Cassini restarted before this insight finished. Retry it."
+	const message = insightReasonInterrupted
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -568,6 +580,7 @@ func scanInsightRun(scanner rowScanner) (InsightRun, error) {
 	if run.UpdatedAt, err = parseInsightTime(updatedAt); err != nil {
 		return InsightRun{}, err
 	}
+	run.Reason = insightReasonOf(run.Status, run.Error)
 	return run, nil
 }
 

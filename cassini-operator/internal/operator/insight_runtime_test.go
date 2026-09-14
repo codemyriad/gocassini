@@ -53,6 +53,11 @@ type insightDAV struct {
 	// documents is the caller's home as a reader sees it, so the read path can
 	// be exercised against a file the requester still has and one they moved.
 	documents map[string]string
+	// failFetch and failPut make Nextcloud answer 500 to a recording GET and to
+	// the delivery PUT, so the two "Nextcloud fell over" outcomes can be told
+	// apart from a denial and from a full disk.
+	failFetch bool
+	failPut   bool
 }
 
 type insightPut struct {
@@ -103,6 +108,13 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
+			dav.mu.Lock()
+			failFetch := dav.failFetch
+			dav.mu.Unlock()
+			if failFetch {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			_, _ = w.Write([]byte("OPUSBYTES"))
 		case r.Method == "MKCOL":
 			dav.mu.Lock()
@@ -124,6 +136,11 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 			}
 			body, _ := io.ReadAll(r.Body)
 			dav.mu.Lock()
+			if dav.failPut {
+				dav.mu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			dav.put = append(dav.put, insightPut{path: rel, body: string(body)})
 			dav.existing[rel] = true
 			dav.mu.Unlock()
@@ -181,17 +198,25 @@ func (d *insightDAV) markExisting(relPath string) {
 // without a model endpoint.
 func fakeInsightCassini(t *testing.T, document string, insightExit int) (bin, argvPath string) {
 	t.Helper()
+	return fakeInsightCassiniExits(t, document, 0, insightExit)
+}
+
+// fakeInsightCassiniExits is fakeInsightCassini with the exit code of
+// `meetings context` under the test's control as well, for the one failure
+// that happens there.
+func fakeInsightCassiniExits(t *testing.T, document string, contextExit, insightExit int) (bin, argvPath string) {
+	t.Helper()
 	dir := t.TempDir()
 	argvPath = filepath.Join(dir, "argv")
 	docPath := filepath.Join(dir, "document")
 	if err := os.WriteFile(docPath, []byte(document), 0o600); err != nil {
 		t.Fatalf("write document: %v", err)
 	}
-	script := `printf '%s\n' "$@" >> ` + argvPath + `
+	script := `printf '%s\n' "$@" >> "` + argvPath + `"
 verb="$1 $2"
 if [ "$verb" = "meetings context" ]; then
   printf '%s' '{"version":"cassini.meetings.context.v1","meetings":[]}'
-  exit 0
+  exit ` + strconv.Itoa(contextExit) + `
 fi
 record=""
 while [ $# -gt 0 ]; do
@@ -199,7 +224,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -n "$record" ]; then printf '%s' '{"provider":{"kind":"openai-compatible","baseUrl":"http://model.invalid/v1","model":"llama-3.1-8b"}}' > "$record"; fi
-cat ` + docPath + `
+cat "` + docPath + `"
 exit ` + strconv.Itoa(insightExit) + `
 `
 	return writeFakeCassini(t, script), argvPath
@@ -353,53 +378,61 @@ func assertEnvKeyPresent(t *testing.T, env []string, key string) {
 	t.Errorf("child environment lost %s, so the child cannot run", key)
 }
 
-// The exit code is the contract, so each one has to produce a different next
-// action. A message that read the same for "no endpoint" and "the model timed
-// out" would leave the reader with nothing to do.
-func TestExplainInsightExitGivesEachCodeItsOwnAction(t *testing.T) {
-	seen := map[string]int{}
-	for _, code := range []int{1, 2, 3, 4, 5, -1} {
-		message := explainInsightExit(context.Background(), code)
-		if strings.TrimSpace(message) == "" {
-			t.Fatalf("exit %d produced no message; a failed card with no message is a spinner that stopped", code)
-		}
-		if previous, repeated := seen[message]; repeated {
-			t.Errorf("exit %d and exit %d produce the same message %q", previous, code, message)
-		}
-		seen[message] = code
+// The exit code is the contract, so each one maps to its own reason token —
+// never to a sentence, which is the app's to write (D-749). A token that read
+// the same for "no endpoint" and "the model timed out" would leave the reader
+// with nothing to do.
+func TestInsightExitReasonGivesEachCodeItsOwnToken(t *testing.T) {
+	want := map[int]string{
+		1:  insightReasonWriteFailed,
+		2:  insightReasonBadRequest,
+		3:  insightReasonNoProvider,
+		4:  insightReasonProviderRefused,
+		5:  insightReasonModelFailed,
+		-1: insightReasonUnknown,
+		9:  insightReasonUnknown,
 	}
-	if !strings.Contains(explainInsightExit(context.Background(), 3), "No AI endpoint is configured") {
-		t.Error("exit 3 must say that no endpoint is configured")
-	}
-	// The app decides which failure this is off the token, never off the prose
-	// (cassini-app/src/insights/client.ts, classifyRunError). Without it every
-	// failure reads as "The insight failed", and "there is no endpoint" stops
-	// being distinguishable from "the endpoint rejected the key" — which are
-	// different things for the reader to do next.
-	for code, reason := range map[int]string{
-		2: insightReasonBadRequest,
-		3: insightReasonNoProvider,
-		4: insightReasonProviderRefused,
-		5: insightReasonModelFailed,
-	} {
-		if !strings.HasPrefix(explainInsightExit(context.Background(), code), reason+": ") {
-			t.Errorf("exit %d = %q, want it to name the reason %q the app classifies on", code, explainInsightExit(context.Background(), code), reason)
+	for code, reason := range want {
+		got := insightExitReason(context.Background(), code)
+		if got != reason {
+			t.Errorf("exit %d = %q, want %q", code, got, reason)
 		}
-	}
-	// And nothing else is tagged: a token on an unclassified failure would have
-	// the card show a confident cause nobody determined.
-	for _, code := range []int{1, -1} {
-		for _, reason := range []string{insightReasonBadRequest, insightReasonNoProvider, insightReasonProviderRefused, insightReasonModelFailed} {
-			if strings.Contains(explainInsightExit(context.Background(), code), reason) {
-				t.Errorf("exit %d claims reason %q, which nothing classified it as", code, reason)
-			}
+		if !isInsightReason(got) {
+			t.Errorf("exit %d = %q, which is not in the reason set", code, got)
 		}
 	}
 	// A cancelled context outranks whatever the killed child reported.
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if !strings.Contains(explainInsightExit(cancelled, 5), "Stopped after") {
-		t.Error("a run stopped by its own timeout must say so, not blame the model")
+	if got := insightExitReason(cancelled, 5); got != insightReasonTimeout {
+		t.Errorf("a run stopped by its own deadline = %q, want %q, not the model's fault", got, insightReasonTimeout)
+	}
+}
+
+// The set is closed and every member is a bare token: no spaces, no colon, no
+// capital — nothing that could be mistaken for the sentences this replaced.
+func TestInsightReasonsAreBareTokens(t *testing.T) {
+	seen := map[string]bool{}
+	for _, reason := range insightReasons {
+		if seen[reason] {
+			t.Errorf("reason %q is listed twice", reason)
+		}
+		seen[reason] = true
+		if reason == "" || strings.ContainsAny(reason, " :.ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+			t.Errorf("reason %q is not a bare lower-case token", reason)
+		}
+	}
+	if isInsightReason("The model did not answer.") || isInsightReason("") {
+		t.Error("a sentence, or nothing, must not pass as a reason")
+	}
+	if insightReasonOf(insightStatusFailed, insightReasonNoProvider) != insightReasonNoProvider {
+		t.Error("a failed run's stored token is its reason")
+	}
+	if insightReasonOf(insightStatusSucceeded, insightReasonNoProvider) != "" {
+		t.Error("a run that did not fail has no reason")
+	}
+	if insightReasonOf(insightStatusFailed, "no-provider: No AI endpoint is configured.") != "" {
+		t.Error("a sentence stored before tokens existed is not a reason; the app classifies it")
 	}
 }
 
@@ -497,8 +530,9 @@ func TestPerformNeverOverwritesADocumentAlreadyThere(t *testing.T) {
 }
 
 // A model endpoint nobody configured is the single commonest failure, and the
-// card has to name the fix rather than show a stopped spinner.
-func TestPerformTurnsAnExitCodeIntoAnActionableFailure(t *testing.T) {
+// row has to carry the token the app names the fix from, rather than a stopped
+// spinner or a sentence of the operator's own.
+func TestPerformTurnsAnExitCodeIntoAReasonToken(t *testing.T) {
 	dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
 	bin, _ := fakeInsightCassini(t, "", 3)
 	service, _ := insightTestService(t, dav.server.URL, bin, nil)
@@ -508,8 +542,8 @@ func TestPerformTurnsAnExitCodeIntoAnActionableFailure(t *testing.T) {
 	if outcome.Status != insightStatusFailed {
 		t.Fatalf("status = %q, want failed", outcome.Status)
 	}
-	if !strings.Contains(outcome.Error, "No AI endpoint is configured") {
-		t.Errorf("error = %q, want the sentence exit 3 means", outcome.Error)
+	if outcome.Error != insightReasonNoProvider {
+		t.Errorf("error = %q, want the token exit 3 means, %q", outcome.Error, insightReasonNoProvider)
 	}
 	if outcome.DocumentPath != "" {
 		t.Errorf("a failed run named a document at %q", outcome.DocumentPath)
@@ -531,8 +565,8 @@ func TestPerformRefusesAMeetingTheCallerCanNoLongerRead(t *testing.T) {
 	if outcome.Status != insightStatusFailed {
 		t.Fatalf("status = %q, want failed", outcome.Status)
 	}
-	if !strings.Contains(outcome.Error, "no longer available to you") {
-		t.Errorf("error = %q", outcome.Error)
+	if outcome.Error != insightReasonMeetingUnavailable {
+		t.Errorf("error = %q, want %q", outcome.Error, insightReasonMeetingUnavailable)
 	}
 	if len(dav.delivered()) != 0 {
 		t.Error("a refused run wrote into the caller's files")
@@ -541,8 +575,8 @@ func TestPerformRefusesAMeetingTheCallerCanNoLongerRead(t *testing.T) {
 
 // A per-caller scan that FAILED reaches the run path as an empty readable set,
 // because serveFilteredCatalog fails closed. Reading that as a denial would
-// write "no longer available to you" permanently onto the run — a card that
-// keeps asserting a permission change nobody made, and repeats it on retry.
+// write meeting-unavailable permanently onto the run — a card that keeps
+// asserting a permission change nobody made, and repeats it on retry.
 func TestPerformCallsAnUnreadableMeetingListAnOutageAndNotADenial(t *testing.T) {
 	dav := newInsightDAV(t, insightTestCatalog)
 	bin, _ := fakeInsightCassini(t, "# Answer\n", 0)
@@ -553,11 +587,113 @@ func TestPerformCallsAnUnreadableMeetingListAnOutageAndNotADenial(t *testing.T) 
 	if outcome.Status != insightStatusFailed {
 		t.Fatalf("status = %q, want failed", outcome.Status)
 	}
-	if !strings.Contains(outcome.Error, "meeting list could not be read") {
-		t.Errorf("error = %q, want it to name the outage", outcome.Error)
+	if outcome.Error != insightReasonCatalogFailed {
+		t.Errorf("error = %q, want the outage %q, not a permission change out of a failed scan", outcome.Error, insightReasonCatalogFailed)
 	}
-	if strings.Contains(outcome.Error, "available to you") {
-		t.Errorf("error = %q claims a permission change out of a failed scan", outcome.Error)
+}
+
+// Every way perform can fail stores one token from insight_reasons.go and
+// nothing else — no sentence, no stderr, no status code. This is the whole of
+// D-749 on the operator's side: the row classifies, the app speaks. The one
+// path not driven here is the store's own sweep (interrupted), which
+// insight_store_test.go covers.
+func TestEveryFailurePathStoresAReasonToken(t *testing.T) {
+	const document = "# Answer\n"
+	cases := []struct {
+		name string
+		// arrange builds the service; the returned context is the attempt's.
+		arrange func(t *testing.T) (*insightService, *bytes.Buffer, context.Context)
+		want    string
+	}{
+		{"staging directory cannot be made", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+			dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+			bin, _ := fakeInsightCassini(t, document, 0)
+			t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			return service, logs, context.Background()
+		}, insightReasonStagingFailed},
+		{"meeting list cannot be read", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+			dav := newInsightDAV(t, insightTestCatalog)
+			bin, _ := fakeInsightCassini(t, document, 0)
+			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			return service, logs, context.Background()
+		}, insightReasonCatalogFailed},
+		{"a meeting is not in the readable set", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+			dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus")
+			bin, _ := fakeInsightCassini(t, document, 0)
+			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			return service, logs, context.Background()
+		}, insightReasonMeetingUnavailable},
+		{"a meeting cannot be downloaded", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+			dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+			dav.failFetch = true
+			bin, _ := fakeInsightCassini(t, document, 0)
+			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			return service, logs, context.Background()
+		}, insightReasonDownloadFailed},
+		{"the bundle cannot be assembled", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+			dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+			bin, _ := fakeInsightCassiniExits(t, document, 1, 0)
+			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			return service, logs, context.Background()
+		}, insightReasonAssembleFailed},
+		{"exit 1, the child could not write", exitsWith(document, 1), insightReasonWriteFailed},
+		{"exit 2, the child refused the request", exitsWith(document, 2), insightReasonBadRequest},
+		{"exit 3, no provider", exitsWith(document, 3), insightReasonNoProvider},
+		{"exit 4, the provider refused", exitsWith(document, 4), insightReasonProviderRefused},
+		{"exit 5, the model failed", exitsWith(document, 5), insightReasonModelFailed},
+		{"exit 7, a code the contract does not name", exitsWith(document, 7), insightReasonUnknown},
+		{"the attempt ran out of time", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+			dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+			// The child sleeps past the attempt's deadline; staging is local and
+			// finishes well inside it.
+			bin := writeFakeCassini(t, `verb="$1 $2"
+if [ "$verb" = "meetings context" ]; then
+  printf '%s' '{"version":"cassini.meetings.context.v1","meetings":[]}'
+  exit 0
+fi
+sleep 30
+`)
+			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			t.Cleanup(cancel)
+			return service, logs, ctx
+		}, insightReasonTimeout},
+		{"the document cannot be delivered", func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+			dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+			dav.failPut = true
+			bin, _ := fakeInsightCassini(t, document, 0)
+			service, logs := insightTestService(t, dav.server.URL, bin, nil)
+			return service, logs, context.Background()
+		}, insightReasonDeliverFailed},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			service, logs, ctx := testCase.arrange(t)
+			outcome := service.perform(ctx, insightTestRun())
+			if outcome.Status != insightStatusFailed {
+				t.Fatalf("status = %q, want failed; log:\n%s", outcome.Status, logs)
+			}
+			if outcome.Error != testCase.want {
+				t.Errorf("error = %q, want %q; log:\n%s", outcome.Error, testCase.want, logs)
+			}
+			if !isInsightReason(outcome.Error) {
+				t.Errorf("error = %q is not a token from the reason set", outcome.Error)
+			}
+			if outcome.DocumentPath != "" {
+				t.Errorf("a failed run named a document at %q", outcome.DocumentPath)
+			}
+		})
+	}
+}
+
+// exitsWith arranges a run whose `insight run` exits with the given code.
+func exitsWith(document string, code int) func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+	return func(t *testing.T) (*insightService, *bytes.Buffer, context.Context) {
+		dav := newInsightDAV(t, insightTestCatalog, "MEETING1.opus", "MEETING2.opus")
+		bin, _ := fakeInsightCassini(t, document, code)
+		service, logs := insightTestService(t, dav.server.URL, bin, nil)
+		return service, logs, context.Background()
 	}
 }
 
