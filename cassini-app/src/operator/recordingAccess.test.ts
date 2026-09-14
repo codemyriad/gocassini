@@ -433,7 +433,6 @@ describe("while the switch runs", () => {
   it("names what this browser is building, before the operator moves anything", () => {
     expect(preparingTitle("access_controlled")).toBe("Preparing the Team folder…");
     expect(preparingTitle("default")).toBe("Preparing the cassini account…");
-    expect(preparingTitle(null)).toBe("Preparing the cassini account…");
     expect(preparingTitle("access_controlled")).not.toContain("close this page");
   });
 

@@ -3,8 +3,9 @@
   import { Check, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import PasswordReveal from "./PasswordReveal.svelte";
   import { loadConfig } from "./operator/config";
-  import { OperatorClient, OperatorHttpError } from "./operator/client";
+  import { OperatorClient } from "./operator/client";
   import { accountSteps } from "./operator/firstRun";
+  import { LOAD_ERROR_TITLE, buildLoadError, type LoadError } from "./operator/loadError";
   import {
     NcSetupError,
     isSetupAvailable,
@@ -58,8 +59,11 @@
 
   let status: StorageStatus | null = null;
   let loading = true;
-  let loadError = "";
-  let actionError = "";
+  // Both failures are the same shape: a sentence with a next move in it, and
+  // the raw diagnosis kept for the disclosure (operator/loadError.ts). Null is
+  // "nothing went wrong", which is what an empty string used to mean.
+  let loadError: LoadError | null = null;
+  let actionError: LoadError | null = null;
   // done is the one-line outcome of the last switch. Ordinary component state:
   // nothing reloads the page, so there is nothing for it to survive.
   let done = "";
@@ -125,12 +129,12 @@
       return;
     }
     loading = true;
-    loadError = "";
+    loadError = null;
     try {
       status = await operatorClient.getStorage();
       watchRunningSwitch();
     } catch (error) {
-      loadError = asMessage(error);
+      loadError = asFailure(error);
     } finally {
       loading = false;
     }
@@ -145,13 +149,13 @@
       return;
     }
     loading = true;
-    loadError = "";
-    actionError = "";
+    loadError = null;
+    actionError = null;
     try {
       status = await operatorClient.recheckStorage();
       watchRunningSwitch();
     } catch (error) {
-      loadError = asMessage(error);
+      loadError = asFailure(error);
     } finally {
       loading = false;
     }
@@ -161,7 +165,7 @@
     if (busy || status === null || status.mode === mode) {
       return;
     }
-    actionError = "";
+    actionError = null;
     done = "";
     target = mode;
     // The checklist is only for the two apps, and only while one is missing.
@@ -195,7 +199,7 @@
       return;
     }
     installing = true;
-    actionError = "";
+    actionError = null;
     try {
       await operatorClient.installStorageApps();
       status = await operatorClient.recheckStorage();
@@ -204,7 +208,7 @@
         void openPanel("confirm");
       }
     } catch (error) {
-      actionError = asMessage(error);
+      actionError = asFailure(error);
     } finally {
       installing = false;
     }
@@ -221,21 +225,38 @@
   // header, so a credential shown once here would be made out of a value
   // nothing uses. "Set a password" below is the row for the rare day somebody
   // needs to sign in as it themselves.
+  //
+  // It also answers the first-run flag, because this is the other place the
+  // account can come into existence (D-756 review). The dialog's own button
+  // answers it after its run; this one answers it after this run, and neither
+  // answers it before the account is there — an install that still cannot
+  // record must not lose the one dialog that would say so.
   async function createAccount(): Promise<void> {
     if (!operatorClient || busy || accountPlan.length === 0) {
       return;
     }
     creatingAccount = true;
-    actionError = "";
+    actionError = null;
     progress = "";
     try {
       await runSetupPlan(accountPlan, {
         onProgress: ({ step, index, total }) => (progress = `${index + 1}/${total} — ${step.title}`),
       });
       status = await operatorClient.recheckStorage();
+      if (status.service_account.exists) {
+        // Best effort, and separately caught: the account was created, and
+        // reporting a failed flag write as though the creation failed would be
+        // the opposite of what happened. A flag that did not get written shows
+        // the dialog once more, which is the honest degrade.
+        try {
+          await operatorClient.acknowledgeFirstRun();
+        } catch (error) {
+          console.warn("Cassini: the first-run acknowledgement failed.", error);
+        }
+      }
       notifySetupChanged();
     } catch (error) {
-      actionError = asMessage(error);
+      actionError = asFailure(error);
     } finally {
       creatingAccount = false;
       progress = "";
@@ -261,7 +282,7 @@
     }
     const mode = target;
     switching = true;
-    actionError = "";
+    actionError = null;
     done = "";
     migration = null;
     progress = "";
@@ -302,7 +323,7 @@
       done = doneMessage(mode);
       notifySetupChanged();
     } catch (error) {
-      actionError = asMessage(error);
+      actionError = asFailure(error);
       flow = null;
       target = null;
       // Re-read rather than trusting the pre-switch snapshot. Most failures
@@ -334,13 +355,13 @@
       return;
     }
     resuming = true;
-    actionError = "";
+    actionError = null;
     done = "";
     try {
       status = await operatorClient.finishStorageMigration();
       notifySetupChanged();
     } catch (error) {
-      actionError = asMessage(error);
+      actionError = asFailure(error);
       try {
         status = await operatorClient.getStorage();
       } catch {
@@ -359,13 +380,13 @@
       return;
     }
     resetting = true;
-    actionError = "";
+    actionError = null;
     credential = null;
     try {
       const user = status.service_account.user;
       credential = { user, password: await resetServiceAccountPassword(user) };
     } catch (error) {
-      actionError = asMessage(error);
+      actionError = asFailure(error);
       if (error instanceof NcSetupError && error.outcome?.password) {
         // A run that created the account and then failed has minted a password
         // that exists nowhere else. Show it with the error rather than losing it.
@@ -389,7 +410,7 @@
   function pollMigration(onFinished: (() => void) | null): () => void {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const tick = async () => {
+    const poll = async () => {
       if (stopped || !operatorClient) {
         return;
       }
@@ -408,10 +429,10 @@
         // failure, and a poll that lost one round trip has nothing to say.
       }
       if (!stopped) {
-        timer = setTimeout(() => void tick(), POLL_MS);
+        timer = setTimeout(() => void poll(), POLL_MS);
       }
     };
-    timer = setTimeout(() => void tick(), POLL_MS);
+    timer = setTimeout(() => void poll(), POLL_MS);
     return () => {
       stopped = true;
       if (timer !== null) {
@@ -438,31 +459,38 @@
     });
   }
 
-  function asMessage(error: unknown): string {
+  // asFailure turns whatever was thrown into the one sentence this section
+  // shows, plus the raw diagnosis for the disclosure.
+  //
+  // Nextcloud's own refusals are classified here because only this side knows
+  // what was being attempted — a cancelled password confirmation is not an
+  // error to report, it is a step somebody declined. Everything else is an
+  // operator call that failed, and operator/loadError.ts is where a status code
+  // becomes a next move (lifted from #288): the section used to render
+  // `error.message`, which is how an administrator came to read "HTTP 503" as
+  // the reason they could not change who sees recordings.
+  function asFailure(error: unknown): LoadError {
     if (error instanceof NcSetupError) {
       switch (error.reason) {
         case "cancelled":
-          return "Nextcloud needs you to confirm your password before it will make these changes.";
+          return plainly(
+            "Nextcloud needs you to confirm your password before it will make these changes.",
+          );
         case "unavailable":
-          return `${error.message} Open Cassini from Nextcloud's own menu, or run the commands under "Details for administrators" instead.`;
+          return plainly(
+            `${error.message} Open Cassini from Nextcloud's own menu, or run the commands under "Details for administrators" instead.`,
+          );
         default:
-          return error.step ? `${error.message} (at: ${error.step})` : error.message;
+          return plainly(error.message, error.step ? `at: ${error.step}` : "");
       }
     }
-    if (error instanceof OperatorHttpError) {
-      if (error.status === 404) {
-        // AppAPI learns an ExApp's routes from the manifest it was REGISTERED
-        // with, so an installation updated in place from a version that
-        // predates these routes 404s every request this section makes.
-        return (
-          "This Nextcloud does not know about Cassini's storage routes, which happens when the app " +
-          "was updated in place from a version that predates them. Re-register the app in Nextcloud " +
-          "(External Apps, remove and add Cassini again, keeping its data)."
-        );
-      }
-      return error.message;
-    }
-    return error instanceof Error ? error.message : String(error);
+    return buildLoadError(error);
+  }
+
+  // plainly is a sentence that is already the right one: Nextcloud said what
+  // happened, and there is no status code to classify.
+  function plainly(summary: string, detail = ""): LoadError {
+    return { title: LOAD_ERROR_TITLE, summary, detail };
   }
 
   $: options = accessOptions(status);
@@ -515,8 +543,33 @@
   </header>
 
   {#if loadError}
-    <div class="px-4 py-4">
-      <div class="alert alert-error text-sm">{loadError}</div>
+    <!-- The section could not be read at all, so this stands in for it: what
+         went wrong in one sentence, the way back, and the raw diagnosis one
+         disclosure down (D-756, lifted from #288). -->
+    <div class="grid gap-3 p-4">
+      <div class="alert alert-error items-start gap-3 text-sm" role="alert">
+        <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+        <div class="grid min-w-0 gap-1">
+          <p class="font-semibold">{loadError.title}</p>
+          <p class="break-words">{loadError.summary}</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button class="btn btn-sm btn-primary" type="button" disabled={loading} on:click={load}>
+          {#if loading}
+            <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+            Checking…
+          {:else}
+            Try again
+          {/if}
+        </button>
+      </div>
+      {#if loadError.detail}
+        <details class="rounded-box border border-base-300 bg-base-200 p-3">
+          <summary class="cursor-pointer text-sm font-semibold">Details for administrators</summary>
+          <p class="mt-2 font-mono text-xs break-words text-base-content/70">{loadError.detail}</p>
+        </details>
+      {/if}
     </div>
   {:else if loading}
     <div class="flex items-center justify-center p-6 text-sm text-base-content/60">Loading…</div>
@@ -544,7 +597,18 @@
       {#if actionError}
         <div class="alert alert-error items-start gap-3 text-sm" role="alert">
           <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
-          <p class="break-words">{actionError}</p>
+          <div class="grid min-w-0 gap-1">
+            <p class="break-words">{actionError.summary}</p>
+            {#if actionError.detail}
+              <!-- Same rule as the load failure and the setup notice: the
+                   status code and the step name are worth keeping and are not
+                   worth reading first. -->
+              <details>
+                <summary class="cursor-pointer text-xs">Show details</summary>
+                <p class="mt-1 font-mono text-xs break-words opacity-80">{actionError.detail}</p>
+              </details>
+            {/if}
+          </div>
         </div>
       {/if}
 
@@ -729,7 +793,7 @@
         </div>
       {/if}
 
-      {#if flow === "preparing"}
+      {#if flow === "preparing" && target}
         <!-- The browser's own half. No permission to close the page: this runs
              HERE, and closing the tab aborts it. -->
         <div

@@ -293,7 +293,11 @@ export function switchSteps(migration: StorageMigration | null): SwitchStep[] {
 // the service account. It is a separate line from switchingTitle because
 // closing the tab here aborts it, and the page must not be offering to be
 // closed yet.
-export function preparingTitle(target: AccessMode | null): string {
+//
+// Unlike switchingTitle it takes no null: this half runs only in the page that
+// started the switch, which knows where it is going. switchingTitle's null is
+// the switch this page came back to and cannot name.
+export function preparingTitle(target: AccessMode): string {
   if (target === PARTICIPANTS) {
     return "Preparing the Team folder…";
   }
