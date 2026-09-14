@@ -68,14 +68,28 @@ describe("InsightCard surface", () => {
     );
   });
 
-  it("lets a failed run be retried from the list, beside the card rather than inside it", () => {
-    // The card is a button and cannot hold another; the control sits next to
-    // it, only for a failed run, and only where the provider can retry (D-749).
-    const card = insightCardSource.indexOf('class="insight-card"');
-    const cardEnd = insightCardSource.indexOf("</button>", card);
+  it("lets a failed run be retried on the card, without a button inside a button", () => {
+    // The card is a container holding the open control and, for a failed run
+    // where the provider can retry, a Retry control beside it (D-749). They
+    // are siblings: the open button is closed before Retry begins.
+    expect(insightCardSource).toMatch(/<div class="insight-card"/);
+    expect(insightCardSource).not.toMatch(/<button[^>]*class="insight-card"/);
+    const open = insightCardSource.indexOf('class="insight-open"');
+    const openEnd = insightCardSource.indexOf("</button>", open);
     const retry = insightCardSource.indexOf("{#if failed && canRetry}");
-    expect(retry).toBeGreaterThan(cardEnd);
+    const cardEnd = insightCardSource.indexOf("</div>", retry);
+    expect(retry).toBeGreaterThan(openEnd);
+    expect(cardEnd).toBeGreaterThan(retry);
+    expect(insightCardSource.slice(retry, cardEnd)).toContain('class="insight-retry"');
     expect(insightCardSource).toContain('dispatch("retry")');
     expect(insightCardSource).toContain("export let canRetry = false;");
+  });
+
+  it("puts Retry on the header row, right-aligned, and the whole card stays the open target", () => {
+    // Laid over the card rather than taking a flex slot from the open button.
+    expect(insightCardSource).toContain(".insight-card {\n    position: relative;");
+    expect(insightCardSource).toContain(".insight-retry {\n    position: absolute;");
+    expect(insightCardSource).toContain('{retrying ? "Retrying…" : "Retry"}');
+    expect(insightCardSource).toContain('<p class="insight-retry-error" role="status">{retryError}</p>');
   });
 });

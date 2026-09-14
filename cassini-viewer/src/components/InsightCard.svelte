@@ -40,83 +40,111 @@
   $: failed = insight.status === "failed";
 </script>
 
+<!-- The card is a container, not a control, for the reason the meeting row is
+     one: Retry has to sit inside the card, and a button cannot hold another.
+     The open button fills the card; Retry is its sibling, laid over the header
+     row beside the status pill. `.insight-card` and aria-current stay on THIS
+     element because the card's open state is styled from that pair; the open
+     button repeats aria-current because that is the element a screen reader
+     lands on. -->
 <div class="insight-row">
-  <button
-    type="button"
-    class="insight-card"
-    aria-current={selected ? "page" : undefined}
-    on:click={() => dispatch("open")}
-  >
-    <span class="insight-eyebrow">
-      <span class="insight-kind">Insight</span>
-      {#if pending}
-        <span class="insight-status" data-status={insight.status}>
-          {formatInsightStatus(insight.status)}
-        </span>
-      {/if}
-    </span>
-    <span class="insight-title">{headline}</span>
-    <span class="insight-meta">
-      <span>{formatInsightCreated(insight)}</span>
-      <!-- Nothing at all when no source is readable: an insight whose meetings
-           this caller cannot see does not report how many there were. -->
-      {#if sourceCount > 0}
-        <span class="dot" aria-hidden="true"></span>
-        <span>{sourceCount} {sourceCount === 1 ? "meeting" : "meetings"}</span>
-      {/if}
-    </span>
-  </button>
-  <!-- Beside the card rather than inside it: the card is a button, and a
-       button cannot hold another. A failed run is recoverable from the list it
-       is seen in, not only from the panel that started it (D-749). -->
-  {#if failed && canRetry}
-    <div class="insight-retry">
-      <button type="button" disabled={retrying} on:click={() => dispatch("retry")}>
+  <div class="insight-card" aria-current={selected ? "page" : undefined}>
+    <button
+      type="button"
+      class="insight-open"
+      aria-current={selected ? "page" : undefined}
+      on:click={() => dispatch("open")}
+    >
+      <span class="insight-eyebrow">
+        <span class="insight-kind">Insight</span>
+        {#if pending}
+          <span class="insight-status" data-status={insight.status}>
+            {formatInsightStatus(insight.status)}
+          </span>
+        {/if}
+      </span>
+      <span class="insight-title">{headline}</span>
+      <span class="insight-meta">
+        <span>{formatInsightCreated(insight)}</span>
+        <!-- Nothing at all when no source is readable: an insight whose meetings
+             this caller cannot see does not report how many there were. -->
+        {#if sourceCount > 0}
+          <span class="dot" aria-hidden="true"></span>
+          <span>{sourceCount} {sourceCount === 1 ? "meeting" : "meetings"}</span>
+        {/if}
+      </span>
+    </button>
+    <!-- A failed run is recoverable from the list it is seen in, not only from
+         the panel that started it (D-749). Only for a failed run, and only
+         where the provider can retry. -->
+    {#if failed && canRetry}
+      <button
+        type="button"
+        class="insight-retry"
+        disabled={retrying}
+        on:click={() => dispatch("retry")}
+      >
         {retrying ? "Retrying…" : "Retry"}
       </button>
       {#if retryError}
-        <span class="insight-retry-error" role="status">{retryError}</span>
+        <p class="insight-retry-error" role="status">{retryError}</p>
       {/if}
-    </div>
-  {/if}
+    {/if}
+  </div>
 </div>
 
 <style>
   /* Inset from the list's full-bleed rows, so the card reads as an object
      sitting in the stream rather than another row of it. */
   .insight-row {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
     padding: 6px 20px;
   }
 
-  .insight-retry {
+  /* The open control fills the card and draws nothing of its own: the surface
+     is the card's, so the card looks the same whether or not Retry is on it. */
+  .insight-open {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    padding-left: 12px;
-    font-size: 0.75rem;
+    flex-direction: column;
+    gap: 3px;
+    width: 100%;
+    padding: 10px 12px;
+    text-align: left;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    border-radius: inherit;
+    color: inherit;
+    font: inherit;
   }
-  .insight-retry button {
+
+  /* On the header row, right-aligned, beside the Failed pill. Absolute rather
+     than a flex sibling so the open control keeps the whole card as its
+     target; the title sits on the next line, so nothing runs under it. */
+  .insight-retry {
+    position: absolute;
+    top: 8px;
+    right: 10px;
     padding: 2px 10px;
     cursor: pointer;
     font-size: 0.75rem;
     font-weight: 550;
+    line-height: 1.3;
     background: transparent;
     border: 1px solid var(--color-base-300);
     border-radius: var(--radius-field, 0.5rem);
     color: var(--color-base-content);
   }
-  .insight-retry button:hover:not(:disabled) {
+  .insight-retry:hover:not(:disabled) {
     background-color: var(--color-base-200);
   }
-  .insight-retry button:disabled {
+  .insight-retry:disabled {
     cursor: default;
     opacity: 0.6;
   }
   .insight-retry-error {
+    margin: 0;
+    padding: 0 12px 8px;
+    font-size: 0.75rem;
     color: var(--color-error);
   }
 
@@ -134,13 +162,7 @@
      than into transparent keeps it opaque over the row separators and stable in
      both themes. */
   .insight-card {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    width: 100%;
-    padding: 10px 12px;
-    text-align: left;
-    cursor: pointer;
+    position: relative;
     background-color: color-mix(in oklch, var(--color-secondary) 10%, var(--color-base-100));
     border: 1px solid color-mix(in oklch, var(--color-secondary) 22%, var(--color-base-300));
     border-left: 3px solid var(--color-secondary);
