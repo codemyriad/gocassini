@@ -32,15 +32,18 @@
   // else. The base URL, the key and the request bounds stay on the ADMIN
   // settings surface.
   //
-  // There is no MODEL picker. One endpoint has one default model, set by the
-  // administrator in AI providers, and that is what a run asks for (D-749):
-  // a per-run combobox was a second place to choose a model for one job, and
-  // an empty one — the default — let the child inherit a model chosen for a
-  // different endpoint. The request still carries `model`, empty, so a per-run
-  // override can return without a wire change.
+  // The MODEL field is for everybody too, pre-filled with the chosen endpoint's
+  // default so nobody has to pick one every time, and editable for the run
+  // where the default is the wrong one (D-749). Changing the endpoint re-fills
+  // it with that endpoint's default. What is typed here affects this run only;
+  // the default itself is set in AI providers and nothing is written back.
+  // The box is never empty when the endpoint has a default, so a run cannot
+  // inherit a model chosen for a different endpoint the way an empty per-run
+  // field once let it.
   import { createEventDispatcher } from "svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
 
+  import ModelCombobox from "./ModelCombobox.svelte";
   import { loadConfig } from "./operator/config";
   import type { OperatorClient } from "./operator/client";
   import type { InsightWorkflow } from "./operator/types";
@@ -48,6 +51,7 @@
   import {
     createInsight,
     listAIProviders,
+    listAIProviderModels,
     workflowTakesQuestion,
     type AIProviderChoice,
     type InsightRun,
@@ -94,16 +98,25 @@
 
   // The endpoints this deployment has, and the one this run will reach.
   // Defaults to the first provider, which is what somebody who does not care
-  // should get without touching anything. The model is the endpoint's own
-  // default, shown rather than chosen.
+  // should get without touching anything.
   let providers: AIProviderChoice[] = [];
   let providersAsked = false;
   let providersError = "";
   let chosenProvider = "";
-  // Always empty: the operator resolves the chosen endpoint's default model.
-  // Kept on the wire so a per-run override can come back without a change to
-  // the request shape.
-  const chosenModel = "";
+  // The model this run asks for. Pre-filled with the chosen endpoint's default
+  // whenever the endpoint is chosen, and free to edit after that. An untouched
+  // box sends the default explicitly, which is the same run the operator
+  // would have resolved for itself.
+  let chosenModel = "";
+
+  // What each endpoint said it serves, asked for when the model field opens
+  // and kept per endpoint so a second opening is free. Loading and failure are
+  // keyed per endpoint too, never held in one in-flight marker: one slow
+  // listing must not make another endpoint's field say it listed nothing
+  // (D-740).
+  let modelsByProvider: Record<string, AIProviderChoice[]> = {};
+  let modelsLoadingByProvider: Record<string, boolean> = {};
+  let modelsErrorByProvider: Record<string, string> = {};
 
   // The operator base is the same one every other call in this app resolves,
   // and it is a pure read of the injected config — no client, so it works for
@@ -137,8 +150,6 @@
   $: if (operatorBasePath !== "" && !providersAsked) {
     void loadProviders();
   }
-  $: chosenProviderEntry = providers.find((provider) => provider.id === chosenProvider) ?? null;
-
   $: chosenWorkflowEntry = workflows.find((workflow) => workflow.id === chosenWorkflow) ?? null;
 
   // Whether this run may carry a question of your own, decided against the
@@ -182,7 +193,7 @@
     try {
       providers = await listAIProviders(operatorBasePath);
       if (chosenProvider === "" && providers.length > 0) {
-        chosenProvider = providers[0].id;
+        chooseProvider(providers[0].id);
       }
     } catch (error) {
       // Narrows the card rather than blocking it: with no list, the run carries
@@ -192,8 +203,38 @@
     }
   }
 
+  // Choosing an endpoint chooses its default model with it. A model typed for
+  // the old endpoint is not carried across: it would name one the new endpoint
+  // may never have heard of.
   function chooseProvider(id: string) {
     chosenProvider = id;
+    chosenModel = defaultModelOf(id);
+  }
+
+  function defaultModelOf(providerId: string): string {
+    return providers.find((provider) => provider.id === providerId)?.model ?? "";
+  }
+
+  async function loadModels(providerId: string) {
+    if (
+      providerId === "" ||
+      modelsByProvider[providerId] ||
+      modelsLoadingByProvider[providerId]
+    ) {
+      return;
+    }
+    modelsLoadingByProvider = { ...modelsLoadingByProvider, [providerId]: true };
+    modelsErrorByProvider = { ...modelsErrorByProvider, [providerId]: "" };
+    try {
+      modelsByProvider = {
+        ...modelsByProvider,
+        [providerId]: await listAIProviderModels(operatorBasePath, providerId),
+      };
+    } catch (error) {
+      modelsErrorByProvider = { ...modelsErrorByProvider, [providerId]: describe(error) };
+    } finally {
+      modelsLoadingByProvider = { ...modelsLoadingByProvider, [providerId]: false };
+    }
   }
 
   async function generate() {
@@ -297,8 +338,7 @@
     <!-- Where this question goes. Offered to EVERYBODY, not only
          administrators: it is the asker's own transcripts being sent, so the
          choice is theirs. Absent only where there is nothing to choose — no
-         endpoint at all, or a list that could not be read. The model is the
-         endpoint's default, read-only: choosing an endpoint is choosing it. -->
+         endpoint at all, or a list that could not be read. -->
     {#if providers.length > 0}
       <div class="ins-endpoint">
         <label class="tpl-field">
@@ -313,10 +353,18 @@
             {/each}
           </select>
         </label>
-        <p class="ins-card-note ins-model">
-          Model: {#if chosenProviderEntry?.model}<code>{chosenProviderEntry.model}</code
-            >{:else}endpoint default{/if}
-        </p>
+        <!-- Pre-filled with the endpoint's default, editable for this run.
+             Opening the field lists what the endpoint serves; the list narrows
+             what you type and never gates it. -->
+        <ModelCombobox
+          bind:value={chosenModel}
+          label="Model"
+          models={modelsByProvider[chosenProvider] ?? []}
+          loading={modelsLoadingByProvider[chosenProvider] === true}
+          error={modelsErrorByProvider[chosenProvider] ?? ""}
+          placeholder="endpoint default"
+          on:open={() => void loadModels(chosenProvider)}
+        />
       </div>
     {/if}
     {#if providersError}
@@ -410,10 +458,6 @@
   .ins-endpoint {
     display: grid;
     gap: 6px;
-  }
-  .ins-model code {
-    font-family: monospace;
-    overflow-wrap: anywhere;
   }
 
   .ins-card-foot {

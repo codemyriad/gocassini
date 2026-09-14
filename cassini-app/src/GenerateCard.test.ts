@@ -103,22 +103,47 @@ describe("GenerateCard", () => {
   it("defaults to the first provider", () => {
     // Somebody who does not care should get a working run without touching
     // anything.
-    expect(generateCardSource).toContain("chosenProvider = providers[0].id;");
+    expect(generateCardSource).toContain("chooseProvider(providers[0].id);");
   });
 
-  it("shows the endpoint's default model and offers no second place to choose one", () => {
-    // One endpoint, one model, set in AI providers (D-749). A per-run combobox
-    // was a second place to choose a model for one job, and its empty default
-    // let the child inherit a model chosen for a different endpoint.
-    expect(generateCardSource).not.toContain("ModelCombobox");
-    expect(generateCardSource).not.toContain("listAIProviderModels");
-    expect(generateCardSource).not.toContain("loadingModelsFor");
-    expect(generateCardSource).toContain("chosenProviderEntry?.model");
-    expect(generateCardSource).toContain("endpoint default");
-    // The wire keeps `model`, empty, so a per-run override can return without
-    // a request-shape change.
-    expect(generateCardSource).toContain('const chosenModel = "";');
+  it("pre-fills the model with the endpoint's default and re-fills it when the endpoint changes", () => {
+    // Nobody picks a model every time: the box opens on the endpoint's own
+    // default, and choosing another endpoint brings that one's default with
+    // it (D-749). What is typed is for this run only; nothing is written back
+    // to AI providers.
+    expect(generateCardSource).toContain("<ModelCombobox");
+    expect(generateCardSource).toContain("bind:value={chosenModel}");
+    expect(generateCardSource).toContain("chosenModel = defaultModelOf(id);");
+    expect(generateCardSource).toContain('?.model ?? ""');
+    // The first endpoint is chosen through the same path a change is, so the
+    // opening default is pre-filled too.
+    expect(generateCardSource).toContain("chooseProvider(providers[0].id);");
+    expect(generateCardSource).toContain('placeholder="endpoint default"');
     expect(generateCardSource).toContain("model: chosenModel,");
+    expect(generateCardSource).not.toContain("putLLMSettings");
+  });
+
+  it("keys the model listing, its loading and its failure per endpoint", () => {
+    // One in-flight marker shared across endpoints was the D-740 bug: a slow
+    // listing on one endpoint made another's field say it had listed no
+    // models. Each endpoint has its own list, its own loading flag and its own
+    // error, and the field reads the chosen endpoint's three.
+    expect(generateCardSource).toContain(
+      "let modelsByProvider: Record<string, AIProviderChoice[]> = {};",
+    );
+    expect(generateCardSource).toContain(
+      "let modelsLoadingByProvider: Record<string, boolean> = {};",
+    );
+    expect(generateCardSource).toContain("let modelsErrorByProvider: Record<string, string> = {};");
+    expect(generateCardSource).toContain("models={modelsByProvider[chosenProvider] ?? []}");
+    expect(generateCardSource).toContain(
+      "loading={modelsLoadingByProvider[chosenProvider] === true}",
+    );
+    expect(generateCardSource).toContain('error={modelsErrorByProvider[chosenProvider] ?? ""}');
+    expect(generateCardSource).not.toContain("loadingModelsFor");
+    // Asked when the field opens, once per endpoint.
+    expect(generateCardSource).toContain("on:open={() => void loadModels(chosenProvider)}");
+    expect(generateCardSource).toContain("listAIProviderModels(operatorBasePath, providerId)");
   });
 
   it("still runs when the endpoints cannot be listed", () => {
