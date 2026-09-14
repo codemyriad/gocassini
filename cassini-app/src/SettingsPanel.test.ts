@@ -165,4 +165,12 @@ describe("SettingsPanel template picker", () => {
       "The publish pipeline still runs the summary prompt",
     );
   });
+
+  it("names the provider's default model as what an empty summary model means", () => {
+    // "endpoint default" named nothing; the provider's default model is what
+    // actually runs when the step names none (D-749).
+    expect(settingsPanelSource).toContain("placeholder={providerModelPlaceholder(summary.provider)}");
+    expect(settingsPanelSource).toContain("(the provider's default)");
+    expect(settingsPanelSource).toContain("no default model set on this provider");
+  });
 });

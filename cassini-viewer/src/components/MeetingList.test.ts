@@ -109,7 +109,7 @@ describe("MeetingList insights", () => {
     // has come back, the failure when it did not, and nothing while the first
     // is still in flight.
     expect(meetingListSource).toContain("{#if insightsError}");
-    expect(meetingListSource).toContain("Insights could not be listed:");
+    expect(meetingListSource).toContain("Insights could not be listed.");
     expect(meetingListSource).toMatch(
       /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
     );
@@ -126,15 +126,41 @@ describe("MeetingList insights", () => {
     );
   });
 
-  it("names the search box after the kinds it is narrowing", () => {
+  it("names the search box after the kinds it is narrowing, and after what it can reach", () => {
     // It narrows insights too, and narrows insights ALONE when the Meetings
-    // toggle is off.
+    // toggle is off — so the kinds stay in the label.
+    //
+    // What changed in D-736 is the second half: with an operator behind it the
+    // box also searches what was SAID, and the placeholder has to say so or the
+    // reader never learns the capability exists. Without one (a standalone
+    // export) it must NOT say so, because there is nothing to ask and the
+    // promise would be empty.
     expect(meetingListSource).toContain(
-      "placeholder={`Search ${matchNounPlural} by name or date`}",
+      "`Search ${matchNounPlural} and what was said in them`",
     );
     expect(meetingListSource).toContain(
-      "aria-label={`Search ${matchNounPlural} by name or date`}",
+      "`Search ${matchNounPlural} by name or date`",
     );
+    expect(meetingListSource).toContain("searchOffered");
+  });
+
+  // A failure must never be rendered as an empty result: "nothing was said
+  // about that" and "the archive is unreachable" are opposite answers.
+  it("keeps a search failure visually distinct from nothing matching", () => {
+    expect(meetingListSource).toContain("searchProblem");
+    expect(meetingListSource).toContain('searchState === "rateLimited"');
+    expect(meetingListSource).toContain('searchState === "indexUnavailable"');
+    expect(meetingListSource).toContain('searchState === "failed"');
+  });
+
+  // A button inside a button is invalid markup browsers resolve by dropping
+  // one, so the moments sit outside the row's own open button.
+  it("renders matched moments outside the row open button", () => {
+    const openButton = meetingListSource.indexOf('class="row-open"');
+    const moments = meetingListSource.indexOf('class="row-moments"');
+    const openButtonEnd = meetingListSource.indexOf("</button>", openButton);
+    expect(openButton).toBeGreaterThan(-1);
+    expect(moments).toBeGreaterThan(openButtonEnd);
   });
 
   it("counts an insight's sources with a number the shell resolved", () => {
@@ -143,5 +169,80 @@ describe("MeetingList insights", () => {
     expect(meetingListSource).toContain(
       "sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}",
     );
+  });
+
+  // A promise the build cannot keep is worse than no promise: a standalone
+  // export has no operator, so the box must not offer to search transcripts.
+  it("gates the transcript promise on there being something to ask", () => {
+    expect(meetingListSource).toContain("export let searchOffered = false;");
+    expect(meetingListSource).toMatch(
+      /placeholder=\{searchOffered[\s\S]{0,160}what was said in them[\s\S]{0,80}by name or date`\}/,
+    );
+  });
+
+  // "Nothing matches" is a claim about the whole archive. After a failed search
+  // it is a claim the search never got to make, and after a partial one it is
+  // false — the design's invariant 4 is that coverage is never overstated.
+  it("will not say nothing matched when the search could not say so", () => {
+    expect(meetingListSource).toContain("searchCoveredEverything");
+    expect(meetingListSource).toContain("{:else if trimmedFilter && searchProblem}");
+    expect(meetingListSource).toContain("{:else if trimmedFilter && !searchCoveredEverything}");
+  });
+
+  it("forwards a card's retry to the shell with the record, and decides nothing", () => {
+    // The shell owns the provider and the request; the list only says which
+    // card asked (D-749).
+    expect(meetingListSource).toContain('on:retry={() => dispatch("retryInsight", item.insight)}');
+    expect(meetingListSource).toContain("canRetry={insightsRetryable}");
+    expect(meetingListSource).toContain("retrying={retryingInsightId === item.insight.id}");
+  });
+});
+
+// The audience chip (D-756). It is the only permanent statement on the browse
+// surface of who can see these recordings, and it is the same for everybody:
+// an administrator and a non-administrator must never disagree about what is
+// true. D-670 exists because the previous behaviour was to say nothing.
+describe("MeetingList audience chip", () => {
+  it("names the two audiences in the words the whole product uses", () => {
+    expect(meetingListSource).toContain("Visible to anyone with a Nextcloud account");
+    expect(meetingListSource).toContain("Visible to meeting participants");
+    // Never the storage enum, and never "Everyone in Cassini": the viewing
+    // layer is handed an audience, not a mode.
+    expect(meetingListSource).not.toContain("access_controlled");
+    expect(meetingListSource).not.toContain("Everyone in Cassini");
+  });
+
+  it("explains each one in a sentence, in the chip's title", () => {
+    expect(meetingListSource).toContain(
+      'title="Anyone with an account on this Nextcloud can see every recording and the name of the room it came from"',
+    );
+    expect(meetingListSource).toContain(
+      'title="Only the people in each call can see its recording"',
+    );
+  });
+
+  it("renders nothing at all when nobody said", () => {
+    // A standalone export has no operator to ask, and an operator too old to
+    // report the mode said nothing either. Absence is not an audience, and a
+    // chip is a claim about who can read a recording.
+    expect(meetingListSource).toContain(
+      'export let audience: "" | "everyone" | "participants" = "";',
+    );
+    expect(meetingListSource).toMatch(
+      /\{#if audience === "everyone"\}[\s\S]{0,400}\{:else if audience === "participants"\}[\s\S]{0,400}\{\/if\}/,
+    );
+  });
+
+  it("sits in the result line, and does not look like a narrowing", () => {
+    // The other chips on that line are active filters with a clear button.
+    // This one filters nothing, so it drops the primary fill that means "this
+    // list is incomplete".
+    const resultline = meetingListSource.slice(
+      meetingListSource.indexOf('<div class="resultline"'),
+      meetingListSource.indexOf("</header>"),
+    );
+    expect(resultline).toContain('class="chip audience"');
+    expect(resultline).toContain('class="chip audience limited"');
+    expect(meetingListSource).toContain(".chip.audience {");
   });
 });

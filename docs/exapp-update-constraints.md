@@ -278,10 +278,13 @@ Rule 5 is measured for deploy options: they are creation-time, and
 `app_api:app:update` reuses the stored ones. Whether the same is true of
 `<routes>` has never been tested either way.
 
-It matters because D-616 added `^operator/storage/?$`, which the whole Setup tab
-is built on. If routes do not refresh on update, every installation upgraded in
-place gets a Setup tab where each button 404s — and the symptom says nothing
-about the cause.
+It matters because D-616 added `^operator/storage/?$`. There is no Setup tab any
+more (D-756) — the choice lives in **Operator › Settings › Who can see
+recordings**, and a fresh install shows one first-run dialog — but both are
+built on that route, as is the dialog's "Create the account" step. If routes do
+not refresh on update, every installation upgraded in place gets a settings
+section that cannot read the storage record and a first run that cannot create
+the `cassini` account — and the symptom says nothing about the cause.
 
 The paragraph above ("an update re-runs the deploy against the same daemon with
 a newer manifest") reads as though they DO refresh, but that sentence is about
@@ -307,9 +310,14 @@ curl -sS -u admin:admin -o /dev/null -w '%{http_code}\n' \
 note telling administrators to re-register, and the mitigation below becomes the
 supported path rather than a courtesy.
 
-**Mitigation already in place:** the Setup tab turns a 404 from `/storage` into
-an explanation naming re-registration, rather than a bare HTTP error. So the
-worst case is recoverable and self-describing even if nobody runs the check.
+**Mitigation already in place:** a failed `/storage` call is turned into one
+plain sentence with a **Try again** beside it, and the raw `HTTP 404: …` is kept
+under "Details for administrators" (`cassini-app/src/operator/loadError.ts`),
+rather than a bare HTTP error reaching the screen. The sentence asks whether the
+update has finished; it does not assert a stale manifest, because a 404 is also
+what a proxy in front of Nextcloud answers. Re-registering the app is the fix WHEN the check above
+confirms routes do not refresh, and it belongs in that release note rather than
+in a message shown to everyone who ever sees a 404.
 
 ## Related
 

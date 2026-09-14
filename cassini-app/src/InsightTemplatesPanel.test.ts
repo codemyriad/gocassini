@@ -101,9 +101,7 @@ describe("InsightTemplatesPanel", () => {
   it("keeps the panel's claim about where these templates are used true", () => {
     // The summary step runs a registry workflow by id, so this sentence
     // describes the code rather than an intention (D-718).
-    expect(insightTemplatesPanelSource).toContain(
-      "Used when creating an insight, and by the summary step in the publish pipeline.",
-    );
+    expect(insightTemplatesPanelSource).toContain("Used by insights and by the summary step.");
   });
 
   it("keeps loading, an empty registry and a failed fetch as three answers", () => {
@@ -111,10 +109,8 @@ describe("InsightTemplatesPanel", () => {
     // "Cassini ships no templates" when the fetch failed, or the reverse.
     expect(insightTemplatesPanelSource).toContain("Loading insight templates…");
     expect(insightTemplatesPanelSource).toContain("This build ships no templates.");
-    expect(insightTemplatesPanelSource).toContain("{loadError}");
-    expect(insightTemplatesPanelSource).toContain(
-      "This says the template list could not be read, not that Cassini ships none.",
-    );
+    expect(insightTemplatesPanelSource).toContain("{#if loadError}");
+    expect(insightTemplatesPanelSource).toContain("Templates could not be listed.");
   });
 
   it("offers no way to author or edit a template", () => {

@@ -16,6 +16,11 @@
   import { RefreshCw } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import ModelCombobox from "./ModelCombobox.svelte";
+  // D-757: "Who can see recordings" is a section of the Settings panel, above
+  // the pipeline it applies to. Its own component because it is a page's worth
+  // of state — a switch, its prerequisites, its progress — and none of it is
+  // shared with the settings below.
+  import RecordingAccessPanel from "./RecordingAccessPanel.svelte";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
@@ -319,6 +324,16 @@
     return provider ? provider.name || provider.base_url || provider.id : id;
   }
 
+  // What an empty model field on this step means, said in the field: the
+  // provider's default model is what runs (D-749), and the placeholder names
+  // it rather than the older "endpoint default", which named nothing.
+  function providerModelPlaceholder(id: string): string {
+    const model = llm?.providers.find((row) => row.id === id)?.model ?? "";
+    return model !== ""
+      ? `${model} (the provider's default)`
+      : "no default model set on this provider";
+  }
+
   // Switching the step on with nothing chosen would send a body the operator
   // refuses ("summary is enabled but has no provider"), so the first provider
   // is chosen for you — which is also what a fresh install wants.
@@ -360,6 +375,8 @@
   $: summaryDirty = llm !== null && JSON.stringify(summary) !== savedSummary;
   $: isDirty = sttDirty || summaryDirty;
 </script>
+
+<RecordingAccessPanel {operatorClient} />
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
   <header class="flex items-start justify-between gap-3 px-4 py-3">
@@ -590,6 +607,7 @@
                 models={summaryModels}
                 loading={loadingModelsFor === summary.provider}
                 error={modelsErrorByProvider[summary.provider] ?? ""}
+                placeholder={providerModelPlaceholder(summary.provider)}
                 on:open={() => void loadModels(summary.provider)}
               />
 
@@ -628,7 +646,7 @@
                 </select>
                 {#if !workflowsKnown}
                   <span class="text-xs text-base-content/50">
-                    The template list could not be read, so this keeps what was saved.
+                    Templates could not be listed.
                   </span>
                 {/if}
                 <!-- The field is saved and served; the publish pipeline does not

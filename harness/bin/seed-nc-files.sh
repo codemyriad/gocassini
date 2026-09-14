@@ -3,16 +3,17 @@
 #
 # A seed pack is what `cassini dev meetings pull --out <dir>` writes: a published
 # site root holding catalog.json and meetings/<id>.opus. This puts one into the
-# Cassini Team folder of a running harness stack, so the viewer, the insights
+# storage root selected for a running harness stack, so the viewer, the insights
 # surfaces and the agent read a real archive instead of a synthetic fixture.
 #
 #   harness/bin/seed-nc-files.sh --pack harness/runtime/seed/prod
 #   harness/bin/seed-nc-files.sh --pack harness/runtime/seed/prod --dry-run
 #   harness/bin/seed-nc-files.sh --pack harness/runtime/seed/prod --replace
 #
-# HOW IT LOADS THEM, AND WHY NOT OVER WEBDAV. The recordings tree is a Team
-# folder, which is ordinary files under <datadir>/__groupfolders/<id>/files. So
-# the pack is copied in and Nextcloud is told to rescan, rather than uploaded.
+# HOW IT LOADS THEM, AND WHY NOT OVER WEBDAV. Both storage roots are ordinary
+# files on disk: the ACL root is under <datadir>/__groupfolders/<id>/files; the
+# default root is under the cassini service account's Files directory. So the
+# pack is copied in and Nextcloud is told to rescan, rather than uploaded.
 # The alternative is the operator's `backfill-nc-files`, which is the right tool
 # for a production migration and the wrong one here: it spends three HTTP round
 # trips per meeting through PHP, deliberately, so that no leaf is ever visible
@@ -20,17 +21,16 @@
 # anyway, that caution buys nothing and costs the whole runtime. Measured on a
 # 2 GB, 128-meeting archive: three seconds to copy, one to scan.
 #
-# WHAT THE SEEDED MEETINGS ARE VISIBLE TO. Every account on the stack. Each
-# seeded leaf is given an explicit `everyone: read` rule — explicit because the
-# app denies any recording that states no rule of its own, treating it as an
-# interrupted delivery. Production's per-meeting permissions are not reproduced:
-# they name production accounts that do not exist here and are not readable to a
-# non-admin caller in the first place. So the archive is real and its access
-# control is not. Anything testing who may read what must not use a seeded
-# meeting as evidence.
+# WHAT THE SEEDED MEETINGS ARE VISIBLE TO. Every signed-in Cassini caller. In
+# ACL mode each seeded leaf is given an explicit `everyone: read` rule — explicit
+# because the app denies any recording that states no rule of its own, treating
+# it as an interrupted delivery. In default mode the app deliberately reads the
+# private service-account archive as its owner for every caller. Production's
+# per-meeting permissions are not reproduced, so anything testing who may read
+# what must not use a seeded meeting as evidence.
 #
-# ORDERING. This needs the Cassini Team folder to exist, which the ExApp creates
-# when it is installed and provisioned. Run it after `dev stack up` has finished,
+# ORDERING. This needs the selected root to exist, which the ExApp creates when
+# it is installed and provisioned. Run it after `dev stack up` has finished,
 # never before: nothing is laid down on disk ahead of provisioning, so
 # provisioning always creates its tree on empty disk exactly as it does on a
 # stack that is never seeded.
@@ -41,10 +41,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
-# The Team folder's mount point, and the recordings root inside it. Both are
-# hard-coded in the operator (nc_provision.go, webdav_upload.go); this mirrors
-# them and fails loudly rather than guessing if the mount point moves.
-SEED_MOUNT_POINT="Cassini"
+# The two recordings roots are hard-coded in the operator (nc_storage_paths.go,
+# webdav_upload.go). Keep these strings paired with its storage mode rather than
+# deriving a default-mode path from the Team-folder mount point.
+SEED_ACL_MOUNT_POINT="Cassini"
+SEED_DEFAULT_MOUNT_POINT="CassiniNoACL"
 SEED_RECORDINGS_SUBPATH="Recordings"
 # The service account that owns the recordings tree (ncRecordingsOwner).
 SEED_OWNER="cassini"
@@ -61,16 +62,16 @@ Usage:
   harness/bin/seed-nc-files.sh --pack <dir> [--replace] [--dry-run]
 
 Load a seed pack — catalog.json plus meetings/<id>.opus, as written by
-`cassini dev meetings pull` — into a running harness stack's Cassini Team
-folder.
+`cassini dev meetings pull` — into a running harness stack's selected
+recordings root.
 
   --pack DIR   the seed pack (default: $CASSINI_HARNESS_SEED_DIR)
   --replace    clear the existing recordings tree first, so the stack holds
                the pack and nothing else
   --dry-run    validate the pack and report the plan, change nothing
 
-Seeded meetings are readable by EVERY account on the stack. Production's
-per-meeting permissions are not reproduced and cannot be.
+Seeded meetings are served to EVERY signed-in Cassini caller. Production's
+per-meeting permissions are not reproduced and cannot be tested with them.
 EOF
 }
 
@@ -132,30 +133,47 @@ pack_bytes="$(du -sk "$PACK_DIR" | awk '{print $1 * 1024}')"
 
 harness_stack_init
 
-folders_json="$(occ groupfolders:list --output=json 2>/dev/null)" \
-  || die "could not list Team folders; is the stack up? (cassini dev stack up)"
-
-FOLDER_ID="$(jq -r --arg mp "$SEED_MOUNT_POINT" \
-  'map(select(.mountPoint == $mp)) | first | .id // empty' <<<"$folders_json")"
-if [[ -z "$FOLDER_ID" ]]; then
-  die "this stack has no '$SEED_MOUNT_POINT' Team folder.
-  It is created when the Cassini ExApp is installed and provisioned, so either
-  the stack is not in installed-exapp mode (CASSINI_HARNESS_CASSINI_MODE), or
-  'dev stack up' has not finished its ExApp install phase."
-fi
-
-DATA_DIR="$(occ config:system:get datadirectory 2>/dev/null | tr -d '\r')"
+DATA_DIR="$(occ config:system:get datadirectory 2>/dev/null | tr -d '\r' || true)"
 [[ -n "$DATA_DIR" ]] || die "could not read Nextcloud's datadirectory"
 
-FOLDER_ROOT="$DATA_DIR/__groupfolders/$FOLDER_ID"
-RECORDINGS_DIR="$FOLDER_ROOT/files/$SEED_RECORDINGS_SUBPATH"
+FOLDER_ID=""
+SCAN_PATH=""
+if harness_storage_mode_is_acl; then
+  folders_json="$(occ groupfolders:list --output=json 2>/dev/null)" \
+    || die "could not list Team folders; is the stack up? (cassini dev stack up)"
+
+  FOLDER_ID="$(jq -r --arg mp "$SEED_ACL_MOUNT_POINT" \
+    'map(select(.mountPoint == $mp)) | first | .id // empty' <<<"$folders_json")"
+  if [[ -z "$FOLDER_ID" ]]; then
+    die "this stack has no '$SEED_ACL_MOUNT_POINT' Team folder.
+    It is created when the Cassini ExApp is installed and provisioned, so either
+    the stack is not in installed-exapp mode (CASSINI_HARNESS_CASSINI_MODE), or
+    'dev stack up' has not finished its ExApp install phase."
+  fi
+
+  FOLDER_ROOT="$DATA_DIR/__groupfolders/$FOLDER_ID/files"
+  RECORDINGS_DIR="$FOLDER_ROOT/$SEED_RECORDINGS_SUBPATH"
+  SCAN_PATH=""
+  seed_destination="$SEED_ACL_MOUNT_POINT Team folder id=$FOLDER_ID"
+else
+  # Default mode has no Team folder. Its archive is private to the service
+  # account, and the operator serves it by acting as that account.
+  FOLDER_ROOT="$DATA_DIR/$SEED_OWNER/files/$SEED_DEFAULT_MOUNT_POINT"
+  RECORDINGS_DIR="$FOLDER_ROOT/$SEED_RECORDINGS_SUBPATH"
+  SCAN_PATH="$SEED_OWNER/files/$SEED_DEFAULT_MOUNT_POINT"
+  seed_destination="$SEED_OWNER private $SEED_DEFAULT_MOUNT_POINT directory"
+fi
 
 seed_log "pack $PACK_DIR (${#PACK_ASSETS[@]} meeting(s), $((pack_bytes / 1024 / 1024)) MiB)"
-seed_log "$SEED_MOUNT_POINT Team folder id=$FOLDER_ID -> $RECORDINGS_DIR"
+seed_log "$seed_destination -> $RECORDINGS_DIR"
 
 if (( DRY_RUN )); then
-  seed_log "dry run: would copy ${#PACK_ASSETS[@]} meeting(s) into the Team folder, merge them"
-  seed_log "dry run: into its catalog, rescan, and protect catalog.json. Nothing was changed."
+  seed_log "dry run: would copy ${#PACK_ASSETS[@]} meeting(s), merge them into its catalog, and rescan"
+  if [[ -n "$FOLDER_ID" ]]; then
+    seed_log "dry run: would protect catalog.json and grant each meeting its ACL rule. Nothing was changed."
+  else
+    seed_log "dry run: default mode has no Team-folder ACLs. Nothing was changed."
+  fi
   exit 0
 fi
 
@@ -242,8 +260,24 @@ seed_log "catalog holds $merged_count meeting(s) after the merge"
 
 # --- make Nextcloud see them -------------------------------------------------
 
-seed_log "scanning the Team folder"
-occ groupfolders:scan "$FOLDER_ID" >/dev/null
+if [[ -n "$FOLDER_ID" ]]; then
+  seed_log "scanning the Team folder"
+  occ groupfolders:scan "$FOLDER_ID" >/dev/null
+else
+  seed_log "scanning $SEED_OWNER's private default archive"
+  occ files:scan --path="$SCAN_PATH" >/dev/null
+fi
+
+if [[ -z "$FOLDER_ID" ]]; then
+  # The default model is deliberately not ACL-enabled: the archive remains
+  # private in Files and the operator reads it as $SEED_OWNER for every signed-in
+  # caller. There are therefore no Team-folder ACLs to set or verify here.
+  held="$(nc_root sh -c "ls -1 '$RECORDINGS_DIR/meetings' 2>/dev/null | wc -l" | tr -d ' \r')"
+  seed_log "seeded ${#PACK_ASSETS[@]} meeting(s); the archive now holds $held"
+  seed_log "default storage serves seeded meetings to EVERY signed-in Cassini caller; do not"
+  seed_log "test access control against them"
+  exit 0
+fi
 
 # Match production's floor: the authoritative catalog is owner-only, and the app
 # filters it per caller. Without this the harness would be readable in a way

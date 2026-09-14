@@ -88,6 +88,16 @@ type searchResponseHit struct {
 	// (D-737). Absent, not empty, when the meeting's marks are unknown: "no
 	// marks here" and "marks unknown" are different answers.
 	Marks *[]searchHitMark `json:"marks,omitempty"`
+	// Snippet is a BOUNDED cut of the matching segment, centred on the term that
+	// hit — never the whole segment, and never the whole transcript.
+	//
+	// This field is why the visibility join in search_query.go matters more than
+	// it used to. Before D-736 a filtering bug leaked the existence of a
+	// meeting; now it would leak words. The join is fail-closed by construction
+	// (json_each + INNER JOIN, so an empty visible set yields no rows even with
+	// the MATCH removed), and TestSearchResponseNeverCarriesInvisibleText pins
+	// the property this field puts at risk.
+	Snippet string `json:"snippet,omitempty"`
 }
 
 // searchResponseCoverage is the honesty field.
@@ -123,6 +133,19 @@ func (c ExAppConfig) serveSearch(
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// perMeeting caps how many hits one meeting may contribute. Unset means no
+	// cap, which is what the CLI's flat list wants; the meeting list asks for
+	// one, because there a meeting crowded out of the page is a meeting the
+	// caller is told does not match.
+	perMeeting := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("perMeeting")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "perMeeting must be a positive whole number")
+			return
+		}
+		perMeeting = parsed
 	}
 	// Before the expensive part, which is the point: a refused request must not
 	// have already cost a PROPFIND and a catalog GET against Nextcloud.
@@ -189,6 +212,7 @@ func (c ExAppConfig) serveSearch(
 		Visible:    bound,
 		SpeakerID:  strings.TrimSpace(r.URL.Query().Get("speaker")),
 		Limit:      limit,
+		PerMeeting: perMeeting,
 		UseAliases: r.URL.Query().Get("aliases") != "off",
 		AliasIndex: search.aliasIndex(),
 	})
@@ -259,6 +283,7 @@ func (c ExAppConfig) serveSearch(
 			SpeakerID: hit.SpeakerID,
 			Matched:   hit.Matched,
 			Marks:     hitMarks,
+			Snippet:   snippetAround(hit.Text, flattenSearchGroups(results.Groups)),
 		})
 	}
 

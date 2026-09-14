@@ -81,10 +81,19 @@ func (p llmProvider) Complete(ctx context.Context, system, user string) (string,
 // and retrying unchanged will fail identically. Anything else — a 5xx, a
 // timeout, an unreachable host — is the call not completing, which retrying is
 // a reasonable answer to.
+//
+// A reply the model stopped writing at its output limit is the model failing
+// too, not the endpoint refusing: the call completed and the answer is unusable.
+// It carries its own sentence so the record says what happened and what fixes
+// it — a larger max_tokens on the endpoint, or fewer meetings.
 func classifyLLMFailure(err error) error {
 	var apiErr *transcribe.APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode >= 400 && apiErr.StatusCode < 500 {
 		return insight.Fail(insight.ReasonProviderRefused, err)
+	}
+	var truncated *transcribe.TruncatedError
+	if errors.As(err, &truncated) {
+		return insight.Fail(insight.ReasonModelFailed, fmt.Errorf("%w; raise the endpoint's max_tokens or ask over fewer meetings", err))
 	}
 	return insight.Fail(insight.ReasonModelFailed, err)
 }

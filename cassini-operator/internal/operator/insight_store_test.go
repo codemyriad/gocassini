@@ -190,14 +190,17 @@ func TestInsightStoreRetryIsAnotherAttemptOnTheSameRun(t *testing.T) {
 		Status:   insightStatusFailed,
 		Provider: "openrouter",
 		Model:    "anthropic/claude",
-		Error:    "the provider returned 401",
+		Error:    insightReasonProviderRefused,
 	}); err != nil {
 		t.Fatalf("FinishAttempt(failed) error = %v", err)
 	}
 
 	failed := mustGetInsightRun(t, store, "ins_0123456789abcdef")
-	if failed.Status != insightStatusFailed || failed.Error != "the provider returned 401" {
-		t.Fatalf("failed run = %#v, want a failure a user can act on", failed)
+	if failed.Status != insightStatusFailed || failed.Error != insightReasonProviderRefused {
+		t.Fatalf("failed run = %#v, want the reason token stored", failed)
+	}
+	if failed.Reason != insightReasonProviderRefused {
+		t.Fatalf("failed run reason = %q, want the same token served under `reason`", failed.Reason)
 	}
 	if failed.Provider != "openrouter" || failed.Model != "anthropic/claude" {
 		t.Fatalf("failed run endpoint = %s/%s, want the one the attempt resolved", failed.Provider, failed.Model)
@@ -215,7 +218,7 @@ func TestInsightStoreRetryIsAnotherAttemptOnTheSameRun(t *testing.T) {
 	}
 	// The endpoint is re-resolved from current settings, so nothing the failed
 	// attempt used may still be showing while the retry runs.
-	if retried.Provider != "" || retried.Model != "" || retried.Error != "" || retried.DocumentPath != "" {
+	if retried.Provider != "" || retried.Model != "" || retried.Error != "" || retried.Reason != "" || retried.DocumentPath != "" {
 		t.Fatalf("retry still carries the failed attempt's results: %#v", retried)
 	}
 	if retried.WorkflowID != failed.WorkflowID || retried.Question != failed.Question ||
@@ -251,6 +254,59 @@ func TestInsightStoreRetryIsAnotherAttemptOnTheSameRun(t *testing.T) {
 	}
 	if attempts[1].FinishedAt == nil || attempts[0].FinishedAt == nil {
 		t.Fatalf("finished attempts have no finished_at: %#v", attempts)
+	}
+}
+
+// ResumeAttempt is the second half of BeginAttempt's lock. A goroutine handed
+// attempt N may only run it while the row is still at attempt N and running; once
+// the sweep failed N and a retry began N+1, the older goroutine must be refused,
+// or one run is attempted twice at once (D-740).
+func TestInsightStoreResumeAttemptRefusesAnAttemptTheRowMovedOnFrom(t *testing.T) {
+	ctx := context.Background()
+	store := newInsightTestStore(t)
+	seedInsightRun(t, store, "ins_0123456789abcdef", "alice")
+	first, err := store.BeginAttempt(ctx, "ins_0123456789abcdef")
+	if err != nil {
+		t.Fatalf("BeginAttempt() error = %v", err)
+	}
+
+	// Waiting in the queue is progress: the resume refreshes updated_at, so a
+	// row this process is about to work on is not what the sweep fails next.
+	backdate := formatUTCString(time.Now().Add(-time.Hour))
+	if _, err := store.db.Exec(`UPDATE insight_runs SET updated_at = ?`, backdate); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	resumed, err := store.ResumeAttempt(ctx, "ins_0123456789abcdef", first.AttemptNumber)
+	if err != nil {
+		t.Fatalf("ResumeAttempt(same attempt) error = %v", err)
+	}
+	if resumed.Status != insightStatusRunning || resumed.AttemptNumber != 1 {
+		t.Fatalf("resumed = %s/%d, want running/1", resumed.Status, resumed.AttemptNumber)
+	}
+	if swept, err := store.MarkInterruptedRunsFailed(ctx, time.Now().Add(-time.Minute)); err != nil || swept != 0 {
+		t.Fatalf("swept %d (err %v) after a resume, want 0: the resume must count as progress", swept, err)
+	}
+
+	// Now the case the CAS exists for: the sweep fails the attempt, a person
+	// retries, and the goroutine still holding attempt 1 finally gets a slot.
+	if _, err := store.db.Exec(`UPDATE insight_runs SET updated_at = ?`, backdate); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	if swept, err := store.MarkInterruptedRunsFailed(ctx, time.Now()); err != nil || swept != 1 {
+		t.Fatalf("swept %d (err %v), want the stale attempt failed", swept, err)
+	}
+	second, err := store.BeginAttempt(ctx, "ins_0123456789abcdef")
+	if err != nil || second.AttemptNumber != 2 {
+		t.Fatalf("retry = %+v (err %v), want attempt 2", second, err)
+	}
+	if _, err := store.ResumeAttempt(ctx, "ins_0123456789abcdef", 1); !errors.Is(err, errInsightRunNotRunning) {
+		t.Fatalf("ResumeAttempt(stale attempt) error = %v, want errInsightRunNotRunning", err)
+	}
+	if _, err := store.ResumeAttempt(ctx, "ins_0123456789abcdef", 2); err != nil {
+		t.Fatalf("ResumeAttempt(current attempt) error = %v", err)
+	}
+	if _, err := store.ResumeAttempt(ctx, "ins_0000000000000000", 1); !errors.Is(err, errInsightRunNotRunning) {
+		t.Fatalf("ResumeAttempt(absent run) error = %v, want errInsightRunNotRunning", err)
 	}
 }
 
@@ -300,7 +356,7 @@ func TestInsightStoreBeginAttemptStartsExactlyOnceUnderConcurrency(t *testing.T)
 	}
 	if err := store.FinishAttempt(ctx, "ins_0123456789abcdef", InsightOutcome{
 		Status: insightStatusFailed,
-		Error:  "the provider returned 401",
+		Error:  insightReasonProviderRefused,
 	}); err != nil {
 		t.Fatalf("FinishAttempt() error = %v", err)
 	}
@@ -368,6 +424,10 @@ func TestInsightStoreFinishAttemptRefusesAnUnusableOutcome(t *testing.T) {
 		"queued as an outcome":      {Status: insightStatusQueued},
 		"success without the bytes": {Status: insightStatusSucceeded},
 		"failure without a reason":  {Status: insightStatusFailed, Error: "   "},
+		// The sentence is the app's to write (D-749): a row that stored one
+		// would carry that release's wording for ever.
+		"failure with a sentence":   {Status: insightStatusFailed, Error: "The model did not answer. Retry, or pick fewer meetings."},
+		"failure with a tagged one": {Status: insightStatusFailed, Error: "model-failed: The model did not answer."},
 	}
 	for name, outcome := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -438,8 +498,8 @@ func TestInsightStoreFailsRunsAnOperatorRestartStranded(t *testing.T) {
 	}
 	for _, id := range []string{"ins_00000000000000a1", "ins_00000000000000a2"} {
 		run := mustGetInsightRun(t, store, id)
-		if run.Status != insightStatusFailed || !strings.Contains(run.Error, "restarted") {
-			t.Fatalf("%s = %s/%q, want a failure that says to retry it", id, run.Status, run.Error)
+		if run.Status != insightStatusFailed || run.Error != insightReasonInterrupted || run.Reason != insightReasonInterrupted {
+			t.Fatalf("%s = %s/%q/%q, want it failed as %q", id, run.Status, run.Error, run.Reason, insightReasonInterrupted)
 		}
 	}
 	if run := mustGetInsightRun(t, store, "ins_00000000000000a3"); run.Status != insightStatusSucceeded {
