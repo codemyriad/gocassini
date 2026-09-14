@@ -217,7 +217,7 @@
         <span>{visibleInsights.length} of {totalInsightCount} insights</span>
       {:else if insightsOffered && insightsError}
         <span class="dot" aria-hidden="true"></span>
-        <span>insights unavailable</span>
+        <span>Insights could not be listed.</span>
       {/if}
       {#if selectedRoomName !== null}
         <span class="chip">
@@ -250,9 +250,7 @@
          meetings and incomplete for insights, and only one of those two things
          went wrong. -->
     {#if insightsError}
-      <p class="list-note" role="status">
-        Insights could not be listed: {insightsError} The meetings are unaffected.
-      </p>
+      <p class="list-note" role="status">Insights could not be listed.</p>
     {/if}
     {#if totalCount === 0 && totalInsightCount === 0}
       <div class="list-empty">
@@ -275,6 +273,10 @@
            empty, so the reason is the listing itself — and a listing that failed
            and one still in flight are different facts, neither of which is "you
            have none". -->
+    {:else if feedItems.length === 0 && insightsOnly && !trimmedFilter && selectedRoomName === null && !insightsLoaded && !insightsError}
+      <div class="list-empty">
+        <strong>Loading insights…</strong>
+      </div>
     {:else if feedItems.length === 0}
       <div class="list-empty">
         <strong>Nothing matches</strong>
@@ -285,10 +287,8 @@
             {selectedRoomName} has no {matchNounPlural}.
           {:else if trimmedFilter}
             No {matchNoun} matches that search.
-          {:else if insightsOnly && !insightsLoaded}
-            Your insights are still loading.
           {:else if insightsOnly && insightsError}
-            Your insights could not be listed, so none can be shown here.
+            Insights could not be listed.
           {:else}
             There are no {matchNounPlural} to show.
           {/if}

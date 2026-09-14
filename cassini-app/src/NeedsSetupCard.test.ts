@@ -88,7 +88,7 @@ describe("the locked card", () => {
       isAdmin: false,
     });
     expect(forEveryoneElse?.actionTitle).toBeUndefined();
-    expect(forEveryoneElse?.summary).toContain("nothing wrong with your account");
+    expect(forEveryoneElse?.summary).toContain("Ask a Nextcloud administrator.");
   });
 
   it("names the remedy for the capability that is missing", () => {

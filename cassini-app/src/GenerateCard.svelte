@@ -283,10 +283,7 @@
       </div>
 
       {#if workflowsError}
-        <p class="text-xs text-warning">
-          The template list could not be read, so this runs the template your deployment has
-          configured. {workflowsError}
-        </p>
+        <p class="text-xs text-warning">Templates could not be listed. The configured one runs.</p>
       {/if}
     {:else}
       <!-- The template registry is ADMIN at the proxy, so there is no picker to
@@ -318,15 +315,12 @@
         </label>
         <p class="ins-card-note ins-model">
           Model: {#if chosenProviderEntry?.model}<code>{chosenProviderEntry.model}</code
-            >{:else}the endpoint's own default{/if}
+            >{:else}endpoint default{/if}
         </p>
       </div>
     {/if}
     {#if providersError}
-      <p class="ins-card-note">
-        The AI endpoints could not be listed, so this runs on the one your deployment has
-        configured. {providersError}
-      </p>
+      <p class="ins-card-note">{providersError}</p>
     {/if}
 
     <div class="ins-card-foot">
@@ -344,12 +338,10 @@
         </p>
       {/if}
 
-      <!-- The instance's key pays for this, so a run is attributable to the
-           deployment rather than to the person who asked. Said here rather than
-           discovered from a bill (D-700). -->
+      <!-- Where the transcripts go and where the answer lands, said before
+           the run rather than discovered after it (D-700). -->
       <p class="ins-card-note">
-        The transcripts of these meetings are sent to this deployment's configured AI endpoint,
-        and the insight is written into your own Nextcloud files.
+        Transcripts go to the endpoint you pick. The answer is saved to your Nextcloud files.
       </p>
     </div>
 

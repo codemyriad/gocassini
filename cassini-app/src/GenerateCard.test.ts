@@ -73,8 +73,8 @@ describe("GenerateCard", () => {
     // The model call uses the instance's key, so a run is attributable to the
     // deployment; the document lands in the requester's own files. Both are
     // said here rather than discovered afterwards.
-    expect(generateCardSource).toContain("configured AI endpoint");
-    expect(generateCardSource).toContain("written into your own Nextcloud files");
+    expect(generateCardSource).toContain("Transcripts go to the endpoint you pick.");
+    expect(generateCardSource).toContain("saved to your Nextcloud files");
   });
 
   it("never puts a raw workflow id in front of somebody who has no names", () => {
@@ -114,7 +114,7 @@ describe("GenerateCard", () => {
     expect(generateCardSource).not.toContain("listAIProviderModels");
     expect(generateCardSource).not.toContain("loadingModelsFor");
     expect(generateCardSource).toContain("chosenProviderEntry?.model");
-    expect(generateCardSource).toContain("the endpoint's own default");
+    expect(generateCardSource).toContain("endpoint default");
     // The wire keeps `model`, empty, so a per-run override can return without
     // a request-shape change.
     expect(generateCardSource).toContain('const chosenModel = "";');
@@ -126,7 +126,7 @@ describe("GenerateCard", () => {
     // "this deployment's own" — exactly what happened before there was a
     // picker. It narrows the card; it does not block it.
     expect(generateCardSource).toContain("providersError = describe(error);");
-    expect(generateCardSource).toContain("The AI endpoints could not be listed");
+    expect(generateCardSource).toContain("{providersError}");
   });
 
   it("offers the question box only where a question can be asked", () => {

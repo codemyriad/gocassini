@@ -514,9 +514,9 @@ func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, i
 		// running, and telling somebody it is would have them wait for an answer
 		// they already have. Both are 409, because both mean "the state you are
 		// retrying is not the state this run is in".
-		message := "this insight is already running"
+		message := "This insight is already running."
 		if existing.Status == insightStatusSucceeded {
-			message = "this insight already has an answer; ask again to run it a second time"
+			message = "This insight already has an answer. Ask again to run it a second time."
 		}
 		writeJSONError(w, http.StatusConflict, message)
 		return
@@ -525,7 +525,7 @@ func (s *insightService) retry(w http.ResponseWriter, r *http.Request, caller, i
 	switch {
 	case err == nil:
 	case errors.Is(err, errInsightRunBusy):
-		writeJSONError(w, http.StatusConflict, "this insight is already running")
+		writeJSONError(w, http.StatusConflict, "This insight is already running.")
 		return
 	case errors.Is(err, sql.ErrNoRows):
 		http.NotFound(w, r)

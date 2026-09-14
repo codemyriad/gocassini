@@ -203,8 +203,8 @@ describe("AppDataProvider.retryInsight", () => {
     expect(init.method).toBe("POST");
   });
 
-  it("reports a race against a running run as the client's own sentence", async () => {
-    respondWith(JSON.stringify({ error: "run is running" }), { status: 409 });
+  it("reports a race against a running run in the operator's own sentence", async () => {
+    respondWith(JSON.stringify({ error: "This insight is already running." }), { status: 409 });
     await expect(new AppDataProvider().retryInsight("ins_0123456789abcdef")).rejects.toThrow(
       "already running",
     );

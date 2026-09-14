@@ -69,8 +69,8 @@ describe("AI providers verification", () => {
   it("reports a failed listing as itself, not as a broken endpoint", () => {
     // An endpoint with no /models route still answers completions perfectly
     // well, so this must not read as "this provider does not work".
-    expect(llmSettingsPanelSource).toContain("Its model list could not be read");
-    expect(llmSettingsPanelSource).toContain("Summaries and insights may still work");
+    expect(llmSettingsPanelSource).toContain("Model list unavailable");
+    expect(llmSettingsPanelSource).toContain("can still type a model ID");
   });
 });
 

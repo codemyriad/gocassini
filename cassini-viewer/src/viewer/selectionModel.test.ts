@@ -368,7 +368,7 @@ describe("the meeting cap", () => {
     );
     const gaps = describeSelectionGaps(over);
     expect(gaps[0]).toBe(
-      "A bundle holds at most 20 meetings, and 22 are picked. Unpick 2 to prepare or generate.",
+      "A bundle holds at most 20 meetings. Unpick 2.",
     );
     expect(gaps.length).toBeGreaterThan(1);
   });

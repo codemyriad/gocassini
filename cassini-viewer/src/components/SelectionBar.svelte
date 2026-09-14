@@ -29,6 +29,7 @@
   // Above the operator's cap Prepare would open a panel whose every action is
   // refused, so the button says the number instead (D-749).
   $: overCap = count > MAX_SELECTED_MEETINGS;
+  $: excess = count - MAX_SELECTED_MEETINGS;
 
   const dispatch = createEventDispatcher<{
     clear: void;
@@ -53,8 +54,9 @@
           {hiddenCount} not shown here.
         {/if}
         {#if overCap}
-          A bundle holds at most {MAX_SELECTED_MEETINGS}; unpick {count - MAX_SELECTED_MEETINGS} to
-          prepare.
+          A bundle holds at most {MAX_SELECTED_MEETINGS} meetings. Unpick {excess === 1
+            ? "one"
+            : excess}.
         {:else}
           Assemble them into one document you can take away.
         {/if}

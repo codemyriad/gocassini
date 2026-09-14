@@ -248,8 +248,7 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
   if (totals.count > MAX_SELECTED_MEETINGS) {
     const excess = totals.count - MAX_SELECTED_MEETINGS;
     gaps.push(
-      `A bundle holds at most ${MAX_SELECTED_MEETINGS} meetings, and ${totals.count} are picked. ` +
-        `Unpick ${excess === 1 ? "one" : excess} to prepare or generate.`,
+      `A bundle holds at most ${MAX_SELECTED_MEETINGS} meetings. Unpick ${excess === 1 ? "one" : excess}.`,
     );
   }
   if (totals.withoutSummary > 0) {

@@ -639,7 +639,7 @@
                 </select>
                 {#if !workflowsKnown}
                   <span class="text-xs text-base-content/50">
-                    The template list could not be read, so this keeps what was saved.
+                    Templates could not be listed.
                   </span>
                 {/if}
                 <!-- The field is saved and served; the publish pipeline does not

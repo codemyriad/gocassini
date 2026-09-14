@@ -114,13 +114,7 @@
       />
     {/if}
     {#if loadError}
-      <div class="grid gap-2">
-        <div class="alert alert-error text-sm">{loadError}</div>
-        <p class="text-xs text-base-content/60">
-          This says the template list could not be read, not that Cassini ships none. The templates
-          are compiled into the recorder image; the panel asks it what they are.
-        </p>
-      </div>
+      <div class="alert alert-error text-sm">Templates could not be listed.</div>
     {:else if loading}
       <div class="flex items-center justify-center p-6 text-sm text-base-content/60">
         Loading insight templates…

@@ -158,11 +158,11 @@ describe("createInsight", () => {
     );
   });
 
-  it("names Nextcloud when the operator could not read it as this user", async () => {
+  it("names the operation a 502 stopped", async () => {
     const fetchMock = respondWith("", { status: 502 });
 
     await expect(createInsight({ meetingIds: ["a"] }, fetchMock)).rejects.toThrow(
-      "Cassini could not read these meetings from Nextcloud.",
+      "Cassini could not start the insight.",
     );
   });
 });
@@ -180,9 +180,7 @@ describe("listInsights", () => {
     // behind an empty shelf.
     const fetchMock = respondWith("404 page not found\n", { status: 404 });
 
-    await expect(listInsights(fetchMock)).rejects.toThrow(
-      "This deployment cannot create insights yet.",
-    );
+    await expect(listInsights(fetchMock)).rejects.toThrow("Insights could not be listed.");
   });
 
   it("does not read a missing list as an empty one", async () => {
@@ -220,14 +218,22 @@ describe("readInsight", () => {
 });
 
 describe("retryInsight", () => {
-  it("reports a race against a running run as its own answer", async () => {
-    // The status is the lock: a retry against queued or running is a 409 no-op,
-    // which is not a failure — the run is already doing what was asked.
-    const fetchMock = respondWith("", { status: 409 });
-
-    await expect(retryInsight("ins_0123456789abcdef", fetchMock)).rejects.toMatchObject({
+  it("repeats which state refused a retry", async () => {
+    // The operator answers 409 for a running run and for one that already has
+    // an answer, and those are different things to do next.
+    const answered = respondWith(
+      JSON.stringify({ error: "This insight already has an answer. Ask again to run it a second time." }),
+      { status: 409 },
+    );
+    await expect(retryInsight("ins_0123456789abcdef", answered)).rejects.toMatchObject({
       status: 409,
-      message: "That insight is already running — retrying does nothing until it stops.",
+      message: "This insight already has an answer. Ask again to run it a second time.",
+    });
+
+    const silent = respondWith("", { status: 409 });
+    await expect(retryInsight("ins_0123456789abcdef", silent)).rejects.toMatchObject({
+      status: 409,
+      message: "This insight is already running.",
     });
   });
 

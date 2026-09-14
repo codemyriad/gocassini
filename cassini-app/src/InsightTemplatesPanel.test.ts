@@ -111,10 +111,8 @@ describe("InsightTemplatesPanel", () => {
     // "Cassini ships no templates" when the fetch failed, or the reverse.
     expect(insightTemplatesPanelSource).toContain("Loading insight templates…");
     expect(insightTemplatesPanelSource).toContain("This build ships no templates.");
-    expect(insightTemplatesPanelSource).toContain("{loadError}");
-    expect(insightTemplatesPanelSource).toContain(
-      "This says the template list could not be read, not that Cassini ships none.",
-    );
+    expect(insightTemplatesPanelSource).toContain("{#if loadError}");
+    expect(insightTemplatesPanelSource).toContain("Templates could not be listed.");
   });
 
   it("offers no way to author or edit a template", () => {

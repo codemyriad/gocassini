@@ -109,7 +109,7 @@ describe("MeetingList insights", () => {
     // has come back, the failure when it did not, and nothing while the first
     // is still in flight.
     expect(meetingListSource).toContain("{#if insightsError}");
-    expect(meetingListSource).toContain("Insights could not be listed:");
+    expect(meetingListSource).toContain("Insights could not be listed.");
     expect(meetingListSource).toMatch(
       /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
     );

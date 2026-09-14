@@ -191,9 +191,14 @@
   $: draftModelsLoading = draft !== null && probes[draft.id]?.status === "checking";
   $: draftModelsError = draft
     ? draft.existing
-      ? probeErrorOf(probes[draft.id])
+      ? modelListUnavailable(probeErrorOf(probes[draft.id]))
       : "Save the provider first to list its models."
     : "";
+
+  // One wording for a listing that failed, on the card and in the combobox.
+  function modelListUnavailable(detail: string): string {
+    return detail === "" ? "" : `Model list unavailable: ${detail.replace(/\.$/, "")}.`;
+  }
 
   function probeModelsOf(state: ProbeState | undefined): LLMModel[] {
     return state?.status === "ok" ? state.models : [];
@@ -664,10 +669,8 @@
                     {#if probes[provider.id]?.status === "failed"}
                       {@const state = probes[provider.id]}
                       <p class="mt-1 text-xs text-warning">
-                        Its model list could not be read: {state.status === "failed"
-                          ? state.message
-                          : ""} Summaries and insights may still work — a model can always be
-                        named by hand.
+                        {modelListUnavailable(state.status === "failed" ? state.message : "")} You
+                        can still type a model ID.
                       </p>
                     {/if}
                   </div>

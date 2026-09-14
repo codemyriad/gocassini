@@ -90,8 +90,8 @@ export class AppDataProvider extends StaticCatalogProvider {
   // POST insights/<id>/retry (D-749). The run record comes back as the
   // operator now holds it — `queued`, attempt incremented — and the viewer
   // puts it in the list in place of the failed one. A 409 arrives as the
-  // client's own sentence ("already running"), which is an answer rather than
-  // a failure.
+  // operator's own sentence (running, or already answered), which is an
+  // answer rather than a failure.
   async retryInsight(id: string): Promise<InsightRecord> {
     return postInsightRetry(id);
   }

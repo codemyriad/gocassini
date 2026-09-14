@@ -445,19 +445,18 @@ export function describeRequestFailure(
           return "One of these meetings is not available to you, or this deployment cannot create insights.";
         case "list":
           // A caller's own list always exists, so the only thing a 404 can mean
-          // here is an operator that does not serve these routes — an install
-          // older than them, or one registered before they were declared. That
-          // is not "you have no insights", and it must not read as it.
-          return "This deployment cannot create insights yet.";
+          // here is an operator that does not serve these routes. That is not
+          // "you have no insights", and it must not read as it.
+          return "Insights could not be listed.";
         default:
           return "That insight is not available to you, or this deployment cannot create insights.";
       }
     case 409:
-      // Not a failure: the run is already moving, which is what the caller
-      // wanted. The card re-reads it rather than painting an error.
-      return "That insight is already running — retrying does nothing until it stops.";
+      // The operator says which state refused the retry: still running, or
+      // already answered. Its sentence is the answer, so it is repeated.
+      return served || "This insight is already running.";
     case 502:
-      return "Cassini could not read these meetings from Nextcloud.";
+      return `Cassini could not ${VERBS[action]}.`;
     default:
       return `Could not ${VERBS[action]} (HTTP ${status}).`;
   }
