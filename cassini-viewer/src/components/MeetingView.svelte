@@ -844,6 +844,19 @@
   // loaded artifact keeps its canonical times and every word keeps its original
   // START — seek targets never move.
   let transcriptQuery = "";
+  // Seeded from a cross-meeting search result (D-736): opening a moment from
+  // the list carries the query in, so the meeting lands already filtered to the
+  // lines that matched rather than making the reader retype it.
+  //
+  // Applied per meeting rather than reactively on the value, so that clearing
+  // or editing the box stays the reader's own — a plain `$:` assignment here
+  // would fight every keystroke by resetting to the incoming prop.
+  export let initialQuery = "";
+  let seededQueryFor = "";
+  $: if (meeting && seededQueryFor !== meeting.id) {
+    seededQueryFor = meeting.id;
+    transcriptQuery = initialQuery;
+  }
 
   $: displaySegments = transcriptIndex
     ? sortBlocksInReadingOrder(

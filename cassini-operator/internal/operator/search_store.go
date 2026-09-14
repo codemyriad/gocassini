@@ -54,7 +54,10 @@ const (
 	// searchSchemaVersion is stamped into PRAGMA user_version. Bump it for ANY
 	// schema or windowing change — including a change to the window geometry,
 	// which alters the row set without altering the DDL.
-	searchSchemaVersion = 1
+	// 2: segment_ref.text, so a hit can carry a snippet (D-736). An existing
+	// index is deleted and rebuilt rather than migrated, which is exactly what
+	// the disposability invariant buys.
+	searchSchemaVersion = 2
 
 	// searchStateIndexed means the meeting's rows are present and current.
 	searchStateIndexed = "indexed"
@@ -109,7 +112,16 @@ CREATE TABLE IF NOT EXISTS segment_ref (
   segment_id TEXT NOT NULL,
   start_ms   INTEGER NOT NULL,
   end_ms     INTEGER NOT NULL,
-  speaker_id TEXT NOT NULL DEFAULT ''
+  speaker_id TEXT NOT NULL DEFAULT '',
+  -- The segment's own words, kept so a hit can carry a snippet of what matched
+  -- (D-736). This is NOT a new disclosure at rest: fts5vocab reconstructs the
+  -- same words verbatim from the contentless postings anyway (spike §1.6), so
+  -- content='' was only ever a size-and-rebuild property. What it does change
+  -- is that the store CAN now emit text, so the fail-closed visibility join in
+  -- search_query.go is doing more work than it was — see the snippet comment
+  -- there, and the test that pins text from an invisible meeting out of a
+  -- response body.
+  text       TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS segment_ref_by_meeting ON segment_ref(opus_name);
@@ -310,7 +322,7 @@ ON CONFLICT(opus_name) DO UPDATE SET
 		}
 
 		refs, err := tx.PrepareContext(ctx,
-			`INSERT INTO segment_ref (opus_name, segment_id, start_ms, end_ms, speaker_id) VALUES (?, ?, ?, ?, ?)`)
+			`INSERT INTO segment_ref (opus_name, segment_id, start_ms, end_ms, speaker_id, text) VALUES (?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return fmt.Errorf("prepare window insert: %w", err)
 		}
@@ -322,7 +334,7 @@ ON CONFLICT(opus_name) DO UPDATE SET
 		defer texts.Close()
 
 		for _, row := range rows {
-			result, err := refs.ExecContext(ctx, name, row.SegmentID, row.StartMS, row.EndMS, row.SpeakerID)
+			result, err := refs.ExecContext(ctx, name, row.SegmentID, row.StartMS, row.EndMS, row.SpeakerID, row.Text)
 			if err != nil {
 				return fmt.Errorf("insert segment: %w", err)
 			}

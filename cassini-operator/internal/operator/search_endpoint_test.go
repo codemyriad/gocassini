@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -135,18 +136,59 @@ func TestSearchEndpointReturnsHydratedReferences(t *testing.T) {
 	}
 }
 
-// The response carries no transcript text anywhere.
-func TestSearchEndpointNeverReturnsText(t *testing.T) {
+// THE property that survived D-736, narrowed to what it was really protecting.
+//
+// This test used to assert that no transcript text appeared in a response at
+// all. That was the v1 shape: results were references only, so a filtering bug
+// could disclose that something existed but never what was said. D-736 puts a
+// bounded snippet on the wire, because a meeting list that cannot say WHY a
+// meeting matched reads as broken — so the blanket assertion had to go.
+//
+// What must NOT go with it is the half that was load-bearing: text from a
+// meeting outside the caller's visible set must never reach them. Deleting the
+// test wholesale would have dropped that silently, which is why it is rewritten
+// here rather than removed.
+func TestSearchResponseNeverCarriesInvisibleText(t *testing.T) {
 	index := newTestSearchStore(t)
-	seedSearchable(t, index, "JOB1.opus", seg("seg_7", "S1", 1000, 4000, "the severance package for Bob"))
+	seedSearchable(t, index, "JOB1.opus", seg("seg_7", "S1", 1000, 4000, "the roadmap for Friday"))
+	seedSearchable(t, index, "JOB2.opus", seg("seg_9", "S9", 1000, 4000, "the roadmap and the severance package for Bob"))
+	// alice can read JOB1 and not JOB2, though both match.
 	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus"}}.server(t)
 	defer srv.Close()
 
-	rec := doSearch(t, searchTestConfig(srv.URL), index, "q=severance", "alice")
-	for _, leaked := range []string{"severance package", "for Bob", "the severance"} {
-		if strings.Contains(rec.Body.String(), leaked) {
-			t.Errorf("response leaked transcript text %q: %s", leaked, rec.Body.String())
+	rec := doSearch(t, searchTestConfig(srv.URL), index, "q=roadmap", "alice")
+	body := rec.Body.String()
+	for _, leaked := range []string{"severance package", "for Bob", "severance"} {
+		if strings.Contains(body, leaked) {
+			t.Errorf("response leaked text from a meeting alice cannot read (%q): %s", leaked, body)
 		}
+	}
+	// And the visible meeting's own snippet is present, so this test cannot
+	// pass by the endpoint simply having stopped returning snippets.
+	if !strings.Contains(body, "roadmap") {
+		t.Errorf("response carries no snippet for the meeting alice CAN read: %s", body)
+	}
+}
+
+// A snippet is a cut of the segment, never the whole transcript.
+func TestSearchEndpointBoundsTheSnippet(t *testing.T) {
+	index := newTestSearchStore(t)
+	long := strings.Repeat("filler words here ", 60) + "the roadmap decision " + strings.Repeat("more filler ", 60)
+	seedSearchable(t, index, "JOB1.opus", seg("seg_7", "S1", 1000, 4000, long))
+	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus"}}.server(t)
+	defer srv.Close()
+
+	rec := doSearch(t, searchTestConfig(srv.URL), index, "q=roadmap", "alice")
+	var got searchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	snippet := got.Hits[0].Snippet
+	if len([]rune(snippet)) > searchSnippetRunes+32 {
+		t.Errorf("snippet is %d runes, want it bounded near %d", len([]rune(snippet)), searchSnippetRunes)
+	}
+	if !strings.Contains(snippet, "roadmap") {
+		t.Errorf("snippet %q is not centred on the match", snippet)
 	}
 }
 
@@ -328,5 +370,49 @@ func TestSearchPathIsAnArchivePath(t *testing.T) {
 	}
 	if isPublishedArchivePath("search-results") {
 		t.Error("only the exact search path should match")
+	}
+}
+
+// The cap is reachable from the wire, and refused politely when nonsense.
+func TestSearchEndpointAppliesPerMeetingCap(t *testing.T) {
+	index := newTestSearchStore(t)
+	var loud []searchTranscriptSegment
+	for i := 0; i < 20; i++ {
+		at := int64(i) * 60_000
+		loud = append(loud, seg(fmt.Sprintf("l%02d", i), "S1", at, at+5_000, "the roadmap again"))
+	}
+	seedSearchable(t, index, "JOB1.opus", loud...)
+	seedSearchable(t, index, "JOB2.opus", seg("q0", "S2", 1000, 4000, "the roadmap once"))
+	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus", "JOB2.opus"}}.server(t)
+	defer srv.Close()
+
+	rec := doSearch(t, searchTestConfig(srv.URL), index, "q=roadmap&perMeeting=2", "alice")
+	var got searchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	perMeeting := map[string]int{}
+	for _, hit := range got.Hits {
+		perMeeting[hit.MeetingID]++
+	}
+	for id, n := range perMeeting {
+		if n > 2 {
+			t.Errorf("meeting %s contributed %d hits, want at most 2", id, n)
+		}
+	}
+	if len(perMeeting) < 2 {
+		t.Errorf("only %d meeting(s) survived the cap: %+v", len(perMeeting), perMeeting)
+	}
+}
+
+func TestSearchEndpointRejectsABadPerMeeting(t *testing.T) {
+	index := newTestSearchStore(t)
+	seedSearchable(t, index, "JOB1.opus", seg("s1", "S1", 1000, 4000, "the roadmap"))
+	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus"}}.server(t)
+	defer srv.Close()
+
+	rec := doSearch(t, searchTestConfig(srv.URL), index, "q=roadmap&perMeeting=0", "alice")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a nonsense cap", rec.Code)
 	}
 }
