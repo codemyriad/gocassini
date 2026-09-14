@@ -88,7 +88,7 @@ describe("the first-run dialog", () => {
     // acknowledge a first run with — one way on, to the section that holds the
     // account row and the diagnosis.
     expect(dialogSource).toContain(
-      `{plan.blocked ? "Cassini can't record yet" : "Cassini is ready to record"}`,
+      `{firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}`,
     );
     expect(dialogSource).toContain("{#if plan.blocked}");
     expect(dialogSource).toContain(
@@ -114,7 +114,19 @@ describe("the first-run dialog", () => {
   });
 
   it("says a standalone build cannot create the account, instead of offering to", () => {
-    expect(dialogSource).toContain("{#if plan.unavailable}");
+    expect(dialogSource).toContain("{:else if plan.unavailable}");
+    expect(dialogSource).toContain(
+      "Cassini needs a Nextcloud account to keep recordings in. This page cannot make the",
+    );
     expect(dialogSource).toContain("Open Cassini from Nextcloud's own menu.");
+    // No Start beside it: every write it would make is refused before it is
+    // sent, so the button would acknowledge a first run that never happened.
+    // The title does not claim to be ready either — firstRunReady is false for
+    // this shape, and it is tested in operator/firstRun.ts.
+    expect(dialogSource).toContain("{#if !plan.unavailable}");
+    const buttons = dialogSource.slice(dialogSource.indexOf("mt-1 flex flex-wrap"));
+    expect(buttons.indexOf("{#if !plan.unavailable}")).toBeLessThan(
+      buttons.indexOf("on:click={start}"),
+    );
   });
 });

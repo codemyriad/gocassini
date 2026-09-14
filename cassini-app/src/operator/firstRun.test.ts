@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { accountSteps, firstRunPlan } from "./firstRun";
+import { accountSteps, firstRunPlan, firstRunReady } from "./firstRun";
 import type { StorageModeOption, StorageSetupStep, StorageStatus } from "./types";
 
 function step(partial: Partial<StorageSetupStep> = {}): StorageSetupStep {
@@ -147,6 +147,40 @@ describe("firstRunPlan", () => {
       { isAdmin: true, setupAvailable: false },
     );
     expect(plan?.unavailable).toBe(false);
+  });
+});
+
+// The title is a claim about what this install can do next, and the two shapes
+// that cannot make the account answer it the same way: no plan for it, and no
+// session to run the plan with. "Cassini is ready to record" over a missing
+// account is the over-claim this decides away (D-756 review).
+describe("firstRunReady", () => {
+  const READY_STATUS = status({
+    service_account: { user: "cassini", known: true, exists: true, reset_occ: "" },
+  });
+
+  it("is true where the account is there, or is about to be", () => {
+    expect(firstRunReady(firstRunPlan(READY_STATUS, READY)!)).toBe(true);
+    expect(firstRunReady(firstRunPlan(status(), READY)!)).toBe(true);
+  });
+
+  it("is false where nothing here can make the account", () => {
+    // No plan for it…
+    expect(firstRunReady(firstRunPlan(status({ modes: [mode({ setup: [] })] }), READY)!)).toBe(
+      false,
+    );
+    // …and a plan this page has no session to run.
+    expect(
+      firstRunReady(firstRunPlan(status(), { isAdmin: true, setupAvailable: false })!),
+    ).toBe(false);
+  });
+
+  it("stays true on a standalone build whose account already exists", () => {
+    // Nothing is written to Nextcloud in that branch — the only call is the
+    // operator's own — so that install really is ready to record.
+    expect(
+      firstRunReady(firstRunPlan(READY_STATUS, { isAdmin: true, setupAvailable: false })!),
+    ).toBe(true);
   });
 });
 

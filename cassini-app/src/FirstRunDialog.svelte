@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import type { FirstRunPlan } from "./operator/firstRun";
+  import { firstRunReady, type FirstRunPlan } from "./operator/firstRun";
   import { NcSetupError, runSetupPlan } from "./operator/ncSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
 
@@ -132,10 +132,12 @@
   >
     <div class="grid gap-3">
       <!-- The title is a claim, so it is made only where it is true: an install
-           whose account is missing with no way to make it here is not ready to
-           record, and saying it was is what this dialog got wrong. -->
+           whose account is missing, with no plan for it or no session to run
+           the plan with, is not ready to record, and saying it was is what this
+           dialog got wrong. firstRunReady is that question, answered where the
+           rest of this dialog's decisions are. -->
       <h2 id="cassini-first-run-title" class="text-lg font-bold">
-        {plan.blocked ? "Cassini can't record yet" : "Cassini is ready to record"}
+        {firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}
       </h2>
 
       <!-- Who can see recordings, before anything about how Cassini works, and
@@ -156,6 +158,16 @@
         <p class="text-sm text-base-content/80">
           Cassini needs a Nextcloud account to keep recordings in, and this page has no way to
           create it. Open Operator › Settings to see what is missing.
+        </p>
+      {:else if plan.unavailable}
+        <!-- The standalone build, or a page Nextcloud's own scripts did not
+             reach. There is a plan for the account and this page cannot run a
+             step of it, so the sentence stands in for a button that would be
+             refused — and it is said here, beside the title it explains,
+             rather than under the buttons. -->
+        <p class="text-sm text-base-content/80">
+          Cassini needs a Nextcloud account to keep recordings in. This page cannot make the
+          changes itself. Open Cassini from Nextcloud's own menu.
         </p>
       {:else if plan.creates}
         <!-- Said only where it is going to happen: an install whose account the
@@ -199,14 +211,11 @@
           >
             Change who can see first
           </button>
-          {#if plan.unavailable}
-            <!-- The standalone build, or a page Nextcloud's own scripts did not
-                 reach. Cassini cannot act as the administrator there, so the
-                 sentence stands in for a button that would be refused. -->
-            <p class="text-xs break-words text-warning">
-              This page cannot make the changes itself. Open Cassini from Nextcloud's own menu.
-            </p>
-          {:else}
+          {#if !plan.unavailable}
+            <!-- No Start on the standalone build: every write it would make is
+                 refused before it is sent, and a button that cannot work would
+                 acknowledge a first run that never happened. The sentence
+                 above is what stands in for it. -->
             <button
               class="btn btn-sm btn-primary"
               type="button"

@@ -25,6 +25,10 @@ import type { StorageSetupStep, StorageStatus } from "./types";
 //	blocked         the account is missing and there is no plan for it. Nothing
 //	                here can fix that, so the dialog says so and sends the
 //	                administrator to Operator › Settings.
+//	unavailable     the account is missing, there IS a plan for it, and this
+//	                page cannot run it: the standalone build, which has neither
+//	                Nextcloud's scripts nor its session. One sentence, and no
+//	                button that would be refused.
 //
 // Only the first two shapes acknowledge the flag, and both do it after the
 // account exists (D-756 review). Acknowledging on the way out of a dialog that
@@ -77,6 +81,19 @@ export function accountSteps(status: StorageStatus | null): StorageSetupStep[] {
   return (option?.setup ?? []).filter(
     (step) => step.browser && ACCOUNT_ACTIONS.includes(step.action),
   );
+}
+
+// firstRunReady says whether this dialog can leave the install able to record:
+// the account is already there, or the button in front of the administrator is
+// going to make it.
+//
+// It is the claim the title makes, so it is decided here rather than in the
+// component (the reason at the top of this file). Both shapes that cannot make
+// the account — no plan for it, and no session to run the plan with — are the
+// same answer to that question, and "Cassini is ready to record" over a missing
+// account is the over-claim this exists to stop.
+export function firstRunReady(plan: FirstRunPlan): boolean {
+  return !plan.blocked && !plan.unavailable;
 }
 
 // firstRunPlan answers what to show, or null for "show nothing".
