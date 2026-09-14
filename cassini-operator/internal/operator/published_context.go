@@ -257,7 +257,7 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 	raw := query["id"]
 	if joined := strings.TrimSpace(query.Get("ids")); joined != "" {
 		if len(raw) > 0 {
-			return request, errors.New("give ids as one comma-separated `ids`, or as repeated `id`, not both")
+			return request, errors.New("meeting ids were given both as one list and one by one")
 		}
 		raw = strings.Split(joined, ",")
 	}
@@ -286,7 +286,7 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 		request.ids = append(request.ids, id)
 	}
 	if len(request.ids) == 0 {
-		return request, errors.New("at least one meeting id is required, as `ids=<id>,<id>`")
+		return request, errors.New("at least one meeting id is required")
 	}
 	if len(request.ids) > maxContextMeetings {
 		return request, fmt.Errorf("a context bundle holds at most %d meetings, got %d", maxContextMeetings, len(request.ids))

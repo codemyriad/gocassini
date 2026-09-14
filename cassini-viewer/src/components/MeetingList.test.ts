@@ -109,7 +109,7 @@ describe("MeetingList insights", () => {
     // has come back, the failure when it did not, and nothing while the first
     // is still in flight.
     expect(meetingListSource).toContain("{#if insightsError}");
-    expect(meetingListSource).toContain("Insights could not be listed:");
+    expect(meetingListSource).toContain("Insights could not be listed.");
     expect(meetingListSource).toMatch(
       /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
     );
@@ -143,5 +143,13 @@ describe("MeetingList insights", () => {
     expect(meetingListSource).toContain(
       "sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}",
     );
+  });
+
+  it("forwards a card's retry to the shell with the record, and decides nothing", () => {
+    // The shell owns the provider and the request; the list only says which
+    // card asked (D-749).
+    expect(meetingListSource).toContain('on:retry={() => dispatch("retryInsight", item.insight)}');
+    expect(meetingListSource).toContain("canRetry={insightsRetryable}");
+    expect(meetingListSource).toContain("retrying={retryingInsightId === item.insight.id}");
   });
 });

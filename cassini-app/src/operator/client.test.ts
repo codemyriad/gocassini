@@ -156,6 +156,51 @@ describe("llm settings client", () => {
     expect(settings.effective).toEqual({ summary: null, insight: null });
   });
 
+  it("carries every provider field the panel renders, the default model included", async () => {
+    // The panel renders what this normalizer hands it, and PUT replaces the
+    // whole list with what the panel sends back. A field served by the
+    // operator but dropped here therefore reads as unset on the card AND is
+    // wiped on the next save — which is how a saved default model came back
+    // as "No default model" (D-749).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            providers: [
+              {
+                id: "openrouter",
+                name: "OpenRouter",
+                base_url: "https://openrouter.ai/api/v1",
+                api_key_configured: true,
+                timeout_sec: 0,
+                max_tokens: 0,
+                model: "deepseek/deepseek-v4-flash",
+              },
+              { id: "local", name: "Local", base_url: "http://host:11434/v1" },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const settings = await new OperatorClient("https://operator.test").getLLMSettings();
+
+    expect(settings.providers[0]).toEqual({
+      id: "openrouter",
+      name: "OpenRouter",
+      base_url: "https://openrouter.ai/api/v1",
+      api_key_configured: true,
+      timeout_sec: 0,
+      max_tokens: 0,
+      model: "deepseek/deepseek-v4-flash",
+    });
+    // Absent reads as "no default model", never as undefined: the panel
+    // trims it and the PUT body must carry a string for every row.
+    expect(settings.providers[1]?.model).toBe("");
+  });
+
   it("omits api_key when unchanged and sends an empty string to clear it", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ providers: [] }), {

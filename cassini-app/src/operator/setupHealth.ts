@@ -635,8 +635,7 @@ const ADMIN_ACTION = "Open AI providers";
 // The button on the compact card. Same words as the button on the panel it
 // opens, so the second press is the one the first one promised.
 const ADMIN_ACTION_SHORT = "Add a provider";
-const NOT_YOURS_TO_FIX = " Only a Nextcloud administrator can change that, and there is nothing " +
-  "wrong with your account.";
+const NOT_YOURS_TO_FIX = " Ask a Nextcloud administrator.";
 
 // buildFeatureNotice returns what to say about a capability this deployment does
 // not have, or null when there is nothing to say — which is BOTH "it is
@@ -654,12 +653,8 @@ export function buildFeatureNotice(options: {
   }
   const summary =
     feature === "insights"
-      ? "Asking a question of a set of meetings needs an AI endpoint, and this deployment has " +
-        "none it can reach — either none is configured, or none is switched on for a step. " +
-        "Recording and transcription are unaffected: they run here, and need no endpoint."
-      : "A summary needs an AI endpoint and the summarise step switched on, and this deployment " +
-        "does not have both. Transcripts are unaffected: they are produced here, and need " +
-        "neither.";
+      ? "Insights need an AI endpoint, and this deployment has none."
+      : "Summaries need an AI endpoint and the summarise step switched on.";
   return {
     title:
       feature === "insights" ? "No AI endpoint is available" : "Meetings are not being summarised",

@@ -5,6 +5,7 @@ import type {
   JobDetailResponse,
   LLMEffectiveStep,
   LLMModel,
+  LLMProviderView,
   LLMSettings,
   LLMSettingsUpdate,
   LLMStep,
@@ -371,13 +372,18 @@ function normalizeLLMSettings(raw: unknown): LLMSettings {
   const providers = Array.isArray(value.providers)
     ? value.providers
         .filter((item): item is Record<string, unknown> => item != null && typeof item === "object")
-        .map((item) => ({
+        // Typed on the callback rather than left to inference: a field added
+        // to LLMProviderView but not copied here is otherwise invisible to
+        // the compiler, and that is exactly how `model` was served by the
+        // operator, dropped on the way in, and then sent back empty (D-749).
+        .map((item): LLMProviderView => ({
           id: asString(item.id),
           name: asString(item.name),
           base_url: asString(item.base_url),
           api_key_configured: item.api_key_configured === true,
           timeout_sec: asNonNegativeNumber(item.timeout_sec),
           max_tokens: asNonNegativeNumber(item.max_tokens),
+          model: asString(item.model),
         }))
         .filter((item) => item.id !== "")
     : [];
@@ -642,9 +648,8 @@ function normalizeStorageTransition(value: unknown): StorageTransition | null {
 // answer: the endpoint never serves one (it replaces a nil registry with an
 // empty array precisely so success cannot look like absence), so this is a
 // build talking to something that is not the operator it expects. Returning []
-// would put the panel's "This build ships no templates. The registry answered,
-// and it is empty." on the screen — a positive claim about the image, made from
-// a body nobody understood.
+// would put the panel's "This build ships no templates." on the screen — a
+// positive claim about the image, made from a body nobody understood.
 function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {
   if (!Array.isArray(raw)) {
     throw new Error("the workflow registry came back in a shape this app does not understand");
