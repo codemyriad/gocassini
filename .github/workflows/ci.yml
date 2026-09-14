@@ -184,7 +184,10 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go mod download
       - name: Install media tools
-        if: matrix.module == 'cassini-go-recorder'
+        # The operator needs them too: its CLI byte-parity test
+        # (TestMeetingsContextBytesMatchTheCLIOverTheSameIDs) packs a real
+        # portable meeting with ffmpeg and silently skips without it (D-740).
+        if: matrix.module == 'cassini-go-recorder' || matrix.module == 'cassini-operator'
         run: |
           # A vendor apt source we never install from can fail `apt-get update`
           # (exit 100) and take this step with it. ci-apt-update.sh drops every

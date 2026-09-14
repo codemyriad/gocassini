@@ -779,7 +779,7 @@ func newHTTPHandlerWithStateDir(logger *log.Logger, rt *Runtime, exappCfg ExAppC
 
 	root := http.NewServeMux()
 	exappCfg.installRoutes(root, stateDir, logger, searchDeps{})
-	mountBasePathOnto(root, rt.cfg.BasePath, api)
+	mountBasePathOnto(root, rt.cfg.BasePath, api, []string{"/jobs", "/jobs/", "/events"})
 
 	outer := http.NewServeMux()
 	outer.Handle("/heartbeat", heartbeatHandler())

@@ -1,6 +1,9 @@
 package operator
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Why an insight run failed, as the run row records it (D-749).
 //
@@ -26,7 +29,7 @@ const (
 	insightReasonWriteFailed = "write-failed"
 	// The WebDAV PUT into the requester's files failed.
 	insightReasonDeliverFailed = "deliver-failed"
-	// The attempt's context expired or was cancelled — the run-timeout backstop.
+	// The attempt hit its own deadline — the run-timeout backstop.
 	insightReasonTimeout = "timeout"
 	// The staging directory or the staged catalog could not be written.
 	insightReasonStagingFailed = "staging-failed"
@@ -39,8 +42,9 @@ const (
 	insightReasonDownloadFailed = "download-failed"
 	// `cassini meetings context` could not build the bundle.
 	insightReasonAssembleFailed = "assemble-failed"
-	// The store's sweep found the run stranded: the operator restarted, or the
-	// attempt stopped writing. Written by MarkInterruptedRunsFailed.
+	// The operator went away under the run: its context was cancelled by a
+	// shutdown, or the store's sweep found it stranded afterwards (written by
+	// MarkInterruptedRunsFailed). Nothing about the request was wrong.
 	insightReasonInterrupted = "interrupted"
 	// Any exit code the contract does not name.
 	insightReasonUnknown = "unknown"
@@ -78,11 +82,17 @@ func isInsightReason(token string) bool {
 //
 // The code space is the contract — it is documented in the command's own help
 // precisely so a caller need not read the message — so this switches on it and
-// never on the child's text. A cancelled context outranks whatever the killed
-// child reported: a run stopped by its own deadline did not fail at the model.
+// never on the child's text. A context that ended outranks whatever the killed
+// child reported: a run stopped from outside did not fail at the model. The
+// two ways it ends are different advice — the deadline is the run's own
+// 60-minute bound, so a smaller selection is the fix; a cancellation is the
+// operator shutting down under the run, so retrying it unchanged is (D-740).
 func insightExitReason(ctx context.Context, code int) string {
-	if ctx.Err() != nil {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return insightReasonTimeout
+	case ctx.Err() != nil:
+		return insightReasonInterrupted
 	}
 	switch code {
 	case 1:

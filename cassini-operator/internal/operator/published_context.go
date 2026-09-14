@@ -123,6 +123,12 @@ func (c ExAppConfig) meetingsContextHandler(logger *log.Logger) http.Handler {
 }
 
 func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request, client *http.Client, logger *log.Logger) {
+	// Set once, before any answer: AppAPI caches a proxied GET for an hour, and
+	// a cached refusal is worse than a cached document — a 404 from an ACL that
+	// has since been granted, or a 502 from an outage that has since cleared,
+	// would be served for the rest of the hour (D-740).
+	w.Header().Set("Cache-Control", "no-store")
+
 	request, err := parseMeetingsContextRequest(r.URL.Query())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -147,7 +153,16 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 	defer cancel()
 
 	readable, catalog, ok := c.readableMeetingsForCaller(ctx, client, caller, logger)
-	if !ok {
+	if !ok || len(readable) == 0 {
+		// Empty is an outage here, not an answer — the same guard the insight
+		// handler has. serveFilteredCatalog fails CLOSED, so a per-caller scan
+		// that errored arrives as an empty catalog with ok=true, and the loop
+		// below would then serve a substrate failure as "not one of yours".
+		// Nobody reaches this route without having just listed their own
+		// meetings, so a readable set of nothing is the failure, not the fact.
+		if logger != nil {
+			logger.Printf("meetings context: caller=%s has no readable meetings (ok=%t) — refusing as an outage rather than a denial", caller, ok)
+		}
 		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
 		return
 	}
@@ -219,7 +234,6 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", request.contentType())
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
@@ -343,11 +357,12 @@ func isPlainMeetingID(id string) bool {
 // what makes the two documents identical rather than merely similar.
 //
 // A failed per-caller scan reaches here as an EMPTY catalog, not as an error —
-// serveFilteredCatalog fails closed — so every requested id then answers 404.
-// That is the safe direction (over-restriction, never disclosure) and it is
-// indistinguishable from a denial, which is the same thing every other read of
-// this archive says. See followups: telling a scan failure apart needs the
-// resolveCatalogForCaller extraction D-701 makes.
+// serveFilteredCatalog fails closed — so the readable set comes back empty with
+// ok=true. That is the safe direction (over-restriction, never disclosure), and
+// both callers treat an empty set as the outage it almost always is and answer
+// 502 rather than 404: a caller who has just listed their own meetings and now
+// reads none of them has hit a failure, not a permission change. Telling the
+// two apart exactly needs the resolveCatalogForCaller extraction D-701 makes.
 //
 // Which model this instance runs is resolved inside that same resolution, so
 // this reads the caller's slice under access control and the whole archive under

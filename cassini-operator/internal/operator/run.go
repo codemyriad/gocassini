@@ -832,23 +832,46 @@ func (rt *Runtime) Shutdown() {
 	}
 }
 
+// operatorAPIRoutes is every pattern the operator JSON API answers, in one place
+// so that mounting it under base path "/" registers exactly what mounting it
+// under "/operator" strips a prefix for. The two used to be separate lists, and
+// the USER /ai/* routes were added to one and not the other, so the plain
+// compose stack served them 404 while the ExApp image served them fine (D-740).
+func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
+	pattern string
+	handler http.Handler
+} {
+	return []struct {
+		pattern string
+		handler http.Handler
+	}{
+		{"/jobs", http.HandlerFunc(rt.jobsHandler)},
+		{"/jobs/", http.HandlerFunc(rt.jobDetailHandler)},
+		{"/events", http.HandlerFunc(rt.eventsHandler)},
+		{"/status", http.HandlerFunc(rt.statusHandler)},
+		{"/setup", http.HandlerFunc(rt.setupHandler)},
+		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
+		{"/ai/providers/", http.HandlerFunc(rt.aiProviderModelsHandler)},
+		{"/settings", http.HandlerFunc(rt.settingsHandler)},
+		// A sibling of the /settings/ prefix rather than another branch inside
+		// the LLM settings handler: the workflow registry is not LLM policy, it
+		// is what the recorder ships, and an exact pattern wins over the prefix
+		// (D-718).
+		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
+		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
+		{"/storage", exappCfg.storageHandler(rt)},
+		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
+	}
+}
+
 func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.Handler {
 	api := http.NewServeMux()
-	api.HandleFunc("/jobs", rt.jobsHandler)
-	api.HandleFunc("/jobs/", rt.jobDetailHandler)
-	api.HandleFunc("/events", rt.eventsHandler)
-	api.HandleFunc("/status", rt.statusHandler)
-	api.HandleFunc("/setup", rt.setupHandler)
-	api.HandleFunc("/ai/providers", rt.aiProvidersHandler)
-	api.HandleFunc("/ai/providers/", rt.aiProviderModelsHandler)
-	api.HandleFunc("/settings", rt.settingsHandler)
-	// A sibling of the /settings/ prefix rather than another branch inside the
-	// LLM settings handler: the workflow registry is not LLM policy, it is what
-	// the recorder ships, and an exact pattern wins over the prefix (D-718).
-	api.HandleFunc("/settings/workflows", rt.settingsWorkflowsHandler)
-	api.HandleFunc("/settings/", rt.llmSettingsHandler)
-	api.Handle("/storage", exappCfg.storageHandler(rt))
-	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
+	routes := operatorAPIRoutes(rt, exappCfg)
+	patterns := make([]string, 0, len(routes))
+	for _, route := range routes {
+		api.Handle(route.pattern, route.handler)
+		patterns = append(patterns, route.pattern)
+	}
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are
@@ -872,7 +895,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 		insights.register(root)
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
-	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
+	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)
 
 	// /heartbeat, /healthz, and the Talk recording-backend endpoints must answer
 	// without AppAPI auth headers — Talk uses its own HMAC scheme (Talk-Recording-
@@ -889,18 +912,15 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 }
 
 // mountBasePathOnto registers the operator api mux under basePath on the given
-// root mux. When basePath is "/" the API is mounted at the root.
-func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
+// root mux. When basePath is "/" the API is mounted at the root, pattern by
+// pattern — the root mux also serves the viewer, the published archive and the
+// lifecycle routes, so the API cannot take "/" wholesale — and patterns is the
+// list of what the API answers, so the root sees exactly the set it serves.
+func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler, patterns []string) {
 	if basePath == "" || basePath == "/" {
-		root.Handle("/jobs", api)
-		root.Handle("/jobs/", api)
-		root.Handle("/events", api)
-		root.Handle("/status", api)
-		root.Handle("/setup", api)
-		root.Handle("/settings", api)
-		root.Handle("/settings/", api)
-		root.Handle("/storage", api)
-		root.Handle("/talk/provisioning", api)
+		for _, pattern := range patterns {
+			root.Handle(pattern, api)
+		}
 		return
 	}
 	root.Handle(basePath, http.StripPrefix(basePath, api))

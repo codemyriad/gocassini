@@ -979,6 +979,7 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
 | `/operator/storage` | ADMIN | Storage mode: which one is active, what the other needs, and the switch (`PUT` copies the archive into the other mode's root and then empties the old one; `POST` re-checks, previews a switch, installs the native apps, or finishes an interrupted switch) |
 | `/operator/setup` | USER | Whether recordings can be served at all, whether the one thing missing is a storage-model decision, and two AI capability bits — `{"ok":…,"state":…,"awaiting_choice":…,"features":{"summaries":…,"insights":…}}` and nothing else |
+| `/operator/ai/providers`, `/operator/ai/providers/<id>/models` | USER (`GET`) | The endpoints a person may pick for an insight — each as an id and a display name, nothing more — and the model list one of them serves, fetched by the operator with the stored key |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
 | `/insights` | USER | Insight runs: create one (`POST`), list the caller's own (`GET`) |
@@ -1010,14 +1011,19 @@ the request arrives at your LLM provider attributable to this deployment rather
 than to the person who asked. See [Data processing &
 privacy](./privacy.md#what-leaves-your-infrastructure-and-when).
 
-`/operator/setup` is the one deliberate exception to "the operator API is
-ADMIN", and it is USER for a reason: without it, the only thing a non-admin
-could learn about an unfinished install was the viewer failing to load. It
-carries the `recordings_access` **verdict** — `ok` and `state` — and the two
-`features` booleans, and nothing else. No step, no administrator, no paths, no
-versions, no endpoint, no model, no key; the diagnosis stays on
-`/operator/status`. See [What people see when setup is not
-finished](#what-people-see-when-setup-is-not-finished).
+`/operator/setup` and `/operator/ai/*` are the two deliberate exceptions to
+"the operator API is ADMIN", and each is USER for a reason. Without `setup`,
+the only thing a non-admin could learn about an unfinished install was the
+viewer failing to load. It carries the `recordings_access` **verdict** — `ok`
+and `state` — and the two `features` booleans, and nothing else. No step, no
+administrator, no paths, no versions, no endpoint, no model, no key; the
+diagnosis stays on `/operator/status`. See [What people see when setup is not
+finished](#what-people-see-when-setup-is-not-finished). `ai/providers` exists
+because choosing which endpoint answers an insight is the asker's decision, and
+most askers are not administrators. What crosses that line is an id and a
+display name per endpoint, and a model list the operator fetches server-side;
+the base URL and the key stay on the ADMIN settings surface, and a failure to
+list models is reported to the asker without the URL.
 
 `PUT /enabled` and `POST /init` are AppAPI **lifecycle callbacks**, not
 proxied browser routes; they do not appear in `<routes>`.
