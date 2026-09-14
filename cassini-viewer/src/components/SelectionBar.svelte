@@ -3,6 +3,7 @@
   import { Tag, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import TagPicker from "./tags/TagPicker.svelte";
+  import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";
 
   // The selection bar (D-626). Presentational: the shell owns the selection and
   // decides whether this exists at all.
@@ -32,6 +33,11 @@
   export let tagMixed: readonly string[] = [];
   export let tagReport = "";
 
+  // Above the operator's cap Prepare would open a panel whose every action is
+  // refused, so the button says the number instead (D-749).
+  $: overCap = count > MAX_SELECTED_MEETINGS;
+  $: excess = count - MAX_SELECTED_MEETINGS;
+
   const dispatch = createEventDispatcher<{
     clear: void;
     prepare: void;
@@ -58,7 +64,13 @@
         {#if hiddenCount > 0}
           {hiddenCount} not shown here.
         {/if}
-        Assemble them into one document you can take away.
+        {#if overCap}
+          A bundle holds at most {MAX_SELECTED_MEETINGS} meetings. Unpick {excess === 1
+            ? "one"
+            : excess}.
+        {:else}
+          Assemble them into one document you can take away.
+        {/if}
       </p>
       {#if tagReport}
         <p class="selbar-desc" role="status">{tagReport}</p>
@@ -84,7 +96,12 @@
           Tag
         </button>
       {/if}
-      <button type="button" class="selbar-prepare" on:click={() => dispatch("prepare")}>
+      <button
+        type="button"
+        class="selbar-prepare"
+        disabled={overCap}
+        on:click={() => dispatch("prepare")}
+      >
         Prepare
       </button>
     </div>

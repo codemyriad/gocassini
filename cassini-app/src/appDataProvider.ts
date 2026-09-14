@@ -15,7 +15,11 @@ import {
   type VocabularyTag,
 } from "cassini-viewer/annotations";
 
-import { listInsights as fetchInsightRuns, readInsight } from "./insights/client";
+import {
+  listInsights as fetchInsightRuns,
+  readInsight,
+  retryInsight as postInsightRetry,
+} from "./insights/client";
 
 // The in-Nextcloud shell's data provider (D-626).
 //
@@ -120,6 +124,15 @@ export class AppDataProvider extends StaticCatalogProvider {
 
   async loadTagJob(): Promise<TagJob | null> {
     return (await requestAnnotations<{ job: TagJob | null }>("tags/job")).job;
+  }
+
+  // POST insights/<id>/retry (D-749). The run record comes back as the
+  // operator now holds it — `queued`, attempt incremented — and the viewer
+  // puts it in the list in place of the failed one. A 409 arrives as the
+  // operator's own sentence (running, or already answered), which is an
+  // answer rather than a failure.
+  async retryInsight(id: string): Promise<InsightRecord> {
+    return postInsightRetry(id);
   }
 }
 

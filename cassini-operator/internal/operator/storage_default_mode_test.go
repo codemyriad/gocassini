@@ -266,6 +266,22 @@ func TestRecordingRefusalOnlyFiresOnANamedMissingPrerequisite(t *testing.T) {
 	if got := ncAccessSubstrate.recordingRefusal(); got == "" {
 		t.Fatal("a missing service account did not refuse the recording")
 	}
+
+	// The mode the enabled edge could not resolve is a DEGRADATION, not a
+	// missing prerequisite, and that is what keeps it out of here: a call is
+	// spent once, and "Cassini could not tell where the archive is" is not a
+	// fault the people in the meeting can do anything about. The recording is
+	// made; publishing is what waits.
+	ncAccessSubstrate.reset()
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.degraded(storageStepModeUnresolved, errTransitionNotReady)
+	if got := ncAccessSubstrate.recordingRefusal(); got != "" {
+		t.Fatalf("an unresolved storage mode refused a recording: %q", got)
+	}
+
+	ncAccessSubstrate.reset()
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.unavailable(storageStepServiceAccount, errTransitionNotReady)
 	ncAccessSubstrate.succeed()
 	if got := ncAccessSubstrate.recordingRefusal(); got == "" {
 		t.Fatal("succeed() cleared a recorded unavailability, which it must never do")

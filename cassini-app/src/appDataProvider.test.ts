@@ -272,3 +272,32 @@ describe("AppDataProvider annotations", () => {
     });
   });
 });
+
+describe("AppDataProvider.retryInsight", () => {
+  it("posts to the run's own retry path and returns the run the operator answered with", async () => {
+    // The viewer puts this record in the list in place of the failed one, so
+    // it has to be the operator's answer and not an optimistic copy (D-749).
+    const fetchMock = respondWith(
+      JSON.stringify({
+        id: "ins_0123456789abcdef",
+        status: "queued",
+        attemptNumber: 2,
+        meetingIds: ["m1"],
+        error: "",
+      }),
+    );
+    const run = await new AppDataProvider().retryInsight("ins_0123456789abcdef");
+    expect(run.status).toBe("queued");
+    expect(run.attemptNumber).toBe(2);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${PROXY_BASE}insights/ins_0123456789abcdef/retry`);
+    expect(init.method).toBe("POST");
+  });
+
+  it("reports a race against a running run in the operator's own sentence", async () => {
+    respondWith(JSON.stringify({ error: "This insight is already running." }), { status: 409 });
+    await expect(new AppDataProvider().retryInsight("ins_0123456789abcdef")).rejects.toThrow(
+      "already running",
+    );
+  });
+});

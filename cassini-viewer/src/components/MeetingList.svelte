@@ -13,6 +13,7 @@
     type MeetingCatalogEntry,
   } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
+  import { formatClockTime } from "../core/transcript";
   import {
     ALL_BROWSE_TYPES,
     buildBrowseFeed,
@@ -22,6 +23,7 @@
     type InsightRecord,
   } from "../viewer/insights";
   import InsightCard from "./InsightCard.svelte";
+  import type { MeetingSearchHit } from "../viewer/meetingSearch";
 
   // The browse list (D-420 V1, room-grouped in D-654, insights folded in for
   // D-721). Presentational: the shell owns the catalog, the insights, the room
@@ -80,6 +82,21 @@
   // shell against the WHOLE catalog — not against this room's meetings, which
   // would undercount an insight that spans rooms, which most of them do.
   export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
+  // Retry from the card (D-749): offered where the shell's provider can, and
+  // the shell says which run is mid-retry and what the last retry answered.
+  export let insightsRetryable = false;
+  export let retryingInsightId = "";
+  export let insightRetryError: { id: string; message: string } | null = null;
+
+  // Who can see the recordings in this list (D-756). The shell resolves it from
+  // the deployment's storage mode and hands down the audience, never the mode
+  // itself: the storage enum is the operator's word for where the bytes live,
+  // and this layer has no business knowing it.
+  //
+  // "" is "nobody said" — a standalone export, which has no operator to ask,
+  // and an operator too old to report it — and it renders nothing. A chip is a
+  // claim about who can read a recording, and there is no safe guess.
+  export let audience: "" | "everyone" | "participants" = "";
 
   export let meetingTags: MeetingTags = new Map();
   // Null offers no row tag button: the build cannot tag, or the vocabulary has not loaded.
@@ -95,10 +112,36 @@
   // two components reading one filter cannot each keep their own copy of it.
   export let types: BrowseTypeFilter = ALL_BROWSE_TYPES;
 
+  // Cross-meeting search (D-736). Owned by the shell, like insights: this
+  // component renders what came back and says which state it is in, but never
+  // makes the request — the visible set behind it is resolved per request from
+  // Nextcloud and that is not a presentational concern.
+  //
+  // searchOffered is false for a build with no operator (a standalone export),
+  // where the box narrows names and dates and claims nothing about transcripts.
+  export let searchOffered = false;
+  // "idle" | "searching" | "ok" | "rateLimited" | "indexUnavailable" | "failed"
+  //
+  // Each failure is its own state ON PURPOSE. Folding any of them into an empty
+  // result would tell the reader that nothing was said about what they asked,
+  // which is the opposite of the truth when the archive is simply unreachable.
+  export let searchState: string = "idle";
+  export let searchMessage = "";
+  // Matched moments, by meeting id, in the server's rank order.
+  export let transcriptHits: ReadonlyMap<string, readonly MeetingSearchHit[]> = new Map();
+  // Meetings that matched ONLY on what was said — they are not in the local
+  // name/date filter's output, so the list has to add them.
+  export let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
+  // What the last search could actually look at. Invariant 4 of the design:
+  // the index never claims coverage it does not have. Saying "no meeting
+  // matches" after searching 4 of 30 is a false negative dressed as an answer.
+  export let searchCoverage: { visible: number; searched: number } | null = null;
+
   const dispatch = createEventDispatcher<{
     select: MeetingCatalogEntry;
     pick: MeetingCatalogEntry;
     openInsight: InsightRecord;
+    retryInsight: InsightRecord;
     visible: MeetingCatalogEntry[];
     counts: { meetings: number; insights: number };
     clearRoom: void;
@@ -107,17 +150,41 @@
     tagMeeting: { meeting: MeetingCatalogEntry; pick: TagPick };
     clearTags: void;
     dismissTagNotice: void;
+    // What was typed. The shell debounces it and asks the operator.
+    query: string;
+    // Open a meeting AT a matched moment, carrying the query so the meeting
+    // view's own in-meeting filter (D-623 slice 7) can show the matching lines
+    // in full — the words are fetched there as the caller, so Nextcloud still
+    // re-checks the ACL on the bytes.
+    openMoment: { entry: MeetingCatalogEntry; startMs: number; query: string };
   }>();
 
   function toggleTagging(meeting: MeetingCatalogEntry, anchor: HTMLElement) {
     tagging = tagging?.meeting.id === meeting.id ? null : { meeting, anchor };
   }
 
-  // Title and date, as it has been since D-420 — the ticket's "keep the
-  // existing date/name filter working inside a room". It deliberately does NOT
-  // reach into transcript text: a hit the list cannot show is a hit that looks
-  // like a bug.
-  $: visibleMeetings = filterMeetingCatalogEntries(meetings, filter);
+  // Title and date, as it has been since D-420. It still does NOT reach into
+  // transcript text: that question is answered by the operator, because the
+  // words are not in this array — which is also what finally makes the old
+  // comment's worry ("a hit the list cannot show") moot, since a hit now
+  // arrives WITH the quote that justifies it.
+  $: nameMatches = filterMeetingCatalogEntries(meetings, filter);
+  // Name/date matches keep the catalog's order and come first; meetings that
+  // matched only on what was said follow, in the server's rank order.
+  $: visibleMeetings = filter.trim() === "" ? nameMatches : [...nameMatches, ...transcriptOnlyMeetings];
+  // The shell owns the request; this only says what was typed.
+  $: dispatch("query", filter);
+  $: isSearching = searchState === "searching";
+  // A failure the reader has to be able to tell from "nothing matched".
+  // True only when the last search saw everything the caller can read.
+  $: searchCoveredEverything =
+    !searchOffered ||
+    searchCoverage === null ||
+    searchCoverage.searched >= searchCoverage.visible;
+  $: searchProblem =
+    searchState === "rateLimited" || searchState === "indexUnavailable" || searchState === "failed"
+      ? searchMessage || "Search is unavailable right now."
+      : "";
   // Both kinds are narrowed by the same search box, and both counts are
   // computed whether or not their kind is being shown: the count is what
   // answers "is there anything behind that switch?".
@@ -197,10 +264,17 @@
              Meetings toggle is off. -->
         <input
           type="search"
-          placeholder={`Search ${matchNounPlural} by name or date`}
-          aria-label={`Search ${matchNounPlural} by name or date`}
+          placeholder={searchOffered
+            ? `Search ${matchNounPlural} and what was said in them`
+            : `Search ${matchNounPlural} by name or date`}
+          aria-label={searchOffered
+            ? `Search ${matchNounPlural} and what was said in them`
+            : `Search ${matchNounPlural} by name or date`}
           bind:value={filter}
         />
+        {#if isSearching}
+          <span class="search-status" aria-live="polite">Searching…</span>
+        {/if}
       </label>
 
       {#if !ncMode}
@@ -235,7 +309,23 @@
         <span>{visibleInsights.length} of {totalInsightCount} insights</span>
       {:else if insightsOffered && insightsError}
         <span class="dot" aria-hidden="true"></span>
-        <span>insights unavailable</span>
+        <span>Insights could not be listed.</span>
+      {/if}
+      <!-- The permanent disclosure, before the transient ones: this is the only
+           thing on the browse surface that says who can see these recordings,
+           and it says the same to everybody. Hiding it from non-admins is what
+           D-670 was raised to stop. -->
+      {#if audience === "everyone"}
+        <span
+          class="chip audience"
+          title="Anyone with an account on this Nextcloud can see every recording and the name of the room it came from"
+        >
+          Visible to anyone with a Nextcloud account
+        </span>
+      {:else if audience === "participants"}
+        <span class="chip audience limited" title="Only the people in each call can see its recording">
+          Visible to meeting participants
+        </span>
       {/if}
       {#if selectedRoomName !== null}
         <span class="chip">
@@ -268,9 +358,7 @@
          meetings and incomplete for insights, and only one of those two things
          went wrong. -->
     {#if insightsError}
-      <p class="list-note" role="status">
-        Insights could not be listed: {insightsError} The meetings are unaffected.
-      </p>
+      <p class="list-note" role="status">Insights could not be listed.</p>
     {/if}
     {#if tagNotice}
       <p class="list-note" role="status">
@@ -299,6 +387,10 @@
            empty, so the reason is the listing itself — and a listing that failed
            and one still in flight are different facts, neither of which is "you
            have none". -->
+    {:else if feedItems.length === 0 && insightsOnly && !trimmedFilter && selectedRoomName === null && !insightsLoaded && !insightsError}
+      <div class="list-empty">
+        <strong>Loading insights…</strong>
+      </div>
     {:else if feedItems.length === 0}
       <div class="list-empty">
         <strong>Nothing matches</strong>
@@ -313,12 +405,19 @@
             No {matchNoun} in {selectedRoomName} matches that search.
           {:else if selectedRoomName !== null}
             {selectedRoomName} has no {matchNounPlural}.
+          {:else if trimmedFilter && searchProblem}
+            <!-- NOT "nothing matches": the transcript half of the question was
+                 never answered, and saying nothing matched would be a claim the
+                 search never got to make. -->
+            Names and dates match no {matchNoun}, and what was said could not be
+            searched.
+          {:else if trimmedFilter && !searchCoveredEverything}
+            No {matchNoun} matches that search — but only {searchCoverage?.searched}
+            of {searchCoverage?.visible} could be searched for what was said in them.
           {:else if trimmedFilter}
             No {matchNoun} matches that search.
-          {:else if insightsOnly && !insightsLoaded}
-            Your insights are still loading.
           {:else if insightsOnly && insightsError}
-            Your insights could not be listed, so none can be shown here.
+            Insights could not be listed.
           {:else}
             There are no {matchNounPlural} to show.
           {/if}
@@ -353,7 +452,11 @@
               insight={item.insight}
               sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}
               selected={item.insight.id === selectedInsightId}
+              canRetry={insightsRetryable}
+              retrying={retryingInsightId === item.insight.id}
+              retryError={insightRetryError?.id === item.insight.id ? insightRetryError.message : ""}
               on:open={() => dispatch("openInsight", item.insight)}
+              on:retry={() => dispatch("retryInsight", item.insight)}
             />
           {:else}
             {@const meeting = item.meeting}
@@ -436,6 +539,35 @@
                   <Tag size={15} aria-hidden="true" />
                 </button>
               {/if}
+              <!-- OUTSIDE row-open on purpose: each moment is its own button,
+                   and a button inside a button is invalid markup that browsers
+                   resolve by dropping one of them. -->
+              {#if (transcriptHits.get(meeting.id) ?? []).length > 0}
+                <div class="row-moments">
+                  {#each transcriptHits.get(meeting.id) ?? [] as moment (moment.segmentId + moment.startMs)}
+                    <button
+                      type="button"
+                      class="row-moment"
+                      title={moment.snippet}
+                      on:click={() =>
+                        dispatch("openMoment", {
+                          entry: meeting,
+                          startMs: moment.startMs,
+                          query: filter,
+                        })}
+                    >
+                      <span class="row-moment-at">{formatClockTime(moment.startMs)}</span>
+                      <span class="row-snippet">{moment.snippet || "matched here"}</span>
+                      {#if moment.matched === "alias"}
+                        <!-- Finding "casino" is not the same as finding
+                             "cassini", and a row that hides the difference is
+                             lying by omission. -->
+                        <span class="row-moment-alias" title="Matched a known mistranscription">~</span>
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             </div>
           {/if}
         {/each}
@@ -456,6 +588,13 @@
     />
   {/if}
 
+  <!-- A search failure is NOT an empty result, and must not read as one: the
+       list below may be showing name matches only, and the reader has to know
+       that the transcript half of their question went unanswered. -->
+  {#if searchProblem && filter.trim() !== ""}
+    <div class="search-problem" role="status">{searchProblem}</div>
+  {/if}
+
   <!-- Sticky footer: load note (only renders when there's an error) -->
   {#if errorMessage && !selectedMeetingId}
     <footer class="flex-none flex flex-col gap-3 px-4 py-4">
@@ -474,6 +613,70 @@
      a hairline rule and three interlocking states (hover, open, group heading),
      which is shorter and easier to keep coherent here than as utility stacks
      on every row. */
+  .search-status {
+    flex: none;
+    font-size: 0.6875rem;
+    color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+    white-space: nowrap;
+  }
+
+  .search-problem {
+    flex: none;
+    margin: 0 1.25rem 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    color: var(--color-warning-content, inherit);
+    background-color: color-mix(in oklab, var(--color-warning) 18%, transparent);
+    border: 1px solid color-mix(in oklab, var(--color-warning) 40%, transparent);
+  }
+
+  /* The matched moments under a row. `speaker: quote` is the mock's
+     .row-snippet; the timestamps are what make each one reachable. */
+  .row-moments {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-top: 0.25rem;
+  }
+
+  .row-moment {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    padding: 0.1rem 0;
+    background: none;
+    border: 0;
+    font: inherit;
+    font-size: 0.75rem;
+    text-align: left;
+    color: color-mix(in oklab, var(--color-base-content) 75%, transparent);
+    cursor: pointer;
+  }
+
+  .row-moment:hover .row-snippet {
+    color: var(--color-base-content);
+  }
+
+  .row-moment-at {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+    color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+  }
+
+  .row-snippet {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .row-moment-alias {
+    flex: none;
+    font-size: 0.6875rem;
+    opacity: 0.7;
+  }
+
   .searchbar {
     z-index: 5;
     padding: 1rem 1.25rem 0.75rem;
@@ -588,6 +791,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* The audience chip is not a narrowing: nothing was filtered and there is
+     nothing to clear, so it drops the primary fill that means "this list is
+     incomplete" and reads as the standing fact it is. Same shape, so the line
+     stays one row of chips. */
+  .chip.audience {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 20%, transparent);
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* The narrower audience is the one worth colouring: a recording only its
+     participants can see is the exception on a Nextcloud, and the chip is how
+     you tell the two apart at a glance. */
+  .chip.audience.limited {
+    background-color: color-mix(in oklch, var(--color-success) 15%, transparent);
+    border-color: color-mix(in oklch, var(--color-success) 38%, transparent);
+    color: var(--color-success);
+  }
+
   .chip button {
     display: inline-flex;
     flex: none;

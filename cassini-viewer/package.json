@@ -12,6 +12,7 @@
     "./annotations": "./src/viewer/annotations.ts",
     "./tagPalette": "./src/viewer/tagPalette.ts",
     "./tags/*": "./src/components/tags/*",
+    "./insights": "./src/viewer/insights.ts",
     "./app.css": "./src/app.css"
   },
   "scripts": {

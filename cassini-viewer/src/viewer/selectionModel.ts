@@ -31,6 +31,12 @@ export interface MeetingSelection {
 
 export const EMPTY_SELECTION: MeetingSelection = { ids: [], dropped: [] };
 
+// MAX_SELECTED_MEETINGS mirrors the operator's cap on one bundle
+// (maxContextMeetings in published_context.go, which the insight route shares):
+// above it the request is refused before any Nextcloud call. Said here, before
+// the request, rather than discovered as a 400 after it (D-749).
+export const MAX_SELECTED_MEETINGS = 20;
+
 export function isSelected(selection: MeetingSelection, id: string): boolean {
   return selection.ids.includes(id);
 }
@@ -237,6 +243,14 @@ export function formatSelectionWordCount(totals: SelectionTotals): string {
 // wrong is the failure this panel exists to prevent.
 export function describeSelectionGaps(totals: SelectionTotals): string[] {
   const gaps: string[] = [];
+  // First, because it is the one gap that stops everything: the operator
+  // refuses a bundle, and a question, over more than this many meetings.
+  if (totals.count > MAX_SELECTED_MEETINGS) {
+    const excess = totals.count - MAX_SELECTED_MEETINGS;
+    gaps.push(
+      `A bundle holds at most ${MAX_SELECTED_MEETINGS} meetings. Unpick ${excess === 1 ? "one" : excess}.`,
+    );
+  }
   if (totals.withoutSummary > 0) {
     gaps.push(
       totals.withoutSummary === 1
@@ -269,8 +283,8 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
     // to unpick can be found without counting.
     gaps.push(
       totals.withoutPortableAudio === 1
-        ? "One of these predates the single-file format — it is marked in the list. The bundle is read from that file, so Prepare will fail for the whole selection until you unpick it."
-        : `${totals.withoutPortableAudio} of these predate the single-file format — they are marked in the list. The bundle is read from those files, so Prepare will fail for the whole selection until you unpick them.`,
+        ? "One of these predates the single-file format (marked in the list). Unpick it to prepare."
+        : `${totals.withoutPortableAudio} of these predate the single-file format (marked in the list). Unpick them to prepare.`,
     );
   }
   if (totals.meetingsWithoutWordCount > 0 && totals.meetingsWithWordCount > 0) {

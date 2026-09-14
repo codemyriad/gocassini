@@ -140,7 +140,7 @@ var shipped = []spec{
 		SkillDir:     "cassini-meeting-summary",
 		Name:         "Meeting summary",
 		Question:     "Summarise what happened, what was decided, and what follows.",
-		Description:  "One document per meeting in a fixed shape: overview, key points, decisions, action items, open questions and the next step. A section with nothing in it says \"None.\" rather than disappearing. This is the prompt the publish pipeline's summary step runs.",
+		Description:  "Overview, key points, decisions, action items, open questions and next step. Empty sections say “None.”",
 	},
 	{
 		ID:           TodosID,
@@ -150,7 +150,7 @@ var shipped = []spec{
 		SkillDir:     "cassini-meeting-todos",
 		Name:         "Commitments and owners",
 		Question:     "List the commitments and who owns them.",
-		Description:  "One section per person who spoke, with what they took on and when they said so, then what was assigned to somebody who never answered, then what nobody claimed. Every participant gets a section even when they took nothing on.",
+		Description:  "What each speaker took on and when, then what was assigned but unanswered, then what nobody claimed.",
 	},
 	{
 		ID:           AskID,
@@ -164,7 +164,7 @@ var shipped = []spec{
 		// caller's. The panel reads an empty Question as "write it yourself"
 		// and shows the box; every other entry shows the question it asks.
 		Question:    "",
-		Description: "Answers a question you type, from the meetings you picked: the answer in at most three sentences, the evidence for it with who said what, and — never omitted — what these meetings do not answer. Use it when no other template asks the thing you want to know.",
+		Description: "Answers your question in up to three sentences, with who said what and what the meetings do not answer.",
 	},
 }
 

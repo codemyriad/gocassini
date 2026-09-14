@@ -101,10 +101,11 @@ run_seeder "$WORK/good" --dry-run
 if (( STATUS == 0 )); then
   # A stack happens to be up and the pack validated and planned. Then the plan
   # must be the one this script promises.
-  grep -q "Team folder id=" <<<"$OUT" || fail "valid pack: dry run printed no folder id: $OUT"
+  grep -qE "Team folder id=|private CassiniNoACL directory" <<<"$OUT" \
+    || fail "valid pack: dry run printed no storage destination: $OUT"
   grep -q "Nothing was changed" <<<"$OUT" || fail "valid pack: dry run did not say it changed nothing: $OUT"
 else
-  grep -qE "could not list Team folders|no '?Cassini'? Team folder|nextcloud container is not running|docker" <<<"$OUT" \
+  grep -qE "could not list Team folders|no '?Cassini'? Team folder|could not read Nextcloud's datadirectory|nextcloud container is not running|docker" <<<"$OUT" \
     || fail "valid pack was rejected for a pack reason: $OUT"
 fi
 
