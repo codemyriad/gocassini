@@ -282,6 +282,16 @@ the publish subprocess spawns, and re-checked on the staged copy before the sink
 commits it. That is what makes "the meeting you download is the meeting this
 attempt sealed" a verified claim rather than a naming convention.
 
+Since D-737 a delivered recording can gain tags and marks after it is published,
+and a rerun must not erase them. So a re-delivery fetches the delivered copy,
+has `cassini annotate carry` write its marks into a staged copy of the sealed
+file, and delivers that with `If-Match` (a 412 means a mark landed meanwhile:
+fetch again, at most three times, then fail). The seal check still runs on the
+sealed file, unchanged, and carry verifies that its staged copy has the same
+audio. The claim becomes "the audio you download is the audio this attempt
+sealed, plus the marks already on it". See
+[three digests, three jobs](../spec/cassini-opus-audio-integrity-v1.md#three-digests-three-jobs).
+
 ### Rerun attempt
 
 Current reruns are **downstream-only**.

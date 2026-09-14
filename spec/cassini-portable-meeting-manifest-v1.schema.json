@@ -108,9 +108,213 @@
           }
         }
       }
+    },
+    "annotations": {
+      "$ref": "#/$defs/annotations"
     }
   },
   "$defs": {
+    "annotations": {
+      "type": "object",
+      "description": "Optional. The tags people and agents have put on this meeting, and on stretches of it. Absent means no marks. The member is versioned by its own format string: a consumer that does not recognise format MUST ignore the whole member and keep the audio and transcripts usable, so only a member that claims cassini.annotations.v1 is held to the shape below. A writer that needs a new field defines a new format string rather than extending v1.",
+      "required": [
+        "format"
+      ],
+      "properties": {
+        "format": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "format": {
+            "const": "cassini.annotations.v1"
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/annotationsV1"
+      }
+    },
+    "annotationsV1": {
+      "type": "object",
+      "description": "cassini.annotations.v1. Writers emit tags in (label, id) order and items with meeting targets first, then by (startMs, endMs, id), so successive revisions diff readably. Ids are unique within the document and every item.tagId names a tag in it. Open, like the rest of the manifest, but the reference writer round-trips v1 through a typed model, so a member this schema does not declare does not survive a rewrite.",
+      "required": [
+        "format",
+        "revision",
+        "audioOpusSha256",
+        "tagNamespace",
+        "tags",
+        "items"
+      ],
+      "properties": {
+        "format": {
+          "const": "cassini.annotations.v1"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Counts committed batches. Informational: concurrent writers are serialised by a conditional write on the file, not by this number."
+        },
+        "audioOpusSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The binding. The integrity.opusAudioSha256 of the audio these marks were made against. When the two are equal the marks are resolved; when they differ the marks are unresolved and a consumer MUST NOT draw their time ranges against this audio."
+        },
+        "tagNamespace": {
+          "type": "string",
+          "pattern": "^urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "Scopes tag ids: the same tag across recordings is the same (tagNamespace, id). Set on a file's first write and never changed. One installation uses one namespace."
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/annotationTag"
+          }
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": {
+            "$ref": "#/$defs/annotationItem"
+          }
+        }
+      }
+    },
+    "annotationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+      "description": "Opaque. Tag ids are random rather than time-ordered, so a reused id reveals nothing about when, or whether, someone else used that label."
+    },
+    "annotationTag": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/annotationId"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*$",
+          "not": {
+            "pattern": "^\\s|\\s$"
+          },
+          "description": "1-64 characters, already trimmed, no control characters."
+        }
+      }
+    },
+    "annotationItem": {
+      "type": "object",
+      "description": "One mark: one application of a tag to a target.",
+      "required": [
+        "id",
+        "tagId",
+        "target",
+        "createdAtUtc",
+        "actor",
+        "operationId"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/annotationId"
+        },
+        "tagId": {
+          "$ref": "#/$defs/annotationId"
+        },
+        "target": {
+          "$ref": "#/$defs/annotationTarget"
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "actor": {
+          "$ref": "#/$defs/annotationActor"
+        },
+        "operationId": {
+          "$ref": "#/$defs/annotationId",
+          "description": "Groups the items one batch added, so a whole run can be undone in one step."
+        }
+      }
+    },
+    "annotationTarget": {
+      "description": "What a mark applies to. A meeting target is the whole meeting and carries no times: it is a different claim from a range that happens to span the recording. A time-range target is half-open, [startMs, endMs), in elapsed playback milliseconds after Opus pre-skip, with startMs < endMs <= audio.durationMs; those two comparisons are not expressible here and writers enforce them.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "meeting"
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "startMs"
+                ]
+              },
+              {
+                "required": [
+                  "endMs"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "startMs",
+            "endMs"
+          ],
+          "properties": {
+            "kind": {
+              "const": "time-range"
+            },
+            "startMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "endMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      ]
+    },
+    "annotationActor": {
+      "type": "object",
+      "description": "Who made a mark. id is the authenticated Nextcloud user who made it, never a value a caller supplied, so a shared file carries who marked what. kind is self-declared (person or agent today): attribution for display and undo, not an access control. Consumers tolerate kinds they do not know.",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
     "meeting": {
       "type": "object",
       "description": "Open. Meeting metadata is open-ended by nature, and nothing in it is load-bearing for decoding, so a member a consumer does not recognise is ignored.",

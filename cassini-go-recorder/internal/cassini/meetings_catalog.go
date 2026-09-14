@@ -197,7 +197,13 @@ func (c *meetingsClient) fetchMeetings(ctx context.Context, filter meetingsFilte
 	case err == nil:
 		return listing, result, nil
 	case errors.Is(err, errMeetingsListAbsent):
-		// Fall through to the catalog.
+		// Fall through to the catalog — unless the filter names a tag. The
+		// catalog carries no marks, so it cannot narrow by one, and answering
+		// with every meeting would report the untagged list under the tagged
+		// question's name.
+		if filter.tag != "" {
+			return meetingsListing{}, meetingsFilterResult{}, errMeetingsTagsUnavailable
+		}
 	default:
 		return meetingsListing{}, meetingsFilterResult{}, err
 	}
@@ -266,6 +272,9 @@ func (c *meetingsClient) meetingsListURL(filter meetingsFilter) (*url.URL, error
 	}
 	if filter.room != "" {
 		query.Set("room", filter.room)
+	}
+	if filter.tag != "" {
+		query.Set("tag", filter.tag)
 	}
 	target.RawQuery = query.Encode()
 	return target, nil
@@ -451,6 +460,7 @@ type meetingsFilterEcho struct {
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
 	Room string `json:"room,omitempty"`
+	Tag  string `json:"tag,omitempty"`
 }
 
 // writeMeetingsCatalogJSON re-emits the catalog in display order, preserving
@@ -462,7 +472,7 @@ func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing, filter mee
 	}
 	var echo *meetingsFilterEcho
 	if filter.active() {
-		echo = &meetingsFilterEcho{Room: filter.room}
+		echo = &meetingsFilterEcho{Room: filter.room, Tag: filter.tag}
 		if filter.hasFrom {
 			echo.From = filter.from.Format(meetingsFilterStampLayout)
 		}

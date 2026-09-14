@@ -342,23 +342,47 @@ func TestInsightRunClassifiesTheRealEndpointsFailures(t *testing.T) {
 	cases := []struct {
 		name   string
 		status int
+		body   string
 		want   int
+		// says is a phrase the run record must carry, where the exit code alone
+		// would leave the reader without the fix.
+		says string
 	}{
-		{"an unusable credential", http.StatusUnauthorized, exitInsightRefused},
-		{"a server that broke", http.StatusInternalServerError, exitInsightModelFailed},
+		{"an unusable credential", http.StatusUnauthorized, `{"error":"nope"}`, exitInsightRefused, ""},
+		{"a server that broke", http.StatusInternalServerError, `{"error":"nope"}`, exitInsightModelFailed, ""},
+		// A 200 whose answer stopped at the output limit. The bytes look like a
+		// document, and a run that recorded them as succeeded would publish half
+		// an answer with nothing in it saying so.
+		{"a reply cut off at the output limit", http.StatusOK,
+			`{"choices":[{"message":{"content":"# Answer\n\nThey agreed to"},"finish_reason":"length"}]}`,
+			exitInsightModelFailed, "cut off at the model's output limit"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
-				_, _ = w.Write([]byte(`{"error":"nope"}`))
+				_, _ = w.Write([]byte(tc.body))
 			}))
 			t.Cleanup(srv.Close)
 			summaryLLMEnv(t, srv.URL)
 
+			recordPath := filepath.Join(t.TempDir(), "record.json")
 			var stdout, stderr bytes.Buffer
-			if code := Run(context.Background(), []string{"insight", "run", "--context", bundle}, &stdout, &stderr); code != tc.want {
+			if code := Run(context.Background(), []string{"insight", "run", "--context", bundle, "--record", recordPath}, &stdout, &stderr); code != tc.want {
 				t.Fatalf("exit = %d, want %d\nstderr: %s", code, tc.want, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("a failed run printed a document:\n%s", stdout.String())
+			}
+			if tc.says == "" {
+				return
+			}
+			record, err := os.ReadFile(recordPath)
+			if err != nil {
+				t.Fatalf("read the record: %v", err)
+			}
+			if !strings.Contains(string(record), tc.says) {
+				t.Errorf("record does not say %q:\n%s", tc.says, record)
 			}
 		})
 	}

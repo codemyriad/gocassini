@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -58,6 +59,10 @@ type Manifest struct {
 	// summary.md content lives in Attachments, not here.
 	Summary     map[string]any   `json:"summary,omitempty"`
 	Attachments []map[string]any `json:"attachments,omitempty"`
+	// Annotations is the optional tags-and-marks document (D-737). It is kept as
+	// raw JSON so that no reader fails to open a recording because of it; see
+	// ParseAnnotations.
+	Annotations json.RawMessage `json:"annotations,omitempty"`
 }
 
 type Provenance struct {

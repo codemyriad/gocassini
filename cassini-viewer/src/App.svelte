@@ -1,13 +1,20 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
   import {
+    filterMeetingCatalogEntries,
     sortMeetingCatalogEntries,
     type MeetingCatalogEntry,
   } from "./viewer/catalog";
   import { StaticCatalogProvider, type DataProvider } from "./viewer/dataProvider";
+  import {
+    groupHitsByMeeting,
+    isAbortError,
+    isMeetingSearchAvailable,
+    type MeetingSearchHit,
+  } from "./viewer/meetingSearch";
   import { isEmbeddedViewer } from "./viewer/appBase";
   import { resolveCatalogSelection } from "./viewer/catalogSelection";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
@@ -69,6 +76,14 @@
   // explicitly. It is threaded down to MeetingView for artifact loads.
   export let dataProvider: DataProvider = new StaticCatalogProvider();
 
+  // Who can see the recordings this viewer is listing (D-756). Part of the
+  // viewing layer's public surface because the chip that states it belongs
+  // beside the meeting count, and passed down rather than resolved here: the
+  // fact comes from the deployment's operator, which this layer cannot reach
+  // and a standalone export does not have. "" is "nobody said", and the chip
+  // renders nothing.
+  export let audience: "" | "everyone" | "participants" = "";
+
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
   let bundledMode = false;
@@ -113,6 +128,15 @@
   // next click — and a selection is a thing you are doing, not a place you are.
   let selection: MeetingSelection = EMPTY_SELECTION;
   let prepareOpen = false;
+  // Said to whoever mounts this shell, each time Prepare opens: the panel's
+  // readiness slot is filled from a fact only the shell around it has (whether
+  // this deployment has an AI endpoint), and that fact is read once at mount.
+  // A reader who was told "no endpoint" and comes back after an administrator
+  // configured one is otherwise told it again until they reload (D-749).
+  const dispatch = createEventDispatcher<{ prepareOpen: void }>();
+  $: if (prepareOpen) {
+    dispatch("prepareOpen");
+  }
   // What the list is actually showing, reported by MeetingList: its text filter
   // is list-local, so this is the only way the shell can say how many picked
   // meetings the current narrowing hides.
@@ -124,6 +148,26 @@
   // come back at least once, `insightsError` says the last one did not, and
   // neither of them is "there are no insights". The list is told all three
   // because "we could not ask" and "there are none" look identical otherwise.
+  // Cross-meeting search (D-736). The shell owns it because it is a request,
+  // and because the list is presentational.
+  let searchQuery = "";
+  let searchState: "idle" | "searching" | "ok" | "rateLimited" | "indexUnavailable" | "failed" = "idle";
+  let searchMessage = "";
+  let transcriptHits: ReadonlyMap<string, readonly MeetingSearchHit[]> = new Map();
+  let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
+  let searchCoverage: { visible: number; searched: number } | null = null;
+  let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+  // Only the newest query may write the results. Without this a slow earlier
+  // request can land after a faster later one and repaint the list with answers
+  // to a question the user has already moved on from.
+  let searchRun = 0;
+  let searchAbort: AbortController | undefined;
+  // Carried into MeetingView when a moment is opened from a search result, so
+  // the meeting lands already filtered to the lines that matched. Cleared on
+  // any ordinary open, because a meeting opened from the list is not a search
+  // result and should show the whole transcript.
+  let transcriptQueryForMeeting = "";
+
   let insights: InsightRecord[] = [];
   let insightsLoaded = false;
   let insightsError = "";
@@ -375,10 +419,140 @@
     }
   }
 
+  // SEARCH_DEBOUNCE_MS: long enough that typing a word is one request rather
+  // than six, short enough that the list does not feel stuck. Each search costs
+  // the operator a whole-archive PROPFIND as the caller, which is also why the
+  // endpoint rate-limits: this is the client-side half of not doing that.
+  const SEARCH_DEBOUNCE_MS = 220;
+  // A meeting contributes at most this many moments to the list. The server
+  // caps it so one talkative meeting cannot crowd every other one out of the
+  // page; this is the number the rows have room to show.
+  const SEARCH_HITS_PER_MEETING = 3;
+
+  // Two independent reasons there may be nothing to ask, and both have to turn
+  // the promise in the placeholder off:
+  //
+  //  1. No operator base at all — a standalone export. Known up front.
+  //  2. An operator that does not serve the route (older than D-623, or on the
+  //     local sink), which only shows up as a 404 on the first real search.
+  //
+  // Feature-detecting the provider method answers neither: every provider here
+  // defines it, because the module decides at call time.
+  let searchRouteServed = true;
+  $: searchOffered =
+    typeof dataProvider.searchMeetings === "function" &&
+    isMeetingSearchAvailable() &&
+    searchRouteServed;
+
+  function handleSearchQuery(query: string) {
+    searchQuery = query;
+    clearTimeout(searchDebounce);
+    // Abort whatever is in flight: its answer is about the previous question.
+    searchAbort?.abort();
+    searchAbort = undefined;
+
+    if (query.trim() === "" || !dataProvider.searchMeetings) {
+      searchRun += 1;
+      searchState = "idle";
+      searchMessage = "";
+      transcriptHits = new Map();
+      transcriptOnlyMeetings = [];
+      searchCoverage = null;
+      return;
+    }
+    searchState = "searching";
+    searchDebounce = setTimeout(() => void runSearch(query), SEARCH_DEBOUNCE_MS);
+  }
+
+  async function runSearch(query: string) {
+    const search = dataProvider.searchMeetings;
+    if (!search) {
+      return;
+    }
+    const run = ++searchRun;
+    const controller = new AbortController();
+    searchAbort = controller;
+
+    let outcome;
+    try {
+      outcome = await search(query, {
+        perMeeting: SEARCH_HITS_PER_MEETING,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        // Superseded by a later keystroke. Saying anything here would overwrite
+        // the newer request's state with the older one's.
+        return;
+      }
+      if (run === searchRun) {
+        searchState = "failed";
+        searchMessage = "Could not search the meetings.";
+      }
+      return;
+    }
+    if (run !== searchRun) {
+      return;
+    }
+
+    if (outcome.status === "unsupported") {
+      // The route is not served here. Stop claiming it in the placeholder:
+      // going on promising a search that answers nothing is worse than never
+      // having offered it. The box still narrows names and dates.
+      searchRouteServed = false;
+      searchState = "idle";
+      searchMessage = "";
+      transcriptHits = new Map();
+      transcriptOnlyMeetings = [];
+      return;
+    }
+    if (outcome.status !== "ok") {
+      // Keep whatever moments are on screen: they were true for this query a
+      // moment ago, and blanking them would look like "nothing matched" —
+      // which is the one thing this state must not be confused with.
+      searchState = outcome.status;
+      searchMessage = outcome.message;
+      return;
+    }
+
+    searchState = "ok";
+    searchMessage = "";
+    searchCoverage = outcome.coverage;
+    const grouped = groupHitsByMeeting(outcome.hits);
+    transcriptHits = new Map(grouped.map((match) => [match.meetingId, match.hits]));
+    // Meetings the name/date filter will not produce, in the server's rank
+    // order. The list concatenates them after its own matches.
+    const known = new Map(catalogMeetings.map((meeting) => [meeting.id, meeting]));
+    const nameMatched = new Set(
+      filterMeetingCatalogEntries(roomMeetings, query).map((meeting) => meeting.id),
+    );
+    transcriptOnlyMeetings = grouped
+      .filter((match) => !nameMatched.has(match.meetingId))
+      .map((match) => known.get(match.meetingId))
+      .filter((meeting): meeting is MeetingCatalogEntry => Boolean(meeting));
+  }
+
+  // Open a meeting AT a matched moment, carrying the query through so the
+  // meeting view's own filter shows the matching lines in full. The words are
+  // fetched there as the caller, so Nextcloud re-checks the ACL on the bytes —
+  // which is why the list can show a short quote and the meeting can show the
+  // whole line without those being the same disclosure.
+  function openSearchMoment(detail: { entry: MeetingCatalogEntry; startMs: number; query: string }) {
+    notFoundMessage = "";
+    window.history.pushState(
+      {},
+      "",
+      viewerHref(buildViewerHash({ meeting: detail.entry.id, timeMs: detail.startMs })),
+    );
+    selectedMeetingId = detail.entry.id;
+    transcriptQueryForMeeting = detail.query;
+  }
+
   function loadCatalogMeeting(meeting: MeetingCatalogEntry) {
     notFoundMessage = "";
     pushMeetingUrl(meeting.id);
     selectedMeetingId = meeting.id;
+    transcriptQueryForMeeting = "";
   }
 
   // MeetingView reports the real speaker/segment/duration counts once a meeting
@@ -568,6 +742,64 @@
     }
   }
 
+  // retryInsightRun asks the provider to retry a failed run and puts the
+  // record it answers with — queued again, attempt incremented — in the list
+  // in place of the failed one, from wherever the reader pressed Retry: the
+  // browse card or the document sheet (D-749). A refresh follows so the card
+  // keeps moving on the shared tick. One retry at a time: the button is the
+  // lock on this side, as the run's status is on the operator's.
+  let retryingInsightId = "";
+  let insightRetryError: { id: string; message: string } | null = null;
+
+  async function retryInsightRun(record: InsightRecord) {
+    const provider = dataProvider;
+    if (!provider.retryInsight || retryingInsightId !== "") {
+      return;
+    }
+    retryingInsightId = record.id;
+    insightRetryError = null;
+    try {
+      const updated = await provider.retryInsight(record.id);
+      if (destroyed) {
+        return;
+      }
+      insights = insights.map((row) => (row.id === updated.id ? updated : row));
+    } catch (error) {
+      if (destroyed) {
+        return;
+      }
+      // Whatever the provider said — a 409 "already running" included, which
+      // is an answer rather than a failure and is followed by the refresh that
+      // shows the run moving.
+      insightRetryError = {
+        id: record.id,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      retryingInsightId = "";
+    }
+    void refreshInsights();
+  }
+
+  function retrySelectedInsight() {
+    if (selectedInsight) {
+      void retryInsightRun(selectedInsight);
+    }
+  }
+
+  // handleInsightCreated is what Generate does once the operator has answered
+  // (D-749): the new record goes to the top of the list, where every insight
+  // is shown, and the Prepare panel closes — the question has been asked, and
+  // the panel's subject was the set it was asked of. Optimistic, so the card
+  // is on screen before the shared refresh tick; the refresh that follows
+  // replaces it with the operator's own listing. dropMissingInsight cannot
+  // close a sheet over it: nothing is open, and the listing will carry it.
+  function handleInsightCreated(record: InsightRecord) {
+    insights = [record, ...insights.filter((row) => row.id !== record.id)];
+    prepareOpen = false;
+    void refreshInsights();
+  }
+
   // ensureInsightDocument fetches the open insight's answer once per attempt.
   // Only a succeeded run has one: a queued, running or failed run has nothing
   // to fetch, and asking for it would turn "not finished" into an error.
@@ -663,6 +895,9 @@
     browseTypes = ALL_BROWSE_TYPES;
   }
   $: canLoadInsightDocument = typeof dataProvider.loadInsightDocument === "function";
+  // Retry is offered exactly where something can perform it: the card and the
+  // sheet render the control only when the provider has the method.
+  $: canRetryInsight = typeof dataProvider.retryInsight === "function";
   // Resolved against the WHOLE catalog, not the room-narrowed list: an insight
   // spanning rooms names sources in each of them, and counting only the ones in
   // the room being looked at would make the same insight claim a different
@@ -836,6 +1071,7 @@
        IS the page, so it keeps the full-bleed layout it has always had. -->
   <div class="grid grid-cols-1 grid-rows-1 h-full bg-base-200 overflow-x-clip">
     <MeetingView
+      initialQuery={transcriptQueryForMeeting}
       {dataProvider}
       meeting={selectedMeeting}
       bundled={true}
@@ -867,12 +1103,16 @@
       meetings={roomMeetings}
       types={browseTypes}
       totalCount={catalogMeetings.length}
+      {audience}
       insights={roomInsights}
       totalInsightCount={insights.length}
       {insightsOffered}
       {insightsLoaded}
       {insightsError}
       {insightSourceCounts}
+      insightsRetryable={canRetryInsight}
+      {retryingInsightId}
+      {insightRetryError}
       {selectedInsightId}
       {selectedRoomName}
       {selectedMeetingId}
@@ -882,9 +1122,18 @@
       {ncMode}
       {themeMode}
       errorMessage={listError}
+      {searchOffered}
+      {searchState}
+      {searchMessage}
+      {transcriptHits}
+      {transcriptOnlyMeetings}
+      {searchCoverage}
+      on:query={(event) => handleSearchQuery(event.detail)}
+      on:openMoment={(event) => openSearchMoment(event.detail)}
       on:select={(event) => loadCatalogMeeting(event.detail)}
       on:pick={handlePick}
       on:openInsight={(event) => openInsight(event.detail)}
+      on:retryInsight={(event) => void retryInsightRun(event.detail)}
       on:visible={(event) => (visibleMeetings = event.detail)}
       on:counts={(event) => (browseCounts = event.detail)}
       on:clearRoom={() => (selectedRoomKey = null)}
@@ -939,8 +1188,12 @@
             documentError={insightDocumentError}
             documentLoading={insightDocumentLoading}
             canLoadDocument={canLoadInsightDocument}
+            canRetry={canRetryInsight}
+            retrying={retryingInsightId === selectedInsight.id}
+            retryError={insightRetryError?.id === selectedInsight.id ? insightRetryError.message : ""}
             on:close={closeSheet}
             on:openSource={openInsightSource}
+            on:retry={retrySelectedInsight}
           />
         {:else}
           <!-- The other direction (D-721): a meeting says which insights read
@@ -950,6 +1203,7 @@
                than the artifact's — what a meeting was used FOR is not part of
                the recording — so it is handed down rather than looked up. -->
           <MeetingView
+            initialQuery={transcriptQueryForMeeting}
             {dataProvider}
             meeting={selectedMeeting}
             bundled={false}
@@ -995,7 +1249,7 @@
                this panel is describing, and `let:` is what carries a slot prop
                across the two levels. -->
           <svelte:fragment slot="generate" let:entries>
-            <slot name="prepare-generate" {entries} />
+            <slot name="prepare-generate" {entries} onInsightCreated={handleInsightCreated} />
           </svelte:fragment>
         </PreparePanel>
       </aside>

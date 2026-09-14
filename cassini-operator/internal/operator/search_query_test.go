@@ -2,8 +2,10 @@ package operator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // seedSearchable indexes one meeting's segments.
@@ -481,5 +483,122 @@ func TestSearchLabelsExactMatchesBeyondTheProbeLimit(t *testing.T) {
 			t.Fatalf("hit %s labelled %q, but every row contains the typed word",
 				hit.SegmentID, hit.Matched)
 		}
+	}
+}
+
+// The defect D-736 names: without a cap, one meeting fills the page and every
+// other meeting the caller can read is reported as not matching.
+func TestSearchCapsHitsPerMeeting(t *testing.T) {
+	store := newTestSearchStore(t)
+	loud := make([]searchTranscriptSegment, 0, 30)
+	for i := 0; i < 30; i++ {
+		at := int64(i) * 60_000
+		loud = append(loud, seg(fmt.Sprintf("loud_%02d", i), "S1", at, at+5_000, "the roadmap again"))
+	}
+	seedSearchable(t, store, "LOUD.opus", loud...)
+	seedSearchable(t, store, "QUIET.opus", seg("quiet_0", "S2", 1_000, 4_000, "the roadmap once"))
+
+	req := searchRequest{
+		Text:       "roadmap",
+		Visible:    []string{"LOUD.opus", "QUIET.opus"},
+		Limit:      10,
+		PerMeeting: 2,
+	}
+	got, err := store.Search(context.Background(), req)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+
+	perMeeting := map[string]int{}
+	for _, hit := range got.Hits {
+		perMeeting[hit.OpusName]++
+	}
+	if perMeeting["LOUD.opus"] > 2 {
+		t.Errorf("LOUD.opus contributed %d hits, want at most 2", perMeeting["LOUD.opus"])
+	}
+	// The point of the cap: the quiet meeting is reachable at all.
+	if perMeeting["QUIET.opus"] == 0 {
+		t.Errorf("QUIET.opus was crowded out entirely: %+v", perMeeting)
+	}
+}
+
+// Without the cap the flat CLI list keeps every hit it ranked, in order.
+func TestSearchWithoutPerMeetingCapKeepsEveryHit(t *testing.T) {
+	store := newTestSearchStore(t)
+	var loud []searchTranscriptSegment
+	for i := 0; i < 6; i++ {
+		at := int64(i) * 60_000
+		loud = append(loud, seg(fmt.Sprintf("loud_%02d", i), "S1", at, at+5_000, "the roadmap again"))
+	}
+	seedSearchable(t, store, "LOUD.opus", loud...)
+
+	got, err := store.Search(context.Background(), searchRequest{
+		Text: "roadmap", Visible: []string{"LOUD.opus"}, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got.Hits) != 6 {
+		t.Fatalf("got %d hits, want all 6 uncapped", len(got.Hits))
+	}
+}
+
+// A hit carries the words that matched, bounded.
+func TestSearchHitCarriesItsText(t *testing.T) {
+	store := newTestSearchStore(t)
+	seedSearchable(t, store, "MINE.opus", seg("seg_1", "S1", 0, 4_000, "we should ship the roadmap on Friday"))
+
+	got, err := store.Search(context.Background(), searchRequest{
+		Text: "roadmap", Visible: []string{"MINE.opus"},
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if !strings.Contains(got.Hits[0].Text, "roadmap") {
+		t.Fatalf("hit text = %q, want the segment's words", got.Hits[0].Text)
+	}
+}
+
+func TestSnippetAroundKeepsShortSegmentsWhole(t *testing.T) {
+	text := "we should ship the roadmap on Friday"
+	if got := snippetAround(text, []string{"roadmap"}); got != text {
+		t.Fatalf("snippet = %q, want the whole segment", got)
+	}
+}
+
+// The cap is what stops one long segment turning a hit into a transcript dump.
+func TestSnippetAroundBoundsALongSegment(t *testing.T) {
+	long := strings.Repeat("filler words here ", 40) + "the roadmap decision " + strings.Repeat("more filler ", 40)
+	got := snippetAround(long, []string{"roadmap"})
+
+	if len([]rune(got)) > searchSnippetRunes+32 {
+		t.Errorf("snippet is %d runes, want it bounded near %d: %q", len([]rune(got)), searchSnippetRunes, got)
+	}
+	if !strings.Contains(got, "roadmap") {
+		t.Errorf("snippet %q lost the match it was centred on", got)
+	}
+	if !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "…") {
+		t.Errorf("snippet %q should show it was cut on both sides", got)
+	}
+}
+
+// A match near the end must not produce a window running past the text.
+func TestSnippetAroundHandlesAMatchAtTheEnd(t *testing.T) {
+	long := strings.Repeat("filler words here ", 40) + "roadmap"
+	got := snippetAround(long, []string{"roadmap"})
+	if !strings.Contains(got, "roadmap") {
+		t.Fatalf("snippet %q lost a match at the very end", got)
+	}
+	if len([]rune(got)) > searchSnippetRunes+32 {
+		t.Errorf("snippet is %d runes, want it bounded", len([]rune(got)))
+	}
+}
+
+// Multi-byte text must not be cut into mojibake.
+func TestSnippetAroundCutsOnRuneBoundaries(t *testing.T) {
+	long := strings.Repeat("più però così ", 30) + "roadmap " + strings.Repeat("ancora ", 30)
+	got := snippetAround(long, []string{"roadmap"})
+	if !utf8.ValidString(got) {
+		t.Fatalf("snippet is not valid UTF-8: %q", got)
 	}
 }

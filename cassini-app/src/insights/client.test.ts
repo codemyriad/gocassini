@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  buildRunFailureNotice,
-  classifyRunError,
   createInsight,
-  describeRunProgress,
+  describeAIFailure,
   isTerminalStatus,
+  listAIProviderModels,
+  listAIProviders,
   listInsights,
   pollDelayMs,
   readInsight,
@@ -40,6 +40,7 @@ function run(overrides: Partial<InsightRun> = {}): InsightRun {
     provider: "",
     model: "",
     documentPath: "",
+    reason: "",
     error: "",
     createdAt: "2026-09-03T10:00:00Z",
     updatedAt: "2026-09-03T10:00:00Z",
@@ -157,11 +158,11 @@ describe("createInsight", () => {
     );
   });
 
-  it("names Nextcloud when the operator could not read it as this user", async () => {
+  it("names the operation a 502 stopped", async () => {
     const fetchMock = respondWith("", { status: 502 });
 
     await expect(createInsight({ meetingIds: ["a"] }, fetchMock)).rejects.toThrow(
-      "Cassini could not read these meetings from Nextcloud.",
+      "Cassini could not start the insight.",
     );
   });
 });
@@ -179,9 +180,7 @@ describe("listInsights", () => {
     // behind an empty shelf.
     const fetchMock = respondWith("404 page not found\n", { status: 404 });
 
-    await expect(listInsights(fetchMock)).rejects.toThrow(
-      "This deployment cannot create insights yet.",
-    );
+    await expect(listInsights(fetchMock)).rejects.toThrow("Insights could not be listed.");
   });
 
   it("does not read a missing list as an empty one", async () => {
@@ -219,14 +218,22 @@ describe("readInsight", () => {
 });
 
 describe("retryInsight", () => {
-  it("reports a race against a running run as its own answer", async () => {
-    // The status is the lock: a retry against queued or running is a 409 no-op,
-    // which is not a failure — the run is already doing what was asked.
-    const fetchMock = respondWith("", { status: 409 });
-
-    await expect(retryInsight("ins_0123456789abcdef", fetchMock)).rejects.toMatchObject({
+  it("repeats which state refused a retry", async () => {
+    // The operator answers 409 for a running run and for one that already has
+    // an answer, and those are different things to do next.
+    const answered = respondWith(
+      JSON.stringify({ error: "This insight already has an answer. Ask again to run it a second time." }),
+      { status: 409 },
+    );
+    await expect(retryInsight("ins_0123456789abcdef", answered)).rejects.toMatchObject({
       status: 409,
-      message: "That insight is already running — retrying does nothing until it stops.",
+      message: "This insight already has an answer. Ask again to run it a second time.",
+    });
+
+    const silent = respondWith("", { status: 409 });
+    await expect(retryInsight("ins_0123456789abcdef", silent)).rejects.toMatchObject({
+      status: 409,
+      message: "This insight is already running.",
     });
   });
 
@@ -275,16 +282,6 @@ describe("the poll schedule", () => {
   });
 });
 
-describe("what a run says while it runs", () => {
-  it("names the wait rather than implying a spinner's worth of it", () => {
-    // The prototype shows 900ms of "Generating…". A person not told that a
-    // model hosted here takes minutes reads a slow run as a broken one.
-    expect(describeRunProgress(run({ status: "running" }))).toContain("minutes, not seconds");
-    expect(describeRunProgress(run({ status: "queued" }))).toContain("Nothing has been sent");
-    expect(describeRunProgress(run({ status: "succeeded" }))).toContain("2 meetings");
-  });
-});
-
 describe("which workflows can be asked a question", () => {
   it("reads the placeholder off the bytes the operator decides on", () => {
     // `POST insights` refuses a question both ways — dropped by a workflow with
@@ -301,85 +298,65 @@ describe("which workflows can be asked a question", () => {
   });
 });
 
-describe("what a failed run says", () => {
-  it("classifies on the operator's reason token, not on its prose", () => {
-    // `cassini insight run` maps each reason to an exit code precisely so the
-    // classification does not move when someone improves a sentence.
-    expect(classifyRunError("insight run failed: no-provider: nothing configured")).toBe(
+describe("what a failed run carries", () => {
+  it("reads the operator's reason token, and normalises a missing one to empty", () => {
+    // The operator stores a token and the viewing layer owns the words
+    // (D-749). An older operator serves no `reason` at all, and that must
+    // read as "" rather than undefined so the classifier has one shape.
+    expect(run({ status: "failed", reason: "no-provider", error: "no-provider" }).reason).toBe(
       "no-provider",
     );
-    expect(classifyRunError("provider-refused: 401")).toBe("provider-refused");
-    expect(classifyRunError("model-failed: context deadline exceeded")).toBe("model-failed");
-    expect(classifyRunError("bad-request: unknown workflow")).toBe("bad-request");
-    expect(classifyRunError("the operator fell over")).toBe("unknown");
+    expect(run({ status: "failed", error: "model-failed: timeout" }).reason).toBe("");
+    expect(run().reason).toBe("");
+  });
+});
+
+describe("listAIProviders", () => {
+  it("carries each endpoint's default model, which is what a run on it asks for", async () => {
+    // One model per endpoint (D-749): the picker shows it beside the choice
+    // rather than offering a second place to choose one.
+    const fetchImpl = respondWith(
+      JSON.stringify([
+        { id: "hosted", name: "OpenRouter", model: "openai/gpt-4o-mini" },
+        { id: "local", name: "Qwen" },
+      ]),
+    );
+    const choices = await listAIProviders("/operator", fetchImpl);
+    expect(choices).toEqual([
+      { id: "hosted", name: "OpenRouter", model: "openai/gpt-4o-mini" },
+      { id: "local", name: "Qwen" },
+    ]);
+    expect(fetchImpl.mock.calls[0][0]).toBe("/operator/ai/providers");
+  });
+});
+
+describe("what a failed AI read says", () => {
+  it("repeats the operator's diagnosis for a models listing", async () => {
+    // The operator names the endpoint and what it answered; that sentence is
+    // the whole diagnosis, and discarding it for "HTTP 502" was how a base
+    // URL with /chat/completions on the end stayed a mystery (D-749).
+    const fetchImpl = respondWith(
+      JSON.stringify({ error: "list models from OpenRouter: HTTP 404" }),
+      { status: 502 },
+    );
+    await expect(listAIProviderModels("/operator", "hosted", fetchImpl)).rejects.toThrow(
+      "This endpoint's model list could not be read: list models from OpenRouter: HTTP 404",
+    );
   });
 
-  it("says what went wrong, and points an administrator at the panel that fixes it", () => {
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "no-provider: no endpoint configured" }),
-      isAdmin: true,
+  it("names the request when the operator said nothing", () => {
+    expect(describeAIFailure("providers", 404, "")).toBe(
+      "The AI endpoints could not be listed (HTTP 404).",
+    );
+    expect(describeAIFailure("providers/x/models", 502, "")).toBe(
+      "This endpoint's model list could not be read (HTTP 502).",
+    );
+  });
+
+  it("still carries the status, so a caller can tell a missing route from a refusal", async () => {
+    const fetchImpl = respondWith("not found", { status: 404 });
+    await expect(listAIProviders("/operator", fetchImpl)).rejects.toMatchObject({
+      status: 404,
     });
-
-    expect(notice?.title).toBe("No AI endpoint is configured");
-    expect(notice?.panel).toBe("endpoints");
-    expect(notice?.actionLabel).toBe("Open AI providers");
-    // The operator's own sentence is carried through rather than replaced: it
-    // is the only thing that knows what actually happened.
-    expect(notice?.summary).toContain("no-provider: no endpoint configured");
-  });
-
-  it("does not promise a retry replays the endpoint that failed", () => {
-    // Retry re-resolves provider and model from current settings, which is what
-    // makes "add a key" a fix rather than a suggestion.
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "provider-refused: 401 Unauthorized" }),
-      isAdmin: true,
-    });
-
-    expect(notice?.summary).toContain("as they stand at that moment");
-  });
-
-  it("offers a non-admin the fact and never the control", () => {
-    // That panel is ADMIN at the proxy and its PUT would 403.
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "no-provider" }),
-      isAdmin: false,
-    });
-
-    expect(notice?.panel).toBe("");
-    expect(notice?.actionLabel).toBe("");
-    expect(notice?.summary).toContain("Only a Nextcloud administrator");
-  });
-
-  it("sends nobody to AI providers for a request no endpoint would have accepted", () => {
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "bad-request: unknown workflow: decisions" }),
-      isAdmin: true,
-    });
-
-    expect(notice?.panel).toBe("");
-    expect(notice?.summary).toContain("unknown workflow: decisions");
-  });
-
-  it("offers no fix for a failure the operator would not classify", () => {
-    // The operator tags only the four failures internal/insight names. An
-    // untagged one is precisely the one nobody said AI settings would repair,
-    // so "Open AI providers" would be a link to a panel that changes nothing.
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "The insight run stopped unexpectedly." }),
-      isAdmin: true,
-    });
-
-    expect(notice?.title).toBe("The insight failed");
-    expect(notice?.panel).toBe("");
-    expect(notice?.actionLabel).toBe("");
-    // And no "only an administrator can change this" either: that sentence is
-    // for a fix somebody else has to make, and there is no known fix here.
-    expect(notice?.summary).not.toContain("Only a Nextcloud administrator");
-    expect(notice?.summary).toContain("The insight run stopped unexpectedly.");
-  });
-
-  it("says nothing about a run that has not failed", () => {
-    expect(buildRunFailureNotice({ run: run({ status: "running" }), isAdmin: true })).toBeNull();
   });
 });
