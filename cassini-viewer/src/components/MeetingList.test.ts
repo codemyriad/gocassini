@@ -170,4 +170,13 @@ describe("MeetingList insights", () => {
       "sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}",
     );
   });
+
+  // A promise the build cannot keep is worse than no promise: a standalone
+  // export has no operator, so the box must not offer to search transcripts.
+  it("gates the transcript promise on there being something to ask", () => {
+    expect(meetingListSource).toContain("export let searchOffered = false;");
+    expect(meetingListSource).toMatch(
+      /placeholder=\{searchOffered[\s\S]{0,160}what was said in them[\s\S]{0,80}by name or date`\}/,
+    );
+  });
 });

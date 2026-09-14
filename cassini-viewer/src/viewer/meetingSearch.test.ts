@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   groupHitsByMeeting,
+  isMeetingSearchAvailable,
   materializeSearchResponse,
   mergeSearchResults,
   searchMeetingTranscripts,
@@ -195,5 +196,20 @@ describe("mergeSearchResults", () => {
   it("gives a name-only match no moments rather than inventing them", () => {
     const rows = mergeSearchResults([meetings[0]], meetings, []);
     expect(rows[0].hits).toEqual([]);
+  });
+});
+
+// The placeholder promises transcript search only where there is something to
+// ask. Feature-detecting the provider method cannot answer this — every
+// provider defines it — so availability is its own question.
+describe("isMeetingSearchAvailable", () => {
+  it("is false with no operator behind the build", () => {
+    withOperator(null);
+    expect(isMeetingSearchAvailable()).toBe(false);
+  });
+
+  it("is true once there is an operator base to resolve", () => {
+    withOperator("https://nc.example/apps/gocassini/");
+    expect(isMeetingSearchAvailable()).toBe(true);
   });
 });

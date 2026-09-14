@@ -75,6 +75,17 @@ export function resolveSearchUrl(): string {
   return new URL(SEARCH_PATH, viewerBase).toString();
 }
 
+// isMeetingSearchAvailable reports whether there is an operator to ask at all.
+//
+// Separate from "the provider has the method": every provider in this repo
+// defines searchMeetings, because the module decides at call time whether a
+// base resolves. So a caller asking "should I offer transcript search?" cannot
+// answer it by feature-detecting the method — it would offer the capability in
+// a standalone export, promise it in the placeholder, and then answer nothing.
+export function isMeetingSearchAvailable(): boolean {
+  return resolveSearchUrl() !== "";
+}
+
 export interface MeetingSearchOptions {
   // Cap on hits from any one meeting. Without it a meeting with sixty hits
   // fills the page and every other matching meeting is absent from the list —

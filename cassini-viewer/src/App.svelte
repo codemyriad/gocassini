@@ -12,6 +12,7 @@
   import {
     groupHitsByMeeting,
     isAbortError,
+    isMeetingSearchAvailable,
     type MeetingSearchHit,
   } from "./viewer/meetingSearch";
   import { isEmbeddedViewer } from "./viewer/appBase";
@@ -410,7 +411,20 @@
   // page; this is the number the rows have room to show.
   const SEARCH_HITS_PER_MEETING = 3;
 
-  $: searchOffered = typeof dataProvider.searchMeetings === "function";
+  // Two independent reasons there may be nothing to ask, and both have to turn
+  // the promise in the placeholder off:
+  //
+  //  1. No operator base at all — a standalone export. Known up front.
+  //  2. An operator that does not serve the route (older than D-623, or on the
+  //     local sink), which only shows up as a 404 on the first real search.
+  //
+  // Feature-detecting the provider method answers neither: every provider here
+  // defines it, because the module decides at call time.
+  let searchRouteServed = true;
+  $: searchOffered =
+    typeof dataProvider.searchMeetings === "function" &&
+    isMeetingSearchAvailable() &&
+    searchRouteServed;
 
   function handleSearchQuery(query: string) {
     searchQuery = query;
@@ -463,8 +477,10 @@
     }
 
     if (outcome.status === "unsupported") {
-      // No operator behind this build. The box still narrows names and dates;
-      // it simply never claimed to search transcripts.
+      // The route is not served here. Stop claiming it in the placeholder:
+      // going on promising a search that answers nothing is worse than never
+      // having offered it. The box still narrows names and dates.
+      searchRouteServed = false;
       searchState = "idle";
       searchMessage = "";
       transcriptHits = new Map();
