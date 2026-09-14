@@ -2,6 +2,7 @@ package operator
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func llmGetenv(m map[string]string) func(string) string {
@@ -409,6 +411,72 @@ func TestLLMProviderModelsReportsUpstreamFailure(t *testing.T) {
 	rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings/llm/providers/default/models", nil))
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "HTTP 500") {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLLMProviderModelsTimeoutIsSaidInSeconds(t *testing.T) {
+	clearLLMEnv(t)
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer upstream.Close()
+	defer close(release)
+	t.Setenv(envLLMBaseURL, upstream.URL+"/v1")
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	saved := llmDiscoveryTimeout
+	llmDiscoveryTimeout = 50 * time.Millisecond
+	defer func() { llmDiscoveryTimeout = saved }()
+
+	rec := httptest.NewRecorder()
+	rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings/llm/providers/default/models", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	host := strings.TrimPrefix(upstream.URL, "http://")
+	// The name is seeded from the URL, so the message names the host twice
+	// here; what matters is the reason after it.
+	if want := fmt.Sprintf("(%s) did not answer within 0.05 seconds", host); !strings.Contains(body, want) {
+		t.Fatalf("body = %s, want %q", body, want)
+	}
+	for _, leaked := range []string{"Get \"", "context deadline exceeded", "/v1/models", "Client.Timeout"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("body = %s leaks %q", body, leaked)
+		}
+	}
+}
+
+func TestLLMProviderModelsRefusedIsSaidInWords(t *testing.T) {
+	clearLLMEnv(t)
+	// A server that is closed before the probe: the port is then refused,
+	// which is what a stopped Ollama or a wrong port looks like.
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	base := upstream.URL + "/v1"
+	upstream.Close()
+	t.Setenv(envLLMBaseURL, base)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.llmSettingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings/llm/providers/default/models", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	host := strings.TrimPrefix(upstream.URL, "http://")
+	if want := fmt.Sprintf("(%s) could not be reached (connection refused)", host); !strings.Contains(body, want) {
+		t.Fatalf("body = %s, want %q", body, want)
+	}
+	for _, leaked := range []string{"Get \"", "/v1/models", "dial tcp"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("body = %s leaks %q", body, leaked)
+		}
 	}
 }
 

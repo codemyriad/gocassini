@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -97,9 +98,12 @@ const (
 
 	maxLLMProviders      = 20
 	maxLLMFieldRunes     = 200
-	llmDiscoveryTimeout  = 20 * time.Second
 	llmDiscoveryMaxBytes = 8 << 20
 )
+
+// llmDiscoveryTimeout bounds one GET {base}/models. A variable so a test can
+// make an endpoint that never answers time out in milliseconds.
+var llmDiscoveryTimeout = 20 * time.Second
 
 var llmProviderIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
@@ -801,10 +805,52 @@ func (rt *Runtime) handleLLMProviderModels(w http.ResponseWriter, r *http.Reques
 	}
 	models, err := listLLMModels(r.Context(), *provider)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, fmt.Sprintf("list models from %s: %v", provider.Name, err))
+		// "{name} ({host}) {reason}": the host because an administrator may see
+		// it and one endpoint is easily mistaken for another; the reason in
+		// plain words, never Go's transport text (llmTransportError).
+		writeJSONError(w, http.StatusBadGateway, fmt.Sprintf("%s (%s) %v", provider.Name, llmProviderHost(provider.BaseURL), err))
 		return
 	}
 	writeJSON(w, http.StatusOK, llmModelsResponse{Provider: id, Models: models})
+}
+
+// llmTransportError turns the error http.Client.Do returns when no response
+// came back into words a settings page can show. What Do returns is a
+// *url.Error whose text is `Get "http://host/v1/models": context deadline
+// exceeded` — the method, the whole URL and a Go idiom, none of which tells an
+// administrator what to do. A timeout says how long was waited (the only
+// number that helps: raise the endpoint's limit or fix the endpoint), and
+// anything else — refused, no such host, TLS — keeps only its innermost
+// reason, which is the plain-words part.
+func llmTransportError(err error) error {
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		return fmt.Errorf("did not answer within %s seconds", strconv.FormatFloat(llmDiscoveryTimeout.Seconds(), 'f', -1, 64))
+	}
+	return fmt.Errorf("could not be reached (%s)", innermostError(err))
+}
+
+// innermostError is the text of the last error in err's Unwrap chain: for a
+// refused dial that is "connection refused", not the *url.Error and
+// *net.OpError wrappers that repeat the URL around it.
+func innermostError(err error) string {
+	for {
+		next := errors.Unwrap(err)
+		if next == nil {
+			return err.Error()
+		}
+		err = next
+	}
+}
+
+// llmProviderHost is the host[:port] of an endpoint, for an error message that
+// names which endpoint failed without repeating the whole URL.
+func llmProviderHost(base string) string {
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return base
+	}
+	return u.Host
 }
 
 // listLLMModels asks an OpenAI-compatible endpoint what it serves. Hosted
@@ -824,7 +870,7 @@ func listLLMModels(ctx context.Context, p LLMProvider) ([]llmModel, error) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, llmTransportError(err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, llmDiscoveryMaxBytes+1))
