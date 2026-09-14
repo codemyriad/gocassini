@@ -21,7 +21,6 @@ describe("GenerateCard", () => {
     expect(generateCardSource).not.toContain("setTimeout");
     expect(generateCardSource).not.toContain("onDestroy");
     expect(generateCardSource).not.toContain("NeedsSetupCard");
-    expect(generateCardSource).not.toContain("buildRunFailureNotice");
   });
 
   it("still says when the request itself was refused", () => {

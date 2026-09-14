@@ -1,11 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  buildRunFailureNotice,
   classifyRunError,
   createInsight,
   describeAIFailure,
-  describeRunProgress,
   isTerminalStatus,
   listAIProviderModels,
   listAIProviders,
@@ -278,16 +276,6 @@ describe("the poll schedule", () => {
   });
 });
 
-describe("what a run says while it runs", () => {
-  it("names the wait rather than implying a spinner's worth of it", () => {
-    // The prototype shows 900ms of "Generating…". A person not told that a
-    // model hosted here takes minutes reads a slow run as a broken one.
-    expect(describeRunProgress(run({ status: "running" }))).toContain("minutes, not seconds");
-    expect(describeRunProgress(run({ status: "queued" }))).toContain("Nothing has been sent");
-    expect(describeRunProgress(run({ status: "succeeded" }))).toContain("2 meetings");
-  });
-});
-
 describe("which workflows can be asked a question", () => {
   it("reads the placeholder off the bytes the operator decides on", () => {
     // `POST insights` refuses a question both ways — dropped by a workflow with
@@ -315,75 +303,6 @@ describe("what a failed run says", () => {
     expect(classifyRunError("model-failed: context deadline exceeded")).toBe("model-failed");
     expect(classifyRunError("bad-request: unknown workflow")).toBe("bad-request");
     expect(classifyRunError("the operator fell over")).toBe("unknown");
-  });
-
-  it("says what went wrong, and points an administrator at the panel that fixes it", () => {
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "no-provider: no endpoint configured" }),
-      isAdmin: true,
-    });
-
-    expect(notice?.title).toBe("No AI endpoint is configured");
-    expect(notice?.panel).toBe("endpoints");
-    expect(notice?.actionLabel).toBe("Open AI providers");
-    // The operator's own sentence is carried through rather than replaced: it
-    // is the only thing that knows what actually happened.
-    expect(notice?.summary).toContain("no-provider: no endpoint configured");
-  });
-
-  it("does not promise a retry replays the endpoint that failed", () => {
-    // Retry replays the endpoint that failed but reads its key and model as they
-    // stand now, which is what makes "add a key" a fix rather than a suggestion.
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "provider-refused: 401 Unauthorized" }),
-      isAdmin: true,
-    });
-
-    expect(notice?.summary).toContain("as they stand at that moment");
-  });
-
-  it("offers a non-admin the fact and never the control", () => {
-    // That panel is ADMIN at the proxy and its PUT would 403.
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "no-provider" }),
-      isAdmin: false,
-    });
-
-    expect(notice?.panel).toBe("");
-    expect(notice?.actionLabel).toBe("");
-    expect(notice?.summary).toContain("Only a Nextcloud administrator");
-  });
-
-  it("sends nobody to AI providers for a request no endpoint would have accepted", () => {
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "bad-request: unknown workflow: decisions" }),
-      isAdmin: true,
-    });
-
-    expect(notice?.panel).toBe("");
-    expect(notice?.summary).toContain("unknown workflow: decisions");
-  });
-
-  it("offers no fix for a failure the operator would not classify", () => {
-    // The operator tags only the four failures internal/insight names. An
-    // untagged one is precisely the one nobody said AI settings would repair,
-    // so "Open AI providers" would be a link to a panel that changes nothing.
-    const notice = buildRunFailureNotice({
-      run: run({ status: "failed", error: "The insight run stopped unexpectedly." }),
-      isAdmin: true,
-    });
-
-    expect(notice?.title).toBe("The insight failed");
-    expect(notice?.panel).toBe("");
-    expect(notice?.actionLabel).toBe("");
-    // And no "only an administrator can change this" either: that sentence is
-    // for a fix somebody else has to make, and there is no known fix here.
-    expect(notice?.summary).not.toContain("Only a Nextcloud administrator");
-    expect(notice?.summary).toContain("The insight run stopped unexpectedly.");
-  });
-
-  it("says nothing about a run that has not failed", () => {
-    expect(buildRunFailureNotice({ run: run({ status: "running" }), isAdmin: true })).toBeNull();
   });
 });
 

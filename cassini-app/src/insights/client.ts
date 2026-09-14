@@ -13,20 +13,12 @@
 // routes, and a POST hidden inside a GET declaration would hide the change that
 // matters.
 //
-// Everything a reader is told about a run lives HERE rather than in
+// What a reader is told about a request that failed lives HERE rather than in
 // GenerateCard.svelte, for the reason setupHealth.ts gives: the copy is the
-// part worth testing, and a wrong sentence about why an insight failed is a
-// worse failure than a missing one. The card renders decisions it did not make.
+// part worth testing. The card renders decisions it did not make.
 
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
-import {
-  classifyInsightError,
-  INSIGHT_FAILURE_COPY,
-  type InsightFailureReason,
-} from "cassini-viewer/insights";
-
-import type { FeatureNotice } from "../operator/setupHealth";
-import type { OperatorPanel } from "../surfaceRouting";
+import { classifyInsightError, type InsightFailureReason } from "cassini-viewer/insights";
 
 // The status vocabulary is fixed by internal/insight's package doc, and this is
 // a reading of it rather than a second copy: a build that invented a fifth
@@ -411,72 +403,12 @@ export function pollDelayMs(round: number): number {
   return Math.min(Math.round(delay), MAX_POLL_DELAY_MS);
 }
 
-// describeRunProgress is what an unfinished run says while you watch it. The
-// prototype showed 900ms of "Generating…"; the honest version names the wait,
-// because a person who is not told a local model takes minutes reads a slow run
-// as a broken one and presses Generate again.
-export function describeRunProgress(run: InsightRun): string {
-  const meetings = countMeetings(run.meetingIds.length);
-  switch (run.status) {
-    case "queued":
-      return "Queued. Nothing has been sent to a model yet.";
-    case "running":
-      return (
-        `Running. Cassini is reading ${meetings} and waiting for the model — on a model hosted ` +
-        `on this deployment that is minutes, not seconds.`
-      );
-    case "succeeded":
-      return `Ready, from ${meetings}.`;
-    default:
-      return "";
-  }
-}
-
 // The four kinds of failure internal/insight classifies, and what each says,
-// live in the viewing layer (cassini-viewer/insights) so the browse card, the
-// document sheet and this app's Generate card describe one failure one way
-// (D-749). Re-exported under the name this module always had.
+// live in the viewing layer (cassini-viewer/insights) so the browse card and
+// the document sheet describe one failure one way (D-749). Re-exported under
+// the name this module always had.
 export type { InsightFailureReason };
 export const classifyRunError = classifyInsightError;
-
-// The one panel behind every AI failure: the endpoint, its key, its model and
-// its request bounds are all edited in AI providers (Settings.svelte maps
-// `endpoints` -> LLMSettingsPanel), which is also where buildFeatureNotice
-// sends an administrator. Same panel, same words, deliberately — it is the same
-// trip.
-const AI_PANEL: OperatorPanel = "endpoints";
-const ADMIN_ACTION = "Open AI providers";
-
-const NOT_YOURS_TO_FIX =
-  " Only a Nextcloud administrator can change this deployment's AI configuration, and there is " +
-  "nothing wrong with your account.";
-
-// buildRunFailureNotice turns a failed run into the NeedsSetupCard the app
-// already renders for every other "this deployment cannot do that yet" state.
-// A spinner that stops is not an error message, so every branch names the cause
-// and — where an administrator could act on it — the panel that fixes it.
-//
-// A non-admin is never offered the link: that panel is ADMIN at the proxy and
-// its PUT would 403, so offering the control would be offering a way to fail.
-export function buildRunFailureNotice(options: {
-  run: InsightRun;
-  isAdmin: boolean;
-}): FeatureNotice | null {
-  const { run, isAdmin } = options;
-  if (run.status !== "failed") {
-    return null;
-  }
-  const reason = classifyRunError(run.error);
-  const { title, summary, fixable } = INSIGHT_FAILURE_COPY[reason];
-  const reported = run.error.trim() === "" ? "" : ` The operator reported: ${run.error.trim()}`;
-  const remediable = fixable && isAdmin;
-  return {
-    title,
-    summary: summary + (fixable && !isAdmin ? NOT_YOURS_TO_FIX : "") + reported,
-    panel: remediable ? AI_PANEL : "",
-    actionLabel: remediable ? ADMIN_ACTION : "",
-  };
-}
 
 // --- Request failures, as opposed to run failures ---
 
@@ -557,10 +489,6 @@ async function readServedMessage(response: Response): Promise<string> {
     return body;
   }
   return "";
-}
-
-function countMeetings(count: number): string {
-  return count === 1 ? "one meeting" : `${count} meetings`;
 }
 
 function asString(value: unknown): string {

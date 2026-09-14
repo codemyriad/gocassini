@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import needsSetupCardSource from "./NeedsSetupCard.svelte?raw";
 import { buildFeatureNotice } from "./operator/setupHealth";
-import { buildRunFailureNotice } from "./insights/client";
 
 // Source-level assertions, the convention this repo already follows for
 // .svelte files (see InsightTemplatesPanel.test.ts): the suite runs in node
@@ -99,22 +98,5 @@ describe("the locked card", () => {
       isAdmin: true,
     });
     expect(summaries?.actionTitle).toBe("Add a provider to write summaries");
-  });
-
-  it("keeps the prose for a run that failed", () => {
-    // "The endpoint rejected the request" is not a state anybody can infer from
-    // a title, so a failure never collapses into the compact card even for an
-    // administrator who could act on it.
-    const failure = buildRunFailureNotice({
-      run: {
-        id: "r1",
-        status: "failed",
-        // classifyRunError matches on the reason key the operator reports.
-        error: "provider-refused: 401 from the endpoint",
-      } as Parameters<typeof buildRunFailureNotice>[0]["run"],
-      isAdmin: true,
-    });
-    expect(failure?.actionTitle).toBeUndefined();
-    expect(failure?.panel).toBe("endpoints");
   });
 });
