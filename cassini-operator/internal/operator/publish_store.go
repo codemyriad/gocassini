@@ -217,3 +217,28 @@ WHERE job_id = ? AND attempt_number = ?`, "done", "failed", nullableString(attem
 	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
 }
+
+// CountDeliveredRecordings is how many recordings this operator has actually
+// published into the archive, from its own job rows.
+//
+// The one question it exists to answer is "has this install been recording
+// here before" (D-753, storageModeFromProbe): an operator that has delivered
+// nothing cannot have an archive to strand, whatever Nextcloud is or is not
+// showing at that moment. Job rows are never deleted, so the count only ever
+// grows, and a delivered recording stays counted after retention has pruned
+// its staging tree.
+//
+// `publish_finished_at IS NOT NULL` is what separates a delivery from a build
+// that finished without one: MarkBuildSucceeded writes `done`/`succeeded` too
+// and never touches that column. A failed publish is not a delivery either,
+// which is why the state is checked as well.
+func (s *Store) CountDeliveredRecordings(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM jobs
+WHERE publish_finished_at IS NOT NULL AND stage = 'done' AND state = 'succeeded'`).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count delivered recordings: %w", err)
+	}
+	return count, nil
+}

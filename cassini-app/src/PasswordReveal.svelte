@@ -62,7 +62,8 @@
 
 <!-- A generic <div>, not a <section>: an interactive role on a semantic
      sectioning element is an a11y error, and this genuinely is a dialog rather
-     than a region of the page. Same reasoning as StoragePanel's confirmation. -->
+     than a region of the page. Same reasoning as the settings section's own
+     confirmations. -->
 <div
   class="grid gap-3 rounded-box border border-warning bg-warning/10 p-3"
   role="alertdialog"

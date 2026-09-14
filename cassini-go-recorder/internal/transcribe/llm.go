@@ -77,6 +77,21 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("API returned %d: %s", e.StatusCode, e.Body)
 }
 
+// TruncatedError is a reply the model stopped writing before it was done: the
+// endpoint answered 200 and `finish_reason` was "length", so the bytes in
+// `content` end wherever the output limit fell, and nothing in them says so.
+//
+// Typed, because it must never be recorded as a success: a summary or an insight
+// that ends mid-sentence with no mark on it is worse than a failure, and it is
+// the one provider failure a larger max_tokens on the endpoint fixes (D-740).
+type TruncatedError struct {
+	MaxTokens int
+}
+
+func (e *TruncatedError) Error() string {
+	return fmt.Sprintf("the answer was cut off at the model's output limit (max_tokens=%d)", e.MaxTokens)
+}
+
 // ChatCompletion sends one system and user message to the configured
 // OpenAI-compatible endpoint and returns the reply.
 //
@@ -141,6 +156,7 @@ func ChatCompletion(ctx context.Context, cfg LLMConfig, system, user string) (st
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -148,6 +164,12 @@ func ChatCompletion(ctx context.Context, cfg LLMConfig, system, user string) (st
 	}
 	if len(result.Choices) == 0 {
 		return "", fmt.Errorf("no choices in API response")
+	}
+	// "length" is the one finish reason that leaves a plausible-looking body
+	// behind. The content is discarded with the error: a caller that wrote it
+	// down anyway would be publishing half a document with no mark on it.
+	if result.Choices[0].FinishReason == "length" {
+		return "", &TruncatedError{MaxTokens: maxTokens}
 	}
 	return result.Choices[0].Message.Content, nil
 }

@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -119,6 +120,13 @@ const (
 	// timed out must still be able to say that it timed out.
 	insightFinishTimeout = 30 * time.Second
 
+	// insightFinishTries is how many times that write is attempted, and
+	// insightFinishBackoff the pause before the second (doubled before the
+	// third). Enough to ride out a busy database; short enough that a card is
+	// not left saying `running` for long after the run ended.
+	insightFinishTries   = 3
+	insightFinishBackoff = 2 * time.Second
+
 	// maxConcurrentInsightRuns bounds how many runs may hold a staging directory
 	// and a pair of subprocesses at once. Runs past it stay `queued`, which is
 	// what the status word means; the alternative is an unbounded number of
@@ -190,6 +198,7 @@ type insightRunStore interface {
 	GetRun(ctx context.Context, id string) (InsightRun, error)
 	ListRuns(ctx context.Context, createdBy string) ([]InsightRun, error)
 	BeginAttempt(ctx context.Context, id string) (InsightRun, error)
+	ResumeAttempt(ctx context.Context, id string, attempt int) (InsightRun, error)
 	FinishAttempt(ctx context.Context, id string, outcome InsightOutcome) error
 }
 
@@ -218,7 +227,13 @@ type insightService struct {
 	// handler's job is the answer it gives, and driving a whole run through it
 	// to check a status code would leave the status codes tested through a
 	// subprocess and the subprocess tested through nothing.
-	launchFn func(id string, claimed bool)
+	//
+	// attempt is the attempt number the caller already claimed, or 0 when the
+	// launch is to claim one itself (see launch).
+	launchFn func(id string, attempt int)
+	// finishBackoff is the pause between tries at recording an outcome. A
+	// field so a test of the retry does not wait on it.
+	finishBackoff time.Duration
 }
 
 // newInsightService returns the service, or nil when this deployment cannot run
@@ -254,8 +269,10 @@ func newInsightService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *insi
 		slots:  make(chan struct{}, maxConcurrentInsightRuns),
 		now:    func() time.Time { return time.Now().UTC() },
 		newID:  newInsightRunID,
+
+		finishBackoff: insightFinishBackoff,
 	}
-	service.launchFn = func(id string, claimed bool) { go service.launch(id, claimed) }
+	service.launchFn = func(id string, attempt int) { go service.launch(id, attempt) }
 	return service
 }
 
@@ -270,11 +287,12 @@ func newInsightService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *insi
 // operator: on shutdown it is cancelled and every child dies with its process
 // group.
 //
-// claimed says whether a handler already took the attempt. A retry claims inside
-// the request, because BeginAttempt is the lock that makes its 409 exact; a
-// create answers 201/queued and claims here, which is what lets a run wait for a
+// attempt says whether a handler already took the attempt, and which. A retry
+// claims inside the request, because BeginAttempt is the lock that makes its
+// 409 exact, and passes the attempt number it was given; a create answers
+// 201/queued and passes 0 to claim here, which is what lets a run wait for a
 // slot under the status word that describes it.
-func (s *insightService) launch(id string, claimed bool) {
+func (s *insightService) launch(id string, attempt int) {
 	select {
 	case s.slots <- struct{}{}:
 	case <-s.rt.ctx.Done():
@@ -282,11 +300,12 @@ func (s *insightService) launch(id string, claimed bool) {
 	}
 	defer func() { <-s.slots }()
 
-	run, err := s.claim(id, claimed)
+	run, err := s.claim(id, attempt)
 	if err != nil {
 		// A busy run is not an error here: another attempt holds it, and the one
-		// thing this goroutine must not do is run a second one beside it.
-		if !errors.Is(err, errInsightRunBusy) {
+		// thing this goroutine must not do is run a second one beside it. Nor is
+		// a claimed attempt the row has moved on from — see claim.
+		if !errors.Is(err, errInsightRunBusy) && !errors.Is(err, errInsightRunNotRunning) {
 			s.logf("insights: claim run=%s: %v", id, err)
 		}
 		return
@@ -296,28 +315,76 @@ func (s *insightService) launch(id string, claimed bool) {
 	defer cancel()
 	outcome := s.perform(ctx, run)
 
-	// Detached from the attempt's context on purpose: a run that was cancelled or
-	// timed out has to be able to record that it was, and it cannot do that
-	// through the context that just expired. Still bounded, and a row a killed
-	// operator left `running` is repaired by the store's own startup sweep.
-	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), insightFinishTimeout)
-	defer finishCancel()
-	if err := s.store.FinishAttempt(finishCtx, id, outcome); err != nil {
-		s.logf("insights: record the outcome of run=%s: %v", id, err)
+	s.recordOutcome(ctx, id, outcome)
+}
+
+// recordOutcome writes how the attempt ended, and does not give up on the first
+// failure.
+//
+// Detached from the attempt's context on purpose: a run that was cancelled or
+// timed out has to be able to record that it was, and it cannot do that through
+// the context that just expired. Retried, because the write is the one thing
+// standing between a finished run and a card that says `running` until the
+// sweep fails it an hour later with a message about a restart that never
+// happened — and because a SQLite busy or a transient I/O error is exactly the
+// kind of failure a second try clears. Still bounded: each try has its own
+// timeout, the backoff is short, and a row nothing could write is repaired by
+// the store's own sweep. errInsightRunNotRunning is not retried: the row moved
+// on, and writing over it would be the double-run this file guards against.
+//
+// If it still fails, the document path is logged at error level: a succeeded
+// run whose outcome was never written has delivered a document the card will
+// never link to, and the path is the only way to find it (D-740).
+func (s *insightService) recordOutcome(ctx context.Context, id string, outcome InsightOutcome) {
+	var err error
+	for try := 1; try <= insightFinishTries; try++ {
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), insightFinishTimeout)
+		err = s.store.FinishAttempt(finishCtx, id, outcome)
+		finishCancel()
+		if err == nil || errors.Is(err, errInsightRunNotRunning) || errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if try < insightFinishTries {
+			s.logf("insights: record the outcome of run=%s (try %d of %d): %v", id, try, insightFinishTries, err)
+			select {
+			case <-time.After(s.finishBackoff * time.Duration(try)):
+			case <-s.rt.ctx.Done():
+				// The operator is going; the sweep will find this row.
+			}
+		}
+	}
+	if err != nil {
+		s.logf("ERROR: insights: the outcome of run=%s could not be recorded (%s, document=%q): %v", id, outcome.Status, outcome.DocumentPath, err)
 	}
 }
 
-func (s *insightService) claim(id string, claimed bool) (InsightRun, error) {
-	if claimed {
-		return s.store.GetRun(s.rt.ctx, id)
+// claim takes the attempt this launch is to run, or re-asserts the one a handler
+// already took.
+//
+// The claimed path is a compare-and-swap and not a read, on purpose. Between the
+// retry handler's BeginAttempt and this goroutine getting a slot, the row can
+// move: the store's sweep fails a `running` row that has not been written to in
+// over an hour, and a person who sees it failed can retry it again — which
+// begins attempt N+1 and launches a second goroutine. A plain read here would
+// let both proceed, and one run would be attempted twice at once. ResumeAttempt
+// succeeds only for a row still running at exactly the attempt this launch was
+// handed, and touches its timestamp so the sweep sees the wait as progress.
+func (s *insightService) claim(id string, attempt int) (InsightRun, error) {
+	if attempt > 0 {
+		run, err := s.store.ResumeAttempt(s.rt.ctx, id, attempt)
+		if errors.Is(err, errInsightRunNotRunning) {
+			s.logf("insights: run=%s attempt=%d was claimed but the row has moved on; not running it", id, attempt)
+		}
+		return run, err
 	}
 	return s.store.BeginAttempt(s.rt.ctx, id)
 }
 
 // perform does one attempt and says how it ended. It never returns an error:
 // every way this can fail is a fact about the run that the person who asked has
-// to be able to read off the card, so it comes back as an outcome rather than as
-// something a caller must decide how to render.
+// to be able to read off the card, so it comes back as an outcome — a reason
+// token from insight_reasons.go — rather than as something a caller must decide
+// how to render. What the app says for each token is the app's own.
 func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOutcome {
 	// The endpoint this attempt will reach, read now rather than after the fact.
 	// The run row records which of the configured providers answered — never its
@@ -328,7 +395,7 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 	staging, err := os.MkdirTemp("", "cassini-insight-*")
 	if err != nil {
 		s.logf("insights: create staging directory for run=%s: %v", run.ID, err)
-		return insightFailure("Cassini could not prepare the meetings on its own disk. An administrator can check the app's storage.")
+		return insightFailure(insightReasonStagingFailed)
 	}
 	// Every path, including a cancelled one: the directory holds whole
 	// recordings, and one leaked per abandoned run is an archive on the ExApp
@@ -361,7 +428,7 @@ func (s *insightService) perform(ctx context.Context, run InsightRun) InsightOut
 			Status:   insightStatusFailed,
 			Provider: provider.id,
 			Model:    model,
-			Error:    "The insight was written but could not be saved into your Nextcloud files. Check that you have space, then try again.",
+			Error:    insightReasonDeliverFailed,
 		}
 	}
 	return InsightOutcome{
@@ -386,18 +453,18 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 	if !ok || len(readable) == 0 {
 		// An empty readable set is the shape a FAILED scan takes, because
 		// serveFilteredCatalog fails closed (see the same guard in
-		// insight_handlers.go). Reading it as a denial would write "one of these
-		// meetings is no longer available to you" permanently onto the run row —
-		// a card that keeps asserting a permission change nobody made, and says
-		// it again on every retry.
+		// insight_handlers.go). Reading it as a denial would write
+		// meeting-unavailable permanently onto the run row — a card that keeps
+		// asserting a permission change nobody made, and says it again on every
+		// retry.
 		s.logf("insights: run=%s caller=%s has no readable meetings (ok=%t) — failing as an outage rather than a denial", run.ID, run.CreatedBy, ok)
-		return "", insightFailure("Cassini could not read your meeting list from Nextcloud. Try again in a moment."), false
+		return "", insightFailure(insightReasonCatalogFailed), false
 	}
 
 	catalogPath := filepath.Join(staging, "catalog.json")
 	if err := os.WriteFile(catalogPath, catalog, 0o600); err != nil {
 		s.logf("insights: stage catalog for run=%s: %v", run.ID, err)
-		return "", insightFailure("Cassini could not prepare the meetings on its own disk. An administrator can check the app's storage."), false
+		return "", insightFailure(insightReasonStagingFailed), false
 	}
 
 	budget := int64(maxContextStagedBytes)
@@ -406,10 +473,10 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 		source, permitted := readable[id]
 		if !permitted {
 			// Denied and absent are one answer everywhere else in this archive and
-			// they are one answer here: the run says the meeting is no longer
-			// available to it, and the log says which case it was.
+			// they are one answer here: the run says the meeting is unavailable to
+			// it, and the log says which case it was.
 			s.logf("insights: run=%s caller=%s asked for id=%s, which is not in their readable set", run.ID, run.CreatedBy, id)
-			return "", insightFailure("One of these meetings is no longer available to you, so the insight was not run."), false
+			return "", insightFailure(insightReasonMeetingUnavailable), false
 		}
 		destPath := filepath.Join(staging, id+".opus")
 		status, err := s.exapp.stageMeetingForContext(ctx, s.client, run.CreatedBy, source, destPath, &budget)
@@ -417,10 +484,10 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 		case err == nil:
 		case status == http.StatusNotFound || status == http.StatusUnauthorized || status == http.StatusForbidden:
 			s.logf("insights: run=%s caller=%s denied id=%s at fetch -> %d", run.ID, run.CreatedBy, id, status)
-			return "", insightFailure("One of these meetings is no longer available to you, so the insight was not run."), false
+			return "", insightFailure(insightReasonMeetingUnavailable), false
 		default:
 			s.logf("insights: run=%s stage id=%s for caller=%s: %v", run.ID, id, run.CreatedBy, err)
-			return "", insightFailure("Cassini could not download one of these meetings from Nextcloud. Try again in a moment."), false
+			return "", insightFailure(insightReasonDownloadFailed), false
 		}
 		staged = append(staged, destPath)
 	}
@@ -430,7 +497,8 @@ func (s *insightService) stageBundle(ctx context.Context, staging string, run In
 	// The bundle is the same document published/meetings-context serves over the
 	// same recordings, so it gets that endpoint's bound.
 	if _, err := s.runCassini(ctx, args, contextChildEnv(s.rt.childEnv()), bundlePath, "context bundle", maxContextDocumentBytes, run.ID); err != nil {
-		return "", insightFailure("Cassini could not assemble these meetings into one document. An administrator can check the app log."), false
+		// runCassini has already logged the exit code and stderr.
+		return "", insightFailure(insightReasonAssembleFailed), false
 	}
 	return bundlePath, InsightOutcome{}, true
 }
@@ -456,58 +524,10 @@ func (s *insightService) runWorkflow(ctx context.Context, staging string, run In
 	// or picked one that has since been removed. See endpointFor.
 	code, err := s.runCassini(ctx, args, s.insightChildEnvFor(endpoint), documentPath, "insight", maxInsightDocumentBytes, run.ID)
 	if err != nil {
-		return "", "", InsightOutcome{Status: insightStatusFailed, Error: explainInsightExit(ctx, code)}, false
+		return "", "", insightFailure(insightExitReason(ctx, code)), false
 	}
 	return documentPath, recordPath, InsightOutcome{}, true
 }
-
-// explainInsightExit turns `cassini insight run`'s exit code into a sentence the
-// person who asked can act on.
-//
-// The code space is the contract — it is documented in the command's own help
-// precisely so a caller need not read the message — so this switches on it and
-// never on the text. A message-derived classification changes silently whenever a
-// message is reworded, which is the failure this avoids.
-func explainInsightExit(ctx context.Context, code int) string {
-	if ctx.Err() != nil {
-		return fmt.Sprintf("The insight took longer than %d minutes and was stopped. A smaller selection, or a faster endpoint, will finish.", int(insightRunTimeout.Minutes()))
-	}
-	switch code {
-	case 1:
-		return "The insight was produced but Cassini could not write it down. An administrator can check the app's storage."
-	case 2:
-		return insightReasonBadRequest + ": This insight could not be run as it was asked for. An administrator can check the app log."
-	case 3:
-		return insightReasonNoProvider + ": No AI endpoint is configured, so there was nothing to ask. An administrator can add one in Cassini's AI settings."
-	case 4:
-		return insightReasonProviderRefused + ": The AI endpoint refused the request — its key, its quota, or the model name. An administrator can fix it in Cassini's AI settings."
-	case 5:
-		return insightReasonModelFailed + ": The model did not answer. Trying again is a reasonable response to this one."
-	default:
-		return "The insight run stopped unexpectedly. An administrator can check the app log."
-	}
-}
-
-// The four words `internal/insight` classifies a failure with, carried on the
-// front of the sentence the exit code produced.
-//
-// The token is there for the app, which reads it to decide WHICH failure this
-// is — "no endpoint configured" and "the endpoint rejected the key" are two
-// different things to do next, and only one of them is worth offering an
-// administrator a link for. It is deliberately not a second field on {run}: the
-// contract's run object is fixed, and a classification carried beside the
-// sentence it classifies is a second thing that can disagree with it.
-//
-// Only the codes insight.Reason actually names are tagged. Exit 1 (produced but
-// unwritable), a run stopped on its own deadline and an unrecognised code are
-// none of the four, and inventing a token for them would let the app show a
-// confident cause for a failure nobody classified.
-const (
-	insightReasonBadRequest      = "bad-request"
-	insightReasonNoProvider      = "no-provider"
-	insightReasonProviderRefused = "provider-refused"
-	insightReasonModelFailed     = "model-failed"
-)
 
 // deliver PUTs the document into the requester's own Nextcloud home and returns
 // the path it was written to.
@@ -804,32 +824,50 @@ func (s *insightService) endpointFor(run InsightRun) insightProviderRef {
 // Layered over insightChildEnv rather than replacing it, so everything that
 // environment already decides — the STT policy, the operator's own secrets
 // being withheld — keeps deciding it, and only the endpoint moves.
+//
+// The SUMMARY_* set is removed as well. The recorder layers INSIGHT_* over
+// SUMMARY_*, so any INSIGHT_ variable left unset would be filled in from the
+// summary endpoint — a model, a leash or a token budget chosen for one host
+// arriving at another. The model was the case that bit (D-740 P0): an insight
+// with no model of its own ran the summary model against whichever endpoint
+// the asker had picked. INSIGHT_MODEL is therefore always emitted here, from
+// the run's own choice, else the chosen endpoint's default, else the model the
+// insight step is configured with when that step resolves to this same
+// endpoint (D-749).
 func (s *insightService) insightChildEnvFor(ref insightProviderRef) []string {
 	base := s.insightChildEnv()
 	if ref.id == "" {
 		return base
 	}
+	settings := s.rt.currentLLMSettings()
 	var chosen *LLMProvider
-	for _, p := range s.rt.currentLLMSettings().Providers {
-		if p.ID == ref.id {
-			chosen = &p
+	for i := range settings.Providers {
+		if settings.Providers[i].ID == ref.id {
+			chosen = &settings.Providers[i]
 			break
 		}
 	}
 	if chosen == nil {
 		return base
 	}
+	model := modelFor(*chosen, ref.model)
+	if model == "" {
+		if step, stepModel, ok := settings.insightEndpoint(); ok && step.ID == chosen.ID {
+			model = stepModel
+		}
+	}
+	drop := map[string]bool{}
+	for _, step := range []string{llmStepSummary, llmStepInsight} {
+		b, k, m, t, n := llmStepEnv(step)
+		drop[b], drop[k], drop[m], drop[t], drop[n] = true, true, true, true, true
+	}
+	out := withoutEnv(base, drop)
 	baseKey, keyKey, modelKey, timeoutKey, tokensKey := llmStepEnv(llmStepInsight)
-	out := withoutEnv(base, map[string]bool{
-		baseKey: true, keyKey: true, modelKey: true, timeoutKey: true, tokensKey: true,
-	})
 	out = append(out, baseKey+"="+chosen.BaseURL)
 	if chosen.APIKey != "" {
 		out = append(out, keyKey+"="+chosen.APIKey)
 	}
-	if ref.model != "" {
-		out = append(out, modelKey+"="+ref.model)
-	}
+	out = append(out, modelKey+"="+model)
 	if chosen.TimeoutSec > 0 {
 		out = append(out, timeoutKey+"="+strconv.Itoa(chosen.TimeoutSec))
 	}
@@ -879,11 +917,11 @@ func (s *insightService) readRunRecord(recordPath, runID string) string {
 
 // --- helpers ------------------------------------------------------------------
 
-// insightFailure is a terminal outcome carrying a sentence the requester can act
-// on. Nothing built here names a provider or a model, because these are the
-// failures that happen before or instead of the model call.
-func insightFailure(message string) InsightOutcome {
-	return InsightOutcome{Status: insightStatusFailed, Error: message}
+// insightFailure is a terminal outcome carrying one reason token from
+// insight_reasons.go. Nothing built here names a provider or a model, because
+// these are the failures that happen before or instead of the model call.
+func insightFailure(reason string) InsightOutcome {
+	return InsightOutcome{Status: insightStatusFailed, Error: reason}
 }
 
 func (s *insightService) logf(format string, args ...any) {

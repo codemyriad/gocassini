@@ -77,6 +77,21 @@
   // shell against the WHOLE catalog — not against this room's meetings, which
   // would undercount an insight that spans rooms, which most of them do.
   export let insightSourceCounts: ReadonlyMap<string, number> = new Map();
+  // Retry from the card (D-749): offered where the shell's provider can, and
+  // the shell says which run is mid-retry and what the last retry answered.
+  export let insightsRetryable = false;
+  export let retryingInsightId = "";
+  export let insightRetryError: { id: string; message: string } | null = null;
+
+  // Who can see the recordings in this list (D-756). The shell resolves it from
+  // the deployment's storage mode and hands down the audience, never the mode
+  // itself: the storage enum is the operator's word for where the bytes live,
+  // and this layer has no business knowing it.
+  //
+  // "" is "nobody said" — a standalone export, which has no operator to ask,
+  // and an operator too old to report it — and it renders nothing. A chip is a
+  // claim about who can read a recording, and there is no safe guess.
+  export let audience: "" | "everyone" | "participants" = "";
 
   // The filter is list-local state — no other surface reads it.
   let filter = "";
@@ -114,6 +129,7 @@
     select: MeetingCatalogEntry;
     pick: MeetingCatalogEntry;
     openInsight: InsightRecord;
+    retryInsight: InsightRecord;
     visible: MeetingCatalogEntry[];
     counts: { meetings: number; insights: number };
     clearRoom: void;
@@ -269,7 +285,23 @@
         <span>{visibleInsights.length} of {totalInsightCount} insights</span>
       {:else if insightsOffered && insightsError}
         <span class="dot" aria-hidden="true"></span>
-        <span>insights unavailable</span>
+        <span>Insights could not be listed.</span>
+      {/if}
+      <!-- The permanent disclosure, before the transient ones: this is the only
+           thing on the browse surface that says who can see these recordings,
+           and it says the same to everybody. Hiding it from non-admins is what
+           D-670 was raised to stop. -->
+      {#if audience === "everyone"}
+        <span
+          class="chip audience"
+          title="Anyone with an account on this Nextcloud can see every recording and the name of the room it came from"
+        >
+          Visible to anyone with a Nextcloud account
+        </span>
+      {:else if audience === "participants"}
+        <span class="chip audience limited" title="Only the people in each call can see its recording">
+          Visible to meeting participants
+        </span>
       {/if}
       {#if selectedRoomName !== null}
         <span class="chip">
@@ -302,9 +334,7 @@
          meetings and incomplete for insights, and only one of those two things
          went wrong. -->
     {#if insightsError}
-      <p class="list-note" role="status">
-        Insights could not be listed: {insightsError} The meetings are unaffected.
-      </p>
+      <p class="list-note" role="status">Insights could not be listed.</p>
     {/if}
     {#if totalCount === 0 && totalInsightCount === 0}
       <div class="list-empty">
@@ -327,6 +357,10 @@
            empty, so the reason is the listing itself — and a listing that failed
            and one still in flight are different facts, neither of which is "you
            have none". -->
+    {:else if feedItems.length === 0 && insightsOnly && !trimmedFilter && selectedRoomName === null && !insightsLoaded && !insightsError}
+      <div class="list-empty">
+        <strong>Loading insights…</strong>
+      </div>
     {:else if feedItems.length === 0}
       <div class="list-empty">
         <strong>Nothing matches</strong>
@@ -346,10 +380,8 @@
             of {searchCoverage?.visible} could be searched for what was said in them.
           {:else if trimmedFilter}
             No {matchNoun} matches that search.
-          {:else if insightsOnly && !insightsLoaded}
-            Your insights are still loading.
           {:else if insightsOnly && insightsError}
-            Your insights could not be listed, so none can be shown here.
+            Insights could not be listed.
           {:else}
             There are no {matchNounPlural} to show.
           {/if}
@@ -380,7 +412,11 @@
               insight={item.insight}
               sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}
               selected={item.insight.id === selectedInsightId}
+              canRetry={insightsRetryable}
+              retrying={retryingInsightId === item.insight.id}
+              retryError={insightRetryError?.id === item.insight.id ? insightRetryError.message : ""}
               on:open={() => dispatch("openInsight", item.insight)}
+              on:retry={() => dispatch("retryInsight", item.insight)}
             />
           {:else}
             {@const meeting = item.meeting}
@@ -670,6 +706,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* The audience chip is not a narrowing: nothing was filtered and there is
+     nothing to clear, so it drops the primary fill that means "this list is
+     incomplete" and reads as the standing fact it is. Same shape, so the line
+     stays one row of chips. */
+  .chip.audience {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 20%, transparent);
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* The narrower audience is the one worth colouring: a recording only its
+     participants can see is the exception on a Nextcloud, and the chip is how
+     you tell the two apart at a glance. */
+  .chip.audience.limited {
+    background-color: color-mix(in oklch, var(--color-success) 15%, transparent);
+    border-color: color-mix(in oklch, var(--color-success) 38%, transparent);
+    color: var(--color-success);
+  }
+
   .chip button {
     display: inline-flex;
     flex: none;

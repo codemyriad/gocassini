@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { notifySetupChanged, onSetupChanged, resetSetupListeners } from "./setupSignal";
 
-// The signal exists so that a setup performed on the Setup tab clears the
-// shell's "Cassini is not configured" notice IN THE SAME SESSION, without
+// The signal exists so that a setup performed in the settings section clears
+// the shell's "Cassini is not configured" notice IN THE SAME SESSION, without
 // reloading the page.
 
 afterEach(() => {

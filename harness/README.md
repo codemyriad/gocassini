@@ -220,7 +220,7 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
-| `--storage-mode default|acl-enabled|undecided|""` | `CASSINI_HARNESS_STORAGE_MODE` | `default` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). `undecided` (or an explicitly empty value) builds the access-controlled substrate and tells the ExApp nothing, which is the only way to reach the setup wizard. See §2.8.1. |
+| `--storage-mode default|acl-enabled|undecided|""` | `CASSINI_HARNESS_STORAGE_MODE` | `default` | Which recording storage model bootstrap builds, and which the ExApp is told to start in (as `CASSINI_STORAGE_MODE=default|access_controlled`). `undecided` (or an explicitly empty value) builds the access-controlled substrate and tells the ExApp nothing, so the app resolves the audience for itself on its first enable. See §2.8.1. |
 | `--debug-skip-storage-scaffold` | `CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1` | off | Build no recordings storage at all. Debug only. See §2.8.1. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |
@@ -230,13 +230,15 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 
 #### 2.8.1 Recording storage mode
 
-Cassini stores published recordings in one of two models, and which one a stack
-is built for has to be decided rather than inferred. The ExApp does not infer,
-and since D-708 it does not fall back either: with nothing recorded and nothing
-declared it is UNDECIDED, publishes nothing, records nothing, and waits for the
-Setup tab. The harness declares the mode so a stack comes up usable — and
-`--storage-mode undecided` (or `--storage-mode ""`) is how you deliberately do not, which is the only way
-to reach the wizard.
+Cassini stores published recordings in one of two models, and they differ in who
+can see a recording: anyone with an account on this Nextcloud, or only the people
+who were in the call. With nothing recorded and nothing declared, the ExApp
+resolves that on its first enabled edge from what it finds — recordings in the
+`Cassini` Team folder keep meeting participants, anything else records as anyone
+with a Nextcloud account — and it never widens an archive that already exists.
+The harness declares the mode so a stack is the thing it says it is, and
+`--storage-mode undecided` (or `--storage-mode ""`) is how you deliberately do
+not, so you can watch the app resolve it.
 
 The two models keep their archives in different places, on purpose — neither can
 shadow the other:
@@ -261,13 +263,14 @@ shadow the other:
 
   --storage-mode undecided
     bootstrap: the same as acl-enabled — account, group, both apps, a mapped
-               ACL-enabled Team folder. A wizard with only one usable mode is
-               not offering a choice.
+               ACL-enabled Team folder, so both audiences are actually
+               reachable from the settings section.
     ExApp:     nothing. CASSINI_STORAGE_MODE is OMITTED from the registration,
                not passed empty — an empty value is an unrecognised one, which
                the app logs as an error rather than as "nobody told me".
-    note:      publishing and recording are refused until the Setup tab is used.
-               This is the state every real install starts in.
+    note:      the app resolves the audience itself on its first enabled edge,
+               which is what every real install does. With an empty Team folder
+               it lands on anyone with a Nextcloud account, and records.
 
   --storage-mode ""
     alias for undecided. CASSINI_STORAGE_MODE is likewise omitted.
@@ -278,26 +281,27 @@ shadow the other:
 ```
 
 The two together — `--storage-mode acl-enabled --debug-skip-storage-scaffold` —
-give you access control selected with none of it built, which is what the app's
-own setup flow exists to fix.
+give you meeting participants selected with none of it built, which is what the
+settings section's prerequisites step exists to fix.
 
 `--storage-mode undecided --debug-skip-storage-scaffold` is the fuller version
-of that: nothing built AND nothing chosen, which is exactly what an
-administrator meets on the day they install Cassini. The Setup tab then has to
-scaffold a mode before it can offer to use it, which is the rule the wizard
-enforces.
+of that: nothing built AND nothing declared, which is exactly what an
+administrator meets on the day they install Cassini. The app resolves the
+audience, the first-run dialog offers to create the `cassini` account, and the
+settings section scaffolds whatever the other audience still needs.
 
 The mode is only the ExApp's *initial* value. It is recorded in the app's
-`storage_settings.json` on the first enable and the Setup tab is what changes it
-afterwards, so re-registering with a different `--storage-mode` over an existing
-app volume changes nothing.
+`storage_settings.json` on the first enable and **Operator › Settings › Who can
+see recordings** is what changes it afterwards, so re-registering with a
+different `--storage-mode` over an existing app volume changes nothing.
 
-Switching modes from the Setup tab COPIES the archive from one root to the other,
-verifies it arrived, records the new mode, and only then empties the old root.
-`storage_settings.json` carries a third field, `migration_clean`, which is false
-between the first of those steps and the last — so a stack killed mid-switch
-comes back with its recordings intact at whichever mode the file names, and the
-Setup tab offers one button to clear the leftovers. To inspect it:
+Switching from that section COPIES the archive from one root to the other,
+verifies it arrived, records the new audience, and only then empties the old
+root. `storage_settings.json` carries a third field, `migration_clean`, which is
+false between the first of those steps and the last — so a stack killed
+mid-switch comes back with its recordings intact at whichever mode the file
+names, and the settings section offers **Resume** to clear the leftovers. To
+inspect it:
 
 ```bash
 docker exec nc_app_gocassini cat /nc_app_gocassini_data/operator/storage_settings.json
@@ -565,10 +569,13 @@ What happens:
 5. The HaRP deploy daemon is registered.
 6. Cassini is registered as `gocassini` and route checks are performed.
 
-Recordings are access-controlled — there is no other mode. `bootstrap.sh`
+Who can see a recording has two answers, and this stack picks one with
+`--storage-mode` (§2.8.1): recordings are visible to anyone with an account on
+this Nextcloud, or only to the people who were in the call. `bootstrap.sh`
 installs the two prerequisites an ExApp cannot install for itself — Team folders
-and Everyone Group — and the ExApp provisions its folder, groups and ACLs on
-enable. Production installers must enable both native apps first. See
+and Everyone Group — either way, and builds the Team folder only for the
+participants-only mode, where the ExApp provisions its groups and ACLs inside it
+on enable. Production installers need both native apps only for that mode. See
 [`docs/exapp-nextcloud-recordings-permissions.md`](../docs/exapp-nextcloud-recordings-permissions.md).
 
 If you already have a suitable local ExApp image, omit `--build` and use the

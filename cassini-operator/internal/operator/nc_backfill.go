@@ -119,7 +119,7 @@ func refuseBackfillOutsideAccessControl(settingsPath string, stderr io.Writer) i
 		fmt.Fprintf(stderr, "this installation runs the %q storage model, and this command only applies to %q.\n\n"+
 			"In %[1]q, recordings live in the %q account's own folder and every signed-in account can already read them — there is no per-recording audience to write, and the ACL rules this command applies would mean nothing there.\n"+
 			"Nothing was read and nothing was written.\n\n"+
-			"If you meant to migrate this archive INTO the Team folder, switch storage modes in the app's Setup tab instead: that moves the recordings that are already published.\n",
+			"If you meant to migrate this archive INTO the Team folder, switch to Meeting participants under Operator › Settings › Who can see recordings instead: that moves the recordings that are already published.\n",
 			storageModeDefault, storageModeAccessControlled, ncRecordingsOwner)
 		return backfillExitNothingToDo
 	}

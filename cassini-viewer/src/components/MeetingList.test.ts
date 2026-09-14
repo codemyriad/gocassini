@@ -109,7 +109,7 @@ describe("MeetingList insights", () => {
     // has come back, the failure when it did not, and nothing while the first
     // is still in flight.
     expect(meetingListSource).toContain("{#if insightsError}");
-    expect(meetingListSource).toContain("Insights could not be listed:");
+    expect(meetingListSource).toContain("Insights could not be listed.");
     expect(meetingListSource).toMatch(
       /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
     );
@@ -187,5 +187,62 @@ describe("MeetingList insights", () => {
     expect(meetingListSource).toContain("searchCoveredEverything");
     expect(meetingListSource).toContain("{:else if trimmedFilter && searchProblem}");
     expect(meetingListSource).toContain("{:else if trimmedFilter && !searchCoveredEverything}");
+  });
+
+  it("forwards a card's retry to the shell with the record, and decides nothing", () => {
+    // The shell owns the provider and the request; the list only says which
+    // card asked (D-749).
+    expect(meetingListSource).toContain('on:retry={() => dispatch("retryInsight", item.insight)}');
+    expect(meetingListSource).toContain("canRetry={insightsRetryable}");
+    expect(meetingListSource).toContain("retrying={retryingInsightId === item.insight.id}");
+  });
+});
+
+// The audience chip (D-756). It is the only permanent statement on the browse
+// surface of who can see these recordings, and it is the same for everybody:
+// an administrator and a non-administrator must never disagree about what is
+// true. D-670 exists because the previous behaviour was to say nothing.
+describe("MeetingList audience chip", () => {
+  it("names the two audiences in the words the whole product uses", () => {
+    expect(meetingListSource).toContain("Visible to anyone with a Nextcloud account");
+    expect(meetingListSource).toContain("Visible to meeting participants");
+    // Never the storage enum, and never "Everyone in Cassini": the viewing
+    // layer is handed an audience, not a mode.
+    expect(meetingListSource).not.toContain("access_controlled");
+    expect(meetingListSource).not.toContain("Everyone in Cassini");
+  });
+
+  it("explains each one in a sentence, in the chip's title", () => {
+    expect(meetingListSource).toContain(
+      'title="Anyone with an account on this Nextcloud can see every recording and the name of the room it came from"',
+    );
+    expect(meetingListSource).toContain(
+      'title="Only the people in each call can see its recording"',
+    );
+  });
+
+  it("renders nothing at all when nobody said", () => {
+    // A standalone export has no operator to ask, and an operator too old to
+    // report the mode said nothing either. Absence is not an audience, and a
+    // chip is a claim about who can read a recording.
+    expect(meetingListSource).toContain(
+      'export let audience: "" | "everyone" | "participants" = "";',
+    );
+    expect(meetingListSource).toMatch(
+      /\{#if audience === "everyone"\}[\s\S]{0,400}\{:else if audience === "participants"\}[\s\S]{0,400}\{\/if\}/,
+    );
+  });
+
+  it("sits in the result line, and does not look like a narrowing", () => {
+    // The other chips on that line are active filters with a clear button.
+    // This one filters nothing, so it drops the primary fill that means "this
+    // list is incomplete".
+    const resultline = meetingListSource.slice(
+      meetingListSource.indexOf('<div class="resultline"'),
+      meetingListSource.indexOf("</header>"),
+    );
+    expect(resultline).toContain('class="chip audience"');
+    expect(resultline).toContain('class="chip audience limited"');
+    expect(meetingListSource).toContain(".chip.audience {");
   });
 });

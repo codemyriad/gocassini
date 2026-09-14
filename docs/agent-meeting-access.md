@@ -18,10 +18,14 @@ Give an agent the three things it needs to reason about your meetings:
 
 ## How it works
 
-The Cassini app serves a **per-caller** read surface, and these commands are a
-client for it. The app fetches from Nextcloud Files **as the calling user**, so
-Nextcloud performs the authorization and Cassini keeps no separate list of who
-may see what.
+The Cassini app serves a read surface, and these commands are a client for it.
+What it returns depends on who can see recordings on that Nextcloud, which is one
+setting in the app: where recordings are visible to **anyone with a Nextcloud
+account**, every account gets every recording, and the app fetches them as the
+`cassini` service account; where they are visible to **meeting participants**,
+the app fetches from Nextcloud Files **as the calling user**, so Nextcloud
+decides per recording. Either way Cassini keeps no separate list of who may see
+what, and never returns more than the account is entitled to.
 
 ```text
   cassini meetings list --from 2026-08-01
@@ -33,7 +37,10 @@ may see what.
         │     ── mints the app-API identity for the session
         ▼
   Cassini app ── GET catalog.json as the recordings owner   (what exists)
-        │     ── PROPFIND meetings/ AS THE CALLING USER     (what they may read)
+        │     ── PROPFIND meetings/ AS THE CALLING USER     (what they may read;
+        │                                                    as the owner where
+        │                                                    every account may
+        │                                                    read everything)
         │     ── intersect, then narrow by the query
         │
         ├── the meeting list, filtered to what the caller may read
@@ -140,10 +147,12 @@ Expected:
   `meeting=01JZ8K… date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes`
 - Exit code `0`.
 
-`source=nextcloud-files` confirms the bytes came from Nextcloud Files, with
-per-caller permissions applied. `source=unknown` means they did not — you are
-most likely talking to a development operator serving a local archive, which has
-no per-caller access control at all. `source=unrecognised` means the response
+`source=nextcloud-files` confirms the bytes came from Nextcloud Files, under
+whichever audience that instance is set to: per-caller permissions where
+recordings are visible to meeting participants, and every recording where they
+are visible to anyone with a Nextcloud account. `source=unknown` means they did
+not — you are most likely talking to a development operator serving a local
+archive, which has no access control at all. `source=unrecognised` means the response
 claimed some other origin, which is equally not a guarantee. Anything but
 `nextcloud-files` also prints a warning on stderr, from all three commands.
 

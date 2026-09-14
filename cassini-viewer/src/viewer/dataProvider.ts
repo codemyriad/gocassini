@@ -109,6 +109,17 @@ export interface DataProvider {
   // "the archive is unreachable" and "nothing was said about that" must not
   // arrive here as the same value.
   searchMeetings?(query: string, options?: MeetingSearchOptions): Promise<MeetingSearchOutcome>;
+
+  // OPTIONAL (D-749): retry a FAILED run — `POST insights/<id>/retry` — and
+  // return the run as it now stands. The operator answers 409 for a run that
+  // is not failed, which the implementation reports as its own sentence.
+  //
+  // Optional for the same reason the two above are: a retry is an operator
+  // doing work, and a build with no operator offers no Retry control rather
+  // than one that fails. The browse card and the document sheet both render it
+  // when this exists, so a failed run is recoverable from wherever it is seen
+  // rather than only from the panel that started it.
+  retryInsight?(id: string): Promise<InsightRecord>;
 }
 
 // resolvePublishedUrl locates a file in the operator's published archive.
