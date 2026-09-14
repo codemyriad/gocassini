@@ -38,6 +38,29 @@ const (
 	RoleDisplay              = "display"
 )
 
+// LegacyPayloadSchemas are earlier identifiers of the same version 1 manifest
+// schema. Files written before the schema moved to format.gocassini.com carry
+// the first one; readers accept them so that a hostname change is not a
+// format change. Writers always emit PayloadSchema.
+var LegacyPayloadSchemas = []string{
+	"https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+}
+
+// AcceptedPayloadSchema reports whether a CASSINI_PAYLOAD_SCHEMA tag value
+// names the version 1 manifest schema, under its current or a legacy
+// identifier.
+func AcceptedPayloadSchema(value string) bool {
+	if value == PayloadSchema {
+		return true
+	}
+	for _, legacy := range LegacyPayloadSchemas {
+		if value == legacy {
+			return true
+		}
+	}
+	return false
+}
+
 type Manifest struct {
 	Kind      string    `json:"kind"`
 	Version   int       `json:"version"`

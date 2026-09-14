@@ -104,6 +104,14 @@ export interface ExtractedPortableManifest {
   tags: Record<string, string>;
 }
 
+// The version 1 manifest schema under its current identifier and the one it
+// had before the move to format.gocassini.com. Files published before the move
+// carry the second; a hostname change is not a format change.
+const ACCEPTED_PAYLOAD_SCHEMAS = [
+  "https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json",
+  "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+];
+
 export async function extractPortableManifestFromArrayBuffer(
   value: ArrayBuffer | Uint8Array,
 ): Promise<ExtractedPortableManifest> {
@@ -116,15 +124,14 @@ export async function extractPortableManifestFromArrayBuffer(
   if (format !== "org.cassini.portable-meeting/1") {
     throw new Error(`portable opus file uses unsupported CASSINI_FORMAT=${format}`);
   }
-  for (const [name, expected] of Object.entries({
-    CASSINI_PROFILE: "ogg-opus",
-    CASSINI_PAYLOAD_MIME: "application/vnd.cassini.portable-meeting+json",
-    CASSINI_PAYLOAD_ENCODING: "base64url+gzip+utf8json",
-    CASSINI_PAYLOAD_SCHEMA:
-      "https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v1.schema.json",
-    CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
+  for (const [name, accepted] of Object.entries({
+    CASSINI_PROFILE: ["ogg-opus"],
+    CASSINI_PAYLOAD_MIME: ["application/vnd.cassini.portable-meeting+json"],
+    CASSINI_PAYLOAD_ENCODING: ["base64url+gzip+utf8json"],
+    CASSINI_PAYLOAD_SCHEMA: ACCEPTED_PAYLOAD_SCHEMAS,
+    CASSINI_AUDIO_MATCH_POLICY: ["exact-opus-audio-v1"],
   })) {
-    if (String(tags[name] ?? "").trim() !== expected) {
+    if (!accepted.includes(String(tags[name] ?? "").trim())) {
       throw new Error(`portable opus file uses unsupported ${name}=${String(tags[name] ?? "")}`);
     }
   }

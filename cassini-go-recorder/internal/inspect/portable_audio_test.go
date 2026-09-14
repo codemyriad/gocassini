@@ -137,6 +137,34 @@ func TestDecodePortableMeetingRejectsUnsupportedFormats(t *testing.T) {
 	}
 }
 
+// Every file published before the schema moved to format.gocassini.com carries
+// the codemyriad.io identifier. It is the same version 1 format, so inspect
+// must read it; a schema nobody published is still refused by name.
+func TestDecodePortableMeetingAcceptsThePreMoveSchemaIdentifier(t *testing.T) {
+	for _, schema := range append([]string{portable.PayloadSchema}, portable.LegacyPayloadSchemas...) {
+		t.Run(schema, func(t *testing.T) {
+			tags := buildPublishedPortableTags(t, portableFixtureOptions{words: []string{"Hello", "team"}}, nil)
+			tags["CASSINI_PAYLOAD_SCHEMA"] = schema
+			info, manifest, err := decodePortableMeeting(tags)
+			if err != nil {
+				t.Fatalf("decodePortableMeeting: %v", err)
+			}
+			if manifest.Meeting.Title != "Weekly Sync" {
+				t.Errorf("decoded title = %q, want %q", manifest.Meeting.Title, "Weekly Sync")
+			}
+			if info.Schema != schema {
+				t.Errorf("reported schema = %q, want the tag as written %q", info.Schema, schema)
+			}
+		})
+	}
+
+	tags := buildPublishedPortableTags(t, portableFixtureOptions{words: []string{"Hello", "team"}}, nil)
+	tags["CASSINI_PAYLOAD_SCHEMA"] = "https://example.test/schema/cassini-portable-meeting-manifest-v1.schema.json"
+	if _, _, err := decodePortableMeeting(tags); err == nil || !strings.Contains(err.Error(), "unsupported CASSINI_PAYLOAD_SCHEMA") {
+		t.Fatalf("error = %v, want an unsupported CASSINI_PAYLOAD_SCHEMA error", err)
+	}
+}
+
 func TestPublishedTranscriptChunkSetIsReadAndHolesFailClosed(t *testing.T) {
 	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
 	tags := buildPublishedPortableTags(t, portableFixtureOptions{words: words}, nil)

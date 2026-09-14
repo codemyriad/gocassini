@@ -934,6 +934,47 @@ describe("switchPortableTranscript", () => {
     );
   });
 
+  // Every file published before the schema moved to format.gocassini.com
+  // carries the codemyriad.io identifier. Same version 1 format, so it loads;
+  // a schema nobody published is still refused by name.
+  it("loads a portable file tagged with the pre-move schema identifier", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=pre-move-schema", protocol: "http:" },
+    } as Window;
+    const fixture = buildPortableOpusFixture({
+      manifest: { meeting: { durationMs: 3000 } },
+      rawTranscript: { items: [] },
+      extraTags: {
+        CASSINI_PAYLOAD_SCHEMA:
+          "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+      },
+    });
+    globalThis.fetch = mockFetchReturning(fixture);
+
+    const artifact = await loadPortableArtifactFromAudioPath("./pre-move-schema.opus");
+
+    expect(artifact.audioSrc).toBe("http://127.0.0.1:8765/pre-move-schema.opus");
+  });
+
+  it("rejects a portable file tagged with an unknown schema identifier", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=unknown-schema", protocol: "http:" },
+    } as Window;
+    const fixture = buildPortableOpusFixture({
+      manifest: { meeting: { durationMs: 3000 } },
+      rawTranscript: { items: [] },
+      extraTags: {
+        CASSINI_PAYLOAD_SCHEMA:
+          "https://example.test/schema/cassini-portable-meeting-manifest-v1.schema.json",
+      },
+    });
+    globalThis.fetch = mockFetchReturning(fixture);
+
+    await expect(loadPortableArtifactFromAudioPath("./unknown-schema.opus")).rejects.toThrow(
+      /unsupported CASSINI_PAYLOAD_SCHEMA/,
+    );
+  });
+
   it("rejects an unsupported portable format tag", async () => {
     globalThis.window = {
       location: { href: "http://127.0.0.1:8765/?meeting=unsupported-format", protocol: "http:" },

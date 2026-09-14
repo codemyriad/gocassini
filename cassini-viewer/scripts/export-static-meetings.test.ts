@@ -20,6 +20,7 @@ import {
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
   parseArgs,
+  readPortableMeeting,
   validatePublishedPortableManifest,
 } from "./export-static-meetings.mjs";
 
@@ -30,7 +31,7 @@ function writePublishedPortableProbeFixture(
   // What the file holds, for the tests that care: the transcript's words and
   // the summary the producer sealed in. Both default to what a minimal fixture
   // has always had — an empty transcript and no summary.
-  contents: { words?: string[]; summaryMarkdown?: string } = {},
+  contents: { words?: string[]; summaryMarkdown?: string; tags?: Record<string, string> } = {},
 ) {
   const encode = (value: unknown) => {
     const raw = Buffer.from(JSON.stringify(value), "utf8");
@@ -105,11 +106,60 @@ function writePublishedPortableProbeFixture(
         CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
         CASSINI_AUDIO_OPUS_SHA256: "a".repeat(64),
         CASSINI_TX_RAW_ASR_PAYLOAD_000: body.chunk,
+        ...(contents.tags ?? {}),
       } },
       streams: [],
     }),
   );
 }
+
+// readPortableMeeting() shells out to ffprobe, which the UI test environment
+// does not provide. Put a stub first on PATH that emits the pre-baked report
+// stored next to the probed .opus file; the caller restores PATH afterwards.
+function stubFFprobeOnPath(root: string): string {
+  const stubBinDir = join(root, "bin");
+  mkdirSync(stubBinDir, { recursive: true });
+  const stubPath = join(stubBinDir, "ffprobe");
+  writeFileSync(stubPath, '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nexec cat "${last}.ffprobe.json"\n');
+  chmodSync(stubPath, 0o755);
+  const previous = process.env.PATH ?? "";
+  process.env.PATH = `${stubBinDir}:${previous}`;
+  return previous;
+}
+
+describe("readPortableMeeting", () => {
+  // Every file published before the schema moved to format.gocassini.com
+  // carries the codemyriad.io identifier. Same version 1 format, so it reads;
+  // a schema nobody published is still refused by name.
+  it("accepts the pre-move schema identifier and refuses an unknown one", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-schema-"));
+    const previousPath = stubFFprobeOnPath(root);
+    try {
+      const sourceDir = join(root, "source");
+      mkdirSync(sourceDir, { recursive: true });
+      writePublishedPortableProbeFixture(sourceDir, "pre-move", { id: "pre-move", title: "Pre-move" }, {
+        tags: {
+          CASSINI_PAYLOAD_SCHEMA:
+            "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+        },
+      });
+      writePublishedPortableProbeFixture(sourceDir, "unknown", { id: "unknown", title: "Unknown" }, {
+        tags: {
+          CASSINI_PAYLOAD_SCHEMA:
+            "https://example.test/schema/cassini-portable-meeting-manifest-v1.schema.json",
+        },
+      });
+
+      expect(readPortableMeeting(join(sourceDir, "pre-move.opus")).manifest.meeting.title).toBe("Pre-move");
+      expect(() => readPortableMeeting(join(sourceDir, "unknown.opus"))).toThrow(
+        /Unsupported CASSINI_PAYLOAD_SCHEMA/,
+      );
+    } finally {
+      process.env.PATH = previousPath;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("describeMeeting", () => {
   it("parses colon-separated legacy meeting ids", () => {

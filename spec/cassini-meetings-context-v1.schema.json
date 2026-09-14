@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cassini-format.codemyriad.io/schema/cassini-meetings-context-v1.schema.json",
+  "$id": "https://format.gocassini.com/schema/cassini-meetings-context-v1.schema.json",
   "title": "Cassini meetings context v1",
   "description": "One or more recorded meetings rendered as context an agent can read: what the meeting was, who spoke, the transcript as speaker-attributed prose, and the generated summary when there is one. Produced by `cassini meetings context [--json]`. A document carrying one meeting is the bare meeting object; a document carrying several is a container whose every element is itself a complete, valid document of the first kind. That is the whole of the multi-meeting design: a reader written against a single meeting keeps working, because what it knows how to read is exactly what each element is. The markdown rendering of the same bundle is the same information for a human or a model to read directly, and is not described here.",
   "oneOf": [

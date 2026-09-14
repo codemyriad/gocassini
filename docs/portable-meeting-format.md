@@ -23,7 +23,10 @@ A conforming file has all of these properties:
 If `CASSINI_FORMAT` is absent, consumers should treat the file as ordinary
 audio. If the format tag, manifest version, profile, transcript layout, or
 integrity policy is unsupported, consumers must stop and report that clearly;
-they must not guess at another shape.
+they must not guess at another shape. Readers also accept the pre-move
+`CASSINI_PAYLOAD_SCHEMA` identifier,
+`https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json`,
+which names the same version 1 schema; writers emit only the current one.
 
 The JSON Schema is
 [`spec/cassini-portable-meeting-manifest-v1.schema.json`](../spec/cassini-portable-meeting-manifest-v1.schema.json).

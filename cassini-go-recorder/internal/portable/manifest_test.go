@@ -249,3 +249,23 @@ func TestProcessingStepCarriesUnappliedHints(t *testing.T) {
 		t.Errorf("the unapplied reason was lost: %s", round)
 	}
 }
+
+// The schema identifier moved hosts once (cassini-format.codemyriad.io to
+// format.gocassini.com). Files written before the move are the same version 1
+// format, so the pre-move identifier reads; anything else does not.
+func TestAcceptedPayloadSchemaTakesCurrentAndPreMoveIdentifiers(t *testing.T) {
+	for _, value := range append([]string{PayloadSchema}, LegacyPayloadSchemas...) {
+		if !AcceptedPayloadSchema(value) {
+			t.Errorf("AcceptedPayloadSchema(%q) = false, want true", value)
+		}
+	}
+	for _, value := range []string{
+		"",
+		"https://format.gocassini.com/schema/cassini-portable-meeting-manifest-v2.schema.json",
+		"https://example.test/schema/cassini-portable-meeting-manifest-v1.schema.json",
+	} {
+		if AcceptedPayloadSchema(value) {
+			t.Errorf("AcceptedPayloadSchema(%q) = true, want false", value)
+		}
+	}
+}
