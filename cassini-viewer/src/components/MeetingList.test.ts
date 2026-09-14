@@ -162,7 +162,7 @@ describe("MeetingList audience chip", () => {
 
   it("explains each one in a sentence, in the chip's title", () => {
     expect(meetingListSource).toContain(
-      'title="Anyone with an account on this Nextcloud can see every recording"',
+      'title="Anyone with an account on this Nextcloud can see every recording and the name of the room it came from"',
     );
     expect(meetingListSource).toContain(
       'title="Only the people in each call can see its recording"',

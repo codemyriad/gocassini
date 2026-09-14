@@ -135,9 +135,11 @@
   // read that failed — and no dialog is drawn from silence.
   let storageStatus: StorageStatus | null = null;
 
-  // Closing the dialog locally as well as at the operator. The acknowledgement
-  // is what makes it once per install; this is what makes it disappear on the
-  // click rather than on the round trip that follows.
+  // Closing the dialog for the rest of this page's life. The operator's
+  // acknowledgement is what makes it once per INSTALL; this is what makes it
+  // disappear on the click rather than on the round trip that follows — and it
+  // is the whole of what "Change who can see first" does, which is why it is
+  // separate from the flag (D-756 review).
   let firstRunClosed = false;
 
   // Where "Who can see recordings" lives: a section at the top of the settings
@@ -322,11 +324,17 @@
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
-  // "Change who can see first" on the first-run dialog (D-756). The audience
-  // control is a SECTION of a settings panel, not the operator's front page, and
-  // the operator's default panel is the run console — so selecting the surface
-  // alone lands an administrator on a list of jobs, one click short of the thing
-  // the button they pressed named.
+  // "Change who can see first", and the blocked dialog's "Open Operator ›
+  // Settings" (D-756). The audience control is a SECTION of a settings panel,
+  // not the operator's front page, and the operator's default panel is the run
+  // console — so selecting the surface alone lands an administrator on a list of
+  // jobs, one click short of the thing the button they pressed named.
+  //
+  // Nothing here acknowledges the first run: the dialog is closed for this page
+  // and the operator's flag is left alone, so an install whose `cassini` account
+  // does not exist yet is asked again next time. The flag is answered where the
+  // account is made — the dialog's own primary action, and the settings
+  // section's "Create the account" row.
   //
   // Same mechanism as handleOpenPanel: push the fragment, then announce it once,
   // so the surface, the operator's panel nav and the viewer all read the same

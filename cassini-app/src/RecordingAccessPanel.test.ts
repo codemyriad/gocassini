@@ -161,7 +161,7 @@ describe("choosing the other option", () => {
       panelSource.indexOf("async function confirmSwitch()"),
       panelSource.indexOf("async function resume()"),
     );
-    expect(confirm).toContain("actionError = asMessage(error);");
+    expect(confirm).toContain("actionError = asFailure(error);");
     expect(confirm).toContain("flow = null;");
     // Re-read rather than trusting the pre-switch snapshot: a transition that
     // fails AFTER moving the archive has already changed the mode in force.
@@ -351,6 +351,51 @@ describe("details for administrators", () => {
   });
 });
 
+// A failed read used to render `error.message` — "HTTP 503", or whichever
+// transport error the browser threw — which is not a sentence anybody can act
+// on and reads like a fault in the thing they were about to change. The
+// classification is operator/loadError.ts, lifted from #288 and unit-tested
+// there; what is asserted here is that this section uses it and offers the way
+// back.
+describe("a call that failed", () => {
+  it("stands in for the section with a sentence, a way back, and the diagnosis", () => {
+    expect(panelSource).toContain('import { LOAD_ERROR_TITLE, buildLoadError, type LoadError }');
+    expect(panelSource).toContain("{loadError.title}");
+    expect(panelSource).toContain("{loadError.summary}");
+    expect(panelSource).toContain("Try again");
+    expect(panelSource).toContain("on:click={load}");
+    // The raw diagnosis is kept, one disclosure down, exactly where the enum
+    // names and the occ recipe live.
+    expect(panelSource).toContain("{#if loadError.detail}");
+    expect(panelSource).toContain("{loadError.detail}");
+  });
+
+  it("classifies an action failure the same way, without losing Nextcloud's own words", () => {
+    const classify = panelSource.slice(
+      panelSource.indexOf("function asFailure(error: unknown)"),
+      panelSource.indexOf("$: options = accessOptions(status);"),
+    );
+    // Nextcloud's refusals stay as they are: only this side knows what was
+    // being attempted, and a cancelled password confirmation is a step somebody
+    // declined rather than an error to classify.
+    expect(classify).toContain("error instanceof NcSetupError");
+    expect(classify).toContain("Nextcloud needs you to confirm your password");
+    expect(classify).toContain("return buildLoadError(error);");
+    // The step id is technical, so it moved behind the disclosure with
+    // everything else technical.
+    expect(classify).toContain('plainly(error.message, error.step ? `at: ${error.step}` : "")');
+    expect(panelSource).toContain("{actionError.summary}");
+    expect(panelSource).toContain("{#if actionError.detail}");
+  });
+
+  it("no longer sends anybody through re-registering the app on the strength of a 404", () => {
+    // A 404 is also what a proxy in front of Nextcloud answers, and the
+    // replacement sentence says what to check without claiming a cause.
+    expect(panelSource).not.toContain("Re-register the app");
+    expect(panelSource).not.toContain("OperatorHttpError");
+  });
+});
+
 describe("the rest of the app", () => {
   it("never reloads the page", () => {
     for (const forbidden of ["location.reload", "window.location.href ="]) {
@@ -419,7 +464,7 @@ describe("the two halves of a switch", () => {
   it("does the browser's half first, in a panel of its own", () => {
     expect(confirm).toContain('flow = "preparing";');
     expect(confirm.indexOf('flow = "preparing";')).toBeLessThan(confirm.indexOf("runModeSetup("));
-    expect(panelSource).toContain('{#if flow === "preparing"}');
+    expect(panelSource).toContain('{#if flow === "preparing" && target}');
     expect(panelSource).toContain("{preparingTitle(target)}");
   });
 
@@ -437,7 +482,7 @@ describe("the two halves of a switch", () => {
     // The sentence itself is switchingLead's, and it is rendered only by the
     // panel the PUT phase opens.
     const preparing = panelSource.slice(
-      panelSource.indexOf('{#if flow === "preparing"}'),
+      panelSource.indexOf('{#if flow === "preparing" && target}'),
       panelSource.indexOf('{#if flow === "switching"}'),
     );
     expect(preparing).not.toContain("switchingLead");
@@ -523,6 +568,29 @@ describe("the account row", () => {
     // The password it mints is dropped, exactly as the dialog drops it.
     expect(create).not.toContain("credential");
     expect(create).not.toContain("password");
+  });
+
+  // The first-run dialog is answered where the account is made, and this is the
+  // other place it can be made (D-756 review). "Change who can see first" leads
+  // here and acknowledges nothing on the way, so this row is what stops an
+  // install being asked about its first run for ever.
+  it("answers the first run once the account is actually there", () => {
+    const create = panelSource.slice(
+      panelSource.indexOf("async function createAccount()"),
+      panelSource.indexOf("// confirmSwitch is the only thing"),
+    );
+    // After the re-check, and only on the answer that says the account exists:
+    // a flag written on the strength of a run nobody verified would retire the
+    // dialog on an install that still cannot record.
+    expect(create.indexOf("operatorClient.recheckStorage()")).toBeLessThan(
+      create.indexOf("acknowledgeFirstRun()"),
+    );
+    expect(create).toContain("if (status.service_account.exists) {");
+    // Its own catch: the account was created, and a failed flag write must not
+    // be reported as a failed creation.
+    expect(create).toMatch(
+      /await operatorClient\.acknowledgeFirstRun\(\);\s*\} catch \(error\) \{/,
+    );
   });
 
   it("does not offer a button this build cannot honour", () => {

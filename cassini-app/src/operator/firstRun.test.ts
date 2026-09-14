@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { accountSteps, firstRunPlan } from "./firstRun";
+import { accountSteps, firstRunPlan, firstRunReady } from "./firstRun";
 import type { StorageModeOption, StorageSetupStep, StorageStatus } from "./types";
 
 function step(partial: Partial<StorageSetupStep> = {}): StorageSetupStep {
@@ -100,16 +100,35 @@ describe("firstRunPlan", () => {
     );
     expect(plan).not.toBeNull();
     expect(plan?.creates).toBe(false);
+    expect(plan?.blocked).toBe(false);
     expect(plan?.unavailable).toBe(false);
   });
 
   it("does not promise an account it has no way to create", () => {
-    // An operator reporting the account missing with no plan for it is a fault,
-    // and the setup notice is what says so. A button that would do nothing is
-    // worse than no button.
+    // An operator reporting the account missing with no plan for it is a fault.
+    // A button that would do nothing is worse than no button — and the shape it
+    // used to fall into was the acknowledge-only one, which told an install
+    // that cannot record that Cassini was ready to record, and then spent its
+    // one dialog saying so.
     const plan = firstRunPlan(status({ modes: [mode({ setup: [] })] }), READY);
     expect(plan?.creates).toBe(false);
+    expect(plan?.blocked).toBe(true);
     expect(plan?.steps).toEqual([]);
+  });
+
+  it("reads a fault from what the operator said, never from its silence", () => {
+    // `known` false is an operator that reports no service account at all. It
+    // has not said the account is missing, so there is nothing to call broken:
+    // the ordinary acknowledge-only dialog stands.
+    const plan = firstRunPlan(
+      status({
+        service_account: { user: "", known: false, exists: false, reset_occ: "" },
+        modes: [mode({ setup: [] })],
+      }),
+      READY,
+    );
+    expect(plan?.creates).toBe(false);
+    expect(plan?.blocked).toBe(false);
   });
 
   it("says the standalone build cannot make the account, rather than offering to", () => {
@@ -128,6 +147,40 @@ describe("firstRunPlan", () => {
       { isAdmin: true, setupAvailable: false },
     );
     expect(plan?.unavailable).toBe(false);
+  });
+});
+
+// The title is a claim about what this install can do next, and the two shapes
+// that cannot make the account answer it the same way: no plan for it, and no
+// session to run the plan with. "Cassini is ready to record" over a missing
+// account is the over-claim this decides away (D-756 review).
+describe("firstRunReady", () => {
+  const READY_STATUS = status({
+    service_account: { user: "cassini", known: true, exists: true, reset_occ: "" },
+  });
+
+  it("is true where the account is there, or is about to be", () => {
+    expect(firstRunReady(firstRunPlan(READY_STATUS, READY)!)).toBe(true);
+    expect(firstRunReady(firstRunPlan(status(), READY)!)).toBe(true);
+  });
+
+  it("is false where nothing here can make the account", () => {
+    // No plan for it…
+    expect(firstRunReady(firstRunPlan(status({ modes: [mode({ setup: [] })] }), READY)!)).toBe(
+      false,
+    );
+    // …and a plan this page has no session to run.
+    expect(
+      firstRunReady(firstRunPlan(status(), { isAdmin: true, setupAvailable: false })!),
+    ).toBe(false);
+  });
+
+  it("stays true on a standalone build whose account already exists", () => {
+    // Nothing is written to Nextcloud in that branch — the only call is the
+    // operator's own — so that install really is ready to record.
+    expect(
+      firstRunReady(firstRunPlan(READY_STATUS, { isAdmin: true, setupAvailable: false })!),
+    ).toBe(true);
   });
 });
 
