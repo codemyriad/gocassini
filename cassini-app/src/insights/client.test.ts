@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  classifyRunError,
   createInsight,
   describeAIFailure,
   isTerminalStatus,
@@ -41,6 +40,7 @@ function run(overrides: Partial<InsightRun> = {}): InsightRun {
     provider: "",
     model: "",
     documentPath: "",
+    reason: "",
     error: "",
     createdAt: "2026-09-03T10:00:00Z",
     updatedAt: "2026-09-03T10:00:00Z",
@@ -298,17 +298,16 @@ describe("which workflows can be asked a question", () => {
   });
 });
 
-describe("what a failed run says", () => {
-  it("classifies on the operator's reason token, not on its prose", () => {
-    // `cassini insight run` maps each reason to an exit code precisely so the
-    // classification does not move when someone improves a sentence.
-    expect(classifyRunError("insight run failed: no-provider: nothing configured")).toBe(
+describe("what a failed run carries", () => {
+  it("reads the operator's reason token, and normalises a missing one to empty", () => {
+    // The operator stores a token and the viewing layer owns the words
+    // (D-749). An older operator serves no `reason` at all, and that must
+    // read as "" rather than undefined so the classifier has one shape.
+    expect(run({ status: "failed", reason: "no-provider", error: "no-provider" }).reason).toBe(
       "no-provider",
     );
-    expect(classifyRunError("provider-refused: 401")).toBe("provider-refused");
-    expect(classifyRunError("model-failed: context deadline exceeded")).toBe("model-failed");
-    expect(classifyRunError("bad-request: unknown workflow")).toBe("bad-request");
-    expect(classifyRunError("the operator fell over")).toBe("unknown");
+    expect(run({ status: "failed", error: "model-failed: timeout" }).reason).toBe("");
+    expect(run().reason).toBe("");
   });
 });
 

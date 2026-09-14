@@ -56,8 +56,8 @@
   $: headline = insightHeadline(insight);
   $: pending = insight.status === "queued" || insight.status === "running";
   $: failed = insight.status === "failed";
-  // Never `insight.error` raw: it starts with the operator's reason token,
-  // which is for software. A title by reason, then the operator's own line.
+  // Never `insight.error` raw: the operator records a reason token and this
+  // build owns every word said for it (insights.ts, INSIGHT_FAILURE_COPY).
   $: failure = failed ? describeInsightFailure(insight) : null;
 
   // The mock files an insight under one room. A real one can span them —

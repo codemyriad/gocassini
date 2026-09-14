@@ -18,7 +18,6 @@
 // part worth testing. The card renders decisions it did not make.
 
 import { resolvePublishedUrl } from "cassini-viewer/dataProvider";
-import { classifyInsightError, type InsightFailureReason } from "cassini-viewer/insights";
 
 // The status vocabulary is fixed by internal/insight's package doc, and this is
 // a reading of it rather than a second copy: a build that invented a fifth
@@ -57,6 +56,13 @@ export interface InsightRun {
   // Where the document landed in the requester's own Nextcloud files. Empty
   // until the run succeeds; a failed run wrote nothing.
   documentPath: string;
+  // Why the latest attempt failed, as one of the operator's reason tokens
+  // ("" while it has not). The words for each token live in the viewing
+  // layer (cassini-viewer/insights, INSIGHT_FAILURE_COPY), so the browse card
+  // and the document sheet describe one failure one way (D-749).
+  reason: string;
+  // The same token, kept for one release; a run from before tokens existed
+  // carries a sentence here, which nothing in this app reads any more.
   error: string;
   createdAt: string;
   updatedAt: string;
@@ -380,6 +386,7 @@ export function readRun(value: unknown): InsightRun {
     provider: asString(value.provider),
     model: asString(value.model),
     documentPath: asString(value.documentPath),
+    reason: asString(value.reason),
     error: asString(value.error),
     createdAt: asString(value.createdAt),
     updatedAt: asString(value.updatedAt),
@@ -402,13 +409,6 @@ export function pollDelayMs(round: number): number {
   const delay = FIRST_POLL_DELAY_MS * Math.pow(1.5, Math.max(0, round));
   return Math.min(Math.round(delay), MAX_POLL_DELAY_MS);
 }
-
-// The four kinds of failure internal/insight classifies, and what each says,
-// live in the viewing layer (cassini-viewer/insights) so the browse card and
-// the document sheet describe one failure one way (D-749). Re-exported under
-// the name this module always had.
-export type { InsightFailureReason };
-export const classifyRunError = classifyInsightError;
 
 // --- Request failures, as opposed to run failures ---
 

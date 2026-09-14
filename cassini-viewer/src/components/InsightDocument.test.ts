@@ -90,9 +90,10 @@ describe("InsightDocument", () => {
 
   describe("a failed run, rendered", () => {
     // Rendered, not read: the words a reader gets for a failure are the
-    // behaviour, and the token the operator puts on `error` is the one thing
-    // that must not reach them.
-    function failedRun(error: string): InsightRecord {
+    // behaviour. The operator stores a reason token and this build owns every
+    // sentence (D-749), so the token must not reach them and neither may any
+    // prose an older operator left on `error`.
+    function failedRun(reason: string, error = reason): InsightRecord {
       return {
         id: "ins_0123456789abcdef",
         status: "failed",
@@ -107,6 +108,7 @@ describe("InsightDocument", () => {
         provider: "hosted",
         model: "",
         documentPath: "",
+        reason,
         error,
         createdAt: "2026-09-03T10:00:00Z",
         updatedAt: "2026-09-03T10:00:00Z",
@@ -114,25 +116,34 @@ describe("InsightDocument", () => {
     }
     const plainText = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
 
-    it("says why in sentences, and never prints the operator's token", () => {
+    it("says what happened and what to do, and never prints the token", () => {
       const html = render(InsightDocument, {
-        props: { insight: failedRun("provider-refused: HTTP 401 Unauthorized") },
+        props: { insight: failedRun("provider-refused") },
       }).body;
       const text = plainText(html);
       expect(text).toContain("The endpoint refused the request");
-      expect(text).toContain("HTTP 401 Unauthorized");
-      expect(text).not.toContain("The operator reported");
+      expect(text).toContain("Check its key, quota or model name under AI providers.");
+      expect(text).not.toContain("provider-refused");
+    });
+
+    it("ignores the sentence an older operator stored, beyond its token", () => {
+      const html = render(InsightDocument, {
+        props: { insight: failedRun("", "provider-refused: HTTP 401 Unauthorized") },
+      }).body;
+      const text = plainText(html);
+      expect(text).toContain("The endpoint refused the request");
+      expect(text).not.toContain("HTTP 401 Unauthorized");
       expect(text).not.toContain("provider-refused");
     });
 
     it("offers Retry exactly where the provider can perform one", () => {
       const withRetry = render(InsightDocument, {
-        props: { insight: failedRun("model-failed: timeout"), canRetry: true },
+        props: { insight: failedRun("model-failed"), canRetry: true },
       }).body;
       expect(withRetry).toMatch(/<button[^>]*>\s*Retry\s*<\/button>/);
 
       const without = render(InsightDocument, {
-        props: { insight: failedRun("model-failed: timeout"), canRetry: false },
+        props: { insight: failedRun("model-failed"), canRetry: false },
       }).body;
       expect(without).not.toMatch(/>\s*Retry\s*</);
     });
@@ -140,7 +151,7 @@ describe("InsightDocument", () => {
     it("locks the button while a retry is in flight and shows what a refused one said", () => {
       const html = render(InsightDocument, {
         props: {
-          insight: failedRun("model-failed: timeout"),
+          insight: failedRun("model-failed"),
           canRetry: true,
           retrying: true,
           retryError: "That insight is already running.",
