@@ -138,6 +138,7 @@
   let searchMessage = "";
   let transcriptHits: ReadonlyMap<string, readonly MeetingSearchHit[]> = new Map();
   let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
+  let searchCoverage: { visible: number; searched: number } | null = null;
   let searchDebounce: ReturnType<typeof setTimeout> | undefined;
   // Only the newest query may write the results. Without this a slow earlier
   // request can land after a faster later one and repaint the list with answers
@@ -439,6 +440,7 @@
       searchMessage = "";
       transcriptHits = new Map();
       transcriptOnlyMeetings = [];
+      searchCoverage = null;
       return;
     }
     searchState = "searching";
@@ -498,6 +500,7 @@
 
     searchState = "ok";
     searchMessage = "";
+    searchCoverage = outcome.coverage;
     const grouped = groupHitsByMeeting(outcome.hits);
     transcriptHits = new Map(grouped.map((match) => [match.meetingId, match.hits]));
     // Meetings the name/date filter will not produce, in the server's rank
@@ -1042,6 +1045,7 @@
       {searchMessage}
       {transcriptHits}
       {transcriptOnlyMeetings}
+      {searchCoverage}
       on:query={(event) => handleSearchQuery(event.detail)}
       on:openMoment={(event) => openSearchMoment(event.detail)}
       on:select={(event) => loadCatalogMeeting(event.detail)}

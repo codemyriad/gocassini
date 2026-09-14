@@ -105,6 +105,10 @@
   // Meetings that matched ONLY on what was said — they are not in the local
   // name/date filter's output, so the list has to add them.
   export let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
+  // What the last search could actually look at. Invariant 4 of the design:
+  // the index never claims coverage it does not have. Saying "no meeting
+  // matches" after searching 4 of 30 is a false negative dressed as an answer.
+  export let searchCoverage: { visible: number; searched: number } | null = null;
 
   const dispatch = createEventDispatcher<{
     select: MeetingCatalogEntry;
@@ -137,6 +141,11 @@
   $: dispatch("query", filter);
   $: isSearching = searchState === "searching";
   // A failure the reader has to be able to tell from "nothing matched".
+  // True only when the last search saw everything the caller can read.
+  $: searchCoveredEverything =
+    !searchOffered ||
+    searchCoverage === null ||
+    searchCoverage.searched >= searchCoverage.visible;
   $: searchProblem =
     searchState === "rateLimited" || searchState === "indexUnavailable" || searchState === "failed"
       ? searchMessage || "Search is unavailable right now."
@@ -326,6 +335,15 @@
             No {matchNoun} in {selectedRoomName} matches that search.
           {:else if selectedRoomName !== null}
             {selectedRoomName} has no {matchNounPlural}.
+          {:else if trimmedFilter && searchProblem}
+            <!-- NOT "nothing matches": the transcript half of the question was
+                 never answered, and saying nothing matched would be a claim the
+                 search never got to make. -->
+            Names and dates match no {matchNoun}, and what was said could not be
+            searched.
+          {:else if trimmedFilter && !searchCoveredEverything}
+            No {matchNoun} matches that search — but only {searchCoverage?.searched}
+            of {searchCoverage?.visible} could be searched for what was said in them.
           {:else if trimmedFilter}
             No {matchNoun} matches that search.
           {:else if insightsOnly && !insightsLoaded}

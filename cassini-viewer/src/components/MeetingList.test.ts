@@ -179,4 +179,13 @@ describe("MeetingList insights", () => {
       /placeholder=\{searchOffered[\s\S]{0,160}what was said in them[\s\S]{0,80}by name or date`\}/,
     );
   });
+
+  // "Nothing matches" is a claim about the whole archive. After a failed search
+  // it is a claim the search never got to make, and after a partial one it is
+  // false — the design's invariant 4 is that coverage is never overstated.
+  it("will not say nothing matched when the search could not say so", () => {
+    expect(meetingListSource).toContain("searchCoveredEverything");
+    expect(meetingListSource).toContain("{:else if trimmedFilter && searchProblem}");
+    expect(meetingListSource).toContain("{:else if trimmedFilter && !searchCoveredEverything}");
+  });
 });
