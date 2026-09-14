@@ -161,6 +161,16 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test -w ${{ matrix.package }}
+      # The suites above read .svelte files as TEXT — they can say a sentence is
+      # in the source and nothing about what an administrator ends up looking
+      # at. This drives the real app in headless Chromium against synthetic API
+      # responses (cassini-app/scripts/check-first-run-browser.mjs). No
+      # Nextcloud, no operator, no network.
+      - name: Run the first-run browser check
+        if: matrix.package == 'cassini-app'
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:first-run-browser -w cassini-app
 
   unit:
     name: Unit tests (${{ matrix.module }})
