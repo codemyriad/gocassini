@@ -24,6 +24,25 @@ describe("AI providers key handling", () => {
     // panel against exactly the endpoints the privacy story is built around.
     expect(llmSettingsPanelSource).toContain('$: draftReady = (draft?.baseUrl ?? "").trim() !== "";');
   });
+
+  it("warns about an OpenRouter key pasted without its prefix, and still saves it", () => {
+    // A key saved without "sk-or-v1-" fails every run with a 401. The warning
+    // is for OpenRouter's host only, for a typed key only, and it blocks
+    // nothing: draftReady does not read it.
+    expect(llmSettingsPanelSource).toContain(
+      'draft && hostOf(draft.baseUrl) === "openrouter.ai" && looksUnprefixed(draft.key)',
+    );
+    expect(llmSettingsPanelSource).toContain('return typed !== "" && !typed.startsWith("sk-or-");');
+    expect(llmSettingsPanelSource).toContain(
+      "OpenRouter keys start with sk-or-v1-. Check the paste.",
+    );
+    expect(llmSettingsPanelSource).not.toContain("draftReady = draftReady && !keyPrefixWarning");
+    // The placeholder asks for the whole key rather than showing the prefix
+    // as if it were already there.
+    expect(llmSettingsPanelSource).toContain(
+      "Paste the full key, sk-or-v1-… for OpenRouter. Self-hosted servers usually need none.",
+    );
+  });
 });
 
 describe("AI providers scope", () => {

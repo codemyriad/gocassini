@@ -222,6 +222,28 @@
   // around.
   $: draftReady = (draft?.baseUrl ?? "").trim() !== "";
 
+  // OpenRouter keys start with "sk-or-v1-". One pasted without the prefix
+  // saves fine and then fails every run with a 401, and the placeholder that
+  // showed the prefix is the likely reason it was left off. Said under the
+  // field, never enforced: only OpenRouter's keys have a known shape.
+  $: keyPrefixWarning =
+    draft && hostOf(draft.baseUrl) === "openrouter.ai" && looksUnprefixed(draft.key)
+      ? "OpenRouter keys start with sk-or-v1-. Check the paste."
+      : "";
+
+  function hostOf(url: string): string {
+    try {
+      return new URL(url.trim()).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+
+  function looksUnprefixed(key: string): boolean {
+    const typed = key.trim();
+    return typed !== "" && !typed.startsWith("sk-or-");
+  }
+
   // Every provider, with the draft's edits standing in for the row it is
   // editing: PUT replaces the whole list, so a save has to send the untouched
   // rows back exactly as they came.
@@ -416,8 +438,11 @@
             class="input input-sm w-full border-base-300 shadow-none"
             placeholder={draft.keyConfigured && !draft.keyCleared
               ? "leave blank to keep the stored key"
-              : "sk-or-v1-… — self-hosted servers usually need none"}
+              : "Paste the full key, sk-or-v1-… for OpenRouter. Self-hosted servers usually need none."}
           />
+          {#if keyPrefixWarning}
+            <p class="text-xs text-warning">{keyPrefixWarning}</p>
+          {/if}
           {#if draft.keyConfigured}
             <button
               class="link link-hover self-start text-xs text-base-content/60"
