@@ -74,6 +74,31 @@ describe("AI providers verification", () => {
   });
 });
 
+describe("AI providers edit placement (D-749)", () => {
+  it("edits a provider on its own card, not in a form under the list", () => {
+    // Opening the form under the whole list read as adding a second endpoint
+    // rather than changing the one just clicked. The card being edited swaps
+    // its read-only body for the form; the other cards stay as they are.
+    expect(llmSettingsPanelSource).toContain("{#snippet providerForm(heading: string)}");
+    expect(llmSettingsPanelSource).toContain("{#if draft?.existing && draft.id === provider.id}");
+    expect(llmSettingsPanelSource).toContain(
+      "{@render providerForm(`Editing ${providerLabel(provider)}`)}",
+    );
+  });
+
+  it("keeps only a new provider's form under the list, and says so in a heading", () => {
+    expect(llmSettingsPanelSource).toContain("{#if draft && !draft.existing}");
+    expect(llmSettingsPanelSource).toContain('{@render providerForm("New endpoint")}');
+    expect(llmSettingsPanelSource).toContain('<h3 class="text-sm font-semibold">{heading}</h3>');
+    // The single form is the whole point: one markup, two placements.
+    expect(llmSettingsPanelSource.split("<ModelCombobox").length - 1).toBe(1);
+  });
+
+  it("still resets the inputs when the draft it shows is swapped", () => {
+    expect(llmSettingsPanelSource).toContain("{#key draft.id}");
+  });
+});
+
 describe("AI providers default model (D-749)", () => {
   it("edits one default model per endpoint, on the provider draft", () => {
     // Summaries and insights ask for this model unless a step names its own,
