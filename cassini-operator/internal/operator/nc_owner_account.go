@@ -57,34 +57,6 @@ import (
 // user list, so an administrator reading it knows what made it.
 const ncRecordingsOwnerDisplayName = "Cassini recordings"
 
-// What one attempt ended in. Machine-readable in the same spirit as
-// appInstallOutcome: each reason leads somewhere different.
-const (
-	// ownerAccountPresent means the probe already found the account, so nothing
-	// was written.
-	ownerAccountPresent = "present"
-	// ownerAccountCreated means the account and its owner group are in place.
-	ownerAccountCreated = "created"
-	// ownerAccountNeedsPassword means Nextcloud demanded password confirmation.
-	// The expected answer on 34.0.2+, and the reason the browser path exists.
-	ownerAccountNeedsPassword = "password_confirmation_required"
-	// ownerAccountGroupIncomplete means the account exists and its owner group
-	// or its membership does not. Named apart from the rest because the two
-	// halves come apart in practice and the remedies differ: the default model
-	// works without the group, the access-controlled one mounts onto it.
-	ownerAccountGroupIncomplete = "group_incomplete"
-	// ownerAccountFailed is anything else: unreachable, a 500, or a write that
-	// answered like a success and left nothing behind.
-	ownerAccountFailed = "failed"
-)
-
-// ownerAccountOutcome is one attempt's result. Detail is the sentence an
-// administrator reads, and is empty when there was nothing to do.
-type ownerAccountOutcome struct {
-	Reason string
-	Detail string
-}
-
 // ensureServiceAccountOnEnable creates the service account and its owner group
 // when the probe reports the account missing, and updates the probe with what
 // is true afterwards.
@@ -99,13 +71,21 @@ type ownerAccountOutcome struct {
 // there was none. They are what the mode is resolved from, so leaving them empty
 // would trade a created account for an unresolvable install.
 //
-// It never returns an error. A refused create is a reported state, not a
-// failure of the preflight, and the caller continues to resolving the mode:
-// an install whose account is missing still has a mode, and that mode is what
-// the first-run dialog is about to act on.
-func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *http.Client, probe *ncStorageProbe, logger *log.Logger) ownerAccountOutcome {
+// It reports nothing back to its caller and returns no error, deliberately.
+// Everything one attempt establishes is a fact somebody else already reads: the
+// amended probe drives every later gate and the setup plan, the refusal note on
+// it drives /storage's account row, the substrate record drives /status and
+// /setup, and the log carries the sentence. A refused create is a reported state
+// rather than a failure of the preflight, so the caller goes on to resolve the
+// mode either way — an install whose account is missing still has a mode.
+//
+// It DID return a machine-readable outcome, and nothing in the operator ever
+// looked at it (D-753 review): the one production call site discarded it, and
+// only tests asserted on it, which made them assertions about a value with no
+// reader. They assert the probe, the log and /status now.
+func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *http.Client, probe *ncStorageProbe, logger *log.Logger) {
 	if probe.ServiceAccount {
-		return ownerAccountOutcome{Reason: ownerAccountPresent}
+		return
 	}
 	logger.Printf("nc storage: the %q service account is missing; attempting to create it and the %q group as %q",
 		ncRecordingsOwner, ncRecordingsOwnerGroup, probe.AdminUser)
@@ -122,14 +102,14 @@ func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *h
 			logger.Printf("nc storage: created the %q group", ncRecordingsOwnerGroup)
 		}
 	}
-	created, r := c.createRecordingsOwner(ctx, client)
+	accountCreated, r := c.createRecordingsOwner(ctx, client)
 	switch {
 	case r != "":
 		// The account's refusal is the one worth reporting: the group is only
 		// ever refused by the same middleware, and the account is the
 		// prerequisite both modes rest on.
 		refusal = r
-	case created:
+	case accountCreated:
 		logger.Printf("nc storage: created the %q service account", ncRecordingsOwner)
 	}
 
@@ -149,12 +129,25 @@ func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *h
 	}
 
 	if probe.ServiceAccount {
-		// The account exists NOW and did not when this function was entered.
-		// Recorded, because it is the one fact that proves an install is fresh
-		// no matter what Nextcloud is showing: both models write and read every
-		// recording as this account, so one that did not exist a minute ago
-		// owns nothing anywhere (storageModeFromProbe).
-		probe.ServiceAccountCreated = true
+		// Created on THIS edge only when the create call actually made it, and
+		// never merely because the account is there now.
+		//
+		// The difference is the whole weight this flag carries. It is the fact
+		// storageModeFromProbe treats as proof that an install is fresh no
+		// matter what Nextcloud is showing — both models write and read every
+		// recording as this account, so one that did not exist a minute ago owns
+		// nothing anywhere — and the probe reaches this function with
+		// ServiceAccount false for two very different reasons: the account is
+		// genuinely absent, or the existence check errored. On the second, the
+		// create answers OCS 102 "already exists", the re-check above finds the
+		// account, and reading THAT as a create would tell a years-old
+		// access-controlled install it was made a moment ago. With
+		// `groupfolders` briefly off, that is enough to record `default`
+		// permanently over an archive nobody can currently see.
+		//
+		// createRecordingsOwner already answers false for 102, so the only thing
+		// that sets this is a create Nextcloud performed.
+		probe.ServiceAccountCreated = accountCreated
 		// And the probe carries no archive facts at all: both roots are read as
 		// this account, and the probe skips them when there is none. Without
 		// this the mode cannot be resolved on the very edge that made the
@@ -176,17 +169,14 @@ func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *h
 	switch {
 	case probe.ServiceAccount && probe.OwnerGroup && membershipErr == nil:
 		logger.Printf("nc storage: the %q service account and its %q group are in place", ncRecordingsOwner, ncRecordingsOwnerGroup)
-		return ownerAccountOutcome{Reason: ownerAccountCreated}
 	case probe.ServiceAccount:
 		// Half done, and it must not read as either "all set" or "nothing
 		// there". The account can store recordings today; the group is what
 		// access control mounts onto, and the probe now says so, which is what
 		// puts a create_group step (and only that step) in the setup plan.
-		detail := ownerGroupIncompleteDetail(probe.OwnerGroup, membershipErr, refusal)
-		logger.Printf("nc storage: %s", detail)
-		return ownerAccountOutcome{Reason: ownerAccountGroupIncomplete, Detail: detail}
+		logger.Printf("nc storage: %s", ownerGroupIncompleteDetail(probe.OwnerGroup, membershipErr, refusal))
 	default:
-		reason, detail := ownerAccountRefusedDetail(refusal)
+		detail := ownerAccountRefusedDetail(refusal)
 		probe.ServiceAccountAttempt = detail
 		logger.Printf("nc storage: %s", detail)
 		// Reported here as well as by the mode's own sanity gate, because that
@@ -195,7 +185,6 @@ func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *h
 		// all. The account is missing either way, and it is the prerequisite the
 		// administrator can act on right now.
 		ncAccessSubstrate.unavailable(storageStepServiceAccount, errors.New(probe.serviceAccountDetail()))
-		return ownerAccountOutcome{Reason: reason, Detail: detail}
 	}
 }
 
@@ -204,20 +193,20 @@ func (c ExAppConfig) ensureServiceAccountOnEnable(ctx context.Context, client *h
 // same for a password confirmation and for a 403 with no message: on these
 // routes, from an ExApp, they are the same condition (D-661), and the remedy
 // does not differ.
-func ownerAccountRefusedDetail(refusal string) (reason, detail string) {
+func ownerAccountRefusedDetail(refusal string) string {
 	switch {
 	case refusal == "":
 		// Nextcloud answered like a success and the account is still not there.
 		// Rare, and worth saying plainly rather than dressing up as a refusal.
-		return ownerAccountFailed, fmt.Sprintf(
+		return fmt.Sprintf(
 			"Cassini tried to create the %q account on enable. Nextcloud reported no error and the account is still not there, so an administrator has to create it: open Cassini as an administrator and it offers to make it from your own browser session",
 			ncRecordingsOwner)
 	case passwordConfirmationRefusal(refusal):
-		return ownerAccountNeedsPassword, fmt.Sprintf(
+		return fmt.Sprintf(
 			"Cassini tried to create the %q account on enable and Nextcloud refused it (%s). User administration needs password confirmation, which an ExApp has no session to give. An administrator's browser does: open Cassini as an administrator and it offers to make the account as you",
 			ncRecordingsOwner, refusal)
 	default:
-		return ownerAccountFailed, fmt.Sprintf(
+		return fmt.Sprintf(
 			"Cassini tried to create the %q account on enable and the attempt failed (%s). An administrator's browser can make it instead: open Cassini as an administrator and it offers to make the account as you",
 			ncRecordingsOwner, refusal)
 	}

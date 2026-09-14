@@ -267,18 +267,16 @@ func TestRecordingRefusalOnlyFiresOnANamedMissingPrerequisite(t *testing.T) {
 		t.Fatal("a missing service account did not refuse the recording")
 	}
 
-	// The two steps that are not missing prerequisites at all. Neither is
-	// emitted any more — the enabled edge resolves the mode and keeps a
-	// recorded one (D-753) — and neither may refuse a recording if it comes
-	// back: a call is spent once, and "nobody has chosen" is not a fault the
-	// people in the meeting can do anything about.
-	for _, step := range []string{storageStepModeUndecided, storageStepModeUnconfirmed} {
-		ncAccessSubstrate.reset()
-		ncAccessSubstrate.markApplicable()
-		ncAccessSubstrate.unavailable(step, errTransitionNotReady)
-		if got := ncAccessSubstrate.recordingRefusal(); got != "" {
-			t.Fatalf("%s refused a recording: %q", step, got)
-		}
+	// The mode the enabled edge could not resolve is a DEGRADATION, not a
+	// missing prerequisite, and that is what keeps it out of here: a call is
+	// spent once, and "Cassini could not tell where the archive is" is not a
+	// fault the people in the meeting can do anything about. The recording is
+	// made; publishing is what waits.
+	ncAccessSubstrate.reset()
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.degraded(storageStepModeUnresolved, errTransitionNotReady)
+	if got := ncAccessSubstrate.recordingRefusal(); got != "" {
+		t.Fatalf("an unresolved storage mode refused a recording: %q", got)
 	}
 
 	ncAccessSubstrate.reset()

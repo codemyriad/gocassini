@@ -31,9 +31,15 @@ type storageMock struct {
 
 	apps           []string // nil means both prerequisites are enabled
 	serviceAccount bool
-	everyoneGroup  bool
-	folder         *gfFolder
-	recordingsRoot bool
+	// userExistsFailures makes the service-account existence check answer 500
+	// that many times before it starts telling the truth. A check that ERRORED
+	// leaves the probe saying the account is missing, which is the same thing it
+	// says when the account really is — and the two must not lead to the same
+	// place (D-753 review, fix 1).
+	userExistsFailures int
+	everyoneGroup      bool
+	folder             *gfFolder
+	recordingsRoot     bool
 	// aclArchive lists the recordings in the Team folder's meetings/ collection.
 	// It is what the upgrade latch keys on: a mounted but EMPTY Team folder is
 	// what a completed opt-out leaves behind and must not be refused, while one
@@ -118,7 +124,16 @@ func (m *storageMock) server(t *testing.T) *httptest.Server {
 			}
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"apps":`+jsonArray(apps)+`}}}`)
 		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/users/"+ncRecordingsOwner:
-			if !m.serviceAccount {
+			m.mu.Lock()
+			if m.userExistsFailures > 0 {
+				m.userExistsFailures--
+				m.mu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			exists := m.serviceAccount
+			m.mu.Unlock()
+			if !exists {
 				w.WriteHeader(http.StatusNotFound)
 				io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":998},"data":[]}}`)
 				return
@@ -140,13 +155,28 @@ func (m *storageMock) server(t *testing.T) *httptest.Server {
 				t.Fatalf("encode folder fixture: %v", err)
 			}
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":`+string(encoded)+`}}`)
-		case r.Method == http.MethodPost && p == "/ocs/v2.php/cloud/users" && m.createsServiceAccount:
-			// The account exists from here on, which is the whole point: every
-			// later read in the same preflight run has to see it, including the
-			// two archive PROPFINDs that are made AS it.
+		case r.Method == http.MethodPost && p == "/ocs/v2.php/cloud/users":
 			m.mu.Lock()
-			m.serviceAccount = true
+			existed := m.serviceAccount
+			if m.createsServiceAccount {
+				// The account exists from here on, which is the whole point:
+				// every later read in the same preflight run has to see it,
+				// including the two archive PROPFINDs that are made AS it.
+				m.serviceAccount = true
+			}
 			m.mu.Unlock()
+			if existed {
+				// OCS 102, the provisioning API's "that is already there".
+				// Reachable only when the existence check failed and the attempt
+				// ran against an account that was there all along — which is
+				// exactly the shape that must not read as a create.
+				io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":102,"message":"User already exists"},"data":[]}}`)
+				return
+			}
+			// Otherwise the envelope says success, and whether the account is
+			// there afterwards is createsServiceAccount's business. An instance
+			// that answers like this and makes nothing is the ordinary current
+			// Nextcloud, and every other test here depends on it.
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[]}}`)
 		case r.Method == "PROPFIND" && m.failPropfindAll:
 			w.WriteHeader(http.StatusInternalServerError)
@@ -363,6 +393,12 @@ func TestPreflightResolvesTheStorageModeOnEnable(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Every row here is an install with no delivery history, which is
+			// what each of them is: a fresh install, or an upgrade whose archive
+			// the probe can see for itself. A real operator always has this
+			// counter (Run registers it), and an empty answer is only safe to
+			// read as "there is nothing here" when something local agrees.
+			setDeliveredRecordings(t, 0, nil)
 			resetProvisioningUser(t)
 			resetSubstrateRecord(t)
 			resetStorageMode(t)
@@ -481,11 +517,28 @@ func TestStorageModeFromProbeReadsTheArchiveRatherThanThePath(t *testing.T) {
 		wantOK:          false,
 		wantWhyMentions: ncRecordingsOwner,
 	}, {
-		name:            "no service account and no Team folder",
-		probe:           ncStorageProbe{FolderProbed: true},
+		// No account and no Team folder, on an operator that has published
+		// nothing. Neither root was even READ — both answer as the account — so
+		// what makes this safe is the history, not the reading.
+		name:            "no service account and no Team folder on an install with no history",
+		probe:           ncStorageProbe{FolderProbed: true, DeliveredRecordingsProbed: true},
 		wantOK:          true,
 		wantAccessCtrl:  false,
 		wantWhyMentions: ncRecordingsOwner,
+	}, {
+		// The same shape with the account check having merely FAILED, on an
+		// install that has published before. Identical facts, and one of the two
+		// is an access-controlled archive: resolve nothing.
+		name:            "no service account and no Team folder on an install with a past",
+		probe:           ncStorageProbe{FolderProbed: true, DeliveredRecordingsProbed: true, DeliveredRecordings: 9},
+		wantOK:          false,
+		wantWhyMentions: "already delivered",
+	}, {
+		// And with no history available at all: an absent answer is not a zero.
+		name:            "no service account, no Team folder and no history to consult",
+		probe:           ncStorageProbe{FolderProbed: true},
+		wantOK:          false,
+		wantWhyMentions: "could not count",
 	}, {
 		// The Team-folder app is off, so an access-controlled archive and an
 		// empty install answer identically: the mount is gone and both roots
@@ -523,6 +576,36 @@ func TestStorageModeFromProbeReadsTheArchiveRatherThanThePath(t *testing.T) {
 		probe:           probed(ncStorageProbe{}),
 		wantOK:          false,
 		wantWhyMentions: ncAppGroupFolders,
+	}, {
+		// The fall-through, on an install with a past. Both roots were read and
+		// both are empty — but "empty" is what an install whose archive is
+		// somewhere this probe cannot see looks like too, and the delivery count
+		// is the only thing that tells the two apart.
+		name:            "both roots read and empty on an install with a past",
+		probe:           probed(ncStorageProbe{Prereqs: enabledPrereqs(), DeliveredRecordingsProbed: true, DeliveredRecordings: 2}),
+		wantOK:          false,
+		wantWhyMentions: "already delivered",
+	}, {
+		name:            "both roots read and empty on an install with no past",
+		probe:           probed(ncStorageProbe{Prereqs: enabledPrereqs(), DeliveredRecordingsProbed: true}),
+		wantOK:          true,
+		wantAccessCtrl:  false,
+		wantWhyMentions: "delivered no recordings",
+	}, {
+		// The Team folder is THERE and mounted for nobody, so the path the probe
+		// read answered as the service account's own home directory and whatever
+		// the folder holds was never in the listing. Same two roots, same empty
+		// answer, and an archive one mount away.
+		name:            "an unmounted Team folder on an install with a past",
+		probe:           probed(ncStorageProbe{Prereqs: enabledPrereqs(), FolderPresent: true, DeliveredRecordingsProbed: true, DeliveredRecordings: 1}),
+		wantOK:          false,
+		wantWhyMentions: "mounted for nobody",
+	}, {
+		name:            "an unmounted Team folder on an install with no past",
+		probe:           probed(ncStorageProbe{Prereqs: enabledPrereqs(), FolderPresent: true, DeliveredRecordingsProbed: true}),
+		wantOK:          true,
+		wantAccessCtrl:  false,
+		wantWhyMentions: "mounted for nobody",
 	}, {
 		name:            "a root that could not be listed",
 		probe:           ncStorageProbe{FolderProbed: true, ServiceAccount: true, DefaultArchive: ncArchiveFacts{Probed: true}},
@@ -1611,4 +1694,87 @@ func waitForSubstrate(t *testing.T, ok func(statusRecordingsAccess) bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("substrate never reached the expected state: %+v", ncAccessSubstrate.snapshot(publishSinkNextcloudFiles))
+}
+
+// enabledPrereqs is an instance with both native apps on, for the rows that are
+// about something OTHER than a missing app.
+func enabledPrereqs() []ncPrerequisiteStatus {
+	out := make([]ncPrerequisiteStatus, 0, len(ncRequiredNativeApps))
+	for _, app := range ncRequiredNativeApps {
+		out = append(out, ncPrerequisiteStatus{Name: app, State: ncPrerequisiteEnabled})
+	}
+	return out
+}
+
+// An existence check that FAILED is not an account that is missing, and the
+// difference decides whether a years-old archive keeps its audience (D-753
+// review, fix 1).
+//
+// The sequence is entirely ordinary. The probe's `GET /cloud/users/cassini`
+// times out, so it reports no account; the enabled edge tries to create one;
+// Nextcloud answers OCS 102 "already exists"; the read-back finds the account
+// that was there all along. Believing THAT is a create tells the resolution this
+// install was made a minute ago — and with `groupfolders` off for an upgrade
+// window, the resolution's other evidence is gone too, so it records `default`
+// over an access-controlled archive and every recording afterwards is readable
+// by every account on the instance.
+func TestPreflightDoesNotTreatAnAlreadyExistingAccountAsCreatedOnThisEdge(t *testing.T) {
+	// An install with a past, which is what makes the wrong answer permanent.
+	setDeliveredRecordings(t, 3, nil)
+	mock := &storageMock{
+		apps:               []string{}, // the Team folder is invisible while this is so
+		serviceAccount:     true,       // it was there the whole time
+		userExistsFailures: 1,          // ...but the probe's check did not get an answer
+	}
+	_, path := runStoragePreflight(t, mock, io.Discard)
+
+	if !mock.saw(http.MethodPost, "/ocs/v2.php/cloud/users") {
+		t.Fatal("the attempt never ran, so this test is not exercising the 102 path")
+	}
+	probe, probed := ncAccessSubstrate.lastProbe()
+	if !probed || !probe.ServiceAccount {
+		t.Fatalf("the read-back did not find the account: probed=%t probe=%+v", probed, probe)
+	}
+	if probe.ServiceAccountCreated {
+		t.Fatal("an account that already existed was recorded as created on this enabled edge")
+	}
+
+	// And the consequence, which is the reason the flag matters at all.
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.Mode != "" {
+		t.Fatalf("mode = %q; an install that may be hiding an access-controlled archive resolved one anyway", snap.Mode)
+	}
+	if readPersistedMode(t, path).Configured() {
+		t.Fatalf("%s recorded a mode for an install whose archive nothing here can see", storageSettingsFileName)
+	}
+}
+
+// A verdict only gets worse within one run (D-753 review, fix 3).
+//
+// The enabled edge reports a missing service account as UNAVAILABLE and then
+// carries on to resolve the mode, because an install without an account still
+// has one. Here it cannot resolve one — the account is missing, so neither root
+// can be read — and the `storage_mode_unresolved` degradation that follows used
+// to overwrite the verdict. recordingRefusal() refuses only on `unavailable`, so
+// Talk then accepted a recording on an install with nowhere to put it: an hour
+// of audio captured, the call spent, and the moderator told at the end.
+func TestPreflightKeepsTheMissingAccountVerdictWhenTheModeIsUnresolved(t *testing.T) {
+	setDeliveredRecordings(t, 0, nil)
+	// A Team folder that might hold an archive, and no account to read it as.
+	mock := &storageMock{serviceAccount: false, everyoneGroup: true, folder: mappedCassiniFolder()}
+	runStoragePreflight(t, mock, io.Discard)
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.State != string(ncSubstrateUnavailable) {
+		t.Fatalf("state = %q, want %q — an unresolved mode must not downgrade a missing prerequisite", snap.State, ncSubstrateUnavailable)
+	}
+	if snap.Step != storageStepServiceAccount {
+		t.Fatalf("step = %q, want %q: the thing an administrator can act on is the account", snap.Step, storageStepServiceAccount)
+	}
+	if !strings.Contains(snap.Cause, ncRecordingsOwner) {
+		t.Fatalf("the cause does not name the account: %q", snap.Cause)
+	}
+	if ncAccessSubstrate.recordingRefusal() == "" {
+		t.Fatal("a recording was accepted on an install with no account to store it as")
+	}
 }

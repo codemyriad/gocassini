@@ -147,9 +147,33 @@ func (s *ncAccessSubstrateStatus) degraded(step string, cause error) {
 
 // record stores an outcome in the same words the log carries, so an admin
 // reading /status and an admin reading the log are looking at the same sentence.
+//
+// Within one run a verdict only ever gets WORSE. That is the same rule succeed()
+// has always followed — a non-fatal degradation survives the steps after it —
+// extended to the one ordering that was still able to lose a verdict: a
+// `degraded` recorded on top of an `unavailable`.
+//
+// It is not hypothetical. The enabled edge reports a missing service account as
+// unavailable and then carries on to resolve the storage mode, because an
+// install without an account still has a mode; a probe that cannot resolve one
+// records `storage_mode_unresolved` as degraded a few lines later. Overwriting
+// there turns "there is no account to store recordings as" into "an answer did
+// not arrive" — and recordingRefusal() refuses only on `unavailable`, so Talk
+// then accepts a recording on an install that provably cannot store it. An hour
+// of audio is captured, the call is spent, and the moderator is told at the end.
+//
+// The kept verdict keeps its step and its sentence with it, so the cause on
+// /status and /setup still names the account rather than the mode.
 func (s *ncAccessSubstrateStatus) record(state ncSubstrateState, step string, cause error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if state == ncSubstrateDegraded && s.state == ncSubstrateUnavailable {
+		// The run went on and found something else; the named missing thing is
+		// still missing, and it is the worse of the two. Only the timestamp
+		// moves, because this run did look.
+		s.checkedAtUTC = nowUTCString()
+		return
+	}
 	s.state = state
 	s.step = step
 	if cause != nil {
@@ -331,16 +355,15 @@ func ncStorageServesAsOwner() bool {
 // refused every recording on the instance until an administrator answered the
 // setup wizard — a call spent, and a moderator told only that "the recording
 // failed" — for a question Cassini now answers from the instance on the enabled
-// edge (D-753, storageModeFromProbe). Neither step is emitted any more, and the
-// guard stays so that re-introducing either cannot silently stop every
-// recording again.
+// edge (D-753, storageModeFromProbe). Neither is emitted, neither is named
+// anywhere in the package any more, and the guard that used to exempt them is
+// gone with them: a step nothing records does not need an exemption, and an
+// exemption for a step nothing records is a licence for the next one to arrive
+// silently exempt.
 func (s *ncAccessSubstrateStatus) recordingRefusal() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.applicable || s.state != ncSubstrateUnavailable {
-		return ""
-	}
-	if s.step == storageStepModeUndecided || s.step == storageStepModeUnconfirmed {
 		return ""
 	}
 	if s.detail != "" {

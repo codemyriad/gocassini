@@ -572,21 +572,6 @@ func (p ncStorageProbe) strandedArchiveMeetings(accessControlled bool) int {
 	return p.ACLArchive.Meetings()
 }
 
-// storageStepModeUndecided and storageStepModeUnconfirmed are no longer
-// emitted (D-753). They were the two states in which an install refused to
-// record and to publish because nobody had answered the setup wizard: nothing
-// was recorded, or something was recorded that nobody had chosen. The enabled
-// edge now resolves the mode from the archive it finds (storageModeFromProbe)
-// and keeps any recorded one, so neither state is reachable.
-//
-// They are named here rather than deleted because recordingRefusal still guards
-// against either coming back — re-introducing one must not silently stop every
-// recording again — and because a monitor keyed on either will now see nothing,
-// which is the correct outcome and an alarming one to discover.
-const storageStepModeUndecided = "storage_mode_undecided"
-
-const storageStepModeUnconfirmed = "storage_mode_unconfirmed"
-
 // storageStepModeUnresolved means the probe could not say what this install
 // already holds, so no mode was resolved on this edge.
 //
@@ -617,20 +602,40 @@ const storageStepModeUnresolved = "storage_mode_unresolved"
 //	                                       archive; adoptLegacyDefaultArchive
 //	                                       carries it into the split root.
 //	recordings in the default root only    default. Adopted.
-//	nothing in either root                 default. An empty archive starts open.
-//	nothing in either root, the            default. The account was made a moment
-//	`groupfolders` app is not enabled,     ago, or this operator has published
-//	and either the service account was     nothing ever: either way there is no
-//	made on this edge or no recording      archive an open mode could strand.
-//	has ever been delivered
-//	nothing in either root, the            nothing. An unmounted Team folder
-//	`groupfolders` app is not enabled,     cannot be read, so "empty" and
-//	and this install HAS delivered         "invisible" are the same answer, and
-//	recordings                             on an install with a past one of them
-//	                                       is an archive.
-//	no service account                     default. Every recording is written and
-//	                                       read as that account, so an install
-//	                                       without one has no archive to keep.
+//	NOTHING that this probe could see      default ONLY with local evidence that
+//	                                       there is nothing to widen: the account
+//	                                       was created on this edge, or this
+//	                                       operator has delivered no recordings.
+//	                                       Otherwise nothing is resolved.
+//	a Team folder Cassini cannot read      nothing. It may hold the archive.
+//
+// The gate on that fourth row is the whole safety argument, and it is one gate
+// rather than a special case for one app being off (D-753 review). "Both roots
+// are empty" is a claim about what the probe could SEE, and there are several
+// ordinary ways for an access-controlled archive to be invisible at the instant
+// this runs: `groupfolders` disabled for an `occ upgrade` window or by a
+// Nextcloud major, a Team folder mounted for nobody, an existence check that
+// errored so the roots were never read at all. Each of them makes a years-old
+// access-controlled install answer exactly like a fresh one, and `default` is
+// recorded permanently — so every recording made afterwards is readable by every
+// account on the instance, and the old archive is stranded.
+//
+// Nextcloud cannot tell those apart while it is in that state. Two LOCAL facts
+// can, neither of which any Nextcloud app being off can change, and either is
+// enough (freshInstallEvidence):
+//
+//	the account was created on this edge  every recording in either model is
+//	                                      written and read as it, so an identity
+//	                                      that did not exist a minute ago owns no
+//	                                      archive anywhere.
+//	no recording has ever been delivered  job rows are never deleted, so the
+//	                                      count is the install's whole history.
+//
+// Neither costs an ordinary fresh install anything: Nextcloud AIO ships without
+// `groupfolders`, and such an install satisfies both. What it costs is the run
+// where the count could not be taken at all, which answers `storage_mode_
+// unresolved` — degraded, recording still allowed, publishing held, looked at
+// again on the next enabled edge. That is recoverable; a widened archive is not.
 //
 // It replaces the wizard the enabled edge used to wait for (D-708), which
 // refused every recording on the instance until an administrator answered it —
@@ -638,6 +643,17 @@ const storageStepModeUnresolved = "storage_mode_unresolved"
 // before anybody saw it. What it does NOT replace is sanity(): a resolved mode
 // is still checked against the instance before anything is written under it.
 func storageModeFromProbe(p ncStorageProbe) (accessControlled, ok bool, why string) {
+	// The one exit every `default` answer takes when NEITHER root was seen to
+	// hold a recording. `seen` says what the probe looked at; the evidence — or
+	// the history that contradicts it — is appended, so the sentence that gets
+	// recorded carries both halves of the argument.
+	emptyDefault := func(seen string) (bool, bool, string) {
+		if evidence := p.freshInstallEvidence(); evidence != "" {
+			return false, true, fmt.Sprintf("%s, and %s", seen, evidence)
+		}
+		return false, false, fmt.Sprintf("%s, and %s", seen, p.deliveryHistory())
+	}
+
 	switch {
 	case !p.FolderProbed:
 		// `Cassini/Recordings` is the Team folder on one install and the service
@@ -656,9 +672,17 @@ func storageModeFromProbe(p ncStorageProbe) (accessControlled, ok bool, why stri
 				"the %q service account does not exist, so Cassini cannot read what the %q Team folder holds",
 				ncRecordingsOwner, ncRecordingsMount)
 		}
-		return false, true, fmt.Sprintf(
-			"the %q service account does not exist yet and there is no %q Team folder, so this install has no archive",
-			ncRecordingsOwner, ncRecordingsMount)
+		// No Team folder, and no account either — which also means NEITHER root
+		// was read, because both are read as that account. So this branch has
+		// seen no archive rather than established there is none, and it goes
+		// through the same gate as every other empty answer.
+		//
+		// It is reachable on a transient fault as readily as on a fresh install:
+		// the existence check erroring leaves ServiceAccount false, and with
+		// `groupfolders` off the folder list is not consulted either.
+		return emptyDefault(fmt.Sprintf(
+			"the %q service account does not exist, so neither recordings root could be read, and there is no %q Team folder",
+			ncRecordingsOwner, ncRecordingsMount))
 	case !p.ArchivesComparable():
 		return false, false, fmt.Sprintf(
 			"Cassini could not read both recordings roots (%s: %t, %s: %t)",
@@ -671,53 +695,72 @@ func storageModeFromProbe(p ncStorageProbe) (accessControlled, ok bool, why stri
 		return false, true, fmt.Sprintf(
 			"%d recording(s) are at %s, which with no Team folder mounted is the %q account's own directory",
 			p.ACLArchive.Meetings(), ncACLRecordingsRoot, ncRecordingsOwner)
-	case !prereqEnabled(p.Prereqs, ncAppGroupFolders) && !p.ACLArchive.Present && !p.DefaultArchive.Present:
-		// "Nothing anywhere", read off an instance whose Team-folder machinery is
-		// switched off, is not evidence that there is nothing anywhere. With
-		// `groupfolders` disabled the `Cassini` mount is gone from the service
-		// account's files, so an access-controlled archive answers exactly like
-		// an empty install: both roots 404 and neither is confirmed present.
-		// Resolving `default` there records the open model permanently, and the
-		// archive is stranded the moment the app comes back. An `occ upgrade`
-		// window, or an app left disabled by a Nextcloud major, is long enough.
-		//
-		// Nextcloud cannot tell the two apart while the app is off. Two local
-		// facts can, and either is enough — a deps-free install is the ordinary
-		// fresh install (Nextcloud AIO ships without `groupfolders`), so this
-		// must not hold one up:
-		if p.ServiceAccountCreated {
-			// Cassini made the account on THIS edge. Every recording in either
-			// model is written and read as it, so a minute ago there was no
-			// identity that could own an archive here. There is nothing to hide.
-			return false, true, fmt.Sprintf(
-				"the %q account was created on this enabled edge, so this install has no archive yet",
-				ncRecordingsOwner)
-		}
-		if p.DeliveredRecordingsProbed && p.DeliveredRecordings == 0 {
-			// This operator has never published a recording. Job rows are never
-			// deleted, so that count is the install's whole history, and an
-			// install with no history has nothing an open mode could strand.
-			return false, true, fmt.Sprintf(
-				"the %q app is not enabled and nothing is at %s or %s, and this install has delivered no recordings",
-				ncAppGroupFolders, ncACLRecordingsRoot, ncDefaultRecordingsRoot)
-		}
-		// It has delivered recordings, or nobody could say. Either way this is
-		// not demonstrably a fresh install, and the one place its archive could
-		// be is the Team folder nothing here can currently see.
-		history := fmt.Sprintf("this install has already delivered %d recording(s)", p.DeliveredRecordings)
-		if !p.DeliveredRecordingsProbed {
-			history = "Cassini could not count what this install has already delivered"
-		}
-		return false, false, fmt.Sprintf(
-			"the %q app is not enabled, so a %q Team folder would be invisible here, neither %s nor %s is present, and %s",
-			ncAppGroupFolders, ncRecordingsMount, ncACLRecordingsRoot, ncDefaultRecordingsRoot, history)
 	case p.DefaultArchive.Populated():
 		return false, true, fmt.Sprintf(
 			"%d recording(s) are in %s", p.DefaultArchive.Meetings(), ncDefaultRecordingsRoot)
+
+	// Everything below here read both roots and saw no recording in either. The
+	// cases differ only in what the probe can say about WHY that might not mean
+	// what it looks like; all of them answer through emptyDefault.
+	case !prereqEnabled(p.Prereqs, ncAppGroupFolders):
+		// With `groupfolders` disabled the `Cassini` mount is gone from the
+		// service account's files, so an access-controlled archive answers
+		// exactly like an empty install: both roots 404 and neither is present.
+		return emptyDefault(fmt.Sprintf(
+			"the %q app is not enabled, so a %q Team folder would be invisible here, and there are no recordings in %s or %s",
+			ncAppGroupFolders, ncRecordingsMount, ncACLRecordingsRoot, ncDefaultRecordingsRoot))
+	case p.FolderPresent && !p.FolderMounted:
+		// The app is on and the folder is there, but nothing mounts it — so
+		// `Cassini/Recordings` answered as the service account's own home
+		// directory, and whatever the folder holds was never in the listing.
+		return emptyDefault(fmt.Sprintf(
+			"the %q Team folder exists but is mounted for nobody, so %s answered as the %q account's own directory and Cassini cannot see what the folder holds",
+			ncRecordingsMount, ncACLRecordingsRoot, ncRecordingsOwner))
 	default:
-		return false, true, fmt.Sprintf(
-			"there are no recordings in %s or %s", ncACLRecordingsRoot, ncDefaultRecordingsRoot)
+		// Both roots read, both empty, nothing invisible that this probe knows
+		// of. The gate is here too rather than only on the rows above: the value
+		// of one rule is that a new way for a root to read empty does not get to
+		// arrive as a new hole, and an install that satisfies it pays nothing.
+		return emptyDefault(fmt.Sprintf(
+			"there are no recordings in %s or %s", ncACLRecordingsRoot, ncDefaultRecordingsRoot))
 	}
+}
+
+// freshInstallEvidence names the local fact that proves this install has no
+// archive an open mode could widen, or "" when there is none.
+//
+// Local is the operative word. Both facts are things Cassini knows without
+// asking Nextcloud, which is what makes them usable in exactly the situation
+// where Nextcloud's answer cannot be believed — an app switched off, a folder
+// mounted for nobody, a check that errored.
+func (p ncStorageProbe) freshInstallEvidence() string {
+	if p.ServiceAccountCreated {
+		// Cassini's own create call made the account on THIS edge. Every
+		// recording in either model is written and read as it, so a minute ago
+		// there was no identity that could own an archive here.
+		return fmt.Sprintf(
+			"the %q account was created on this enabled edge, so this install has no archive yet",
+			ncRecordingsOwner)
+	}
+	if p.DeliveredRecordingsProbed && p.DeliveredRecordings == 0 {
+		// This operator has never published a recording. Job rows are never
+		// deleted, so that count is the install's whole history.
+		return "this install has delivered no recordings"
+	}
+	return ""
+}
+
+// deliveryHistory is the same question answered the other way: what this
+// install's own history says, for the sentence explaining why nothing was
+// resolved. A count nobody could take is not a zero, and reads as its own
+// reason.
+func (p ncStorageProbe) deliveryHistory() string {
+	if !p.DeliveredRecordingsProbed {
+		return "Cassini could not count what this install has already delivered, so it cannot rule out an archive it cannot currently see"
+	}
+	return fmt.Sprintf(
+		"this install has already delivered %d recording(s), so an archive it cannot currently see is not ruled out",
+		p.DeliveredRecordings)
 }
 
 // storageModeUnresolvedDetail is the sentence the container log and /status both

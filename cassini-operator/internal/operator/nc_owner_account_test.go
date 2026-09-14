@@ -157,25 +157,28 @@ func (m *ownerAccountMock) find(method, path string) (recordedReq, bool) {
 }
 
 // runOwnerAccountAttempt runs one attempt against the mock, from the probe a
-// preflight would have handed it, and returns everything the caller can see.
-func runOwnerAccountAttempt(t *testing.T, mock *ownerAccountMock, probe ncStorageProbe) (ownerAccountOutcome, ncStorageProbe, string) {
+// preflight would have handed it, and returns everything the attempt leaves
+// behind: the amended probe and the log. The third thing it leaves behind is the
+// substrate record, which every test below reads through
+// ncAccessSubstrate.snapshot.
+func runOwnerAccountAttempt(t *testing.T, mock *ownerAccountMock, probe ncStorageProbe) (ncStorageProbe, string) {
 	t.Helper()
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
 	var logs strings.Builder
 	cfg := testExAppConfig(mock.server(t).URL)
-	outcome := cfg.ensureServiceAccountOnEnable(context.Background(), &http.Client{}, &probe, log.New(&logs, "", 0))
-	return outcome, probe, logs.String()
+	cfg.ensureServiceAccountOnEnable(context.Background(), &http.Client{}, &probe, log.New(&logs, "", 0))
+	return probe, logs.String()
 }
 
 // The release family where this works: the account and its narrow owner group
 // appear on enable and the install can record without anybody opening anything.
 func TestOwnerAccountCreatedOnEnable(t *testing.T) {
 	mock := &ownerAccountMock{}
-	outcome, probe, logs := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin"})
+	probe, logs := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin"})
 
-	if outcome.Reason != ownerAccountCreated {
-		t.Fatalf("outcome = %+v, want %q", outcome, ownerAccountCreated)
+	if !strings.Contains(logs, "are in place") {
+		t.Fatalf("the log does not say the account and group were made: %s", logs)
 	}
 	if !probe.ServiceAccount || !probe.OwnerGroup {
 		t.Fatalf("probe was not amended with what the attempt created: account=%t group=%t", probe.ServiceAccount, probe.OwnerGroup)
@@ -209,7 +212,6 @@ func TestOwnerAccountCreatedOnEnable(t *testing.T) {
 	}
 	for what, text := range map[string]string{
 		"the log":            logs,
-		"the outcome":        outcome.Reason + " " + outcome.Detail,
 		"the probe":          probe.ServiceAccountAttempt,
 		"the /status detail": ncAccessSubstrate.snapshot(publishSinkNextcloudFiles).Detail,
 	} {
@@ -228,10 +230,12 @@ func TestOwnerAccountRefusedWithPasswordConfirmation(t *testing.T) {
 	for _, shape := range []string{"http", "envelope"} {
 		t.Run(shape, func(t *testing.T) {
 			mock := &ownerAccountMock{refuse: shape}
-			outcome, probe, logs := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin"})
+			probe, logs := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin"})
 
-			if outcome.Reason != ownerAccountNeedsPassword {
-				t.Fatalf("outcome = %+v, want %q", outcome, ownerAccountNeedsPassword)
+			// The refusal is on the probe, which is what /storage's account row
+			// and the setup plan read.
+			if !strings.Contains(probe.ServiceAccountAttempt, "Password confirmation") {
+				t.Fatalf("the probe carries no refusal note naming the condition: %q", probe.ServiceAccountAttempt)
 			}
 			if probe.ServiceAccount || probe.OwnerGroup {
 				t.Fatalf("a refused create was recorded as having made something: account=%t group=%t", probe.ServiceAccount, probe.OwnerGroup)
@@ -272,16 +276,16 @@ func TestOwnerAccountReportsAnAccountWithoutItsGroup(t *testing.T) {
 	// The account already exists (the probe could not confirm it, which is why
 	// the attempt ran), and the group write is the one that is refused.
 	mock := &ownerAccountMock{user: true, refuseGroupWrite: true}
-	outcome, probe, logs := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin"})
+	probe, logs := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin"})
 
-	if outcome.Reason != ownerAccountGroupIncomplete {
-		t.Fatalf("outcome = %+v, want %q", outcome, ownerAccountGroupIncomplete)
-	}
 	if !probe.ServiceAccount || probe.OwnerGroup {
 		t.Fatalf("probe = account:%t group:%t, want the account present and the group missing", probe.ServiceAccount, probe.OwnerGroup)
 	}
-	if !strings.Contains(outcome.Detail, ncRecordingsOwnerGroup) || !strings.Contains(logs, ncRecordingsOwnerGroup) {
-		t.Errorf("neither the outcome nor the log names the missing group: %s / %s", outcome.Detail, logs)
+	if !strings.Contains(logs, ncRecordingsOwnerGroup) {
+		t.Errorf("the log does not name the missing group: %s", logs)
+	}
+	if !strings.Contains(logs, "exists but") {
+		t.Errorf("the log does not say which half is there: %s", logs)
 	}
 	// An account that exists must never be reported missing, and the refusal
 	// note belongs to the account, not the group.
@@ -303,16 +307,13 @@ func TestOwnerAccountReportsAnAccountWithoutItsGroup(t *testing.T) {
 // refused, so the account is in no group at all.
 func TestOwnerAccountReportsARefusedMembership(t *testing.T) {
 	mock := &ownerAccountMock{user: true, group: true, refuse: "http"}
-	outcome, probe, _ := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin"})
+	probe, logs := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin"})
 
-	if outcome.Reason != ownerAccountGroupIncomplete {
-		t.Fatalf("outcome = %+v, want %q", outcome, ownerAccountGroupIncomplete)
-	}
 	if !probe.ServiceAccount || !probe.OwnerGroup {
 		t.Fatalf("probe = account:%t group:%t, want both present", probe.ServiceAccount, probe.OwnerGroup)
 	}
-	if !strings.Contains(outcome.Detail, "not a member") {
-		t.Errorf("the outcome does not say which half is missing: %s", outcome.Detail)
+	if !strings.Contains(logs, "not a member") {
+		t.Errorf("the log does not say which half is missing: %s", logs)
 	}
 }
 
@@ -321,10 +322,13 @@ func TestOwnerAccountReportsARefusedMembership(t *testing.T) {
 // set up, which is all of them after the first run.
 func TestOwnerAccountWritesNothingWhenTheAccountExists(t *testing.T) {
 	mock := &ownerAccountMock{user: true, group: true, member: true}
-	outcome, probe, _ := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin", ServiceAccount: true, OwnerGroup: true})
+	probe, logs := runOwnerAccountAttempt(t, mock, ncStorageProbe{AdminUser: "admin", ServiceAccount: true, OwnerGroup: true})
 
-	if outcome.Reason != ownerAccountPresent {
-		t.Fatalf("outcome = %+v, want %q", outcome, ownerAccountPresent)
+	if logs != "" {
+		t.Errorf("an instance that is already set up produced a log line: %s", logs)
+	}
+	if probe.ServiceAccountCreated {
+		t.Error("an account nobody created was recorded as created on this edge")
 	}
 	if !probe.ServiceAccount {
 		t.Error("the attempt unset a fact it was not asked to change")
