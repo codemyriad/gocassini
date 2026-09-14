@@ -1,6 +1,12 @@
 package operator
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -12,8 +18,13 @@ import (
 
 // everyRecordedStep is every step this package passes to
 // ncAccessSubstrate.unavailable or .degraded, in the shape it is recorded in.
-// Grepping for those two calls is how it was assembled and how it should be
-// re-checked when a new one is added.
+//
+// It is still a written list, because a step is not always a constant at the
+// call site — sanity() and accessControlReady() decide one and RETURN it, and no
+// amount of reading the call site says which. But it is no longer only a written
+// list: TestEveryRecordedStepIsListed parses this package and fails when a step
+// that IS legible at the call site is missing from here, which is the drift that
+// actually happened (`owner_account` went years without a sentence).
 //
 // Absent on purpose: `storage_mode_undecided` and `storage_mode_unconfirmed`.
 // The operator resolves a mode when it is enabled (D-753), so neither can be
@@ -26,6 +37,7 @@ var everyRecordedStep = []string{
 	storageStepFolderACL,
 	storageStepFolderManager,
 	storageStepDeclaredConflict,
+	storageStepModeUnresolved,
 	storageStepModeMismatch + ":" + storageStepDefaultRootShadowed,
 	storageStepModeMismatch + ":" + storageStepDefaultRootUnknown,
 	// nc_provision.go, nc_storage_preflight.go
@@ -154,5 +166,173 @@ func TestNamedStepFamiliesShareOneSentence(t *testing.T) {
 	// family's.
 	if storageCauseFor(storageStepModeMismatch+":something_else") == "" {
 		t.Fatal("an unrecognised mode mismatch must still fall back to the family sentence")
+	}
+}
+
+// Every step the source records, read OFF the source rather than out of a list
+// somebody has to remember to update.
+//
+// This is the check the hand-maintained list could not do for itself, and the
+// gap was real: `owner_account` is recorded straight from nc_provision.go and
+// had no sentence of its own for as long as the table has existed. The parse is
+// deliberately narrow — a step that is a literal, a constant, or a constant
+// prefix joined to something computed — because those are the ones a reader
+// could have resolved too, and a test that guessed at the rest would fail on
+// code that is perfectly correct.
+//
+// A step assembled some other way (sanity() returning one it chose) is skipped
+// here and lives in everyRecordedStep. So the two halves are complementary: this
+// one catches what is legible, the list carries what is not.
+func TestEveryRecordedStepIsListed(t *testing.T) {
+	exact, prefixes := recordedStepsInSource(t)
+	if len(exact) == 0 && len(prefixes) == 0 {
+		t.Fatal("the source scan found no recorded steps at all; it has stopped looking at what it thinks it is looking at")
+	}
+	listed := make(map[string]bool, len(everyRecordedStep))
+	for _, step := range everyRecordedStep {
+		listed[step] = true
+	}
+	for _, step := range exact {
+		if !listed[step] {
+			t.Errorf("%q is recorded in this package and is not in everyRecordedStep, so nothing checks it has a cause sentence", step)
+		}
+	}
+	for _, prefix := range prefixes {
+		found := false
+		for _, step := range everyRecordedStep {
+			if strings.HasPrefix(step, prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("steps named %q<something> are recorded in this package and everyRecordedStep has no example of one", prefix)
+		}
+	}
+}
+
+// recordedStepsInSource returns the steps passed to ncAccessSubstrate.unavailable
+// and .degraded across the package's non-test files: the ones that resolve to a
+// whole string, and the constant prefixes of the ones that carry a computed name.
+func recordedStepsInSource(t *testing.T) (exact, prefixes []string) {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read the package directory: %v", err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(".", name), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, file)
+	}
+
+	// Every package-level string constant, so a step spelled as one resolves to
+	// the same text the table is keyed on.
+	consts := map[string]string{}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range value.Names {
+					if i >= len(value.Values) {
+						continue
+					}
+					if text, whole := foldStepExpr(value.Values[i], consts); whole {
+						consts[name.Name] = text
+					}
+				}
+			}
+		}
+	}
+
+	seenExact := map[string]bool{}
+	seenPrefix := map[string]bool{}
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "unavailable" && sel.Sel.Name != "degraded" {
+				return true
+			}
+			if ident, ok := sel.X.(*ast.Ident); !ok || ident.Name != "ncAccessSubstrate" {
+				return true
+			}
+			text, whole := foldStepExpr(call.Args[0], consts)
+			switch {
+			case whole && text != "":
+				seenExact[text] = true
+			case !whole && text != "":
+				seenPrefix[text] = true
+			}
+			return true
+		})
+	}
+	for step := range seenExact {
+		exact = append(exact, step)
+	}
+	for prefix := range seenPrefix {
+		prefixes = append(prefixes, prefix)
+	}
+	return exact, prefixes
+}
+
+// foldStepExpr resolves a step expression as far as the source allows.
+//
+//	whole == true   the text IS the step.
+//	whole == false  the text is a constant PREFIX and the rest is computed.
+//	text == ""      nothing could be resolved; the caller ignores it.
+func foldStepExpr(expr ast.Expr, consts map[string]string) (text string, whole bool) {
+	switch node := expr.(type) {
+	case *ast.ParenExpr:
+		return foldStepExpr(node.X, consts)
+	case *ast.BasicLit:
+		if node.Kind != token.STRING {
+			return "", false
+		}
+		value, err := strconv.Unquote(node.Value)
+		if err != nil {
+			return "", false
+		}
+		return value, true
+	case *ast.Ident:
+		if value, ok := consts[node.Name]; ok {
+			return value, true
+		}
+		return "", false
+	case *ast.BinaryExpr:
+		if node.Op != token.ADD {
+			return "", false
+		}
+		left, leftWhole := foldStepExpr(node.X, consts)
+		if left == "" || !leftWhole {
+			// Nothing constant at the front, so there is no prefix to check
+			// either.
+			return "", false
+		}
+		right, rightWhole := foldStepExpr(node.Y, consts)
+		if right != "" && rightWhole {
+			return left + right, true
+		}
+		return left, false
+	default:
+		return "", false
 	}
 }

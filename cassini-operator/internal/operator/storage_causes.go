@@ -48,11 +48,15 @@ type storageCause struct {
 // nobody will ever read. A step with no entry falls through to the app's own
 // "the check did not finish" sentence rather than to silence.
 var storageCauses = map[string]storageCause{
+	// Recorded under the step name `owner_account`, from three places that all
+	// mean the same thing: the account is not there. The sentence used to say
+	// Nextcloud was refusing it write access, which is a different condition and
+	// not one this step has ever carried.
 	storageStepServiceAccount: {
 		admin: fmt.Sprintf(
-			"Nextcloud is not letting the %s account write to its files. This usually means the account was removed or its group changed.",
+			"The %s account that recordings are saved as does not exist, so there is nothing to save them as. Cassini asks Nextcloud to create it and recent releases refuse, because making an account needs a password to be confirmed and a background app has no session to confirm one in. An administrator signed in to Nextcloud can make it from Cassini's own settings.",
 			ncRecordingsOwner),
-		user: "The Nextcloud account that recordings are saved as is missing, or it can no longer write to Nextcloud's files.",
+		user: "The Nextcloud account that recordings are saved as does not exist, so nothing can be saved yet.",
 	},
 	storageStepUniversalGroup: {
 		admin: "The Nextcloud group that lets everyone reach the recordings folder does not exist, even though the app that supplies it is enabled.",
@@ -75,6 +79,16 @@ var storageCauses = map[string]storageCause{
 	storageStepDeclaredConflict: {
 		admin: "A deploy option names a rule for who can see recordings that this Nextcloud does not match, so nothing was written down.",
 		user:  "A deploy option names a rule for who can see recordings that this Nextcloud does not match.",
+	},
+	storageStepModeUnresolved: {
+		// Who can see them first, how it works second. This is the one step here
+		// that is not a fault: nothing is missing and nothing was written down —
+		// which is exactly why the sentence has to say that recordings are safe
+		// rather than leave a reader to guess from a state name.
+		admin: "Cassini could not work out who is meant to be able to see the recordings this install already has. It recorded nothing rather than guess, because guessing wrong would make every recording readable by every account here. Recordings carry on being made. Publishing waits until the app is enabled again and the question can be answered.",
+		// The product name is deliberately absent: this half of the table may not
+		// name the Team folder, and that folder is called Cassini.
+		user: "It is not yet clear who is meant to be able to see the recordings already saved here. Nothing has been decided rather than guessed at. Recordings carry on being made, and they will appear once that is settled.",
 	},
 	"administrator": {
 		admin: "Cassini could not find a Nextcloud administrator account to act as, so the recordings folder and its permissions were never created.",
