@@ -202,6 +202,35 @@ export function findByLabel(
 }
 
 // Prefix matches first, then the most used, then by label.
+// mergeVocabularyTags folds entries that share a tagId into one.
+//
+// The operator returns the vocabulary per (namespace, tagId): the same tag
+// applied in two archives comes back twice, with that archive's own counts.
+// Everything in the app — the rail's boxes, the filter, the pickers, rename,
+// merge and delete — addresses a tag by its tagId alone, so two rows with one
+// id is a tag listed twice and, in a keyed each, a render that throws.
+export function mergeVocabularyTags(tags: readonly VocabularyTag[]): VocabularyTag[] {
+  const byId = new Map<string, VocabularyTag>();
+  for (const tag of tags) {
+    const seen = byId.get(tag.tagId);
+    if (!seen) {
+      byId.set(tag.tagId, { ...tag });
+      continue;
+    }
+    seen.meetings += tag.meetings;
+    seen.marks += tag.marks;
+    // The most recent change is the one worth reporting, and a namespace that
+    // has never been touched must not hide one that has.
+    if (tag.changedAtUtc > seen.changedAtUtc) {
+      seen.changedBy = tag.changedBy;
+      seen.changedAtUtc = tag.changedAtUtc;
+    }
+    seen.color = seen.color || tag.color;
+    seen.icon = seen.icon || tag.icon;
+  }
+  return [...byId.values()];
+}
+
 export function matchTags(tags: readonly VocabularyTag[], query: string): VocabularyTag[] {
   const key = labelKey(query);
   const rank = (tag: VocabularyTag) => (labelKey(tag.label).startsWith(key) ? 0 : 1);

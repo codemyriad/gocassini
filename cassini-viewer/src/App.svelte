@@ -48,6 +48,7 @@
   } from "./viewer/insights";
   import {
     describeAnnotationError,
+    mergeVocabularyTags,
     tagsByMeeting,
     type AnnotationRequest,
     type MeetingAnnotations,
@@ -973,7 +974,7 @@
   $: canTag =
     typeof dataProvider.loadTagVocabulary === "function" &&
     typeof dataProvider.applyAnnotationOps === "function";
-  $: vocabularyTags = canTag ? (tagVocabulary?.tags ?? null) : null;
+  $: vocabularyTags = canTag ? (tagVocabulary ? mergeVocabularyTags(tagVocabulary.tags) : null) : null;
   $: meetingTags = (tagVocabulary ? tagsByMeeting(tagVocabulary) : new Map()) as MeetingTags;
   // A tag deleted or merged away must not leave the list narrowed by a box that is gone.
   $: activeTagIds = selectedTagIds.filter((id) => vocabularyTags?.some((tag) => tag.tagId === id));
