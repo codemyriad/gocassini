@@ -1452,6 +1452,11 @@
     cursor: pointer;
     background-color: oklch(0% 0 0 / 0.55);
   }
+  .sheet-scrim,
+  .prepare-scrim {
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+  }
   .sheet-scrim {
     z-index: 20;
   }

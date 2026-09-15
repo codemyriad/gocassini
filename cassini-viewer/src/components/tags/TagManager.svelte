@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import { fade } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import { Ellipsis, X } from "@lucide/svelte";
 
   import { plural, type TagPick, type TagUpdate, type VocabularyTag } from "../../viewer/annotations";
@@ -108,16 +109,26 @@
     return { destroy: () => (back as HTMLElement | null)?.focus() };
   }
 
+  const matches = (query: string) => typeof window !== "undefined" && window.matchMedia(query).matches;
+
+  function sheetSlide(_node: Element) {
+    if (matches("(prefers-reduced-motion: reduce)")) return { duration: 0 };
+    const axis = matches("(max-width: 720px)") ? "Y" : "X";
+    return { duration: 320, easing: cubicOut, css: (_t: number, u: number) => `transform: translate${axis}(${u * 100}%)` };
+  }
+
+  const scrimFade = () => (matches("(prefers-reduced-motion: reduce)") ? { duration: 0 } : { duration: 200 });
+
   const focus = (node: HTMLElement, on = true) => {
     if (on) node.focus();
   };
 </script>
 
 {#if open}
-  <button type="button" tabindex="-1" class="absolute inset-0 z-41 cursor-pointer bg-black/55" aria-label="Close Manage tags"
-    transition:fade={{ duration: 150 }} on:click={() => dispatch("close")}></button>
+  <button type="button" tabindex="-1" class="absolute inset-0 z-41 cursor-pointer bg-black/55 backdrop-blur-[3px]" aria-label="Close Manage tags"
+    transition:fade={scrimFade()} on:click={() => dispatch("close")}></button>
   <div bind:this={sheet} use:modal role="dialog" aria-modal="true" aria-labelledby="tag-manager-title" tabindex="-1"
-    transition:fade={{ duration: 150 }} on:keydown={onKeydown}
+    transition:sheetSlide on:keydown={onKeydown}
     class="absolute inset-y-0 right-0 z-42 flex w-[min(560px,100%)] flex-col border-base-300 bg-base-100 shadow-2xl min-[721px]:border-l max-[720px]:top-auto max-[720px]:h-[92%] max-[720px]:w-full max-[720px]:rounded-t-box max-[720px]:border-t">
     <header class="flex items-center gap-2.5 border-b border-base-300 px-5 pb-3 pt-4 max-[720px]:px-4">
       <h2 id="tag-manager-title" class="flex flex-1 items-center gap-2.5 text-[17px] font-semibold">
