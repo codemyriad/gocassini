@@ -687,7 +687,7 @@
     --shell-panel: var(--color-main-background, var(--color-base-100, #ffffff));
     display: flex;
     align-items: stretch;
-    gap: 2px;
+    gap: 0;
     min-height: 34px;
     padding: 0 16px 0 0;
     border-bottom: 1px solid var(--color-border-dark, var(--color-base-300, #e5e7eb));
