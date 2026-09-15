@@ -282,7 +282,20 @@
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
       const scope = root.closest(".meeting-viewer") ?? root;
       if (path.includes(scope) || path[0] === document.body || path[0] === document.documentElement) {
+        // preventDefault alone only cancels the BROWSER's find bar. The host
+        // page is listening too — in the ExApp build that is Nextcloud, whose
+        // unified search opens on the same chord — and preventDefault does not
+        // stop another listener from running. So the event has to be taken out
+        // of the propagation path entirely, not merely defaulted away.
+        //
+        // This listener is on window in the capture phase, which is the first
+        // point any handler sees the event, so stopping here reaches every
+        // other listener including the host's. Immediate as well as ordinary
+        // propagation, because a host listener registered on window before
+        // this one would otherwise still run.
         event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
         toolbar.focusFind();
       }
       return;
