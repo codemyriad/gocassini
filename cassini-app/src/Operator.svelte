@@ -255,6 +255,7 @@
   import { onDestroy, onMount, tick } from "svelte";
   import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
   import { fade } from "svelte/transition";
+  import { guardLeave } from "./operator/unsaved";
   import { loadConfig } from "./operator/config";
   import {
     OperatorClient,
@@ -525,6 +526,10 @@
     if (next === panel) {
       return;
     }
+    guardLeave(() => goToPanel(next));
+  }
+
+  function goToPanel(next: OperatorPanel) {
     panel = next;
     // Fragment-only pushState, exactly as the job deep-link does it, so the
     // back button walks the nav and a panel can be linked to (D-722).
@@ -998,11 +1003,13 @@
   </nav>
 
   <div
-    class="mx-auto flex min-h-full w-full flex-col gap-4 px-4 pt-4 pb-10"
+    class="op-settings op-recordings mx-auto flex min-h-full w-full flex-col gap-4"
     class:cassini-op-panel-inactive={panel !== "recordings"}
   >
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <div class="flex flex-wrap items-center gap-2.5 text-sm">
+    <header class="op-panel-head">
+      <div>
+        <div class="op-panel-title">
+          <h1>Recordings</h1>
         <span
           class={`badge badge-sm h-auto font-medium rounded-lg gap-1.5 py-1 ${streamStatusTone(streamStatus)}`}
           title={streamStatusLabel(streamStatus)}
@@ -1029,11 +1036,14 @@
             Retrying every {POLL_INTERVAL_MS / 1000}s
           </span>
         {/if}
+        </div>
       </div>
-      <button class="btn btn-sm btn-primary md:text-sm" type="button" on:click={openComposer}>
-        Record a meeting
-      </button>
-    </div>
+      <div class="op-panel-actions">
+        <button class="op-btn" type="button" on:click={openComposer}>
+          Record a meeting
+        </button>
+      </div>
+    </header>
 
     {#if configError}
       <section class="alert alert-error">
@@ -1074,12 +1084,12 @@
            above read the same box, and the CSS split and the JS "which panes
            exist" decision cannot disagree. -->
       <div class="@container mt-6" bind:clientWidth={consoleWidth}>
-      <div class="grid rounded-box border border-base-300 bg-base-100 shadow-sm @min-[981px]:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+      <div class="op-split grid @min-[981px]:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
         {#if isDesktop || !selectedJobId}
         <section class="flex min-w-0 flex-col overflow-hidden">
-          <header class="flex min-h-14 items-center justify-between gap-3 px-4 py-3 @min-[981px]:h-14">
+          <header class="op-pane-head flex min-h-14 items-center justify-between gap-3 px-4 py-3 @min-[981px]:h-14">
             <h2 class="font-semibold">Recordings</h2>
-            <button class="btn btn-ghost btn-sm" on:click={refreshJobs} type="button" aria-label="Refresh jobs">
+            <button class="icon-btn" on:click={refreshJobs} type="button" aria-label="Refresh jobs">
               <RefreshCw size={16} aria-hidden="true" />
             </button>
           </header>
@@ -1113,8 +1123,8 @@
                 {#each jobs as job (job.id)}
                   <button
                     class="card w-full min-w-0 overflow-hidden border text-left {job.id === selectedJobId
-                      ? 'cursor-default border-base-300 bg-base-200'
-                      : 'cursor-pointer border-base-300 bg-base-100 hover:bg-base-200/60'}"
+                      ? 'run-card run-card-selected cursor-default border-base-300'
+                      : 'run-card cursor-pointer border-base-300'}"
                     type="button"
                     aria-current={job.id === selectedJobId ? "page" : undefined}
                     on:click={() => openJob(job.id)}
@@ -1162,9 +1172,9 @@
 
         {#if isDesktop || selectedJobId}
         <section
-          class="flex min-w-0 flex-col @min-[981px]:min-h-[calc(100vh-13rem)] @min-[981px]:border-l @min-[981px]:border-base-300"
+          class="op-detail-pane flex min-w-0 flex-col @min-[981px]:min-h-[calc(100vh-13rem)] @min-[981px]:border-l"
         >
-          <header class="flex min-h-14 items-center justify-between gap-3 px-4 py-3 @min-[981px]:h-14">
+          <header class="op-pane-head flex min-h-14 items-center justify-between gap-3 px-4 py-3 @min-[981px]:h-14">
             <div class="flex min-w-0 flex-1 items-center gap-2">
               {#if !isDesktop}
                 <button
@@ -1242,7 +1252,7 @@
               class:opacity-50={shouldShowDetailLoading(loadingDetail, selectedJob, selectedJobId)}
             >
               <div class="grid gap-4">
-                <section class="grid gap-3 rounded-box border border-base-300 bg-base-200 p-4">
+                <section class="op-tint run-detail-card grid gap-3">
                   <div class="min-w-0">
                     <h3 class="truncate text-lg font-semibold" title={requestUrlLabel(selectedJob.job.request_json)}>
                       {meetingLabel(selectedJob.job.request_json, selectedJob.job.id, selectedJob.job.room_name)}
@@ -1628,6 +1638,44 @@
 </div>
 
 <style>
+  .op-recordings {
+    padding: 16px 20px 48px;
+  }
+  .op-split {
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 12%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .op-detail-pane {
+    border-left-color: color-mix(in oklch, var(--color-base-content) 7%, var(--color-base-200));
+  }
+  .run-card {
+    background-color: color-mix(in oklch, var(--color-base-content) 4%, var(--color-base-200));
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.5rem);
+    box-shadow: none;
+  }
+  .run-card:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-200));
+    border-color: color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
+  }
+  .run-card.run-card-selected,
+  .run-card.run-card-selected:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 10%, var(--color-base-200));
+    border: 2px solid var(--color-base-content);
+    box-shadow: inset 3px 0 0 var(--color-base-content);
+  }
+  .op-pane-head h2 {
+    font-size: 14px;
+    font-weight: 650;
+  }
+  .run-detail-card {
+    padding: 14px;
+  }
+  @media (max-width: 720px) {
+    .op-recordings {
+      padding: 8px 16px 40px;
+    }
+  }
   .op-nav-item {
     display: flex;
     align-items: center;
@@ -1690,6 +1738,9 @@
     display: none;
   }
   @media (max-width: 720px) {
+    .op-shell {
+      align-content: start;
+    }
     .op-nav-bar {
       position: sticky;
       top: 0;
