@@ -253,7 +253,8 @@
 
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
+  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, PanelLeft, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
+  import { fade } from "svelte/transition";
   import { loadConfig } from "./operator/config";
   import {
     OperatorClient,
@@ -263,7 +264,7 @@
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
   import { shouldShowDetailLoading } from "./operator/viewState";
   import Settings from "./Settings.svelte";
-  import { applyJob, applyPanel, isOperatorPanel, readJob, readPanel } from "./surfaceRouting";
+  import { applyJob, applyPanel, readJob, readPanel } from "./surfaceRouting";
 
   const POLL_INTERVAL_MS = 2000;
   // If the SSE stream doesn't reach "open" within this window, assume the
@@ -470,7 +471,57 @@
     return url.toString();
   }
 
+  let navOpen = false;
+  let navButton: HTMLButtonElement;
+  let navViewTop = 0;
+  let navViewHeight = 0;
+
+  function measureNavView() {
+    const scroller = shellElement?.closest(".cassini-shell-scroll") as HTMLElement | null;
+    if (!scroller || !shellElement) return;
+    navViewTop = Math.max(0, scroller.scrollTop - shellElement.offsetTop);
+    navViewHeight = scroller.clientHeight;
+  }
+
+  function openNav() {
+    measureNavView();
+    navOpen = true;
+  }
+
+  let navScrollCleanup: (() => void) | undefined;
+  $: {
+    navScrollCleanup?.();
+    navScrollCleanup = undefined;
+    if (navOpen) {
+      const scroller = shellElement?.closest(".cassini-shell-scroll") as HTMLElement | null;
+      const previousOverflow = scroller?.style.overflowY ?? "";
+      if (scroller) scroller.style.overflowY = "hidden";
+      window.addEventListener("resize", measureNavView);
+      navScrollCleanup = () => {
+        if (scroller) scroller.style.overflowY = previousOverflow;
+        window.removeEventListener("resize", measureNavView);
+      };
+    }
+  }
+  onDestroy(() => navScrollCleanup?.());
+  $: currentPanelLabel =
+    OPERATOR_NAV.flatMap((group) => group.items).find((item) => item.id === panel)?.label ?? "";
+
+  function closeNav() {
+    if (!navOpen) return;
+    navOpen = false;
+    navButton?.focus();
+  }
+
+  function handleNavKeydown(event: KeyboardEvent) {
+    if (navOpen && event.key === "Escape") {
+      event.preventDefault();
+      closeNav();
+    }
+  }
+
   function selectPanel(next: OperatorPanel) {
+    navOpen = false;
     if (next === panel) {
       return;
     }
@@ -479,13 +530,6 @@
     // back button walks the nav and a panel can be linked to (D-722).
     window.history.pushState({}, "", panelHref(next));
     resetPanelScroll();
-  }
-
-  function handlePanelSelect(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
-    if (isOperatorPanel(value)) {
-      selectPanel(value);
-    }
   }
 
   function handlePanelPopState() {
@@ -877,13 +921,16 @@
      one of them is ever laid out — the run console is display:none when it is
      not the active panel, and the settings host does not exist unless it is — so
      auto-placement puts whichever survives in the second column. -->
+<svelte:window on:keydown={handleNavKeydown} />
+
 <div
-  class="grid min-h-full grid-cols-1 bg-base-200 text-base-content min-[721px]:grid-cols-[268px_minmax(0,1fr)]"
+  class="op-shell grid min-h-full grid-cols-1 bg-base-200 text-base-content min-[721px]:grid-cols-[268px_minmax(0,1fr)]"
   bind:this={shellElement}
 >
-  <!-- Below 721px the two-column layout has nowhere to put a 268px rail, and
-       four rows of pills under the shell's own tab bar read as a second tab bar,
-       so the nav becomes one control instead. -->
+  <!-- Below 721px the two-column layout has nowhere to put a 268px rail, so the
+       rail becomes a drawer behind a section button, the way the viewing
+       layer's rooms rail does: the same headings and rows as on desktop, where
+       a native select would restyle them per platform. -->
   <!-- The rail stays put while the content scrolls, which is what the prototype
        asks for. The scroll pane belongs to the SHELL (App.svelte), not to this
        surface, so the rail cannot be a non-scrolling sibling of a scrolling
@@ -892,40 +939,55 @@
        load-bearing: a stretched grid item is as tall as its area and has
        nowhere to stick. It carries the surface background because content now
        passes underneath it, and none of it applies below 721px, where the nav
-       is one select in its own row rather than a rail. -->
-  <nav
-    class="flex flex-col px-4 pt-4 pb-1 min-[721px]:sticky min-[721px]:top-0 min-[721px]:self-start min-[721px]:bg-base-200 min-[721px]:px-0 min-[721px]:pt-1.5 min-[721px]:pb-3.5"
-    aria-label="Operator sections"
-  >
-    <select
-      class="select select-sm w-full min-[721px]:hidden"
-      aria-label="Operator section"
-      value={panel}
-      on:change={handlePanelSelect}
+       is a drawer. -->
+  <div class="op-nav-bar">
+    <button
+      bind:this={navButton}
+      type="button"
+      class="op-nav-button"
+      aria-label="Choose an Operator section"
+      aria-expanded={navOpen}
+      on:click={openNav}
     >
-      {#each OPERATOR_NAV as group}
-        <optgroup label={group.label}>
-          {#each group.items as item}
-            <option value={item.id}>{item.label}</option>
-          {/each}
-        </optgroup>
-      {/each}
-    </select>
+      <PanelLeft size={15} aria-hidden="true" />
+      <span>{currentPanelLabel}</span>
+    </button>
+  </div>
+
+  {#if navOpen}
+    <button
+      type="button"
+      class="op-nav-scrim"
+      style:--op-nav-top="{navViewTop}px"
+      style:--op-nav-height="{navViewHeight}px"
+      aria-label="Close the section list"
+      transition:fade={{ duration: 200 }}
+      on:click={closeNav}
+    ></button>
+  {/if}
+
+  <nav
+    class="op-nav flex flex-col pt-[16px] pb-3.5 min-[721px]:sticky min-[721px]:top-0 min-[721px]:self-start"
+    aria-label="Operator sections"
+    data-open={navOpen}
+    style:--op-nav-top="{navViewTop}px"
+    style:--op-nav-height="{navViewHeight}px"
+  >
     {#each OPERATOR_NAV as group, groupIndex}
       <div
-        class="hidden h-8 items-center px-4 text-[10px] font-semibold tracking-[0.09em] uppercase text-base-content/45 min-[721px]:flex {groupIndex > 0 ? 'min-[721px]:mt-2.5' : ''}"
+        class="flex h-[12px] items-center px-4 text-[10px] leading-none font-semibold tracking-[0.09em] uppercase text-base-content/45 mb-[0.75rem] {groupIndex > 0 ? 'mt-4' : ''}"
       >
         {group.label}
       </div>
       {#each group.items as item}
-        <!-- The active row is marked the way the viewing layer marks its own
-             selected row (MeetingList's .meeting-row[aria-current]): a 15%
-             primary wash and a 2px primary edge, but NOT primary text. In
-             Nextcloud --color-primary is whatever accent the instance chose, and
-             primary-on-primary-wash is the pair that stops being legible. -->
+        <!-- The active row is marked the way the rooms rail marks the selected
+             room: a 35% primary wash and a 3px primary edge, base-content text
+             at the same weight. In Nextcloud --color-primary is whatever accent
+             the instance chose, and primary text on a primary wash is the pair
+             that stops being legible. -->
         <button
           type="button"
-          class="hidden w-full items-center gap-2 border-l-2 border-transparent px-4 py-1.5 text-left text-sm text-base-content/80 hover:bg-base-300/60 aria-[current=page]:border-primary aria-[current=page]:bg-primary/15 aria-[current=page]:font-semibold aria-[current=page]:text-base-content min-[721px]:flex"
+          class="op-nav-item"
           aria-current={panel === item.id ? "page" : undefined}
           on:click={() => selectPanel(item.id)}
         >
@@ -1566,6 +1628,129 @@
 </div>
 
 <style>
+  .op-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 16px;
+    text-align: left;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    color: var(--color-base-content);
+    font-size: 0.875rem;
+  }
+  .op-shell {
+    position: relative;
+  }
+  .op-nav {
+    background-color: var(--color-base-200);
+  }
+  .op-nav-bar {
+    display: none;
+  }
+  @media (min-width: 721px) {
+    .op-shell::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 267px;
+      width: 1px;
+      background-color: var(--color-base-300);
+      pointer-events: none;
+      z-index: 2;
+    }
+  }
+  .op-nav-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    height: 2.375rem;
+    padding: 0 12px;
+    cursor: pointer;
+    background-color: var(--color-base-100);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    font-size: 0.8125rem;
+    font-weight: 550;
+    color: var(--color-base-content);
+  }
+  .op-nav-button:hover {
+    border-color: color-mix(in oklch, var(--color-base-content) 35%, transparent);
+  }
+  .op-nav-button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .op-nav-scrim {
+    display: none;
+  }
+  @media (max-width: 720px) {
+    .op-nav-bar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: flex;
+      padding: 1rem;
+      background-color: var(--color-base-200);
+    }
+    .op-nav-scrim {
+      position: absolute;
+      top: var(--op-nav-top, 0);
+      left: 0;
+      right: 0;
+      height: var(--op-nav-height, 100%);
+      z-index: 39;
+      display: block;
+      padding: 0;
+      border: 0;
+      cursor: pointer;
+      background-color: oklch(0% 0 0 / 0.55);
+      -webkit-backdrop-filter: blur(3px);
+      backdrop-filter: blur(3px);
+    }
+    .op-nav {
+      position: absolute;
+      top: var(--op-nav-top, 0);
+      height: var(--op-nav-height, 100%);
+      left: 0;
+      z-index: 40;
+      width: min(268px, 82vw);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      border-right: 1px solid var(--color-base-300);
+      box-shadow: 6px 0 24px oklch(0% 0 0 / 0.18);
+      transform: translateX(-100%);
+      visibility: hidden;
+      transition:
+        transform 0.3s cubic-bezier(0.32, 0.72, 0, 1),
+        visibility 0s linear 0.3s;
+    }
+    .op-nav[data-open="true"] {
+      transform: none;
+      visibility: visible;
+      transition:
+        transform 0.3s cubic-bezier(0.32, 0.72, 0, 1),
+        visibility 0s;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .op-nav {
+      transition: none;
+    }
+  }
+  .op-nav-item:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+  }
+  .op-nav-item[aria-current="page"] {
+    background-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+    box-shadow: inset 3px 0 0 var(--color-primary);
+  }
+
   /* The run console keeps its DOM while a settings panel is showing (list
      scroll, the open run, its expanded attempts), so it is hidden rather than
      unmounted. Scoped CSS, not a utility: display:none has to win against the

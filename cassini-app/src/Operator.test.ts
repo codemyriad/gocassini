@@ -314,11 +314,14 @@ describe("Operator left nav (D-723)", () => {
     expect(operatorSource).toContain('class:cassini-op-panel-inactive={panel !== "recordings"}');
   });
 
-  it("mirrors the rail as a select where there is no room for a rail", () => {
-    // Four rows of pills under the shell's own tab bar read as a second tab
-    // bar, so below 721px the nav collapses to one control.
-    expect(operatorSource).toContain('class="select select-sm w-full min-[721px]:hidden"');
-    expect(operatorSource).toContain("<optgroup label={group.label}>");
+  it("opens the rail as a drawer where there is no room for a rail", () => {
+    // Below 721px a section button names the current panel and opens the same
+    // rail as a drawer, as the viewing layer's rooms rail does; a native select
+    // restyled the group headings differently on every platform.
+    expect(operatorSource).not.toContain("<select");
+    expect(operatorSource).toContain('aria-label="Choose an Operator section"');
+    expect(operatorSource).toContain("data-open={navOpen}");
+    expect(operatorSource).toMatch(/\.op-nav\[data-open="true"\] \{[^}]*transform: none;/);
     expect(operatorSource).toContain("min-[721px]:grid-cols-[268px_minmax(0,1fr)]");
   });
 
