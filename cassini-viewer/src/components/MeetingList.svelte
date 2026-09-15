@@ -512,25 +512,25 @@
                         <Users size={12} aria-hidden="true" />{meeting.speakerCount}
                       </span>
                     {/if}
-                    {#if rowTags.length > 0}
-                      <span class="row-tags">
-                        {#each rowTags.slice(0, 3) as { tag, whole, stretches } (tag.tagId)}
-                          <TagChip
-                            label={tag.label}
-                            color={colorFor(tag)}
-                            icon={tag.icon}
-                            variant={whole ? "whole" : "stretch"}
-                            count={stretches}
-                          />
-                        {/each}
-                        {#if rowTags.length > 3}
-                          <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}
-                            >+{rowTags.length - 3}</span
-                          >
-                        {/if}
-                      </span>
-                    {/if}
                   </span>
+                  {#if rowTags.length > 0}
+                    <span class="row-tags">
+                      {#each rowTags.slice(0, 3) as { tag, whole, stretches } (tag.tagId)}
+                        <TagChip
+                          label={tag.label}
+                          color={colorFor(tag)}
+                          icon={tag.icon}
+                          variant={whole ? "whole" : "stretch"}
+                          count={stretches}
+                        />
+                      {/each}
+                      {#if rowTags.length > 3}
+                        <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}
+                          >+{rowTags.length - 3}</span
+                        >
+                      {/if}
+                    </span>
+                  {/if}
                 </span>
               </button>
               {#if tags}
@@ -1000,12 +1000,14 @@
   }
 
   .row-main {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 2px 12px;
     min-width: 0;
   }
   .row-title {
+    grid-column: 1 / -1;
     line-height: 22px;
     font-weight: 550;
     overflow: hidden;
@@ -1044,7 +1046,6 @@
   .row-tags {
     display: inline-flex;
     gap: 4px;
-    margin-left: 4px;
     min-width: 0;
     overflow: hidden;
   }
@@ -1130,6 +1131,10 @@
       width: 22px;
       height: 22px;
     }
+    .row-main {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
     .row-tag :global(svg) {
       width: 14px;
       height: 14px;
