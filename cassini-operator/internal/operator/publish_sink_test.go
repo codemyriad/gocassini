@@ -720,3 +720,49 @@ func TestPublishRefusesASealedArtifactThatChanged(t *testing.T) {
 		t.Fatalf("sink must not be reached for an unverifiable artifact, got %#v", sink.delivered)
 	}
 }
+
+// D-747: a correctly configured ExApp used to log a self-contradictory line at
+// startup — naming nextcloud-files as both unknown and known, and claiming it
+// was "using local" — because NewRuntime guessed a sink through a constructor
+// that cannot build that one. Behaviour was right and the log was false, which
+// sent a reader looking for a storage problem that did not exist.
+func TestNewRuntimeDoesNotGuessAPublishSink(t *testing.T) {
+	tmp := t.TempDir()
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer store.Close()
+
+	var logged bytes.Buffer
+	logger := log.New(&logged, "", 0)
+	rt := NewRuntime(context.Background(), store, Config{
+		DBPath:      filepath.Join(tmp, "jobs.sqlite3"),
+		WorkRoot:    filepath.Join(tmp, "jobs"),
+		SiteRoot:    filepath.Join(tmp, "site"),
+		PublishSink: publishSinkNextcloudFiles,
+	}, logger, ioDiscard{}, ioDiscard{})
+
+	if got := logged.String(); strings.Contains(got, "publish sink") {
+		t.Errorf("NewRuntime said something about the publish sink: %q", got)
+	}
+	// Left for Run to assign from newPublishSinkFor, which is the only
+	// constructor that can build this sink.
+	if rt.publishSink != nil {
+		t.Errorf("publishSink = %q, want nil until Run constructs the real one", rt.publishSink.Name())
+	}
+}
+
+// The nil window must stay harmless: a Runtime with no sink yet still answers
+// both readers, and neither panics.
+func TestRuntimeWithNoSinkYetStillAnswers(t *testing.T) {
+	rt := &Runtime{cfg: Config{SiteRoot: t.TempDir(), PublishSink: publishSinkNextcloudFiles}}
+	if rt.sink() == nil {
+		t.Fatal("sink() returned nil")
+	}
+	// The raw selection is what it can honestly report before Run has resolved
+	// one — not a claim that local is in use.
+	if got := rt.resolvedPublishSinkName(); got != publishSinkNextcloudFiles {
+		t.Errorf("resolvedPublishSinkName() = %q, want the raw selection %q", got, publishSinkNextcloudFiles)
+	}
+}
