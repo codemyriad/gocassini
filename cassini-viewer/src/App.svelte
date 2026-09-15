@@ -1453,7 +1453,8 @@
     background-color: oklch(0% 0 0 / 0.55);
   }
   .sheet-scrim,
-  .prepare-scrim {
+  .prepare-scrim,
+  .rail-scrim {
     -webkit-backdrop-filter: blur(3px);
     backdrop-filter: blur(3px);
   }
