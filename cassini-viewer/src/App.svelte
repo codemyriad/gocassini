@@ -1495,8 +1495,8 @@
      the rail's 268px plus the bar's own margin. */
   .selection-dock {
     position: absolute;
-    left: 288px;
-    right: 20px;
+    left: 276px;
+    right: 8px;
     bottom: 14px;
     z-index: 15;
   }
@@ -1524,8 +1524,8 @@
     }
     /* No rail track to clear. */
     .selection-dock {
-      left: 12px;
-      right: 12px;
+      left: 8px;
+      right: 8px;
     }
     .prepare-sheet {
       top: auto;

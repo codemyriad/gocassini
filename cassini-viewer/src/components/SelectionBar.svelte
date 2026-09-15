@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Tag, X } from "@lucide/svelte";
+  import { FileText, Tag, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import TagPicker from "./tags/TagPicker.svelte";
   import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";
@@ -56,10 +56,16 @@
 <div class="selection-bar" role="region" aria-label="Selected meetings">
   {#if count > 0}
     <div class="selbar-said">
-      <p class="selbar-count">
-        {count}
-        {count === 1 ? "meeting selected" : "meetings selected"}
-      </p>
+      <div class="selbar-head">
+        <p class="selbar-count">
+          {count}
+          {count === 1 ? "meeting selected" : "meetings selected"}
+        </p>
+        <button type="button" class="selbar-clear" on:click={() => dispatch("clear")}>
+          <X size={12} aria-hidden="true" />
+          Clear selection
+        </button>
+      </div>
       <p class="selbar-desc">
         {#if hiddenCount > 0}
           {hiddenCount} not shown here.
@@ -69,7 +75,7 @@
             ? "one"
             : excess}.
         {:else}
-          Assemble them into one document you can take away.
+          Tag, download or get insights from them.
         {/if}
       </p>
       {#if tagReport}
@@ -78,11 +84,6 @@
     </div>
 
     <div class="selbar-actions">
-      <!-- Quiet by design: Prepare is the action, and a second outlined button
-           beside it would compete with it. -->
-      <button type="button" class="selbar-clear" on:click={() => dispatch("clear")}>
-        Clear selection
-      </button>
       {#if tags}
         <button
           bind:this={tagButton}
@@ -102,6 +103,7 @@
         disabled={overCap}
         on:click={() => dispatch("prepare")}
       >
+        <FileText size={14} aria-hidden="true" />
         Prepare
       </button>
     </div>
@@ -149,7 +151,7 @@
     padding: 0.75rem 1rem;
     background-color: var(--color-base-200);
     border: 1px solid var(--color-base-300);
-    border-radius: var(--radius-box, 1rem);
+    border-radius: var(--radius-xl, 0.75rem);
     /* Floats clear of the list rather than capping it: rows scroll visibly
        behind and around it, so it reads as a separate thing rather than as the
        bottom of the list. */
@@ -183,17 +185,30 @@
     gap: 0.5rem;
   }
 
+  .selbar-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    margin-bottom: 2px;
+  }
+
   .selbar-clear {
-    padding: 6px 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
     cursor: pointer;
-    background-color: var(--color-base-100);
-    border: 0;
+    background-color: transparent;
+    border: 1px solid var(--color-base-300);
     border-radius: var(--radius-field, 0.5rem);
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    font-weight: 600;
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
   .selbar-clear:hover {
     color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
 
   .selbar-tag {
@@ -212,14 +227,18 @@
   }
   .selbar-tag:hover,
   .selbar-tag[aria-expanded="true"] {
-    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
   }
 
   .selbar-prepare {
-    padding: 7px 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 12px;
     cursor: pointer;
     background-color: var(--color-primary);
-    border: 0;
+    border: 1px solid transparent;
     border-radius: var(--radius-field, 0.5rem);
     font-size: 0.8125rem;
     font-weight: 600;
