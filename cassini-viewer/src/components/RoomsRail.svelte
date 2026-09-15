@@ -231,23 +231,22 @@
     background: none;
   }
 
-  /* Each box takes the colour of the thing it shows, so the filter reads
-     against the list rather than against itself: base-content for a meeting
-     row, secondary — this theme's amber, and the colour every insight surface
-     uses — for an insight card. */
+  /* base-content for meetings, primary for insights: primary is the checked
+     colour everywhere else in the list and follows Nextcloud's theming, where
+     the amber insight surfaces do not. */
   .type-row input[data-type="meetings"]:checked {
     background-color: var(--color-base-content);
     border-color: var(--color-base-content);
   }
   .type-row input[data-type="insights"]:checked {
-    background-color: var(--color-secondary);
-    border-color: var(--color-secondary);
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
   }
   .type-row input[data-type="meetings"]:checked::after {
     border-color: var(--color-base-100);
   }
   .type-row input[data-type="insights"]:checked::after {
-    border-color: var(--color-secondary-content);
+    border-color: var(--color-primary-content);
   }
   .type-row input.tag-box:checked {
     background-color: var(--tag);
