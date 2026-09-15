@@ -148,7 +148,7 @@
       <p class="text-sm text-base-content/80">
         Recordings, and the names of the rooms they came from, will be visible to
         <strong>anyone with an account on this Nextcloud</strong>. You
-        can limit them to the people in each call at any time, in Operator › Settings.
+        can limit them to room members at any time, in <strong>Operator › Publish pipeline</strong>.
       </p>
 
       {#if plan.blocked}
@@ -157,7 +157,7 @@
              where the account row and the full diagnosis are. -->
         <p class="text-sm text-base-content/80">
           Cassini needs a Nextcloud account to keep recordings in, and this page has no way to
-          create it. Open Operator › Settings to see what is missing.
+          create it. Open <strong>Operator › Publish pipeline</strong> to see what is missing.
         </p>
       {:else if plan.unavailable}
         <!-- The standalone build, or a page Nextcloud's own scripts did not
@@ -199,7 +199,7 @@
             bind:this={primary}
             on:click={openSettings}
           >
-            Open Operator › Settings
+            Open Operator › Publish pipeline
           </button>
         {:else}
           <button

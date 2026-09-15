@@ -450,7 +450,7 @@ describe("what a failed run says (D-749)", () => {
     const said = describeInsightFailure(failed("provider-refused"));
     expect(said).toEqual(INSIGHT_FAILURE_COPY["provider-refused"]);
     expect(said.title).toBe("The endpoint refused the request");
-    expect(said.line).toBe("Check its key, quota or model name under AI providers.");
+    expect(said.line).toBe("Check its key, quota or model name under Operator › AI providers.");
     expect(describeInsightFailure(failed("interrupted")).title).toBe(
       "Cassini restarted before this insight finished",
     );

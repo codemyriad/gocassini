@@ -122,7 +122,7 @@ describe("InsightDocument", () => {
       }).body;
       const text = plainText(html);
       expect(text).toContain("The endpoint refused the request");
-      expect(text).toContain("Check its key, quota or model name under AI providers.");
+      expect(text).toContain("Check its key, quota or model name under Operator › AI providers.");
       expect(text).not.toContain("provider-refused");
     });
 

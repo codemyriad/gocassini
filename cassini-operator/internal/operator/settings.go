@@ -506,12 +506,12 @@ type effectiveSTT struct {
 }
 
 const (
-	noteCUDA = "admitted builds run on CUDA with one recognizer and one host thread"
-	noteCPU  = "no usable GPU on this host: builds run on the CPU, which is correct but much slower — " +
-		"install the matching -cuda image on a GPU deploy daemon for GPU speed"
-	notePinnedCPU    = "device_override=cpu: builds run on the CPU even if a GPU becomes available"
-	noteCUDAUnusable = "device_override=cuda but this host has no usable CUDA runtime or device: builds stay " +
-		"blocked until one is available, or until the override is cleared so they can fall back to the CPU"
+	noteCUDA = "Recordings are transcribed on the GPU, one at a time."
+	noteCPU  = "No GPU is available, so recordings are transcribed on the CPU. This works, but is much slower. " +
+		"For GPU speed, run Cassini's CUDA image on a server with a GPU."
+	notePinnedCPU    = "Set to CPU, so recordings stay on the CPU even if a GPU becomes available."
+	noteCUDAUnusable = "Set to GPU, but this machine has no usable GPU. Recordings won't be processed until one " +
+		"is available, or until the device is set back to Auto."
 )
 
 // effectiveFor is STTSettings.effective corrected by what this image can

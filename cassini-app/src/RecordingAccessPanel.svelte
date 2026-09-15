@@ -523,22 +523,22 @@
     migration !== null;
 </script>
 
-<section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
-  <header class="flex items-start justify-between gap-3 px-4 py-3">
-    <div class="min-w-0">
-      <h2 class="font-semibold">Who can see recordings</h2>
-      <p class="text-xs text-base-content/60">
+<section class="op-tint access">
+  <header class="access-head">
+    <div class="set-row-main">
+      <h2 class="set-row-name op-card-title">Who can see recordings</h2>
+      <p class="set-row-sub">
         Applies to every recording Cassini publishes to this Nextcloud.
       </p>
     </div>
     <button
-      class="btn btn-ghost btn-sm btn-square"
+      class="icon-btn"
       type="button"
       on:click={recheck}
       disabled={loading || busy || !operatorClient}
       aria-label="Check this Nextcloud again"
     >
-      <RefreshCw size={16} aria-hidden="true" />
+      <RefreshCw size={15} aria-hidden="true" />
     </button>
   </header>
 
@@ -546,7 +546,7 @@
     <!-- The section could not be read at all, so this stands in for it: what
          went wrong in one sentence, the way back, and the raw diagnosis one
          disclosure down (D-756, lifted from #288). -->
-    <div class="grid gap-3 p-4">
+    <div class="access-body">
       <div class="alert alert-error items-start gap-3 text-sm" role="alert">
         <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
         <div class="grid min-w-0 gap-1">
@@ -565,20 +565,21 @@
         </button>
       </div>
       {#if loadError.detail}
-        <details class="rounded-box border border-base-300 bg-base-200 p-3">
-          <summary class="cursor-pointer text-sm font-semibold">Details for administrators</summary>
-          <p class="mt-2 font-mono text-xs break-words text-base-content/70">{loadError.detail}</p>
+        <details>
+          <summary class="tpl-toggle">
+            <span class="tpl-chev" aria-hidden="true"></span>
+            Details for administrators
+          </summary>
+          <p class="tpl-def access-mono">{loadError.detail}</p>
         </details>
       {/if}
     </div>
   {:else if loading}
-    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">Loading…</div>
+    <p class="op-state">Loading…</p>
   {:else if !status}
-    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">
-      No storage settings available.
-    </div>
+    <p class="op-state">No storage settings available.</p>
   {:else}
-    <div class="grid gap-4 p-4">
+    <div class="access-body">
       {#if credential}
         <!-- Above everything else, and it does not go away on its own: there is
              no second chance at this string. -->
@@ -617,7 +618,7 @@
              archive is complete at the mode in force either way, so naming the
              root that holds the leftovers is detail, not news. -->
         <div class="flex flex-wrap items-center gap-3 rounded-box border border-warning bg-warning/10 p-3" role="status">
-          <p class="text-sm font-semibold">A switch didn't finish.</p>
+          <p class="text-sm font-semibold">The last switch didn't finish.</p>
           <button
             class="btn btn-sm btn-warning"
             type="button"
@@ -659,30 +660,28 @@
         </div>
       {/if}
 
+      <div class="access-choose">
       <!-- The two audiences. One sentence each about who can see, the current
            one marked, and choosing the other one starts the switch.
            The current option is not disabled: a checked radio that cannot be
            focused is a radiogroup a keyboard reader cannot read, and choose()
            already no-ops on the mode in force. -->
-      <div class="grid gap-3 lg:grid-cols-2" role="radiogroup" aria-label="Who can see recordings">
+      <div class="access-options" role="radiogroup" aria-label="Who can see recordings">
         {#each options as option (option.mode)}
           <button
-            class="grid content-start gap-1.5 rounded-box border p-3 text-left transition {option.current
-              ? 'border-primary bg-primary/15 ring-1 ring-inset ring-primary'
-              : 'border-base-300 bg-base-200 hover:border-primary/50'}"
+            class="access-opt"
+            class:selected={option.current}
             type="button"
             role="radio"
             aria-checked={option.current}
             disabled={busy}
             on:click={() => choose(option.mode)}
           >
-            <span class="flex items-center gap-2">
-              <span class="text-sm font-semibold">{option.title}</span>
-              {#if option.current}
-                <span class="badge badge-primary badge-sm">Current</span>
-              {/if}
+            <span class="access-radio" class:checked={option.current} aria-hidden="true"></span>
+            <span class="access-opt-body">
+              <span class="access-opt-title">{option.title}</span>
+              <span class="access-opt-desc">{option.description}</span>
             </span>
-            <span class="text-xs text-base-content/70">{option.description}</span>
           </button>
         {/each}
       </div>
@@ -691,7 +690,7 @@
            switch does not change who can see the recordings that already
            exist. It stays on screen permanently, not only after a switch. -->
       {#if existingLine}
-        <p class="text-sm text-base-content/80">{existingLine}</p>
+        <p class="set-row-sub access-existing">{existingLine}</p>
       {/if}
 
       {#if flow === "prereqs"}
@@ -702,9 +701,9 @@
         <div
           class="grid gap-3 rounded-box border border-warning bg-warning/10 p-3"
           role="alertdialog"
-          aria-label="Two Nextcloud apps are needed"
+          aria-label="This needs two Nextcloud apps"
         >
-          <p class="text-sm font-semibold">Two Nextcloud apps are needed</p>
+          <p class="text-sm font-semibold">This needs two Nextcloud apps</p>
           <ul class="grid gap-1.5">
             {#each apps as app (app.id)}
               <li class="flex items-center gap-2 text-xs">
@@ -720,28 +719,16 @@
             {/each}
           </ul>
           <p class="text-xs break-words text-base-content/80">
-            Cassini can install it for you. If Nextcloud refuses, install it from Nextcloud's Apps
-            page; Cassini notices when it is there.
+            Cassini can install what's missing for you. If that fails, install it from Nextcloud's
+            Apps page and Cassini will detect it.
           </p>
           <!-- The instance-wide effect, before the install rather than after.
                An acceptance criterion since D-671 that has never shipped. -->
           <p class="rounded-box bg-base-100/60 p-2 text-xs break-words text-base-content/80">
-            Everyone Group adds a group called <b>Everyone</b> to the whole of Nextcloud. It shows up
-            when sharing files in other apps too, not only in Cassini.
+            Everyone Group adds an <b>Everyone</b> group to your whole Nextcloud. It also appears
+            when sharing files in other apps, not just in Cassini.
           </p>
-          <div class="flex flex-wrap items-center gap-2">
-            <button
-              class="btn btn-sm btn-ghost"
-              type="button"
-              disabled={installing}
-              bind:this={prereqsFocus}
-              on:click={cancel}
-            >
-              Cancel
-            </button>
-            <a class="btn btn-sm btn-outline" href={nextcloudUrl("/settings/apps")} target="_top">
-              Open Nextcloud Apps
-            </a>
+          <div class="flex flex-wrap items-center gap-3">
             <button
               class="btn btn-sm btn-primary"
               type="button"
@@ -754,6 +741,18 @@
               {:else}
                 {installButtonLabel(missing)}
               {/if}
+            </button>
+            <a class="btn btn-sm btn-outline" href={nextcloudUrl("/settings/apps")} target="_top">
+              Open Nextcloud Apps
+            </a>
+            <button
+              class="link-btn op-cancel"
+              type="button"
+              disabled={installing}
+              bind:this={prereqsFocus}
+              on:click={cancel}
+            >
+              Cancel
             </button>
           </div>
         </div>
@@ -772,15 +771,7 @@
             <p class="text-xs break-words text-base-content/80">{line}</p>
           {/each}
           <p class="text-xs break-words text-base-content/70">{confirmation.pause}</p>
-          <div class="flex flex-wrap items-center gap-2">
-            <button
-              class="btn btn-sm btn-ghost"
-              type="button"
-              bind:this={confirmFocus}
-              on:click={cancel}
-            >
-              Cancel
-            </button>
+          <div class="flex flex-wrap items-center gap-3">
             <button
               class="btn btn-sm {confirmation.danger ? 'btn-error' : 'btn-warning'}"
               type="button"
@@ -788,6 +779,14 @@
               on:click={confirmSwitch}
             >
               {confirmation.confirmLabel}
+            </button>
+            <button
+              class="link-btn op-cancel"
+              type="button"
+              bind:this={confirmFocus}
+              on:click={cancel}
+            >
+              Cancel
             </button>
           </div>
         </div>
@@ -797,7 +796,7 @@
         <!-- The browser's own half. No permission to close the page: this runs
              HERE, and closing the tab aborts it. -->
         <div
-          class="grid gap-2 rounded-box border border-base-300 bg-base-200 p-3"
+          class="op-tint access-panel grid gap-2"
           role="status"
           aria-live="polite"
         >
@@ -816,7 +815,7 @@
              interruption is honest: whichever step it stopped at, a complete
              archive exists somewhere. -->
         <div
-          class="grid gap-3 rounded-box border border-base-300 bg-base-200 p-3"
+          class="op-tint access-panel grid gap-3"
           role="status"
           aria-live="polite"
         >
@@ -848,12 +847,15 @@
 
       <!-- Everything technical, one disclosure down and collapsed by default:
            the paths, the app ids, the enum, the account and the commands. -->
-      <details class="rounded-box border border-base-300 bg-base-200 p-3">
-        <summary class="cursor-pointer text-sm font-semibold">Details for administrators</summary>
-        <dl class="mt-3 grid gap-3">
+      <details>
+        <summary class="tpl-toggle">
+          <span class="tpl-chev" aria-hidden="true"></span>
+          Details for administrators
+        </summary>
+        <dl class="tpl-def access-details">
           {#if place.root}
             <div>
-              <dt class="text-xs uppercase tracking-wide text-base-content/45">Recordings are stored in</dt>
+              <dt class="access-dt">Recordings are stored in</dt>
               <dd class="text-sm break-words">
                 <code class="break-all">{place.root}</code>
                 <span class="text-base-content/70">({place.container})</span>
@@ -861,17 +863,17 @@
             </div>
           {/if}
           <div>
-            <dt class="text-xs uppercase tracking-wide text-base-content/45">Nextcloud apps in use</dt>
+            <dt class="access-dt">Nextcloud apps in use</dt>
             <dd class="text-sm">{appsInUse(status)}</dd>
           </div>
           <div>
-            <dt class="text-xs uppercase tracking-wide text-base-content/45">Storage check</dt>
+            <dt class="access-dt">Storage check</dt>
             <dd class="text-sm">
               <span class={status.ok ? "text-success" : "text-warning"}>{checkLine}</span>
               {#if reportUrl}
                 <span class="text-base-content/40">·</span>
                 <a
-                  class="link link-hover text-base-content/70"
+                  class="access-link"
                   href={reportUrl}
                   target="_blank"
                   rel="noopener noreferrer">Full report</a
@@ -881,26 +883,28 @@
             {#if !status.ok && status.detail}
               <!-- The operator's own sentence, verbatim, so this section and
                    the container log read the same. -->
-              <dd class="mt-1 rounded-box bg-base-100 p-2 font-mono text-xs break-words text-base-content/70">
+              <dd class="access-code-block mt-1 break-words">
                 {status.detail}
               </dd>
             {/if}
           </div>
           <div>
-            <dt class="text-xs uppercase tracking-wide text-base-content/45">The rule Cassini has recorded</dt>
+            <dt class="access-dt">Rule</dt>
             <dd class="text-sm break-words">
               <code>{status.mode === "" ? "none" : status.mode}</code>
-              <span class="text-base-content/70">{modeSourceLabel(status.mode_source)}</span>
             </dd>
           </div>
           <div>
-            <dt class="text-xs uppercase tracking-wide text-base-content/45">Service account</dt>
+            <dt class="access-dt">How it was set</dt>
+            <dd class="text-sm break-words">{modeSourceLabel(status.mode_source)}</dd>
+          </div>
+          <div>
+            <dt class="access-dt">Service account</dt>
             <dd class="text-sm break-words text-base-content/80">
-              Recordings are written and read by a Nextcloud account called
-              <code>{status.service_account.user}</code>. Cassini doesn't need its password and
-              doesn't keep one.
+              Cassini stores and reads recordings using a Nextcloud account called
+              <code>{status.service_account.user}</code>. Cassini doesn't need or keep its password.
               <button
-                class="link link-hover font-medium"
+                class="access-link"
                 type="button"
                 disabled={busy || !setupAvailable}
                 on:click={setPassword}
@@ -911,16 +915,16 @@
                   Set a password
                 {/if}
               </button>
-              if you want to sign in as it.
+              if you want to sign in as this account.
             </dd>
           </div>
           {#if occ.length > 0}
             <div>
-              <dt class="text-xs uppercase tracking-wide text-base-content/45">Do it by hand instead</dt>
+              <dt class="access-dt">Set it up manually</dt>
               <dd class="text-sm">
-                The same change, as <code>occ</code> commands:
+                Run these <code>occ</code> commands on the server to make the same change:
                 <pre
-                  class="m-0 mt-1 overflow-x-auto rounded-box bg-base-100 p-2 font-mono text-xs leading-relaxed">{occ.join(
+                  class="access-code-block m-0 mt-1 overflow-x-auto">{occ.join(
                     "\n",
                   )}</pre>
               </dd>
@@ -930,12 +934,181 @@
         {#if !setupAvailable}
           <!-- The standalone build, or a page Nextcloud's own scripts did not
                reach. Cassini cannot act as the administrator there. -->
-          <p class="mt-3 border-t border-base-300 pt-3 text-xs break-words text-base-content/60">
-            This build cannot make these changes itself. Open Cassini from Nextcloud's own menu, or
-            run the commands above on the server.
+          <p class="set-row-sub access-standalone">
+            Cassini can't make these changes from here. Open Cassini from Nextcloud's app menu, or run
+            the commands above on the server.
           </p>
         {/if}
       </details>
+      </div>
     </div>
   {/if}
 </section>
+
+<style>
+  .access {
+    display: grid;
+    gap: 12px;
+    margin-top: 12px;
+    padding: 14px 16px;
+  }
+  .access-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .access-choose {
+    display: grid;
+    gap: 12px;
+  }
+  .access-body {
+    display: grid;
+    gap: 12px;
+  }
+  .access-mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    overflow-wrap: anywhere;
+  }
+  .access-options {
+    display: grid;
+    gap: 12px;
+  }
+  @media (min-width: 1024px) {
+    .access-options {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .access-opt {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--color-base-content);
+    background-color: var(--op-inset);
+    border: 1px solid var(--op-inset-border);
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .access-opt:not(:disabled):hover {
+    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
+  }
+  .access-opt.selected,
+  .access-opt.selected:not(:disabled):hover {
+    background-color: color-mix(in srgb, var(--color-primary) 14%, var(--color-base-100));
+    border-color: var(--color-primary);
+  }
+  .access-opt:disabled {
+    cursor: default;
+  }
+  .access-opt-body {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+  .access-radio {
+    position: relative;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    background: var(--color-base-100);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 26%, transparent);
+    border-radius: 50%;
+  }
+  .access-radio.checked {
+    border-color: var(--color-primary);
+  }
+  .access-radio.checked::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    background: var(--color-primary);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .access-opt-title {
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .access-opt-desc {
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .set-row-sub {
+    display: block;
+  }
+  .access-existing {
+    margin: 0;
+  }
+  .access-panel {
+    padding: 12px 14px;
+    background-color: var(--op-inset);
+  }
+  .access-details {
+    display: grid;
+    gap: 12px;
+    max-width: none;
+    color: var(--color-base-content);
+  }
+  .access-link {
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 500;
+    color: var(--color-base-content);
+    background: none;
+    border: 0;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
+    text-underline-offset: 2px;
+  }
+  .access-link:hover {
+    text-decoration-color: currentColor;
+  }
+  .access-link:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .access-dt {
+    margin-bottom: 2px;
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-base-content);
+  }
+  .access-details code {
+    padding: 1px 5px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+    background-color: var(--op-code-bg);
+    border: 1px solid var(--op-code-border);
+    border-radius: var(--radius-selector, 0.25rem);
+  }
+  .access-details dd {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .access-code-block {
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+    background-color: var(--op-code-bg);
+    border: 1px solid var(--op-code-border);
+    border-radius: var(--radius-field, 0.5rem);
+  }
+  .access-standalone {
+    margin-top: 12px;
+  }
+</style>

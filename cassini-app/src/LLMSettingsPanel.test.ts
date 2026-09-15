@@ -34,13 +34,13 @@ describe("AI providers key handling", () => {
     );
     expect(llmSettingsPanelSource).toContain('return typed !== "" && !typed.startsWith("sk-or-");');
     expect(llmSettingsPanelSource).toContain(
-      "OpenRouter keys start with sk-or-v1-. Check the paste.",
+      "OpenRouter keys start with sk-or-v1-. Check you pasted the whole key.",
     );
     expect(llmSettingsPanelSource).not.toContain("draftReady = draftReady && !keyPrefixWarning");
     // The placeholder asks for the whole key rather than showing the prefix
     // as if it were already there.
     expect(llmSettingsPanelSource).toContain(
-      "Paste the full key, sk-or-v1-… for OpenRouter. Self-hosted servers usually need none.",
+      "Paste the full API key (sk-or-v1-… for OpenRouter). Self-hosted servers usually don't need one.",
     );
   });
 });
@@ -80,7 +80,7 @@ describe("AI providers scope", () => {
     expect(llmSettingsPanelSource).toContain("on:click={() => (pendingRemoval = provider)}");
     expect(llmSettingsPanelSource).toContain('role="alertdialog"');
     expect(llmSettingsPanelSource).toContain("Remove {provider.name || provider.base_url || provider.id}?");
-    expect(llmSettingsPanelSource).toContain("The stored key is destroyed");
+    expect(llmSettingsPanelSource).toContain("The saved API key is deleted");
     expect(llmSettingsPanelSource).toContain('names.push("meeting summaries");');
     // The write happens only from the confirmation's own button.
     expect(llmSettingsPanelSource.match(/void removeProvider\(provider\)/g)).toHaveLength(1);
@@ -122,8 +122,8 @@ describe("AI providers edit placement (D-749)", () => {
 
   it("keeps only a new provider's form under the list, and says so in a heading", () => {
     expect(llmSettingsPanelSource).toContain("{#if draft && !draft.existing}");
-    expect(llmSettingsPanelSource).toContain('{@render providerForm("New endpoint")}');
-    expect(llmSettingsPanelSource).toContain('<h3 class="text-sm font-semibold">{heading}</h3>');
+    expect(llmSettingsPanelSource).toContain('{@render providerForm("New provider")}');
+    expect(llmSettingsPanelSource).toContain('<h3 class="set-row-name">{heading}</h3>');
     // The single form is the whole point: one markup, two placements.
     expect(llmSettingsPanelSource.split("<ModelCombobox").length - 1).toBe(1);
   });
@@ -142,7 +142,7 @@ describe("AI providers card layout (D-749)", () => {
     const header = '<div class="flex items-start justify-between gap-2">';
     expect(llmSettingsPanelSource).toContain(header);
     expect(llmSettingsPanelSource).not.toContain("flex flex-wrap items-start justify-between");
-    expect(llmSettingsPanelSource).toContain('class="flex flex-none items-center gap-1"');
+    expect(llmSettingsPanelSource).toContain('class="flex flex-none items-center gap-3"');
     const row = llmSettingsPanelSource.indexOf(header);
     const remove = llmSettingsPanelSource.indexOf("Remove\n                    </button>", row);
     const warning = llmSettingsPanelSource.indexOf("{modelListUnavailable(state.status", row);

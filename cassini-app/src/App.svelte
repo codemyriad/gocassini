@@ -9,6 +9,7 @@
   import SetupNotice from "./SetupNotice.svelte";
   import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
+  import { guardLeave } from "./operator/unsaved";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
   import { firstRunPlan } from "./operator/firstRun";
   import { isSetupAvailable } from "./operator/ncSetup";
@@ -221,6 +222,10 @@
     if (next === surface) {
       return;
     }
+    guardLeave(() => goToSurface(next));
+  }
+
+  function goToSurface(next: Surface): void {
     const previous = surface;
     surface = next;
     // Fragment-only pushState — same mechanism the viewer uses; gives history /
@@ -348,6 +353,12 @@
   // address instead of three updates that can disagree about where we are.
   function openRecordingAccess(): void {
     firstRunClosed = true;
+    openPublishPipeline();
+  }
+
+  // The setup notice's "Open Operator › Publish pipeline" steps: the same
+  // destination as the first-run dialog's button, without closing that dialog.
+  function openPublishPipeline(): void {
     if (!operatorAvailable) {
       return;
     }
@@ -508,7 +519,7 @@
             tone={setupNotice.tone}
             busy={setupRetryBusy}
             on:retry={retrySetupCheck}
-            on:navigate={() => selectSurface("operator")}
+            on:navigate={openPublishPipeline}
           />
         </div>
       </div>
@@ -528,7 +539,7 @@
             tone={setupNotice.tone}
             busy={setupRetryBusy}
             on:retry={retrySetupCheck}
-            on:navigate={() => selectSurface("operator")}
+            on:navigate={openPublishPipeline}
           />
         </div>
       </div>
@@ -600,7 +611,7 @@
         tone={setupNotice.tone}
         busy={setupRetryBusy}
         on:retry={retrySetupCheck}
-        on:navigate={() => selectSurface("operator")}
+        on:navigate={openPublishPipeline}
       />
     </div>
   </div>
@@ -616,7 +627,7 @@
           tone={setupNotice.tone}
           busy={setupRetryBusy}
           on:retry={retrySetupCheck}
-          on:navigate={() => selectSurface("operator")}
+          on:navigate={openPublishPipeline}
         />
       </div>
     </div>

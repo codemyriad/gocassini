@@ -18,13 +18,15 @@ describe("the section", () => {
       'import RecordingAccessPanel from "./RecordingAccessPanel.svelte"',
     );
     expect(settingsPanelSource).toContain("<RecordingAccessPanel {operatorClient} />");
-    expect(settingsPanelSource.indexOf("<RecordingAccessPanel")).toBeLessThan(
-      settingsPanelSource.indexOf("Publish pipeline</h2>"),
-    );
+    // Under the page's own header, so the page opens on its title, and above
+    // every pipeline step it applies to.
+    const section = settingsPanelSource.indexOf("<RecordingAccessPanel");
+    expect(section).toBeGreaterThan(settingsPanelSource.indexOf("<h1>Publish pipeline</h1>"));
+    expect(section).toBeLessThan(settingsPanelSource.indexOf(">Hardware<"));
   });
 
   it("leads with who can see a recording", () => {
-    expect(panelSource).toContain("<h2 class=\"font-semibold\">Who can see recordings</h2>");
+    expect(panelSource).toContain('<h2 class="set-row-name op-card-title">Who can see recordings</h2>');
     expect(panelSource).toContain("Applies to every recording Cassini publishes to this Nextcloud.");
   });
 
@@ -32,7 +34,7 @@ describe("the section", () => {
     expect(panelSource).toContain('role="radiogroup"');
     expect(panelSource).toContain('role="radio"');
     expect(panelSource).toContain("aria-checked={option.current}");
-    expect(panelSource).toContain('<span class="badge badge-primary badge-sm">Current</span>');
+    expect(panelSource).toContain('<span class="access-radio" class:checked={option.current} aria-hidden="true"></span>');
     // The names and the sentence under each are values, not markup: they are
     // the same two strings the chip and the first-run dialog use.
     expect(panelSource).toContain("{option.title}");
@@ -91,16 +93,12 @@ describe("choosing the other option", () => {
   });
 
   it("lists the two apps, with the instance-wide effect before the install", () => {
-    expect(panelSource).toContain("Two Nextcloud apps are needed");
+    expect(panelSource).toContain("This needs two Nextcloud apps");
     expect(panelSource).toContain('{app.installed ? "Installed" : "Not installed"}');
-    expect(panelSource).toContain(
-      "Cassini can install it for you. If Nextcloud refuses, install it from Nextcloud's Apps",
-    );
-    expect(panelSource).toContain("page; Cassini notices when it is there.");
-    expect(panelSource).toContain(
-      "Everyone Group adds a group called <b>Everyone</b> to the whole of Nextcloud. It shows up",
-    );
-    expect(panelSource).toContain("when sharing files in other apps too, not only in Cassini.");
+    expect(panelSource).toContain("Cassini can install what's missing for you.");
+    expect(panelSource).toContain("Apps page and Cassini will detect it.");
+    expect(panelSource).toContain("Everyone Group adds an <b>Everyone</b> group to your whole Nextcloud.");
+    expect(panelSource).toContain("when sharing files in other apps, not just in Cassini.");
   });
 
   // Cassini's own steps are not described at all: the administrator is not
@@ -251,7 +249,7 @@ describe("a switch this page did not start", () => {
     );
     expect(confirm).toContain("disabled={busy}");
     const resume = panelSource.slice(
-      panelSource.indexOf("A switch didn't finish."),
+      panelSource.indexOf("The last switch didn't finish."),
       panelSource.indexOf("on:click={resume}"),
     );
     expect(resume).toContain("disabled={busy}");
@@ -281,7 +279,7 @@ describe("an interrupted switch", () => {
   // button, not a card about a root nobody reads.
   it("is one line and one button, wired to the operator's own repair", () => {
     expect(panelSource).toContain("{#if !status.migration_clean}");
-    expect(panelSource).toContain("A switch didn't finish.");
+    expect(panelSource).toContain("The last switch didn't finish.");
     expect(panelSource).toContain("on:click={resume}");
     expect(panelSource).toContain("operatorClient.finishStorageMigration()");
     expect(panelSource).toMatch(/{:else}\s+Resume\s+{\/if}/);
@@ -299,9 +297,10 @@ describe("details for administrators", () => {
       "Recordings are stored in",
       "Nextcloud apps in use",
       "Storage check",
-      "The rule Cassini has recorded",
+      "Rule",
+      "How it was set",
       "Service account",
-      "Do it by hand instead",
+      "Set it up manually",
     ]) {
       expect(panelSource).toContain(label);
     }
@@ -320,11 +319,10 @@ describe("details for administrators", () => {
   });
 
   it("says what the service account is for, and offers the one password action", () => {
-    expect(panelSource).toContain("Recordings are written and read by a Nextcloud account called");
-    expect(panelSource).toContain("Cassini doesn't need its password and");
-    expect(panelSource).toContain("doesn't keep one.");
+    expect(panelSource).toContain("Cassini stores and reads recordings using a Nextcloud account called");
+    expect(panelSource).toContain("Cassini doesn't need or keep its password.");
     expect(panelSource).toContain("Set a password");
-    expect(panelSource).toContain("if you want to sign in as it.");
+    expect(panelSource).toContain("if you want to sign in as this account.");
     expect(panelSource).toContain("resetServiceAccountPassword(user)");
   });
 
@@ -346,7 +344,7 @@ describe("details for administrators", () => {
 
   it("says when this build cannot make the changes itself", () => {
     expect(panelSource).toContain("{#if !setupAvailable}");
-    expect(panelSource).toContain("This build cannot make these changes itself.");
+    expect(panelSource).toContain("Cassini can't make these changes from here.");
     expect(panelSource).toContain("isSetupAvailable()");
   });
 });
@@ -539,7 +537,7 @@ describe("the alertdialog panels", () => {
 // The dialog's other button acknowledges and creates nothing, and in settings
 // the mode in force is the one option that cannot be chosen — so without this
 // row the only remaining way to create the `cassini` account is a switch to
-// Meeting participants, which is a different decision entirely.
+// Room members, which is a different decision entirely.
 describe("the account row", () => {
   it("offers to create the account whenever the operator says it is missing", () => {
     expect(panelSource).toContain(

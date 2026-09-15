@@ -76,10 +76,9 @@
         Save the password for the <code>{user}</code> account now.
       </p>
       <p class="text-xs break-words text-base-content/80">
-        This is the only time it is shown. Cassini does not store it and cannot show it again —
-        Nextcloud keeps it, and Cassini itself signs in as this account a different way. You only
-        need it to log in as <code>{user}</code> yourself. If you lose it, you can set a new one
-        from this tab.
+        This is the only time it's shown. Cassini doesn't store it and can't show it again. You only
+        need it to sign in as <code>{user}</code> yourself; Cassini connects another way. If you lose
+        it, set a new one here.
       </p>
     </div>
   </div>
@@ -110,14 +109,13 @@
 
   {#if copyFailed}
     <p class="text-xs break-words text-warning" role="status">
-      This browser would not let Cassini use the clipboard. The password is selected above — copy
-      it with your keyboard.
+      Your browser blocked copying. The password is selected above, so copy it with your keyboard.
     </p>
   {/if}
 
   {#if resetOcc}
     <details class="text-xs">
-      <summary class="cursor-pointer text-base-content/70">Or set one from the server instead</summary>
+      <summary class="cursor-pointer text-base-content/70">Or set one on the server instead</summary>
       <pre
         class="m-0 mt-1 overflow-x-auto rounded-box bg-base-200 p-2 font-mono text-xs leading-relaxed">{resetOcc}</pre>
     </details>

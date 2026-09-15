@@ -16,7 +16,7 @@ describe("the first-run dialog", () => {
     );
     expect(dialogSource).toContain("anyone with an account on this Nextcloud");
     expect(dialogSource).toContain(
-      "can limit them to the people in each call at any time, in Operator › Settings.",
+      "can limit them to room members at any time, in <strong>Operator › Publish pipeline</strong>.",
     );
     // The audience sentence comes first, and the account sentence second. The
     // shipped wizard led with the mechanism, which is the whole thing this
@@ -94,7 +94,7 @@ describe("the first-run dialog", () => {
     expect(dialogSource).toContain(
       "Cassini needs a Nextcloud account to keep recordings in, and this page has no way to",
     );
-    expect(dialogSource).toContain("Open Operator › Settings");
+    expect(dialogSource).toContain("Open Operator › Publish pipeline");
     const blocked = dialogSource.slice(
       dialogSource.indexOf("{#if plan.blocked}", dialogSource.indexOf("mt-1 flex flex-wrap")),
       dialogSource.indexOf("Change who can see first"),
