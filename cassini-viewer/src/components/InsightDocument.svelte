@@ -3,7 +3,7 @@
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { Calendar, FileText, MessageSquare, X } from "@lucide/svelte";
-  import { formatMeetingDateShort, type MeetingCatalogEntry } from "../viewer/catalog";
+  import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
   import {
     describeInsightFailure,
@@ -155,7 +155,7 @@
                 <FileText size={14} aria-hidden="true" />
                 <span class="ins-source-title">{source.title}</span>
                 <span class="ins-source-meta">
-                  {formatMeetingDateShort(source.dateLabel)} · {roomLabelOf(source)}
+                  {formatMeetingDateWithDay(source.dateLabel)} · {roomLabelOf(source)}
                 </span>
               </button>
             </li>

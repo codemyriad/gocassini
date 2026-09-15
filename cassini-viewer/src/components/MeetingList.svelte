@@ -8,7 +8,7 @@
   import TagPicker from "./tags/TagPicker.svelte";
   import {
     filterMeetingCatalogEntries,
-    formatMeetingDateShort,
+    formatMeetingDateWithDay,
     formatMeetingDuration,
     type MeetingCatalogEntry,
   } from "../viewer/catalog";
@@ -518,7 +518,7 @@
                 <span class="row-main">
                   <span class="row-title">{meeting.title}</span>
                   <span class="row-meta">
-                    <span>{formatMeetingDateShort(meeting.dateLabel)}</span>
+                    <span>{formatMeetingDateWithDay(meeting.dateLabel)}</span>
                     {#if showRoom}
                       <span class="rule" aria-hidden="true"></span>
                       <span class="row-room">{rowRoom}</span>
