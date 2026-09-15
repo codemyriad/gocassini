@@ -981,6 +981,10 @@
   .meeting-row:hover {
     background-color: var(--color-base-200);
   }
+  .meeting-row.row-picked::after,
+  .meeting-row[aria-current="page"]::after {
+    background-color: color-mix(in oklch, var(--color-base-content) 14%, transparent);
+  }
   .meeting-row.row-picked {
     background-color: color-mix(in oklch, var(--color-primary) 15%, transparent);
     box-shadow: inset 2px 0 0 var(--color-primary);
