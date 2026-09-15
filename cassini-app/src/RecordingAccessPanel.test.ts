@@ -596,4 +596,11 @@ describe("the account row", () => {
       "disabled={busy || !setupAvailable || accountPlan.length === 0}",
     );
   });
+
+  it("opens the switch for an audience chosen in the first-run dialog, and acknowledges it once switched", () => {
+    expect(panelSource).toContain("pendingAccessChoice.set(null);");
+    expect(panelSource).toContain("choose(next);");
+    const switchDone = panelSource.slice(panelSource.indexOf("done = doneMessage(mode);"));
+    expect(switchDone.indexOf("await operatorClient.acknowledgeFirstRun();")).toBeGreaterThan(-1);
+  });
 });

@@ -15,6 +15,7 @@
   } from "./operator/ncSetup";
   import { runModeSetup } from "./operator/runModeSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
+  import { pendingAccessChoice } from "./operator/accessChoice";
   import {
     PARTICIPANTS,
     accessOptions,
@@ -321,6 +322,13 @@
       flow = null;
       target = null;
       done = doneMessage(mode);
+      if (status.first_run && status.service_account.exists) {
+        try {
+          await operatorClient.acknowledgeFirstRun();
+        } catch (error) {
+          console.warn("Cassini: the first-run acknowledgement failed.", error);
+        }
+      }
       notifySetupChanged();
     } catch (error) {
       actionError = asFailure(error);
@@ -494,6 +502,12 @@
   }
 
   $: options = accessOptions(status);
+
+  $: if ($pendingAccessChoice && status && !loading && !busy) {
+    const next = $pendingAccessChoice;
+    pendingAccessChoice.set(null);
+    choose(next);
+  }
   $: existingLine = existingRecordingsLine(status, switched);
   $: apps = requiredApps(status);
   $: missing = missingApps(status);

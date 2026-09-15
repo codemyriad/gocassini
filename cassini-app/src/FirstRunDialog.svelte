@@ -4,6 +4,9 @@
   import { firstRunReady, type FirstRunPlan } from "./operator/firstRun";
   import { NcSetupError, runSetupPlan } from "./operator/ncSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
+  import { pendingAccessChoice } from "./operator/accessChoice";
+  import { EVERYONE, accessOptions, type AccessMode } from "./operator/recordingAccess";
+  import type { StorageMode } from "./operator/types";
 
   // The one dialog a fresh install shows (D-756).
   //
@@ -18,6 +21,12 @@
   // where they are tested. This component performs them and nothing else.
   export let operatorClient: OperatorClient;
   export let plan: FirstRunPlan;
+  export let mode: StorageMode = "";
+
+  const current: AccessMode = mode === "" ? EVERYONE : mode;
+  let chosen: AccessMode = current;
+  const options = accessOptions(null);
+  $: switching = chosen !== current;
 
   // `done` closes the dialog; `settings` is the reader choosing to change the
   // audience before anything is created. The shell owns which surface is
@@ -28,14 +37,13 @@
   let progress = "";
   let actionError = "";
   let primary: HTMLButtonElement | null = null;
-  let secondary: HTMLButtonElement | null = null;
 
   onMount(() => {
     // The dialog covers the app, so the focus has to be inside it. The primary
     // button unless there is none — the standalone build has only the other
     // one. No focus trap: it is two buttons, and a half-built trap is worse
     // than the browser's own behaviour.
-    (primary ?? secondary)?.focus();
+    primary?.focus();
   });
 
   // openSettings leaves for Operator › Settings without creating anything and
@@ -53,6 +61,11 @@
   // The shell hides the dialog for the rest of this page's life, so nobody is
   // shown it twice over the page they are working on.
   function openSettings(): void {
+    dispatch("settings");
+  }
+
+  function continueWithChoice(): void {
+    pendingAccessChoice.set(chosen);
     dispatch("settings");
   }
 
@@ -124,54 +137,102 @@
      RecordingAccessPanel.svelte's confirmations are inline for the same
      reason. -->
 <div class="first-run-scrim">
+  <div class="fr-backdrop" aria-hidden="true">
+    <div class="fr-sk-tabs">
+      <span class="fr-sk-tab current"><span class="fr-sk" style="width: 44px"></span></span>
+      <span class="fr-sk-tab"><span class="fr-sk" style="width: 52px"></span></span>
+    </div>
+    <div class="fr-sk-body">
+      <div class="fr-sk-rail">
+        <span class="fr-sk fr-sk-label"></span>
+        {#each [96, 40, 118, 50, 128, 36, 76, 44] as width, index}
+          <span class="fr-sk-room" class:current={index === 0}>
+            <span class="fr-sk" style="width: {width}px"></span>
+            <span class="fr-sk fr-sk-count"></span>
+          </span>
+        {/each}
+        <span class="fr-sk fr-sk-label fr-sk-gap"></span>
+        {#each [52, 40] as width}
+          <span class="fr-sk-room">
+            <span class="fr-sk fr-sk-check"></span>
+            <span class="fr-sk" style="width: {width}px"></span>
+          </span>
+        {/each}
+        <span class="fr-sk fr-sk-label fr-sk-gap"></span>
+        {#each [60, 48] as width}
+          <span class="fr-sk-room">
+            <span class="fr-sk fr-sk-check"></span>
+            <span class="fr-sk" style="width: {width}px"></span>
+          </span>
+        {/each}
+      </div>
+      <div class="fr-sk-main">
+        <span class="fr-sk-search"></span>
+        <span class="fr-sk fr-sk-result"></span>
+        <span class="fr-sk fr-sk-month"></span>
+        {#each [150, 150, 150, 128, 150, 150, 60, 150, 150, 150] as width}
+          <div class="fr-sk-row">
+            <span class="fr-sk fr-sk-check"></span>
+            <span class="fr-sk-row-text">
+              <span class="fr-sk fr-sk-title" style="width: {width}px"></span>
+              <span class="fr-sk fr-sk-meta"></span>
+            </span>
+            <span class="fr-sk fr-sk-duration"></span>
+          </div>
+        {/each}
+      </div>
+    </div>
+  </div>
   <div
-    class="first-run-card w-full max-w-lg rounded-box border border-base-300 bg-base-100 p-5 shadow-lg sm:p-6"
+    class="first-run-card w-full max-w-[1000px] rounded-box border border-base-300 bg-base-100 p-5 shadow-lg sm:p-6"
     role="dialog"
     aria-modal="true"
     aria-labelledby="cassini-first-run-title"
   >
     <div class="grid gap-3">
-      <!-- The title is a claim, so it is made only where it is true: an install
-           whose account is missing, with no plan for it or no session to run
-           the plan with, is not ready to record, and saying it was is what this
-           dialog got wrong. firstRunReady is that question, answered where the
-           rest of this dialog's decisions are. -->
       <h2 id="cassini-first-run-title" class="text-lg font-bold">
         {firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}
       </h2>
-
-      <!-- Who can see recordings, before anything about how Cassini works, and
-           the rooms alongside the recordings: the room name travels with every
-           published recording, so an audience sentence that named only the
-           recordings would be describing half of what is visible (11 September
-           product decision). -->
       <p class="text-sm text-base-content/80">
-        Recordings, and the names of the rooms they came from, will be visible to
-        <strong>anyone with an account on this Nextcloud</strong>. You
-        can limit them to room members at any time, in <strong>Operator › Publish pipeline</strong>.
+        First, choose who can open Cassini's recordings and see the names of the rooms they came from.
       </p>
 
+      <div class="fr-options" role="radiogroup" aria-label="Who can see recordings">
+        {#each options as option (option.mode)}
+          <button
+            class="fr-opt"
+            class:selected={chosen === option.mode}
+            type="button"
+            role="radio"
+            aria-checked={chosen === option.mode}
+            disabled={busy}
+            on:click={() => (chosen = option.mode)}
+          >
+            <span class="fr-radio" class:checked={chosen === option.mode} aria-hidden="true"></span>
+            <span class="fr-opt-body">
+              <span class="fr-opt-title">{option.title}</span>
+              <span class="fr-opt-desc">{option.description}</span>
+            </span>
+          </button>
+        {/each}
+      </div>
+
       {#if plan.blocked}
-        <!-- Nothing here can fix it: the operator says the account is missing
-             and offered no step this page could run. The settings section is
-             where the account row and the full diagnosis are. -->
         <p class="text-sm text-base-content/80">
           Cassini needs a Nextcloud account to keep recordings in, and this page has no way to
           create it. Open <strong>Operator › Publish pipeline</strong> to see what is missing.
         </p>
       {:else if plan.unavailable}
-        <!-- The standalone build, or a page Nextcloud's own scripts did not
-             reach. There is a plan for the account and this page cannot run a
-             step of it, so the sentence stands in for a button that would be
-             refused — and it is said here, beside the title it explains,
-             rather than under the buttons. -->
         <p class="text-sm text-base-content/80">
           Cassini needs a Nextcloud account to keep recordings in. This page cannot make the
           changes itself. Open Cassini from Nextcloud's own menu.
         </p>
+      {:else if switching}
+        <p class="text-sm text-base-content/80">
+          Next, <strong>Operator › Publish pipeline</strong> walks you through installing what this
+          needs and turning it on.
+        </p>
       {:else if plan.creates}
-        <!-- Said only where it is going to happen: an install whose account the
-             operator already made is not about to make another one. -->
         <p class="text-sm text-base-content/80">
           To start, Cassini creates a Nextcloud account called <code>cassini</code> to keep recordings
           in. Nextcloud may ask for your password.
@@ -189,43 +250,37 @@
         <p class="text-xs break-words text-error" role="alert">{actionError}</p>
       {/if}
 
-      <div class="mt-1 flex flex-wrap items-center justify-end gap-2">
+      <div class="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <p class="text-sm text-base-content/70">You can change this later.</p>
         {#if plan.blocked}
-          <!-- One way on, and it is the one that leads somewhere: a Start
-               button here would acknowledge a first run that never happened. -->
           <button
-            class="btn btn-sm btn-primary"
+            class="btn btn-primary"
             type="button"
             bind:this={primary}
             on:click={openSettings}
           >
             Open Operator › Publish pipeline
           </button>
-        {:else}
+        {:else if switching}
           <button
-            class="btn btn-sm btn-ghost"
+            class="btn btn-primary"
             type="button"
             disabled={busy}
-            bind:this={secondary}
-            on:click={openSettings}
+            bind:this={primary}
+            on:click={continueWithChoice}
           >
-            Change who can see first
+            Continue in Publish pipeline
           </button>
-          {#if !plan.unavailable}
-            <!-- No Start on the standalone build: every write it would make is
-                 refused before it is sent, and a button that cannot work would
-                 acknowledge a first run that never happened. The sentence
-                 above is what stands in for it. -->
-            <button
-              class="btn btn-sm btn-primary"
-              type="button"
-              disabled={busy}
-              bind:this={primary}
-              on:click={start}
-            >
-              {plan.creates ? "Create the account and start" : "Start"}
-            </button>
-          {/if}
+        {:else if !plan.unavailable}
+          <button
+            class="btn btn-primary"
+            type="button"
+            disabled={busy}
+            bind:this={primary}
+            on:click={start}
+          >
+            {plan.creates ? "Create the account and start" : "Start recording"}
+          </button>
         {/if}
       </div>
     </div>
@@ -245,10 +300,213 @@
     display: grid;
     place-items: center;
     padding: 1rem;
-    background-color: color-mix(in oklch, black 45%, transparent);
+    overflow: hidden;
+    background-color: var(--color-base-200);
+  }
+  .first-run-scrim::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-color: color-mix(in oklch, black 30%, transparent);
+  }
+  .fr-backdrop {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    filter: blur(5px);
+    pointer-events: none;
+    --sk-line: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+  }
+  .fr-sk {
+    display: block;
+    height: 9px;
+    border-radius: 3px;
+    background-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
+  }
+  .fr-sk-tabs {
+    display: flex;
+    flex: none;
+    height: 34px;
+    background-color: var(--color-base-100);
+    border-bottom: 1px solid var(--sk-line);
+  }
+  .fr-sk-tab {
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+  }
+  .fr-sk-tab.current {
+    background-color: var(--color-base-200);
+  }
+  .fr-sk-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .fr-sk-rail {
+    display: flex;
+    flex-direction: column;
+    width: 268px;
+    flex: none;
+    padding: 16px 0;
+    background-color: var(--color-base-100);
+  }
+  .fr-sk-label {
+    width: 44px;
+    height: 7px;
+    margin: 0 16px 12px;
+  }
+  .fr-sk-gap {
+    margin-top: 22px;
+  }
+  .fr-sk-room {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 16px;
+  }
+  .fr-sk-room.current {
+    background-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+  }
+  .fr-sk-count {
+    width: 10px;
+    margin-left: auto;
+  }
+  .fr-sk-check {
+    width: 13px;
+    height: 13px;
+    flex: none;
+  }
+  .fr-sk-main {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    background-color: var(--color-base-200);
+  }
+  .fr-sk-search {
+    display: block;
+    height: 34px;
+    margin: 12px 20px 0;
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 25%, transparent);
+    border-radius: 5px;
+  }
+  .fr-sk-result {
+    width: 200px;
+    height: 7px;
+    margin: 14px 20px 0;
+  }
+  .fr-sk-month {
+    width: 110px;
+    height: 7px;
+    margin: 32px 20px 14px;
+  }
+  .fr-sk-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 60px;
+    margin: 0 20px;
+    border-bottom: 1px solid var(--sk-line);
+  }
+  .fr-sk-row-text {
+    display: grid;
+    gap: 8px;
+  }
+  .fr-sk-title {
+    height: 10px;
+  }
+  .fr-sk-meta {
+    width: 110px;
+    height: 7px;
+  }
+  .fr-sk-duration {
+    width: 22px;
+    margin-left: auto;
+  }
+  @media (max-width: 640px) {
+    .fr-sk-rail {
+      display: none;
+    }
+  }
+
+  .fr-options {
+    display: grid;
+    gap: 12px;
+  }
+  @container (min-width: 560px) {
+    .fr-options {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .fr-opt {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    text-align: left;
+    cursor: pointer;
+    color: var(--color-base-content);
+    background-color: var(--color-base-200);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .fr-opt:not(:disabled):hover {
+    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
+  }
+  .fr-opt.selected,
+  .fr-opt.selected:not(:disabled):hover {
+    background-color: color-mix(in srgb, var(--color-primary) 14%, var(--color-base-100));
+    border-color: var(--color-primary);
+  }
+  .fr-opt:disabled {
+    cursor: default;
+  }
+  .fr-opt-body {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+  .fr-radio {
+    position: relative;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    background: var(--color-base-100);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 26%, transparent);
+    border-radius: 50%;
+  }
+  .fr-radio.checked {
+    border-color: var(--color-primary);
+  }
+  .fr-radio.checked::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    background: var(--color-primary);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .fr-opt-title {
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .fr-opt-desc {
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
 
   .first-run-card {
+    position: relative;
+    z-index: 1;
+    container-type: inline-size;
     max-height: 100%;
     overflow-y: auto;
   }

@@ -578,6 +578,7 @@
         <FirstRunDialog
           {operatorClient}
           plan={firstRun}
+          mode={storageStatus?.mode ?? ""}
           on:done={() => (firstRunClosed = true)}
           on:settings={openRecordingAccess}
         />

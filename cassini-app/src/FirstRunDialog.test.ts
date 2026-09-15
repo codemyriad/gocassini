@@ -9,19 +9,17 @@ import dialogSource from "./FirstRunDialog.svelte?raw";
 // quietly lose.
 
 describe("the first-run dialog", () => {
-  it("says who can see recordings before it says how anything works", () => {
-    expect(dialogSource).toContain("Cassini is ready to record");
+  it("asks who can see recordings before it says how anything works", () => {
     expect(dialogSource).toContain(
-      "Recordings, and the names of the rooms they came from, will be visible to",
+      `{firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}`,
     );
-    expect(dialogSource).toContain("anyone with an account on this Nextcloud");
     expect(dialogSource).toContain(
-      "can limit them to room members at any time, in <strong>Operator › Publish pipeline</strong>.",
+      "First, choose who can open Cassini's recordings and see the names of the rooms they came from.",
     );
-    // The audience sentence comes first, and the account sentence second. The
-    // shipped wizard led with the mechanism, which is the whole thing this
-    // change reverses.
-    expect(dialogSource.indexOf("Recordings, and the names of the rooms")).toBeLessThan(
+    // The two audiences are the settings section's own options, in its words.
+    expect(dialogSource).toContain("accessOptions(null)");
+    expect(dialogSource).toContain('role="radiogroup"');
+    expect(dialogSource.indexOf('role="radiogroup"')).toBeLessThan(
       dialogSource.indexOf("To start, Cassini creates a Nextcloud account"),
     );
   });
@@ -44,10 +42,17 @@ describe("the first-run dialog", () => {
     expect(dialogSource).toContain("{:else if plan.creates}");
   });
 
-  it("offers the audience before the account, and creating as the primary action", () => {
-    expect(dialogSource).toContain("Change who can see first");
+  it("starts on the audience in force, and hands any other choice to the settings section", () => {
     expect(dialogSource).toContain("Create the account and start");
-    expect(dialogSource).toContain('class="btn btn-sm btn-primary"');
+    expect(dialogSource).toContain("Start recording");
+    expect(dialogSource).toContain("Continue in Publish pipeline");
+    expect(dialogSource).toContain("pendingAccessChoice.set(chosen);");
+    expect(dialogSource).toContain('class="btn btn-primary"');
+    const handOff = dialogSource.slice(
+      dialogSource.indexOf("function continueWithChoice()"),
+      dialogSource.indexOf("// start does the whole of the first run"),
+    );
+    expect(handOff).not.toContain("acknowledgeFirstRun");
   });
 
   it("never shows the service account's password", () => {
@@ -70,9 +75,6 @@ describe("the first-run dialog", () => {
     // with what just happened.
     expect(dialogSource).toContain("notifySetupChanged();");
     // Exactly one acknowledgement, inside the action that creates the account.
-    // "Change who can see first" used to fire a second one on its way out,
-    // which spent this install's one dialog on a click that created nothing and
-    // left an install that still could not record with nothing left to say so.
     expect(dialogSource.match(/acknowledgeFirstRun\(\)/g)).toHaveLength(1);
     const leave = dialogSource.slice(
       dialogSource.indexOf("function openSettings()"),
@@ -83,22 +85,13 @@ describe("the first-run dialog", () => {
   });
 
   it("claims nothing about being ready when the account cannot be made here", () => {
-    // The operator says the account is missing and offered no step this page
-    // could run. There is nothing to start, so there is no Start button to
-    // acknowledge a first run with — one way on, to the section that holds the
-    // account row and the diagnosis.
-    expect(dialogSource).toContain(
-      `{firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}`,
-    );
     expect(dialogSource).toContain("{#if plan.blocked}");
     expect(dialogSource).toContain(
       "Cassini needs a Nextcloud account to keep recordings in, and this page has no way to",
     );
     expect(dialogSource).toContain("Open Operator › Publish pipeline");
-    const blocked = dialogSource.slice(
-      dialogSource.indexOf("{#if plan.blocked}", dialogSource.indexOf("mt-1 flex flex-wrap")),
-      dialogSource.indexOf("Change who can see first"),
-    );
+    const buttons = dialogSource.slice(dialogSource.indexOf("mt-1 flex flex-wrap"));
+    const blocked = buttons.slice(buttons.indexOf("{#if plan.blocked}"), buttons.indexOf("{:else if switching}"));
     expect(blocked).toContain("on:click={openSettings}");
     expect(blocked).not.toContain("on:click={start}");
   });
@@ -119,13 +112,8 @@ describe("the first-run dialog", () => {
       "Cassini needs a Nextcloud account to keep recordings in. This page cannot make the",
     );
     expect(dialogSource).toContain("Open Cassini from Nextcloud's own menu.");
-    // No Start beside it: every write it would make is refused before it is
-    // sent, so the button would acknowledge a first run that never happened.
-    // The title does not claim to be ready either — firstRunReady is false for
-    // this shape, and it is tested in operator/firstRun.ts.
-    expect(dialogSource).toContain("{#if !plan.unavailable}");
     const buttons = dialogSource.slice(dialogSource.indexOf("mt-1 flex flex-wrap"));
-    expect(buttons.indexOf("{#if !plan.unavailable}")).toBeLessThan(
+    expect(buttons.indexOf("{:else if !plan.unavailable}")).toBeLessThan(
       buttons.indexOf("on:click={start}"),
     );
   });
