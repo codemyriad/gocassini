@@ -350,16 +350,14 @@ jobs:
   # Joins the per-platform digests into the tagged multi-arch manifest list.
   # Downstream jobs depend on this job, so on push they only start once every
   # tag points at the multi-arch image. PRs push nothing: this job only
-  # forwards the amd64 tags, and a failing arm64 build reports on its own
-  # check instead of skipping every amd64 e2e job.
+  # forwards the amd64 tags. It still requires the arm64 job on PRs, so a
+  # broken arm64 build fails the required faithful gate instead of merging.
+  # No always(): the default success() condition also skips this job when a
+  # newer push cancels the run, so a stale run never retags the registry.
   build-image:
     name: Build ExApp image
     runs-on: ubuntu-latest
     needs: [build-image-amd64, build-image-arm64]
-    if: >-
-      always() &&
-      needs.build-image-amd64.result == 'success' &&
-      (github.event_name == 'pull_request' || needs.build-image-arm64.result == 'success')
     outputs:
       image_ref: ${{ needs.build-image-amd64.outputs.tags }}
       digest: ${{ steps.merge.outputs.digest || needs.build-image-amd64.outputs.digest }}
