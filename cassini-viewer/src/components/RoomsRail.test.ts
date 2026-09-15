@@ -37,11 +37,9 @@ describe("RoomsRail Show filter", () => {
     expect(roomsRailSource).toContain("export let insightCount = 0;");
   });
 
-  it("checks the insights box in the primary colour", () => {
-    // Primary is the checked colour across the list and follows Nextcloud's
-    // theming; the amber insight surfaces do not.
+  it("checks both Show boxes in the same neutral colour", () => {
     expect(roomsRailSource).toContain(
-      '.type-row input[data-type="insights"]:checked {\n    background-color: var(--color-primary);',
+      '.type-row input[data-type]:checked {\n    background-color: var(--color-base-content);',
     );
   });
 

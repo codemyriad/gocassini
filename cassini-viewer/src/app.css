@@ -223,20 +223,6 @@
   border: 1px solid var(--color-border-dark);
 }
 
-/* All NC modes: solid primary fill on the selected room.
- * D-654 replaced the list's cards with flat rows, so this is scoped to the
- * thing that actually carries a selected state — NOT to every button in the
- * rail. */
-:host([data-nc-theme]) .cassini-root .room-button[aria-pressed="true"] {
-  background-color: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-primary-content);
-  box-shadow: none;
-}
-:host([data-nc-theme]) .cassini-root .room-button[aria-pressed="true"] * {
-  color: var(--color-primary-content);
-}
-
 /* HC: flatten all backgrounds to NC's main-background — clean white/black canvas */
 :host([data-nc-theme*="highcontrast"]) .cassini-root {
   --color-base-100: var(--color-main-background);

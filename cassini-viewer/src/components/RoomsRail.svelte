@@ -233,7 +233,7 @@
     line-height: 20px;
   }
   .type-row:hover {
-    background-color: var(--color-base-300);
+    background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
   }
   .type-row:has(input:disabled) {
     cursor: default;
@@ -243,22 +243,12 @@
     background: none;
   }
 
-  /* base-content for meetings, primary for insights: primary is the checked
-     colour everywhere else in the list and follows Nextcloud's theming, where
-     the amber insight surfaces do not. */
-  .type-row input[data-type="meetings"]:checked {
+  .type-row input[data-type]:checked {
     background-color: var(--color-base-content);
     border-color: var(--color-base-content);
   }
-  .type-row input[data-type="insights"]:checked {
-    background-color: var(--color-primary);
-    border-color: var(--color-primary);
-  }
-  .type-row input[data-type="meetings"]:checked::after {
+  .type-row input[data-type]:checked::after {
     border-color: var(--color-base-100);
-  }
-  .type-row input[data-type="insights"]:checked::after {
-    border-color: var(--color-primary-content);
   }
   .type-row input.tag-box:checked {
     background-color: var(--tag);
@@ -315,7 +305,6 @@
   .segment[aria-pressed="true"] {
     background-color: var(--color-base-200);
     color: var(--color-base-content);
-    font-weight: 600;
     box-shadow:
       0 1px 2px oklch(0% 0 0 / 0.12),
       0 0 0 1px color-mix(in oklch, var(--color-base-content) 8%, transparent);
@@ -347,7 +336,7 @@
   }
   .manage-tags:hover {
     color: var(--color-base-content);
-    background-color: var(--color-base-300);
+    background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
   }
   .rail-note {
     padding: 4px 16px;
@@ -369,16 +358,10 @@
     font-size: 0.875rem;
   }
   .room-button:hover {
-    background-color: var(--color-base-300);
+    background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
   }
   .room-button[aria-pressed="true"] {
-    background-color: color-mix(
-      in oklch,
-      var(--color-primary) 15%,
-      transparent
-    );
-    color: var(--color-primary);
-    font-weight: 600;
+    background-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
     box-shadow: inset 2px 0 0 var(--color-primary);
   }
 
@@ -404,9 +387,6 @@
     font-size: 0.6875rem;
     font-variant-numeric: tabular-nums;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
-  }
-  .room-button[aria-pressed="true"] .room-count {
-    color: var(--color-primary);
   }
 
   /* Narrow: the rail becomes the drawer. visibility (not just the transform)
