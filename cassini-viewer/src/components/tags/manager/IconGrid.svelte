@@ -28,14 +28,14 @@
 <div use:popover={{ anchor, close: () => dispatch("close") }} role="radiogroup" aria-label="Tag icon" tabindex="-1"
   class="tag-popover w-[264px] p-2" on:keydown={onKeydown}>
   <button bind:this={none} type="button" role="radio" aria-checked={value === ""} on:click={() => dispatch("select", "")}
-    class="ig-opt flex h-8 w-full cursor-pointer items-center gap-2 rounded-field px-2 text-sm font-medium hover:bg-base-200">
+    class="ig-opt flex h-8 w-full cursor-pointer items-center gap-2 rounded-field px-2 text-sm font-medium hover:bg-base-content/8">
     <span class="ig-none-box size-3 rounded-full border border-dashed border-base-content/40" aria-hidden="true"></span>No icon
   </button>
   <div class="mt-1.5 grid grid-cols-8 gap-1 border-t border-base-300 pt-1.5">
     {#each TAG_ICONS as icon, index (icon)}
       <button bind:this={buttons[index]} type="button" role="radio" aria-checked={icon === value} aria-label={styleName(icon)} title={styleName(icon)}
         tabindex={index === focused ? 0 : -1} on:click={() => dispatch("select", icon)} on:focus={() => (focused = index)}
-        class="ig-opt grid h-7 cursor-pointer place-items-center rounded-field text-(--tag) hover:bg-base-200">
+        class="ig-opt grid h-7 cursor-pointer place-items-center rounded-field text-(--tag) hover:bg-base-content/8">
         <TagIcon {icon} size={15} />
       </button>
     {/each}

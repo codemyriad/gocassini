@@ -259,7 +259,7 @@
 ) {
   border-color: var(--color-border-maxcontrast);
 }
-:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.search-field, .resultline .chip, .selbar-clear, .selbar-tag) {
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.search-field, .resultline .chip, .selbar-clear, .selbar-tag, .tag-popover, .tag-popover input) {
   border-color: var(--color-border-maxcontrast);
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root .tag-chip {
@@ -571,7 +571,9 @@ body {
 /* The surface of every tag popover: the picker, the swatches, the icons, the manager's menu. */
 .tag-popover {
   z-index: 50;
-  background: var(--color-base-100);
+  /* The inset surface the settings fields and the search box use: darker than
+     the page in dark, lighter in light. */
+  background: var(--color-base-200);
   border: 1px solid var(--color-base-300);
   border-radius: var(--radius-box, 0.5rem);
   box-shadow:

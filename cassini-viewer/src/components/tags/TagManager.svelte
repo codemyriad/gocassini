@@ -201,7 +201,7 @@
         aria-label={`Actions for ${menu.tag.label}`} class="tag-popover grid w-44 p-1" on:keydown={onMenuKeydown}>
         {#each MENU as [id, text], index (id)}
           <button type="button" role="menuitem" use:focus={index === 0} disabled={id === "merge" && tags.length < 2} class:text-error={id === "delete"}
-            class="rounded-field px-2.5 py-1.5 text-left text-sm hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none disabled:opacity-40"
+            class="rounded-field px-2.5 py-1.5 text-left text-sm hover:bg-base-content/8 focus-visible:bg-base-content/8 focus-visible:outline-none disabled:opacity-40"
             on:click={() => choose(id)}>{text}</button>
         {/each}
       </div>

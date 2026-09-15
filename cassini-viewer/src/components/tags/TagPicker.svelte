@@ -186,12 +186,14 @@
     font-size: 13.5px;
     color: inherit;
     background: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
     border-radius: var(--radius-field, 0.5rem);
   }
+  input:focus,
   input:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-base-content) 11%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-base-content) 11%, var(--color-base-100));
   }
   ul {
     max-height: 264px;
@@ -216,7 +218,7 @@
     cursor: pointer;
   }
   .active {
-    background: var(--color-base-200);
+    background: color-mix(in oklch, var(--color-base-content) 9%, transparent);
   }
   .mark {
     display: inline-flex;
