@@ -93,3 +93,40 @@ describe("RoomsRail tag filter", () => {
     expect(roomsRailSource).toContain('dispatch("manageTags")');
   });
 });
+
+// Who can see the recordings (D-756), beside the Rooms heading. It is shown to
+// every reader, administrator or not, and says the same to both: D-670 exists
+// because the previous behaviour was to say nothing.
+describe("RoomsRail audience notice", () => {
+  const html = (audience: string) => render(RoomsRail as never, { props: { audience } } as never).body;
+
+  it("names each audience in two words and explains it on hover, focus or tap", () => {
+    const everyone = html("everyone");
+    expect(everyone).toContain("All users");
+    expect(everyone).toContain("Anyone with an account on this Nextcloud can open every meeting here, including its recording and transcript");
+    expect(everyone).toMatch(/<button[^>]*aria-describedby="audience-detail"/);
+    const participants = html("participants");
+    expect(participants).toContain("Members only");
+    // The grant is the room's attendee list at publish, not who was present in
+    // the call (talk_participants.go, audience_test.go), so the wording must not
+    // say "in the call".
+    expect(participants).toContain("including anyone invited who didn't join the call");
+    expect(participants).not.toContain("in each call");
+  });
+
+  it("says under both that the setting is organisation-wide and who can change it", () => {
+    for (const audience of ["everyone", "participants"]) {
+      expect(html(audience)).toMatch(/class="audience-foot[^"]*">This is an organisation-wide setting\. Contact your Nextcloud admin to change it\.</);
+    }
+  });
+
+  it("never names the storage mode", () => {
+    expect(roomsRailSource).not.toContain("access_controlled");
+  });
+
+  it("renders nothing when nobody said", () => {
+    const rail = html("");
+    expect(rail).not.toContain("All users");
+    expect(rail).not.toContain("Members only");
+  });
+});

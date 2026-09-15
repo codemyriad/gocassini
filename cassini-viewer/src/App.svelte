@@ -1233,6 +1233,7 @@
       {tagsFailed}
       selectedTagIds={activeTagIds}
       {tagMatch}
+      {audience}
       on:toggleTag={(event) => toggleTagFilter(event.detail)}
       on:tagMatch={(event) => (tagMatch = event.detail)}
       on:manageTags={() => (tagManagerOpen = true)}
@@ -1242,7 +1243,6 @@
       meetings={roomMeetings}
       types={browseTypes}
       totalCount={catalogMeetings.length}
-      {audience}
       insights={roomInsights}
       totalInsightCount={insights.length}
       {insightsOffered}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Settings } from "@lucide/svelte";
+  import { Lock, Settings, Users } from "@lucide/svelte";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
   import { matchTags, type VocabularyTag } from "../viewer/annotations";
@@ -58,6 +58,27 @@
   const TAG_MATCHES: TagMatch[] = ["any", "all"];
   $: tagRows = tags ? matchTags(tags, "") : null;
 
+  export let audience: "" | "everyone" | "participants" = "";
+  const AUDIENCE = {
+    everyone: {
+      label: "All users",
+      detail:
+        "Anyone with an account on this Nextcloud can open every meeting here, including its recording and transcript, and see which room it came from. Guests can't.",
+    },
+    participants: {
+      label: "Members only",
+      detail:
+        "A recording can be opened by the people in its room when it was saved, including anyone invited who didn't join the call. Guests, and people added to the room later, can't open it. Recordings from public rooms are open to anyone with an account.",
+    },
+  } as const;
+  const AUDIENCE_FOOTNOTE = "This is an organisation-wide setting. Contact your Nextcloud admin to change it.";
+  let audienceEl: HTMLElement;
+  let audienceOpen = false;
+
+  function closeAudienceOutside(event: MouseEvent) {
+    if (audienceOpen && !event.composedPath().includes(audienceEl)) audienceOpen = false;
+  }
+
   function select(key: string | null) {
     dispatch("select", key);
     // Picking a room is the drawer's whole purpose, so it closes behind you.
@@ -66,8 +87,37 @@
   }
 </script>
 
+<svelte:window on:click={closeAudienceOutside} />
+
 <nav aria-label="Rooms" class="rooms-rail" data-open={open}>
-  <h2 class="rail-head">Rooms</h2>
+  <div class="rail-head rail-head-row rooms-head">
+    <h2>Rooms</h2>
+    {#if audience}
+      <span class="audience" bind:this={audienceEl}>
+        <button
+          type="button"
+          class="audience-note"
+          aria-expanded={audienceOpen}
+          aria-describedby="audience-detail"
+          on:click={() => (audienceOpen = !audienceOpen)}
+          on:keydown={(event) => {
+            if (event.key === "Escape") audienceOpen = false;
+          }}
+        >
+          {#if audience === "everyone"}
+            <Users size={11} aria-hidden="true" />
+          {:else}
+            <Lock size={11} aria-hidden="true" />
+          {/if}
+          {AUDIENCE[audience].label}
+        </button>
+        <span id="audience-detail" role="tooltip" class="tag-popover audience-detail" class:open={audienceOpen}>
+          {AUDIENCE[audience].detail}
+          <span class="audience-foot">{AUDIENCE_FOOTNOTE}</span>
+        </span>
+      </span>
+    {/if}
+  </div>
 
   <div class="rail-list">
     <button
@@ -182,15 +232,15 @@
 </nav>
 
 <style>
-  /* Plain CSS rather than Tailwind utilities: aria-pressed drives four
-     properties at once (fill, text, weight, the inset marker), which reads
+  /* Plain CSS rather than Tailwind utilities: aria-pressed drives two
+     properties at once (fill and the inset marker), which reads
      better as one rule than as a stack of aria-[pressed=true]: variants, and
      the narrow-viewport drawer needs a media query either way. */
   .rooms-rail {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding: 0.875rem 0;
+    padding: 16px 0 0.875rem;
     overflow-y: auto;
     overscroll-behavior: contain;
     background-color: var(--color-base-200);
@@ -313,6 +363,62 @@
     .segment {
       transition: none;
     }
+  }
+
+  .rail-head-row.rooms-head {
+    position: relative;
+    gap: 6px;
+  }
+  .audience-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: -3px 0;
+    padding: 2px 6px;
+    cursor: help;
+    background-color: color-mix(in oklch, var(--color-base-content) 7%, transparent);
+    border: 0;
+    border-radius: 5px;
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 14px;
+    letter-spacing: normal;
+    text-transform: none;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  .audience-note:hover,
+  .audience-note[aria-expanded="true"] {
+    background-color: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+    color: var(--color-base-content);
+  }
+  .audience-detail {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 8px;
+    right: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    letter-spacing: normal;
+    text-transform: none;
+    text-wrap: pretty;
+    color: var(--color-base-content);
+  }
+  .audience-foot {
+    display: block;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--color-base-300);
+    font-size: 11px;
+    text-wrap: balance;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .audience:hover .audience-detail,
+  .audience:focus-within .audience-detail,
+  .audience-detail.open {
+    display: block;
   }
 
   .rail-head-row {
