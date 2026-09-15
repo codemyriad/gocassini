@@ -14,7 +14,7 @@ describe("the first-run dialog", () => {
       `{firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}`,
     );
     expect(dialogSource).toContain(
-      "First, choose who can open Cassini's recordings and see the names of the rooms they came from.",
+      "First, choose who can open Cassini's recordings and see the names of the rooms they came from. You can change this later.",
     );
     // The two audiences are the settings section's own options, in its words.
     expect(dialogSource).toContain("accessOptions(null)");
@@ -91,7 +91,7 @@ describe("the first-run dialog", () => {
     );
     expect(dialogSource).toContain("Open Operator › Publish pipeline");
     const buttons = dialogSource.slice(dialogSource.indexOf("mt-1 flex flex-wrap"));
-    const blocked = buttons.slice(buttons.indexOf("{#if plan.blocked}"), buttons.indexOf("{:else if switching}"));
+    const blocked = buttons.slice(buttons.indexOf("{#if plan.blocked || plan.unavailable}"), buttons.indexOf("{:else if switching}"));
     expect(blocked).toContain("on:click={openSettings}");
     expect(blocked).not.toContain("on:click={start}");
   });
@@ -106,15 +106,18 @@ describe("the first-run dialog", () => {
     expect(dialogSource).toContain(".first-run-scrim {");
   });
 
-  it("says a standalone build cannot create the account, instead of offering to", () => {
+  it("says a standalone build cannot create the account, and points at the commands instead", () => {
     expect(dialogSource).toContain("{:else if plan.unavailable}");
     expect(dialogSource).toContain(
-      "Cassini needs a Nextcloud account to keep recordings in. This page cannot make the",
+      "Cassini needs a Nextcloud account to keep recordings in. This page can't create it",
     );
-    expect(dialogSource).toContain("Open Cassini from Nextcloud's own menu.");
+    expect(dialogSource).toContain("Open Cassini from Nextcloud's own menu, or run the commands under");
+    // Never Start: every write it would make is refused before it is sent, so
+    // the button would acknowledge a first run that never happened.
     const buttons = dialogSource.slice(dialogSource.indexOf("mt-1 flex flex-wrap"));
-    expect(buttons.indexOf("{:else if !plan.unavailable}")).toBeLessThan(
-      buttons.indexOf("on:click={start}"),
-    );
+    const noStart = buttons.slice(0, buttons.indexOf("{:else if switching}"));
+    expect(noStart).toContain("{#if plan.blocked || plan.unavailable}");
+    expect(noStart).toContain("on:click={openSettings}");
+    expect(noStart).not.toContain("on:click={start}");
   });
 });

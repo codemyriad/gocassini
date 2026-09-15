@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
+  import { TriangleAlert } from "@lucide/svelte";
   import type { OperatorClient } from "./operator/client";
   import { firstRunReady, type FirstRunPlan } from "./operator/firstRun";
   import { NcSetupError, runSetupPlan } from "./operator/ncSetup";
@@ -194,7 +195,7 @@
         {firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}
       </h2>
       <p class="text-sm text-base-content/80">
-        First, choose who can open Cassini's recordings and see the names of the rooms they came from.
+        First, choose who can open Cassini's recordings and see the names of the rooms they came from. You can change this later.
       </p>
 
       <div class="fr-options" role="radiogroup" aria-label="Who can see recordings">
@@ -218,14 +219,18 @@
       </div>
 
       {#if plan.blocked}
-        <p class="text-sm text-base-content/80">
-          Cassini needs a Nextcloud account to keep recordings in, and this page has no way to
-          create it. Open <strong>Operator › Publish pipeline</strong> to see what is missing.
+        <p class="fr-problem" role="status">
+          <TriangleAlert size={18} class="fr-problem-icon" aria-hidden="true" />
+          <span>Cassini needs a Nextcloud account to keep recordings in, and this page has no way to
+          create it. Open <strong>Operator › Publish pipeline</strong> to see what is missing.</span>
         </p>
       {:else if plan.unavailable}
-        <p class="text-sm text-base-content/80">
-          Cassini needs a Nextcloud account to keep recordings in. This page cannot make the
-          changes itself. Open Cassini from Nextcloud's own menu.
+        <p class="fr-problem" role="status">
+          <TriangleAlert size={18} class="fr-problem-icon" aria-hidden="true" />
+          <span>Cassini needs a Nextcloud account to keep recordings in. This page can't create it
+          itself. Open Cassini from Nextcloud's own menu, or run the commands under
+          <strong>Details for administrators</strong> in <strong>Operator › Publish pipeline</strong>
+          on the server.</span>
         </p>
       {:else if switching}
         <p class="text-sm text-base-content/80">
@@ -250,9 +255,8 @@
         <p class="text-xs break-words text-error" role="alert">{actionError}</p>
       {/if}
 
-      <div class="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <p class="text-sm text-base-content/70">You can change this later.</p>
-        {#if plan.blocked}
+      <div class="mt-1 flex flex-wrap items-center justify-end gap-2">
+        {#if plan.blocked || plan.unavailable}
           <button
             class="btn btn-primary"
             type="button"
@@ -271,7 +275,7 @@
           >
             Continue in Publish pipeline
           </button>
-        {:else if !plan.unavailable}
+        {:else}
           <button
             class="btn btn-primary"
             type="button"
@@ -430,6 +434,24 @@
     .fr-sk-rail {
       display: none;
     }
+  }
+
+  .fr-problem {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-warning) 12%, var(--color-base-100));
+    border: 1px solid color-mix(in oklch, var(--color-warning) 45%, var(--color-base-100));
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .fr-problem :global(.fr-problem-icon) {
+    flex: none;
+    margin-top: 2px;
+    color: var(--color-warning);
   }
 
   .fr-options {
