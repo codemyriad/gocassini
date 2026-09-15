@@ -416,3 +416,53 @@ func TestSearchEndpointRejectsABadPerMeeting(t *testing.T) {
 		t.Fatalf("status = %d, want 400 for a nonsense cap", rec.Code)
 	}
 }
+
+// Narrowing by room must bound the visible set BEFORE the statement, not
+// filter a ranked page afterwards — otherwise a caller who has narrowed to one
+// room can be told nothing matched while matches sit below the page cut.
+func TestSearchEndpointNarrowsByRoom(t *testing.T) {
+	index := newTestSearchStore(t)
+	seedSearchable(t, index, "JOB1.opus", seg("s1", "S1", 1000, 4000, "the roadmap"))
+	seedSearchable(t, index, "JOB2.opus", seg("s2", "S2", 1000, 4000, "the roadmap"))
+	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus", "JOB2.opus"}}.server(t)
+	defer srv.Close()
+
+	rec := doSearch(t, searchTestConfig(srv.URL), index, "q=roadmap&room=rm_2", "alice")
+	var got searchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, hit := range got.Hits {
+		if hit.MeetingID != "MEET-2" {
+			t.Errorf("hit from outside the room: %+v", hit)
+		}
+	}
+	if len(got.Hits) == 0 {
+		t.Fatal("the room's own meeting should still match")
+	}
+	// Coverage counts what was actually searched, so a narrowed search must not
+	// claim to have looked at the whole archive.
+	if got.Coverage.Visible != 1 {
+		t.Errorf("coverage.visible = %d, want 1 after narrowing to rm_2", got.Coverage.Visible)
+	}
+}
+
+// An unknown room is an empty narrowing, not an unfiltered search.
+func TestSearchEndpointUnknownRoomFindsNothing(t *testing.T) {
+	index := newTestSearchStore(t)
+	seedSearchable(t, index, "JOB1.opus", seg("s1", "S1", 1000, 4000, "the roadmap"))
+	srv := searchUpstream{catalog: searchTestCatalog, visible: []string{"JOB1.opus"}}.server(t)
+	defer srv.Close()
+
+	rec := doSearch(t, searchTestConfig(srv.URL), index, "q=roadmap&room=rm_nope", "alice")
+	var got searchResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Hits) != 0 {
+		t.Errorf("got %d hits for a room that matches nothing", len(got.Hits))
+	}
+	if got.Coverage.Visible != 0 {
+		t.Errorf("coverage.visible = %d, want 0", got.Coverage.Visible)
+	}
+}

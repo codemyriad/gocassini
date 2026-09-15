@@ -87,6 +87,15 @@ export function isMeetingSearchAvailable(): boolean {
 }
 
 export interface MeetingSearchOptions {
+  // Narrow to one room, server-side. Sent rather than applied to the answer:
+  // the endpoint bounds its visible set before the statement runs, so LIMIT
+  // applies to the narrowed population. Filtering the returned page instead can
+  // report nothing while matches sit just below the cut.
+  readonly roomId?: string;
+  // Narrow to one tag, the same way and for the same reason. One tag only —
+  // that is what the endpoint takes; see searchNarrowing for what happens when
+  // the caller has picked several.
+  readonly tag?: string;
   // Cap on hits from any one meeting. Without it a meeting with sixty hits
   // fills the page and every other matching meeting is absent from the list —
   // which reads as "those meetings do not match".
@@ -119,6 +128,12 @@ export async function searchMeetingTranscripts(
   }
   if (options.limit && options.limit > 0) {
     target.searchParams.set("limit", String(options.limit));
+  }
+  if (options.roomId && options.roomId.trim() !== "") {
+    target.searchParams.set("room", options.roomId.trim());
+  }
+  if (options.tag && options.tag.trim() !== "") {
+    target.searchParams.set("tag", options.tag.trim());
   }
 
   let response: Response;

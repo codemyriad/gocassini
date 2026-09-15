@@ -213,3 +213,33 @@ describe("isMeetingSearchAvailable", () => {
     expect(isMeetingSearchAvailable()).toBe(true);
   });
 });
+
+// The narrowing must reach the SERVER, not just the rendered answer: the
+// endpoint bounds its visible set before the statement, so LIMIT applies to the
+// narrowed population. Filtering the page instead can report nothing while
+// matches sit below the cut.
+describe("narrowing reaches the server", () => {
+  it("sends room and tag when they are set", async () => {
+    withOperator("https://nc.example/apps/gocassini/");
+    const fetchMock = respondWith(200, { hits: [], coverage: { visible: 2, searched: 2 } });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await searchMeetingTranscripts("roadmap", { roomId: "rm_7", tag: "Daily" });
+
+    const called = new URL((fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string);
+    expect(called.searchParams.get("room")).toBe("rm_7");
+    expect(called.searchParams.get("tag")).toBe("Daily");
+  });
+
+  it("omits them when there is no narrowing, rather than sending blanks", async () => {
+    withOperator("https://nc.example/apps/gocassini/");
+    const fetchMock = respondWith(200, { hits: [], coverage: { visible: 2, searched: 2 } });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await searchMeetingTranscripts("roadmap", { roomId: "", tag: "   " });
+
+    const called = new URL((fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string);
+    expect(called.searchParams.has("room")).toBe(false);
+    expect(called.searchParams.has("tag")).toBe(false);
+  });
+});
