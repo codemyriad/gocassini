@@ -872,7 +872,7 @@
     position: sticky;
     top: 0;
     z-index: 2;
-    padding: 1.875rem var(--list-x) 0.5rem;
+    padding: var(--list-x) var(--list-x) 0.5rem;
     font-size: 11px;
     font-weight: 650;
     line-height: 1;
