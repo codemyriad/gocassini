@@ -61,7 +61,7 @@
   export let audience: "" | "everyone" | "participants" = "";
   const AUDIENCE = {
     everyone: {
-      label: "All users",
+      label: "Visible to all users",
       detail:
         "Anyone with an account on this Nextcloud can open every meeting here, including its recording and transcript, and see which room it came from. Guests can't.",
     },

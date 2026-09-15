@@ -102,7 +102,7 @@ describe("RoomsRail audience notice", () => {
 
   it("names each audience in two words and explains it on hover, focus or tap", () => {
     const everyone = html("everyone");
-    expect(everyone).toContain("All users");
+    expect(everyone).toContain("Visible to all users");
     expect(everyone).toContain("Anyone with an account on this Nextcloud can open every meeting here, including its recording and transcript");
     expect(everyone).toMatch(/<button[^>]*aria-describedby="audience-detail"/);
     const participants = html("participants");
@@ -126,7 +126,7 @@ describe("RoomsRail audience notice", () => {
 
   it("renders nothing when nobody said", () => {
     const rail = html("");
-    expect(rail).not.toContain("All users");
+    expect(rail).not.toContain("Visible to all users");
     expect(rail).not.toContain("Members only");
   });
 });
