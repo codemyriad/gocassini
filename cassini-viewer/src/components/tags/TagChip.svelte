@@ -21,7 +21,7 @@
   {#if icon}
     <TagIcon {icon} size={11} />
   {:else}
-    <TagIcon size={9} />
+    <TagIcon size={8} />
   {/if}
   <span class="tag-chip-label">{label}</span>
   {#if variant === "stretch" && count > 1}
@@ -47,7 +47,9 @@
     gap: 3px;
     max-width: 100%;
     min-width: 0;
-    padding: 2px 5px 2px 4px;
+    box-sizing: border-box;
+    height: 18px;
+    padding: 0 5px;
     font-size: 11.5px;
     font-weight: 550;
     line-height: 1;
@@ -58,18 +60,22 @@
     border-radius: 999px;
   }
   .tag-chip.whole {
-    color: var(--color-base-100);
-    background: var(--tag);
-    border-color: var(--tag);
+    background: color-mix(in srgb, var(--tag) 18%, transparent);
+    border-color: transparent;
     border-radius: 5px;
   }
   .tag-chip :global(span.tag-dot) {
-    background: color-mix(in oklch, var(--tag) 65%, black);
-    background: oklch(from var(--tag) calc(l - 0.14) calc(c * 2) h);
+    margin-right: 2px;
+    translate: 0 0.5px;
+    background: currentColor;
   }
   .tag-chip-label {
+    padding-block: 3px;
+    margin-block: -3px;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-box: trim-both ex alphabetic;
+    translate: 0 0.5px;
   }
   .tag-chip-count {
     font-family: var(--font-mono);

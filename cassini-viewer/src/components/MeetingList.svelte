@@ -1006,6 +1006,7 @@
     min-width: 0;
   }
   .row-title {
+    line-height: 22px;
     font-weight: 550;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1019,6 +1020,7 @@
     gap: 2px 8px;
     min-width: 0;
     font-size: 0.75rem;
+    line-height: 18px;
     font-variant-numeric: tabular-nums;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }

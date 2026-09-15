@@ -6,7 +6,7 @@
   import { matchTags, type VocabularyTag } from "../viewer/annotations";
   import type { TagMatch } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
-  import TagIcon from "./tags/TagIcon.svelte";
+  import TagChip from "./tags/TagChip.svelte";
 
   // The rooms nav (D-654), and under it the two kinds the list holds.
   //
@@ -117,10 +117,9 @@
               checked={selectedTagIds.includes(tag.tagId)}
               on:change={() => dispatch("toggleTag", tag.tagId)}
             />
-            {#if tag.icon}
-              <span class="tag-mark"><TagIcon icon={tag.icon} /></span>
-            {/if}
-            <span class="room-name">{tag.label}</span>
+            <span class="rail-tag">
+              <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} variant="whole" />
+            </span>
             <span class="room-count">{tag.meetings}</span>
           </label>
         {:else}
@@ -231,6 +230,7 @@
     cursor: pointer;
     color: var(--color-base-content);
     font-size: 0.875rem;
+    line-height: 20px;
   }
   .type-row:hover {
     background-color: var(--color-base-300);
@@ -260,9 +260,6 @@
   .type-row input[data-type="insights"]:checked::after {
     border-color: var(--color-primary-content);
   }
-  .type-row input.tag-box {
-    border-color: var(--tag);
-  }
   .type-row input.tag-box:checked {
     background-color: var(--tag);
     border-color: var(--tag);
@@ -270,9 +267,16 @@
   .type-row input.tag-box:checked::after {
     border-color: var(--color-base-100);
   }
-  .tag-mark {
-    display: inline-flex;
-    color: var(--tag);
+  .rail-tag {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  .rail-tag :global(span.tag-chip) {
+    flex: 0 1 auto;
+  }
+  .rail-tag :global(.tag-chip span.tag-dot) {
+    translate: none;
   }
 
   .tag-match {
