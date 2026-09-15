@@ -129,6 +129,12 @@ func (c ExAppConfig) serveSearch(
 		}
 		limit = parsed
 	}
+	// room narrows the same way tag does, and for the same reason: a viewer or
+	// an agent that has narrowed to one room is asking a question about that
+	// room, and answering it from a page ranked over every room can return
+	// nothing while matches sit just below the cut. Narrowing the visible set
+	// first makes LIMIT mean what it says.
+	room := strings.TrimSpace(r.URL.Query().Get("room"))
 	tag, err := parseTagParam(r.URL.Query())
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
@@ -181,6 +187,11 @@ func (c ExAppConfig) serveSearch(
 	byOpusName := make(map[string]catalogHydration, len(entries))
 	for _, entry := range entries {
 		if entry.opusName == "" {
+			continue
+		}
+		// The room is part of the caller's own catalog, so this narrows the
+		// visible set BEFORE the statement rather than filtering a ranked page.
+		if room != "" && entry.roomID != room {
 			continue
 		}
 		visible = append(visible, entry.opusName)
