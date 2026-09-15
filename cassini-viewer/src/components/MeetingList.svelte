@@ -92,6 +92,8 @@
   // Null offers no row tag button: the build cannot tag, or the vocabulary has not loaded.
   export let tags: readonly VocabularyTag[] | null = null;
   export let tagFilterCount = 0;
+  // The tags the list is narrowed by, in the order they were picked.
+  export let tagFilterIds: readonly string[] = [];
   export let tagNotice = "";
   let tagging: { meeting: MeetingCatalogEntry; anchor: HTMLElement } | null = null;
 
@@ -139,6 +141,7 @@
     toggleTheme: void;
     tagMeeting: { meeting: MeetingCatalogEntry; pick: TagPick };
     clearTags: void;
+    removeTag: string;
     dismissTagNotice: void;
     // What was typed. The shell debounces it and asks the operator.
     query: string;
@@ -194,6 +197,22 @@
   });
   $: feedGroups = groupBrowseFeedByMonth(feedItems);
   $: trimmedFilter = filter.trim();
+  $: filterTags = tagFilterIds
+    .map((id) => tags?.find((tag) => tag.tagId === id))
+    .filter((tag): tag is VocabularyTag => tag !== undefined);
+  $: shownFilterTags = filterTags.length > 3 ? filterTags.slice(0, 2) : filterTags;
+  $: moreFilterTags = filterTags.length - shownFilterTags.length;
+  $: narrowed = selectedRoomName !== null || trimmedFilter !== "" || tagFilterCount > 0;
+
+  function clearFilters(): void {
+    filter = "";
+    if (selectedRoomName !== null) {
+      dispatch("clearRoom");
+    }
+    if (tagFilterCount > 0) {
+      dispatch("clearTags");
+    }
+  }
   // The one narrowing that can empty the list without the search doing it.
   $: insightsOnly = insightsOffered && types.insights && !types.meetings;
   // The empty state names what it looked for, so a list showing both kinds
@@ -289,14 +308,17 @@
     <!-- Fixed height: a chip appearing must not push the list down under the
          pointer. -->
     <div class="resultline" role="status">
-      <span>{visibleMeetings.length} of {totalCount} meetings</span>
-      <!-- Three states, and none of them is the other two: a count once a
-           listing has come back, the fact that it did not when it failed, and
-           nothing at all while the first one is still in flight. A "0" that was
-           never loaded would be a claim nobody made. -->
+      {#if types.meetings}
+        <span>{narrowed ? `${visibleMeetings.length} of ${totalCount} meetings` : plural(totalCount, "meeting")}</span>
+      {/if}
+      <!-- A count once a listing has come back and there is something to
+           count, the fact that it did not when it failed, and nothing at all
+           while the first one is still in flight. -->
       {#if insightsOffered && insightsLoaded}
-        <span class="dot" aria-hidden="true"></span>
-        <span>{visibleInsights.length} of {totalInsightCount} insights</span>
+        {#if types.insights && totalInsightCount > 0}
+          {#if types.meetings}<span class="dot" aria-hidden="true"></span>{/if}
+          <span>{narrowed ? `${visibleInsights.length} of ${totalInsightCount} insights` : plural(totalInsightCount, "insight")}</span>
+        {/if}
       {:else if insightsOffered && insightsError}
         <span class="dot" aria-hidden="true"></span>
         <span>Insights could not be listed.</span>
@@ -313,6 +335,28 @@
           </button>
         </span>
       {/if}
+      {#each shownFilterTags as tag (tag.tagId)}
+        <TagChip
+          label={tag.label}
+          color={colorFor(tag)}
+          icon={tag.icon}
+          variant="whole"
+          removable
+          on:remove={() => dispatch("removeTag", tag.tagId)}
+        />
+      {/each}
+      {#if moreFilterTags > 0}
+        <span class="chip" title={filterTags.slice(shownFilterTags.length).map((tag) => tag.label).join(", ")}>
+          +{moreFilterTags}
+        </span>
+      {:else if tagFilterCount > 0 && filterTags.length === 0}
+        <span class="chip">
+          {plural(tagFilterCount, "tag")}
+          <button type="button" on:click={() => dispatch("clearTags")} aria-label="Clear tag filters">
+            <X size={12} aria-hidden="true" />
+          </button>
+        </span>
+      {/if}
       {#if trimmedFilter}
         <span class="chip">
           “{trimmedFilter}”
@@ -320,6 +364,9 @@
             <X size={12} aria-hidden="true" />
           </button>
         </span>
+      {/if}
+      {#if narrowed}
+        <button type="button" class="clear-filters" on:click={clearFilters}>Clear filters</button>
       {/if}
     </div>
   </header>
@@ -674,7 +721,7 @@
 
   .searchbar {
     z-index: 5;
-    padding: 1rem var(--list-x) 0.75rem;
+    padding: 1rem var(--list-x) 6px;
     background-color: var(--color-base-100);
     border-bottom: 1px solid var(--color-base-300);
   }
@@ -716,19 +763,16 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0 0.75rem;
-    height: 2.375rem;
-    /* Same ground as the list below it: the border defines the field, not a
-       change of surface. */
-    background-color: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
+    padding: 0 12px;
+    height: 40px;
+    background-color: var(--color-base-200);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
     border-radius: var(--radius-field, 0.5rem);
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
   .search-field:focus-within {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px
-      color-mix(in oklch, var(--color-primary) 15%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-base-content) 11%, var(--color-base-100));
   }
   .search-field input {
     flex: 1;
@@ -756,7 +800,7 @@
     align-items: center;
     gap: 0.625rem;
     height: 30px;
-    margin-top: 0.5rem;
+    margin-top: 6px;
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -764,40 +808,63 @@
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
 
-  /* An active narrowing is state, not decoration: primary-coloured so it is
-     obvious the list is filtered rather than complete. */
+  .clear-filters {
+    flex: none;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    font-size: 0.75rem;
+    font-weight: 550;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .clear-filters:hover {
+    color: var(--color-base-content);
+  }
+
+  /* Sized like a tag chip (TagChip.svelte), without the dot: a filter is not
+     one of the vocabulary's colours. */
   .chip {
     display: inline-flex;
+    flex: none;
     align-items: center;
-    gap: 0.375rem;
+    gap: 4px;
     min-width: 0;
-    padding: 3px 8px;
-    border-radius: 20px;
-    background-color: color-mix(
-      in oklch,
-      var(--color-primary) 15%,
-      transparent
-    );
-    border: 1px solid
-      color-mix(in oklch, var(--color-primary) 38%, transparent);
-    font-size: 0.71875rem;
+    max-width: 16rem;
+    box-sizing: border-box;
+    height: 22px;
+    padding: 0 7px 0 8px;
+    font-size: 11.5px;
     font-weight: 550;
-    color: var(--color-primary);
+    line-height: 1;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: color-mix(in oklch, var(--color-base-content) 85%, transparent);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, transparent);
+    border-radius: 5px;
+  }
+
+  .resultline :global(.tag-chip) {
+    height: 22px;
+    gap: 4px;
+    padding: 0 7px 0 8px;
   }
 
   .chip button {
     display: inline-flex;
     flex: none;
-    padding: 0;
+    margin: -2px 0;
+    padding: 0 0 0 2px;
     background: none;
     border: 0;
     cursor: pointer;
-    color: color-mix(in oklch, var(--color-primary) 70%, transparent);
+    color: inherit;
+    opacity: 0.7;
   }
   .chip button:hover {
-    color: var(--color-primary);
+    opacity: 1;
   }
 
   .resultline .dot {
@@ -1066,14 +1133,10 @@
     background: none;
     border: 1px solid var(--color-base-300);
     border-radius: var(--radius-field, 0.5rem);
-    color: var(--color-primary);
+    color: var(--color-base-content);
   }
   .list-empty-action:hover {
-    background-color: color-mix(
-      in oklch,
-      var(--color-primary) 15%,
-      transparent
-    );
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
 
   @media (max-width: 720px) {

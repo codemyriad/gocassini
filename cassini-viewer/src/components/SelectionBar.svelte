@@ -62,8 +62,8 @@
           {count === 1 ? "meeting selected" : "meetings selected"}
         </p>
         <button type="button" class="selbar-clear" on:click={() => dispatch("clear")}>
-          <X size={12} aria-hidden="true" />
           Clear selection
+          <X size={12} aria-hidden="true" />
         </button>
       </div>
       <p class="selbar-desc">
@@ -197,7 +197,9 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 8px;
+    box-sizing: border-box;
+    height: 22px;
+    padding: 0 7px 0 8px;
     cursor: pointer;
     background-color: transparent;
     border: 1px solid var(--color-base-300);

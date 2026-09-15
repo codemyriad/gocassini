@@ -1281,6 +1281,8 @@
       {meetingTags}
       tags={vocabularyTags}
       tagFilterCount={activeTagIds.length}
+      tagFilterIds={activeTagIds}
+      on:removeTag={(event) => toggleTagFilter(event.detail)}
       {tagNotice}
       on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
       on:clearTags={() => (selectedTagIds = [])}

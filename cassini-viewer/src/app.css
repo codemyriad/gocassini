@@ -259,6 +259,19 @@
 ) {
   border-color: var(--color-border-maxcontrast);
 }
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.search-field, .resultline .chip, .selbar-clear, .selbar-tag) {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tag-chip {
+  border-color: var(--tag);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .cassini-check:not(:checked) {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .audience-note {
+  box-shadow: inset 0 0 0 1px var(--color-border-maxcontrast);
+  color: var(--color-main-text);
+}
 :host([data-nc-theme*="highcontrast"]) .cassini-root .op-settings :is(.hw-section, .set-card) {
   border-top-color: var(--color-border-maxcontrast);
 }

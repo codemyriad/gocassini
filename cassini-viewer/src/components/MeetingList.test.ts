@@ -114,7 +114,7 @@ describe("MeetingList insights", () => {
     expect(meetingListSource).toContain("{#if insightsError}");
     expect(meetingListSource).toContain("Insights could not be listed.");
     expect(meetingListSource).toMatch(
-      /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
+      /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,400}\{:else if insightsOffered && insightsError\}/,
     );
   });
 
