@@ -1,7 +1,12 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { FileText, Tag, X } from "@lucide/svelte";
+  import { cubicOut } from "svelte/easing";
+  import { ChevronDown, FileText, Tag, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
+  import { formatMeetingDateShort, type MeetingCatalogEntry } from "../viewer/catalog";
+  import type { MeetingTags } from "../viewer/listTags";
+  import { colorFor } from "../viewer/tagPalette";
+  import TagChip from "./tags/TagChip.svelte";
   import TagPicker from "./tags/TagPicker.svelte";
   import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";
 
@@ -32,6 +37,20 @@
   export let tagSelected: readonly string[] = [];
   export let tagMixed: readonly string[] = [];
   export let tagReport = "";
+  // The picked meetings themselves, in pick order. The count alone leaves a
+  // reader who has since changed room or search with no way to see WHICH
+  // meetings a bundle would carry.
+  export let entries: readonly MeetingCatalogEntry[] = [];
+  // Of those, the ones the current narrowing is not showing.
+  export let hiddenIds: ReadonlySet<string> = new Set();
+  // Each picked meeting's tags, for the list behind the count. Whole-meeting
+  // tags only: a tag on one stretch of a transcript says nothing about the
+  // meeting the bundle carries, and this is where a bulk tag is seen to land.
+  export let meetingTags: MeetingTags = new Map();
+
+  const MAX_ROW_TAGS = 2;
+  const wholeTags = (id: string) =>
+    (meetingTags.get(id) ?? []).filter((entry) => entry.whole).map((entry) => entry.tag);
 
   // Above the operator's cap Prepare would open a panel whose every action is
   // refused, so the button says the number instead (D-749).
@@ -43,7 +62,31 @@
     prepare: void;
     dismissDropped: void;
     tag: TagPick;
+    unpick: MeetingCatalogEntry;
+    open: MeetingCatalogEntry;
   }>();
+
+  // Whether the list of picks is open. Closed by default: the bar floats over
+  // the list it describes, and a panel nobody asked for would cover it.
+  let listing = false;
+
+  // Rises out of the bar it belongs to, rather than appearing over the list.
+  // Reduced motion gets the same panel with no travel.
+  function riseUp(_node: Element, { duration = 180 }: { duration?: number }) {
+    const still =
+      typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (still) {
+      return { duration: 0 };
+    }
+    return {
+      duration,
+      easing: cubicOut,
+      css: (t: number, u: number) => `opacity: ${t}; transform: translateY(${u * 8}px) scale(${0.985 + t * 0.015})`,
+    };
+  }
+  $: if (count === 0) {
+    listing = false;
+  }
 
   let tagButton: HTMLButtonElement;
   let tagging = false;
@@ -57,10 +100,17 @@
   {#if count > 0}
     <div class="selbar-said">
       <div class="selbar-head">
-        <p class="selbar-count">
+        <button
+          type="button"
+          class="selbar-count"
+          aria-expanded={listing}
+          aria-label={listing ? "Hide the selected meetings" : "Show the selected meetings"}
+          on:click={() => (listing = !listing)}
+        >
           {count}
           {count === 1 ? "meeting selected" : "meetings selected"}
-        </p>
+          <ChevronDown size={13} class="selbar-count-chev" aria-hidden="true" />
+        </button>
         <button type="button" class="selbar-clear" on:click={() => dispatch("clear")}>
           Clear selection
           <X size={12} aria-hidden="true" />
@@ -107,6 +157,42 @@
         Prepare
       </button>
     </div>
+    {#if listing}
+      <!-- Above the bar, not over the actions: this answers "which ones", and
+           the row it belongs to is the count it opens from. -->
+      <div class="selbar-list" role="group" aria-label="Selected meetings" transition:riseUp={{}}>
+        <ul>
+          {#each entries as entry (entry.id)}
+            <li class="selbar-item">
+              <button type="button" class="selbar-item-open" on:click={() => dispatch("open", entry)}>
+                <span class="selbar-item-title">{entry.title}</span>
+                <span class="selbar-item-meta">
+                  {formatMeetingDateShort(entry.dateLabel)}
+                  {#each wholeTags(entry.id).slice(0, MAX_ROW_TAGS) as tag (tag.tagId)}
+                    <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} variant="whole" />
+                  {/each}
+                  {#if wholeTags(entry.id).length > MAX_ROW_TAGS}
+                    <span class="selbar-item-more">+{wholeTags(entry.id).length - MAX_ROW_TAGS}</span>
+                  {/if}
+                  {#if hiddenIds.has(entry.id)}
+                    <span class="selbar-item-hidden">Not shown here</span>
+                  {/if}
+                </span>
+              </button>
+              <button
+                type="button"
+                class="selbar-item-drop"
+                aria-label={`Unpick ${entry.title}`}
+                on:click={() => dispatch("unpick", entry)}
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+
     {#if tags && tagging}
       <TagPicker
         {tags}
@@ -144,6 +230,7 @@
      with a floating geometry and a stacked shadow, which reads better as a
      handful of rules than as utility stacks across six elements. */
   .selection-bar {
+    position: relative;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -168,9 +255,100 @@
   }
 
   .selbar-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+    border: 0;
     font-size: 0.875rem;
     font-weight: 650;
     color: var(--color-primary);
+  }
+  .selbar-count :global(.selbar-count-chev) {
+    transition: transform 120ms ease;
+  }
+  .selbar-count[aria-expanded="true"] :global(.selbar-count-chev) {
+    transform: rotate(180deg);
+  }
+
+  .selbar-list {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 8px);
+    max-height: min(320px, 50vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 6px;
+    background-color: var(--color-base-200);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-xl, 0.75rem);
+    box-shadow:
+      0 1px 3px oklch(0% 0 0 / 0.18),
+      0 12px 32px oklch(0% 0 0 / 0.28);
+  }
+  .selbar-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .selbar-item-open {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    min-width: 0;
+    gap: 2px 10px;
+    padding: 6px 8px;
+    text-align: left;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-field, 0.5rem);
+    color: var(--color-base-content);
+  }
+  .selbar-item-open:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+  .selbar-item-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8125rem;
+    font-weight: 550;
+  }
+  .selbar-item-meta {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    font-size: 0.6875rem;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .selbar-item-more {
+    font-variant-numeric: tabular-nums;
+  }
+  .selbar-item-hidden {
+    padding: 0 5px;
+    border-radius: 999px;
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+  .selbar-item-drop {
+    display: inline-flex;
+    flex: none;
+    padding: 6px;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-field, 0.5rem);
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .selbar-item-drop:hover {
+    color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
 
   .selbar-desc {

@@ -997,6 +997,11 @@
   $: selectionTotals = summarizeSelection(pickedMeetings);
   $: selectionGaps = describeSelectionGaps(selectionTotals);
   $: hiddenSelectedCount = countHiddenByView(selection, visibleMeetings);
+  // The same question as countHiddenByView, answered per meeting, for the list
+  // behind the bar's count: a pick the current room or search is not showing
+  // says so beside its own row rather than only in a total.
+  $: shownMeetingIds = new Set(visibleMeetings.map((meeting) => meeting.id));
+  $: hiddenSelectedIds = new Set(selection.ids.filter((id) => !shownMeetingIds.has(id)));
   // Not `selection.ids.length > 0`: the bar is the only surface that reports a
   // meeting having left the archive, so it has to survive a loss that took the
   // last pick with it (selectionModel.shouldShowSelectionBar).
@@ -1295,6 +1300,11 @@
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
           droppedCount={selection.dropped.length}
+          entries={pickedMeetings}
+          hiddenIds={hiddenSelectedIds}
+          {meetingTags}
+          on:unpick={(event) => handlePick(event)}
+          on:open={(event) => loadCatalogMeeting(event.detail)}
           on:clear={handleClearSelection}
           on:prepare={() => (prepareOpen = true)}
           on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
