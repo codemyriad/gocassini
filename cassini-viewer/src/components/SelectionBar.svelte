@@ -147,15 +147,17 @@
     align-items: center;
     gap: 0.75rem 1rem;
     padding: 0.75rem 1rem;
-    background-color: var(--color-base-100);
+    background-color: var(--color-base-200);
     border: 1px solid var(--color-base-300);
     border-radius: var(--radius-box, 1rem);
     /* Floats clear of the list rather than capping it: rows scroll visibly
        behind and around it, so it reads as a separate thing rather than as the
        bottom of the list. */
     box-shadow:
-      0 1px 2px oklch(0% 0 0 / 0.06),
-      0 8px 24px oklch(0% 0 0 / 0.14);
+      0 1px 3px oklch(0% 0 0 / 0.18),
+      0 6px 16px oklch(0% 0 0 / 0.24),
+      0 18px 42px oklch(0% 0 0 / 0.34),
+      0 32px 72px oklch(0% 0 0 / 0.28);
   }
 
   .selbar-said {
@@ -184,7 +186,7 @@
   .selbar-clear {
     padding: 6px 10px;
     cursor: pointer;
-    background: none;
+    background-color: var(--color-base-100);
     border: 0;
     border-radius: var(--radius-field, 0.5rem);
     font-size: 0.8125rem;
@@ -192,7 +194,6 @@
   }
   .selbar-clear:hover {
     color: var(--color-base-content);
-    background-color: var(--color-base-200);
   }
 
   .selbar-tag {
@@ -202,7 +203,7 @@
     gap: 6px;
     padding: 6px 12px;
     cursor: pointer;
-    background: none;
+    background-color: var(--color-base-100);
     border: 1px solid var(--color-base-300);
     border-radius: var(--radius-field, 0.5rem);
     font-size: 0.8125rem;
@@ -224,8 +225,13 @@
     font-weight: 600;
     color: var(--color-primary-content);
   }
-  .selbar-prepare:hover {
+  .selbar-prepare:not(:disabled):hover {
     background-color: color-mix(in oklch, var(--color-primary) 88%, black);
+  }
+  .selbar-prepare:disabled {
+    cursor: not-allowed;
+    background-color: var(--color-base-300);
+    color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
   }
 
   /* Full width beneath both: losing a meeting out of a selection is a change to

@@ -106,7 +106,7 @@
           <label class="type-row" data-tag-color={colorFor(tag)}>
             <input
               type="checkbox"
-              class="tag-box"
+              class="cassini-check tag-box"
               checked={selectedTagIds.includes(tag.tagId)}
               on:change={() => dispatch("toggleTag", tag.tagId)}
             />
@@ -145,6 +145,7 @@
       <label class="type-row">
         <input
           type="checkbox"
+          class="cassini-check"
           data-type="meetings"
           checked={types.meetings}
           disabled={isLastBrowseType(types, "meetings")}
@@ -156,6 +157,7 @@
       <label class="type-row">
         <input
           type="checkbox"
+          class="cassini-check"
           data-type="insights"
           checked={types.insights}
           disabled={isLastBrowseType(types, "insights")}
@@ -229,19 +231,6 @@
     background: none;
   }
 
-  .type-row input[type="checkbox"] {
-    position: relative;
-    flex: none;
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    appearance: none;
-    -webkit-appearance: none;
-    cursor: pointer;
-    background: transparent;
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 25%, transparent);
-    border-radius: var(--radius-selector, 0.25rem);
-  }
   /* Each box takes the colour of the thing it shows, so the filter reads
      against the list rather than against itself: base-content for a meeting
      row, secondary — this theme's amber, and the colour every insight surface
@@ -253,17 +242,6 @@
   .type-row input[data-type="insights"]:checked {
     background-color: var(--color-secondary);
     border-color: var(--color-secondary);
-  }
-  .type-row input[type="checkbox"]:checked::after {
-    content: "";
-    position: absolute;
-    top: 1px;
-    left: 4.5px;
-    width: 3.5px;
-    height: 8px;
-    border-style: solid;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
   }
   .type-row input[data-type="meetings"]:checked::after {
     border-color: var(--color-base-100);
@@ -305,11 +283,6 @@
     padding: 4px 16px;
     font-size: 0.8125rem;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
-  }
-
-  .type-row input[type="checkbox"]:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
   }
 
   .room-button {

@@ -29,9 +29,9 @@ describe("MeetingList rows", () => {
   });
 
   it("keeps the open state on the element the row's styling is keyed to", () => {
-    // `.meeting-row[aria-current="page"]` is what both this file and app.css's
-    // Nextcloud-theme override select on. Moving it off the row would silently
-    // strip the open row's fill in the NC build.
+    // `.meeting-row[aria-current="page"]` is what this file and app.css's
+    // high-contrast hover rule select on. Moving it off the row would silently
+    // strip the open row's tint.
     expect(meetingListSource).toMatch(
       /class="meeting-row"[\s\S]{0,120}aria-current=\{meeting\.id === selectedMeetingId/,
     );

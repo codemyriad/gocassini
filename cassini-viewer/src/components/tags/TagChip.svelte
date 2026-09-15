@@ -18,7 +18,11 @@
 </script>
 
 <span class="tag-chip" class:whole={variant === "whole"} data-tag-color={color}>
-  <TagIcon {icon} />
+  {#if icon}
+    <TagIcon {icon} size={11} />
+  {:else}
+    <TagIcon size={9} />
+  {/if}
   <span class="tag-chip-label">{label}</span>
   {#if variant === "stretch" && count > 1}
     <span class="tag-chip-count">{count}<span class="sr-only">{" stretches"}</span></span>
@@ -40,10 +44,10 @@
     display: inline-flex;
     flex: none;
     align-items: center;
-    gap: 5px;
+    gap: 3px;
     max-width: 100%;
     min-width: 0;
-    padding: 3px 7px 3px 6px;
+    padding: 2px 5px 2px 4px;
     font-size: 11.5px;
     font-weight: 550;
     line-height: 1;
@@ -57,7 +61,11 @@
     color: var(--color-base-100);
     background: var(--tag);
     border-color: var(--tag);
-    border-radius: 3px;
+    border-radius: 5px;
+  }
+  .tag-chip :global(span.tag-dot) {
+    background: color-mix(in oklch, var(--tag) 65%, black);
+    background: oklch(from var(--tag) calc(l - 0.14) calc(c * 2) h);
   }
   .tag-chip-label {
     overflow: hidden;

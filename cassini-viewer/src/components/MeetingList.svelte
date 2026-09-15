@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Sun, Moon, Search, PanelLeft, Tag, X } from "@lucide/svelte";
+  import { Sun, Moon, Search, PanelLeft, Tag, Users, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import { wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
@@ -461,23 +461,27 @@
           {:else}
             {@const meeting = item.meeting}
             {@const rowTags = meetingTags.get(meeting.id) ?? []}
+            {@const rowRoom = roomLabelOf(meeting)}
+            {@const showRoom = selectedRoomName === null && rowRoom !== meeting.title}
             <!-- The row is a container, not a control, so that picking and
                  opening can sit side by side: a checkbox cannot live inside a
                  button, and demoting the whole row to a click-handling div would
                  cost it keyboard focus. `.meeting-row` and aria-current stay on
                  THIS element because that pair is what the row's open state is
-                 styled from, in this file and in app.css's Nextcloud-theme
-                 override; the open button repeats aria-current because that is
+                 styled from, in this file and in app.css's high-contrast
+                 hover rule; the open button repeats aria-current because that is
                  the element a screen reader lands on. -->
             <div
               class="meeting-row"
               class:row-pickable={selectable}
               aria-current={meeting.id === selectedMeetingId ? "page" : undefined}
+              class:row-picked={selectable && pickedIds.has(meeting.id)}
             >
               {#if selectable}
                 <label class="row-pick">
                   <input
                     type="checkbox"
+                    class="cassini-check"
                     checked={pickedIds.has(meeting.id)}
                     aria-label={`Select ${meeting.title}`}
                     on:change={() => dispatch("pick", meeting)}
@@ -494,11 +498,19 @@
                   <span class="row-title">{meeting.title}</span>
                   <span class="row-meta">
                     <span>{formatMeetingDateShort(meeting.dateLabel)}</span>
-                    <span class="dot" aria-hidden="true"></span>
-                    <span class="row-room">{roomLabelOf(meeting)}</span>
+                    {#if showRoom}
+                      <span class="rule" aria-hidden="true"></span>
+                      <span class="row-room">{rowRoom}</span>
+                    {/if}
                     {#if typeof meeting.speakerCount === "number"}
-                      <span class="dot" aria-hidden="true"></span>
-                      <span>{meeting.speakerCount} speakers</span>
+                      <span class="rule" aria-hidden="true"></span>
+                      <span
+                        class="row-speakers"
+                        title={plural(meeting.speakerCount, "speaker")}
+                        aria-label={plural(meeting.speakerCount, "speaker")}
+                      >
+                        <Users size={12} aria-hidden="true" />{meeting.speakerCount}
+                      </span>
                     {/if}
                     {#if rowTags.length > 0}
                       <span class="row-tags">
@@ -520,11 +532,6 @@
                     {/if}
                   </span>
                 </span>
-                {#if typeof meeting.digestDurationMs === "number"}
-                  <span class="row-duration">
-                    {formatMeetingDuration(meeting.digestDurationMs)}
-                  </span>
-                {/if}
               </button>
               {#if tags}
                 <button
@@ -536,8 +543,13 @@
                   title="Tag this meeting"
                   on:click={(event) => toggleTagging(meeting, event.currentTarget)}
                 >
-                  <Tag size={15} aria-hidden="true" />
+                  <Tag size={16} aria-hidden="true" />
                 </button>
+              {/if}
+              {#if typeof meeting.digestDurationMs === "number"}
+                <span class="row-duration">
+                  {formatMeetingDuration(meeting.digestDurationMs)}
+                </span>
               {/if}
               <!-- OUTSIDE row-open on purpose: each moment is its own button,
                    and a button inside a button is invalid markup that browsers
@@ -609,6 +621,15 @@
 </section>
 
 <style>
+  .meeting-list {
+    --list-x: 20px;
+  }
+  @media (max-width: 720px) {
+    .meeting-list {
+      --list-x: 1rem;
+    }
+  }
+
   /* Plain CSS for the list surface: the rows are a repeated, dense layout with
      a hairline rule and three interlocking states (hover, open, group heading),
      which is shorter and easier to keep coherent here than as utility stacks
@@ -622,7 +643,7 @@
 
   .search-problem {
     flex: none;
-    margin: 0 1.25rem 0.5rem;
+    margin: 0 var(--list-x) 0.5rem;
     padding: 0.5rem 0.75rem;
     border-radius: 0.5rem;
     font-size: 0.75rem;
@@ -679,7 +700,7 @@
 
   .searchbar {
     z-index: 5;
-    padding: 1rem 1.25rem 0.75rem;
+    padding: 1rem var(--list-x) 0.75rem;
     background-color: var(--color-base-100);
     border-bottom: 1px solid var(--color-base-300);
   }
@@ -838,7 +859,7 @@
      catalog's own errors: the two failures are independent and either one can
      happen without the other. */
   .list-note {
-    margin: 0.75rem 1.25rem 0;
+    margin: 0.75rem var(--list-x) 0;
     padding: 0.5rem 0.75rem;
     font-size: 0.8125rem;
     line-height: 1.45;
@@ -850,8 +871,8 @@
   .group-head {
     position: sticky;
     top: 0;
-    z-index: 1;
-    padding: 1.875rem 1.25rem 0.5rem;
+    z-index: 2;
+    padding: 1.875rem var(--list-x) 0.5rem;
     font-size: 11px;
     font-weight: 650;
     line-height: 1;
@@ -872,17 +893,22 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-auto-flow: column;
-    column-gap: 0.5rem;
+    column-gap: 0.25rem;
     align-items: center;
     width: 100%;
-    padding: 9px 20px;
+    padding: 9px var(--list-x);
     color: var(--color-base-content);
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .meeting-row {
+      transition: none;
+    }
   }
   /* Only when picking is offered: without the checkbox the row keeps exactly
      the geometry it had before D-626. */
   .row-pickable {
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.5rem;
   }
 
   /* The open action fills the rest of the row, so a click anywhere but the
@@ -890,7 +916,7 @@
      pixel. */
   .row-open {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     align-items: center;
     gap: 0.75rem;
     width: 100%;
@@ -924,34 +950,27 @@
     /* Padding, not a bigger box: the hit target has to be thumb-sized without
        pushing the title off its baseline. */
     padding: 6px;
-    margin: -6px 0;
+    margin: -6px 0.5rem -6px -6px;
     cursor: pointer;
   }
-  .row-pick input {
-    width: 15px;
-    height: 15px;
-    margin: 0;
-    cursor: pointer;
-    accent-color: var(--color-primary);
+  .row-pick:hover input:not(:checked),
+  .meeting-row:hover .row-pick input:not(:checked) {
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
   }
-  .row-pick input:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
+  .row-pick input:checked {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
   }
-  /* The open row is a solid primary fill under Nextcloud theming (app.css), so
-     a primary checkbox would vanish into it. currentColor is whatever that
-     row's text resolved to — primary-content there, base-content in the
-     viewer's own themes, where the open row is only a tint. */
-  .meeting-row[aria-current="page"] .row-pick input {
-    accent-color: currentColor;
+  .row-pick input:checked::after {
+    border-color: var(--color-primary-content);
   }
   /* Inset to the row's padding so the rule separates rows rather than cutting
      the column edge to edge. */
   .meeting-row::after {
     content: "";
     position: absolute;
-    left: 20px;
-    right: 20px;
+    left: var(--list-x);
+    right: var(--list-x);
     bottom: 0;
     height: 1px;
     /* Decoration: it is painted over the open action's hit area, and a rule
@@ -962,6 +981,10 @@
   .meeting-row:hover {
     background-color: var(--color-base-200);
   }
+  .meeting-row.row-picked {
+    background-color: color-mix(in oklch, var(--color-primary) 15%, transparent);
+    box-shadow: inset 2px 0 0 var(--color-primary);
+  }
   .meeting-row[aria-current="page"] {
     background-color: color-mix(
       in oklch,
@@ -969,6 +992,7 @@
       transparent
     );
     box-shadow: inset 2px 0 0 var(--color-primary);
+    transition: none;
   }
 
   .row-main {
@@ -994,21 +1018,27 @@
     font-variant-numeric: tabular-nums;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
+  .row-speakers {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
   .row-room {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .row-meta .dot {
+  .row-meta .rule {
     flex: none;
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background-color: currentColor;
+    width: 1px;
+    height: 10px;
+    margin: 0 2px;
+    background-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
   }
   .row-tags {
     display: inline-flex;
     gap: 4px;
+    margin-left: 4px;
     min-width: 0;
     overflow: hidden;
   }
@@ -1023,8 +1053,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     cursor: pointer;
     background: none;
@@ -1040,13 +1070,15 @@
     background-color: var(--color-base-100);
     border-color: var(--color-base-300);
   }
-  @media (hover: none) {
+  @media (hover: none), (max-width: 720px) {
     .row-tag {
       opacity: 1;
     }
   }
   .row-duration {
     flex: none;
+    min-width: 4.5ch;
+    text-align: right;
     font-size: 0.75rem;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
@@ -1058,7 +1090,7 @@
     flex-direction: column;
     align-items: center;
     gap: 0.5rem;
-    padding: 3rem 1.25rem;
+    padding: 3rem var(--list-x);
     text-align: center;
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
@@ -1087,6 +1119,14 @@
   @media (max-width: 720px) {
     .rooms-button {
       display: flex;
+    }
+    .row-tag {
+      width: 22px;
+      height: 22px;
+    }
+    .row-tag :global(svg) {
+      width: 14px;
+      height: 14px;
     }
   }
 </style>
