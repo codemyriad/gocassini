@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { Settings } from "@lucide/svelte";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
   import { matchTags, type VocabularyTag } from "../viewer/annotations";
@@ -96,8 +97,14 @@
   {#if tagsOffered}
     <div class="rail-head rail-head-sub rail-head-row">
       <h2>Tags</h2>
-      <button type="button" class="manage-tags" on:click={() => dispatch("manageTags")}>
-        Manage tags
+      <button
+        type="button"
+        class="manage-tags"
+        aria-label="Manage tags"
+        title="Manage tags"
+        on:click={() => dispatch("manageTags")}
+      >
+        <Settings size={14} aria-hidden="true" />
       </button>
     </div>
     {#if tagRows}
@@ -110,7 +117,9 @@
               checked={selectedTagIds.includes(tag.tagId)}
               on:change={() => dispatch("toggleTag", tag.tagId)}
             />
-            <span class="tag-mark"><TagIcon icon={tag.icon} /></span>
+            {#if tag.icon}
+              <span class="tag-mark"><TagIcon icon={tag.icon} /></span>
+            {/if}
             <span class="room-name">{tag.label}</span>
             <span class="room-count">{tag.meetings}</span>
           </label>
@@ -119,16 +128,19 @@
         {/each}
       </div>
       {#if selectedTagIds.length >= 2}
-        <div class="join mx-4 mt-1.5" role="group" aria-label="Show meetings with">
-          {#each TAG_MATCHES as mode}
-            <button
-              type="button"
-              class="btn btn-xs join-item flex-1"
-              class:btn-active={tagMatch === mode}
-              aria-pressed={tagMatch === mode}
-              on:click={() => dispatch("tagMatch", mode)}>{mode} of them</button
-            >
-          {/each}
+        <div class="tag-match">
+          <span class="tag-match-label" aria-hidden="true">Match</span>
+          <div class="segmented" role="group" aria-label="Show meetings with">
+            {#each TAG_MATCHES as mode}
+              <button
+                type="button"
+                aria-pressed={tagMatch === mode}
+                aria-label={`${mode} of the ticked tags`}
+                class="segment"
+                on:click={() => dispatch("tagMatch", mode)}>{mode}</button
+              >
+            {/each}
+          </div>
         </div>
       {/if}
     {:else if tagsFailed}
@@ -248,6 +260,9 @@
   .type-row input[data-type="insights"]:checked::after {
     border-color: var(--color-primary-content);
   }
+  .type-row input.tag-box {
+    border-color: var(--tag);
+  }
   .type-row input.tag-box:checked {
     background-color: var(--tag);
     border-color: var(--tag);
@@ -260,23 +275,75 @@
     color: var(--tag);
   }
 
+  .tag-match {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 16px 4px;
+  }
+  .tag-match-label {
+    font-size: 0.75rem;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .segmented {
+    flex: 1;
+    display: flex;
+    gap: 3px;
+    padding: 4px;
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    border-radius: var(--radius-field, 0.5rem);
+  }
+  .segment {
+    flex: 1;
+    padding: 2px 8px;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: calc(var(--radius-field, 0.5rem) - 4px);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+    transition: background-color 0.12s ease, color 0.12s ease;
+  }
+  .segment:hover {
+    color: var(--color-base-content);
+  }
+  .segment[aria-pressed="true"] {
+    background-color: var(--color-base-200);
+    color: var(--color-base-content);
+    font-weight: 600;
+    box-shadow:
+      0 1px 2px oklch(0% 0 0 / 0.12),
+      0 0 0 1px color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .segment {
+      transition: none;
+    }
+  }
+
   .rail-head-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 2px;
   }
   .manage-tags {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin: -6px 0;
     padding: 0;
     cursor: pointer;
     background: none;
     border: 0;
-    font-size: 0.75rem;
-    letter-spacing: normal;
-    text-transform: none;
+    border-radius: var(--radius-selector, 0.25rem);
     color: inherit;
   }
   .manage-tags:hover {
     color: var(--color-base-content);
+    background-color: var(--color-base-300);
   }
   .rail-note {
     padding: 4px 16px;
