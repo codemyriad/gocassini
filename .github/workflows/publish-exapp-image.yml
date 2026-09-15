@@ -215,18 +215,20 @@ jobs:
           echo "Resolved FFmpeg ${version} from ffmpeg.org"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
-  build-image:
-    name: Build ExApp image
+  # Each platform builds on a native runner. Building arm64 under QEMU on an
+  # x86 runner compiled FFmpeg for over an hour and never finished, and a
+  # cancelled build exports no cache, so it could never warm up. On non-PR
+  # events both jobs push by digest and build-image joins them into one
+  # multi-arch manifest list.
+  build-image-amd64:
+    name: Build ExApp image (amd64)
     runs-on: ubuntu-latest
     needs: [classify-changes, validate-manifest, resolve-ffmpeg]
     outputs:
-      image_ref: ${{ steps.meta.outputs.tags }}
+      tags: ${{ steps.meta.outputs.tags }}
       digest: ${{ steps.build-push.outputs.digest || steps.build-pr.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -305,27 +307,25 @@ jobs:
           build-args: |
             FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
             FFMPEG_BUILD_JOBS=4
-          cache-from: type=gha,scope=build-image
-          cache-to: type=gha,mode=max,scope=build-image
+          cache-from: type=gha,scope=build-image-amd64
+          cache-to: type=gha,mode=max,scope=build-image-amd64
 
-      # Non-PR builds (push, release tags, workflow_dispatch) build multi-arch
-      # images (linux/amd64,linux/arm64) and push the multi-arch manifest list
-      # directly to ghcr.io. Downstream jobs pull the primary ref via ghcr.
-      - name: Build and push multi-arch image (non-PR)
+      # Non-PR builds (push, release tags, workflow_dispatch) push the amd64
+      # image by digest only. build-image tags the multi-arch manifest list.
+      - name: Push amd64 image by digest (non-PR)
         if: github.event_name != 'pull_request'
         id: build-push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deployment/Dockerfile.exapp
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: linux/amd64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
             FFMPEG_BUILD_JOBS=4
-          cache-from: type=gha,scope=build-image
-          cache-to: type=gha,mode=max,scope=build-image
+          cache-from: type=gha,scope=build-image-amd64
+          cache-to: type=gha,mode=max,scope=build-image-amd64
 
       # PR builds can't reach ghcr (push step is skipped), so they still
       # need the artifact-based handoff. Push builds skip the artifact —
@@ -346,6 +346,60 @@ jobs:
           path: /tmp/exapp-image.tar
           retention-days: 1
           if-no-files-found: ignore
+
+  # Joins the per-platform digests into the tagged multi-arch manifest list.
+  # Downstream jobs depend on this job, so on push they only start once every
+  # tag points at the multi-arch image. PRs push nothing: this job only
+  # forwards the amd64 tags, and a failing arm64 build reports on its own
+  # check instead of skipping every amd64 e2e job.
+  build-image:
+    name: Build ExApp image
+    runs-on: ubuntu-latest
+    needs: [build-image-amd64, build-image-arm64]
+    if: >-
+      always() &&
+      needs.build-image-amd64.result == 'success' &&
+      (github.event_name == 'pull_request' || needs.build-image-arm64.result == 'success')
+    outputs:
+      image_ref: ${{ needs.build-image-amd64.outputs.tags }}
+      digest: ${{ steps.merge.outputs.digest || needs.build-image-amd64.outputs.digest }}
+    steps:
+      - name: Set up Docker Buildx
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push multi-arch manifest list
+        if: github.event_name != 'pull_request'
+        id: merge
+        env:
+          TAGS: ${{ needs.build-image-amd64.outputs.tags }}
+          AMD64_DIGEST: ${{ needs.build-image-amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.build-image-arm64.outputs.digest }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${IMAGE}"
+          args=()
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then args+=(-t "$tag"); fi
+          done <<< "$TAGS"
+          docker buildx imagetools create "${args[@]}" \
+            "${ref}@${AMD64_DIGEST}" "${ref}@${ARM64_DIGEST}"
+          primary="$(head -n1 <<< "$TAGS")"
+          docker buildx imagetools inspect "$primary"
+          digest="$(docker buildx imagetools inspect "$primary" --format '{{json .Manifest}}' | jq -r .digest)"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Forward amd64 tags (PR)
+        if: github.event_name == 'pull_request'
+        run: echo "PR build; downstream jobs load the amd64 image from the exapp-image artifact."
 
   faithful-installed-exapp-talk-cpu:
     name: Faithful installed ExApp Talk artifact (CPU)
@@ -582,20 +636,29 @@ jobs:
           CASSINI_SMOKE_MODELS_ONLY: '1'
         run: ./harness/bin/ci-transcribe-smoke-exapp.sh
 
-  smoke-arm64:
-    name: Smoke test ARM64 image (runtime + transcription)
-    runs-on: ubuntu-latest
-    needs: [classify-changes, resolve-ffmpeg]
+  # Native arm64 runner (free for public repos). Builds and smoke-tests the
+  # arm64 image, then on non-PR events pushes it by digest for build-image.
+  build-image-arm64:
+    name: Build + smoke test ARM64 image (runtime + transcription)
+    runs-on: ubuntu-24.04-arm
+    needs: [classify-changes, validate-manifest, resolve-ffmpeg]
     if: needs.classify-changes.outputs.relevant == 'true'
-    timeout-minutes: 60
+    timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build ARM64 ExApp image
         id: build
@@ -610,10 +673,8 @@ jobs:
           build-args: |
             FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
             FFMPEG_BUILD_JOBS=4
-          cache-from: |
-            type=gha,scope=smoke-arm64
-            type=gha,scope=build-image
-          cache-to: type=gha,mode=max,scope=smoke-arm64
+          cache-from: type=gha,scope=build-image-arm64
+          cache-to: type=gha,mode=max,scope=build-image-arm64
 
       - name: Validate environment in ARM64 container
         run: |
@@ -651,6 +712,22 @@ jobs:
             echo "::error::ARM64 transcription produced only ${words} words (expected >= 40)" >&2
             exit 1
           fi
+
+      # Same inputs as the smoke build, so every layer comes from this
+      # builder's local cache; only the push is new work.
+      - name: Push arm64 image by digest (non-PR)
+        if: github.event_name != 'pull_request'
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp
+          platforms: linux/arm64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
+            FFMPEG_BUILD_JOBS=4
+          cache-from: type=gha,scope=build-image-arm64
 
   build-cuda-base:
     name: Build CUDA base image (model + CUDA libs)
