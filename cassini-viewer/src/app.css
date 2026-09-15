@@ -265,6 +265,17 @@
 :host([data-nc-theme*="highcontrast"]) .cassini-root .tag-chip {
   border-color: var(--tag);
 }
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tm-save:not(:disabled) {
+  background-color: var(--color-main-text);
+  border-color: var(--color-main-text);
+  color: var(--color-main-background);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tm-head {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tm-row {
+  --tm-line: var(--color-border-maxcontrast);
+}
 :host([data-nc-theme*="highcontrast"]) .cassini-root .cassini-check:not(:checked) {
   border-color: var(--color-border-maxcontrast);
 }

@@ -47,18 +47,18 @@
 </script>
 
 <div class="flex flex-wrap items-center gap-1.5" data-tag-color={color}>
-  <button bind:this={swatch} type="button" class="btn btn-square btn-ghost btn-sm border-base-300" title="Colour"
+  <input bind:this={input} bind:value={label} type="text" maxlength="64" autocomplete="off" spellcheck="false" aria-label="Tag name"
+    class="input input-sm min-w-0 flex-[1_1_140px] text-[14px]" on:input={() => (conflict = null)} on:keydown={onKeydown} />
+  <button bind:this={swatch} type="button" class="tm-pick btn btn-square btn-ghost btn-sm" title="Colour"
     aria-label={`Colour: ${styleName(color)}`} aria-haspopup="true" aria-expanded={choosing === "color"} on:click={() => toggle("color")}>
     <span class="size-3.5 rounded-full bg-(--tag)" aria-hidden="true"></span>
   </button>
-  <button bind:this={iconButton} type="button" class="btn btn-square btn-ghost btn-sm border-base-300 text-(--tag)" class:border-dashed={!icon}
+  <button bind:this={iconButton} type="button" class="tm-pick btn btn-square btn-ghost btn-sm text-(--tag)"
     title="Icon" aria-label={icon ? `Icon: ${styleName(icon)}` : "Add an icon"} aria-haspopup="true" aria-expanded={choosing === "icon"} on:click={() => toggle("icon")}>
     {#if icon}<TagIcon {icon} size={15} />{:else}<Plus size={14} class="text-base-content/50" />{/if}
   </button>
-  <input bind:this={input} bind:value={label} type="text" maxlength="64" autocomplete="off" spellcheck="false" aria-label="Tag name"
-    class="input input-sm min-w-0 flex-[1_1_140px]" on:input={() => (conflict = null)} on:keydown={onKeydown} />
-  <button type="button" class="btn btn-ghost btn-sm" on:click={() => dispatch("cancel")}>Cancel</button>
-  <button type="button" class="btn btn-neutral btn-sm" disabled={!label.trim()} on:click={save}>Save</button>
+  <button type="button" class="tm-cancel cursor-pointer px-1 text-sm" on:click={() => dispatch("cancel")}>Cancel</button>
+  <button type="button" class="tm-save btn btn-neutral btn-sm px-4 font-semibold" disabled={!label.trim()} on:click={save}>Save</button>
   {#if conflict}
     {@const other = conflict}
     <p class="basis-full text-xs">
@@ -75,3 +75,23 @@
       on:select={(event) => ((icon = event.detail), (choosing = null), iconButton.focus())} />
   {/if}
 </div>
+
+<style>
+  /* The two pickers are fields, like the name beside them: same border, same
+     radius, so the row reads as one control strip. */
+  .tm-pick {
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+  }
+  .tm-cancel {
+    margin-right: -4px;
+    background: none;
+    border: 0;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .tm-cancel:hover {
+    color: var(--color-base-content);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+</style>
