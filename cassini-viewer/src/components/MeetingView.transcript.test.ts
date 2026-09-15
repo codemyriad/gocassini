@@ -250,9 +250,17 @@ describe("finding words in the open meeting", () => {
     expect(source).toContain("Nothing in this transcript matches");
   });
 
-  it("shows how much of the transcript survived the filter", () => {
-    // Without the count a filtered transcript is indistinguishable from a short
-    // meeting, and there is no cue that anything is hidden.
-    expect(source).toContain("{visibleSegments.length} of {displaySegments.length}");
+  it("hides turns only when asked, so find on its own never shortens the meeting", () => {
+    expect(source).toContain("let onlyMatching = false;");
+    expect(source).toContain(
+      "$: visibleSegments = onlyMatching\n    ? filterDisplaySegmentsByQuery(transcriptIndex, displaySegments, transcriptQuery)\n    : displaySegments;",
+    );
+    expect(source).toContain("bind:onlyMatching");
+  });
+
+  it("finds over the canonical words, through the rows on the page", () => {
+    expect(source).toContain(
+      "findStops(transcriptIndex, transcriptRows, wordPartsByBlock, transcriptQuery)",
+    );
   });
 });

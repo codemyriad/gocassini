@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { X } from "@lucide/svelte";
+  import { Tag, X } from "@lucide/svelte";
+  import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
+  import TagPicker from "./tags/TagPicker.svelte";
   import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";
 
   // The selection bar (D-626). Presentational: the shell owns the selection and
@@ -25,6 +27,11 @@
   // rather than silently dropped: the bundle would otherwise change under the
   // user between picking and preparing.
   export let droppedCount = 0;
+  // Null offers no Tag action: the build cannot tag, or the vocabulary has not loaded.
+  export let tags: readonly VocabularyTag[] | null = null;
+  export let tagSelected: readonly string[] = [];
+  export let tagMixed: readonly string[] = [];
+  export let tagReport = "";
 
   // Above the operator's cap Prepare would open a panel whose every action is
   // refused, so the button says the number instead (D-749).
@@ -35,7 +42,11 @@
     clear: void;
     prepare: void;
     dismissDropped: void;
+    tag: TagPick;
   }>();
+
+  let tagButton: HTMLButtonElement;
+  let tagging = false;
 </script>
 
 <!-- Positioned against the browse shell, NOT the viewport: in the embedded
@@ -61,6 +72,9 @@
           Assemble them into one document you can take away.
         {/if}
       </p>
+      {#if tagReport}
+        <p class="selbar-desc" role="status">{tagReport}</p>
+      {/if}
     </div>
 
     <div class="selbar-actions">
@@ -69,6 +83,19 @@
       <button type="button" class="selbar-clear" on:click={() => dispatch("clear")}>
         Clear selection
       </button>
+      {#if tags}
+        <button
+          bind:this={tagButton}
+          type="button"
+          class="selbar-tag"
+          aria-haspopup="dialog"
+          aria-expanded={tagging}
+          on:click={() => (tagging = !tagging)}
+        >
+          <Tag size={14} aria-hidden="true" />
+          Tag
+        </button>
+      {/if}
       <button
         type="button"
         class="selbar-prepare"
@@ -78,6 +105,18 @@
         Prepare
       </button>
     </div>
+    {#if tags && tagging}
+      <TagPicker
+        {tags}
+        label={`Tag ${plural(count, "meeting")}`}
+        multiple
+        selected={tagSelected}
+        mixed={tagMixed}
+        anchor={tagButton}
+        on:pick={(event) => dispatch("tag", event.detail)}
+        on:close={() => (tagging = false)}
+      />
+    {/if}
   {/if}
 
   {#if droppedCount > 0}
@@ -154,6 +193,25 @@
   .selbar-clear:hover {
     color: var(--color-base-content);
     background-color: var(--color-base-200);
+  }
+
+  .selbar-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    background: none;
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-base-content);
+  }
+  .selbar-tag:hover,
+  .selbar-tag[aria-expanded="true"] {
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
   }
 
   .selbar-prepare {

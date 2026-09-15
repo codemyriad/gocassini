@@ -38,7 +38,8 @@ describe("the actual shared word renderer", () => {
     expect(html.match(/<button\b/g)).toHaveLength(1);
     expect(html).toContain("cassini-word-interpolated");
     expect(html).toContain('title="Estimated word timing"');
-    expect(html).toMatch(/<span>Revised<\/span>/);
-    expect(html).toMatch(/<span>confirmed\.<\/span>/);
+    // Untimed words still carry their id, so a marked stretch and find can reach them.
+    expect(html).toMatch(/<span data-word-id="rewritten">Revised<\/span>/);
+    expect(html).toMatch(/<span data-word-id="untimed">confirmed\.<\/span>/);
   });
 });

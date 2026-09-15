@@ -216,6 +216,10 @@ A speech-to-text step may carry a `hints` record describing the decoder biasing
 that ran. It is absent when the pass ran unbiased; `applied: false` with a
 `reason` means a vocabulary was configured but could not be used, which is a
 different thing from no vocabulary at all and must not be reported as success.
+`participantTermCount` and `participantScore`, when present, describe the
+automatic participant-name pool and its lower per-token score.
+`ownNameExcluded: true` means each participant track omitted its speaker's own
+name while keeping the other names; a mixed track uses the full pool.
 
 Processing provenance is keyed by transcript id:
 
@@ -418,6 +422,7 @@ stdin with `--ops -`. It applies the ops in order, as one batch and one rewrite:
 | `unmark-tag` | `{"op": "unmark-tag", "tagId", "target"?}` | Removes every mark of that tag in this file, or only those with that target |
 | `undo-operation` | `{"op": "undo-operation", "operationId"}` | Removes every mark stamped with that operation id: the bulk undo of an agent run |
 | `relabel` | `{"op": "relabel", "tagId", "label"}` | Renames the tag in this file only |
+| `merge-tag` | `{"op": "merge-tag", "tagId", "into": {"id", "label"}}` | Moves every mark of `tagId` in this file to `into`, defining `into` here if the file lacks it. A mark whose target `into` already has is dropped as a duplicate. A file without `tagId` is a no-op, reported in `notFound` |
 
 After the ops run, tags left with no marks are dropped. New marks are stamped
 with `createdAtUtc`, the actor (`--actor-id`, with `--actor-kind`), and the

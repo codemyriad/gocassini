@@ -58,6 +58,7 @@ func (buildingIndex) MarkUnavailable(context.Context, string, string) error { re
 func (buildingIndex) ResolveLabel(context.Context, string, []string) (string, bool, error) {
 	return "", false, nil
 }
+func (buildingIndex) TagVisible(context.Context, string, []string) (bool, error) { return true, nil }
 func (buildingIndex) Namespace(context.Context) (string, error) {
 	return "", errAnnotationIndexBuilding
 }

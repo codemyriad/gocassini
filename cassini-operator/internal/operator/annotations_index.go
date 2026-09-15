@@ -14,6 +14,8 @@ type annotationIndex interface {
 	// ResolveLabel finds the tag id already used for label among visible, the
 	// caller's readable meetings only.
 	ResolveLabel(ctx context.Context, label string, visible []string) (tagID string, ok bool, err error)
+	// TagVisible reports whether one of visible carries tagID.
+	TagVisible(ctx context.Context, tagID string, visible []string) (bool, error)
 	// Namespace is the tag namespace most indexed recordings carry, or "" when
 	// none carries one — the CLI then keeps the file's own, or mints one on a
 	// first write. It refuses with errAnnotationIndexBuilding while the first

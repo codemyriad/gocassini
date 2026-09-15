@@ -52,8 +52,136 @@ func TestVocabularyForBuildPrefersConfiguredSpelling(t *testing.T) {
 		[]string{"Silvio Tomatis"},
 		[]AudioStream{{SpeakerLabel: "silvio tomatis"}, {SpeakerLabel: "Chris"}},
 	)
-	if len(got) != 2 || got[0] != "Silvio Tomatis" || got[1] != "Chris" {
+	if len(got.Terms) != 2 || got.Terms[0] != "Silvio Tomatis" || got.Terms[1] != "Chris" {
 		t.Fatalf("got %v, want [Silvio Tomatis Chris]", got)
+	}
+	if got.ParticipantTermCount != 1 {
+		t.Fatalf("participant term count = %d, want 1 (the configured duplicate is not automatic)", got.ParticipantTermCount)
+	}
+}
+
+// Participant names come from metadata rather than an operator choosing a
+// spelling. They therefore carry a smaller phrase-specific score: a score of 2
+// made the one-word name "Silvio" repeat hundreds of times on uncertain audio.
+func TestResolveBuildVocabularyCapsAutomaticParticipantScore(t *testing.T) {
+	dir := t.TempDir()
+	vocabulary := vocabularyForBuild(
+		[]string{"Librocco"},
+		[]AudioStream{{SpeakerLabel: "Silvio"}, {SpeakerLabel: "Chris"}},
+	)
+	dec, prov, err := resolveDecoderVocabulary(dir, vocabulary, transducerPaths(t))
+	if err != nil {
+		t.Fatalf("resolveDecoderVocabulary: %v", err)
+	}
+	body, err := os.ReadFile(dec.HotwordsFile)
+	if err != nil {
+		t.Fatalf("read hotwords file: %v", err)
+	}
+	if got := string(body); got != "Librocco\nSilvio :0.5\nChris :0.5\n" {
+		t.Fatalf("hotwords file = %q, want configured score implicit and participant score capped", got)
+	}
+	if prov == nil || !prov.Applied || prov.TermCount != 3 || prov.Score != 2 ||
+		prov.ParticipantTermCount != 2 || prov.ParticipantScore != 0.5 || prov.OwnNameExcluded {
+		t.Fatalf("provenance does not describe both scores: %+v", prov)
+	}
+}
+
+func TestAutomaticParticipantScoreHonoursLowerOperatorScore(t *testing.T) {
+	t.Setenv(envHintsScore, "0.25")
+	vocabulary := vocabularyForBuild(nil, []AudioStream{{SpeakerLabel: "Silvio"}})
+	dec, prov, err := resolveDecoderVocabulary(t.TempDir(), vocabulary, transducerPaths(t))
+	if err != nil {
+		t.Fatalf("resolveDecoderVocabulary: %v", err)
+	}
+	body, err := os.ReadFile(dec.HotwordsFile)
+	if err != nil {
+		t.Fatalf("read hotwords file: %v", err)
+	}
+	if got := string(body); got != "Silvio :0.25\n" {
+		t.Fatalf("hotwords file = %q, want the lower operator score", got)
+	}
+	if prov.ParticipantScore != 0.25 || prov.Score != 0.25 {
+		t.Fatalf("provenance scores = base %v, participant %v; want 0.25 for both", prov.Score, prov.ParticipantScore)
+	}
+}
+
+func TestSpeakerDecodersOmitTheTracksOwnName(t *testing.T) {
+	dir := t.TempDir()
+	streams := []AudioStream{
+		{Index: 1, SpeakerLabel: "Silvio"},
+		{Index: 3, SpeakerLabel: "Chris"},
+	}
+	// Silvio is explicit as well as present in participant metadata. It keeps
+	// the operator's stronger score on Chris's track but is still omitted from
+	// Silvio's own track.
+	vocabulary := vocabularyForBuild([]string{"Librocco", "Silvio"}, streams)
+	base, _, err := resolveDecoderVocabulary(dir, vocabulary, transducerPaths(t))
+	if err != nil {
+		t.Fatalf("resolveDecoderVocabulary: %v", err)
+	}
+	decoders, err := speakerDecoders(dir, vocabulary, streams, base)
+	if err != nil {
+		t.Fatalf("speakerDecoders: %v", err)
+	}
+
+	body, err := os.ReadFile(decoders[1].HotwordsFile)
+	if err != nil {
+		t.Fatalf("read Silvio-track hotwords: %v", err)
+	}
+	if got, want := string(body), "Librocco\nChris :0.5\n"; got != want {
+		t.Errorf("Silvio-track hotwords = %q, want %q", got, want)
+	}
+	body, err = os.ReadFile(decoders[3].HotwordsFile)
+	if err != nil {
+		t.Fatalf("read Chris-track hotwords: %v", err)
+	}
+	if got, want := string(body), "Librocco\nSilvio\n"; got != want {
+		t.Errorf("Chris-track hotwords = %q, want %q", got, want)
+	}
+
+	// With no explicit duplicate, the owner disappears while the other name
+	// remains available as the useful spelling hint.
+	vocabulary = vocabularyForBuild(nil, streams)
+	base, _, err = resolveDecoderVocabulary(dir, vocabulary, transducerPaths(t))
+	if err != nil {
+		t.Fatalf("resolveDecoderVocabulary without explicit duplicate: %v", err)
+	}
+	decoders, err = speakerDecoders(dir, vocabulary, streams, base)
+	if err != nil {
+		t.Fatalf("speakerDecoders without explicit duplicate: %v", err)
+	}
+	body, err = os.ReadFile(decoders[1].HotwordsFile)
+	if err != nil {
+		t.Fatalf("read Silvio-track hotwords: %v", err)
+	}
+	if got := string(body); got != "Chris :0.5\n" {
+		t.Fatalf("Silvio-track hotwords = %q, want only the other participant", got)
+	}
+}
+
+func TestSpeakerDecodersOmitOwnNamesWhenAllWereConfiguredExplicitly(t *testing.T) {
+	dir := t.TempDir()
+	streams := []AudioStream{{Index: 1, SpeakerLabel: "Silvio"}, {Index: 2, SpeakerLabel: "Chris"}}
+	vocabulary := vocabularyForBuild([]string{"Silvio", "Chris", "Librocco"}, streams)
+	if vocabulary.ParticipantTermCount != 0 {
+		t.Fatalf("participant term count = %d, want every name classified as configured", vocabulary.ParticipantTermCount)
+	}
+	base, _, err := resolveDecoderVocabulary(dir, vocabulary, transducerPaths(t))
+	if err != nil {
+		t.Fatalf("resolveDecoderVocabulary: %v", err)
+	}
+	decoders, err := speakerDecoders(dir, vocabulary, streams, base)
+	if err != nil {
+		t.Fatalf("speakerDecoders: %v", err)
+	}
+	for index, want := range map[int]string{1: "Chris\nLibrocco\n", 2: "Silvio\nLibrocco\n"} {
+		body, err := os.ReadFile(decoders[index].HotwordsFile)
+		if err != nil {
+			t.Fatalf("read stream %d hotwords: %v", index, err)
+		}
+		if got := string(body); got != want {
+			t.Errorf("stream %d hotwords = %q, want %q", index, got, want)
+		}
 	}
 }
 

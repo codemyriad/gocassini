@@ -211,7 +211,7 @@ func TestProcessingStepCarriesHintsThroughTheWire(t *testing.T) {
 	  "speechToText": {
 	    "backend": "sherpa-onnx",
 	    "model": "parakeet-tdt-0.6b-v3",
-	    "hints": {"termCount": 12, "score": 2, "decodingMethod": "modified_beam_search", "applied": true}
+	    "hints": {"termCount": 12, "score": 2, "participantTermCount": 5, "participantScore": 0.5, "ownNameExcluded": true, "decodingMethod": "modified_beam_search", "applied": true}
 	  }
 	}`)
 	var prov Provenance
@@ -221,7 +221,9 @@ func TestProcessingStepCarriesHintsThroughTheWire(t *testing.T) {
 	if prov.SpeechToText == nil || prov.SpeechToText.Hints == nil {
 		t.Fatal("hints were dropped decoding the build manifest")
 	}
-	if got := prov.SpeechToText.Hints; got.TermCount != 12 || !got.Applied || got.DecodingMethod != "modified_beam_search" {
+	if got := prov.SpeechToText.Hints; got.TermCount != 12 || got.Score != 2 ||
+		got.ParticipantTermCount != 5 || got.ParticipantScore != 0.5 || !got.OwnNameExcluded ||
+		!got.Applied || got.DecodingMethod != "modified_beam_search" {
 		t.Fatalf("hints decoded wrongly: %+v", got)
 	}
 
@@ -229,7 +231,9 @@ func TestProcessingStepCarriesHintsThroughTheWire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-encode: %v", err)
 	}
-	if !strings.Contains(string(round), `"hints"`) || !strings.Contains(string(round), `"termCount":12`) {
+	if !strings.Contains(string(round), `"hints"`) || !strings.Contains(string(round), `"termCount":12`) ||
+		!strings.Contains(string(round), `"participantTermCount":5`) || !strings.Contains(string(round), `"participantScore":0.5`) ||
+		!strings.Contains(string(round), `"ownNameExcluded":true`) {
 		t.Errorf("hints did not survive the round-trip: %s", round)
 	}
 }

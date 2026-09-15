@@ -147,11 +147,14 @@ type ProcessingStep struct {
 // HintsProvenance says what decoder biasing a speech-to-text pass actually
 // applied, and when it could not, why. Absent means the pass ran unbiased.
 type HintsProvenance struct {
-	TermCount      int     `json:"termCount"`
-	Score          float32 `json:"score,omitempty"`
-	DecodingMethod string  `json:"decodingMethod,omitempty"`
-	Applied        bool    `json:"applied"`
-	Reason         string  `json:"reason,omitempty"`
+	TermCount            int     `json:"termCount"`
+	Score                float32 `json:"score,omitempty"`
+	ParticipantTermCount int     `json:"participantTermCount,omitempty"`
+	ParticipantScore     float32 `json:"participantScore,omitempty"`
+	OwnNameExcluded      bool    `json:"ownNameExcluded,omitempty"`
+	DecodingMethod       string  `json:"decodingMethod,omitempty"`
+	Applied              bool    `json:"applied"`
+	Reason               string  `json:"reason,omitempty"`
 }
 
 type Meeting struct {
