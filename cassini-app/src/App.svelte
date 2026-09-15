@@ -671,10 +671,6 @@
     min-height: 100%;
   }
 
-  /* Deliberately compact: this bar is persistent chrome above a viewer that
-     wants every pixel of height (the player sits at the bottom edge), and it
-     switches between only two surfaces — so it is sized as a control, not as
-     primary navigation. */
   /* Colours resolve through a three-step chain, outermost wins:
        1. Nextcloud's own vars (--color-main-background etc.) — these inherit
           through the shadow boundary from the host page :root (see the D-414
@@ -687,45 +683,42 @@
           is why the whole toolbar stayed light in dark mode.
        3. a hardcoded light default, for a build with neither. */
   .cassini-shell-nav {
+    --shell-ink: var(--color-main-text, var(--color-base-content, #1f2937));
+    --shell-panel: var(--color-main-background, var(--color-base-100, #ffffff));
     display: flex;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
+    align-items: stretch;
+    gap: 2px;
+    min-height: 34px;
+    padding: 0 16px 0 0;
     border-bottom: 1px solid var(--color-border-dark, var(--color-base-300, #e5e7eb));
-    background: var(--color-main-background, var(--color-base-100, #ffffff));
+    background: var(--shell-panel);
   }
 
   .cassini-shell-tab {
     appearance: none;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
     border: 0;
+    border-radius: 0;
     background: transparent;
     cursor: pointer;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
     font: inherit;
-    font-size: 0.8125rem;
-    line-height: 1.35;
-    font-weight: 600;
-    color: var(--color-main-text, var(--color-base-content, #1f2937));
-    opacity: 0.7;
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: 550;
+    color: color-mix(in oklch, var(--shell-ink) 65%, var(--shell-panel));
   }
 
   .cassini-shell-tab:hover {
-    background: var(--color-background-hover, var(--color-base-200, #f3f4f6));
-    opacity: 1;
+    background: color-mix(in oklch, var(--shell-ink) 4%, var(--shell-panel));
+    color: var(--shell-ink);
   }
 
-  /* Neutral high-contrast highlight rather than the theme accent: in Nextcloud
-     --color-primary is the SAME colour as the app header, so an accent-filled tab
-     stacked two heavy accent blocks and read louder than the content it switches.
-
-     Swapping the foreground and background tokens inverts the fill for free —
-     near-black on white in light mode, near-white on black in dark — and it
-     tracks whichever theme system is live (NC's or daisyUI's) instead of needing
-     a hardcoded dark-mode branch. */
   .cassini-shell-tab[aria-current="page"] {
-    background: var(--color-main-text, var(--color-base-content, #000000));
-    color: var(--color-main-background, var(--color-base-100, #ffffff));
-    opacity: 1;
+    background: color-mix(in oklch, var(--shell-ink) 7%, var(--shell-panel));
+    color: var(--shell-ink);
+    box-shadow: inset 0 -2px 0 color-mix(in oklch, var(--shell-ink) 65%, var(--shell-panel));
   }
 
   .cassini-shell-surface {
