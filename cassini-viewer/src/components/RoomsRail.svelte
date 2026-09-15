@@ -362,7 +362,7 @@
   }
   .room-button[aria-pressed="true"] {
     background-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
-    box-shadow: inset 2px 0 0 var(--color-primary);
+    box-shadow: inset 3px 0 0 var(--color-primary);
   }
 
   /* "No room" is the absence of a room, not a room — italic so it does not read

@@ -987,7 +987,7 @@
   }
   .meeting-row.row-picked {
     background-color: color-mix(in oklch, var(--color-primary) 15%, transparent);
-    box-shadow: inset 2px 0 0 var(--color-primary);
+    box-shadow: inset 3px 0 0 var(--color-primary);
   }
   .meeting-row[aria-current="page"] {
     background-color: color-mix(
@@ -995,7 +995,7 @@
       var(--color-primary) 15%,
       transparent
     );
-    box-shadow: inset 2px 0 0 var(--color-primary);
+    box-shadow: inset 3px 0 0 var(--color-primary);
     transition: none;
   }
 
