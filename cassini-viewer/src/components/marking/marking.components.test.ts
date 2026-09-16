@@ -5,6 +5,8 @@ import { AnnotationError, type AnnotationItem, type MeetingAnnotations } from ".
 import MeetingTags from "./MeetingTags.svelte";
 import StretchToolbar from "./StretchToolbar.svelte";
 import TranscriptFrame from "./TranscriptFrame.svelte";
+import { get } from "svelte/store";
+
 import { createMarksSession, viewMarks } from "./session";
 
 // Rendered through Svelte's server renderer, as TranscriptWords.test.ts does:
@@ -129,6 +131,23 @@ describe("a meeting view that can read marks but not write them", () => {
     const html = render(MeetingTags, { props: { session: await readOnly(async () => meeting(false)) } }).body;
     expect(html).toContain("2 marks can't be placed on this recording");
     expect(html).not.toContain("Remove them");
+  });
+
+  it("gives each unknown tag its own colour instead of hashing them into collisions", async () => {
+    // The three ids in this fixture all hash to the same colour, which is what
+    // a read-only view would have shown before: three tags, one colour.
+    const session = await readOnly(async () => meeting(true));
+    const view = viewMarks(get(session), []);
+    const colors = [...view.whole, ...view.placed].map((look) => look.color);
+    expect(new Set(colors).size).toBe(new Set([...view.whole, ...view.placed].map((l) => l.tag.id)).size);
+  });
+
+  it("leaves a tag the vocabulary knows exactly as the vocabulary styles it", async () => {
+    const session = await readOnly(async () => meeting(true));
+    const view = viewMarks(get(session), [
+      { tagId: "t-budget", namespace: "", label: "budget", meetings: 1, marks: 1, color: "teal", icon: "", changedBy: "", changedAtUtc: "" },
+    ]);
+    expect(view.whole.find((look) => look.tag.id === "t-budget")?.color).toBe("teal");
   });
 
   it("keeps find, which reads and changes nothing", async () => {

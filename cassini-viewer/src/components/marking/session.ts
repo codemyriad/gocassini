@@ -15,7 +15,7 @@ import {
   type TagPick,
   type VocabularyTag,
 } from "../../viewer/annotations";
-import { colorFor, type TagColorId, type TagIconId } from "../../viewer/tagPalette";
+import { colorFor, leastUsedColor, type TagColorId, type TagIconId } from "../../viewer/tagPalette";
 
 export function pickColor(pick: TagPick, vocabulary: readonly VocabularyTag[]): TagColorId {
   return "tagId" in pick
@@ -141,9 +141,40 @@ export const describeMark = (mark: PlacedMark) =>
 export function viewMarks(state: MarksState, vocabulary: readonly VocabularyTag[]): MarksView {
   const groups = groupByTag(state.annotations?.annotations ?? null);
   const known = new Map(vocabulary.map((tag) => [tag.tagId, tag]));
+
+  // Tags the vocabulary has never heard of are dealt a colour rather than given
+  // the hash of their id (D-775). colorFor() hashes each id on its own, so two
+  // of a handful of tags landing on the same colour is ordinary, not unlucky:
+  // with three tags it happens about a quarter of the time, with five about
+  // three times in five. That does not show in the app, where every tag is in
+  // the vocabulary — but a recording read on its own carries only ids and
+  // labels, so EVERY tag is in that case at once, and same-coloured brackets
+  // down a transcript say two marks are the same thing when they are not.
+  // Dealing in the document's tag order keeps it deterministic, and reuses the
+  // palette's own dealer, so a read-only view looks the way a freshly tagged
+  // meeting does. A tag the vocabulary does know is untouched here.
+  const dealt = new Map<string, TagColorId>();
+  const seen: { id: string; color: TagColorId }[] = [];
+  for (const group of groups) {
+    const entry = known.get(group.tag.id);
+    const chosen = state.newColors[labelKey(group.tag.label)];
+    if (entry || chosen) {
+      seen.push({ id: group.tag.id, color: colorFor(entry ?? { id: group.tag.id, color: chosen }) });
+      continue;
+    }
+    const color = leastUsedColor(seen);
+    dealt.set(group.tag.id, color);
+    seen.push({ id: group.tag.id, color });
+  }
+
   const look = (tag: AnnotationTag): TagLook => {
     const entry = known.get(tag.id);
-    return { tag, color: colorFor(entry ?? { id: tag.id, color: state.newColors[labelKey(tag.label)] }), icon: entry?.icon ?? "" };
+    const dealtColor = dealt.get(tag.id);
+    return {
+      tag,
+      color: dealtColor ?? colorFor(entry ?? { id: tag.id, color: state.newColors[labelKey(tag.label)] }),
+      icon: entry?.icon ?? "",
+    };
   };
   const whole = groups.filter((group) => group.whole).map((group) => look(group.tag));
   const items = groups.flatMap((group) =>
