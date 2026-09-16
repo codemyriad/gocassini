@@ -948,6 +948,12 @@
   .frame :global(.tf-text *::selection) {
     background-color: var(--sel-fill);
   }
+  /* The playing word is inverted, and a selection over it laid its fill on the
+     light ground while leaving the text light: it keeps its own two colours. */
+  .frame :global(.tf-text [data-active="true"]::selection) {
+    color: var(--color-base-100);
+    background-color: var(--color-base-content);
+  }
   .frame :global([data-sel-fill] [data-word-id][data-sel]:not([data-active="true"])),
   .frame :global([data-word-id][data-lit]:not([data-sel], [data-active="true"])) {
     background-image: linear-gradient(var(--hl-edge), var(--hl-edge)), linear-gradient(var(--hl-fill), var(--hl-fill));
