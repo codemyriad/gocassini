@@ -1,0 +1,31 @@
+-- Who had access to the room while the recording was being made (D-769).
+--
+-- The audience is resolved today at PUBLISH time and thrown away
+-- (resolveRecordingAudience -> PROPPATCH -> discarded), and in the default
+-- storage model it is never resolved at all, because no ACL is written there.
+-- So once a recording exists, nothing on the instance can say who it belonged
+-- to: the Talk room answers who is in it NOW, which is a different question,
+-- and the published .opus records who SPOKE, never who merely attended.
+--
+-- Capturing it while the meeting is happening is the only way to answer the
+-- question the way it has to be answered — as of the meeting, frozen, so a
+-- room whose membership changes later cannot change who may open a recording
+-- made before that change.
+--
+-- No backfill clause, deliberately. Every other column added to this table was
+-- recoverable from something already stored (0008 read the room out of
+-- talk_binding); this one is not recoverable from anything, and inventing it
+-- from today's room membership would be a claim about a past meeting that
+-- nothing supports.
+ALTER TABLE jobs ADD COLUMN room_audience TEXT;
+
+-- When the roster was captured. Two jobs it does alone:
+--
+--   * it is the write-once guard. A rerun must never re-capture, because
+--     re-deriving at rerun time is exactly the drift to current membership
+--     this column exists to prevent;
+--   * it distinguishes "captured, and the room had no grantable members"
+--     (guests and federated users only) from "never captured" — an empty
+--     roster and a missing one mean opposite things to a reader, and only the
+--     second one is a recording nothing can narrow.
+ALTER TABLE jobs ADD COLUMN room_audience_at TEXT;

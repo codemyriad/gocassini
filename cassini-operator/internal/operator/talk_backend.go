@@ -306,6 +306,11 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 	// Resolve the room's display name off the start path; the build flow
 	// embeds it as the packed meeting's title (see talk_room_name.go).
 	go rt.resolveTalkRoomName(resp.ID, state.Owner, state.RoomToken)
+	// Record who has access to the room, for the same reason and in the same
+	// shape: off the start path, best-effort, and never able to fail a
+	// recording. This is the half of the capture that sees the room as the
+	// meeting begins; the other half runs when it stops (talk_room_audience.go).
+	go rt.captureRoomAudience(resp.ID, state.Owner, state.RoomToken, roomAudiencePhaseStart)
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 

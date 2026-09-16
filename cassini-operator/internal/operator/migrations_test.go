@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-func TestMigrationsRunContiguouslyThroughInsightRuns(t *testing.T) {
+func TestMigrationsRunContiguouslyThroughRoomAudience(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
 	last := migrations[len(migrations)-1]
-	if last.Version != 10 || last.Name != "insight_requested_endpoint" {
-		t.Fatalf("last migration = %04d_%s, want 0010_insight_requested_endpoint", last.Version, last.Name)
+	if last.Version != 11 || last.Name != "job_room_audience" {
+		t.Fatalf("last migration = %04d_%s, want 0011_job_room_audience", last.Version, last.Name)
 	}
 }
 
