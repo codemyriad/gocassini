@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { cubicOut } from "svelte/easing";
-  import { ChevronDown, FileText, Tag, X } from "@lucide/svelte";
+  import { ChevronDown, FileText, Tag, TriangleAlert, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
   import type { MeetingTags } from "../viewer/listTags";
@@ -120,14 +120,21 @@
         {#if hiddenCount > 0}
           {hiddenCount} not shown here.
         {/if}
-        {#if overCap}
-          A bundle holds at most {MAX_SELECTED_MEETINGS} meetings. Unpick {excess === 1
-            ? "one"
-            : excess}.
-        {:else}
-          Tag, download or get insights from them.
-        {/if}
+        Tag, download or get insights from them.
       </p>
+      <!-- Not a note among the others: over the cap, Prepare is refused, so it
+           is the one thing in this bar standing between a selection and what it
+           is for. -->
+      {#if overCap}
+        <p class="selbar-over" role="status">
+          <TriangleAlert size={14} aria-hidden="true" />
+          <span>
+            You can work with up to {MAX_SELECTED_MEETINGS} meetings at once. Unpick {excess === 1
+              ? "one"
+              : excess}.
+          </span>
+        </p>
+      {/if}
       {#if tagReport}
         <p class="selbar-desc" role="status">{tagReport}</p>
       {/if}
@@ -354,6 +361,25 @@
   .selbar-desc {
     font-size: 0.75rem;
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+
+  .selbar-over {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background-color: color-mix(in oklch, var(--color-error) 12%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-error) 45%, transparent);
+    border-radius: var(--radius-field, 0.5rem);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-base-content);
+  }
+  .selbar-over :global(svg) {
+    flex: none;
+    color: var(--color-error);
   }
 
   .selbar-actions {

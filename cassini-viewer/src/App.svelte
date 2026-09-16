@@ -1408,6 +1408,7 @@
           totals={selectionTotals}
           gaps={selectionGaps}
           loadBundle={loadSelectedBundle}
+          on:unpick={(event) => handlePick(event)}
           on:close={() => (prepareOpen = false)}
         >
           <!-- Forwarded, not decided (D-722). Whether this deployment can be
