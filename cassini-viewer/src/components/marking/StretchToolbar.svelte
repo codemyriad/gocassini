@@ -64,7 +64,7 @@
 <div
   class="text-xs {row
     ? 'flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1'
-    : 'grid w-52 gap-1.5 border border-base-300 bg-base-100 p-1.5 shadow-md'}"
+    : 'st-card grid w-52 gap-1.5 border border-base-300 bg-base-100 p-1.5 shadow-md'}"
   style:border-radius={row ? undefined : "calc(var(--radius-field, 0.5rem) + 7px)"}
   role="toolbar"
   aria-label="This section"

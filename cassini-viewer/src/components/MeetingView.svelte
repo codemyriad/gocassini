@@ -1275,7 +1275,7 @@
             <p class="px-[7px] text-[1.06rem] leading-[1.72] text-base-content break-words">{#each row.members as member, memberIndex (member.key)}{#if memberIndex > 0}{' '}{/if}{#if member.kind === 'speech'}<span
                   id={segmentDomId(member.block.id)}
                 >{@render blockProse(member.block)}</span>{:else}<span
-                   class="box-decoration-clone rounded-[8px] border bg-base-200/60 pl-[2px] pr-1.5 py-[3px] text-[0.94rem] text-base-content/60 {isLikelyCrosstalkAcrossBlocks(
+                   class="mv-interjection box-decoration-clone rounded-[8px] border bg-base-200/60 pl-[2px] pr-1.5 py-[3px] text-[0.94rem] text-base-content/60 {isLikelyCrosstalkAcrossBlocks(
                      member.blocks,
                    )
                      ? 'border-warning'

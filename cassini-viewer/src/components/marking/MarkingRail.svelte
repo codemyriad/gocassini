@@ -113,7 +113,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
     <div
       bind:this={track}
-      class="absolute inset-y-0 left-0.5 w-3.5 rounded-sm bg-base-content/8"
+      class="mr-track absolute inset-y-0 left-0.5 w-3.5 rounded-sm bg-base-content/8"
       role="group"
       aria-label="Tagged sections across the whole meeting"
       on:click={(event) => durationMs > 0 && dispatch("go", msAt(event))}
@@ -147,7 +147,7 @@
   {:else}
   <div
     bind:this={track}
-    class="absolute inset-y-0 left-9 w-3.5 cursor-crosshair touch-none rounded-sm bg-base-content/8 focus-visible:outline-2 focus-visible:outline-offset-3"
+    class="mr-track absolute inset-y-0 left-9 w-3.5 cursor-crosshair touch-none rounded-sm bg-base-content/8 focus-visible:outline-2 focus-visible:outline-offset-3"
     tabindex="0"
     role="group"
     aria-label="The whole meeting. Drag down it to grab a section; click, or press Enter, for one turn."
