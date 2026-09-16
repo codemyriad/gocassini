@@ -272,6 +272,18 @@
 :host([data-nc-theme*="highcontrast"]) .cassini-root .prep-row-flag {
   color: var(--color-warning-text, var(--color-main-text));
 }
+:host([data-nc-theme*="highcontrast"]) .cassini-root .segmented {
+  background-color: transparent;
+  border: 1px solid var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .segment {
+  color: var(--color-main-text);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .segment[aria-pressed="true"] {
+  background-color: var(--color-main-text);
+  color: var(--color-main-background);
+  box-shadow: none;
+}
 :host([data-nc-theme*="highcontrast"]) .cassini-root .needs-key {
   background-color: transparent;
   border: 1px solid var(--color-border-maxcontrast);
