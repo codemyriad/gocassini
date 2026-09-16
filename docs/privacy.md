@@ -50,9 +50,17 @@ artifacts:
   recording each artifact's kind, state, and integrity hashes.
 - **Logs** — per-attempt operator logs (`record.log`, `build.log`, `seal.log`,
   `publish.log`).
-- **Operator database** — job and attempt history plus insight-run records,
-  including any typed question. It does not store recording audio, transcripts,
-  summaries, or insight answer bodies.
+- **Room audience** — for each Talk recording, the accounts, groups and teams
+  that had access to the conversation while it was being recorded, captured when
+  the recording starts and again when it stops. It is what lets Cassini later
+  limit a recording to the people who were in the call rather than to whoever is
+  in that room today, so it is deliberately frozen and never re-derived. Guests,
+  email invitees and federated participants are not recorded: they have no local
+  account to grant, so there is nothing to keep. It lives on the job row, which
+  outlives the recording itself — job history is kept after artifacts are pruned.
+- **Operator database** — job and attempt history, the room audience above, plus
+  insight-run records including any typed question. It does not store recording
+  audio, transcripts, summaries, or insight answer bodies.
 
 ## Where it is stored
 

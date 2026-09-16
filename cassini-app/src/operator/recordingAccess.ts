@@ -245,7 +245,7 @@ export function switchConfirmation(
       known
         ? `All ${plural(count, "recording")}, including the ones currently limited to their participants, will become visible to anyone with an account on this Nextcloud.`
         : "All recordings, including the ones currently limited to their participants, will become visible to anyone with an account on this Nextcloud.",
-      "Switching back later won't re-limit them.",
+      "Switching back later won't re-limit them automatically, though you'll be able to limit them again from this page.",
     ],
     pause: PAUSE_LONG,
     confirmLabel: known

@@ -341,7 +341,7 @@ describe("confirming a switch", () => {
       title: "Switch to Everyone with a Nextcloud account?",
       lines: [
         "All 134 recordings, including the ones currently limited to their participants, will become visible to anyone with an account on this Nextcloud.",
-        "Switching back later won't re-limit them.",
+        "Switching back later won't re-limit them automatically, though you'll be able to limit them again from this page.",
       ],
       pause: "Recording pauses while the switch runs, usually a few minutes for this many.",
       confirmLabel: "Make 134 recordings visible to everyone",
