@@ -368,10 +368,9 @@
   }
 
   /* The meeting sheet's section heading (MeetingView's .mv-section-title),
-     held close over what it heads in the drawer's narrower column. */
+     0.5rem over what it heads. */
   .ins-title {
-    margin: 0 0 8px;
-    padding-bottom: 0;
+    margin: 0 0 0.5rem;
     font-size: 15px;
     font-weight: 600;
     color: var(--color-base-content);

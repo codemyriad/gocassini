@@ -1100,7 +1100,7 @@
            the transcript under it: three sections of one sheet, titled the
            same way. -->
       <section>
-        <p class="mv-section-title mb-3">Summary</p>
+        <p class="mv-section-title">Summary</p>
         <div class="mv-card">
           <!-- Markdown rendered via {@html} can't receive Svelte-scoped
                styles, so per-tag styling is expressed through Tailwind's
@@ -1138,7 +1138,7 @@
     {#if linkedInsights.length > 0}
       <!-- The same heading and card as the summary above it. -->
       <section>
-        <p class="mv-section-title mb-3">Insights</p>
+        <p class="mv-section-title">Insights</p>
         <div class="mv-card mv-card-list">
           {#each linkedInsights as record (record.id)}
             <button
@@ -1164,7 +1164,7 @@
     {/if}
 
     {#if displaySegments.length === 0}
-      <p class="mv-section-title mb-3">Transcript</p>
+      <p class="mv-section-title">Transcript</p>
       <p class="text-base-content/70 text-sm leading-normal">No transcript loaded yet.</p>
     {:else}
       <!-- Heading and bar are one block, so the sheet's gap falls above the
@@ -1576,20 +1576,17 @@
   }
 
   /* A section heading, a step under the meeting's name above it: Summary,
-     Insights and Transcript alike, each 16px above what it heads — the 4px
-     here, and the 12px of the card's margin or the search bar's padding. */
+     Insights and Transcript alike, each the same 0.5rem over what it heads.
+     Over the transcript that is the search bar's own top padding, which it
+     needs when it sticks, so there the heading adds nothing of its own. */
   .mv-section-title {
-    margin-bottom: 0;
-    padding-bottom: 4px;
+    margin-bottom: 0.5rem;
     font-size: 15px;
     font-weight: 600;
     color: var(--color-base-content);
   }
-  /* Over the search bar, whose own padding already sits under the heading:
-     the heading adds nothing to it, so the field reads as close to its title
-     as the cards do to theirs. */
   .mv-section-title-bar {
-    padding-bottom: 0;
+    margin-bottom: 0;
   }
 
   .mv-meta {

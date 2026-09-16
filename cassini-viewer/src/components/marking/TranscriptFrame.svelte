@@ -661,7 +661,7 @@
   </div>
   <div
     bind:offsetHeight={barHeight}
-    class="tf-bar sticky z-10 grid gap-2 bg-base-200 py-3"
+    class="tf-bar sticky z-10 grid gap-2 bg-base-200 py-2"
     style:top="{Math.max(0, stickTop - 1)}px"
     style:margin-inline="calc(-1 * var(--tf-bleed, 8px))"
     style:padding-inline="var(--tf-bleed, 8px)"
