@@ -970,7 +970,7 @@
     width: 100%;
     padding: 9px var(--list-x);
     color: var(--color-base-content);
-    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+    transition: background-color 0.15s ease;
   }
   @media (prefers-reduced-motion: reduce) {
     .meeting-row {
@@ -1050,6 +1050,9 @@
     pointer-events: none;
     background-color: var(--color-base-300);
   }
+  /* Hover is the rail's shade and nothing more; picked and open are the
+     insight card's open tint (24% of the accent in that shade), and the colour
+     alone says it: no rule down the side. */
   .meeting-row:hover {
     background-color: var(--color-base-200);
   }
@@ -1057,17 +1060,11 @@
   .meeting-row[aria-current="page"]::after {
     background-color: color-mix(in oklch, var(--color-base-content) 14%, transparent);
   }
-  .meeting-row.row-picked {
-    background-color: color-mix(in oklch, var(--color-primary) 15%, transparent);
-    box-shadow: inset 3px 0 0 var(--color-primary);
+  .meeting-row.row-picked,
+  .meeting-row[aria-current="page"] {
+    background-color: color-mix(in oklch, var(--color-primary) 24%, var(--color-base-200));
   }
   .meeting-row[aria-current="page"] {
-    background-color: color-mix(
-      in oklch,
-      var(--color-primary) 15%,
-      transparent
-    );
-    box-shadow: inset 3px 0 0 var(--color-primary);
     transition: none;
   }
 
