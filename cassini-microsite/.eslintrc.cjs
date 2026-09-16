@@ -1,7 +1,9 @@
 module.exports = {
   // Build output and generated types are not source; linting them floods the
-  // report with errors from minified bundles.
-  ignorePatterns: ["dist/", ".astro/"],
+  // report with errors from minified bundles. public/embed/ is the published
+  // viewer embed (D-775) — built from cassini-viewer and committed here, so it
+  // is build output that happens to live under public/.
+  ignorePatterns: ["dist/", ".astro/", "public/embed/"],
   env: {
     node: true,
     browser: true,
