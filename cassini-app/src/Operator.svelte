@@ -1002,6 +1002,10 @@
     {/each}
   </nav>
 
+  <!-- The content scrolls, the rail does not: on one shared scroller the rail
+       is sticky, and a bounce at either end of the content drags it along with
+       everything else. -->
+  <div class="op-content">
   <div
     class="op-settings op-recordings mx-auto flex min-h-full w-full flex-col gap-4"
     class:cassini-op-panel-inactive={panel !== "recordings"}
@@ -1635,6 +1639,7 @@
          happens on entry — the same contract the shell applies to this surface. -->
     <Settings {panel} on:panel={(event) => selectPanel(event.detail)} />
   {/if}
+  </div>
 </div>
 
 <style>
@@ -1691,6 +1696,28 @@
   }
   .op-shell {
     position: relative;
+  }
+  .op-content {
+    display: contents;
+  }
+  @media (min-width: 721px) {
+    .op-shell {
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .op-content {
+      display: block;
+      min-width: 0;
+      height: 100%;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .op-nav {
+      height: 100%;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
   }
   .op-nav {
     background-color: var(--color-base-200);
