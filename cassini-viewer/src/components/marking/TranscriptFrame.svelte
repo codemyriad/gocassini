@@ -677,12 +677,13 @@
   </div>
 
   {#if marking && wide}
-    <!-- Its own bar under the search: what is tagged in this transcript is a
-         different subject from what was typed into it, and it stays reachable
-         while reading, which is the point of stepping through it. -->
+    <!-- Sticky under the search, floating over the tag column: what is tagged
+         in this transcript is a different subject from what was typed into it,
+         and it stays reachable while reading, which is the point of stepping
+         through it. -->
     <div
       bind:offsetHeight={tagbarHeight}
-      class="tf-tagbar relative sticky z-10 flex flex-wrap items-center gap-2 bg-base-200 py-2"
+      class="tf-tagbar relative sticky z-10 flex flex-wrap items-center gap-2"
       style:top="{Math.max(0, stickTop - 1) + barHeight}px"
       style:margin-inline="calc(-1 * var(--tf-bleed, 8px))"
       style:padding-inline="var(--tf-bleed, 8px)"
@@ -878,49 +879,37 @@
     justify-content: space-between;
     gap: 12px;
   }
-  /* On a wide screen this is a small floating cluster in the margin beside the
-     transcript rather than a second full-width strip: the transcript is what
-     the screen is for, and these controls are consulted rather than read. */
-  @media (min-width: 981px) {
-    .tf-tagbar {
-      height: 0;
-      padding-block: 0;
-      overflow: visible;
-    }
-    .tf-tagbar::after {
-      display: none;
-    }
-    .tf-tagbar-inner {
-      position: absolute;
-      /* The bar bleeds past the frame on both sides, and the tag column is the
-         frame's last --tf-tag-column; a tag starts --tf-tags-left into it.
-         These controls span from there to the frame's edge, as the tags do.
-         They sit on the sheet's own ground, so the text scrolling under them
-         passes behind rather than through; the box reaches 6px past them on
-         each side, so what is in it stays where it was. */
-      top: 4px;
-      left: calc(100% - var(--tf-bleed, 8px) - var(--tf-tag-column, 196px) + var(--tf-tags-left, 0px) - 6px);
-      right: calc(var(--tf-bleed, 8px) - 6px);
-      padding: 4px 6px;
-      flex-wrap: wrap;
-      row-gap: 6px;
-      background-color: var(--color-base-200);
-      border-radius: 9px;
-    }
-    /* The count reads from the tag's edge, the arrows hold the far one. */
-    .tf-tagbar-inner :global(.tf-marks-group) {
-      margin-left: auto;
-    }
+  /* Wherever the transcript has its tag column (the bar is only drawn then),
+     this is a small floating cluster over that column rather than a second
+     full-width strip: the transcript is what the screen is for, and these
+     controls are consulted rather than read. It follows the column, not the
+     screen, so there is no width at which the column is there and the strip
+     comes back. */
+  .tf-tagbar {
+    height: 0;
+    padding-block: 0;
+    overflow: visible;
   }
-
-  /* The rule stops where the content does, like the search bar's own. */
-  .tf-tagbar::after {
-    content: "";
+  .tf-tagbar-inner {
     position: absolute;
-    left: var(--tf-bleed, 8px);
-    right: var(--tf-bleed, 8px);
-    bottom: 0;
-    border-bottom: 1px solid var(--color-base-300);
+    /* The bar bleeds past the frame on both sides, and the tag column is the
+       frame's last --tf-tag-column; a tag starts --tf-tags-left into it.
+       These controls span from there to the frame's edge, as the tags do.
+       They sit on the sheet's own ground, so the text scrolling under them
+       passes behind rather than through; the box reaches 6px past them on
+       each side, so what is in it stays where it was. */
+    top: 4px;
+    left: calc(100% - var(--tf-bleed, 8px) - var(--tf-tag-column, 196px) + var(--tf-tags-left, 0px) - 6px);
+    right: calc(var(--tf-bleed, 8px) - 6px);
+    padding: 4px 6px;
+    flex-wrap: wrap;
+    row-gap: 6px;
+    background-color: var(--color-base-200);
+    border-radius: 9px;
+  }
+  /* The count reads from the tag's edge, the arrows hold the far one. */
+  .tf-tagbar-inner :global(.tf-marks-group) {
+    margin-left: auto;
   }
   .tf-dock :global(.tf-marks-group) {
     margin-left: auto;
