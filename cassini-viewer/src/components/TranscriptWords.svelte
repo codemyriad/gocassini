@@ -26,7 +26,7 @@
 
 <!-- Inline only: both ordinary speech and interjections live in one paragraph.
      Keep separators outside buttons so hover paints the word, not its gap. -->
-{#each parts as part (part.id)}{part.prefix}{#if part.startMs !== undefined}<button
+{#each parts as part (part.id)}{#if part.prefix}<span class="cassini-gap" data-gap-for={part.id}>{part.prefix}</span>{/if}{#if part.startMs !== undefined}<button
     type="button"
     class="cassini-word"
     class:cassini-word-interpolated={part.alignment === "interpolated"}

@@ -444,17 +444,38 @@ body {
   background: transparent;
   cursor: pointer;
 }
+/* Neither of these carries a hue any more. A tag's own colour and the amber of
+ * a search hit are the two things in a transcript that MEAN something; hover is
+ * a pointer's shadow and the playing word is a position, and both said it in
+ * the accent, which put three colours on the same words. */
 .cassini-word:hover {
-  background: color-mix(in srgb, var(--color-primary) 30%, transparent);
-  box-shadow: 0 1px 0 var(--color-primary);
+  background: color-mix(in oklch, var(--color-base-content) 14%, transparent);
+  box-shadow: 0 1px 0 color-mix(in oklch, var(--color-base-content) 35%, transparent);
 }
+/* Inverted rather than tinted: it is the one thing saying where the audio is,
+ * so it has to be unmistakable without being another colour. */
 .cassini-word[data-active="true"] {
   color: var(--color-base-100);
-  background: color-mix(in srgb, var(--color-primary) 70%, var(--color-base-content));
+  background: var(--color-base-content);
 }
+/* A timed word is a <button>, an atomic inline as tall as its line-height; an
+ * untimed word or a run of punctuation is a plain span, only as tall as the
+ * font. They take the same box here, so a rule drawn along a tagged passage
+ * has one bottom edge. Nothing wraps before one of these the way a line can
+ * begin with a space, so as inline-blocks they cannot indent a line. */
+span[data-word-id] {
+  display: inline-block;
+  line-height: inherit;
+}
+
+/* A word whose timing was estimated rather than measured. It used to carry a
+ * dashed amber underline, which on a recording transcribed without word
+ * timings is EVERY word: a page of broken underlines that read as damage and
+ * drowned the rule under a tagged passage. The fact is still told where it is
+ * useful — the header says "Passage-timed" or "Mixed timing" for the whole
+ * transcript, and each word keeps its own title. */
 .cassini-word-interpolated {
-  text-decoration: underline dashed var(--color-warning);
-  text-underline-offset: 0.2em;
+  text-decoration: none;
 }
 
 /* GPU-composited loading spinner. DaisyUI's loading-spinner uses a mask

@@ -1144,7 +1144,6 @@
       <!-- Heading and bar are one block, so the sheet's gap falls above the
            heading rather than between it and the search under it. -->
       <div class="mv-transcript">
-      <p class="mv-transcript-title">Transcript</p>
       <TranscriptFrame
         session={marks}
         vocabulary={tagVocabulary}
@@ -1159,6 +1158,9 @@
         stickTop={headerHeight}
         viewHeight={scrollHeight - headerHeight - playerHeight}
       >
+        <svelte:fragment slot="title">
+          <p class="mv-transcript-title">Transcript</p>
+        </svelte:fragment>
       {#if visibleSegments.length === 0}
       <!-- Distinct from the line above on purpose: "no transcript" and "nothing
            matched what you typed" are different facts, and the first one read as
@@ -1196,11 +1198,11 @@
         {#each transcriptRows as row (row.key)}
           <article
             aria-current={isRowSounding(row, activeSegmentIds) ? "true" : undefined}
-            class="transition-all {continuationKeys.has(row.key) ? '-mt-1' : ''} {isRowSounding(
+            class="transition-all {continuationKeys.has(row.key) ? '-mt-1' : 'mv-new-speaker'} {isRowSounding(
               row,
               activeSegmentIds,
             )
-              ? 'ring-2 ring-primary ring-offset-6 ring-offset-base-100 bg-base-100 rounded-sm'
+              ? 'ring-2 ring-base-content/30 ring-offset-6 ring-offset-base-100 bg-base-100 rounded-sm'
               : ''}"
           >
             <!-- Header row: speaker name + timestamp, both aligned left.
@@ -1208,7 +1210,10 @@
                  narrow screen instead of squeezing the speaker name. -->
             <div class="flex flex-wrap items-center gap-1 mb-1">
               {#if !continuationKeys.has(row.key)}
-                <span class="badge badge-md badge-info text-sm px-1 font-bold">{row.speakerLabel}</span>
+                <!-- A name, not a status: it takes the page's own ink on a
+                     quiet surface rather than the solid white chip, which was
+                     the brightest thing in a dark transcript. -->
+                <span class="mv-speaker-name badge badge-md text-sm px-1.5">{row.speakerLabel}</span>
               {/if}
               {#if isRowLikelyCrosstalk(row)}
                 <span
@@ -1217,7 +1222,7 @@
                 >probably crosstalk</span>
               {/if}
               <button
-                class="badge badge-md text-sm bg-base-200 px-1 text-base-content/60 hover:bg-primary/60 hover:text-base-content cursor-pointer tabular-nums"
+                class="mv-turn-time badge badge-md text-sm px-1.5 text-base-content/60 cursor-pointer tabular-nums"
                 on:click={() => seekTo(row.startMs)}
                 type="button"
               >
@@ -1242,10 +1247,10 @@
                  was said in. A chip's copy text reads "(Ben: Right.)" - the
                  parens and the name are real text nodes, the screen-reader
                  prefix is `select-none` so it never lands in the clipboard. -->
-            <p class="px-1.5 text-[1.06rem] leading-[1.72] text-base-content break-words">{#each row.members as member, memberIndex (member.key)}{#if memberIndex > 0}{' '}{/if}{#if member.kind === 'speech'}<span
+            <p class="px-[7px] text-[1.06rem] leading-[1.72] text-base-content break-words">{#each row.members as member, memberIndex (member.key)}{#if memberIndex > 0}{' '}{/if}{#if member.kind === 'speech'}<span
                   id={segmentDomId(member.block.id)}
                 >{@render blockProse(member.block)}</span>{:else}<span
-                   class="box-decoration-clone rounded-md border bg-base-200/60 px-1.5 py-0.5 text-[0.94rem] text-base-content/60 {isLikelyCrosstalkAcrossBlocks(
+                   class="box-decoration-clone rounded-[8px] border bg-base-200/60 pl-[2px] pr-1.5 py-[3px] text-[0.94rem] text-base-content/60 {isLikelyCrosstalkAcrossBlocks(
                      member.blocks,
                    )
                      ? 'border-warning'
@@ -1253,11 +1258,11 @@
                    title={isLikelyCrosstalkAcrossBlocks(member.blocks)
                      ? likelyCrosstalkTitle(member.speakerLabel)
                      : undefined}
-                 >{#if isLikelyCrosstalkAcrossBlocks(member.blocks)}<span class="sr-only select-none">Probably crosstalk. </span>{/if}<span class="sr-only select-none">Interjection by </span><span aria-hidden="true">(</span><span
-                    class="font-semibold">{member.speakerLabel}</span><span aria-hidden="true">:</span>{#each member.blocks as chipBlock (chipBlock.id)}{' '}<span
-                      class="rounded {activeSegmentIds.has(chipBlock.id) ? 'bg-primary/25' : ''}"
+                 >{#if isLikelyCrosstalkAcrossBlocks(member.blocks)}<span class="sr-only select-none">Probably crosstalk. </span>{/if}<span class="sr-only select-none">Interjection by </span><span class="sr-only" aria-hidden="true">(</span><span
+                    class="mv-speaker-name mv-speaker-inline">{member.speakerLabel}</span><span class="sr-only">:</span>{#each member.blocks as chipBlock (chipBlock.id)}{' '}<span
+                      class="rounded {activeSegmentIds.has(chipBlock.id) ? 'bg-base-content/15' : ''}"
                       id={segmentDomId(chipBlock.id)}
-                    >{@render blockProse(chipBlock)}</span>{/each}<span aria-hidden="true">)</span></span>{/if}{/each}</p>
+                    >{@render blockProse(chipBlock)}</span>{/each}<span class="sr-only" aria-hidden="true">)</span></span>{/if}{/each}</p>
           </article>
         {/each}
       </div>
@@ -1407,7 +1412,7 @@
           class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 min-[981px]:gap-x-3.5"
         >
           <button
-            class="btn btn-primary btn-sm btn-square min-[981px]:btn-md"
+            class="mv-play btn btn-sm btn-square min-[981px]:btn-md"
             on:click={togglePlayback}
             type="button"
             aria-label={playing ? "Pause" : "Play"}
@@ -1428,7 +1433,7 @@
             >
               <input
                 type="checkbox"
-                class="toggle toggle-primary toggle-sm"
+                class="toggle toggle-sm"
                 aria-label="Toggle transcript auto-scroll"
                 checked={followPlayback && !manualScrollLock}
                 on:change={toggleFollowPlayback}
@@ -1443,7 +1448,7 @@
           <div class="order-2 grid min-w-0 gap-0.5">
             <input
               aria-label="Seek within meeting"
-              class="range range-primary range-sm w-full"
+              class="range range-sm w-full text-base-content"
               max={Math.max(clampedDurationMs, 1)}
               min="0"
               on:input={handleTimelineInput}
@@ -1537,8 +1542,14 @@
     border: 1px solid var(--color-base-300);
   }
   .mv-toggle.on {
-    background-color: color-mix(in oklch, var(--color-primary) 20%, transparent);
-    border-color: color-mix(in oklch, var(--color-primary) 50%, transparent);
+    background-color: color-mix(in oklch, var(--color-base-content) 16%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+  }
+
+  /* Playback is neutral throughout, like the word it is playing. */
+  .mv-play {
+    --btn-color: var(--color-base-content);
+    --btn-fg: var(--color-base-100);
   }
 
   /* A section heading, a step under the meeting's name above it. */
@@ -1586,6 +1597,52 @@
     margin-top: 12px;
   }
   /* The corners a tag chip has, since that is what these look like. */
+  /* The anchor a reader scans between turns: full-strength ink and the
+     heaviest weight on the row, on a quiet surface. */
+  .mv-speaker-name {
+    background-color: color-mix(in oklch, var(--color-base-content) 10%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 22%, transparent);
+    font-weight: 600;
+    /* A label on what was said, not louder than it. */
+    color: color-mix(in oklch, var(--color-base-content) 72%, transparent);
+  }
+
+  /* The turn's time sits in the same box a speaker chip does — same padding,
+     a transparent border in place of the chip's — so where a turn has no name
+     its time starts on the transcript's own left edge. Hover is neutral, like
+     the words'. */
+  .mv-turn-time {
+    background-color: transparent;
+    border: 1px solid transparent;
+  }
+  .mv-turn-time:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+    color: var(--color-base-content);
+  }
+
+  /* The same name chip a turn opens with, sized for the line it sits in. The
+     brackets and colon round it were punctuation standing in for a label. */
+  .mv-speaker-inline {
+    display: inline-block;
+    padding: 0 5px;
+    margin-right: 2px;
+    border-radius: 5px;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    vertical-align: 1px;
+  }
+
+  /* A new voice starts a block of its own: more air above it than above the
+     next timestamp in the same person's turn, so who is speaking can be read
+     from the shape of the page before the names are. The first turn needs
+     none — the bar above already gives it room. */
+  :global(.mv-new-speaker) {
+    margin-top: 14px;
+  }
+  :global(.mv-new-speaker:first-child) {
+    margin-top: 0;
+  }
+
   .mv-speaker-count {
     display: inline-flex;
     align-items: center;

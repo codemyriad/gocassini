@@ -64,11 +64,16 @@ describe("a meeting view with no annotation loader", () => {
 });
 
 describe("a meeting view with its marks loaded", () => {
-  it("adds the rail, marking and the marks toggle to the transcript", async () => {
+  it("adds the rail and the tagged-sections count to the transcript, and no tagging mode to set first", async () => {
     const html = frame(await opened(async () => meeting(true)));
-    expect(html).toContain("The whole meeting. Drag down it to grab a stretch");
-    expect(html).toContain("Mark with a tag…");
-    expect(html).toMatch(/Marks <span[^>]*>2<\/span>/);
+    expect(html).toContain("The whole meeting. Drag down it to grab a section");
+    // On the section's own heading line, in words: "marks" was the data model's
+    // term for one application of a tag, and the only one a reader had to be
+    // taught.
+    expect(html).toMatch(/2\s+tagged sections/);
+    // Arming is chosen from a selection's own toolbar, at the moment somebody
+    // is tagging; in the search bar it was a mode with no readable purpose.
+    expect(html).not.toContain("Mark with a tag…");
   });
 
   it("puts the whole-meeting tags in the header, removable, with a way to add one", async () => {
@@ -84,7 +89,7 @@ describe("a meeting view with its marks loaded", () => {
     const html = render(MeetingTags, { props: { session } }).body;
     expect(html).toContain("2 marks can't be placed on this recording");
     expect(html).toContain("Remove them");
-    expect(frame(session)).toMatch(/Marks <span[^>]*>0<\/span>/);
+    expect(frame(session)).toMatch(/0\s+tagged sections/);
   });
 
   it("says quietly that tags are being prepared on a 503", async () => {
@@ -102,12 +107,15 @@ describe("the stretch toolbar", () => {
   const toolbar = (props: Record<string, unknown>) =>
     render(StretchToolbar, { props: { startMs: 1234, endMs: 5470, ...props } }).body;
 
-  it("offers to tag a new stretch, and to clear it, with its times", () => {
+  it("offers to tag a new section, and to clear it, with its times", () => {
     const html = toolbar({});
     expect(html).toContain("0:01.2");
     expect(html).toContain("0:05.4");
-    expect(html).toContain("Tag this stretch");
+    expect(html).toContain("Tag this section");
     expect(html).toContain("Clear");
+    // Where a repeat pass is set up: at the moment somebody is tagging, beside
+    // the tag it would keep.
+    expect(html).toContain("Keep this tag ready");
   });
 
   it("is prefilled with the tag in hand, which it still waits to confirm", () => {

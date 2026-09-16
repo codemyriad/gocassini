@@ -12,21 +12,26 @@
   export let selectedId: string | undefined = undefined;
   export let hoverId: string | null = null;
   export let labels = true;
+  // Where the sticky bars above this end, so a tag can hold that line while
+  // its own section scrolls past.
+  export let stickTop = 0;
 
   const dispatch = createEventDispatcher<{ select: PlacedMark }>();
 
   // Tighter without labels, where the margin is narrow.
   $: step = labels ? 12 : BRACKET_STEP_NARROW;
-  $: labelLeft = (Math.max(0, ...brackets.map(({ mark }) => mark.column)) + 1) * step + 4;
+  $: labelLeft = (Math.max(0, ...brackets.map(({ mark }) => mark.column)) + 1) * step + 22;
 </script>
 
 {#each brackets as { mark, top, height } (mark.item.id)}
   {@const on = mark.item.id === selectedId || mark.item.id === hoverId}
+  <!-- A bracket, not a bar: the arms reach further in at the top and bottom so
+       the shape says where a tagged section starts and ends, and the wider
+       target makes it something a pointer can find. -->
   <button
     type="button"
-    class="absolute w-2.5 cursor-pointer rounded-r p-0 before:absolute before:inset-y-0 before:left-0 before:w-1.5 before:rounded-r-[3px] before:border-l-0 before:border-(--tag) before:content-[''] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--tag) {on
-      ? 'bg-(--tag-bg) before:border-[3.5px] before:border-l-0'
-      : 'bg-transparent before:border-[2.5px] before:border-l-0'}"
+    class="mb-bracket absolute cursor-pointer p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--tag)"
+    class:on
     data-tag-color={mark.color}
     style:top="{top}px"
     style:height="{height}px"
@@ -39,9 +44,63 @@
     on:blur={() => (hoverId = null)}
     on:click={() => dispatch("select", mark)}
   ></button>
-  {#if labels && on}
-    <span class="pointer-events-none absolute flex max-w-[calc(100%-20px)]" style:top="{top}px" style:left="{labelLeft}px" aria-hidden="true">
-      <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} />
-    </span>
+  <!-- The tag is the point of the bracket, so it is always there rather than
+       waiting for a pointer to find the shape first. -->
+  {#if labels}
+    <!-- The chip rides its own section: it holds the line under the bars while
+         any part of that section is on screen, and leaves with it. -->
+    <div
+      class="mb-label-track pointer-events-none absolute"
+      style:top="{top}px"
+      style:height="{height}px"
+      style:left="{labelLeft}px"
+    >
+      <button
+        type="button"
+        tabindex="-1"
+        class="mb-label pointer-events-auto sticky flex max-w-full cursor-pointer"
+        class:on
+        style:top="{stickTop}px"
+        aria-hidden="true"
+        on:pointerenter={() => (hoverId = mark.item.id)}
+        on:pointerleave={() => (hoverId = null)}
+        on:click={() => dispatch("select", mark)}
+      >
+        <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} variant="whole" />
+      </button>
+    </div>
   {/if}
 {/each}
+
+<style>
+  /* Drawn in CSS rather than utilities: three edges of one box, with arms that
+     grow when the bracket is the one in hand. */
+  .mb-bracket {
+    /* The arms ARE the box's top and bottom borders, so the shape and the hit
+       area are the same 22 pixels: drawn arms that the pointer passed through
+       made the bracket look bigger than it could be hovered. */
+    width: 22px;
+    background: none;
+    border: 2px solid var(--tag);
+    border-left: 0;
+    border-radius: 0 4px 4px 0;
+  }
+  /* Hover changes colour, never geometry: growing the arms and the border
+     moved the shape under the pointer, which left and re-entered it. */
+  .mb-bracket.on {
+    background-color: var(--tag-bg);
+  }
+
+  .mb-label-track {
+    right: 0;
+  }
+  .mb-label {
+    padding: 0;
+    background: none;
+    border: 0;
+    opacity: 0.85;
+  }
+  .mb-label.on {
+    opacity: 1;
+  }
+</style>

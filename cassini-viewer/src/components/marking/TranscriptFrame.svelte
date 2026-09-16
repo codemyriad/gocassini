@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { ChevronDown, ChevronUp } from "@lucide/svelte";
 
   import type { FindStop } from "../../core/find";
   import {
@@ -24,7 +25,8 @@
   } from "../../viewer/annotations";
   import MarkBrackets, { BRACKET_STEP_NARROW } from "./MarkBrackets.svelte";
   import MarkingRail from "./MarkingRail.svelte";
-  import MarksList from "./MarksList.svelte";
+  import TagChip from "../tags/TagChip.svelte";
+  import TagPicker from "../tags/TagPicker.svelte";
   import StretchToolbar from "./StretchToolbar.svelte";
   import TranscriptToolbar from "./TranscriptToolbar.svelte";
   import { pickColor, viewMarks, type MarksSession, type PlacedMark } from "./session";
@@ -58,7 +60,8 @@
   let barHeight = 0;
   let selection: Selection | null = null;
   let armed: TagPick | null = null;
-  let marksOpen = false;
+  let armButton: HTMLButtonElement;
+  let picking = false;
   let hoverId: string | null = null;
   let stop = -1;
   // Every word on the page, timed or not, in page order; and each one's place.
@@ -73,6 +76,17 @@
   $: view = marking ? viewMarks($session, vocabulary) : null;
   $: wide = width >= 720;
   $: bracketColumns = Math.max(0, ...(view?.placed.map((mark) => mark.column) ?? [])) + 1;
+  // Where a tag chip begins, measured the way MarkBrackets measures it: the
+  // bracket column's 10px inset, one step per overlapping bracket, and the gap
+  // that clears the arms. The floating controls line up with it.
+  $: tagsLeft = 10 + bracketColumns * 12 + 22;
+  // The tag column is as wide as what stands in it: the brackets, the gap, and
+  // the controls that head the column, which are the widest thing in it.
+  const TAG_CONTROLS = 200;
+  $: tagColumn = tagsLeft + TAG_CONTROLS;
+  // The bracket of the section being edited, so its card can stand where its
+  // tag stands.
+  $: selectedBracket = brackets.find(({ mark }) => mark.item.id === selection?.itemId) ?? null;
   $: indexById = new Map(words.map((word, index) => [word.id, index]));
   $: range = selection ? rangeOfSpan(words, selection) : null;
   $: selectedMark = view?.placed.find((mark) => mark.item.id === selection?.itemId) ?? null;
@@ -135,12 +149,29 @@
     painted.set(attribute, next);
   }
 
-  const across = (stretch: [number, number] | null) =>
-    new Map(stretch ? page.slice(stretch[0], stretch[1] + 1).map((element) => [element, ""]) : []);
+  // Every word in the stretch, and the punctuation and spaces BETWEEN them:
+  // painting the words alone left the rule broken at every comma.
+  const across = (stretch: [number, number] | null) => {
+    const marked = new Map<HTMLElement, string>();
+    if (!stretch) return marked;
+    const within = page.slice(stretch[0], stretch[1] + 1);
+    within.forEach((element, index) => {
+      marked.set(element, "");
+      if (index === 0) return;
+      const gap = element.previousElementSibling;
+      if (gap instanceof HTMLElement && gap.classList.contains("cassini-gap")) {
+        marked.set(gap, "");
+      }
+    });
+    return marked;
+  };
 
   $: selected = onPage(selection, pageAt);
-  $: paint("data-sel", across(selected));
-  $: paint("data-lit", across(hoverMark && onPage(spanForRange(words, hoverMark.startMs, hoverMark.endMs), pageAt)));
+  $: selMarks = across(selected);
+  $: litMarks = across(hoverMark && onPage(spanForRange(words, hoverMark.startMs, hoverMark.endMs), pageAt));
+  $: paint("data-sel", selMarks);
+  $: paint("data-lit", litMarks);
+
   $: paint(
     "data-find",
     new Map(
@@ -178,10 +209,13 @@
   }
   $: view, pageAt, width, void tick().then(placeBrackets);
 
-  function reveal(wordId: string | undefined, block: ScrollLogicalPosition = "center") {
-    page[pageAt.get(wordId ?? "") ?? -1]?.scrollIntoView({ block });
+  function reveal(wordId: string | undefined, block: ScrollLogicalPosition = "center", behavior: ScrollBehavior = "auto") {
+    page[pageAt.get(wordId ?? "") ?? -1]?.scrollIntoView({ block, behavior });
   }
-  const revealWord = (index: number | undefined, block?: ScrollLogicalPosition) => reveal(words[index ?? -1]?.id, block);
+  const revealWord = (index: number | undefined, block?: ScrollLogicalPosition, behavior?: ScrollBehavior) =>
+    reveal(words[index ?? -1]?.id, block, behavior);
+  // A glide where one is welcome, so the reader sees which way they went.
+  const glide = (): ScrollBehavior => (matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
   const revealStop = () => reveal(stops[stop]?.id);
 
   function step(direction: 1 | -1) {
@@ -218,10 +252,17 @@
     }
   }
 
-  function jump(mark: PlacedMark) {
-    marksOpen = false;
+  // Which tagged section the arrows last went to, so they walk the list in
+  // order rather than always from the top.
+  let markAt = -1;
+
+  function stepMark(delta: 1 | -1) {
+    const placed = view?.placed ?? [];
+    if (placed.length === 0) return;
+    markAt = (markAt + delta + placed.length) % placed.length;
+    const mark = placed[markAt];
     seek(mark.startMs);
-    revealWord(spanForRange(words, mark.startMs, mark.endMs)?.from);
+    revealWord(spanForRange(words, mark.startMs, mark.endMs)?.from, "center", glide());
   }
 
   function grabPin(event: PointerEvent, edge: "from" | "to") {
@@ -291,7 +332,6 @@
     if (!marking || inField) return;
     if (event.key === "Escape") {
       if (selection) void clearSelection();
-      else if (marksOpen) marksOpen = false;
       else if (armed) armed = null;
       else return;
       event.preventDefault();
@@ -311,6 +351,12 @@
 </script>
 
 <div bind:this={root} bind:clientWidth={width} class="frame">
+  <!-- The heading line of the section this frame is: its title, filled by the
+       shell, and what is already tagged in it. Both scroll away; only the
+       search below sticks. -->
+  <div class="tf-head">
+    <slot name="title" />
+  </div>
   <div
     bind:offsetHeight={barHeight}
     class="tf-bar sticky z-10 grid gap-2 bg-base-200 py-3 {armed ? 'shadow-[inset_0_-2px_0_var(--tag)]' : ''}"
@@ -323,28 +369,71 @@
       bind:this={toolbar}
       bind:query
       bind:onlyMatching
-      bind:armed
-      bind:marksOpen
       stops={stops.length}
       current={stop}
-      tagging={marking}
-      {vocabulary}
-      marksCount={view?.placed.length ?? 0}
       on:step={(event) => step(event.detail)}
     />
-    {#if marksOpen && view}
-      <MarksList marks={view.placed} on:jump={(event) => jump(event.detail)} />
-    {/if}
     {#if stretchProps && !wide}
-      <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
+      <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:arm={(event) => (armed = event.detail)} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
     {/if}
   </div>
 
+  {#if marking}
+    <!-- Its own bar under the search: what is tagged in this transcript is a
+         different subject from what was typed into it, and it stays reachable
+         while reading, which is the point of stepping through it. -->
+    <div
+      class="tf-tagbar relative sticky z-10 flex items-center gap-2 bg-base-200 py-2"
+      style:top="{Math.max(0, stickTop - 1) + barHeight}px"
+      style:margin-inline="calc(-1 * var(--tf-bleed, 8px))"
+      style:padding-inline="var(--tf-bleed, 8px)"
+      style:--tf-tags-left="{tagsLeft - 10}px"
+      style:--tf-tag-column="{tagColumn}px"
+    >
+      <div class="tf-tagbar-inner flex items-center gap-2">
+      <span class="tf-marks">
+        {view?.placed.length ?? 0}
+        {(view?.placed.length ?? 0) === 1 ? "tagged section" : "tagged sections"}
+      </span>
+      {#if (view?.placed.length ?? 0) > 0}
+        <span class="tf-marks-group">
+          <button type="button" class="tf-marks-step" aria-label="Previous tagged section" title="Previous tagged section" on:click={() => stepMark(-1)}>
+            <ChevronUp size={13} aria-hidden="true" />
+          </button>
+          <button type="button" class="tf-marks-step" aria-label="Next tagged section" title="Next tagged section" on:click={() => stepMark(1)}>
+            <ChevronDown size={13} aria-hidden="true" />
+          </button>
+        </span>
+      {/if}
+      <!-- The tag held ready for the next section, said where tagging is: it
+           is the one mode this transcript can be in, so it names itself and
+           offers the way out. -->
+      {#if armed}
+        <span class="tf-armed join" role="group" aria-label="Tagging with">
+          <button bind:this={armButton} type="button" class="join-item btn btn-xs" title="Change the tag" aria-haspopup="dialog" aria-expanded={picking} on:click={() => (picking = !picking)}>
+            <TagChip label={armed.label} color={pickColor(armed, vocabulary)} />
+          </button>
+          <button type="button" class="join-item btn btn-xs" on:click={() => (armed = null)}>Stop <kbd class="kbd kbd-xs">Esc</kbd></button>
+        </span>
+        {#if picking}
+          <TagPicker
+            tags={vocabulary}
+            label="Tag sections with"
+            anchor={armButton}
+            on:pick={(event) => ((armed = event.detail), (picking = false))}
+            on:close={() => (picking = false)}
+          />
+        {/if}
+      {/if}
+      </div>
+    </div>
+  {/if}
+
   <div
-    class="mt-3 grid"
+    class="mt-6 grid"
     style:grid-template-columns={marking
       ? wide
-        ? "64px minmax(0,1fr) 196px"
+        ? `68px minmax(0,1fr) ${tagColumn}px`
         : `34px minmax(0,1fr) ${Math.max(26, bracketColumns * BRACKET_STEP_NARROW + 2)}px`
       : "minmax(0,1fr)"}
     style:--sel="var(--tag-bg)"
@@ -384,7 +473,7 @@
             role="slider"
             tabindex="0"
             data-pin
-            aria-label={edge === "from" ? "Where the stretch begins" : "Where the stretch ends"}
+            aria-label={edge === "from" ? "Where the section begins" : "Where the section ends"}
             aria-valuemin={0}
             aria-valuemax={durationMs}
             aria-valuenow={ms}
@@ -396,7 +485,7 @@
             on:pointercancel={() => (pinDrag = null)}
             on:keydown={(event) => nudgePin(event, edge)}
             ><span
-              class="pointer-events-none absolute left-[7px] rounded-[3px] bg-base-100 px-1 font-mono text-[10.5px] leading-[1.2] whitespace-nowrap text-(--sel-edge) ring-1 ring-(--sel-edge) {edge === 'from' ? 'bottom-[calc(100%+2px)]' : 'top-[calc(100%+2px)]'}"
+              class="tf-pin-time pointer-events-none absolute left-[7px] px-1.5 py-[2px] font-mono text-[10.5px] leading-[1.2] whitespace-nowrap text-(--sel-edge) {edge === 'from' ? 'bottom-[calc(100%+4px)]' : 'top-[calc(100%+4px)]'}"
               >{formatPreciseTime(ms)}</span
             ></span
           >
@@ -404,11 +493,35 @@
       {/if}
     </div>
     {#if marking}
-      <div class="relative">
-        <MarkBrackets {brackets} selectedId={selection?.itemId} bind:hoverId labels={wide} on:select={(event) => selectMark(event.detail)} />
+      <!-- Inset, so the brackets and their tags sit clear of the floating
+           tagged-sections controls above them. -->
+      <div class="relative pl-2.5">
+        <MarkBrackets
+          {brackets}
+          selectedId={selection?.itemId}
+          bind:hoverId
+          labels={wide}
+          stickTop={Math.max(0, stickTop - 1) + barHeight + (wide ? 44 : 8)}
+          on:select={(event) => selectMark(event.detail)}
+        />
         {#if stretchProps && wide}
-          <div class="absolute right-0" style:top="{pins ? pins.to.y + pins.to.h + 6 : 0}px">
-            <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
+          <!-- Under that section's own tag, which never moves: the chip stays
+               exactly where it was and the card opens beneath it. -->
+          <div
+            class="absolute"
+            style:top="{selectedBracket ? selectedBracket.top + 26 : pins ? pins.to.y + pins.to.h + 6 : 0}px"
+            style:height={selectedBracket ? `${Math.max(0, selectedBracket.height - 26)}px` : undefined}
+            style:left="{selectedBracket ? tagsLeft - 10 : 0}px"
+            style:right={selectedBracket ? "auto" : "0"}
+          >
+            <!-- Rides its own section, like the tag it replaced: it holds the
+                 line under the bars while any of that section is on screen. -->
+            <div
+              class="sticky"
+              style:top="{selectedBracket ? Math.max(0, stickTop - 1) + barHeight + (wide ? 44 : 8) + 26 : 0}px"
+            >
+              <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:arm={(event) => (armed = event.detail)} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
+            </div>
           </div>
         {/if}
       </div>
@@ -417,6 +530,99 @@
 </div>
 
 <style>
+  /* The pin's own time, floating over the words it sits between: it needs to
+     be legible against whatever is behind it, so it carries a surface of its
+     own rather than a hairline ring. */
+  .tf-pin-time {
+    background-color: var(--color-base-100);
+    border: 1px solid var(--sel-edge);
+    border-radius: 5px;
+    box-shadow: 0 2px 8px oklch(0% 0 0 / 0.35);
+  }
+
+  .tf-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  /* On a wide screen this is a small floating cluster in the margin beside the
+     transcript rather than a second full-width strip: the transcript is what
+     the screen is for, and these controls are consulted rather than read. */
+  @media (min-width: 981px) {
+    .tf-tagbar {
+      height: 0;
+      padding-block: 0;
+      overflow: visible;
+    }
+    .tf-tagbar::after {
+      display: none;
+    }
+    .tf-tagbar-inner {
+      position: absolute;
+      top: 8px;
+      /* The bar bleeds past the frame on both sides, and the tag column is the
+         frame's last --tf-tag-column; a tag starts --tf-tags-left into it.
+         These controls span from there to the frame's edge, as the tags do. */
+      left: calc(100% - var(--tf-bleed, 8px) - var(--tf-tag-column, 196px) + var(--tf-tags-left, 0px));
+      right: var(--tf-bleed, 8px);
+      flex-wrap: wrap;
+      row-gap: 6px;
+    }
+    /* The count reads from the tag's edge, the arrows hold the far one. */
+    .tf-marks-group {
+      margin-left: auto;
+    }
+  }
+
+  /* The rule stops where the content does, like the search bar's own. */
+  .tf-tagbar::after {
+    content: "";
+    position: absolute;
+    left: var(--tf-bleed, 8px);
+    right: var(--tf-bleed, 8px);
+    bottom: 0;
+    border-bottom: 1px solid var(--color-base-300);
+  }
+  .tf-armed {
+    margin-left: auto;
+  }
+  @media (min-width: 981px) {
+    .tf-armed {
+      flex-basis: 100%;
+      margin-left: 0;
+    }
+  }
+  .tf-marks-group {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 2px;
+  }
+  .tf-marks-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    cursor: pointer;
+    background: none;
+    border: 1px solid var(--color-base-300);
+    border-radius: 5px;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .tf-marks-step:hover {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    color: var(--color-base-content);
+  }
+  /* A count, not a control: the arrows beside it are how to reach them. */
+  .tf-marks {
+    flex: none;
+    font-size: 12px;
+    white-space: nowrap;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+
   /* The rule sits inside the bar's own padding rather than under its full
      bleed, so it lines up with the content it divides. */
   .tf-bar {
@@ -434,16 +640,47 @@
 
   /* Rightward only: a later word's paint covers an earlier word's text, so a
      leftward bleed would clip the letter before a comma. */
+  /* Underlined, not filled: a tagged stretch is an annotation ON the words,
+     and a block of colour behind them competes with reading them — and with
+     the search highlight, which is a fill. */
+  /* An estimated word timing is drawn as a dashed underline of its own, which
+     inside a tagged passage reads as the tag's rule breaking up. The tag's
+     line wins there; the dashes are still on every word outside it. */
+  .frame :global(.cassini-word-interpolated:is([data-sel], [data-lit])) {
+    text-decoration: none;
+  }
+
+  /* One rule under the passage. The words carry it — timed words are buttons
+     and untimed words and punctuation are spans given the same box (app.css),
+     so they share one bottom edge — and each runs it on over the space that
+     follows, into the next word. The space is never painted itself: as a box
+     of its own it rounded to a different device pixel from the words beside
+     it, and the rule stepped. */
   .frame :global([data-word-id]:is([data-sel], [data-lit]):not([data-active="true"])) {
     border-radius: 0;
-    background: var(--hl);
-    box-shadow: 0.3em 0 0 var(--hl);
+    background: linear-gradient(var(--hl-edge), var(--hl-edge)) no-repeat 0 100% / 100% 2px;
+    text-decoration: none;
+    box-shadow: none;
+    padding-right: 0.27em;
+    margin-right: -0.27em;
+  }
+  /* Hovering a word inside a tagged passage: the fill behind the word, and the
+     rule still along the bottom, as two layers of one background. */
+  .frame :global([data-word-id]:is([data-sel], [data-lit]):hover:not([data-active="true"])) {
+    background-image: linear-gradient(var(--hl-edge), var(--hl-edge)),
+      linear-gradient(
+        color-mix(in oklch, var(--color-base-content) 14%, transparent),
+        color-mix(in oklch, var(--color-base-content) 14%, transparent)
+      );
+    background-size: 100% 2px, calc(100% - 0.27em) 100%;
+    background-position: 0 100%, 0 0;
+    background-repeat: no-repeat, no-repeat;
   }
   .frame :global([data-word-id][data-sel]) {
-    --hl: var(--sel);
+    --hl-edge: var(--sel-edge);
   }
   .frame :global([data-word-id][data-lit]) {
-    --hl: var(--tag-bg);
+    --hl-edge: var(--tag);
   }
   .frame :global([data-word-id][data-find]:not([data-active="true"])) {
     background: color-mix(in oklab, var(--color-warning) 35%, transparent);

@@ -80,7 +80,7 @@
   {#if labels}
     {#each railTicks(durationMs) as tick (tick)}
       <span
-        class="absolute right-[calc(100%-32px)] -translate-y-1/2 font-mono text-[10px] leading-none whitespace-nowrap text-base-content/50"
+        class="absolute right-[calc(100%-26px)] -translate-y-1/2 font-mono text-[10px] leading-none whitespace-nowrap text-base-content/50"
         style:top={pct(tick)}
         aria-hidden="true">{formatClockTime(tick)}</span
       >
@@ -91,7 +91,7 @@
     class="absolute inset-y-0 w-3.5 cursor-crosshair touch-none rounded-sm bg-base-content/8 focus-visible:outline-2 focus-visible:outline-offset-3 {labels ? 'left-9' : 'left-0.5'}"
     tabindex="0"
     role="group"
-    aria-label="The whole meeting. Drag down it to grab a stretch; click, or press Enter, for one turn."
+    aria-label="The whole meeting. Drag down it to grab a section; click, or press Enter, for one turn."
     on:pointerdown={(event) => down(event)}
     on:pointermove={move}
     on:pointerup={up}
@@ -101,7 +101,7 @@
     {#each stops as ms, index}
       <i class="pointer-events-none absolute bg-warning {index === current ? '-inset-x-1 -mt-0.5 h-1' : 'inset-x-px -mt-px h-0.5'}" style:top={pct(ms)}></i>
     {/each}
-    <i class="pointer-events-none absolute -inset-x-1 -mt-px h-0.5 bg-primary" style:top={pct(playheadMs)}></i>
+    <i class="pointer-events-none absolute -inset-x-1 -mt-px h-0.5 bg-base-content" style:top={pct(playheadMs)}></i>
     {#if selection}
       <i
         class="pointer-events-none absolute -inset-x-[3px] min-h-1 rounded-xs border-y-[3px] border-(--tag) bg-(--tag-bg)"
@@ -118,19 +118,8 @@
       {/each}
     {/if}
   </div>
-  <div class="absolute inset-y-0 {labels ? 'left-[54px]' : 'left-5'}" aria-hidden="true">
-    {#each marks as mark (mark.item.id)}
-      <button
-        type="button"
-        tabindex="-1"
-        class="absolute min-h-[3px] w-[3px] cursor-pointer rounded-xs bg-(--tag) p-0"
-        data-tag-color={mark.color}
-        style:top={pct(mark.startMs)}
-        style:height={pct(mark.endMs - mark.startMs)}
-        style:left="{mark.column * 4}px"
-        title={describeMark(mark)}
-        on:click={() => dispatch("select", mark)}
-      ></button>
-    {/each}
-  </div>
+  <!-- No coloured strips beside the rail: a tag is drawn once, in the bracket
+       column on the right of the transcript, and a second set of marks in the
+       margin read as a different thing that had to be worked out.
+  -->
 </div>

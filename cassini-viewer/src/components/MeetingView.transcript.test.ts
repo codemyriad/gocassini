@@ -211,11 +211,13 @@ describe("the transcript pane's markup", () => {
 
   it("gives every chip a screen-reader prefix that never reaches the clipboard", () => {
     // Read aloud as "Interjection by Ben Okafor: Right.", copied as
-    // "(Ben Okafor: Right.)" — the prefix is select-none, the parens are real
-    // text nodes marked aria-hidden so they are punctuation, not words.
+    // "(Ben Okafor: Right.)" — the prefix is select-none, and the parens and
+    // colon are still real text for a copy, but no longer drawn: the name is a
+    // chip like the one a turn opens with.
     expect(template).toContain('<span class="sr-only select-none">Interjection by </span>');
-    expect(template).toContain('<span aria-hidden="true">(</span>');
-    expect(template).toContain('<span aria-hidden="true">)</span>');
+    expect(template).toContain('<span class="sr-only" aria-hidden="true">(</span>');
+    expect(template).toContain('<span class="sr-only" aria-hidden="true">)</span>');
+    expect(template).toContain('class="mv-speaker-name mv-speaker-inline"');
   });
 
   it("keeps the transcript pane a live region with static rows inside it", () => {

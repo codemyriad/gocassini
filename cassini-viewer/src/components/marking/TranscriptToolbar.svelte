@@ -1,27 +1,16 @@
 <script lang="ts">
-  import { createEventDispatcher, tick } from "svelte";
-  import { ChevronDown, ChevronUp, Search, Tag, X } from "@lucide/svelte";
+  import { createEventDispatcher } from "svelte";
+  import { ChevronDown, ChevronUp, Search, X } from "@lucide/svelte";
 
-  import type { TagPick, VocabularyTag } from "../../viewer/annotations";
-  import TagChip from "../tags/TagChip.svelte";
-  import TagPicker from "../tags/TagPicker.svelte";
-  import { pickColor } from "./session";
 
   export let query = "";
   export let onlyMatching = false;
   export let stops = 0;
   export let current = -1;
-  export let tagging = false;
-  export let armed: TagPick | null = null;
-  export let vocabulary: readonly VocabularyTag[] = [];
-  export let marksCount = 0;
-  export let marksOpen = false;
 
   const dispatch = createEventDispatcher<{ step: 1 | -1 }>();
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   let field: HTMLInputElement;
-  let armButton: HTMLButtonElement;
-  let picking = false;
 
   $: finding = query.trim() !== "";
 
@@ -30,13 +19,6 @@
     field.select();
   }
 
-  // The button that opened the picker gives way to the armed tag's; focus follows.
-  async function arm(pick: TagPick) {
-    armed = pick;
-    picking = false;
-    await tick();
-    armButton?.focus();
-  }
 
   function onKeydown(event: KeyboardEvent) {
     if (event.key === "Enter" && stops > 0) {
@@ -108,40 +90,13 @@
       <input
         type="checkbox"
         role="switch"
-        class="toggle toggle-sm toggle-primary"
+        class="toggle toggle-sm"
         bind:checked={onlyMatching}
       />
       <span title="Show only the turns your search matched">Matches only</span>
     </label>
   {/if}
-  {#if tagging}
-    <div class="ml-auto flex items-center gap-1.5">
-      {#if armed}
-        <div class="join" role="group" aria-label="Marking with a tag">
-          <button bind:this={armButton} type="button" class="join-item btn btn-xs" title="Change the tag" aria-haspopup="dialog" aria-expanded={picking} on:click={() => (picking = !picking)}>
-            <TagChip label={armed.label} color={pickColor(armed, vocabulary)} />
-          </button>
-          <button type="button" class="join-item btn btn-xs" on:click={() => (armed = null)}>Stop <kbd class="kbd kbd-xs">Esc</kbd></button>
-        </div>
-      {:else}
-        <button bind:this={armButton} type="button" class="btn btn-xs" aria-haspopup="dialog" aria-expanded={picking} on:click={() => (picking = !picking)}>
-          <Tag size={13} aria-hidden="true" />Mark with a tag…
-        </button>
-      {/if}
-      <button type="button" class="btn btn-xs" aria-expanded={marksOpen} on:click={() => (marksOpen = !marksOpen)}>
-        Marks <span class="font-mono tabular-nums opacity-60">{marksCount}</span>
-      </button>
-    </div>
-    {#if picking}
-      <TagPicker
-        tags={vocabulary}
-        label="Mark with a tag"
-        anchor={armButton}
-        on:pick={(event) => arm(event.detail)}
-        on:close={() => (picking = false)}
-      />
-    {/if}
-  {/if}
+
 </div>
 
 <style>
@@ -233,10 +188,10 @@
     white-space: nowrap;
     color: var(--color-base-content);
   }
-  /* Off is grey, on is the app's colour, like the player's own toggle. */
+  /* Off is grey, on is a stronger neutral, like the player's own toggle. */
   .tt-only.on {
-    background-color: color-mix(in oklch, var(--color-primary) 20%, transparent);
-    border-color: color-mix(in oklch, var(--color-primary) 50%, transparent);
+    background-color: color-mix(in oklch, var(--color-base-content) 16%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
   }
 
   .tt-kbd {
