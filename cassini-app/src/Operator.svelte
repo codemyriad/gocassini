@@ -1738,12 +1738,14 @@
       z-index: 2;
     }
   }
+  /* Browse's rooms button in the Operator: the same button, at the height of
+     the search field it sits beside there (MeetingList's .search-field). */
   .op-nav-button {
     display: flex;
     align-items: center;
     gap: 6px;
     max-width: 100%;
-    height: 2.375rem;
+    height: 40px;
     padding: 0 12px;
     cursor: pointer;
     background-color: var(--color-base-100);
