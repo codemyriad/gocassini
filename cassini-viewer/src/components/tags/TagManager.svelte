@@ -114,13 +114,20 @@
 
   const matches = (query: string) => typeof window !== "undefined" && window.matchMedia(query).matches;
 
+  // The shell's own overlay timing (App.svelte): this sheet opens over the
+  // same surface, so it moves with it rather than on a clock of its own.
+  const OVERLAY_MS = 260;
+
   function sheetSlide(_node: Element) {
     if (matches("(prefers-reduced-motion: reduce)")) return { duration: 0 };
     const axis = matches("(max-width: 720px)") ? "Y" : "X";
-    return { duration: 320, easing: cubicOut, css: (_t: number, u: number) => `transform: translate${axis}(${u * 100}%)` };
+    return { duration: OVERLAY_MS, easing: cubicOut, css: (_t: number, u: number) => `transform: translate${axis}(${u * 100}%)` };
   }
 
-  const scrimFade = () => (matches("(prefers-reduced-motion: reduce)") ? { duration: 0 } : { duration: 200 });
+  const scrimFade = () =>
+    matches("(prefers-reduced-motion: reduce)")
+      ? { duration: 0 }
+      : { duration: OVERLAY_MS, easing: cubicOut };
 
   const focus = (node: HTMLElement, on = true) => {
     if (on) node.focus();

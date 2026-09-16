@@ -155,7 +155,16 @@
   // this deployment has an AI endpoint), and that fact is read once at mount.
   // A reader who was told "no endpoint" and comes back after an administrator
   // configured one is otherwise told it again until they reload (D-749).
-  const dispatch = createEventDispatcher<{ prepareOpen: void }>();
+  const dispatch = createEventDispatcher<{ prepareOpen: void; overlay: boolean }>();
+
+  // Whether something is open over the browse surface. The shell above this
+  // component draws the Browse/Operator tabs, which a scrim positioned inside
+  // here cannot reach: told this, it can dim and blur them with everything
+  // else, so an overlay covers the app rather than most of it.
+  // The rooms drawer is not one of them: it is a part of this surface sliding
+  // into view, not a thing over it, and the tabs stay usable while it is open.
+  $: overlayOpen = prepareOpen || tagManagerOpen || Boolean(selectedInsight || selectedMeetingId);
+  $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
   }
@@ -271,7 +280,12 @@
   // it covers unreachable and read as a page rather than a layer. A percentage
   // transform (rather than svelte/transition's fly, which needs pixels) travels
   // exactly the sheet's own width at whatever size it resolved to.
-  function sheetSlide(_node: Element, { duration = 320 }: { duration?: number }) {
+  // One duration for everything that opens over a surface — the panel, the
+  // scrim under it and the tabs the shell dims — so an overlay reads as a
+  // single move rather than three that finish at different moments.
+  const OVERLAY_MS = 260;
+
+  function sheetSlide(_node: Element, { duration = OVERLAY_MS }: { duration?: number }) {
     if (prefersReducedMotion) {
       return { duration: 0 };
     }
@@ -284,7 +298,7 @@
   }
 
   function scrimFade() {
-    return prefersReducedMotion ? { duration: 0 } : { duration: 200 };
+    return prefersReducedMotion ? { duration: 0 } : { duration: OVERLAY_MS, easing: cubicOut };
   }
 
   // Routing is hash-only (see src/viewer/hashRouting.ts for why and the wire

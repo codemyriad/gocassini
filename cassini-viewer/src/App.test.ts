@@ -62,7 +62,12 @@ describe("the shell's answer to a created insight", () => {
 
 describe("the shell's Prepare panel", () => {
   it("announces each opening, so the shell around it can re-read what fills the panel", () => {
-    expect(appSource).toContain('const dispatch = createEventDispatcher<{ prepareOpen: void }>();');
+    expect(appSource).toContain(
+      'const dispatch = createEventDispatcher<{ prepareOpen: void; overlay: boolean }>();',
+    );
     expect(appSource).toContain('$: if (prepareOpen) {\n    dispatch("prepareOpen");\n  }');
+    // And whether anything is open at all, so the shell can cover the tabs it
+    // draws above this component with the same scrim.
+    expect(appSource).toContain('dispatch("overlay", overlayOpen);');
   });
 });

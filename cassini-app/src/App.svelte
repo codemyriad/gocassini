@@ -69,6 +69,10 @@
   // shell chrome, byte-identical output.
   let operatorAvailable = false;
   let surface: Surface = "browse";
+  // Whether a surface below has something open over it — the rooms drawer, a
+  // meeting or insight sheet, Prepare, Manage tags, the operator's own section
+  // drawer. The tabs are this component's, so only it can cover them.
+  let overlayOpen = false;
 
   // setupNotice is non-null when this deployment's recordings substrate is not
   // proven (D-585). Where it renders depends on whether the archive can still be
@@ -487,7 +491,12 @@
 
 {#if operatorAvailable}
   <div class="cassini-shell">
-    <nav class="cassini-shell-nav" data-theme={themeMode} aria-label="Cassini surfaces">
+    <nav
+      class="cassini-shell-nav"
+      class:cassini-shell-nav-covered={overlayOpen}
+      data-theme={themeMode}
+      aria-label="Cassini surfaces"
+    >
       <button
         type="button"
         class="cassini-shell-tab"
@@ -548,7 +557,7 @@
            hidden while an admin surface is active; those mount only when active
            so the operator's SSE stream + polling don't run in the background. -->
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-        <ViewerApp {ncMode} {dataProvider} {audience} on:prepareOpen={() => void refreshSetupFeatures()}>
+        <ViewerApp {ncMode} {dataProvider} {audience} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
           <!-- Its opposite, driven by the same bit (D-700): the readiness card
                says a question cannot be asked here, this one asks it. The Prepare
@@ -694,6 +703,24 @@
           and all three fall through to the hardcoded light values below — which
           is why the whole toolbar stayed light in dark mode.
        3. a hardcoded light default, for a build with neither. */
+  /* On a phone an overlay is the whole screen, so the tabs go under it with
+     everything else — the scrims are positioned inside the surface below this
+     bar and cannot reach it on their own. On a wider screen a sheet covers
+     part of the page and the tabs stay where they are. */
+  .cassini-shell-nav {
+    transition: filter 260ms cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cassini-shell-nav {
+      transition: none;
+    }
+  }
+  @media (max-width: 720px) {
+    .cassini-shell-nav-covered {
+      filter: blur(3px) brightness(0.45);
+      pointer-events: none;
+    }
+  }
   .cassini-shell-nav {
     --shell-ink: var(--color-main-text, var(--color-base-content, #1f2937));
     --shell-panel: var(--color-main-background, var(--color-base-100, #ffffff));
