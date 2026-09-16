@@ -1096,34 +1096,35 @@
   <div out:fade={contentFadeConfig()}>
   <main class="mv-main flex flex-col m-4 min-[981px]:mx-6 min-[981px]:mb-8">
     {#if summaryHtml}
-      <!-- A card on the sheet's ground, titled inside like the insights block
-           under it: the summary is one of the two things written about this
-           meeting, and they read as a pair rather than as a heading and a
-           tinted quote. -->
-      <section class="mv-card">
-        <p class="mv-eyebrow">Summary</p>
-        <!-- Markdown rendered via {@html} can't receive Svelte-scoped
-             styles, so per-tag styling is expressed through Tailwind's
-             arbitrary descendant selectors on the wrapper. -->
-        <div
-          class="text-[15px] leading-relaxed text-base-content
-            [&>*+*]:mt-3.5
-            [&>h1:first-child]:mt-0 [&>h2:first-child]:mt-0 [&>h3:first-child]:mt-0 [&>h4:first-child]:mt-0
-            [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-6 [&_h1]:leading-tight
-            [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:leading-tight
-            [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:leading-tight
-            [&_h4]:text-base [&_h4]:font-semibold [&_h4]:mt-4
-            [&_strong]:font-semibold [&_em]:italic
-            [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:decoration-2
-            [&_ul]:pl-6 [&_ul]:grid [&_ul]:gap-1.5 [&_ul]:list-disc
-            [&_ol]:pl-6 [&_ol]:grid [&_ol]:gap-1.5 [&_ol]:list-decimal
-            [&_li]:marker:text-base-content/55
-            [&_code]:font-mono [&_code]:text-[0.875em] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-base-300
-            [&_pre]:font-mono [&_pre]:text-sm [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:bg-base-300 [&_pre]:overflow-x-auto
-            [&_pre_code]:p-0 [&_pre_code]:bg-transparent [&_pre_code]:text-[1em]
-            [&_blockquote]:border-l-[3px] [&_blockquote]:border-primary/60 [&_blockquote]:pl-3.5 [&_blockquote]:py-0.5 [&_blockquote]:text-base-content/80
-            [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-base-300"
-        >{@html summaryHtml}</div>
+      <!-- A card on the sheet's ground under a heading, like the insights and
+           the transcript under it: three sections of one sheet, titled the
+           same way. -->
+      <section>
+        <p class="mv-section-title mb-3">Summary</p>
+        <div class="mv-card">
+          <!-- Markdown rendered via {@html} can't receive Svelte-scoped
+               styles, so per-tag styling is expressed through Tailwind's
+               arbitrary descendant selectors on the wrapper. -->
+          <div
+            class="text-[15px] leading-relaxed text-base-content
+              [&>*+*]:mt-3.5
+              [&>h1:first-child]:mt-0 [&>h2:first-child]:mt-0 [&>h3:first-child]:mt-0 [&>h4:first-child]:mt-0
+              [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-6 [&_h1]:leading-tight
+              [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:leading-tight
+              [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:leading-tight
+              [&_h4]:text-base [&_h4]:font-semibold [&_h4]:mt-4
+              [&_strong]:font-semibold [&_em]:italic
+              [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:decoration-2
+              [&_ul]:pl-6 [&_ul]:grid [&_ul]:gap-1.5 [&_ul]:list-disc
+              [&_ol]:pl-6 [&_ol]:grid [&_ol]:gap-1.5 [&_ol]:list-decimal
+              [&_li]:marker:text-base-content/55
+              [&_code]:font-mono [&_code]:text-[0.875em] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-base-300
+              [&_pre]:font-mono [&_pre]:text-sm [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:bg-base-300 [&_pre]:overflow-x-auto
+              [&_pre_code]:p-0 [&_pre_code]:bg-transparent [&_pre_code]:text-[1em]
+              [&_blockquote]:border-l-[3px] [&_blockquote]:border-primary/60 [&_blockquote]:pl-3.5 [&_blockquote]:py-0.5 [&_blockquote]:text-base-content/80
+              [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-base-300"
+          >{@html summaryHtml}</div>
+        </div>
       </section>
     {/if}
 
@@ -1135,33 +1136,35 @@
          what a meeting was used for is not part of what was recorded, which is
          why the record comes from the shell rather than the artifact. -->
     {#if linkedInsights.length > 0}
-      <!-- The same card as the summary above it. -->
-      <section class="mv-card mv-card-list">
-        <p class="mv-eyebrow">Insights</p>
-        {#each linkedInsights as record (record.id)}
-          <button
-            type="button"
-            class="mv-insight flex w-full items-baseline gap-2 rounded-field px-2 py-1.5 text-left cursor-pointer"
-            on:click={() => dispatch("openInsight", record)}
-          >
-            <FileText size={14} class="shrink-0 self-center" aria-hidden="true" />
-            <span class="min-w-0 flex-1 truncate text-sm font-medium">
-              {insightHeadline(record)}
-            </span>
-            <span class="shrink-0 text-xs tabular-nums text-base-content/60">
-              {formatInsightCreated(record)}
-              {#if (insightSourceCounts.get(record.id) ?? 0) > 0}
-                &middot; Context from {insightSourceCounts.get(record.id)}
-                {insightSourceCounts.get(record.id) === 1 ? "meeting" : "meetings"}
-              {/if}
-            </span>
-          </button>
-        {/each}
+      <!-- The same heading and card as the summary above it. -->
+      <section>
+        <p class="mv-section-title mb-3">Insights</p>
+        <div class="mv-card mv-card-list">
+          {#each linkedInsights as record (record.id)}
+            <button
+              type="button"
+              class="mv-insight flex w-full items-baseline gap-2 px-2 py-1 text-left cursor-pointer"
+              on:click={() => dispatch("openInsight", record)}
+            >
+              <FileText size={14} class="shrink-0 self-center" aria-hidden="true" />
+              <span class="min-w-0 flex-1 truncate text-sm font-medium">
+                {insightHeadline(record)}
+              </span>
+              <span class="shrink-0 text-xs tabular-nums text-base-content/60">
+                {formatInsightCreated(record)}
+                {#if (insightSourceCounts.get(record.id) ?? 0) > 0}
+                  &middot; Context from {insightSourceCounts.get(record.id)}
+                  {insightSourceCounts.get(record.id) === 1 ? "meeting" : "meetings"}
+                {/if}
+              </span>
+            </button>
+          {/each}
+        </div>
       </section>
     {/if}
 
     {#if displaySegments.length === 0}
-      <p class="text-lg font-semibold text-base-content">Transcript</p>
+      <p class="mv-section-title mb-3">Transcript</p>
       <p class="text-base-content/70 text-sm leading-normal">No transcript loaded yet.</p>
     {:else}
       <!-- Heading and bar are one block, so the sheet's gap falls above the
@@ -1185,7 +1188,7 @@
         let:openMark
       >
         <svelte:fragment slot="title">
-          <p class="mv-transcript-title">Transcript</p>
+          <p class="mv-section-title">Transcript</p>
         </svelte:fragment>
       {#if visibleSegments.length === 0}
       <!-- Distinct from the line above on purpose: "no transcript" and "nothing
@@ -1505,35 +1508,24 @@
 </section>
 
 <style>
-  /* Summary and Insights: the card surface on the sheet's own ground, the way
-     Prepare and the operator's settings pages layer. */
+  /* Summary and Insights: the operator's card surface (its run cards and
+     .op-tint), a tint of the ink over the sheet's own ground. */
   .mv-card {
     padding: 16px;
-    background-color: var(--color-base-100);
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 12%, var(--color-base-200));
-    border-radius: var(--radius-box, 0.75rem);
+    background-color: color-mix(in oklch, var(--color-base-content) 4%, var(--color-base-200));
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.5rem);
   }
+  /* A list of documents, held close: 4px of card around rows that hover to
+     its own corners less that 4px, so the two curves stay concentric. */
   .mv-card-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 8px;
+    gap: 0;
+    padding: 4px;
   }
-  /* The label is the app's colour: it names what Cassini wrote, and it is the
-     only colour either card carries. */
-  .mv-eyebrow {
-    margin-bottom: 10px;
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 1;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--color-primary);
-  }
-  /* Lined up with the row beneath it, so the label and the first icon share an
-     edge. */
-  .mv-card-list .mv-eyebrow {
-    margin: 4px 0 2px 8px;
+  .mv-card-list .mv-insight {
+    border-radius: calc(var(--radius-box, 0.5rem) - 4px);
   }
   .mv-insight:hover {
     background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
@@ -1583,9 +1575,12 @@
     --btn-fg: var(--color-base-100);
   }
 
-  /* A section heading, a step under the meeting's name above it. */
-  .mv-transcript-title {
+  /* A section heading, a step under the meeting's name above it: Summary,
+     Insights and Transcript alike, each 16px above what it heads — the 4px
+     here, and the 12px of the card's margin or the search bar's padding. */
+  .mv-section-title {
     margin-bottom: 0;
+    padding-bottom: 4px;
     font-size: 15px;
     font-weight: 600;
     color: var(--color-base-content);
