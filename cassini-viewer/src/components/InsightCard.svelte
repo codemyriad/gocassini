@@ -99,7 +99,9 @@
   /* Inset from the list's full-bleed rows, so the card reads as an object
      sitting in the stream rather than another row of it. */
   .insight-row {
-    padding: 6px var(--list-x, 20px);
+    /* Enough air that a row tinted by selection directly above or below does
+       not read as touching the card. */
+    padding: 10px var(--list-x, 20px);
   }
 
   /* The open control fills the card and draws nothing of its own: the surface
