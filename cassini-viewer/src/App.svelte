@@ -74,6 +74,7 @@
   import TagManager from "./components/tags/TagManager.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
+  import { focusLayer } from "./components/ui/focusLayer";
 
   // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
   // is selected, which meeting is open, the `meeting` hash param, theme, and
@@ -167,6 +168,11 @@
   // The rooms drawer is not one of them: it is a part of this surface sliding
   // into view, not a thing over it, and the tabs stay usable while it is open.
   $: overlayOpen = prepareOpen || tagManagerOpen || Boolean(selectedInsight || selectedMeetingId);
+  // Which layer is on top, in the order they stack: the meeting sheet, then
+  // Prepare, then the rooms drawer (only ever open on a phone), then Manage
+  // tags. Everything under it is inert, so neither Tab nor a screen reader
+  // wanders into a page the reader cannot see for the drawer over it.
+  $: topLayer = tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
   $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
@@ -1239,6 +1245,7 @@
   </div>
 {:else}
   <div class="browse-shell">
+    <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
       {selectedRoomKey}
@@ -1261,7 +1268,9 @@
       on:tagMatch={(event) => (tagMatch = event.detail)}
       on:manageTags={() => (tagManagerOpen = true)}
     />
+    </div>
 
+    <div class="contents" inert={topLayer > 0}>
     <MeetingList
       meetings={roomMeetings}
       types={browseTypes}
@@ -1312,9 +1321,10 @@
       on:clearTags={() => (selectedTagIds = [])}
       on:dismissTagNotice={() => (tagNotice = "")}
     />
+    </div>
 
     {#if selectionBarUp}
-      <div class="selection-dock" bind:offsetHeight={selectionDockHeight}>
+      <div class="selection-dock" bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
         <SelectionBar
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
@@ -1340,6 +1350,8 @@
       <button
         type="button"
         class="shell-scrim rail-scrim"
+        tabindex="-1"
+        inert={topLayer > 3}
         aria-label="Close the room list"
         transition:fade={scrimFade()}
         on:click={() => (railOpen = false)}
@@ -1357,6 +1369,8 @@
       <button
         type="button"
         class="shell-scrim sheet-scrim"
+        tabindex="-1"
+        inert={topLayer > 1}
         aria-label={selectedInsight ? "Close the insight" : "Close the meeting"}
         transition:fade={scrimFade()}
         on:click={closeSheet}
@@ -1364,6 +1378,8 @@
       <aside
         class="meeting-sheet"
         class:tagging={!selectedInsight && Boolean(dataProvider.loadMeetingAnnotations)}
+        inert={topLayer > 1}
+        use:focusLayer
         transition:sheetSlide={{}}
       >
         {#if selectedInsight}
@@ -1416,11 +1432,13 @@
       <button
         type="button"
         class="shell-scrim prepare-scrim"
+        tabindex="-1"
+        inert={topLayer > 2}
         aria-label="Close Prepare"
         transition:fade={scrimFade()}
         on:click={() => (prepareOpen = false)}
       ></button>
-      <aside class="prepare-sheet" transition:sheetSlide={{}}>
+      <aside class="prepare-sheet" inert={topLayer > 2} use:focusLayer transition:sheetSlide={{}}>
         <PreparePanel
           entries={pickedMeetings}
           totals={selectionTotals}

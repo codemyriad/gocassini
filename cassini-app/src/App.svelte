@@ -494,6 +494,7 @@
     <nav
       class="cassini-shell-nav"
       class:cassini-shell-nav-covered={overlayOpen}
+      inert={overlayOpen}
       data-theme={themeMode}
       aria-label="Cassini surfaces"
     >
