@@ -16,6 +16,7 @@
 # by script, so an embed on another origin cannot read it without this.
 /nextcloud-conf-2026/*
   Access-Control-Allow-Origin: *
+  Access-Control-Expose-Headers: Content-Range, Content-Length
 
 # /embed/v1/ is the floating contract channel: browsers hold it briefly and then
 # revalidate, so a snippet pasted once picks up every compatible release without
