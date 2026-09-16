@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Sun, Moon, Search, PanelLeft, Tag, Users, X } from "@lucide/svelte";
+  import { Sun, Moon, Search, PanelLeft, Tag, TriangleAlert, Users, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import { wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
@@ -58,6 +58,11 @@
   // last rows need room to clear it. The list does not know what it is; it only
   // knows not to hide its own last row under it.
   export let bottomOverlay = false;
+  // How tall that overlay actually is, measured by the shell. The inset used
+  // to be a fixed 96px guess, which a bar carrying a second line — a loss
+  // notice, the cap refusal — grew past, leaving the last rows to scroll under
+  // it with no way to reach them.
+  export let bottomOverlayHeight = 0;
 
   // The insights drawn from the meetings in this room (D-721) — already
   // narrowed by the shell, for the same reason the meetings are: the room
@@ -381,17 +386,24 @@
   <div
     class="list-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable"
     class:list-scroll-inset={bottomOverlay}
+    style={bottomOverlay ? `--list-bottom-inset: ${Math.round(bottomOverlayHeight) + 24}px` : undefined}
   >
     <!-- Stated here rather than swallowed: the list below is complete for
          meetings and incomplete for insights, and only one of those two things
          went wrong. -->
     {#if insightsError}
-      <p class="list-note" role="status">Insights could not be listed.</p>
+      <p class="list-note list-note-error" role="status">
+        <TriangleAlert size={14} aria-hidden="true" />
+        <span>Insights could not be listed.</span>
+      </p>
     {/if}
     {#if tagNotice}
       <p class="list-note" role="status">
-        {tagNotice}
-        <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+        <TriangleAlert size={14} aria-hidden="true" />
+        <span>
+          {tagNotice}
+          <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+        </span>
       </p>
     {/if}
     {#if totalCount === 0 && totalInsightCount === 0}
@@ -909,13 +921,30 @@
      catalog's own errors: the two failures are independent and either one can
      happen without the other. */
   .list-note {
-    margin: 0.75rem var(--list-x) 0;
-    padding: 0.5rem 0.75rem;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0.5rem;
+    margin: 1rem var(--list-x) 0;
+    padding: 0.625rem 0.75rem;
     font-size: 0.8125rem;
     line-height: 1.45;
     background-color: color-mix(in oklch, var(--color-warning) 20%, transparent);
     border-radius: var(--radius-field, 0.5rem);
     color: var(--color-base-content);
+  }
+  .list-note :global(svg) {
+    margin-top: 1px;
+    color: var(--color-warning, #b45309);
+  }
+  /* A listing that failed is not a notice about the archive: nothing here is
+     going to fill that gap until it is fixed. */
+  .list-note-error {
+    background-color: color-mix(in oklch, var(--color-error) 15%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-error) 45%, transparent);
+  }
+  .list-note-error :global(svg) {
+    color: var(--color-error);
   }
 
   .group-head {
@@ -935,7 +964,7 @@
   /* Room for whatever floats over the bottom of the list, so its last row can
      be scrolled clear of it rather than sitting permanently underneath. */
   .list-scroll-inset {
-    padding-bottom: 96px;
+    padding-bottom: var(--list-bottom-inset, 96px);
   }
 
   .meeting-row {

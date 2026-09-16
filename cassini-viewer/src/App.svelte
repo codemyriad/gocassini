@@ -150,6 +150,9 @@
   // next click — and a selection is a thing you are doing, not a place you are.
   let selection: MeetingSelection = EMPTY_SELECTION;
   let prepareOpen = false;
+  // The floating bar's real height, so the list can leave exactly that much
+  // room under its last row.
+  let selectionDockHeight = 0;
   // Said to whoever mounts this shell, each time Prepare opens: the panel's
   // readiness slot is filled from a fact only the shell around it has (whether
   // this deployment has an AI endpoint), and that fact is read once at mount.
@@ -1278,6 +1281,7 @@
       {pickedIds}
       selectable={canPrepare}
       bottomOverlay={selectionBarUp}
+      bottomOverlayHeight={selectionDockHeight}
       {ncMode}
       {themeMode}
       errorMessage={listError}
@@ -1310,7 +1314,7 @@
     />
 
     {#if selectionBarUp}
-      <div class="selection-dock">
+      <div class="selection-dock" bind:offsetHeight={selectionDockHeight}>
         <SelectionBar
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
