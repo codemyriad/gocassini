@@ -262,6 +262,16 @@
 :host([data-nc-theme*="highcontrast"]) .cassini-root :is(.search-field, .resultline .chip, .selbar-clear, .selbar-tag, .tag-popover, .tag-popover input) {
   border-color: var(--color-border-maxcontrast);
 }
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.prep-card, .prep-action, .prep-gap, .tpl-box, .ins-sources, .ins-note) {
+  border: 1px solid var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.prep-head, .prep-row, .prep-total) {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .prep-row-words.unknown,
+:host([data-nc-theme*="highcontrast"]) .cassini-root .prep-row-flag {
+  color: var(--color-warning-text, var(--color-main-text));
+}
 :host([data-nc-theme*="highcontrast"]) .cassini-root .needs-key {
   background-color: transparent;
   border: 1px solid var(--color-border-maxcontrast);
