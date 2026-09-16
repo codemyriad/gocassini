@@ -180,6 +180,10 @@ type storageStatusResponse struct {
 	// Preview is present only on the POST that asked what a mode switch would
 	// do. Nothing has happened when it is set.
 	Preview *storageTransitionPreview `json:"preview,omitempty"`
+	// OpenRecordings is present only on the POST that asked for it: the
+	// recordings a migration left readable by everyone, and who each one would
+	// be narrowed to.
+	OpenRecordings *openRecordingsResult `json:"open_recordings,omitempty"`
 }
 
 // storageAction is the POST body. Two verbs share one route because AppAPI
@@ -214,6 +218,12 @@ const (
 	// nothing — it is a note in the operator's own settings file, so a fresh
 	// install stops showing the dialog on every visit and on every browser.
 	storageActionAcknowledgeFirstRun = "acknowledge_first_run"
+	// storageActionListOpenRecordings answers which recordings are readable by
+	// every account and which of those could be limited to the people who were
+	// in the call (D-769). A POST rather than a field on GET /storage because
+	// it PROBES — one PROPFIND of the Team folder — and GET is a page an
+	// administrator may refresh, which is why it only ever reads the record.
+	storageActionListOpenRecordings = "list_unrestricted"
 	// storageActionFinishMigration completes a switch that stopped part way: it
 	// clears the root the recorded mode does NOT name and marks the instance
 	// settled. It is the one recovery action, and it is the same action whichever
@@ -314,6 +324,18 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp := c.storageStatus(rt, nil)
 		resp.Preview = &preview
 		writeJSON(w, http.StatusOK, resp)
+	case storageActionListOpenRecordings:
+		open, err := c.listOpenRecordings(ctx, rt.store, rt.logger)
+		if err != nil {
+			// Conflict rather than 500: every way this fails is "that question
+			// does not apply to this instance" or "Nextcloud did not answer",
+			// and neither is a fault in the operator.
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		resp := c.storageStatus(rt, nil)
+		resp.OpenRecordings = &open
+		writeJSON(w, http.StatusOK, resp)
 	case storageActionFinishMigration:
 		result, err := c.finishStorageMigration(ctx, rt.logger)
 		if err != nil {
@@ -344,7 +366,7 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp.Installs = installs
 		writeJSON(w, http.StatusOK, resp)
 	default:
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q, %q, %q, %q or %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration, storageActionAcknowledgeFirstRun))
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q, %q, %q, %q, %q or %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration, storageActionAcknowledgeFirstRun, storageActionListOpenRecordings))
 	}
 }
 
