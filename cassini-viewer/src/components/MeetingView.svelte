@@ -542,12 +542,24 @@
     element?.scrollIntoView({ behavior, block: "center" });
   }
 
+  // Paused, the playhead is as often in a silence between turns as in one, and
+  // then nothing is sounding; the turn it last passed the start of stands in.
+  function rowKeyNear(ms: number): string | null {
+    let key: string | null = transcriptRows[0]?.key ?? null;
+    for (const row of transcriptRows) {
+      if (row.startMs > ms) break;
+      key = row.key;
+    }
+    return key;
+  }
+
   function resumeFollow() {
     followPlayback = true;
     manualScrollLock = false;
-    if (activeFollowRowKey) {
+    const key = activeFollowRowKey ?? rowKeyNear(currentTimeMs);
+    if (key) {
       lastAutoScrollRowKey = "";
-      void scrollSegmentIntoView(activeFollowRowKey, "smooth");
+      void scrollSegmentIntoView(key, "smooth");
     }
   }
 
@@ -557,8 +569,10 @@
       return;
     }
     followPlayback = !followPlayback;
+    // Turned back on, it goes to where the audio is now, not only once the
+    // audio reaches its next turn: the reader may be anywhere by then.
     if (followPlayback) {
-      manualScrollLock = false;
+      resumeFollow();
     }
   }
 
