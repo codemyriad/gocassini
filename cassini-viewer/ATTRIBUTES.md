@@ -18,9 +18,22 @@ This file is the published surface. The implementation is
 | `src` | yes | URL of a Cassini portable `.opus`. Absolute or relative to the embedding page. | — |
 | `title` | no | A name for the recording, shown as the heading. | Read from the file name, e.g. `Daily-Standup--2026-03-13--12-00-00.opus` → "Daily Standup", 2026-03-13 12:00 |
 | `theme` | no | `light`, `dark`, or `auto` | `auto` — follows the reader's `prefers-color-scheme` |
+| `hide-badge` | no | Present to remove the "Recorded with Cassini" footer | absent — the badge is shown |
 
 Attributes are read when the element enters the page. Changing one afterwards
 has no effect; replace the element instead.
+
+## The badge
+
+An embed carries a small "Recorded with Cassini" footer linking to
+`gocassini.com`, shown by default. It is the only thing on the page that says
+what produced the recording, to readers who have no other way to find out.
+
+Remove it with `hide-badge`:
+
+```html
+<cassini-meeting src="…" hide-badge></cassini-meeting>
+```
 
 ## What it shows
 
