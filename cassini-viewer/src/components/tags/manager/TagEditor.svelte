@@ -46,7 +46,7 @@
   const toggle = (which: "color" | "icon") => (choosing = choosing === which ? null : which);
 </script>
 
-<div class="flex flex-wrap items-center gap-1.5" data-tag-color={color}>
+<div class="tm-row flex flex-wrap items-center gap-1.5" data-tag-color={color}>
   <input bind:this={input} bind:value={label} type="text" maxlength="64" autocomplete="off" spellcheck="false" aria-label="Tag name"
     class="input input-sm min-w-0 flex-[1_1_140px] text-[14px]" on:input={() => (conflict = null)} on:keydown={onKeydown} />
   <button bind:this={swatch} type="button" class="tm-pick btn btn-square btn-ghost btn-sm" title="Colour"
@@ -57,7 +57,7 @@
     title="Icon" aria-label={icon ? `Icon: ${styleName(icon)}` : "Add an icon"} aria-haspopup="true" aria-expanded={choosing === "icon"} on:click={() => toggle("icon")}>
     {#if icon}<TagIcon {icon} size={15} />{:else}<Plus size={14} class="text-base-content/50" />{/if}
   </button>
-  <button type="button" class="tm-cancel cursor-pointer px-1 text-sm" on:click={() => dispatch("cancel")}>Cancel</button>
+  <button type="button" class="tm-cancel cursor-pointer px-1" on:click={() => dispatch("cancel")}>Cancel</button>
   <button type="button" class="tm-save btn btn-neutral btn-sm px-4 font-semibold" disabled={!label.trim()} on:click={save}>Save</button>
   {#if conflict}
     {@const other = conflict}
@@ -83,15 +83,20 @@
     border: 1px solid var(--color-base-300);
     border-radius: var(--radius-field, 0.5rem);
   }
+  /* The size Save is set in (daisyUI's btn-sm), so the two actions read as a
+     pair rather than as a link beside a button. */
   .tm-cancel {
-    margin-right: -4px;
+    /* Clear of the two pickers on one side and of Save on the other: between
+       them it read as a third control in the strip. */
+    margin-left: 8px;
+    margin-right: 6px;
     background: none;
     border: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
   .tm-cancel:hover {
     color: var(--color-base-content);
-    text-decoration: underline;
-    text-underline-offset: 2px;
   }
 </style>
