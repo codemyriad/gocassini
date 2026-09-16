@@ -20,8 +20,10 @@ import {
   listAvailableTranscripts,
   loadPortableTranscriptBody,
   pickDisplayForTranscript,
+  readPortableAnnotations,
   readPortableSummaryMarkdown,
   type ExtractedPortableManifest,
+  type PortableAnnotations,
   type PortableMeetingManifest,
   type PortableTranscriptDescriptor,
   type PortableTranscriptEntry,
@@ -233,6 +235,20 @@ export async function loadPortableMeetingSummary(
     segmentCount: transcript.segments.length,
     digestDurationMs: transcript.media.durationMs,
   };
+}
+
+/**
+ * The tags and marks a portable meeting carries, or null when it carries none
+ * this build can show. Reads through the same store as everything else, so a
+ * meeting that is already open costs no second fetch.
+ */
+export async function loadPortableMeetingAnnotations(
+  audioPath: string,
+  store: PortableMeetingStore = defaultPortableStore,
+): Promise<PortableAnnotations | null> {
+  const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
+  const { manifest } = await store.loadManifest(resolvedAudioPath);
+  return readPortableAnnotations(manifest);
 }
 
 /**

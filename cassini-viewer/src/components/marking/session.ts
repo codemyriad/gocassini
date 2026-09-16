@@ -35,9 +35,15 @@ export interface MarksState {
   busy: boolean;
   // Colours chosen for new tags, by label, until the vocabulary has them.
   newColors: Record<string, TagColorId>;
+  // Whether this session was opened with somewhere to write to (D-775). It
+  // lives on the state rather than as a prop on every component because the
+  // session is what already knows, and because `write()` silently returning
+  // false is not something a reader can see: a control that cannot work has to
+  // be absent, not disabled.
+  editable: boolean;
 }
 
-const OFF: MarksState = { status: "off", annotations: null, error: "", errorFrom: "meeting", busy: false, newColors: {} };
+const OFF: MarksState = { status: "off", annotations: null, error: "", errorFrom: "meeting", busy: false, newColors: {}, editable: false };
 
 export function createMarksSession(onChanged: (result: AnnotationResult) => void) {
   const state = writable<MarksState>(OFF);
@@ -53,18 +59,19 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
       state.set(OFF);
       return;
     }
-    state.set({ ...OFF, status: "loading" });
+    const editable = applyWith !== null;
+    state.set({ ...OFF, status: "loading", editable });
     try {
       const annotations = await load();
       if (current === generation) {
-        state.set({ ...OFF, status: "ready", annotations });
+        state.set({ ...OFF, status: "ready", annotations, editable });
       }
     } catch (error) {
       if (current !== generation) {
         return;
       }
       const delay = retryDelay(error, attempt);
-      state.set({ ...OFF, status: delay === null ? "failed" : "preparing", error: delay === null ? describeAnnotationError(error) : "" });
+      state.set({ ...OFF, status: delay === null ? "failed" : "preparing", error: delay === null ? describeAnnotationError(error) : "", editable });
       if (delay !== null) {
         retry = setTimeout(() => current === generation && void open(load, applyWith, attempt + 1), delay);
       }

@@ -70,6 +70,12 @@
   const painted = new Map<string, Map<HTMLElement, string>>();
 
   $: marking = $session.status === "ready";
+  // Seeing marks and making them are separate (D-775). `marking` still governs
+  // everything that DRAWS — the rail, the brackets, the marks list — so a
+  // published export shows exactly what the recording carries. `editing` governs
+  // everything that would CHANGE a mark, and a session with nowhere to write has
+  // none of it: not disabled, absent.
+  $: editing = marking && $session.editable;
   $: view = marking ? viewMarks($session, vocabulary) : null;
   $: wide = width >= 720;
   $: bracketColumns = Math.max(0, ...(view?.placed.map((mark) => mark.column) ?? [])) + 1;
@@ -78,7 +84,7 @@
   $: selectedMark = view?.placed.find((mark) => mark.item.id === selection?.itemId) ?? null;
   $: hoverMark = view?.placed.find((mark) => mark.item.id === hoverId) ?? null;
   $: selColor = selectedMark?.color ?? (armed ? pickColor(armed, vocabulary) : "slate");
-  $: stretchProps = marking &&
+  $: stretchProps = editing &&
     range && {
       startMs: range.startMs,
       endMs: range.endMs,
@@ -288,7 +294,7 @@
       return;
     }
     const inField = path.some((node) => node instanceof HTMLElement && node.matches("input, textarea, select, [role='dialog']"));
-    if (!marking || inField) return;
+    if (!editing || inField) return;
     if (event.key === "Escape") {
       if (selection) void clearSelection();
       else if (marksOpen) marksOpen = false;
@@ -325,7 +331,8 @@
       bind:marksOpen
       stops={stops.length}
       current={stop}
-      tagging={marking}
+      tagging={editing}
+      marks={marking}
       {vocabulary}
       marksCount={view?.placed.length ?? 0}
       on:step={(event) => step(event.detail)}
@@ -362,6 +369,7 @@
             stops={stops.map((found) => found.ms)}
             current={stop}
             labels={wide}
+            grabbing={editing}
             on:grab={(event) => grab(event.detail.aMs, event.detail.bMs, event.detail.handle)}
             on:pick={(event) => pickTurn(event.detail)}
             on:select={(event) => selectMark(event.detail)}
@@ -371,7 +379,7 @@
     {/if}
     <div bind:this={textCell} class="relative min-w-0" data-tag-color={hoverMark?.color ?? selColor}>
       <slot />
-      {#if marking && pins && range}
+      {#if editing && pins && range}
         {#each EDGES as edge (edge)}
           {@const ms = edge === "from" ? range.startMs : range.endMs}
           <span

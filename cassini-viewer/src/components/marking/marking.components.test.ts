@@ -48,6 +48,13 @@ async function opened(load: () => Promise<MeetingAnnotations>) {
   return session;
 }
 
+// What a published export gets: a loader and nowhere to write (D-775).
+async function readOnly(load: () => Promise<MeetingAnnotations>) {
+  const session = createMarksSession(() => {});
+  await session.open(load, null);
+  return session;
+}
+
 const frame = (session: ReturnType<typeof createMarksSession>) =>
   render(TranscriptFrame, { props: { session, durationMs: 60_000 } }).body;
 
@@ -95,6 +102,37 @@ describe("a meeting view with its marks loaded", () => {
     expect(html).toContain("Tags are being prepared");
     expect(html).not.toContain("Add tag");
     expect(frame(session)).not.toContain("The whole meeting");
+  });
+});
+
+describe("a meeting view that can read marks but not write them", () => {
+  it("draws every mark the recording carries", async () => {
+    const session = await readOnly(async () => meeting(true));
+    const html = frame(session);
+    expect(html).toMatch(/Marks <span[^>]*>2<\/span>/);
+    expect(render(MeetingTags, { props: { session } }).body).toContain("budget");
+  });
+
+  it("offers nothing that would change one", async () => {
+    const session = await readOnly(async () => meeting(true));
+    const html = frame(session);
+    // The rail is an overview, not a way to start a stretch.
+    expect(html).not.toContain("Drag down it to grab a stretch");
+    expect(html).not.toContain("Mark with a tag…");
+    const header = render(MeetingTags, { props: { session } }).body;
+    expect(header).not.toContain("Add tag");
+    expect(header).not.toContain('aria-label="Remove budget"');
+  });
+
+  it("still says which marks cannot be placed, without offering to remove them", async () => {
+    // The reader is owed the fact; only the operator can act on it.
+    const html = render(MeetingTags, { props: { session: await readOnly(async () => meeting(false)) } }).body;
+    expect(html).toContain("2 marks can't be placed on this recording");
+    expect(html).not.toContain("Remove them");
+  });
+
+  it("keeps find, which reads and changes nothing", async () => {
+    expect(frame(await readOnly(async () => meeting(true)))).toContain('aria-label="Find in this meeting"');
   });
 });
 

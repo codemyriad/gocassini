@@ -8,6 +8,10 @@
 
   // The whole meeting top to bottom: drag to grab a stretch, click for one turn.
   export let durationMs: number;
+  // False makes the rail an overview and nothing else: marks, ticks and the
+  // playhead still draw and a mark is still selectable, but no drag or click
+  // can start a stretch there (D-775).
+  export let grabbing = true;
   export let marks: readonly PlacedMark[] = [];
   export let selection: { startMs: number; endMs: number } | null = null;
   export let color: TagColorId = "slate";
@@ -38,7 +42,7 @@
   }
 
   function down(event: PointerEvent, handleAnchorMs?: number) {
-    if (event.button > 0 || !(durationMs > 0)) {
+    if (event.button > 0 || !(durationMs > 0) || !grabbing) {
       return;
     }
     event.preventDefault();
@@ -68,6 +72,9 @@
   // Not once the frame has taken Enter to confirm a stretch: picking a turn
   // then would swap the stretch being tagged for the one under the playhead.
   function onKeydown(event: KeyboardEvent) {
+    if (!grabbing) {
+      return;
+    }
     if (!event.defaultPrevented && event.target === track && (event.key === "Enter" || event.key === " ")) {
       event.preventDefault();
       event.stopPropagation();
@@ -88,10 +95,12 @@
   {/if}
   <div
     bind:this={track}
-    class="absolute inset-y-0 w-3.5 cursor-crosshair touch-none rounded-sm bg-base-content/8 focus-visible:outline-2 focus-visible:outline-offset-3 {labels ? 'left-9' : 'left-0.5'}"
-    tabindex="0"
+    class="absolute inset-y-0 w-3.5 touch-none rounded-sm bg-base-content/8 focus-visible:outline-2 focus-visible:outline-offset-3 {grabbing ? 'cursor-crosshair' : ''} {labels ? 'left-9' : 'left-0.5'}"
+    tabindex={grabbing ? 0 : -1}
     role="group"
-    aria-label="The whole meeting. Drag down it to grab a stretch; click, or press Enter, for one turn."
+    aria-label={grabbing
+      ? "The whole meeting. Drag down it to grab a stretch; click, or press Enter, for one turn."
+      : "The whole meeting, and where its marks fall in it."}
     on:pointerdown={(event) => down(event)}
     on:pointermove={move}
     on:pointerup={up}

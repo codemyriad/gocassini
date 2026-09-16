@@ -16,6 +16,7 @@ const {
   loadPortableArtifactFromAudioPath,
   loadArtifactFromDirectory,
   loadPortableMeetingSummary,
+  loadPortableMeetingAnnotations,
   switchPortableTranscript,
   loadBundledArtifact,
   loadMeetingCatalog,
@@ -33,6 +34,7 @@ const {
     loadPortableMeetingSummary: vi.fn((..._args: unknown[]) =>
       Promise.resolve({ speakerCount: 1, segmentCount: 2, digestDurationMs: 3 }),
     ),
+    loadPortableMeetingAnnotations: vi.fn((..._args: unknown[]) => Promise.resolve(null)),
     switchPortableTranscript: vi.fn((..._args: unknown[]) =>
       Promise.resolve({ kind: "switched" }),
     ),
@@ -51,6 +53,7 @@ vi.mock("./loadArtifact", () => ({
   loadPortableArtifactFromAudioPath,
   loadArtifactFromDirectory,
   loadPortableMeetingSummary,
+  loadPortableMeetingAnnotations,
   switchPortableTranscript,
   loadBundledArtifact,
   PortableMeetingStore: FakePortableMeetingStore,
@@ -194,11 +197,14 @@ describe("StaticCatalogProvider", () => {
     expect(provider.loadInsightDocument).toBeUndefined();
   });
 
-  it("does not offer tags, because only an operator writes marks", () => {
+  it("offers no way to change tags, because only an operator writes marks", () => {
+    // The read is offered (see below) and every write is absent. That asymmetry
+    // IS the read-only contract: App.svelte opens the marks session on the read
+    // alone and hides every editing control when the writes are missing, so a
+    // public export draws its marks and cannot pretend to change them (D-775).
     const provider: Record<string, unknown> = new StaticCatalogProvider() as never;
     for (const method of [
       "loadTagVocabulary",
-      "loadMeetingAnnotations",
       "applyAnnotationOps",
       "updateTag",
       "mergeTag",
@@ -207,6 +213,78 @@ describe("StaticCatalogProvider", () => {
     ]) {
       expect(provider[method], method).toBeUndefined();
     }
+  });
+
+  it("reads a portable meeting's own tags through its store", async () => {
+    loadPortableMeetingAnnotations.mockResolvedValueOnce({
+      format: "cassini.annotations.v1",
+      revision: 4,
+      audioOpusSha256: "abc",
+      tagNamespace: "ns",
+      tags: [{ id: "tag_1", label: "Decision" }],
+      items: [
+        {
+          id: "mk_1",
+          tagId: "tag_1",
+          target: { kind: "time-range", startMs: 1000, endMs: 2000 },
+          createdAtUtc: "2026-09-16T10:00:00Z",
+          actor: { kind: "person", id: "chris" },
+          operationId: "op_1",
+        },
+      ],
+      resolved: true,
+    });
+    const provider = new StaticCatalogProvider();
+    const result = await provider.loadMeetingAnnotations(entry({ audioPath: "./a.opus" }));
+
+    expect(loadPortableMeetingAnnotations).toHaveBeenCalledWith(
+      "./a.opus",
+      expect.any(FakePortableMeetingStore),
+    );
+    // The operator's wire shape exactly, so the marks session cannot tell that
+    // these came from a file rather than a route.
+    expect(result).toEqual({
+      meetingId: "m1",
+      revision: 4,
+      annotations: {
+        format: "cassini.annotations.v1",
+        revision: 4,
+        audioOpusSha256: "abc",
+        tagNamespace: "ns",
+        tags: [{ id: "tag_1", label: "Decision" }],
+        items: [
+          {
+            id: "mk_1",
+            tagId: "tag_1",
+            target: { kind: "time-range", startMs: 1000, endMs: 2000 },
+            createdAtUtc: "2026-09-16T10:00:00Z",
+            actor: { kind: "person", id: "chris" },
+            operationId: "op_1",
+          },
+        ],
+      },
+      resolved: true,
+    });
+  });
+
+  it("reads an unannotated meeting, and one with no audio, as carrying no tags", async () => {
+    // "None" and "this build cannot show tags" are different states: the first
+    // is this value, the second is the method not existing.
+    const provider = new StaticCatalogProvider();
+    expect(await provider.loadMeetingAnnotations(entry({ audioPath: "./a.opus" }))).toEqual({
+      meetingId: "m1",
+      revision: 0,
+      annotations: null,
+      resolved: null,
+    });
+    expect(await provider.loadMeetingAnnotations(entry({ artifactPath: "./dir" }))).toEqual({
+      meetingId: "m1",
+      revision: 0,
+      annotations: null,
+      resolved: null,
+    });
+    // A directory has no manifest to read, so it must not have been fetched for.
+    expect(loadPortableMeetingAnnotations).toHaveBeenCalledTimes(1);
   });
 
   it("gives each provider instance its own store so cache state is not shared", async () => {

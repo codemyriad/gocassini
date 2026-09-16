@@ -11,7 +11,11 @@
   export let onlyMatching = false;
   export let stops = 0;
   export let current = -1;
+  // `tagging` is whether marks can be MADE here; `marks` is whether there are
+  // marks to LOOK at. They used to be one flag, which put the marks list — a
+  // read — behind the ability to write (D-775).
   export let tagging = false;
+  export let marks = false;
   export let armed: TagPick | null = null;
   export let vocabulary: readonly VocabularyTag[] = [];
   export let marksCount = 0;
@@ -86,25 +90,29 @@
       Only matching turns
     </label>
   {/if}
-  {#if tagging}
+  {#if tagging || marks}
     <div class="ml-auto flex items-center gap-1.5">
-      {#if armed}
-        <div class="join" role="group" aria-label="Marking with a tag">
-          <button bind:this={armButton} type="button" class="join-item btn btn-xs" title="Change the tag" aria-haspopup="dialog" aria-expanded={picking} on:click={() => (picking = !picking)}>
-            <TagChip label={armed.label} color={pickColor(armed, vocabulary)} />
+      {#if tagging}
+        {#if armed}
+          <div class="join" role="group" aria-label="Marking with a tag">
+            <button bind:this={armButton} type="button" class="join-item btn btn-xs" title="Change the tag" aria-haspopup="dialog" aria-expanded={picking} on:click={() => (picking = !picking)}>
+              <TagChip label={armed.label} color={pickColor(armed, vocabulary)} />
+            </button>
+            <button type="button" class="join-item btn btn-xs" on:click={() => (armed = null)}>Stop <kbd class="kbd kbd-xs">Esc</kbd></button>
+          </div>
+        {:else}
+          <button bind:this={armButton} type="button" class="btn btn-xs" aria-haspopup="dialog" aria-expanded={picking} on:click={() => (picking = !picking)}>
+            <Tag size={13} aria-hidden="true" />Mark with a tag…
           </button>
-          <button type="button" class="join-item btn btn-xs" on:click={() => (armed = null)}>Stop <kbd class="kbd kbd-xs">Esc</kbd></button>
-        </div>
-      {:else}
-        <button bind:this={armButton} type="button" class="btn btn-xs" aria-haspopup="dialog" aria-expanded={picking} on:click={() => (picking = !picking)}>
-          <Tag size={13} aria-hidden="true" />Mark with a tag…
+        {/if}
+      {/if}
+      {#if marks}
+        <button type="button" class="btn btn-xs" aria-expanded={marksOpen} on:click={() => (marksOpen = !marksOpen)}>
+          Marks <span class="font-mono tabular-nums opacity-60">{marksCount}</span>
         </button>
       {/if}
-      <button type="button" class="btn btn-xs" aria-expanded={marksOpen} on:click={() => (marksOpen = !marksOpen)}>
-        Marks <span class="font-mono tabular-nums opacity-60">{marksCount}</span>
-      </button>
     </div>
-    {#if picking}
+    {#if tagging && picking}
       <TagPicker
         tags={vocabulary}
         label="Mark with a tag"
