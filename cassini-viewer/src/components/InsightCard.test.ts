@@ -37,12 +37,13 @@ describe("InsightCard", () => {
     expect(insightCardSource).not.toMatch(/\{insight\.meetingIds/);
   });
 
-  it("takes its accent from a token the Nextcloud theme does not remap", () => {
-    // primary is already the open row and the active-narrowing chips, and in
-    // the embedded build it becomes the instance's own accent — an insight has
-    // to stay visibly a different kind of thing under any theming.
-    expect(insightCardSource).toContain("var(--color-secondary)");
-    expect(insightCardSource).not.toContain("var(--color-primary)");
+  it("takes its accent from the app's own colour", () => {
+    // An insight is the app's headline object, so it wears the app's colour —
+    // in the embedded build, the instance's own accent. It was amber to stay
+    // distinct from primary under any theming, which made the one thing
+    // Cassini produces the one thing that looked borrowed.
+    expect(insightCardSource).toContain("var(--color-primary)");
+    expect(insightCardSource).not.toContain("var(--color-secondary)");
   });
 });
 
@@ -53,7 +54,7 @@ describe("InsightCard surface", () => {
     // kind of thing". Mixed INTO base-100 rather than into transparent so it
     // stays opaque over the row separators and stable in both themes.
     expect(insightCardSource).toContain(
-      "background-color: color-mix(in oklch, var(--color-secondary) 10%, var(--color-base-100));",
+      "background-color: color-mix(in oklch, var(--color-primary) 10%, var(--color-base-100));",
     );
     expect(insightCardSource).not.toContain("background-color: var(--color-base-100);");
   });
@@ -61,10 +62,10 @@ describe("InsightCard surface", () => {
   it("keeps the open card distinguishable from a hovered one", () => {
     // Three states on one surface, so the wash has to step rather than repeat.
     expect(insightCardSource).toContain(
-      "background-color: color-mix(in oklch, var(--color-secondary) 18%, var(--color-base-100));",
+      "background-color: color-mix(in oklch, var(--color-primary) 18%, var(--color-base-100));",
     );
     expect(insightCardSource).toContain(
-      "background-color: color-mix(in oklch, var(--color-secondary) 26%, var(--color-base-100));",
+      "background-color: color-mix(in oklch, var(--color-primary) 26%, var(--color-base-100));",
     );
   });
 

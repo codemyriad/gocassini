@@ -282,7 +282,7 @@
     background-color: var(--color-base-100);
     /* The insight reads on the same surface its cards use elsewhere, so the
        panel itself says which of the two kinds of thing the sheet is holding. */
-    border-left: 4px solid var(--color-secondary);
+    border-left: 4px solid var(--color-primary);
   }
 
   .ins-head {
