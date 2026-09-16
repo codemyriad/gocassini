@@ -313,8 +313,10 @@
 <div bind:this={root} bind:clientWidth={width} class="frame">
   <div
     bind:offsetHeight={barHeight}
-    class="sticky z-10 -mx-2 grid gap-2 border-b border-base-300 bg-base-200 px-2 py-2 {armed ? 'shadow-[inset_0_-2px_0_var(--tag)]' : ''}"
-    style:top="{stickTop}px"
+    class="tf-bar sticky z-10 grid gap-2 bg-base-200 py-3 {armed ? 'shadow-[inset_0_-2px_0_var(--tag)]' : ''}"
+    style:top="{Math.max(0, stickTop - 1)}px"
+    style:margin-inline="calc(-1 * var(--tf-bleed, 8px))"
+    style:padding-inline="var(--tf-bleed, 8px)"
     data-tag-color={armed ? pickColor(armed, vocabulary) : undefined}
   >
     <TranscriptToolbar
@@ -415,6 +417,21 @@
 </div>
 
 <style>
+  /* The rule sits inside the bar's own padding rather than under its full
+     bleed, so it lines up with the content it divides. */
+  .tf-bar {
+    position: sticky;
+  }
+  .tf-bar::after {
+    content: "";
+    position: absolute;
+    left: var(--tf-bleed, 8px);
+    right: var(--tf-bleed, 8px);
+    bottom: 0;
+    border-bottom: 1px solid var(--color-base-300);
+  }
+
+
   /* Rightward only: a later word's paint covers an earlier word's text, so a
      leftward bleed would clip the letter before a comma. */
   .frame :global([data-word-id]:is([data-sel], [data-lit]):not([data-active="true"])) {
