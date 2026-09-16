@@ -316,11 +316,11 @@
            while the first one is still in flight. -->
       {#if insightsOffered && insightsLoaded}
         {#if types.insights && totalInsightCount > 0}
-          {#if types.meetings}<span class="dot" aria-hidden="true"></span>{/if}
+          {#if types.meetings}<span class="rule" aria-hidden="true"></span>{/if}
           <span>{narrowed ? `${visibleInsights.length} of ${totalInsightCount} insights` : plural(totalInsightCount, "insight")}</span>
         {/if}
       {:else if insightsOffered && insightsError}
-        <span class="dot" aria-hidden="true"></span>
+        <span class="rule" aria-hidden="true"></span>
         <span>Insights could not be listed.</span>
       {/if}
       {#if selectedRoomName !== null}
@@ -867,12 +867,14 @@
     opacity: 1;
   }
 
-  .resultline .dot {
+  /* The rows' own separator, so one list punctuates its counts and its rows
+     the same way. */
+  .resultline .rule {
     flex: none;
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background-color: currentColor;
+    width: 1px;
+    height: 10px;
+    margin: 0 2px;
+    background-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
   }
 
   /* An incomplete list says so where the list is, not in the footer with the
