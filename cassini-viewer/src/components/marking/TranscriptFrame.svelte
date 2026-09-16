@@ -243,12 +243,13 @@
     revealWord(selection?.from);
   }
 
-  // Its end, where the toolbar sits.
+  // Its start, where its tag and card stand; the arrows carry on from it.
   function selectMark(mark: PlacedMark) {
     const span = spanForRange(words, mark.startMs, mark.endMs);
     if (span) {
       selection = { ...span, itemId: mark.item.id };
-      revealWord(span.to);
+      markAt = (view?.placed ?? []).indexOf(mark);
+      revealWord(span.from, "center", glide());
     }
   }
 
