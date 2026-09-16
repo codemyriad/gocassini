@@ -834,14 +834,20 @@
     }
     .tf-tagbar-inner {
       position: absolute;
-      top: 8px;
       /* The bar bleeds past the frame on both sides, and the tag column is the
          frame's last --tf-tag-column; a tag starts --tf-tags-left into it.
-         These controls span from there to the frame's edge, as the tags do. */
-      left: calc(100% - var(--tf-bleed, 8px) - var(--tf-tag-column, 196px) + var(--tf-tags-left, 0px));
-      right: var(--tf-bleed, 8px);
+         These controls span from there to the frame's edge, as the tags do.
+         They sit on the sheet's own ground, so the text scrolling under them
+         passes behind rather than through; the box reaches 6px past them on
+         each side, so what is in it stays where it was. */
+      top: 4px;
+      left: calc(100% - var(--tf-bleed, 8px) - var(--tf-tag-column, 196px) + var(--tf-tags-left, 0px) - 6px);
+      right: calc(var(--tf-bleed, 8px) - 6px);
+      padding: 4px 6px;
       flex-wrap: wrap;
       row-gap: 6px;
+      background-color: var(--color-base-200);
+      border-radius: 9px;
     }
     /* The count reads from the tag's edge, the arrows hold the far one. */
     .tf-marks-group {
