@@ -1173,6 +1173,32 @@
     .rooms-button {
       display: flex;
     }
+    /* The row's own controls line up with the title's line, not with the
+       middle of a block that has grown a second and third line under it. A row
+       whose text fits on one line is unchanged: its first line IS the row. */
+    .meeting-row {
+      align-items: start;
+    }
+    .row-pick,
+    .row-tag,
+    .row-duration {
+      align-self: start;
+      min-height: 22px;
+      display: flex;
+      align-items: center;
+    }
+    /* Two pixels below the title's own centre: the title's cap height sits
+       high in its line box, so a mathematically centred control reads as
+       riding above the word beside it. */
+    .row-tag,
+    .row-duration {
+      margin-top: 2px;
+    }
+    /* The checkbox's hit area hangs 6px above its box, which at the top of the
+       row is 6px above the title's line rather than around it. */
+    .row-pick {
+      margin-top: -1px;
+    }
     .row-tag {
       width: 22px;
       height: 22px;
