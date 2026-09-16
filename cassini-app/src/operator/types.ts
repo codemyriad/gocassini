@@ -346,6 +346,65 @@ export interface StorageStatus {
   first_run: boolean;
   // migration is a mode switch that is RUNNING, and null at every other moment.
   migration: StorageMigration | null;
+  // open_recordings is present only on the responses that asked about them:
+  // the recordings a migration left readable by everyone (D-769). Null means
+  // "not asked", which is not the same as "none", and the panel must not
+  // render an absence as reassurance.
+  open_recordings: OpenRecordings | null;
+  // restricted is present only on the response that narrowed recordings: what
+  // happened to each one that was asked for.
+  restricted: RestrictResult[];
+}
+
+// --- D-769: the recordings a migration left open ------------------------------
+
+// OpenRecordingPrincipal is one account, group or circle that would be granted
+// read. Cassini stores ids, so an id is what this carries.
+export interface OpenRecordingPrincipal {
+  type: string;
+  id: string;
+}
+
+// Why a recording is listed but cannot be narrowed. The operator sends these
+// rather than prose, so a copy edit here cannot break a branch there.
+export type OpenRecordingReason = "" | "no_job" | "no_roster" | "nobody_grantable";
+
+export interface OpenRecording {
+  id: string;
+  room_name: string;
+  created_at: string;
+  // narrowable says a roster was captured and could be applied. False makes
+  // the row inert: it is a statement, not a control.
+  narrowable: boolean;
+  reason: OpenRecordingReason;
+  audience: OpenRecordingPrincipal[];
+  // audience_digest fingerprints what was displayed. It goes back with the
+  // request so the operator can refuse a row whose audience has changed since.
+  audience_digest: string;
+}
+
+export interface OpenRecordings {
+  recordings: OpenRecording[];
+  // ignored are the open recordings an administrator has dismissed. Returned
+  // so the panel can offer to undo one without another round trip.
+  ignored: OpenRecording[];
+  // narrowable is how many of `recordings` can actually be acted on — the
+  // number the button counts.
+  narrowable: number;
+}
+
+export type RestrictOutcome =
+  | "restricted"
+  | "refused_stale"
+  | "refused_empty"
+  | "refused_not_open"
+  | "failed";
+
+export interface RestrictResult {
+  id: string;
+  outcome: RestrictOutcome;
+  grants: number;
+  detail: string;
 }
 
 // StorageTransitionPreview is what a mode switch WOULD do, before it does any

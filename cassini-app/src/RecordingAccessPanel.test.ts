@@ -599,3 +599,55 @@ describe("the account row", () => {
     );
   });
 });
+
+// D-769: the list of recordings a migration left readable by everyone.
+//
+// Source assertions, like the rest of this file: a .svelte file is not mounted
+// here, so what a unit test can hold onto is the shape of the markup and where
+// its sentences come from.
+describe("the open-recordings list", () => {
+  it("is asked for on first expand, not with the section", () => {
+    // Answering costs the operator a PROPFIND of the Team folder, and most
+    // visits to this page are not about this list.
+    expect(panelSource).toContain("void loadOpenRecordings()");
+    expect(panelSource).toContain("!openAsked");
+  });
+
+  it("only appears where the question has a meaning", () => {
+    // Under "Everyone with a Nextcloud account" every recording is readable by
+    // everyone by design, and during an unfinished migration which root is
+    // authoritative is exactly what is unresolved.
+    expect(panelSource).toContain("status.mode === PARTICIPANTS && status.migration_clean");
+    expect(panelSource).toContain("{#if openRecordingsApplicable}");
+  });
+
+  it("never renders a failed look as an empty archive", () => {
+    // "Cassini could not look" and "nothing is open" are opposite answers.
+    expect(panelSource).toContain("openError = asFailure(error)");
+    expect(panelSource).toContain("openRecordings = null");
+  });
+
+  it("gives a row it cannot narrow no controls at all", () => {
+    expect(panelSource).toContain("{#if row.narrowable}");
+    expect(panelSource).toContain("openRecordingReasonLine(row)");
+  });
+
+  it("sends the digest rather than the audience", () => {
+    // The audience is not editable here, so the browser has no business
+    // authoring an ACL — it echoes back a fingerprint of what it displayed.
+    expect(panelSource).toContain("audience_digest: row.audience_digest");
+    expect(panelSource).not.toContain("audience: row.audience");
+  });
+
+  it("keeps ignoring reversible", () => {
+    expect(panelSource).toContain("setIgnored(row.id, true)");
+    expect(panelSource).toContain("setIgnored(row.id, false)");
+    expect(panelSource).toContain("Stop ignoring");
+  });
+
+  it("re-derives the list after a write instead of removing rows itself", () => {
+    // A recording leaves this list by no longer qualifying. That property is
+    // what makes the list survive a reload, and it should survive the write too.
+    expect(panelSource).toContain("openRecordings = next.open_recordings");
+  });
+});
