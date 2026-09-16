@@ -98,6 +98,28 @@ export function nudge<S extends WordSpan>(
     : { ...span, to: Math.min(Math.max(index, span.from), last) };
 }
 
+// The timed words a reader's own text selection covers, from the first and
+// last word it touches on the page. Page order and time order part where two
+// people talk at once, so the span runs from the earliest to the latest timed
+// word between them; untimed words and punctuation count for nothing.
+export function spanForPage(
+  pageIds: readonly string[],
+  indexById: ReadonlyMap<string, number>,
+  first: number,
+  last: number,
+): WordSpan | null {
+  let from = Number.POSITIVE_INFINITY;
+  let to = Number.NEGATIVE_INFINITY;
+  for (let at = Math.max(0, first); at <= Math.min(last, pageIds.length - 1); at += 1) {
+    const index = indexById.get(pageIds[at]!);
+    if (index !== undefined) {
+      from = Math.min(from, index);
+      to = Math.max(to, index);
+    }
+  }
+  return from <= to ? { from, to } : null;
+}
+
 // Side by side where ranges overlap: each takes the first column free at its start.
 export function stackColumns(ranges: readonly { startMs: number; endMs: number }[]): number[] {
   const order = ranges

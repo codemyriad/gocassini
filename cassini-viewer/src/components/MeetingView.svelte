@@ -1157,6 +1157,8 @@
         seek={seekTo}
         stickTop={headerHeight}
         viewHeight={scrollHeight - headerHeight - playerHeight}
+        let:chips
+        let:openMark
       >
         <svelte:fragment slot="title">
           <p class="mv-transcript-title">Transcript</p>
@@ -1194,6 +1196,8 @@
               speakerLabel={block.speakerLabel}
               highlighter={wordHighlighter}
               seek={seekTo}
+              {chips}
+              {openMark}
             />{/snippet}
         {#each transcriptRows as row (row.key)}
           <article
@@ -1470,16 +1474,6 @@
   </footer>
   {/if}
 
-  {#if followPlayback && manualScrollLock}
-    <button
-      type="button"
-      class="absolute top-16 right-4 z-30 badge badge-neutral gap-1 px-2 pb-1 cursor-pointer shadow-md rounded-md"
-      on:click={toggleFollowPlayback}
-      aria-label="Resume auto-scroll"
-    >
-    Auto-scroll paused
-    </button>
-  {/if}
 </section>
 
 <style>

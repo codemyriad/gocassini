@@ -193,6 +193,10 @@ describe("the transcript pane's markup", () => {
     expect(template).toContain("{@render blockProse(member.block)}");
     expect(template).toContain("{@render blockProse(chipBlock)}");
     expect(template).not.toContain("highlightWords");
+    // On a narrow screen the frame hands back the tags to draw in the text,
+    // and every block of prose passes them on.
+    expect(template).toContain("let:chips\n        let:openMark");
+    expect(template).toContain("{chips}\n              {openMark}");
   });
 
   it("carries none of the badges, borders or indentation the durations lived on", () => {

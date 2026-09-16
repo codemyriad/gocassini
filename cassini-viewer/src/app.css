@@ -443,6 +443,10 @@ body {
   text-align: inherit;
   background: transparent;
   cursor: pointer;
+  /* A word is a button, and a button's text is not always selectable; on a
+   * narrow screen the reader's own selection is how a section is made. */
+  -webkit-user-select: text;
+  user-select: text;
 }
 /* Neither of these carries a hue any more. A tag's own colour and the amber of
  * a search hit are the two things in a transcript that MEAN something; hover is

@@ -1,5 +1,7 @@
 <script module lang="ts">
-  export const BRACKET_STEP_NARROW = 8;
+  // How far a tag drops for each section it overlaps, so two tags that would
+  // stand in the same place, or stick at the same line, both show.
+  export const LABEL_STEP = 22;
 </script>
 
 <script lang="ts">
@@ -11,15 +13,13 @@
   export let brackets: readonly { mark: PlacedMark; top: number; height: number }[] = [];
   export let selectedId: string | undefined = undefined;
   export let hoverId: string | null = null;
-  export let labels = true;
   // Where the sticky bars above this end, so a tag can hold that line while
   // its own section scrolls past.
   export let stickTop = 0;
 
   const dispatch = createEventDispatcher<{ select: PlacedMark }>();
 
-  // Tighter without labels, where the margin is narrow.
-  $: step = labels ? 12 : BRACKET_STEP_NARROW;
+  const step = 12;
   $: labelLeft = (Math.max(0, ...brackets.map(({ mark }) => mark.column)) + 1) * step + 22;
 </script>
 
@@ -37,7 +37,6 @@
     style:height="{height}px"
     style:left="{mark.column * step}px"
     aria-label={describeMark(mark)}
-    title={labels ? undefined : describeMark(mark)}
     on:pointerenter={() => (hoverId = mark.item.id)}
     on:pointerleave={() => (hoverId = null)}
     on:focus={() => (hoverId = mark.item.id)}
@@ -45,31 +44,29 @@
     on:click={() => dispatch("select", mark)}
   ></button>
   <!-- The tag is the point of the bracket, so it is always there rather than
-       waiting for a pointer to find the shape first. -->
-  {#if labels}
-    <!-- The chip rides its own section: it holds the line under the bars while
-         any part of that section is on screen, and leaves with it. -->
-    <div
-      class="mb-label-track pointer-events-none absolute"
-      style:top="{top}px"
-      style:height="{height}px"
-      style:left="{labelLeft}px"
+       waiting for a pointer to find the shape first. It rides its own section:
+       it holds the line under the bars while any part of that section is on
+       screen, and leaves with it. -->
+  <div
+    class="mb-label-track pointer-events-none absolute"
+    style:top="{top + mark.column * LABEL_STEP}px"
+    style:height="{Math.max(0, height - mark.column * LABEL_STEP)}px"
+    style:left="{labelLeft}px"
+  >
+    <button
+      type="button"
+      tabindex="-1"
+      class="mb-label pointer-events-auto sticky flex max-w-full cursor-pointer"
+      class:on
+      style:top="{stickTop + mark.column * LABEL_STEP}px"
+      aria-hidden="true"
+      on:pointerenter={() => (hoverId = mark.item.id)}
+      on:pointerleave={() => (hoverId = null)}
+      on:click={() => dispatch("select", mark)}
     >
-      <button
-        type="button"
-        tabindex="-1"
-        class="mb-label pointer-events-auto sticky flex max-w-full cursor-pointer"
-        class:on
-        style:top="{stickTop}px"
-        aria-hidden="true"
-        on:pointerenter={() => (hoverId = mark.item.id)}
-        on:pointerleave={() => (hoverId = null)}
-        on:click={() => dispatch("select", mark)}
-      >
-        <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} variant="whole" />
-      </button>
-    </div>
-  {/if}
+      <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} variant="whole" />
+    </button>
+  </div>
 {/each}
 
 <style>

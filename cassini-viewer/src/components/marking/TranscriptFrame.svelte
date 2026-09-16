@@ -9,6 +9,7 @@
     rangeOfSpan,
     rowAt,
     spanForDrag,
+    spanForPage,
     spanForRange,
     type TimedWord,
     type WordSpan,
@@ -23,13 +24,11 @@
     type TagPick,
     type VocabularyTag,
   } from "../../viewer/annotations";
-  import MarkBrackets, { BRACKET_STEP_NARROW } from "./MarkBrackets.svelte";
+  import MarkBrackets, { LABEL_STEP } from "./MarkBrackets.svelte";
   import MarkingRail from "./MarkingRail.svelte";
-  import TagChip from "../tags/TagChip.svelte";
-  import TagPicker from "../tags/TagPicker.svelte";
   import StretchToolbar from "./StretchToolbar.svelte";
   import TranscriptToolbar from "./TranscriptToolbar.svelte";
-  import { pickColor, viewMarks, type MarksSession, type PlacedMark } from "./session";
+  import { viewMarks, type MarksSession, type PlacedMark } from "./session";
 
   // The transcript column: its toolbar, and while marks are loaded the rail on
   // the left and the brackets on the right. Words are decorated through their
@@ -47,7 +46,10 @@
   export let stickTop = 0;
   export let viewHeight = 0;
 
-  type Selection = WordSpan & { itemId?: string; moved?: boolean };
+  // `native`: made with the reader's own text selection, whose handles stand
+  // where the pins would.
+  type Selection = WordSpan & { itemId?: string; moved?: boolean; native?: boolean };
+  type DomSelection = NonNullable<ReturnType<Document["getSelection"]>>;
   type Point = { x: number; y: number; h: number };
   const EDGES = ["from", "to"] as const;
 
@@ -58,10 +60,12 @@
   let rail: MarkingRail | undefined;
   let width = 0;
   let barHeight = 0;
+  let tagbarHeight = 0;
+  let textHeight = 0;
   let selection: Selection | null = null;
-  let armed: TagPick | null = null;
-  let armButton: HTMLButtonElement;
-  let picking = false;
+  // The tag last put on a section here, offered again on the next one: a pass
+  // tagging many sections alike is one click each, with no mode to set.
+  let recent: TagPick | null = null;
   let hoverId: string | null = null;
   let stop = -1;
   // Every word on the page, timed or not, in page order; and each one's place.
@@ -87,18 +91,32 @@
   // The bracket of the section being edited, so its card can stand where its
   // tag stands.
   $: selectedBracket = brackets.find(({ mark }) => mark.item.id === selection?.itemId) ?? null;
+  // Where under the bars its tag holds, and so where its card starts.
+  $: cardDrop = selectedBracket ? selectedBracket.mark.column * LABEL_STEP + 26 : 0;
   $: indexById = new Map(words.map((word, index) => [word.id, index]));
+  // On a narrow screen there is no column for tags to stand in, so each one
+  // goes into the text in front of the first word it covers.
+  $: chips = marking && !wide ? chipsByWord(view?.placed ?? []) : null;
+  function chipsByWord(placed: readonly PlacedMark[]) {
+    const byWord = new Map<string, PlacedMark[]>();
+    for (const mark of placed) {
+      const span = spanForRange(words, mark.startMs, mark.endMs);
+      const id = span && words[span.from]?.id;
+      if (id) byWord.set(id, [...(byWord.get(id) ?? []), mark]);
+    }
+    return byWord;
+  }
   $: range = selection ? rangeOfSpan(words, selection) : null;
   $: selectedMark = view?.placed.find((mark) => mark.item.id === selection?.itemId) ?? null;
   $: hoverMark = view?.placed.find((mark) => mark.item.id === hoverId) ?? null;
-  $: selColor = selectedMark?.color ?? (armed ? pickColor(armed, vocabulary) : "slate");
+  $: selColor = selectedMark?.color ?? "slate";
   $: stretchProps = marking &&
     range && {
       startMs: range.startMs,
       endMs: range.endMs,
       mark: selectedMark,
       moved: Boolean(selection?.moved),
-      armed,
+      recent,
       vocabulary,
       busy: $session.busy,
       error: $session.errorFrom === "stretch" ? $session.error : "",
@@ -172,6 +190,31 @@
   $: paint("data-sel", selMarks);
   $: paint("data-lit", litMarks);
 
+  // On a narrow screen every tagged section is underlined at rest, in its own
+  // colour: there is no bracket beside the text to say where one runs. Where
+  // two overlap, the later one's colour shows.
+  $: restMarks = marking && !wide ? restByElement(view?.placed ?? [], page, pageAt) : new Map<HTMLElement, PlacedMark>();
+  function restByElement(placed: readonly PlacedMark[], ..._changed: unknown[]) {
+    const byElement = new Map<HTMLElement, PlacedMark>();
+    for (const mark of placed) {
+      for (const element of across(onPage(spanForRange(words, mark.startMs, mark.endMs), pageAt)).keys()) {
+        byElement.set(element, mark);
+      }
+    }
+    return byElement;
+  }
+  $: paint("data-rest", new Map([...restMarks.keys()].map((element) => [element, ""])));
+  $: paint("data-tag-color", new Map([...restMarks].map(([element, mark]) => [element, mark.color])));
+
+  // A tap on underlined words opens their section where it is; the tap still
+  // seeks, as a tap on any word does.
+  function textClick(event: MouseEvent) {
+    if (wide) return;
+    const word = (event.target as Element | null)?.closest?.<HTMLElement>("[data-word-id]");
+    const mark = word ? restMarks.get(word) : undefined;
+    if (mark && mark.item.id !== selection?.itemId) selectMark(mark, false);
+  }
+
   $: paint(
     "data-find",
     new Map(
@@ -225,6 +268,9 @@
 
   function setEdge(edge: "from" | "to", index: number) {
     if (!selection) return;
+    // A pin moved takes over from the reader's own highlight, which would
+    // otherwise still show the old ends.
+    if (selection.native) document.getSelection()?.removeAllRanges();
     selection =
       edge === "from"
         ? { ...selection, from: Math.min(index, selection.to), moved: true }
@@ -243,13 +289,211 @@
     revealWord(selection?.from);
   }
 
+  // The reader's own selection inside this frame, as a live Range. In a shadow
+  // root the document's selection is retargeted to the host, so it is asked
+  // for the ranges inside this root: the standard way first, then the older
+  // Safari signature, then Chrome's own.
+  function readerRange(): Range | null {
+    const scope = root?.getRootNode();
+    const chosen = document.getSelection();
+    if (!scope || !chosen || chosen.rangeCount === 0) return null;
+    if (scope instanceof ShadowRoot && "getComposedRanges" in chosen) {
+      const composed = chosen as DomSelection & { getComposedRanges: (...args: unknown[]) => StaticRange[] };
+      let found: StaticRange | undefined;
+      try {
+        found = composed.getComposedRanges({ shadowRoots: [scope] })[0];
+      } catch {
+        found = composed.getComposedRanges(scope)[0];
+      }
+      if (!found || found.collapsed) return null;
+      const live = document.createRange();
+      try {
+        live.setStart(found.startContainer, found.startOffset);
+        live.setEnd(found.endContainer, found.endOffset);
+      } catch {
+        return null;
+      }
+      return live.collapsed ? null : live;
+    }
+    const own = scope instanceof ShadowRoot ? ((scope as ShadowRoot & { getSelection?: () => DomSelection | null }).getSelection?.() ?? chosen) : chosen;
+    return own.rangeCount > 0 && !own.isCollapsed ? own.getRangeAt(0) : null;
+  }
+
+  // The words the range takes a character of, found by halving, since the
+  // page is in document order: from the first whose end is past the range's
+  // start to the last whose start is before its end. A range that begins at a
+  // word's very end, or finishes at a very start, takes none of that word.
+  const atStart = (element: HTMLElement, node: Node, offset: number) =>
+    offset === 0 && (node === element || node === element.firstChild);
+  const atEnd = (element: HTMLElement, node: Node, offset: number) =>
+    (node === element && offset === element.childNodes.length) ||
+    (node === element.lastChild && offset === (node.textContent?.length ?? 0));
+  function touched(live: Range): [number, number] | null {
+    const cell = textCell;
+    if (!cell || page.length === 0 || !live.intersectsNode(cell)) return null;
+    const firstAfter = (test: (element: HTMLElement) => boolean) => {
+      let low = 0;
+      let high = page.length;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (test(page[mid]!)) high = mid;
+        else low = mid + 1;
+      }
+      return low;
+    };
+    try {
+      let first = firstAfter((element) => live.comparePoint(element, element.childNodes.length) >= 0);
+      let last = firstAfter((element) => live.comparePoint(element, 0) > 0) - 1;
+      if (page[first] && atEnd(page[first]!, live.startContainer, live.startOffset)) first += 1;
+      if (page[last] && atStart(page[last]!, live.endContainer, live.endOffset)) last -= 1;
+      return first <= last ? [first, last] : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Selecting text is one way to make a section, at any width, and on a
+  // narrow screen the only one. The selection only ever sets one; letting it
+  // go (a tap on the card, on a word) leaves it in place, and Clear or tagging
+  // ends it.
+  // While the reader's own selection is up on a narrow screen, its handles are
+  // the ones to drag; once it is let go, the pins take over.
+  let nativeLive = false;
+  let selectionTimer: ReturnType<typeof setTimeout> | undefined;
+  function onSelectionChange() {
+    clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(() => {
+      const live = readerRange();
+      const ends = live && touched(live);
+      nativeLive = Boolean(ends);
+      if (!marking) return;
+      const span = ends && spanForPage(page.map((element) => element.dataset.wordId!), indexById, ends[0], ends[1]);
+      if (!span || (selection?.native && selection.from === span.from && selection.to === span.to)) return;
+      selection = { ...span, native: true };
+    }, 120);
+  }
+
+  // The stretch of the meeting on screen: the first and last timed words
+  // between the bars and the player, found by halving, since the page runs
+  // top to bottom.
+  let scroller: HTMLElement | null = null;
+  let seen: { startMs: number; endMs: number } | null = null;
+  let seenFrame = 0;
+  function findScroller(): HTMLElement | null {
+    for (let node = root?.parentElement; node; node = node.parentElement) {
+      if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node;
+    }
+    return null;
+  }
+  function measureSeen() {
+    seenFrame = 0;
+    if (!scroller || page.length === 0) {
+      seen = null;
+      return;
+    }
+    const top = scroller.getBoundingClientRect().top + stickTop;
+    const firstWhere = (test: (box: DOMRect) => boolean) => {
+      let low = 0;
+      let high = page.length;
+      while (low < high) {
+        const mid = (low + high) >> 1;
+        if (test(page[mid]!.getBoundingClientRect())) high = mid;
+        else low = mid + 1;
+      }
+      return low;
+    };
+    let first = firstWhere((box) => box.bottom > top + barHeight + tagbarHeight);
+    let last = firstWhere((box) => box.top >= top + viewHeight) - 1;
+    const timed = (at: number) => indexById.get(page[at]?.dataset.wordId ?? "");
+    while (first <= last && timed(first) === undefined) first += 1;
+    while (last >= first && timed(last) === undefined) last -= 1;
+    const one = words[timed(first) ?? -1];
+    const two = words[timed(last) ?? -1];
+    const next = one && two ? { startMs: Math.min(one.startMs, two.startMs), endMs: Math.max(one.endMs, two.endMs) } : null;
+    if (next?.startMs !== seen?.startMs || next?.endMs !== seen?.endMs) seen = next;
+  }
+  function queueSeen() {
+    if (scroller && !seenFrame) seenFrame = requestAnimationFrame(measureSeen);
+  }
+  $: page, width, viewHeight, barHeight, tagbarHeight, void tick().then(queueSeen);
+
+  // The page word under a point, or the one a space under it belongs to.
+  function pageIndexAt(x: number, y: number): number | undefined {
+    const scope = root.getRootNode() as Document | ShadowRoot;
+    for (const element of scope.elementsFromPoint(x, y)) {
+      if (!(element instanceof HTMLElement) || !textCell.contains(element)) continue;
+      const id = element.dataset.wordId ?? element.dataset.gapFor;
+      if (id !== undefined) return pageAt.get(id);
+    }
+    return undefined;
+  }
+
+  // A mouse drag across the words selects them. A browser will not begin a
+  // selection inside a <button>, and every timed word is one, so a drag that
+  // starts on a word does it here, a whole word at a time. A touch goes to the
+  // phone's own long press; a plain click still seeks.
+  let textDrag: { anchor: number; x: number; y: number; moved: boolean } | null = null;
+  function textDown(event: PointerEvent) {
+    textDrag = null;
+    dragClick = false;
+    if (event.pointerType !== "mouse" || event.button !== 0 || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+    const word = (event.target as Element | null)?.closest?.<HTMLElement>(".cassini-word");
+    const anchor = word ? pageAt.get(word.dataset.wordId ?? "") : undefined;
+    if (anchor !== undefined) textDrag = { anchor, x: event.clientX, y: event.clientY, moved: false };
+  }
+  function textMove(event: PointerEvent) {
+    if (!textDrag) return;
+    if (!(event.buttons & 1)) {
+      textDrag = null;
+      return;
+    }
+    if (!textDrag.moved) {
+      if (Math.hypot(event.clientX - textDrag.x, event.clientY - textDrag.y) < 5) return;
+      textDrag.moved = true;
+      textCell.setPointerCapture?.(event.pointerId);
+    }
+    event.preventDefault();
+    const at = pageIndexAt(event.clientX, event.clientY);
+    if (at === undefined) return;
+    const [start, end] = at >= textDrag.anchor ? [page[textDrag.anchor], page[at]] : [page[at], page[textDrag.anchor]];
+    const last = end?.lastChild;
+    if (start?.firstChild && last) document.getSelection()?.setBaseAndExtent(start.firstChild, 0, last, last.textContent?.length ?? 0);
+  }
+  // The release lands on the frame once it holds the pointer, so the word it
+  // started on is not also clicked, and nothing seeks.
+  function textUp() {
+    dragClick = Boolean(textDrag?.moved);
+    textDrag = null;
+  }
+
+  // A click in the transcript that lands on nothing belonging to the selection
+  // lets it go, as a click beside any selection does. Not the click that ends
+  // a drag, and not one that has just opened a section: it compares the
+  // selection before and after the click went through.
+  let dragClick = false;
+  let selectionAtClick: Selection | null = null;
+  function clickStart() {
+    selectionAtClick = selection;
+  }
+  function clickEnd(event: MouseEvent) {
+    if (dragClick) {
+      dragClick = false;
+      return;
+    }
+    if (!selection || selection !== selectionAtClick) return;
+    const kept = event
+      .composedPath()
+      .some((node) => node instanceof HTMLElement && node.matches("[data-pin], [data-keep-selection]"));
+    if (!kept) void clearSelection();
+  }
+
   // Its start, where its tag and card stand; the arrows carry on from it.
-  function selectMark(mark: PlacedMark) {
+  function selectMark(mark: PlacedMark, go = true) {
     const span = spanForRange(words, mark.startMs, mark.endMs);
     if (span) {
       selection = { ...span, itemId: mark.item.id };
       markAt = (view?.placed ?? []).indexOf(mark);
-      revealWord(span.from, "center", glide());
+      if (go) revealWord(span.from, "center", glide());
     }
   }
 
@@ -301,18 +545,22 @@
   }
 
   async function write(request: AnnotationRequest) {
-    if (await session.write(request, "stretch")) void clearSelection();
+    const written = await session.write(request, "stretch");
+    if (written) void clearSelection();
+    return written;
   }
 
   // The toolbar and the pins go with the selection; focus left with nowhere to be goes to the rail.
   async function clearSelection() {
+    if (selection?.native) document.getSelection()?.removeAllRanges();
     selection = null;
     await tick();
     const active = (root.getRootNode() as Document | ShadowRoot).activeElement;
     if (!active || active === document.body) rail?.focus();
   }
-  const tagStretch = (event: CustomEvent<TagPick>) =>
-    range && write(markRequest(event.detail, timeRange(range.startMs, range.endMs)));
+  async function tagStretch(event: CustomEvent<TagPick>) {
+    if (range && (await write(markRequest(event.detail, timeRange(range.startMs, range.endMs))))) recent = event.detail;
+  }
   const saveMove = () =>
     selectedMark && range && write({ ops: moveStretchOps(selectedMark.item.id, selectedMark.tag, range.startMs, range.endMs) });
   const removeMark = () => selectedMark && write(removeRequest([selectedMark.item.id]));
@@ -333,12 +581,15 @@
     if (!marking || inField) return;
     if (event.key === "Escape") {
       if (selection) void clearSelection();
-      else if (armed) armed = null;
       else return;
       event.preventDefault();
     } else if (event.key === "Enter" && selection) {
-      const onPin = path.some((node) => node instanceof HTMLElement && node.hasAttribute("data-pin"));
-      if (onPin || !keyboardEventTargetsControl(event)) {
+      // A word is a button, and the one a drag began on keeps the focus; its
+      // own Enter would seek, where the reader means the selection.
+      const inText = path.some(
+        (node) => node instanceof HTMLElement && (node.hasAttribute("data-pin") || node.classList.contains("cassini-word")),
+      );
+      if (inText || !keyboardEventTargetsControl(event)) {
         event.preventDefault();
         stretchToolbar?.confirm();
       }
@@ -347,7 +598,17 @@
 
   onMount(() => {
     window.addEventListener("keydown", onKeydown, true);
-    return () => window.removeEventListener("keydown", onKeydown, true);
+    document.addEventListener("selectionchange", onSelectionChange);
+    scroller = findScroller();
+    scroller?.addEventListener("scroll", queueSeen, { passive: true });
+    queueSeen();
+    return () => {
+      window.removeEventListener("keydown", onKeydown, true);
+      document.removeEventListener("selectionchange", onSelectionChange);
+      scroller?.removeEventListener("scroll", queueSeen);
+      cancelAnimationFrame(seenFrame);
+      clearTimeout(selectionTimer);
+    };
   });
 </script>
 
@@ -360,11 +621,10 @@
   </div>
   <div
     bind:offsetHeight={barHeight}
-    class="tf-bar sticky z-10 grid gap-2 bg-base-200 py-3 {armed ? 'shadow-[inset_0_-2px_0_var(--tag)]' : ''}"
+    class="tf-bar sticky z-10 grid gap-2 bg-base-200 py-3"
     style:top="{Math.max(0, stickTop - 1)}px"
     style:margin-inline="calc(-1 * var(--tf-bleed, 8px))"
     style:padding-inline="var(--tf-bleed, 8px)"
-    data-tag-color={armed ? pickColor(armed, vocabulary) : undefined}
   >
     <TranscriptToolbar
       bind:this={toolbar}
@@ -374,9 +634,6 @@
       current={stop}
       on:step={(event) => step(event.detail)}
     />
-    {#if stretchProps && !wide}
-      <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:arm={(event) => (armed = event.detail)} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
-    {/if}
   </div>
 
   {#if marking}
@@ -384,7 +641,8 @@
          different subject from what was typed into it, and it stays reachable
          while reading, which is the point of stepping through it. -->
     <div
-      class="tf-tagbar relative sticky z-10 flex items-center gap-2 bg-base-200 py-2"
+      bind:offsetHeight={tagbarHeight}
+      class="tf-tagbar relative sticky z-10 flex flex-wrap items-center gap-2 bg-base-200 py-2"
       style:top="{Math.max(0, stickTop - 1) + barHeight}px"
       style:margin-inline="calc(-1 * var(--tf-bleed, 8px))"
       style:padding-inline="var(--tf-bleed, 8px)"
@@ -406,44 +664,39 @@
           </button>
         </span>
       {/if}
-      <!-- The tag held ready for the next section, said where tagging is: it
-           is the one mode this transcript can be in, so it names itself and
-           offers the way out. -->
-      {#if armed}
-        <span class="tf-armed join" role="group" aria-label="Tagging with">
-          <button bind:this={armButton} type="button" class="join-item btn btn-xs" title="Change the tag" aria-haspopup="dialog" aria-expanded={picking} on:click={() => (picking = !picking)}>
-            <TagChip label={armed.label} color={pickColor(armed, vocabulary)} />
-          </button>
-          <button type="button" class="join-item btn btn-xs" on:click={() => (armed = null)}>Stop <kbd class="kbd kbd-xs">Esc</kbd></button>
-        </span>
-        {#if picking}
-          <TagPicker
-            tags={vocabulary}
-            label="Tag sections with"
-            anchor={armButton}
-            on:pick={(event) => ((armed = event.detail), (picking = false))}
-            on:close={() => (picking = false)}
-          />
-        {/if}
-      {/if}
       </div>
+      {#if stretchProps && !wide}
+        <!-- Its own line in this bar, where the screen has no column beside
+             the text for a card: what the section is, and what to do with it,
+             side by side. -->
+        <div class="basis-full">
+          <StretchToolbar row bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
+        </div>
+      {/if}
     </div>
   {/if}
 
   <div
-    class="mt-6 grid"
+    class="tf-text mt-6 grid"
     style:grid-template-columns={marking
       ? wide
         ? `68px minmax(0,1fr) ${tagColumn}px`
-        : `34px minmax(0,1fr) ${Math.max(26, bracketColumns * BRACKET_STEP_NARROW + 2)}px`
+        : "20px minmax(0,1fr)"
       : "minmax(0,1fr)"}
     style:--sel="var(--tag-bg)"
     style:--sel-edge="var(--tag)"
+    style:--sel-fill="color-mix(in oklch, var(--tag) 28%, transparent)"
     data-tag-color={selColor}
+    data-sel-new={selection && (!selection.itemId || !wide) ? "" : undefined}
+    role="presentation"
+    on:click|capture={clickStart}
+    on:click={clickEnd}
   >
     {#if marking}
-      <div>
-        <div class="sticky" style:top="{stickTop + barHeight + 12}px" style:height="{Math.max(160, viewHeight - barHeight - 28)}px">
+      <div data-keep-selection>
+        <!-- As tall as the view it maps, and never taller than the transcript:
+             a short one is not stretched to a screen's height to match it. -->
+        <div class="sticky" style:top="{stickTop + barHeight + 12}px" style:height="{Math.min(Math.max(160, viewHeight - barHeight - 28), textHeight)}px">
           <MarkingRail
             bind:this={rail}
             {durationMs}
@@ -454,20 +707,37 @@
             stops={stops.map((found) => found.ms)}
             current={stop}
             labels={wide}
+            visible={seen}
             on:grab={(event) => grab(event.detail.aMs, event.detail.bMs, event.detail.handle)}
             on:pick={(event) => pickTurn(event.detail)}
             on:select={(event) => selectMark(event.detail)}
+            on:go={(event) => revealWord(spanForDrag(words, event.detail, event.detail)?.from, "center", glide())}
           />
         </div>
       </div>
     {/if}
-    <div bind:this={textCell} class="relative min-w-0" data-tag-color={hoverMark?.color ?? selColor}>
-      <slot />
-      {#if marking && pins && range}
+    <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+    <div
+      bind:this={textCell}
+      bind:clientHeight={textHeight}
+      class="relative min-w-0 self-start"
+      data-tag-color={hoverMark?.color ?? selColor}
+      on:pointerdown={textDown}
+      on:pointermove={textMove}
+      on:pointerup={textUp}
+      on:pointercancel={textUp}
+      on:click={textClick}
+    >
+      <slot {chips} openMark={selectMark} />
+      {#if marking && pins && range && !(nativeLive && !wide)}
         {#each EDGES as edge (edge)}
           {@const ms = edge === "from" ? range.startMs : range.endMs}
           <span
-            class="absolute -ml-px w-0 cursor-grab touch-none border-l-2 border-(--sel-edge) outline-none before:absolute before:-inset-x-2.5 before:-inset-y-1.5 before:content-[''] after:absolute after:-left-1.5 after:size-2.5 after:rounded-full after:bg-(--sel-edge) after:content-[''] focus-visible:after:ring-3 focus-visible:after:ring-(--sel) {edge === 'from' ? 'after:-top-2' : 'after:-bottom-2'}"
+            class="absolute -ml-px w-0 cursor-grab touch-none border-l-2 border-(--sel-edge) outline-none before:absolute before:content-[''] after:absolute after:rounded-full after:bg-(--sel-edge) after:content-[''] focus-visible:after:ring-3 focus-visible:after:ring-(--sel) {wide
+              ? 'before:-inset-x-2.5 before:-inset-y-1.5 after:-left-1.5 after:size-2.5'
+              : 'before:-inset-x-4 before:-inset-y-3 after:-left-2 after:size-3.5'} {edge === 'from'
+              ? wide ? 'after:-top-2' : 'after:-top-3'
+              : wide ? 'after:-bottom-2' : 'after:-bottom-3'}"
             style:left="{pins[edge].x}px"
             style:top="{pins[edge].y}px"
             style:height="{pins[edge].h}px"
@@ -486,32 +756,33 @@
             on:pointercancel={() => (pinDrag = null)}
             on:keydown={(event) => nudgePin(event, edge)}
             ><span
-              class="tf-pin-time pointer-events-none absolute left-[7px] px-1.5 py-[2px] font-mono text-[10.5px] leading-[1.2] whitespace-nowrap text-(--sel-edge) {edge === 'from' ? 'bottom-[calc(100%+4px)]' : 'top-[calc(100%+4px)]'}"
+              class="tf-pin-time pointer-events-none absolute left-[7px] px-1.5 py-[2px] font-mono text-[10.5px] leading-[1.2] whitespace-nowrap {edge === 'from' ? 'bottom-[calc(100%+4px)]' : 'top-[calc(100%+4px)]'}"
               >{formatPreciseTime(ms)}</span
             ></span
           >
         {/each}
       {/if}
     </div>
-    {#if marking}
+    {#if marking && wide}
       <!-- Inset, so the brackets and their tags sit clear of the floating
            tagged-sections controls above them. -->
-      <div class="relative pl-2.5">
+      <div class="relative pl-2.5" data-keep-selection>
         <MarkBrackets
           {brackets}
           selectedId={selection?.itemId}
           bind:hoverId
-          labels={wide}
-          stickTop={Math.max(0, stickTop - 1) + barHeight + (wide ? 44 : 8)}
+          stickTop={Math.max(0, stickTop - 1) + barHeight + 44}
           on:select={(event) => selectMark(event.detail)}
         />
         {#if stretchProps && wide}
           <!-- Under that section's own tag, which never moves: the chip stays
-               exactly where it was and the card opens beneath it. -->
+               exactly where it was and the card opens beneath it. A new
+               selection has no tag yet, so its card stands level with the
+               selection's last line, where the pointer let go. -->
           <div
             class="absolute"
-            style:top="{selectedBracket ? selectedBracket.top + 26 : pins ? pins.to.y + pins.to.h + 6 : 0}px"
-            style:height={selectedBracket ? `${Math.max(0, selectedBracket.height - 26)}px` : undefined}
+            style:top="{selectedBracket ? selectedBracket.top + cardDrop : pins ? pins.to.y : 0}px"
+            style:height={selectedBracket ? `${Math.max(0, selectedBracket.height - cardDrop)}px` : undefined}
             style:left="{selectedBracket ? tagsLeft - 10 : 0}px"
             style:right={selectedBracket ? "auto" : "0"}
           >
@@ -519,9 +790,9 @@
                  line under the bars while any of that section is on screen. -->
             <div
               class="sticky"
-              style:top="{selectedBracket ? Math.max(0, stickTop - 1) + barHeight + (wide ? 44 : 8) + 26 : 0}px"
+              style:top="{selectedBracket ? Math.max(0, stickTop - 1) + barHeight + 44 + cardDrop : 0}px"
             >
-              <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:arm={(event) => (armed = event.detail)} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
+              <StretchToolbar bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
             </div>
           </div>
         {/if}
@@ -533,9 +804,11 @@
 <style>
   /* The pin's own time, floating over the words it sits between: it needs to
      be legible against whatever is behind it, so it carries a surface of its
-     own rather than a hairline ring. */
+     own, in the handle's colour with the time reversed out of it, so it reads
+     as part of the handle it names. */
   .tf-pin-time {
-    background-color: var(--color-base-100);
+    color: var(--color-base-100);
+    background-color: var(--sel-edge);
     border: 1px solid var(--sel-edge);
     border-radius: 5px;
     box-shadow: 0 2px 8px oklch(0% 0 0 / 0.35);
@@ -584,15 +857,6 @@
     right: var(--tf-bleed, 8px);
     bottom: 0;
     border-bottom: 1px solid var(--color-base-300);
-  }
-  .tf-armed {
-    margin-left: auto;
-  }
-  @media (min-width: 981px) {
-    .tf-armed {
-      flex-basis: 100%;
-      margin-left: 0;
-    }
   }
   .tf-marks-group {
     display: inline-flex;
@@ -662,6 +926,36 @@
     background: linear-gradient(var(--hl-edge), var(--hl-edge)) no-repeat 0 100% / 100% 2px;
     text-decoration: none;
     box-shadow: none;
+    padding-right: 0.27em;
+    margin-right: -0.27em;
+  }
+  /* A selection not yet tagged looks the same before and after the reader
+     lets go of it: the browser's highlight here is this fill, and the words
+     keep the fill, under their rule, once the highlight is gone. On a narrow
+     screen an open section takes it too, since every section there already
+     carries a rule at rest. */
+  .frame :global(.tf-text *::selection) {
+    background-color: var(--sel-fill);
+  }
+  .frame :global([data-sel-new] [data-word-id][data-sel]:not([data-active="true"])) {
+    background-image: linear-gradient(var(--hl-edge), var(--hl-edge)), linear-gradient(var(--sel-fill), var(--sel-fill));
+    background-size: 100% 2px, 100% 100%;
+    background-position: 0 100%, 0 0;
+    background-repeat: no-repeat, no-repeat;
+  }
+  /* The run-on over the next space would lie under a comma or a full stop that
+     follows with no space, and that mark's own fill on top made it twice as
+     strong; there the fill stops at the word, and only the rule runs on. */
+  .frame :global([data-sel-new] [data-word-id][data-sel]:has(+ [data-word-id]):not([data-active="true"])) {
+    background-size: 100% 2px, calc(100% - 0.27em) 100%;
+  }
+  /* A tagged section at rest, where there is no bracket for it: its rule, a
+     step quieter than when it is open, mixed with the ground rather than made
+     transparent so it is no stronger where a comma's box meets a word's. */
+  .frame :global([data-word-id][data-rest]:not([data-sel], [data-lit], [data-find], [data-active="true"])) {
+    --rest-edge: color-mix(in oklch, var(--tag) 70%, var(--color-base-200));
+    border-radius: 0;
+    background: linear-gradient(var(--rest-edge), var(--rest-edge)) no-repeat 0 100% / 100% 2px;
     padding-right: 0.27em;
     margin-right: -0.27em;
   }

@@ -7,6 +7,7 @@ import {
   rangeOfSpan,
   rowAt,
   spanForDrag,
+  spanForPage,
   spanForRange,
   stackColumns,
   wordsByTime,
@@ -121,6 +122,33 @@ describe("nudging a marker", () => {
     expect(nudge(words, { from: 0, to: 3 }, "to", 1, true).to).toBe(5);
     expect(nudge(words, { from: 0, to: 5 }, "to", 1, true).to).toBe(7);
     expect(nudge(words, { from: 0, to: 7 }, "to", -1, true).to).toBe(5);
+  });
+});
+
+describe("a selection made on the page", () => {
+  // w1 and w2 are timed; "um" and "," are not; w5 was spoken before w4 by
+  // someone talking over them, so it sits later on the page than in time.
+  const page = ["w1", "um", "w2", ",", "w5", "w4"];
+  const timed = new Map([
+    ["w1", 1],
+    ["w2", 2],
+    ["w4", 4],
+    ["w5", 5],
+  ]);
+
+  it("runs from the first to the last timed word it touches", () => {
+    expect(spanForPage(page, timed, 0, 2)).toEqual({ from: 1, to: 2 });
+    expect(spanForPage(page, timed, 1, 3)).toEqual({ from: 2, to: 2 });
+  });
+
+  it("spans the earliest to the latest word where the page and the tape disagree", () => {
+    expect(spanForPage(page, timed, 4, 5)).toEqual({ from: 4, to: 5 });
+  });
+
+  it("is nothing when only untimed words are selected, or nothing at all", () => {
+    expect(spanForPage(page, timed, 1, 1)).toBeNull();
+    expect(spanForPage(page, timed, 3, 2)).toBeNull();
+    expect(spanForPage(page, timed, -3, 99)).toEqual({ from: 1, to: 5 });
   });
 });
 

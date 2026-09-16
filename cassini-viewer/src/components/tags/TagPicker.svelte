@@ -180,10 +180,13 @@
     width: 300px;
     max-width: calc(100vw - 24px);
   }
+  /* Compact: a list to pick from, in the middle of tagging, rather than a
+     panel to read. About six tags show; the rest scroll, with a part-row at
+     the foot to say so. */
   input {
-    margin: 10px 10px 8px;
-    padding: 7px 10px;
-    font-size: 13.5px;
+    margin: 8px 8px 6px;
+    padding: 5px 9px;
+    font-size: 13px;
     color: inherit;
     background: var(--color-base-100);
     border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
@@ -196,9 +199,9 @@
     box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-base-content) 11%, var(--color-base-100));
   }
   ul {
-    max-height: 264px;
+    max-height: 172px;
     margin: 0;
-    padding: 6px;
+    padding: 4px;
     overflow-y: auto;
     overscroll-behavior: contain;
     list-style: none;
@@ -210,10 +213,10 @@
   [role="option"] {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 8px;
     min-width: 0;
-    padding: 6px 8px;
-    font-size: 13.5px;
+    padding: 4px 8px;
+    font-size: 13px;
     border-radius: var(--radius-field, 0.5rem);
     cursor: pointer;
   }
@@ -260,7 +263,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 0 12px 6px 6px;
+    padding: 0 10px 4px 4px;
   }
   .create [role="option"] {
     flex: 1;
@@ -293,7 +296,7 @@
     border-color: var(--tag);
   }
   .empty {
-    padding: 0 12px 12px;
+    padding: 0 10px 10px;
     font-size: 12.5px;
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }

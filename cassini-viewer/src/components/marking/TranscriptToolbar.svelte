@@ -2,6 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import { ChevronDown, ChevronUp, Search, X } from "@lucide/svelte";
 
+  import Kbd from "../ui/Kbd.svelte";
 
   export let query = "";
   export let onlyMatching = false;
@@ -75,7 +76,7 @@
           <X size={14} aria-hidden="true" />
         </button>
       {:else}
-        <kbd class="tt-kbd kbd kbd-sm">{mac ? "⌘" : "Ctrl"} F</kbd>
+        <Kbd size="sm">{mac ? "⌘" : "Ctrl"} F</Kbd>
       {/if}
     </label>
   </div>
@@ -194,10 +195,4 @@
     border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
   }
 
-  .tt-kbd {
-    padding-inline: 6px;
-    border-radius: 5px;
-    font-size: 12px;
-    line-height: 1.4;
-  }
 </style>

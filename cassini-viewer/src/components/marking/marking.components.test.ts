@@ -66,7 +66,10 @@ describe("a meeting view with no annotation loader", () => {
 describe("a meeting view with its marks loaded", () => {
   it("adds the rail and the tagged-sections count to the transcript, and no tagging mode to set first", async () => {
     const html = frame(await opened(async () => meeting(true)));
-    expect(html).toContain("The whole meeting. Drag down it to grab a section");
+    // Rendered with no width, the frame is laid out for a narrow screen, where
+    // the rail is a map of the tagged sections and the text does the grabbing.
+    expect(html).toContain('aria-label="Tagged sections across the whole meeting"');
+    expect(html.match(/class="mr-seg /g)).toHaveLength(2);
     // On the section's own heading line, in words: "marks" was the data model's
     // term for one application of a tag, and the only one a reader had to be
     // taught.
@@ -111,17 +114,17 @@ describe("the stretch toolbar", () => {
     const html = toolbar({});
     expect(html).toContain("0:01.2");
     expect(html).toContain("0:05.4");
-    expect(html).toContain("Tag this section");
+    expect(html).toContain("Tag selection");
     expect(html).toContain("Clear");
-    // Where a repeat pass is set up: at the moment somebody is tagging, beside
-    // the tag it would keep.
-    expect(html).toContain("Keep this tag ready");
+    // No mode to set before tagging, and nothing to offer again yet.
+    expect(html).not.toContain("Keep this tag ready");
+    expect(html).not.toContain("Tag as ");
   });
 
-  it("is prefilled with the tag in hand, which it still waits to confirm", () => {
-    const html = toolbar({ armed: { tagId: "t-hiring", label: "hiring" } });
-    expect(html).toContain("Tag as hiring");
-    expect(html).not.toContain("Tag this stretch");
+  it("offers the last tag used again, in one click, beside the way to pick any", () => {
+    const html = toolbar({ recent: { tagId: "t-hiring", label: "hiring" } });
+    expect(html).toContain('aria-label="Tag as hiring"');
+    expect(html).toContain("Tag selection");
   });
 
   it("saves a moved mark only when asked, and can remove it", async () => {
@@ -129,10 +132,13 @@ describe("the stretch toolbar", () => {
     let state = { status: "off" } as Parameters<typeof viewMarks>[0];
     session.subscribe((value) => (state = value))();
     const mark = viewMarks(state, []).placed[0]!;
-    expect(toolbar({ mark })).not.toContain("Save move");
+    expect(toolbar({ mark })).not.toContain("Save changes");
+    expect(toolbar({ mark })).not.toContain("Unsaved changes");
     expect(toolbar({ mark })).toContain("Done");
     const moved = toolbar({ mark, moved: true });
-    expect(moved).toContain("Save move");
+    // Said as a state, and saved with the strongest button on the card.
+    expect(moved).toContain("Unsaved changes");
+    expect(moved).toContain("Save changes");
     expect(moved).toContain("Remove");
     expect(moved).toContain("Cancel");
   });
