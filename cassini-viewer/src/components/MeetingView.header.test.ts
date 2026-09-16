@@ -86,7 +86,7 @@ describe("MeetingView linked insights", () => {
     const summaryAt = meetingViewSource.indexOf("{@html summaryHtml}");
     const insightsAt = meetingViewSource.indexOf("{#if linkedInsights.length > 0}");
     const transcriptAt = meetingViewSource.indexOf(
-      '<p class="mv-section-title">Transcript</p>',
+      '<p class="mv-section-title mv-section-title-bar">Transcript</p>',
     );
     expect(summaryAt).toBeGreaterThan(-1);
     expect(insightsAt).toBeGreaterThan(summaryAt);

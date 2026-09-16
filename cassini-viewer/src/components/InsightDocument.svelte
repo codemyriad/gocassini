@@ -141,8 +141,9 @@
 
     <!-- 2. The material. -->
     {#if sources.length > 0}
-      <section class="ins-sources">
-        <h3 class="ins-eyebrow">
+      <!-- One card: the count heads the list it counts, inside it. -->
+      <section class="ins-sources ins-card">
+        <h3 class="ins-card-title">
           Context from {sources.length}
           {sources.length === 1 ? "meeting" : "meetings"}
         </h3>
@@ -242,7 +243,7 @@
          asked for it and how it ended have to be ON the document or two
          attempts are indistinguishable. -->
     <section class="ins-prov">
-      <h3 class="ins-eyebrow">This run</h3>
+      <h3 class="ins-title">This run</h3>
       <dl>
         <div>
           <dt>Asked by</dt>
@@ -366,26 +367,45 @@
     color: var(--color-base-content);
   }
 
-  .ins-eyebrow {
-    margin: 0 0 0.5rem;
+  /* The meeting sheet's section heading (MeetingView's .mv-section-title),
+     held close over what it heads in the drawer's narrower column. */
+  .ins-title {
+    margin: 0 0 8px;
+    padding-bottom: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-base-content);
+  }
+
+  /* The meeting sheet's card (its .mv-card), which is the operator's: a tint
+     of the ink over the drawer's ground. */
+  .ins-card {
+    background-color: color-mix(in oklch, var(--color-base-content) 4%, var(--color-base-200));
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  /* A list of documents, held close as the meeting sheet's insights are: 4px
+     of card round rows whose hover corners sit inside its own, under a title
+     that starts where their icons do. */
+  .ins-sources {
+    padding: 4px;
+  }
+  /* A label on the card rather than a heading over it: the drawer's small
+     capitals. */
+  .ins-card-title {
+    margin: 0;
+    padding: 8px 8px 10px;
     font-size: 11px;
     font-weight: 650;
+    line-height: 1.2;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
-
-  /* Lifted off the insight's own panel, because this is the material rather
-     than the writing. */
-  .ins-sources {
-    padding: 0.75rem;
-    background-color: var(--color-base-100);
-    border-radius: var(--radius-box, 0.75rem);
-  }
   .ins-sources ul {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 0;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -395,12 +415,12 @@
     align-items: baseline;
     gap: 0.5rem;
     width: 100%;
-    padding: 6px 8px;
+    padding: 4px 8px;
     text-align: left;
     cursor: pointer;
     background: none;
     border: 0;
-    border-radius: var(--radius-field, 0.5rem);
+    border-radius: calc(var(--radius-box, 0.5rem) - 4px);
     color: var(--color-base-content);
   }
   .ins-sources button:hover {
@@ -422,17 +442,20 @@
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
 
+  /* On the same card as the sources. */
   .ins-note {
     margin: 0;
     padding: 0.75rem;
     font-size: 0.875rem;
     line-height: 1.5;
-    background-color: var(--color-base-100);
-    border-radius: var(--radius-box, 0.75rem);
+    background-color: color-mix(in oklch, var(--color-base-content) 4%, var(--color-base-200));
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.5rem);
     color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
   }
   .ins-note-error {
     background-color: color-mix(in oklch, var(--color-error) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-error) 30%, transparent);
     color: var(--color-base-content);
   }
   .ins-note-error p {

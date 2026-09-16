@@ -1188,7 +1188,7 @@
         let:openMark
       >
         <svelte:fragment slot="title">
-          <p class="mv-section-title">Transcript</p>
+          <p class="mv-section-title mv-section-title-bar">Transcript</p>
         </svelte:fragment>
       {#if visibleSegments.length === 0}
       <!-- Distinct from the line above on purpose: "no transcript" and "nothing
@@ -1584,6 +1584,12 @@
     font-size: 15px;
     font-weight: 600;
     color: var(--color-base-content);
+  }
+  /* Over the search bar, whose own padding already sits under the heading:
+     the heading adds nothing to it, so the field reads as close to its title
+     as the cards do to theirs. */
+  .mv-section-title-bar {
+    padding-bottom: 0;
   }
 
   .mv-meta {
