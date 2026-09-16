@@ -120,6 +120,11 @@
   let headerHeight = 0;
   let scrollHeight = 0;
   let playerHeight = 0;
+  // The scroll area's scrollbar gutter, measured: it is 15px with a classic
+  // scrollbar at any width, and nothing with an overlay one.
+  let scrollOuterWidth = 0;
+  let scrollInnerWidth = 0;
+  $: scrollGutter = Math.max(0, scrollOuterWidth - scrollInnerWidth);
 
   type DisplaySegment = JudgedDisplaySegment;
 
@@ -951,7 +956,11 @@
        even when the (absolutely positioned) player overlaps the scroll.
        `scrollbar-gutter: stable` reserves the scrollbar gutter persistently
        so content width never shifts as scrollbar appears/disappears. -->
-  <div bind:clientHeight={scrollHeight} class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
+  <div
+    bind:clientHeight={scrollHeight}
+    bind:offsetWidth={scrollOuterWidth}
+    bind:clientWidth={scrollInnerWidth}
+    class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
     <!-- Sticky header — the meeting's identity, and the transcript flows under
          it. It used to be a strip of status badges with the title in a second,
          SCROLLING header below, so the one thing that says which meeting you
@@ -1170,6 +1179,7 @@
         playheadMs={clampedCurrentTimeMs}
         seek={seekTo}
         stickTop={headerHeight}
+        stickBottom={playerHeight}
         viewHeight={scrollHeight - headerHeight - playerHeight}
         let:chips
         let:openMark
@@ -1391,11 +1401,13 @@
   {/if}
 
   {#if transcriptIndex && audioSrc}
-  <!-- right-[15px] matches the scrollbar gutter on the sibling scroll
-       container so the player aligns with transcript content's right edge. -->
+  <!-- Its right edge stops at the scrollbar gutter of the sibling scroll
+       container, at every width, so the player lines up with the transcript
+       and with the tagged-sections dock over it. -->
   <footer
     bind:offsetHeight={playerHeight}
-    class="absolute bottom-0 left-0 right-0 min-[981px]:right-[15px] z-30 p-2 min-[981px]:px-4 min-[981px]:pb-4 pointer-events-none [will-change:opacity]"
+    style:right="{scrollGutter}px"
+    class="absolute bottom-0 left-0 z-30 p-2 min-[981px]:px-4 min-[981px]:pb-4 pointer-events-none [will-change:opacity]"
     transition:fade={playerFadeConfig()}
   >
     <div class="card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">

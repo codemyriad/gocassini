@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { ChevronDown, ChevronUp } from "@lucide/svelte";
 
   import type { FindStop } from "../../core/find";
   import {
@@ -26,6 +25,7 @@
   } from "../../viewer/annotations";
   import MarkBrackets, { LABEL_STEP } from "./MarkBrackets.svelte";
   import MarkingRail from "./MarkingRail.svelte";
+  import SectionsNav from "./SectionsNav.svelte";
   import StretchToolbar from "./StretchToolbar.svelte";
   import TranscriptToolbar from "./TranscriptToolbar.svelte";
   import { viewMarks, type MarksSession, type PlacedMark } from "./session";
@@ -44,6 +44,8 @@
   export let playheadMs = 0;
   export let seek: (ms: number) => void = () => {};
   export let stickTop = 0;
+  // How much of the bottom of the view the player covers.
+  export let stickBottom = 0;
   export let viewHeight = 0;
 
   // `native`: made with the reader's own text selection, whose handles stand
@@ -61,6 +63,7 @@
   let width = 0;
   let barHeight = 0;
   let tagbarHeight = 0;
+  let dockHeight = 0;
   let textHeight = 0;
   let selection: Selection | null = null;
   // The tag last put on a section here, offered again on the next one: a pass
@@ -79,6 +82,10 @@
   $: marking = $session.status === "ready";
   $: view = marking ? viewMarks($session, vocabulary) : null;
   $: wide = width >= 720;
+  // What the sticky bars cover of the view: the tag bar at the top where the
+  // screen is wide, the dock above the player where it is not.
+  $: coverTop = barHeight + (marking && wide ? tagbarHeight : 0);
+  $: coverBottom = marking && !wide ? dockHeight + 8 : 0;
   $: bracketColumns = Math.max(0, ...(view?.placed.map((mark) => mark.column) ?? [])) + 1;
   // Where a tag chip begins, measured the way MarkBrackets measures it: the
   // bracket column's 10px inset, one step per overlapping bracket, and the gap
@@ -87,6 +94,9 @@
   // The tag column is as wide as what stands in it: the brackets, the gap, and
   // the controls that head the column, which are the widest thing in it.
   const TAG_CONTROLS = 200;
+  // The rail's column where the screen is narrow: its 14px track and a clear
+  // gap before the text.
+  const RAIL_NARROW = 30;
   $: tagColumn = tagsLeft + TAG_CONTROLS;
   // The bracket of the section being edited, so its card can stand where its
   // tag stands.
@@ -380,6 +390,10 @@
   // between the bars and the player, found by halving, since the page runs
   // top to bottom.
   let scroller: HTMLElement | null = null;
+  // A sticky element keeps its distance from the scroll area's padding, not
+  // from its edge: the sheet's own space below the transcript is taken off
+  // again, so the dock stands on the player rather than above that space.
+  let scrollerPad = 0;
   let seen: { startMs: number; endMs: number } | null = null;
   let seenFrame = 0;
   function findScroller(): HTMLElement | null {
@@ -405,8 +419,8 @@
       }
       return low;
     };
-    let first = firstWhere((box) => box.bottom > top + barHeight + tagbarHeight);
-    let last = firstWhere((box) => box.top >= top + viewHeight) - 1;
+    let first = firstWhere((box) => box.bottom > top + coverTop);
+    let last = firstWhere((box) => box.top >= top + viewHeight - coverBottom) - 1;
     const timed = (at: number) => indexById.get(page[at]?.dataset.wordId ?? "");
     while (first <= last && timed(first) === undefined) first += 1;
     while (last >= first && timed(last) === undefined) last -= 1;
@@ -418,7 +432,8 @@
   function queueSeen() {
     if (scroller && !seenFrame) seenFrame = requestAnimationFrame(measureSeen);
   }
-  $: page, width, viewHeight, barHeight, tagbarHeight, void tick().then(queueSeen);
+  $: page, width, viewHeight, coverTop, coverBottom, void tick().then(queueSeen);
+  $: if (scroller && width) scrollerPad = parseFloat(getComputedStyle(scroller).paddingBottom) || 0;
 
   // The page word under a point, or the one a space under it belongs to.
   function pageIndexAt(x: number, y: number): number | undefined {
@@ -500,15 +515,36 @@
     }
   }
 
-  // Which tagged section the arrows last went to, so they walk the list in
-  // order rather than always from the top.
+  // Which tagged section the arrows last went to, or was last opened. It is
+  // the reader's place among them only while it is open or on screen: once
+  // they have scrolled away the count goes back to the plain total, and the
+  // arrows go from what is on screen instead. Just after a step it counts as
+  // on screen, while the glide to it is still under way.
   let markAt = -1;
+  let steppedAt = 0;
+  $: shownAt = placeShown(markAt, seen, selection?.itemId, view?.placed ?? []);
+  function placeShown(at: number, onScreen: typeof seen, openId: string | undefined, placed: readonly PlacedMark[]) {
+    const mark = placed[at];
+    if (!mark) return -1;
+    if (mark.item.id === openId || performance.now() - steppedAt < 1500) return at;
+    return onScreen && mark.startMs < onScreen.endMs && mark.endMs > onScreen.startMs ? at : -1;
+  }
 
   function stepMark(delta: 1 | -1) {
     const placed = view?.placed ?? [];
     if (placed.length === 0) return;
-    markAt = (markAt + delta + placed.length) % placed.length;
-    const mark = placed[markAt];
+    if (shownAt >= 0) {
+      markAt = (shownAt + delta + placed.length) % placed.length;
+    } else {
+      // The sections are in time order: the next is the first starting at or
+      // after the top of the screen, the previous the last starting before it.
+      const top = seen?.startMs ?? 0;
+      const next = placed.findIndex((mark) => mark.startMs >= top);
+      const before = placed.filter((mark) => mark.startMs < top).length - 1;
+      markAt = delta > 0 ? Math.max(0, next) : before >= 0 ? before : placed.length - 1;
+    }
+    steppedAt = performance.now();
+    const mark = placed[markAt]!;
     seek(mark.startMs);
     revealWord(spanForRange(words, mark.startMs, mark.endMs)?.from, "center", glide());
   }
@@ -603,6 +639,7 @@
     window.addEventListener("keydown", onKeydown, true);
     document.addEventListener("selectionchange", onSelectionChange);
     scroller = findScroller();
+    if (scroller) scrollerPad = parseFloat(getComputedStyle(scroller).paddingBottom) || 0;
     scroller?.addEventListener("scroll", queueSeen, { passive: true });
     queueSeen();
     return () => {
@@ -639,7 +676,7 @@
     />
   </div>
 
-  {#if marking}
+  {#if marking && wide}
     <!-- Its own bar under the search: what is tagged in this transcript is a
          different subject from what was typed into it, and it stays reachable
          while reading, which is the point of stepping through it. -->
@@ -653,29 +690,8 @@
       style:--tf-tag-column="{tagColumn}px"
     >
       <div class="tf-tagbar-inner flex items-center gap-2">
-      <span class="tf-marks">
-        {view?.placed.length ?? 0}
-        {(view?.placed.length ?? 0) === 1 ? "tagged section" : "tagged sections"}
-      </span>
-      {#if (view?.placed.length ?? 0) > 0}
-        <span class="tf-marks-group">
-          <button type="button" class="tf-marks-step" aria-label="Previous tagged section" title="Previous tagged section" on:click={() => stepMark(-1)}>
-            <ChevronUp size={13} aria-hidden="true" />
-          </button>
-          <button type="button" class="tf-marks-step" aria-label="Next tagged section" title="Next tagged section" on:click={() => stepMark(1)}>
-            <ChevronDown size={13} aria-hidden="true" />
-          </button>
-        </span>
-      {/if}
+        <SectionsNav count={view?.placed.length ?? 0} current={shownAt} on:step={(event) => stepMark(event.detail)} />
       </div>
-      {#if stretchProps && !wide}
-        <!-- Its own line in this bar, where the screen has no column beside
-             the text for a card: what the section is, and what to do with it,
-             side by side. -->
-        <div class="basis-full">
-          <StretchToolbar row bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
-        </div>
-      {/if}
     </div>
   {/if}
 
@@ -684,7 +700,7 @@
     style:grid-template-columns={marking
       ? wide
         ? `68px minmax(0,1fr) ${tagColumn}px`
-        : "20px minmax(0,1fr)"
+        : `${RAIL_NARROW}px minmax(0,1fr)`
       : "minmax(0,1fr)"}
     style:--sel="var(--tag-bg)"
     style:--sel-edge="var(--tag)"
@@ -697,9 +713,15 @@
   >
     {#if marking}
       <div data-keep-selection>
-        <!-- As tall as the view it maps, and never taller than the transcript:
-             a short one is not stretched to a screen's height to match it. -->
-        <div class="sticky" style:top="{stickTop + barHeight + 12}px" style:height="{Math.min(Math.max(160, viewHeight - barHeight - 28), textHeight)}px">
+        <!-- Between the sticky bars (the tag bar has no height of its own on a
+             wide screen, and on a narrow one is a dock above the player), as
+             tall as the space they leave and no taller, and never taller than
+             the transcript: a short one is not stretched to match a screen. -->
+        <div
+          class="sticky"
+          style:top="{stickTop + coverTop + 12}px"
+          style:height="{Math.max(0, Math.min(viewHeight - coverTop - coverBottom - 24, textHeight))}px"
+        >
           <MarkingRail
             bind:this={rail}
             {durationMs}
@@ -804,6 +826,37 @@
       </div>
     {/if}
   </div>
+  {#if marking && !wide}
+    <!-- Where the screen is narrow, the tagged sections sit in a card of their
+         own above the player, over the text and clear of the rail beside it,
+         its right edge on the player's controls' (the footer's 8px, the
+         card's border and its 8px): in reach of a thumb, clear of the
+         phone's own menu over a selection, and over the text rather than in
+         its flow, so opening a section does not move what is being read. The
+         frame keeps as much room below its last line, and the dock ends in it,
+         so at the foot of the transcript nothing is left under it. Its surface
+         is the player's card, classes and all: in Nextcloud the border comes
+         from a rule on .card. -->
+    <div aria-hidden="true" style:height="{coverBottom}px"></div>
+    <div class="sticky z-20 h-0" style:bottom="{stickBottom - scrollerPad}px">
+      <div
+        bind:offsetHeight={dockHeight}
+        class="tf-dock card absolute bottom-0 grid gap-2 border border-base-300 bg-base-100 p-2 shadow-2xl"
+        style:left="{RAIL_NARROW}px"
+        style:right="calc(17px - var(--tf-bleed, 8px))"
+        role="group"
+        aria-label="Tagged sections"
+      >
+        {#if stretchProps}
+          <StretchToolbar row bind:this={stretchToolbar} {...stretchProps} on:tag={tagStretch} on:save={saveMove} on:remove={removeMark} on:clear={clearSelection} />
+          <hr class="border-base-300" />
+        {/if}
+        <div class="flex items-center gap-2 px-1">
+          <SectionsNav large count={view?.placed.length ?? 0} current={shownAt} on:step={(event) => stepMark(event.detail)} />
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -855,7 +908,7 @@
       border-radius: 9px;
     }
     /* The count reads from the tag's edge, the arrows hold the far one. */
-    .tf-marks-group {
+    .tf-tagbar-inner :global(.tf-marks-group) {
       margin-left: auto;
     }
   }
@@ -869,34 +922,8 @@
     bottom: 0;
     border-bottom: 1px solid var(--color-base-300);
   }
-  .tf-marks-group {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    gap: 2px;
-  }
-  .tf-marks-step {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    cursor: pointer;
-    background: none;
-    border: 1px solid var(--color-base-300);
-    border-radius: 5px;
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
-  }
-  .tf-marks-step:hover {
-    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
-    color: var(--color-base-content);
-  }
-  /* A count, not a control: the arrows beside it are how to reach them. */
-  .tf-marks {
-    flex: none;
-    font-size: 12px;
-    white-space: nowrap;
-    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  .tf-dock :global(.tf-marks-group) {
+    margin-left: auto;
   }
 
   /* The rule sits inside the bar's own padding rather than under its full

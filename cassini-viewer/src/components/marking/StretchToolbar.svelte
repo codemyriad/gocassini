@@ -20,8 +20,9 @@
   export let busy = false;
   // Why the last write from here failed.
   export let error = "";
-  // One line in a bar rather than a card beside the text, where the screen is
-  // too narrow for a column; no key hints there, where there are no keys.
+  // One line in the dock above the player rather than a card beside the text,
+  // where the screen is too narrow for a column; no key hints there, where
+  // there are no keys.
   export let row = false;
 
   const dispatch = createEventDispatcher<{ tag: TagPick; save: void; remove: void; clear: void }>();
@@ -57,13 +58,14 @@
      the same chip in the same spot, then who put it there, the times, and the
      two actions on one line. Every button is one size, its label at its start
      and its key at its end; in a bar, where there are no keys, none. -->
-<!-- Its corners follow the buttons' inside it: their radius, and the 6px and
-     the border between them and the edge. -->
+<!-- As a card, its corners follow the buttons' inside it: their radius, and
+     the 6px and the border between them and the edge. As a row it sits in the
+     dock's own card. -->
 <div
-  class="border border-base-300 bg-base-100 text-xs {row
-    ? 'flex flex-wrap items-center gap-x-3 gap-y-1.5 px-2 py-1.5'
-    : 'grid w-52 gap-1.5 p-1.5 shadow-md'}"
-  style:border-radius="calc(var(--radius-field, 0.5rem) + 7px)"
+  class="text-xs {row
+    ? 'flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1'
+    : 'grid w-52 gap-1.5 border border-base-300 bg-base-100 p-1.5 shadow-md'}"
+  style:border-radius={row ? undefined : "calc(var(--radius-field, 0.5rem) + 7px)"}
   role="toolbar"
   aria-label="This section"
 >
