@@ -238,7 +238,7 @@
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-row:not([aria-current="page"]):hover,
 :host([data-nc-theme*="highcontrast"]) .cassini-root .room-button:not([aria-pressed="true"]):hover {
-  background-color: var(--color-background-dark);
+  background-color: color-mix(in oklch, var(--color-primary) 38%, var(--color-main-background));
 }
 /* HC: the Operator settings pages layer by tint (card 4%, inner surfaces on the
  * page colour), which HC's flattened backgrounds erase. Every edge takes NC's
@@ -271,6 +271,19 @@
 :host([data-nc-theme*="highcontrast"]) .cassini-root .prep-row-words.unknown,
 :host([data-nc-theme*="highcontrast"]) .cassini-root .prep-row-flag {
   color: var(--color-warning-text, var(--color-main-text));
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .insight-card {
+  background-color: transparent;
+  border-color: var(--color-border-maxcontrast);
+  border-left-color: var(--color-primary);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .insight-card:hover {
+  background-color: color-mix(in oklch, var(--color-primary) 30%, var(--color-main-background));
+  border-color: var(--color-primary);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .insight-card[aria-current="page"] {
+  background-color: color-mix(in oklch, var(--color-primary) 48%, var(--color-main-background));
+  border-color: var(--color-primary);
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root .segmented {
   background-color: transparent;
