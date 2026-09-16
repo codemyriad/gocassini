@@ -182,8 +182,12 @@ type storageStatusResponse struct {
 	Preview *storageTransitionPreview `json:"preview,omitempty"`
 	// OpenRecordings is present only on the POST that asked for it: the
 	// recordings a migration left readable by everyone, and who each one would
-	// be narrowed to.
+	// be narrowed to. It is also refreshed after either write, so the caller
+	// never has to follow up with a second request to see the new state.
 	OpenRecordings *openRecordingsResult `json:"open_recordings,omitempty"`
+	// Restricted is present only on the POST that narrowed recordings: what
+	// happened to each one, in the order they were asked for.
+	Restricted []restrictMeetingResult `json:"restricted,omitempty"`
 }
 
 // storageAction is the POST body. Two verbs share one route because AppAPI
@@ -195,6 +199,13 @@ type storageAction struct {
 	// AccessControlEnabled names the mode a `preview` asks about. Ignored by
 	// every other action.
 	AccessControlEnabled *bool `json:"access_control_enabled"`
+	// Meetings are the recordings a `restrict_meetings` asks to narrow, each
+	// with the digest of the audience the administrator was shown.
+	Meetings []restrictMeetingRequest `json:"meetings,omitempty"`
+	// IDs and Ignored are `ignore_recordings`: which recordings, and whether
+	// this is the dismissal or the undo.
+	IDs     []string `json:"ids,omitempty"`
+	Ignored *bool    `json:"ignored,omitempty"`
 }
 
 const (
@@ -224,6 +235,14 @@ const (
 	// it PROBES — one PROPFIND of the Team folder — and GET is a page an
 	// administrator may refresh, which is why it only ever reads the record.
 	storageActionListOpenRecordings = "list_unrestricted"
+	// storageActionRestrictRecordings limits the selected recordings to the
+	// people who were in each call, using the roster captured at record time.
+	// The one write in D-769.
+	storageActionRestrictRecordings = "restrict_meetings"
+	// storageActionIgnoreRecordings dismisses recordings from that list, or
+	// brings them back. It changes nothing in Nextcloud — it is a note that an
+	// administrator has seen a recording and is content to leave it open.
+	storageActionIgnoreRecordings = "ignore_recordings"
 	// storageActionFinishMigration completes a switch that stopped part way: it
 	// clears the root the recorded mode does NOT name and marks the instance
 	// settled. It is the one recovery action, and it is the same action whichever
@@ -336,6 +355,43 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp := c.storageStatus(rt, nil)
 		resp.OpenRecordings = &open
 		writeJSON(w, http.StatusOK, resp)
+	case storageActionRestrictRecordings:
+		if len(in.Meetings) == 0 {
+			writeJSONError(w, http.StatusBadRequest, "meetings is required and must name at least one recording")
+			return
+		}
+		results, err := c.restrictOpenRecordings(ctx, rt.store, in.Meetings, rt.logger)
+		if err != nil {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		resp := c.storageStatus(rt, nil)
+		resp.Restricted = results
+		// Re-derive rather than have the browser remove rows itself: a
+		// recording leaves this list by no longer qualifying, and that is the
+		// property worth preserving all the way to the screen.
+		if open, listErr := c.listOpenRecordings(ctx, rt.store, rt.logger); listErr == nil {
+			resp.OpenRecordings = &open
+		}
+		writeJSON(w, http.StatusOK, resp)
+	case storageActionIgnoreRecordings:
+		if len(in.IDs) == 0 {
+			writeJSONError(w, http.StatusBadRequest, "ids is required and must name at least one recording")
+			return
+		}
+		if in.Ignored == nil {
+			writeJSONError(w, http.StatusBadRequest, "ignored is required and must be true or false")
+			return
+		}
+		if err := rt.store.SetRecordingsIgnored(ctx, in.IDs, *in.Ignored, nowUTCString()); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp := c.storageStatus(rt, nil)
+		if open, listErr := c.listOpenRecordings(ctx, rt.store, rt.logger); listErr == nil {
+			resp.OpenRecordings = &open
+		}
+		writeJSON(w, http.StatusOK, resp)
 	case storageActionFinishMigration:
 		result, err := c.finishStorageMigration(ctx, rt.logger)
 		if err != nil {
@@ -366,7 +422,7 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp.Installs = installs
 		writeJSON(w, http.StatusOK, resp)
 	default:
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected %q, %q, %q, %q, %q or %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration, storageActionAcknowledgeFirstRun, storageActionListOpenRecordings))
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected one of %q, %q, %q, %q, %q, %q, %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration, storageActionAcknowledgeFirstRun, storageActionListOpenRecordings, storageActionRestrictRecordings))
 	}
 }
 

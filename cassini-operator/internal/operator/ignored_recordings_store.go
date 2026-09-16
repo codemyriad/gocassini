@@ -14,6 +14,42 @@ import (
 // that is genuinely still readable by everyone, either because nothing can ever
 // narrow it or because they opened it on purpose.
 
+// SetRecordingsIgnored adds or removes ids from the ignore set.
+//
+// Idempotent in both directions: ignoring an already-ignored recording and
+// un-ignoring one that was never ignored both succeed and change nothing, so a
+// double-click costs a statement rather than an error. `ignoredAt` records when
+// the decision was taken; it is not read by anything today and is there because
+// a set of bare ids with no dates is the kind of table nobody can later explain.
+func (s *Store) SetRecordingsIgnored(ctx context.Context, ids []string, ignored bool, ignoredAt string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin ignored recordings update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if ignored {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO ignored_recordings (meeting_id, ignored_at) VALUES (?, ?)
+ON CONFLICT(meeting_id) DO NOTHING`, id, ignoredAt); err != nil {
+				return fmt.Errorf("ignore recording %s: %w", id, err)
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM ignored_recordings WHERE meeting_id = ?`, id); err != nil {
+			return fmt.Errorf("un-ignore recording %s: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit ignored recordings update: %w", err)
+	}
+	return nil
+}
+
 // ListIgnoredRecordings returns the ignored meeting ids as a set.
 //
 // A set rather than a slice because every caller asks "is this one ignored"
