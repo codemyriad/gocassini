@@ -284,6 +284,13 @@
         {#if isSearching}
           <span class="search-status" aria-live="polite">Searching…</span>
         {/if}
+        <!-- Our own, because the one the browser draws for type="search" is
+             unthemeable: a blue gradient disc in the middle of a dark field. -->
+        {#if trimmedFilter}
+          <button type="button" class="search-clear" aria-label="Clear search" on:click={() => (filter = "")}>
+            <X size={14} aria-hidden="true" />
+          </button>
+        {/if}
       </label>
 
       {#if !ncMode}
@@ -783,6 +790,27 @@
     font-size: 0.9375rem;
     color: var(--color-base-content);
   }
+  .search-field input::-webkit-search-cancel-button,
+  .search-field input::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .search-clear {
+    display: inline-flex;
+    flex: none;
+    padding: 4px;
+    margin-right: -4px;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-field, 0.5rem);
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  .search-clear:hover {
+    color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+
   .search-field input::placeholder {
     color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
   }
