@@ -131,12 +131,12 @@
     <!-- 1. The question the panel exists to answer, so it reads as the heading
          of the brief rather than as a caption on it. A workflow can be run with
          no question of its own, and then there is no quote to show. -->
+    <!-- A template with a question of its own leads with it. One without —
+         "summarise these" — led with a sentence naming the workflow id, which
+         is a fact about the run rather than the brief, and the answer below it
+         says what it is. -->
     {#if question}
       <p class="ins-question">“{question}”</p>
-    {:else}
-      <p class="ins-question ins-question-none">
-        Ran the <code>{insight.workflowId}</code> workflow, with no question of its own.
-      </p>
     {/if}
 
     <!-- 2. The material. -->
@@ -155,7 +155,7 @@
                 <FileText size={14} aria-hidden="true" />
                 <span class="ins-source-title">{source.title}</span>
                 <span class="ins-source-meta">
-                  {formatMeetingDateWithDay(source.dateLabel)} · {roomLabelOf(source)}
+                  {formatMeetingDateWithDay(source.dateLabel)}
                 </span>
               </button>
             </li>
@@ -279,9 +279,11 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    background-color: var(--color-base-100);
-    /* The insight reads on the same surface its cards use elsewhere, so the
-       panel itself says which of the two kinds of thing the sheet is holding. */
+    /* The drawer ground the Prepare panel and the meeting sheet use, with what
+       is lifted off it on the lighter card surface. The insight used to be the
+       other way up, which made one sheet read as two different surfaces
+       depending on what it was holding. */
+    background-color: var(--color-base-200);
     border-left: 4px solid var(--color-primary);
   }
 
@@ -318,10 +320,17 @@
     align-items: center;
     gap: 0.375rem;
   }
+  /* The chip the insight card's provider and model wear, so the model reads
+     as the name of a thing rather than as another fact in the row. */
   .ins-head-model {
-    font-family: monospace;
-    font-size: 0.75rem;
+    padding: 1px 6px;
+    background-color: var(--color-base-100);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-100));
+    border-radius: 5px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11.5px;
     overflow-wrap: anywhere;
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
   }
   .ins-head button {
     display: inline-flex;
@@ -334,7 +343,7 @@
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
   .ins-head button:hover {
-    background-color: var(--color-base-200);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
     color: var(--color-base-content);
   }
 
@@ -356,11 +365,6 @@
     line-height: 1.4;
     color: var(--color-base-content);
   }
-  .ins-question-none {
-    font-size: 0.9375rem;
-    font-weight: 450;
-    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
-  }
 
   .ins-eyebrow {
     margin: 0 0 0.5rem;
@@ -375,7 +379,7 @@
      than the writing. */
   .ins-sources {
     padding: 0.75rem;
-    background-color: var(--color-base-200);
+    background-color: var(--color-base-100);
     border-radius: var(--radius-box, 0.75rem);
   }
   .ins-sources ul {
@@ -400,7 +404,7 @@
     color: var(--color-base-content);
   }
   .ins-sources button:hover {
-    background-color: var(--color-base-100);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
   .ins-source-title {
     flex: 1;
@@ -423,7 +427,7 @@
     padding: 0.75rem;
     font-size: 0.875rem;
     line-height: 1.5;
-    background-color: var(--color-base-200);
+    background-color: var(--color-base-100);
     border-radius: var(--radius-box, 0.75rem);
     color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
   }
@@ -465,7 +469,7 @@
     color: var(--color-base-content);
   }
   .ins-retry button:hover:not(:disabled) {
-    background-color: var(--color-base-200);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
   }
   .ins-retry button:disabled {
     cursor: default;
