@@ -1255,7 +1255,9 @@
                   title="Simultaneous speech: {formatSpeakerList(row.over)} {row.over.length > 1
                     ? 'were'
                     : 'was'} speaking at the same time."
-                ><span class="sr-only">Simultaneous speech: </span>over {formatSpeakerList(row.over)}</span>
+                ><span class="sr-only">Simultaneous speech: </span><span aria-hidden="true">(</span>over {formatSpeakerList(
+                    row.over,
+                  )}<span aria-hidden="true">)</span></span>
               {/if}
             </div>
 
@@ -1466,7 +1468,7 @@
           <div class="order-2 grid min-w-0 gap-0.5">
             <input
               aria-label="Seek within meeting"
-              class="range range-sm w-full text-base-content"
+              class="mv-scrub range range-sm w-full text-base-content"
               max={Math.max(clampedDurationMs, 1)}
               min="0"
               on:input={handleTimelineInput}
@@ -1552,6 +1554,15 @@
   .mv-toggle.on {
     background-color: color-mix(in oklch, var(--color-base-content) 16%, transparent);
     border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+  }
+
+  /* Round, like the playhead on the transcript's rail, which is drawn to match
+     it (MarkingRail's .mr-playhead); the library's is a rounded square. */
+  .mv-scrub::-webkit-slider-thumb {
+    border-radius: 999px;
+  }
+  .mv-scrub::-moz-range-thumb {
+    border-radius: 999px;
   }
 
   /* Playback is neutral throughout, like the word it is playing. */

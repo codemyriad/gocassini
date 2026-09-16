@@ -212,17 +212,25 @@
     border: 1px solid color-mix(in oklch, var(--color-base-content) 35%, transparent);
     border-radius: 4px;
   }
-  /* The player's scrubber thumb in miniature: a ring of the page's ink. */
+  /* The player's scrubber thumb, the same one: its ring of the page's ink,
+     its fill and its shadow (MeetingView's .mv-scrub), drawn at its size and
+     scaled down whole to the width of the rail, so every part keeps its
+     proportion. */
   .mr-playhead {
     position: absolute;
     left: 50%;
-    width: 12px;
-    height: 12px;
+    width: calc(var(--size-selector, 0.25rem) * 5);
+    height: calc(var(--size-selector, 0.25rem) * 5);
     translate: -50% -50%;
+    scale: 0.7;
     pointer-events: none;
     background-color: var(--color-base-100);
-    border: 3px solid var(--color-base-content);
+    border: 0.25rem solid var(--color-base-content);
     border-radius: 999px;
+    box-shadow:
+      0 -1px oklch(0% 0 0 / calc(var(--depth, 1) * 0.1)) inset,
+      0 8px 0 -4px oklch(100% 0 0 / calc(var(--depth, 1) * 0.1)) inset,
+      0 1px color-mix(in oklab, var(--color-base-content) calc(var(--depth, 1) * 10%), #0000);
   }
   .mr-seg::before {
     content: "";

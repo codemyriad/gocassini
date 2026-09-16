@@ -37,7 +37,7 @@ function wordsOf(block: OverlapBlock): string {
  * when a reader selects across the paragraph.
  */
 function renderRow(row: TranscriptRow<OverlapBlock>): { header: string; paragraph: string } {
-  const over = row.over.length > 0 ? `  over ${row.over.join(" and ")}` : "";
+  const over = row.over.length > 0 ? `  (over ${row.over.join(" and ")})` : "";
   const paragraph = row.members
     .map((member) =>
       member.kind === "speech"
@@ -79,8 +79,8 @@ describe("what the transcript pane renders", () => {
     // One header apiece, and the fragments carry none of their own: a row is
     // rendered as a single <p>, so there is nothing else it could be.
     expect(collision.map((row) => renderRow(row).header)).toEqual([
-      "Cara Lindqvist  0:40  over Ben Okafor",
-      "Ben Okafor  0:43  over Cara Lindqvist",
+      "Cara Lindqvist  0:40  (over Ben Okafor)",
+      "Ben Okafor  0:43  (over Cara Lindqvist)",
     ]);
   });
 
@@ -226,7 +226,8 @@ describe("the transcript pane's markup", () => {
 
   it("keeps the transcript pane a live region with static rows inside it", () => {
     expect(template).toContain('role="log"');
-    expect(template).toContain('<span class="sr-only">Simultaneous speech: </span>over ');
+    // Bracketed as an aside to the header, the brackets kept from the reader.
+    expect(template).toContain('<span class="sr-only">Simultaneous speech: </span><span aria-hidden="true">(</span>over ');
   });
 
   it("wires follow-scroll and nested crosstalk to the rendered turn", () => {
