@@ -1509,7 +1509,10 @@
     right: 0;
     bottom: 0;
     z-index: 30;
-    width: min(680px, 100%);
+    /* Never the whole width: a strip of the blurred list always shows beside
+       it, the thing a reader clicks to go back. */
+    --sheet-peek: 48px;
+    width: min(680px, calc(100% - var(--sheet-peek)));
     display: flex;
     flex-direction: column;
     background-color: var(--color-base-200);
@@ -1518,7 +1521,7 @@
   }
   /* Room for the marking rail on the left and the brackets on the right (D-746). */
   .meeting-sheet.tagging {
-    width: min(940px, 100%);
+    width: min(940px, calc(100% - var(--sheet-peek)));
   }
 
   /* The selection bar floats over the list it belongs to — inset past the rail
@@ -1572,8 +1575,10 @@
       box-shadow: 0 -8px 30px oklch(0% 0 0 / 0.22);
     }
     /* A side drawer on a phone leaves the content it covers unreachable and
-       reads as a page; a bottom sheet reads as a layer over the list. */
+       reads as a page; a bottom sheet reads as a layer over the list, which
+       shows above it rather than beside it. */
     .meeting-sheet {
+      --sheet-peek: 0px;
       top: auto;
       left: 0;
       right: 0;
