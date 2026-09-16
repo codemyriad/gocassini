@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { Copy, Download, FileText, TriangleAlert, X } from "@lucide/svelte";
+  import CloseButton from "./ui/CloseButton.svelte";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import {
     MAX_SELECTED_MEETINGS,
@@ -188,9 +189,7 @@
 <aside class="prepare-panel" aria-label="Prepare context">
   <header class="prep-head">
     <h2>Prepare context</h2>
-    <button type="button" on:click={() => dispatch("close")} aria-label="Close Prepare">
-      <X size={16} aria-hidden="true" />
-    </button>
+    <CloseButton label="Close Prepare" on:click={() => dispatch("close")} />
   </header>
 
   <div class="prep-body">
@@ -331,20 +330,6 @@
   .prep-head h2 {
     font-size: 0.9375rem;
     font-weight: 650;
-    color: var(--color-base-content);
-  }
-  .prep-head button {
-    display: inline-flex;
-    flex: none;
-    padding: 4px;
-    cursor: pointer;
-    background: none;
-    border: 0;
-    border-radius: var(--radius-field, 0.5rem);
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
-  }
-  .prep-head button:hover {
-    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
     color: var(--color-base-content);
   }
 

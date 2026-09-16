@@ -2,7 +2,8 @@
   import { createEventDispatcher } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, FileText, MessageSquare, X } from "@lucide/svelte";
+  import { Calendar, FileText, MessageSquare } from "@lucide/svelte";
+  import CloseButton from "./ui/CloseButton.svelte";
   import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
   import {
@@ -106,9 +107,7 @@
   <header class="ins-head">
     <div class="ins-head-top">
       <h2>{headline}</h2>
-      <button type="button" on:click={() => dispatch("close")} aria-label="Close the insight">
-        <X size={16} aria-hidden="true" />
-      </button>
+      <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
     </div>
     <div class="ins-head-meta">
       {#if room}
@@ -332,20 +331,6 @@
     font-size: 11.5px;
     overflow-wrap: anywhere;
     color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
-  }
-  .ins-head button {
-    display: inline-flex;
-    flex: none;
-    padding: 4px;
-    cursor: pointer;
-    background: none;
-    border: 0;
-    border-radius: var(--radius-field, 0.5rem);
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
-  }
-  .ins-head button:hover {
-    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
-    color: var(--color-base-content);
   }
 
   .ins-body {

@@ -2,7 +2,8 @@
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import { Ellipsis, History, X } from "@lucide/svelte";
+  import { Ellipsis, History } from "@lucide/svelte";
+  import CloseButton from "../ui/CloseButton.svelte";
 
   import { plural, type TagPick, type TagUpdate, type VocabularyTag } from "../../viewer/annotations";
   import { changedLine, confirmLine, countsLine, createJobTracker, jobStatus, type TagAction, type TagProvider } from "../../viewer/tagManager";
@@ -144,7 +145,7 @@
       <h2 id="tag-manager-title" class="flex flex-1 items-center gap-2.5 text-[17px] font-semibold">
         Manage tags <span class="badge badge-outline badge-sm font-medium">{plural(tags.length, "tag")}</span>
       </h2>
-      <button type="button" data-close class="btn btn-square btn-ghost btn-sm" aria-label="Close" on:click={() => dispatch("close")}><X size={16} /></button>
+      <CloseButton label="Close" data-close on:click={() => dispatch("close")} />
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-8 pt-1.5 max-[720px]:px-2">
       {#if $jobs.notice}<p role="alert" class="alert alert-warning alert-soft sticky top-0 z-10 my-1.5 py-2 text-sm">{$jobs.notice}</p>{/if}

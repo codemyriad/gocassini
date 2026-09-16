@@ -11,8 +11,8 @@
     ArrowLeft,
     Users,
     CassetteTape,
-    X,
   } from "@lucide/svelte";
+  import CloseButton from "./ui/CloseButton.svelte";
   import {
     formatClockTime,
     isLikelyCrosstalkAcrossBlocks,
@@ -1031,15 +1031,7 @@
 
 
     {#if inSheet}
-      <button
-        type="button"
-        class="btn btn-ghost btn-xs btn-square flex-none"
-        on:click={() => dispatch("back")}
-        aria-label="Close the meeting"
-        title="Close (Esc)"
-      >
-        <X size={16} aria-hidden="true" />
-      </button>
+      <CloseButton label="Close the meeting" title="Close (Esc)" on:click={() => dispatch("back")} />
     {/if}
     </div>
 
