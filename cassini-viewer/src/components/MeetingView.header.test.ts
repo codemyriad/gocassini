@@ -36,6 +36,24 @@ describe("MeetingView header", () => {
     // with it. A duration of 0:00 under a title is a claim, not a placeholder.
     expect(meetingViewSource).toContain("{#if transcriptIndex && clampedDurationMs > 0}");
     expect(meetingViewSource).toContain("{#if speakerNames.length > 0}");
+    // The room and the date were the exceptions, and rendered their own
+    // absence: "No room", and the meeting's id standing under a calendar icon
+    // where a date belongs (D-775).
+    expect(meetingViewSource).toContain("{#if hasRoom(meeting)}");
+    expect(meetingViewSource).toContain("{#if hasMeetingDate(meeting.dateLabel)}");
+  });
+
+  it("keeps the operator's diagnostics off a public page", () => {
+    // formatArtifactMode() says which transcript variant is loaded — "Canonical
+    // transcript", or "Viewer ready" before one is. True, useful to an operator,
+    // and on someone else's page it is a fact about our plumbing (D-775).
+    expect(meetingViewSource).toContain('export let surface: "app" | "embed" = "app";');
+    expect(meetingViewSource).toContain('{#if surface === "app"}');
+    const badge = meetingViewSource.indexOf("formatArtifactMode()}");
+    const gate = meetingViewSource.lastIndexOf('{#if surface === "app"}', badge);
+    expect(gate).toBeGreaterThan(-1);
+    // Defaulting to "app" is what keeps every existing mount unchanged.
+    expect(meetingViewSource).not.toContain('export let surface: "app" | "embed";');
   });
 });
 

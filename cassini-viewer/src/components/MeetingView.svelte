@@ -64,8 +64,8 @@
     LoadedArtifact,
   } from "../viewer/loadArtifact";
   import { buildDisplayTranscriptFromArtifacts, type PortableTranscriptDescriptor } from "../viewer/portable";
-  import { formatMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
-  import { roomLabelOf } from "../viewer/rooms";
+  import { formatMeetingDate, hasMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
+  import { hasRoom, roomLabelOf } from "../viewer/rooms";
   import {
     formatInsightCreated,
     insightHeadline,
@@ -83,6 +83,14 @@
   export let dataProvider: DataProvider;
   export let meeting: MeetingCatalogEntry | null = null;
   export let bundled = false;
+
+  // Which surface this is mounted on (D-775). "app" is a reader inside their own
+  // Nextcloud, who is the only one the operator diagnostics mean anything to.
+  // "embed" is a page on the open web that has never heard of the installation
+  // this recording came from. It is set by the entry point — src/public.ts
+  // passes "embed" — and deliberately not by an attribute on the element: it is
+  // a property of being an embed, not something an embedding page chooses.
+  export let surface: "app" | "embed" = "app";
   // inSheet is true when the shell has opened this meeting as a sheet over the
   // browse list (D-654) rather than mounting it as a page of its own. It only
   // decides how leaving is offered: a close control at every width, instead of
@@ -986,9 +994,14 @@
 
     <!-- Status info: artifact mode, transcript switcher, timing precision. -->
     <div class="flex flex-none items-center gap-1 text-base-content/70">
-      <span class="badge badge-xs badge-outline px-1">
-        {formatArtifactMode()}
-      </span>
+      {#if surface === "app"}
+        <!-- Which transcript variant is loaded. An operator reads this; on a
+             public page it is our plumbing, and "Viewer ready" is not a fact
+             about the recording. -->
+        <span class="badge badge-xs badge-outline px-1">
+          {formatArtifactMode()}
+        </span>
+      {/if}
       {#if transcriptSwitchError}
         <button
           type="button"
@@ -1058,14 +1071,18 @@
          speakers come out of the artifact and arrive with it. -->
     {#if meeting}
       <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-base-content/70">
-        <span class="inline-flex items-center gap-1.5">
-          <MessageSquare size={14} aria-hidden="true" />
-          {roomLabelOf(meeting)}
-        </span>
-        <span class="inline-flex items-center gap-1.5">
-          <Calendar size={14} aria-hidden="true" />
-          {formatMeetingDate(meeting.dateLabel)}
-        </span>
+        {#if hasRoom(meeting)}
+          <span class="inline-flex items-center gap-1.5">
+            <MessageSquare size={14} aria-hidden="true" />
+            {roomLabelOf(meeting)}
+          </span>
+        {/if}
+        {#if hasMeetingDate(meeting.dateLabel)}
+          <span class="inline-flex items-center gap-1.5">
+            <Calendar size={14} aria-hidden="true" />
+            {formatMeetingDate(meeting.dateLabel)}
+          </span>
+        {/if}
         {#if transcriptIndex && clampedDurationMs > 0}
           <span class="inline-flex items-center gap-1.5 tabular-nums">
             <Clock size={14} aria-hidden="true" />

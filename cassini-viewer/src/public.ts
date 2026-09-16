@@ -116,6 +116,9 @@ class CassiniMeetingElement extends HTMLElement {
         dataProvider: provider,
         meeting: entry,
         bundled: false,
+        // Not an attribute: being an embed is what makes this true, and it is
+        // not the embedding page's to choose.
+        surface: "embed",
         isDesktop: this.clientWidth >= 720,
         prefersReducedMotion:
           typeof window.matchMedia === "function" &&
