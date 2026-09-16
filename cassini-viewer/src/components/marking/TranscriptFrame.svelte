@@ -190,10 +190,11 @@
   $: paint("data-sel", selMarks);
   $: paint("data-lit", litMarks);
 
-  // On a narrow screen every tagged section is underlined at rest, in its own
-  // colour: there is no bracket beside the text to say where one runs. Where
-  // two overlap, the later one's colour shows.
-  $: restMarks = marking && !wide ? restByElement(view?.placed ?? [], page, pageAt) : new Map<HTMLElement, PlacedMark>();
+  // Every tagged section is underlined at rest, in its own colour: a bracket
+  // says which lines a section is on, the rule which words, and on a narrow
+  // screen there is no bracket at all. Where two overlap, the later one's
+  // colour shows.
+  $: restMarks = marking ? restByElement(view?.placed ?? [], page, pageAt) : new Map<HTMLElement, PlacedMark>();
   function restByElement(placed: readonly PlacedMark[], ..._changed: unknown[]) {
     const byElement = new Map<HTMLElement, PlacedMark>();
     for (const mark of placed) {
@@ -206,8 +207,10 @@
   $: paint("data-rest", new Map([...restMarks.keys()].map((element) => [element, ""])));
   $: paint("data-tag-color", new Map([...restMarks].map(([element, mark]) => [element, mark.color])));
 
-  // A tap on underlined words opens their section where it is; the tap still
-  // seeks, as a tap on any word does.
+  // On a narrow screen a tap on underlined words opens their section where it
+  // is, and still seeks, as a tap on any word does. On a wide one a click on
+  // the text only seeks: a reader clicking about to listen would otherwise
+  // open a card at every click, and the bracket and its tag open it there.
   function textClick(event: MouseEvent) {
     if (wide) return;
     const word = (event.target as Element | null)?.closest?.<HTMLElement>("[data-word-id]");
@@ -687,7 +690,7 @@
     style:--sel-edge="var(--tag)"
     style:--sel-fill="color-mix(in oklch, var(--tag) 28%, transparent)"
     data-tag-color={selColor}
-    data-sel-new={selection && (!selection.itemId || !wide) ? "" : undefined}
+    data-sel-fill={selection ? "" : undefined}
     role="presentation"
     on:click|capture={clickStart}
     on:click={clickEnd}
@@ -722,6 +725,8 @@
       bind:clientHeight={textHeight}
       class="relative min-w-0 self-start"
       data-tag-color={hoverMark?.color ?? selColor}
+      style:--lit-edge="var(--tag)"
+      style:--lit-fill="color-mix(in oklch, var(--tag) 28%, transparent)"
       on:pointerdown={textDown}
       on:pointermove={textMove}
       on:pointerup={textUp}
@@ -935,16 +940,17 @@
     padding-right: 0.27em;
     margin-right: -0.27em;
   }
-  /* A selection not yet tagged looks the same before and after the reader
-     lets go of it: the browser's highlight here is this fill, and the words
-     keep the fill, under their rule, once the highlight is gone. On a narrow
-     screen an open section takes it too, since every section there already
-     carries a rule at rest. */
+  /* A selection looks the same before and after the reader lets go of it:
+     the browser's highlight here is this fill, and the words keep the fill,
+     under their rule, once the highlight is gone. An open section, and one a
+     pointer is on its bracket or tag, take a fill too, since every section
+     already carries a rule at rest. */
   .frame :global(.tf-text *::selection) {
     background-color: var(--sel-fill);
   }
-  .frame :global([data-sel-new] [data-word-id][data-sel]:not([data-active="true"])) {
-    background-image: linear-gradient(var(--hl-edge), var(--hl-edge)), linear-gradient(var(--sel-fill), var(--sel-fill));
+  .frame :global([data-sel-fill] [data-word-id][data-sel]:not([data-active="true"])),
+  .frame :global([data-word-id][data-lit]:not([data-sel], [data-active="true"])) {
+    background-image: linear-gradient(var(--hl-edge), var(--hl-edge)), linear-gradient(var(--hl-fill), var(--hl-fill));
     background-size: 100% 2px, 100% 100%;
     background-position: 0 100%, 0 0;
     background-repeat: no-repeat, no-repeat;
@@ -952,12 +958,13 @@
   /* The run-on over the next space would lie under a comma or a full stop that
      follows with no space, and that mark's own fill on top made it twice as
      strong; there the fill stops at the word, and only the rule runs on. */
-  .frame :global([data-sel-new] [data-word-id][data-sel]:has(+ [data-word-id]):not([data-active="true"])) {
+  .frame :global([data-sel-fill] [data-word-id][data-sel]:has(+ [data-word-id]):not([data-active="true"])),
+  .frame :global([data-word-id][data-lit]:has(+ [data-word-id]):not([data-sel], [data-active="true"])) {
     background-size: 100% 2px, calc(100% - 0.27em) 100%;
   }
-  /* A tagged section at rest, where there is no bracket for it: its rule, a
-     step quieter than when it is open, mixed with the ground rather than made
-     transparent so it is no stronger where a comma's box meets a word's. */
+  /* A tagged section at rest: its rule, a step quieter than when it is open,
+     mixed with the ground rather than made transparent so it is no stronger
+     where a comma's box meets a word's. */
   .frame :global([data-word-id][data-rest]:not([data-sel], [data-lit], [data-find], [data-active="true"])) {
     --rest-edge: color-mix(in oklch, var(--tag) 70%, var(--color-base-200));
     border-radius: 0;
@@ -977,11 +984,16 @@
     background-position: 0 100%, 0 0;
     background-repeat: no-repeat, no-repeat;
   }
+  /* A word carries its own section's colour at rest, so the open and lit
+     colours come from above it: the selection's from the grid, the lit
+     section's from the text cell. */
   .frame :global([data-word-id][data-sel]) {
     --hl-edge: var(--sel-edge);
+    --hl-fill: var(--sel-fill);
   }
   .frame :global([data-word-id][data-lit]) {
-    --hl-edge: var(--tag);
+    --hl-edge: var(--lit-edge);
+    --hl-fill: var(--lit-fill);
   }
   .frame :global([data-word-id][data-find]:not([data-active="true"])) {
     background: color-mix(in oklab, var(--color-warning) 35%, transparent);
