@@ -352,7 +352,6 @@
           label={tag.label}
           color={colorFor(tag)}
           icon={tag.icon}
-          variant="whole"
           removable
           on:remove={() => dispatch("removeTag", tag.tagId)}
         />
@@ -555,14 +554,8 @@
                   </span>
                   {#if rowTags.length > 0}
                     <span class="row-tags">
-                      {#each rowTags.slice(0, 3) as { tag, whole, stretches } (tag.tagId)}
-                        <TagChip
-                          label={tag.label}
-                          color={colorFor(tag)}
-                          icon={tag.icon}
-                          variant={whole ? "whole" : "stretch"}
-                          count={stretches}
-                        />
+                      {#each rowTags.slice(0, 3) as { tag } (tag.tagId)}
+                        <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
                       {/each}
                       {#if rowTags.length > 3}
                         <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}

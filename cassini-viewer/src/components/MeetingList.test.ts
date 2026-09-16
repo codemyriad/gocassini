@@ -244,8 +244,10 @@ describe("MeetingList tags", () => {
   it("shows three chips on a row, whole-meeting tags first, then how many more", () => {
     const row = html({ meetingTags, tags });
     expect(row.match(/class="tag-chip[\s"]/g)).toHaveLength(3);
-    expect(row.match(/class="tag-chip\s[^"]*\bwhole\b/g)).toHaveLength(2);
-    expect(row).toMatch(/>3<span class="sr-only[^"]*"> stretches</);
+    // One look for every tag: where a tag sits in the meeting is the
+    // transcript's to show, not the chip's.
+    expect(row).not.toMatch(/class="tag-chip\s[^"]*\bwhole\b/);
+    expect(row).not.toContain("stretches");
     expect(row).toMatch(/title="tag-d"[^>]*>\+1</);
   });
 

@@ -165,7 +165,7 @@
                    and everything else a chip cannot say. -->
               <button type="button" class="tm-chip flex min-w-0 flex-1 cursor-pointer items-center" aria-label={`Edit ${tag.label}`}
                 on:click={() => (editing = { tagId: tag.tagId, choosing: null, conflict: null })}>
-                <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} variant="whole" />
+                <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
               </button>
               <span class="whitespace-nowrap text-xs tabular-nums text-base-content/65">{countsLine(tag)}</span>
               {#if changed}

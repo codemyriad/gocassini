@@ -74,7 +74,7 @@
          and never moves, so repeating it named the same thing twice. In a bar
          there is no chip beside it, so the line starts with the tag. -->
     {#if row}
-      <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} variant="whole" />
+      <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} />
       <p class="min-w-0 max-w-[9rem] truncate text-base-content/60">{mark.item.actor.id}</p>
       {@render times("")}
       {#if moved}{@render unsaved()}{/if}

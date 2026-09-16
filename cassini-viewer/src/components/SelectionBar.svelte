@@ -176,7 +176,7 @@
                 <span class="selbar-item-meta">
                   {formatMeetingDateWithDay(entry.dateLabel)}
                   {#each wholeTags(entry.id).slice(0, MAX_ROW_TAGS) as tag (tag.tagId)}
-                    <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} variant="whole" />
+                    <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
                   {/each}
                   {#if wholeTags(entry.id).length > MAX_ROW_TAGS}
                     <span class="selbar-item-more">+{wholeTags(entry.id).length - MAX_ROW_TAGS}</span>

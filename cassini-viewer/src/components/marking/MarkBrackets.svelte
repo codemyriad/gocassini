@@ -64,7 +64,7 @@
       on:pointerleave={() => (hoverId = null)}
       on:click={() => dispatch("select", mark)}
     >
-      <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} variant="whole" />
+      <TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} />
     </button>
   </div>
 {/each}

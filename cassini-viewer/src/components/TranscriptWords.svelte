@@ -37,7 +37,7 @@
     class="cassini-tag-start"
     aria-label={`${describeMark(mark)}. Open it.`}
     on:click={() => openMark?.(mark)}
-  ><TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} variant="whole" /></button>{/each}{#if part.startMs !== undefined}<button
+  ><TagChip label={mark.tag.label} color={mark.color} icon={mark.icon} /></button>{/each}{#if part.startMs !== undefined}<button
     type="button"
     class="cassini-word"
     class:cassini-word-interpolated={part.alignment === "interpolated"}

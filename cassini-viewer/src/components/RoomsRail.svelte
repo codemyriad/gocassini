@@ -168,7 +168,7 @@
               on:change={() => dispatch("toggleTag", tag.tagId)}
             />
             <span class="rail-tag">
-              <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} variant="whole" />
+              <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
             </span>
             <span class="room-count">{tag.meetings}</span>
           </label>

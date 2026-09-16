@@ -8,25 +8,21 @@
   export let label: string;
   export let color: TagColorId;
   export let icon: TagIconId | "" = "";
-  // whole: on the whole meeting, a solid block. stretch: on stretches of it, a
-  // tinted pill with how many.
-  export let variant: "whole" | "stretch" = "stretch";
-  export let count = 0;
   export let removable = false;
 
   const dispatch = createEventDispatcher<{ remove: void }>();
 </script>
 
-<span class="tag-chip" class:whole={variant === "whole"} data-tag-color={color}>
+<!-- One look wherever a tag is shown. A tag on the whole meeting and a tag on
+     sections of it were a block and a pill with a count, a difference nobody
+     could read; where the sections are is the transcript's to show. -->
+<span class="tag-chip" data-tag-color={color}>
   {#if icon}
     <TagIcon {icon} size={11} />
   {:else}
     <TagIcon size={8} />
   {/if}
   <span class="tag-chip-label">{label}</span>
-  {#if variant === "stretch" && count > 1}
-    <span class="tag-chip-count">{count}<span class="sr-only">{" stretches"}</span></span>
-  {/if}
   {#if removable}
     <button
       type="button"
@@ -55,13 +51,8 @@
     line-height: 1;
     white-space: nowrap;
     color: var(--tag);
-    background: var(--tag-bg);
-    border: 1px solid var(--tag-border);
-    border-radius: 999px;
-  }
-  .tag-chip.whole {
     background: color-mix(in srgb, var(--tag) 18%, transparent);
-    border-color: transparent;
+    border: 1px solid transparent;
     border-radius: 5px;
   }
   .tag-chip :global(span.tag-dot) {
@@ -76,12 +67,6 @@
     text-overflow: ellipsis;
     text-box: trim-both ex alphabetic;
     translate: 0 0.5px;
-  }
-  .tag-chip-count {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
   }
   .tag-chip-remove {
     display: inline-flex;

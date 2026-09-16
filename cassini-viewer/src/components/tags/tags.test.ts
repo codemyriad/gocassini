@@ -33,16 +33,17 @@ describe("TagIcon", () => {
 
 describe("TagChip", () => {
   it("always shows the label, in the tag's colour", () => {
-    const chip = html(TagChip, { label: "hiring", color: "teal", variant: "whole" });
+    const chip = html(TagChip, { label: "hiring", color: "teal" });
     expect(chip).toContain('data-tag-color="teal"');
-    expect(chip).toMatch(/class="[^"]*\bwhole\b/);
     expect(chip).toContain(">hiring</span>");
   });
 
-  it("counts stretches only when there is more than one", () => {
-    // The space is load-bearing: without it a screen reader says "3stretches".
-    expect(html(TagChip, { label: "hiring", color: "teal", count: 3 })).toMatch(/>3<span class="sr-only[^"]*"> stretches</);
-    expect(html(TagChip, { label: "hiring", color: "teal", count: 1 })).not.toContain("stretches");
+  it("looks the same wherever the tag is, with no count of sections", () => {
+    // A tag on the whole meeting and on sections of it were two looks nobody
+    // could tell apart; the transcript is where the sections are shown.
+    const chip = html(TagChip, { label: "hiring", color: "teal" });
+    expect(chip).not.toContain("whole");
+    expect(chip).not.toContain("stretches");
   });
 
   it("names its remove button after the tag", () => {

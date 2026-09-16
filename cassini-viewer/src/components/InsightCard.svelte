@@ -170,7 +170,8 @@
     background-color: color-mix(in oklch, var(--color-primary) 10%, var(--color-base-100));
     border: 1px solid color-mix(in oklch, var(--color-primary) 22%, var(--color-base-300));
     border-left: 3px solid var(--color-primary);
-    border-radius: var(--radius-field, 0.5rem);
+    /* Square where the rule runs: a rounded corner bent the rule's ends. */
+    border-radius: 0 var(--radius-field, 0.5rem) var(--radius-field, 0.5rem) 0;
     color: var(--color-base-content);
   }
   .insight-card:hover {
