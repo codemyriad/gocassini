@@ -84,7 +84,7 @@
        same search is a setting rather than an action, and as a plain chip it
        read as a button that would do something. -->
   {#if finding}
-    <!-- The player's Auto-scroll control, in miniature: a tinted, outlined box
+    <!-- The player's Follow control, in miniature: a tinted, outlined box
          holding its label and its switch, so the two toggles in this sheet are
          the same kind of thing. -->
     <label class="tt-only" class:on={onlyMatching}>

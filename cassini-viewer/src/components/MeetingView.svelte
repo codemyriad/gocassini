@@ -1438,7 +1438,7 @@
         {/key}
 
         <!--
-          One row at every width: [play] [scrub + labels] [auto-scroll].
+          One row at every width: [play] [scrub + labels] [follow].
           Stacked, the player took a third of a phone screen — the transcript
           it belongs to is the thing being read, so the bar gives the room back
           and drops the total, which the elapsed and remaining already imply.
@@ -1461,22 +1461,22 @@
 
           <div class="order-3 flex flex-none items-center justify-end gap-1.5">
             <!-- The switch first, then what it does: the same shape and order
-                 as the transcript's own toggle, and grey until it is on. -->
+                 as the transcript's own toggle, and grey until it is on. One
+                 word at every width, the only one a phone has room for; the
+                 tooltip says what it follows. -->
             <label
               class="mv-toggle flex items-center gap-1.5 h-8 px-2 rounded-lg cursor-pointer min-[981px]:h-10"
               class:on={followPlayback && !manualScrollLock}
+              title="Keep the transcript on the words being played"
             >
               <input
                 type="checkbox"
                 class="toggle toggle-sm"
-                aria-label="Toggle transcript auto-scroll"
+                aria-label="Follow the audio in the transcript"
                 checked={followPlayback && !manualScrollLock}
                 on:change={toggleFollowPlayback}
               />
-              <span class="whitespace-nowrap text-xs min-[981px]:text-sm">
-                <span class="max-[560px]:hidden">Auto-scroll</span>
-                <span class="min-[561px]:hidden">Follow</span>
-              </span>
+              <span class="whitespace-nowrap text-xs min-[981px]:text-sm">Follow</span>
             </label>
           </div>
 
