@@ -20,7 +20,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:embedded": "vite build --config vite.embedded.config.ts && node ./scripts/assert-embedded-single-bundle.mjs",
-    "build:all": "npm run build && npm run build:embedded",
+    "build:all": "npm run build && npm run build:embedded && npm run build:public",
     "export:meetings": "npm run build && node ./scripts/export-static-meetings.mjs --rebuild-viewer",
     "export:portable-runtime": "npm run build && node ./scripts/export-runtime-portable-site.mjs",
     "materialize:display": "node ./scripts/materialize-display-transcripts.mjs",
@@ -29,7 +29,8 @@
     "demo-data:clean": "node ./scripts/demo-data-clean.mjs",
     "demo-data:pull": "node ./scripts/demo-data-pull.mjs",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:public": "vite build --config vite.public.config.ts && node ./scripts/assert-embedded-single-bundle.mjs --dir dist/public --js viewer.js --css viewer.css"
   },
   "devDependencies": {
     "@lucide/svelte": "^1.11.0",
