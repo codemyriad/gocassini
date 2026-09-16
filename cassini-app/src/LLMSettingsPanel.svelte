@@ -419,32 +419,7 @@
     {#key draft.id}
       <section class="ep-form">
         <div class="ep-form-head">
-          <h3 class="set-row-name">{heading}</h3>
-          <div class="ep-form-actions">
-            <button
-              class="op-btn"
-              type="button"
-              disabled={!draftReady || saving}
-              on:click={saveProvider}
-            >
-              {#if saving}
-                <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-                Saving…
-              {:else}
-                Save provider
-              {/if}
-            </button>
-            {#if providers.length > 0}
-              <button
-                class="link-btn op-cancel"
-                type="button"
-                disabled={saving}
-                on:click={() => (draft = null)}
-              >
-                Cancel
-              </button>
-            {/if}
-          </div>
+          <h3 class="set-row-name ep-form-title">{heading}</h3>
         </div>
         <div class="ep-form-grid">
           <label class="op-field">
@@ -558,6 +533,33 @@
           </div>
         </details>
 
+        <!-- Under the form, not over it: the save belongs after the fields it
+             writes, which is where a reader's eye ends up. -->
+        <div class="ep-form-actions">
+          <button
+            class="op-btn"
+            type="button"
+            disabled={!draftReady || saving}
+            on:click={saveProvider}
+          >
+            {#if saving}
+              <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              Saving…
+            {:else}
+              Save provider
+            {/if}
+          </button>
+          {#if providers.length > 0}
+            <button
+              class="link-btn op-cancel"
+              type="button"
+              disabled={saving}
+              on:click={() => (draft = null)}
+            >
+              Cancel
+            </button>
+          {/if}
+        </div>
       </section>
     {/key}
   {/if}
@@ -971,6 +973,12 @@
   .ep-bounds {
     margin-top: 10px;
   }
+  /* The form's own heading: it names the thing being made, so it reads as a
+     title rather than as another row label. */
+  .ep-form-title {
+    font-size: 15px;
+    font-weight: 650;
+  }
   .ep-form-head {
     display: flex;
     flex-wrap: wrap;
@@ -980,9 +988,10 @@
   }
   .ep-form-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
-    margin-left: auto;
+    margin-top: 4px;
   }
   .ep-key-state {
     display: inline-flex;

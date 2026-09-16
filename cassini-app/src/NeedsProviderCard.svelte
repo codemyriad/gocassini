@@ -28,29 +28,30 @@
 </div>
 
 <style>
-  /* Secondary is this theme's amber — the colour the prototype gives everything
-     model-written, and the colour it gives this card. Unlike primary it is not
-     remapped to the Nextcloud accent in the embedded build, so a locked panel
-     looks the same whatever the instance is themed. The button inside is ink:
-     the card is the colour, so the action does not have to be. */
+  /* The app's own colour, the one an insight wears: this card stands in for
+     the insight the panel cannot offer yet, rather than warning about one. The
+     button inside is ink — the card is the colour, so the action need not be. */
+  /* One row: the title wraps before the action moves, so the card reads as a
+     sentence with its button rather than two stacked things. */
   .needs-key {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 13px;
-    padding: 11px 14px;
-    background-color: color-mix(in srgb, var(--color-secondary) 9%, var(--color-base-100));
+    gap: 12px;
+    padding: 14px;
+    background-color: color-mix(in srgb, var(--color-primary) 9%, var(--color-base-100));
     border-radius: var(--radius-box, 0.75rem);
   }
   .needs-key :global(.needs-key-icon) {
     flex: none;
     width: 22px;
     height: 22px;
-    color: var(--color-secondary);
+    color: var(--color-primary);
   }
   .needs-key-title {
     flex: 1 1 auto;
     min-width: 0;
+    text-wrap: pretty;
     font-size: 13.5px;
     font-weight: 650;
     color: var(--color-base-content);
@@ -58,14 +59,14 @@
   .needs-key-go {
     flex: none;
     margin-left: auto;
-    padding: 10px 18px;
+    padding: 7px 12px;
     cursor: pointer;
     background-color: var(--color-base-content);
     border: 0;
     border-radius: var(--radius-field, 0.5rem);
-    font-size: 13.5px;
+    font-size: 12.5px;
     font-weight: 600;
-    line-height: 1;
+    line-height: 1.2;
     color: var(--color-base-100);
   }
   .needs-key-go:hover {

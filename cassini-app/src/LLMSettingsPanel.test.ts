@@ -123,7 +123,9 @@ describe("AI providers edit placement (D-749)", () => {
   it("keeps only a new provider's form under the list, and says so in a heading", () => {
     expect(llmSettingsPanelSource).toContain("{#if draft && !draft.existing}");
     expect(llmSettingsPanelSource).toContain('{@render providerForm("New provider")}');
-    expect(llmSettingsPanelSource).toContain('<h3 class="set-row-name">{heading}</h3>');
+    expect(llmSettingsPanelSource).toContain(
+      '<h3 class="set-row-name ep-form-title">{heading}</h3>',
+    );
     // The single form is the whole point: one markup, two placements.
     expect(llmSettingsPanelSource.split("<ModelCombobox").length - 1).toBe(1);
   });

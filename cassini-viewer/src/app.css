@@ -262,6 +262,14 @@
 :host([data-nc-theme*="highcontrast"]) .cassini-root :is(.search-field, .resultline .chip, .selbar-clear, .selbar-tag, .tag-popover, .tag-popover input) {
   border-color: var(--color-border-maxcontrast);
 }
+:host([data-nc-theme*="highcontrast"]) .cassini-root .needs-key {
+  background-color: transparent;
+  border: 1px solid var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .needs-key :global(.needs-key-icon),
+:host([data-nc-theme*="highcontrast"]) .cassini-root .needs-key .needs-key-icon {
+  color: var(--color-main-text);
+}
 :host([data-nc-theme*="highcontrast"]) .cassini-root .tag-chip {
   border-color: var(--tag);
 }
