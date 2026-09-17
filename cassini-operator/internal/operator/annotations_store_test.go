@@ -412,35 +412,29 @@ func TestAnnotationStoreMarksOverlappingIsHalfOpen(t *testing.T) {
 	}
 }
 
-func TestAnnotationStoreRebuildsOnSchemaVersionMismatch(t *testing.T) {
+func TestAnnotationStorePreservesUnknownSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), annotationsStoreFilename)
 	store, err := openAnnotationStore(path, nil)
 	if err != nil {
-		t.Fatalf("open: %v", err)
+		t.Fatal(err)
 	}
 	recordMarks(t, store, "JOB1.opus", annotatedFile(t, "c1", testTagNamespaceA, []testTag{{"tag_h", "hiring"}}, meetingMark("m", "tag_h")))
-	// Written by another build, newer: it must rebuild rather than refuse.
-	if _, err := store.db.Exec("PRAGMA user_version = 99"); err != nil {
-		t.Fatalf("stamp: %v", err)
+	if _, err := store.db.Exec("PRAGMA user_version=99"); err != nil {
+		t.Fatal(err)
 	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close: %v", err)
+	store.Close()
+	if reopened, err := openAnnotationStore(path, nil); err == nil {
+		reopened.Close()
+		t.Fatal("expected unsupported schema error")
 	}
-
-	var logs bytes.Buffer
-	reopened, err := openAnnotationStore(path, log.New(&logs, "", 0))
+	raw, err := openSidecarAt(path, "test")
 	if err != nil {
-		t.Fatalf("reopen: %v", err)
+		t.Fatal(err)
 	}
-	defer reopened.Close()
-	if version, _ := reopened.userVersion(); version != annotationsSchemaVersion {
-		t.Fatalf("version = %d, want %d", version, annotationsSchemaVersion)
-	}
-	if coverage, _ := reopened.Coverage(context.Background(), []string{"JOB1.opus"}); coverage.Indexed != 0 {
-		t.Errorf("the stale projection survived a version change: %+v", coverage)
-	}
-	if !strings.Contains(logs.String(), "deleting and rebuilding") {
-		t.Errorf("a discarded projection was not logged: %q", logs.String())
+	defer raw.Close()
+	var count int
+	if err := raw.db.QueryRow("SELECT COUNT(*) FROM annotation_snapshot").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("data lost: count=%d err=%v", count, err)
 	}
 }
 

@@ -94,7 +94,7 @@ func (s *annotationService) readMeeting(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	result, err := s.showMeeting(ctx, caller, meetingID, relPath)
+	result, err := s.readDocument(ctx, caller, meetingID, relPath)
 	if err != nil {
 		s.answerFailure(w, r, "read meeting="+meetingID, err)
 		return
@@ -233,7 +233,7 @@ func (s *annotationService) commitMeeting(ctx context.Context, meetingID, relPat
 		return annotateResult{}, &annotateFailure{status: http.StatusBadGateway, public: "the tag vocabulary is unavailable", cause: err}
 	}
 
-	release, err := annotationWriteLocks.acquire(ctx, relPath)
+	release, err := annotationWriteLocks.acquire(ctx, path.Base(relPath))
 	if err != nil {
 		return annotateResult{}, &annotateFailure{
 			status: http.StatusConflict,

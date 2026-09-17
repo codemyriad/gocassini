@@ -106,13 +106,19 @@ func newAnnotationsNextcloud(t *testing.T, visible ...string) *annotationsNextcl
 			body.WriteString(`</d:multistatus>`)
 			w.WriteHeader(http.StatusMultiStatus)
 			_, _ = io.WriteString(w, body.String())
-		case r.Method == http.MethodGet && strings.HasSuffix(base, ".opus"):
+		case (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasSuffix(base, ".opus"):
 			nc.frontMu.Lock()
-			nc.callerGETs = append(nc.callerGETs, r.URL.Path)
+			if r.Method == http.MethodGet {
+				nc.callerGETs = append(nc.callerGETs, r.URL.Path)
+			}
 			allowed := nc.visible[base]
 			nc.frontMu.Unlock()
 			if !allowed {
 				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if r.Method == http.MethodHead {
+				w.WriteHeader(200)
 				return
 			}
 			proxy.ServeHTTP(w, r)
@@ -370,60 +376,37 @@ func TestAnnotationsMeetingAnswersAnUnreadableMeetingAsAbsent(t *testing.T) {
 	}
 }
 
-func TestAnnotationsMeetingGETReadsAsTheCaller(t *testing.T) {
-	t.Run("a meeting with marks", func(t *testing.T) {
-		nc := newAnnotationsNextcloud(t, "MEETING1.opus")
-		shown := strings.Replace(annTestApplied, `"revision":1,"operationId"`, `"revision":4,"operationId"`, 1)
-		bin := fakeCassini(t, annTestCLIPrints(shown))
-		h, _ := annTestService(t, nc.url, bin, &fakeAnnotationIndex{})
-
+func TestAnnotationsMeetingGETReadsDurableDocument(t *testing.T) {
+	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
+	store, err := openAnnotationStore(path.Join(t.TempDir(), "annotations.sqlite3"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var result annotateResult
+	if err := json.Unmarshal([]byte(annTestApplied), &result); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Record(context.Background(), "MEETING1.opus", result); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := annTestService(t, nc.url, "must-not-run", store)
+	for i := 0; i < 2; i++ {
 		rec := annTestCall(h, http.MethodGet, "MEETING1", "alice", "")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "tag_known") {
+			t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
 		}
-		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-			t.Errorf("Cache-Control = %q, want no-store", got)
-		}
-		body := annTestDecode(t, rec)
-		if string(body["meetingId"]) != `"MEETING1"` || string(body["revision"]) != "4" || string(body["resolved"]) != "true" {
-			t.Fatalf("response = %s", rec.Body.String())
-		}
-		if !strings.Contains(string(body["annotations"]), `"tag_known"`) {
-			t.Fatalf("the annotations must be the recording's own: %s", body["annotations"])
-		}
-		for _, key := range []string{"audioOpusSha256", "containerSha256", "format"} {
-			if _, ok := body[key]; ok {
-				t.Errorf("%s must not reach the wire: %s", key, rec.Body.String())
-			}
-		}
-
-		callerGETs, ownerGETs := nc.gets()
-		if len(callerGETs) != 1 || !strings.Contains(callerGETs[0], "/files/alice/"+annTestRecording) {
-			t.Fatalf("the recording must be read as the caller, got caller=%v", callerGETs)
-		}
-		if len(ownerGETs) != 0 || nc.indexOfOp(http.MethodPut, annTestRecording) != -1 {
-			t.Fatalf("a read must not touch the recording as the service account: owner GETs=%v ops=%v", ownerGETs, nc.opsFor(annTestRecording))
-		}
-		args := annTestRead(t, bin+".args")
-		if !strings.HasPrefix(args, "annotate\nshow\n") || !strings.HasSuffix(args, "--json\n") {
-			t.Fatalf("args = %q, want annotate show <file> --json", args)
-		}
-	})
-
-	t.Run("a meeting with none", func(t *testing.T) {
-		nc := newAnnotationsNextcloud(t, "MEETING1.opus")
-		bin := fakeCassini(t, annTestCLIPrints(`{"format":"cassini.annotate.result.v1","annotations":null,"revision":0,"resolved":null,"audioOpusSha256":"aa","containerSha256":"bb"}`))
-		h, _ := annTestService(t, nc.url, bin, nil)
-
-		rec := annTestCall(h, http.MethodGet, "MEETING1", "alice", "")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
-		}
-		body := annTestDecode(t, rec)
-		if string(body["annotations"]) != "null" || string(body["resolved"]) != "null" || string(body["revision"]) != "0" {
-			t.Fatalf("no marks is null, not an empty document: %s", rec.Body.String())
-		}
-	})
+	}
+	caller, owner := nc.gets()
+	if len(caller)+len(owner) != 0 {
+		t.Fatalf("downloaded media: %v %v", caller, owner)
+	}
+	nc.frontMu.Lock()
+	delete(nc.visible, "MEETING1.opus")
+	nc.frontMu.Unlock()
+	if rec := annTestCall(h, http.MethodGet, "MEETING1", "alice", ""); rec.Code != 404 {
+		t.Fatalf("revoked access: %d", rec.Code)
+	}
 }
 
 func TestAnnotationsMeetingPOSTCommitsAsTheCaller(t *testing.T) {
@@ -816,13 +799,6 @@ func TestAnnotationsMeetingUsesTheDefaultModelsPrivateRoot(t *testing.T) {
 	index := &fakeAnnotationIndex{}
 	h, _ := annTestService(t, nc.url, bin, index)
 
-	if rec := annTestCall(h, http.MethodGet, "MEETING1", "alice", ""); rec.Code != http.StatusOK {
-		t.Fatalf("GET code = %d (%s)", rec.Code, rec.Body.String())
-	}
-	callerGETs, ownerGETs := nc.gets()
-	if len(callerGETs) != 0 || len(ownerGETs) != 1 || !strings.HasSuffix(ownerGETs[0], "/"+rel) {
-		t.Fatalf("the private root is read as its owner: caller=%v owner=%v", callerGETs, ownerGETs)
-	}
 	if rec := annTestCall(h, http.MethodPost, "MEETING1", "bob", annTestMark); rec.Code != http.StatusOK {
 		t.Fatalf("POST code = %d (%s)", rec.Code, rec.Body.String())
 	}

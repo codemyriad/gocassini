@@ -15,20 +15,14 @@ import (
 	"time"
 )
 
-// The tag index (D-737): annotations.sqlite3, a disposable copy of the marks
-// inside each delivered .opus — a sidecar for search.sqlite3's reasons, and a
-// separate file so a schema bump here never forces a transcript re-index there.
-//
-// The recording is the record: every write commits the file first and records
-// here second, so a failure here costs coverage, never a mark. As in search,
-// nothing here knows who may read what; every read takes the caller's visible
-// set as an argument and binds it into the statement.
+// Durable annotation documents and their relational search projection share one
+// transaction and database. Archive files can seed a replacement database, but
+// an existing database must never be discarded during a schema upgrade.
 const (
 	annotationsStoreFilename = "annotations.sqlite3"
 
-	// annotationsSchemaVersion: bump for any change to the schema or to what
-	// ingest keeps from a document. A mismatched file is deleted and rebuilt.
-	annotationsSchemaVersion = 2
+	// annotationsSchemaVersion is upgraded through managed migrations.
+	annotationsSchemaVersion = 3
 
 	annotationsStateIndexed = "indexed"
 	// annotationsStateUnavailable: the meeting is known but its marks could not
@@ -116,7 +110,7 @@ func (rt *Runtime) annotationReads() *annotationStore {
 }
 
 func openAnnotationStore(path string, logger *log.Logger) (*annotationStore, error) {
-	db, err := openSidecarDB(path, "annotations index", annotationsSchemaSQL, annotationsSchemaVersion, logger)
+	db, err := openDurableAnnotationDB(path)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +238,7 @@ func (s *annotationStore) record(ctx context.Context, opusName string, result an
 	if projected.revision == 0 {
 		projected.revision = result.Revision
 	}
-	return s.replace(ctx, opusName, projected, result.ContainerSHA256, onlyIfNewer)
+	return s.replace(ctx, opusName, projected, result.ContainerSHA256, onlyIfNewer, &result)
 }
 
 // MarkUnavailable records opusName as unreadable (annotationIndex), with no
@@ -256,7 +250,7 @@ func (s *annotationStore) MarkUnavailable(ctx context.Context, opusName, _ strin
 
 // replace swaps a meeting's rows in one transaction — replace, never merge, so
 // a mark removed from the file leaves the index too. "" state means skipped.
-func (s *annotationStore) replace(ctx context.Context, opusName string, m projectedMeeting, container string, onlyIfNewer bool) (string, error) {
+func (s *annotationStore) replace(ctx context.Context, opusName string, m projectedMeeting, container string, onlyIfNewer bool, documents ...*annotateResult) (string, error) {
 	name := strings.TrimSpace(opusName)
 	if name == "" {
 		return "", errors.New("opus name must not be empty")
@@ -267,6 +261,14 @@ func (s *annotationStore) replace(ctx context.Context, opusName string, m projec
 	}
 	skipped := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var pending int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND desired != confirmed`, name).Scan(&pending); err != nil {
+			return err
+		}
+		if pending != 0 {
+			skipped = true
+			return nil
+		}
 		if onlyIfNewer {
 			var current int
 			switch err := tx.QueryRowContext(ctx,
@@ -302,7 +304,11 @@ VALUES (?, ?, ?, ?, ?, ?)`, name, state, m.revision, m.resolved, m.namespace,
 				return fmt.Errorf("insert mark: %w", err)
 			}
 		}
-		return nil
+		if len(documents) > 0 && documents[0] != nil && !m.unreadable {
+			return importAnnotationSnapshot(ctx, tx, name, *documents[0])
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM annotation_head WHERE opus_name=? AND desired=confirmed`, name)
+		return err
 	})
 	if err != nil || skipped {
 		return "", err
@@ -755,7 +761,7 @@ func (s *annotationStore) tagInUse(ctx context.Context, tagID string) (bool, err
 // recordedContainers is each recorded meeting's container digest ("" when
 // unknown), for a rebuild deciding whether a file needs reading again.
 func (s *annotationStore) recordedContainers(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT opus_name, container_sha256 FROM meeting_annotations`)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.opus_name, CASE WHEN h.desired IS NULL AND m.state='indexed' THEN '' ELSE m.container_sha256 END FROM meeting_annotations m LEFT JOIN annotation_head h ON h.opus_name=m.opus_name`)
 	if err != nil {
 		return nil, fmt.Errorf("read recorded annotations: %w", err)
 	}

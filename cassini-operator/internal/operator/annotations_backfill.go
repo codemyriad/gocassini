@@ -147,6 +147,11 @@ func backfillOneAnnotation(
 	ctx context.Context, store *annotationStore, opusName string, recorded map[string]string,
 	delivered searchDeliveredStateReader, archive annotationArchiveReader,
 ) (annotationBackfillOutcome, string) {
+	release, err := annotationWriteLocks.acquire(ctx, opusName)
+	if err != nil {
+		return annotationBackfillFailed, err.Error()
+	}
+	defer release()
 	checksum, exists, err := delivered(ctx, opusName)
 	if err != nil {
 		return annotationBackfillFailed, fmt.Sprintf("read delivered state: %v", err)

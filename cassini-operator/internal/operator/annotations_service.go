@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"cassini-operator/internal/operator/appapi"
 )
@@ -15,13 +16,14 @@ const annotationsURLPath = "/annotations"
 // annotationService serves a meeting's annotations and the tag vocabulary.
 // rt.annotations is the rebuildable projection, and may be nil.
 type annotationService struct {
-	rt     *Runtime
-	exapp  ExAppConfig
-	bin    string
-	client *http.Client
-	logger *log.Logger
-	styles *tagStyleStore
-	jobs   tagJobs
+	rt      *Runtime
+	exapp   ExAppConfig
+	bin     string
+	client  *http.Client
+	logger  *log.Logger
+	styles  *tagStyleStore
+	jobs    tagJobs
+	imports sync.Map
 }
 
 // newAnnotationService returns nil where no mark can be served, as
