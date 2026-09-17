@@ -294,15 +294,15 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 		cfg = &DecoderConfig{Method: decodingGreedySearch}
 	}
 
-	if len(terms) == 0 {
-		return cfg, nil, nil
-	}
 	if envBool(envHintsDisabled) {
 		// The kill switch restores the previous decoder as well as dropping the
 		// hotwords. Turning biasing off while leaving beam search on would give
 		// an operator no way back to the output they had before, which is the
 		// one thing a kill switch has to be able to do.
 		cfg = &DecoderConfig{Method: decodingGreedySearch}
+		if len(terms) == 0 {
+			return cfg, nil, nil
+		}
 		return cfg, &HintsProvenance{
 			TermCount:            len(terms),
 			ParticipantTermCount: vocabulary.ParticipantTermCount,
@@ -310,6 +310,9 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 			Applied:              false,
 			Reason:               "disabled by configuration (" + envHintsDisabled + ")",
 		}, nil
+	}
+	if len(terms) == 0 {
+		return cfg, nil, nil
 	}
 	if paths.BpeVocabFile == "" {
 		// The loud half of the silent-no-op guard. Without bpe.vocab the terms

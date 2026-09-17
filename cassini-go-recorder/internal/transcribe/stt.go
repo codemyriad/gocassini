@@ -276,8 +276,8 @@ func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, n
 	cfg.ModelConfig.Provider = provider
 	cfg.ModelConfig.Debug = 0
 
-	// The model reference profile takes precedence over caller decoder hints.
-	// Other models retain the decoder selected by the caller. Hotwords ride along:
+	// Frontend/boundary policy and decoder selection are independent. Preserve
+	// the caller-selected decoder and supported hints. Hotwords ride along:
 	// sherpa reads the file only under modified beam search, and encodes the
 	// terms with the model's own BPE vocabulary, so all four settings move
 	// together or none of them do. Setting the file without modeling_unit is
@@ -774,7 +774,7 @@ func vadSegmentWindowBoundsWithPolicy(total, sampleRate int, policy vadDecodePol
 		if total <= 0 {
 			return nil
 		}
-		// Benchmark-only: retain the detected utterance and its real context.
+		// Preserve the detected utterance for the production v3 boundary policy.
 		// The decoder's independent maxSafeSegmentSamples guard still applies.
 		return []windowBound{{start: 0, end: total}}
 	}

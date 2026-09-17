@@ -230,3 +230,13 @@ func TestMergedFallbackDecoderAndProvenance(t *testing.T) {
 		t.Fatal("changed another model's decoder/provenance")
 	}
 }
+
+func TestMergedFallbackDoesNotInventRequestedHints(t *testing.T) {
+	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+		for _, accepted := range []bool{false, true} {
+			if got := mergedFallbackHints(ModelPaths{ModelID: id}, nil, accepted); got != nil {
+				t.Fatalf("%s accepted=%v: invented hint request: %+v", id, accepted, got)
+			}
+		}
+	}
+}

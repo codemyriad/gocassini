@@ -1042,13 +1042,10 @@ func mergedFallbackDecoder(paths ModelPaths, base *DecoderConfig) *DecoderConfig
 }
 
 func mergedFallbackHints(paths ModelPaths, original *HintsProvenance, accepted bool) *HintsProvenance {
-	if !accepted || !usesParakeetV3ReferencePolicy(paths.ModelID) {
+	if original == nil || !accepted || !usesParakeetV3ReferencePolicy(paths.ModelID) {
 		return original
 	}
-	result := HintsProvenance{}
-	if original != nil {
-		result = *original
-	}
+	result := *original
 	result.Applied = false
 	result.DecodingMethod = decodingGreedySearch
 	result.Score = 0

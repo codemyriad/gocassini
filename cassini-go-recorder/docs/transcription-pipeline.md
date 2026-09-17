@@ -174,9 +174,10 @@ greedy decoding because beam search lost speech in its separate non-VAD tests.
 Only an accepted fallback replaces the final hint provenance with an explicit
 unapplied reason; an attempted but rejected fallback leaves participant hints
 reported as applied. Other model families retain their existing fallback policy.
-With non-empty terms,
-`CASSINI_STT_HINTS_DISABLED=1` restores the previous `greedy_search` decoder as
-well as disabling the hints.
+`CASSINI_STT_HINTS_DISABLED=1` restores the previous `greedy_search` decoder
+with or without configured terms. When terms were requested, provenance records
+that the switch disabled them. An accepted fallback with no requested hints does
+not invent a hint-provenance record.
 
 The CTC tier keeps greedy search. sherpa-onnx has no hotword support for CTC, so
 the wider beam would cost decode time and buy nothing.

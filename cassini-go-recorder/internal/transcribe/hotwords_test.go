@@ -357,3 +357,11 @@ func TestHintsDisabledSwitchAlsoRestoresGreedySearch(t *testing.T) {
 		t.Errorf("hints must be off and recorded as such, got dec=%+v prov=%+v", dec, prov)
 	}
 }
+
+func TestHintsDisabledSwitchRestoresGreedyWithoutVocabulary(t *testing.T) {
+	t.Setenv(envHintsDisabled, "1")
+	dec, prov, err := resolveDecoder(t.TempDir(), nil, transducerPaths(t))
+	if err != nil || dec.Method != decodingGreedySearch || dec.Biased() || dec.MaxActivePaths != 0 || prov != nil {
+		t.Fatalf("empty vocabulary ignored decoder kill switch: decoder=%+v provenance=%+v err=%v", dec, prov, err)
+	}
+}
