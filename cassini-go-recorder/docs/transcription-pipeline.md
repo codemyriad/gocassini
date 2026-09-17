@@ -13,7 +13,7 @@ This document describes the post-recording transcription pipeline that turns a f
 | Audio + STT | `internal/transcribe/audio.go`, `models.go`, `stt.go` | ffmpeg probe/mix, model download/cache, sherpa-onnx recognizer |
 | Segmentation + format | `internal/transcribe/format.go` | Segment assembly, JSON/VTT emitters, manifest writer |
 | LLM integration | `internal/transcribe/llm.go` | OpenAI-compatible HTTP client for the summary call |
-| Decoder hints | `internal/transcribe/hotwords.go` | Turns the configured vocabulary into sherpa-onnx contextual biasing |
+| Decoder hints | `internal/transcribe/hotwords.go` | Applies vocabulary where supported; records why hints cannot be used otherwise |
 | Summary generation (V4) | `internal/transcribe/summary.go` | System prompt assembly and transcript flattening; the prompt bytes come from the workflow registry |
 | Template (V0 contract) | `internal/insight/workflows/prompts/summarise-template.v0.md` | The summary's section structure — single source of truth |
 
@@ -94,7 +94,7 @@ type BuildConfig struct {
     ModelID      ModelID   // STT model
     CacheDir     string    // model cache root
     SummaryLLM   LLMConfig // step 9
-    Vocabulary   []string  // preferred spellings, biases the decoder
+    Vocabulary   []string  // preferred spellings, applied only by supported decoders
     NumThreads   int
 }
 ```
@@ -147,9 +147,17 @@ The acceptance criteria from D-242 map to:
 
 The operator-configured vocabulary reaches the recorder as
 `CASSINI_TRANSCRIPTION_TERMS`, a JSON array of preferred spellings. It is
-applied to the **decoder**, not to finished text.
+applied to supported **decoders**, not to finished text.
 
-Transducer models decode with `modified_beam_search` by default, whether or not
+Parakeet v3 (FP32 and INT8) uses the reference frontend and greedy decoding to
+reduce missing speech. It cannot apply vocabulary or automatic participant
+hints. When terms are configured, the build logs that they were not applied
+and records the reason in `provenance.speechToText.hints`. Its detected speech
+spans retain 30 ms of surrounding recorded audio, remain whole within VAD
+resource limits, and receive no synthetic decoder tail. Normal CPU/CUDA builds
+and the developer CLI include the required patched native runtime.
+
+Other transducer models decode with `modified_beam_search` by default, whether or not
 a vocabulary is set. Hotwords are only read under beam search, and a decoder
 that changed under the operator depending on whether a text box happened to be
 empty would be worse than one that is simply stable. When a vocabulary is set
@@ -170,7 +178,8 @@ the wider beam would cost decode time and buy nothing.
 
 Applying hints requires both of these model properties:
 
-1. the model must be a transducer. The `nemo_ctc` tier cannot be biased.
+1. the model must use a supported beam-search transducer decoder. Parakeet v3
+   and the `nemo_ctc` tier use greedy decoding and cannot be biased.
 2. the model bundle must ship `bpe.vocab`, and `modeling_unit` must be `bpe`.
    These two are the dangerous pair: with an empty `bpe_vocab` sherpa fails to
    construct the recognizer (loud), but with `modeling_unit` left unset the

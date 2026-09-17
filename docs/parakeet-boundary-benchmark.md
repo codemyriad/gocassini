@@ -78,15 +78,34 @@ windows of ten seconds or more; shorter-window experiments use half the main
 window. Those choices are held constant within the corresponding family and
 must be reported alongside window length.
 
-`preserveVADSpan` is an opt-in benchmark policy, false by default. When true,
+`preserveVADSpan` is false by default in manual ablation conditions. When true,
 it bypasses the independent VAD-window subdivision and preserves the detected
 span plus its requested real context. Window length, overlap, grace and terminal
 window settings are ignored. The existing VAD maximum (25 seconds) and decoder
 safety fallback (55 seconds at 16 kHz) remain in place. This tests utterance
-preservation without choosing a new lexical window constant; it does not change
-the production decoder or production boundary defaults.
+preservation without choosing a new lexical window constant. Production Parakeet
+v3 now uses this policy with 30 ms real context, greedy decoding and no synthetic
+padding; other models retain their existing policies.
 
 ## Running
+
+`CASSINI_BOUNDARY_PIPELINE` selects a complete pipeline:
+
+- `ablation` (default): explicit conditions and optional decoder override, using
+  the private legacy constructor so production v3 defaults cannot override an experiment.
+- `legacy`: prior beam decoder, ten-second VAD windows and 500 ms synthetic tail.
+- `production`: the normal model-specific constructor and boundary policy; v3
+  requires the marked Cassini reference runtime and uses greedy decoding, whole
+  VAD spans, 30 ms real context and no synthetic padding. Hotwords are unapplied.
+
+The last two profiles do not need `CASSINI_BOUNDARY_POLICIES` and ignore decoder
+and condition overrides. They emit the effective policy in each row. For a
+full meeting, omit sample limits and scoring intervals and provide every track.
+Compare legacy against the original runtime and production against the packaged
+reference runtime; record both library hashes. The profile flag alone does not
+restore an old native frontend. Build the patched CPU test binary via
+`scripts/build-cassini-bin.sh --test -tags boundarybench ./internal/transcribe`.
+
 
 From `cassini-go-recorder`, with a complete cached Parakeet v3 model and Silero:
 
@@ -110,7 +129,8 @@ private JSONL row, and records model, device, policy, decoded-PCM SHA-256, sampl
 count, elapsed decode time, and words. Decoder metadata records the effective
 hotword-file SHA-256, hotword score, and beam width. Runs without hotwords record
 an empty hash and score zero; greedy additionally records beam width zero.
-It warms the recognizer once per fixture;
+Rows also record `pipeline` and `warmup`. It warms the recognizer once per fixture
+unless `CASSINI_BOUNDARY_SKIP_WARMUP=1` is set (useful for full-meeting replay);
 runtime is diagnostic, not a statistically controlled performance comparison.
 Keep model/runtime checksums and the source revision with an experiment.
 

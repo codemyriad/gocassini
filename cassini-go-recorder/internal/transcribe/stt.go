@@ -60,9 +60,10 @@ func (w Word) extentCapMS() int64 {
 
 // Recognizer wraps a sherpa-onnx offline recognizer with Silero VAD segmentation.
 type Recognizer struct {
-	r          *sherpa.OfflineRecognizer
-	vad        *sherpa.VoiceActivityDetector
-	sampleRate int
+	r              *sherpa.OfflineRecognizer
+	vad            *sherpa.VoiceActivityDetector
+	sampleRate     int
+	boundaryPolicy *vadDecodePolicy
 }
 
 // vadWindowSamples is the configured SileroVad.WindowSize. sherpa-onnx can
@@ -165,6 +166,7 @@ type vadDecodePolicy struct {
 	headPaddingMS, tailPaddingMS                                    int
 	contextMS                                                       int
 	preserveVADSpan                                                 bool
+	disableSyntheticPadding                                         bool
 }
 
 func defaultVADDecodePolicy() vadDecodePolicy {
@@ -173,6 +175,32 @@ func defaultVADDecodePolicy() vadDecodePolicy {
 		graceSamples: vadDecodeWindowGrace, minTerminalSamples: vadDecodeMinTerminal,
 		tailPaddingMS: 500,
 	}
+}
+
+// Parakeet v3's reference frontend normalizes over the entire input. Synthetic
+// silence changes every frame; retaining the detected utterance and the source
+// context avoids both that perturbation and arbitrary mid-utterance resets.
+// 30ms is Silero's reference speech-boundary margin, not an ASR score optimum.
+func usesParakeetV3ReferencePolicy(id ModelID) bool {
+	return id == ModelParakeet06BV3 || id == ModelParakeet06BV3Int8
+}
+
+func vadDecodePolicyForModel(id ModelID) vadDecodePolicy {
+	policy := defaultVADDecodePolicy()
+	if usesParakeetV3ReferencePolicy(id) {
+		policy.preserveVADSpan = true
+		policy.contextMS = 30
+		policy.tailPaddingMS = 0
+		policy.disableSyntheticPadding = true
+	}
+	return policy
+}
+
+func (r *Recognizer) decodePolicy() vadDecodePolicy {
+	if r.boundaryPolicy != nil {
+		return *r.boundaryPolicy
+	}
+	return defaultVADDecodePolicy()
 }
 
 func newVADModelConfig(modelPath string, sampleRate int) sherpa.VadModelConfig {
@@ -206,6 +234,28 @@ const (
 // Silero VAD model. provider is "cpu" or "cuda"; vadModelPath is the path to
 // silero_vad.onnx.
 func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig) (*Recognizer, error) {
+	return newRecognizerWithProfile(paths, vadModelPath, provider, numThreads, decoder, true)
+}
+
+const parakeetReferenceRuntimeMarker = "+cassini-parakeet-v3-reference-v1"
+
+func validateReferenceRuntime(id ModelID, version string) error {
+	if usesParakeetV3ReferencePolicy(id) && !strings.Contains(version, parakeetReferenceRuntimeMarker) {
+		return fmt.Errorf("Parakeet v3 requires the Cassini reference frontend runtime (found %q); build with cassini-go-recorder/scripts/build-cassini-bin.sh", version)
+	}
+	return nil
+}
+
+// The legacy profile is private and exists only for recorded-audio comparisons.
+func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, referenceProfile bool) (*Recognizer, error) {
+	if referenceProfile {
+		if err := validateReferenceRuntime(paths.ModelID, sherpa.GetVersion()); err != nil {
+			return nil, err
+		}
+		if usesParakeetV3ReferencePolicy(paths.ModelID) {
+			decoder = &DecoderConfig{Method: decodingGreedySearch}
+		}
+	}
 	if numThreads < 1 {
 		numThreads = 4
 	}
@@ -228,8 +278,8 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	cfg.ModelConfig.Provider = provider
 	cfg.ModelConfig.Debug = 0
 
-	// The decoder is chosen by the caller, which is the only place that knows
-	// whether this model can beam-search at all. Hotwords ride along with it:
+	// The model reference profile takes precedence over caller decoder hints.
+	// Other models retain the decoder selected by the caller. Hotwords ride along:
 	// sherpa reads the file only under modified beam search, and encodes the
 	// terms with the model's own BPE vocabulary, so all four settings move
 	// together or none of them do. Setting the file without modeling_unit is
@@ -249,7 +299,11 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 		return nil, fmt.Errorf("failed to create Silero VAD (check model path: %s)", vadModelPath)
 	}
 
-	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate}, nil
+	policy := defaultVADDecodePolicy()
+	if referenceProfile {
+		policy = vadDecodePolicyForModel(paths.ModelID)
+	}
+	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate, boundaryPolicy: &policy}, nil
 }
 
 func applyDecoderConfig(cfg *sherpa.OfflineRecognizerConfig, decoder *DecoderConfig) {
@@ -298,7 +352,7 @@ func applyDecoderConfig(cfg *sherpa.OfflineRecognizerConfig, decoder *DecoderCon
 //
 // Word timestamps refer to the full recording timeline either way.
 func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) ([]Word, error) {
-	return r.transcribeWithVADPolicy(samples, sampleRate, useVAD, defaultVADDecodePolicy())
+	return r.transcribeWithVADPolicy(samples, sampleRate, useVAD, r.decodePolicy())
 }
 
 func (r *Recognizer) transcribeWithVADPolicy(samples []float32, sampleRate int, useVAD bool, policy vadDecodePolicy) ([]Word, error) {
@@ -602,7 +656,7 @@ func wordEndOverContinuingAudio(samples []float32, sampleRate int, word Word, au
 // within the full recording. vadSegment means the source span came from VAD and
 // therefore ends at a detected speech boundary with its closing silence removed.
 func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOffsetMS int64, vadSegment bool) ([]Word, error) {
-	return r.transcribeSegmentWithPolicy(samples, sampleRate, segOffsetMS, vadSegment, defaultVADDecodePolicy())
+	return r.transcribeSegmentWithPolicy(samples, sampleRate, segOffsetMS, vadSegment, r.decodePolicy())
 }
 
 func (r *Recognizer) transcribeSegmentWithPolicy(samples []float32, sampleRate int, segOffsetMS int64, vadSegment bool, policy vadDecodePolicy) ([]Word, error) {
@@ -647,7 +701,7 @@ func (r *Recognizer) transcribeSegmentWithPolicy(samples []float32, sampleRate i
 		// avoiding a decode change for the normal 15s sliding windows.
 		decoderTailPaddingSamples := decoderTailPadSamples(len(chunk), sampleRate, vadSegment)
 		decoderHeadPaddingSamples := 0
-		if vadSegment {
+		if vadSegment || policy.disableSyntheticPadding {
 			decoderHeadPaddingSamples = policy.headPaddingMS * sampleRate / 1000
 			decoderTailPaddingSamples = policy.tailPaddingMS * sampleRate / 1000
 		}

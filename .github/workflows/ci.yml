@@ -261,7 +261,7 @@ jobs:
           # (exit 100) and take this step with it. ci-apt-update.sh drops every
           # source that is not the Ubuntu archive first — see the note there.
           sudo ./scripts/ci-apt-update.sh
-          sudo apt-get install -y ffmpeg jq ripgrep
+          sudo apt-get install -y ffmpeg jq ripgrep build-essential cmake curl git patch unzip
       - name: Run recorder integration test against local Nextcloud
         env:
           SPREED_PROFILE: full
@@ -301,7 +301,7 @@ jobs:
           # (exit 100) and take this step with it. ci-apt-update.sh drops every
           # source that is not the Ubuntu archive first — see the note there.
           sudo ./scripts/ci-apt-update.sh
-          sudo apt-get install -y ffmpeg jq ripgrep
+          sudo apt-get install -y ffmpeg jq ripgrep build-essential cmake curl git patch unzip
       - name: Run mute integration test against local Nextcloud
         env:
           SPREED_PROFILE: full

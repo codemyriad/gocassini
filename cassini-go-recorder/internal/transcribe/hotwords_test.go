@@ -237,7 +237,7 @@ func TestResolveHintsReportsCTCModelAsUnapplied(t *testing.T) {
 	if prov == nil || prov.Applied {
 		t.Fatalf("expected an unapplied provenance record, got %+v", prov)
 	}
-	if prov.TermCount != 1 || !strings.Contains(prov.Reason, "CTC") || !strings.Contains(prov.Reason, "balanced") {
+	if prov.TermCount != 1 || !strings.Contains(prov.Reason, "CTC") || !strings.Contains(prov.Reason, "cannot take decoder hints") {
 		t.Errorf("provenance must name the reason, got %+v", prov)
 	}
 }

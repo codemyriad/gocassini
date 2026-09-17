@@ -41,9 +41,23 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 	if corpusPath == "" {
 		t.Skip("set CASSINI_BOUNDARY_CORPUS, CASSINI_BOUNDARY_POLICIES, CASSINI_BOUNDARY_OUTPUT and CASSINI_CACHE_ROOT")
 	}
+	pipeline := os.Getenv("CASSINI_BOUNDARY_PIPELINE")
+	if pipeline == "" {
+		pipeline = "ablation"
+	}
+	if pipeline != "ablation" && pipeline != "production" && pipeline != "legacy" {
+		t.Fatal("unsupported benchmark pipeline")
+	}
+	warmup := os.Getenv("CASSINI_BOUNDARY_SKIP_WARMUP") != "1"
 	var fixtures []boundaryFixture
 	var conditions []boundaryCondition
-	for path, target := range map[string]any{corpusPath: &fixtures, os.Getenv("CASSINI_BOUNDARY_POLICIES"): &conditions} {
+	inputs := map[string]any{corpusPath: &fixtures}
+	if pipeline == "ablation" {
+		inputs[os.Getenv("CASSINI_BOUNDARY_POLICIES")] = &conditions
+	} else {
+		conditions = []boundaryCondition{{ID: pipeline, PreserveVADSpan: true}}
+	}
+	for path, target := range inputs {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -127,6 +141,12 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 		if method != decodingGreedySearch && method != decodingModifiedBeamSearch {
 			t.Fatal("unsupported benchmark decoder")
 		}
+		if pipeline == "legacy" {
+			method = decodingModifiedBeamSearch
+		}
+		if pipeline == "production" && usesParakeetV3ReferencePolicy(paths.ModelID) {
+			method = decodingGreedySearch
+		}
 		score := float32(defaultHotwordsScore)
 		if fixture.HotwordScore != nil {
 			score = *fixture.HotwordScore
@@ -146,19 +166,25 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 		} else {
 			decoder.Score = 0 // No contextual score is applied without hotwords.
 		}
-		rec, e := NewRecognizer(paths, vad, device, 1, decoder)
+		rec, e := newRecognizerWithProfile(paths, vad, device, 1, decoder, pipeline == "production")
 		if e != nil {
 			t.Fatal(e)
 		}
 		// Warm the loaded recognizer before timing conditions. Timings remain
 		// diagnostic; accuracy comparisons do not depend on them.
-		if _, e = rec.transcribeWithVADPolicy(samples, 16000, true, defaultVADDecodePolicy()); e != nil {
-			t.Fatal(e)
+		if warmup {
+			if _, e = rec.Transcribe(samples, 16000, true); e != nil {
+				t.Fatal(e)
+			}
 		}
 		for _, condition := range conditions {
 			policy := vadDecodePolicy{windowSamples: condition.WindowMS * 16, overlapSamples: condition.OverlapMS * 16, graceSamples: 8000, minTerminalSamples: min(5000, condition.WindowMS/2) * 16, headPaddingMS: condition.HeadMS, tailPaddingMS: condition.TailMS, contextMS: condition.ContextMS, preserveVADSpan: condition.PreserveVADSpan}
 			// Preserve the established 5s terminal policy for >=10s windows; smaller
 			// windows use half a window so rebalancing cannot exceed the main window.
+			if pipeline != "ablation" {
+				policy = rec.decodePolicy()
+				condition = boundaryCondition{ID: pipeline, WindowMS: policy.windowSamples / 16, OverlapMS: policy.overlapSamples / 16, HeadMS: policy.headPaddingMS, TailMS: policy.tailPaddingMS, ContextMS: policy.contextMS, PreserveVADSpan: policy.preserveVADSpan}
+			}
 			before := time.Now()
 			words, e := rec.transcribeWithVADPolicy(samples, 16000, true, policy)
 			elapsed := time.Since(before)
@@ -175,6 +201,8 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 				words = kept
 			}
 			row := struct {
+				Pipeline       string            `json:"pipeline"`
+				Warmup         bool              `json:"warmup"`
 				Fixture        string            `json:"fixture"`
 				Condition      boundaryCondition `json:"condition"`
 				Decoder        string            `json:"decoder"`
@@ -187,7 +215,7 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 				Samples        int               `json:"samples"`
 				Seconds        float64           `json:"seconds"`
 				Words          []Word            `json:"words"`
-			}{fixture.ID, condition, method, hotwordsHash, decoder.Score, decoder.MaxActivePaths, model, device, fmt.Sprintf("%x", hash.Sum(nil)), len(samples), elapsed.Seconds(), words}
+			}{pipeline, warmup, fixture.ID, condition, method, hotwordsHash, decoder.Score, decoder.MaxActivePaths, model, device, fmt.Sprintf("%x", hash.Sum(nil)), len(samples), elapsed.Seconds(), words}
 			if e = enc.Encode(row); e != nil {
 				t.Fatal(e)
 			}

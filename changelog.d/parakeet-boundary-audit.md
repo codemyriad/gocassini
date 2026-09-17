@@ -1,4 +1,4 @@
-- Fix duplicated overlap words when adjacent decodes disagree only on sentence-final periods (for example, `morning.` versus `morning,`).
-- Add an opt-in recorded-audio benchmark for Parakeet window length, overlap, real context, synthetic padding, and decoder controls, with reference-disagreement scoring and held-out evaluation. Default decoding parameters are unchanged.
-- Add a separate, opt-in ONNX frontend diagnostic to distinguish model preprocessing effects from boundary and decoder changes. It is not used by production transcription.
-- Add isolated native reference-frontend and beam-search diagnostic patches, a compiled feature probe, and whole-VAD benchmark controls. Recorded-corpus validation is documented; production inference remains unchanged.
+- Reduce missing speech in Parakeet v3 transcriptions by matching the model’s reference audio preprocessing and using greedy decoding. Preserve detected utterances with surrounding recorded audio instead of splitting them every ten seconds and appending synthetic silence.
+- Fix duplicated overlap words when adjacent decodes disagree only on sentence-final punctuation.
+- Include the corrected native runtime in CPU/CUDA builds and the developer CLI. Parakeet v3 now reports vocabulary and participant hints as unapplied because its greedy decoder does not support hotword bias.
+- Add recorded-audio comparisons and resumable full-meeting GPU validation tools.

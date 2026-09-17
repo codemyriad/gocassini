@@ -20,10 +20,10 @@ import (
 // Two hard requirements come from sherpa-onnx itself
 // (offline-recognizer-transducer-nemo-impl.h):
 //
-//  1. hotwords are read only under decoding_method=modified_beam_search. Every
-//     transducer pass therefore runs beam search, whether or not a vocabulary
-//     is set: one decoder for everyone, rather than a decoder that changes
-//     under the operator depending on whether a text box is empty.
+//  1. hotwords are read only under decoding_method=modified_beam_search. Parakeet v3
+//     uses its reference greedy decoder and explicitly reports hints as
+//     unapplied. Other transducers retain beam search independently of whether
+//     a vocabulary is configured.
 //  2. modeling_unit must be "bpe" AND bpe_vocab must name a real file. With
 //     bpe_vocab empty the recognizer fails to construct; with modeling_unit
 //     left unset the terms are tokenised as whole words, fail to encode, and
@@ -70,9 +70,8 @@ const (
 // to run, and the hotword biasing to run it with. A nil *DecoderConfig leaves
 // sherpa on its own default, which is greedy search.
 type DecoderConfig struct {
-	// Method is the sherpa decoding_method. Transducer models always run
-	// modified beam search; CTC models keep greedy search because sherpa has no
-	// hotword support for them and the wider beam would buy nothing.
+	// Method is the sherpa decoding_method. Parakeet v3 and CTC use greedy;
+	// other transducer models retain modified beam search for contextual hints.
 	Method string
 	// MaxActivePaths is the beam width, meaningful only under beam search.
 	MaxActivePaths int
@@ -268,6 +267,17 @@ func resolveDecoder(workDir string, terms []string, paths ModelPaths) (*DecoderC
 
 func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, paths ModelPaths) (*DecoderConfig, *HintsProvenance, error) {
 	terms := vocabulary.Terms
+	if usesParakeetV3ReferencePolicy(paths.ModelID) {
+		cfg := &DecoderConfig{Method: decodingGreedySearch}
+		if len(terms) == 0 {
+			return cfg, nil, nil
+		}
+		return cfg, &HintsProvenance{
+			TermCount: len(terms), ParticipantTermCount: vocabulary.ParticipantTermCount,
+			DecodingMethod: cfg.Method, Applied: false,
+			Reason: "Parakeet v3 uses reference greedy decoding to preserve speech; decoder vocabulary and participant hints are not applied",
+		}, nil
+	}
 	// A CTC model cannot beam-search for hotwords in sherpa, so it keeps the
 	// decoder it has always had. If a vocabulary is configured, say plainly
 	// that this tier cannot use it.
@@ -280,11 +290,11 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 			TermCount:            len(terms),
 			ParticipantTermCount: vocabulary.ParticipantTermCount,
 			Applied:              false,
-			Reason:               "this quality tier uses a CTC model, which cannot take decoder hints; choose balanced or best",
+			Reason:               "this quality tier uses a CTC model, which cannot take decoder hints",
 		}, nil
 	}
 
-	// Every transducer pass runs modified beam search, vocabulary or not. One
+	// Other transducer passes run modified beam search, vocabulary or not. One
 	// code path is the point: the decoder does not change under the operator
 	// depending on whether a text box happens to be empty.
 	cfg := &DecoderConfig{Method: decodingModifiedBeamSearch, MaxActivePaths: hotwordsMaxActivePaths}

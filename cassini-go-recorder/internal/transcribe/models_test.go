@@ -41,6 +41,9 @@ func TestEnsureModelPrefersTheBundledRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureModel() error = %v", err)
 	}
+	if paths.ModelID != ModelParakeet06BV3Int8 {
+		t.Fatalf("lost model identity: %q", paths.ModelID)
+	}
 	if !strings.HasPrefix(paths.EncoderFile, bundledRoot) {
 		t.Errorf("encoder path = %q, want it under the bundled root %q", paths.EncoderFile, bundledRoot)
 	}
