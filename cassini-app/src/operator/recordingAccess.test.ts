@@ -566,7 +566,7 @@ function openRecordingsOf(over: Partial<OpenRecordings> = {}): OpenRecordings {
 }
 
 describe("open recordings summary", () => {
-  it("counts every open recording, not only the fixable ones", () => {
+  it("describes every recording that needs review and how many can be limited", () => {
     const open = openRecordingsOf({
       recordings: [
         openRecordingOf({ id: "a" }),
@@ -575,14 +575,24 @@ describe("open recordings summary", () => {
       narrowable: 1,
     });
     expect(openRecordingsSummary(open)).toBe(
-      "2 recordings are visible to everyone with a Nextcloud account",
+      "2 recordings are open to everyone on this Nextcloud; 1 recording can be limited to the people who took part in each meeting",
     );
   });
 
-  it("agrees with itself at one", () => {
+  it("says when every listed recording can be limited", () => {
     const open = openRecordingsOf({ recordings: [openRecordingOf()], narrowable: 1 });
     expect(openRecordingsSummary(open)).toBe(
-      "1 recording is visible to everyone with a Nextcloud account",
+      "1 recording is open to everyone on this Nextcloud and can be limited to the people who took part in each meeting",
+    );
+  });
+
+  it("keeps unfixable recordings in the review queue without promising an action", () => {
+    const open = openRecordingsOf({
+      recordings: [openRecordingOf({ narrowable: false, reason: "no_roster", audience: [] })],
+      narrowable: 0,
+    });
+    expect(openRecordingsSummary(open)).toBe(
+      "1 recording is open to everyone on this Nextcloud and needs review",
     );
   });
 

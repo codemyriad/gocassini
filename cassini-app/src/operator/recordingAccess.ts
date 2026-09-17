@@ -433,16 +433,25 @@ export function occRecipe(status: StorageStatus | null): string[] {
 
 export const OPEN_RECORDINGS_NONE = "";
 
-// openRecordingsSummary is the collapsed row. It counts everything still open,
-// narrowable or not, because the number an administrator cares about first is
-// "how much of my archive is visible to everyone" — not "how much of it can I
-// fix in one click".
+// openRecordingsSummary is the collapsed row. Its count is the review queue,
+// not the total number of recordings that happen to be open: recordings from
+// public conversations and ones an administrator deliberately ignored are
+// intentionally absent. A second clause names the automatic action only when
+// every listed recording has a captured audience.
 export function openRecordingsSummary(open: OpenRecordings | null): string {
   const total = open?.recordings.length ?? 0;
   if (total === 0) {
     return OPEN_RECORDINGS_NONE;
   }
-  return `${plural(total, "recording")} ${total === 1 ? "is" : "are"} visible to everyone with a Nextcloud account`;
+  const review = `${plural(total, "recording")} ${total === 1 ? "is" : "are"} open to everyone on this Nextcloud`;
+  const narrowable = open?.narrowable ?? 0;
+  if (narrowable === total) {
+    return `${review} and can be limited to the people who took part in each meeting`;
+  }
+  if (narrowable === 0) {
+    return `${review} and ${total === 1 ? "needs" : "need"} review`;
+  }
+  return `${review}; ${plural(narrowable, "recording")} can be limited to the people who took part in each meeting`;
 }
 
 // openRecordingLabel names the row. A meeting with no room name falls back to

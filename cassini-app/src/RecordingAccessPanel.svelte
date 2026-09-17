@@ -976,7 +976,9 @@
             {#if openRecordings !== null && hasOpenRows}
               <p class="text-sm text-base-content/70">
                 These are the people who had access to each room when it was recorded. Later
-                changes to a room do not affect them. Anything else: Files → Advanced permissions.
+                changes to a room do not affect them. To manage access in more detail (for example,
+                to add additional permissions), go to Nextcloud Files:
+                <code>Cassini/Meetings/&lt;meeting-id&gt;.opus</code> → Details → Advanced permissions.
               </p>
 
               {#if offerSelectAll}

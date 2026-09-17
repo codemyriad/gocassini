@@ -28,6 +28,12 @@ describe("the section", () => {
     expect(panelSource).toContain("Applies to every recording Cassini publishes to this Nextcloud.");
   });
 
+  it("points detailed permission changes to the individual recording in Nextcloud Files", () => {
+    expect(panelSource).toContain("To manage access in more detail");
+    expect(panelSource).toContain("Cassini/Meetings/&lt;meeting-id&gt;.opus");
+    expect(panelSource).toContain("Details → Advanced permissions.");
+  });
+
   it("offers the two audiences as one radiogroup, with the current one marked", () => {
     expect(panelSource).toContain('role="radiogroup"');
     expect(panelSource).toContain('role="radio"');
