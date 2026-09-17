@@ -223,6 +223,27 @@
     return url.toString();
   }
 
+  // Where the readiness checks now live: the Operator surface, "Publish
+  // pipeline" panel, which is the one SettingsPanel renders. Both hops are
+  // needed — landing on the Operator surface alone opens its default panel
+  // (Recordings) and leaves the reader to find the checks themselves.
+  //
+  // Built from the CURRENT fragment and announced once, the same way
+  // handleOpenPanel does it: the surface, the operator's panel nav and the
+  // viewer each read the fragment through popstate, so a silent pushState
+  // would leave three readers disagreeing about where we are.
+  function openRecordingSetup(): void {
+    // Second guard. The button is only offered to an administrator, but the
+    // cost of being wrong is a surface whose every request 403s at the proxy.
+    if (!operatorAvailable) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.hash = applyPanel(applySurface(window.location.hash, "operator"), "pipeline").replace(/^#/, "");
+    window.history.pushState({}, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
   function selectSurface(next: Surface): void {
     if (next === surface) {
       return;
@@ -492,18 +513,18 @@
   });
 </script>
 
-<!-- D-763's warning survives the D-751/D-756 navigation change; its destination
-     does not. `setup` is no longer a surface, so the "Open Setup" button and the
-     shareable #surface=setup link both pointed at something removed.
-     The WARNING is the part that carries the value — an administrator being told
-     that recording will not work is the whole point of the readiness work, and
-     staying silent about it would be worse than having no link. Where the checks
-     themselves live is an open design question (Operator settings is the likely
-     home, beside the access controls D-751 moved there); until that is decided,
-     this states the fact and offers no route to a page that is gone. -->
+<!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab is
+     gone (D-751) and `setup` is no longer a surface (D-756), so the checks now
+     live in Operator › Publish pipeline, above the recording-access section.
+     Only an administrator can act on this, so the route is only offered to one —
+     everyone else gets the fact, which is still worth telling them, because it
+     explains why their recordings are not appearing. -->
 {#if recordingNeedsAction}
   <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
     Recording setup needs an administrator’s attention.
+    {#if operatorAvailable}
+      <button class="btn btn-sm ml-2" on:click={openRecordingSetup}>Open recording setup</button>
+    {/if}
   </div>
 {/if}
 {#if operatorAvailable}

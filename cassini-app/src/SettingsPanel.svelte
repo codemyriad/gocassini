@@ -23,6 +23,20 @@
   // of state — a switch, its prerequisites, its progress — and none of it is
   // shared with the settings below.
   import RecordingAccessPanel from "./RecordingAccessPanel.svelte";
+  // D-763: whether recording WORKS, above who may see what it produces.
+  //
+  // That order is the point rather than a layout preference. Installing the
+  // ExApp does not establish that Talk recording will work — HPB, the signaling
+  // secret, storage, processing or the incoming handoff can each be silently
+  // incomplete — and an administrator who sets the audience for recordings that
+  // never happen has answered the second question while the first is still
+  // broken.
+  //
+  // This lived under a Setup tab that D-751 removed. It belongs here for the
+  // same reason "Who can see recordings" does: it is a page's worth of state
+  // that applies to the pipeline below it, and it is admin-only, which this
+  // panel already is.
+  import RecordingSetup from "./RecordingSetup.svelte";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
@@ -467,7 +481,18 @@
     </div>
   </header>
 
-<RecordingAccessPanel {operatorClient} />
+{#if operatorClient}
+  <RecordingSetup {operatorClient} />
+{/if}
+
+<!-- The readiness checks offer a "Set up storage" action that scrolls here,
+     which is what the removed Setup page's own anchor used to do. Keeping the
+     id on a wrapper rather than inside RecordingAccessPanel leaves that
+     component untouched and keeps the cross-link a property of the layout that
+     places the two sections, which is where it belongs. -->
+<div id="recording-storage">
+  <RecordingAccessPanel {operatorClient} />
+</div>
 
   {#if loadError}
     <div class="err-box" role="alert">{loadError}</div>
