@@ -3,7 +3,7 @@
 Run against a private output directory produced by `replay-stt-meetings.py`:
 
 ```sh
-python3 harness/bin/summarize-stt-meetings.py \
+python3 harness/bin/audit-stt-replays.py \
   --output-dir /private/replay-production \
   --published-root /private/published \
   --output /private/replay-audit.json
@@ -15,7 +15,9 @@ coverage against expected meeting duration, empty tracks, timestamp errors,
 case/punctuation-normalized adjacent word repeats, and longest same-word runs.
 A possible source truncation means maximum decoded duration falls more than
 one second below 98% of expected duration; shorter individual participant tracks
-are normal and do not trigger this meeting-level diagnostic.
+are normal and do not trigger this meeting-level diagnostic. Timestamp coverage
+does not prove source integrity: missing packets replaced by silence can still
+span the expected duration.
 
 Published comparisons join speaker labels to MKV participant names or titles;
 `labelMatched=false` requires manual mapping before comparing windows. The eight
