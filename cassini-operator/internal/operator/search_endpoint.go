@@ -84,6 +84,20 @@ type searchResponseHit struct {
 	EndMS     int64  `json:"endMs"`
 	SpeakerID string `json:"speakerId,omitempty"`
 	Matched   string `json:"matched"`
+	// Marks are the tags whose time-range marks this hit's range overlaps
+	// (D-737). Absent, not empty, when the meeting's marks are unknown: "no
+	// marks here" and "marks unknown" are different answers.
+	Marks *[]searchHitMark `json:"marks,omitempty"`
+	// Snippet is a BOUNDED cut of the matching segment, centred on the term that
+	// hit — never the whole segment, and never the whole transcript.
+	//
+	// This field is why the visibility join in search_query.go matters more than
+	// it used to. Before D-736 a filtering bug leaked the existence of a
+	// meeting; now it would leak words. The join is fail-closed by construction
+	// (json_each + INNER JOIN, so an empty visible set yields no rows even with
+	// the MATCH removed), and TestSearchResponseNeverCarriesInvisibleText pins
+	// the property this field puts at risk.
+	Snippet string `json:"snippet,omitempty"`
 }
 
 // searchResponseCoverage is the honesty field.
@@ -115,6 +129,30 @@ func (c ExAppConfig) serveSearch(
 		}
 		limit = parsed
 	}
+	// room narrows the same way tag does, and for the same reason: a viewer or
+	// an agent that has narrowed to one room is asking a question about that
+	// room, and answering it from a page ranked over every room can return
+	// nothing while matches sit just below the cut. Narrowing the visible set
+	// first makes LIMIT mean what it says.
+	room := strings.TrimSpace(r.URL.Query().Get("room"))
+	tag, err := parseTagParam(r.URL.Query())
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// perMeeting caps how many hits one meeting may contribute. Unset means no
+	// cap, which is what the CLI's flat list wants; the meeting list asks for
+	// one, because there a meeting crowded out of the page is a meeting the
+	// caller is told does not match.
+	perMeeting := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("perMeeting")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "perMeeting must be a positive whole number")
+			return
+		}
+		perMeeting = parsed
+	}
 	// Before the expensive part, which is the point: a refused request must not
 	// have already cost a PROPFIND and a catalog GET against Nextcloud.
 	if allowed, wait := search.limiter.allow(caller); !allowed {
@@ -134,30 +172,14 @@ func (c ExAppConfig) serveSearch(
 			"the search index is not available on this deployment; this is not an empty result")
 		return
 	}
-
-	resolved, outcome := c.resolveCatalogForCaller(ctx, client, caller, logger)
-	switch outcome {
-	case catalogResolveOK, catalogResolveNoArchive:
-	case catalogResolveUnavailable:
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive is unreachable; this is not an empty result")
-		return
-	case catalogResolveScanFailed:
-		writeJSONError(w, http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
-		return
-	case catalogResolveNoMount:
-		writeJSONError(w, http.StatusBadGateway, "the recordings folder is not available to your account; this is not an empty result")
-		return
-	default:
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
+	if tag != "" && search.annotations == nil {
+		// Silently unnarrowed would be a false answer.
+		writeJSONError(w, http.StatusServiceUnavailable, tagIndexUnavailableMessage)
 		return
 	}
 
-	entries, err := decodeCatalogEntries(resolved.body)
-	if err != nil {
-		if logger != nil {
-			logger.Printf("search: parse resolved catalog caller=%s: %v", caller, err)
-		}
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
+	entries, ok := c.resolveVisibleMeetings(ctx, w, client, caller, logger, "search")
+	if !ok {
 		return
 	}
 
@@ -167,15 +189,41 @@ func (c ExAppConfig) serveSearch(
 		if entry.opusName == "" {
 			continue
 		}
+		// The room is part of the caller's own catalog, so this narrows the
+		// visible set BEFORE the statement rather than filtering a ranked page.
+		if room != "" && entry.roomID != room {
+			continue
+		}
 		visible = append(visible, entry.opusName)
 		byOpusName[entry.opusName] = entry
 	}
 
+	// A tag narrows the VISIBLE SET before the statement, never a ranked page
+	// afterwards, which would miss a tagged meeting ranked below the page.
+	bound := visible
+	if tag != "" {
+		tagged, err := search.annotations.taggedMeetings(ctx, tag, visible)
+		if err != nil {
+			if logger != nil {
+				logger.Printf("search: tag narrowing failed caller=%s: %v", caller, err)
+			}
+			writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
+			return
+		}
+		bound = make([]string, 0, len(tagged))
+		for _, name := range visible {
+			if tagged[name] {
+				bound = append(bound, name)
+			}
+		}
+	}
+
 	results, err := index.Search(ctx, searchRequest{
 		Text:       query,
-		Visible:    visible,
+		Visible:    bound,
 		SpeakerID:  strings.TrimSpace(r.URL.Query().Get("speaker")),
 		Limit:      limit,
+		PerMeeting: perMeeting,
 		UseAliases: r.URL.Query().Get("aliases") != "off",
 		AliasIndex: search.aliasIndex(),
 	})
@@ -204,14 +252,36 @@ func (c ExAppConfig) serveSearch(
 		return
 	}
 
+	// Every hit's meeting is in the caller's visible set: the statement was
+	// bound to it.
+	var marks [][]searchHitMark
+	if search.annotations != nil {
+		spans := make([]markSpan, 0, len(results.Hits))
+		for _, hit := range results.Hits {
+			spans = append(spans, markSpan{opusName: hit.OpusName, startMS: hit.StartMS, endMS: hit.EndMS})
+		}
+		marks, err = search.annotations.marksOverlapping(ctx, spans)
+		if err != nil {
+			if logger != nil {
+				logger.Printf("search: marks for hits caller=%s: %v", caller, err)
+			}
+			writeJSONError(w, http.StatusBadGateway, tagIndexUnreadableMessage)
+			return
+		}
+	}
+
 	response := searchResponse{
 		Hits:     make([]searchResponseHit, 0, len(results.Hits)),
 		Widened:  results.Widened,
 		Searched: results.Groups,
 		Coverage: searchResponseCoverage{Visible: len(visible), Searched: coverage},
 	}
-	for _, hit := range results.Hits {
+	for i, hit := range results.Hits {
 		entry := byOpusName[hit.OpusName]
+		var hitMarks *[]searchHitMark
+		if i < len(marks) && marks[i] != nil {
+			hitMarks = &marks[i]
+		}
 		response.Hits = append(response.Hits, searchResponseHit{
 			MeetingID: entry.id,
 			Title:     entry.title,
@@ -223,6 +293,8 @@ func (c ExAppConfig) serveSearch(
 			EndMS:     hit.EndMS,
 			SpeakerID: hit.SpeakerID,
 			Matched:   hit.Matched,
+			Marks:     hitMarks,
+			Snippet:   snippetAround(hit.Text, flattenSearchGroups(results.Groups)),
 		})
 	}
 
@@ -239,6 +311,72 @@ func (c ExAppConfig) serveSearch(
 	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// resolveVisibleMeetings is the caller's readable meetings, resolved the way
+// search has always resolved them: resolveCatalogForCaller, the one
+// access-control path, then the caller's own catalog entries. Shared by search
+// and the tag vocabulary (D-737) so the two cannot disagree about what a caller
+// may read.
+//
+// On any outcome that is not an answer it has already written the loud error
+// and returns false. route names the caller in the log; nothing the caller
+// typed is logged.
+func (c ExAppConfig) resolveVisibleMeetings(
+	ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger, route string,
+) ([]catalogHydration, bool) {
+	resolved, outcome := c.resolveCatalogForCaller(ctx, client, caller, logger)
+	switch outcome {
+	case catalogResolveOK, catalogResolveNoArchive:
+	case catalogResolveUnavailable:
+		writeJSONError(w, http.StatusBadGateway, "the recordings archive is unreachable; this is not an empty result")
+		return nil, false
+	case catalogResolveScanFailed:
+		writeJSONError(w, http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
+		return nil, false
+	case catalogResolveNoMount:
+		writeJSONError(w, http.StatusBadGateway, "the recordings folder is not available to your account; this is not an empty result")
+		return nil, false
+	default:
+		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
+		return nil, false
+	}
+
+	entries, err := decodeCatalogEntries(resolved.body)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("%s: parse resolved catalog caller=%s: %v", route, caller, err)
+		}
+		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
+		return nil, false
+	}
+	return entries, true
+}
+
+// visibleOpusNames is the join keys of a caller's entries, skipping any that
+// cannot be keyed.
+func visibleOpusNames(entries []catalogHydration) []string {
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.opusName != "" {
+			names = append(names, entry.opusName)
+		}
+	}
+	return names
+}
+
+// catalogEntryOpusName is the join key of one catalog entry: the basename of
+// its audioPath, or of its artifactPath when it has none. The index, the
+// projection and the visibility scan all key on this string.
+func catalogEntryOpusName(audioPath, artifactPath string) string {
+	ref := strings.TrimSpace(audioPath)
+	if ref == "" {
+		ref = strings.TrimSpace(artifactPath)
+	}
+	if ref == "" {
+		return ""
+	}
+	return path.Base(ref)
 }
 
 // catalogHydration is what the caller's own catalog says about one meeting.
@@ -270,16 +408,8 @@ func decodeCatalogEntries(raw []byte) ([]catalogHydration, error) {
 	}
 	entries := make([]catalogHydration, 0, len(catalog.Meetings))
 	for _, meeting := range catalog.Meetings {
-		ref := strings.TrimSpace(meeting.AudioPath)
-		if ref == "" {
-			ref = strings.TrimSpace(meeting.ArtifactPath)
-		}
-		name := ""
-		if ref != "" {
-			name = path.Base(ref)
-		}
 		entries = append(entries, catalogHydration{
-			id: strings.TrimSpace(meeting.ID), opusName: name,
+			id: strings.TrimSpace(meeting.ID), opusName: catalogEntryOpusName(meeting.AudioPath, meeting.ArtifactPath),
 			title: meeting.Title, dateLabel: meeting.DateLabel,
 			roomID: meeting.RoomID, roomName: meeting.RoomName,
 		})
@@ -324,6 +454,9 @@ type searchDeps struct {
 	// limiter bounds how often one caller can make this app talk to Nextcloud.
 	// Nil outside a running operator, which the limiter itself tolerates.
 	limiter *searchRateLimiter
+	// annotations is the tag index (D-737), for search and the meeting list.
+	// Nil when it could not be opened: hits carry no `marks`, and `tag=` is 503.
+	annotations *annotationStore
 }
 
 // aliasIndex merges the shipped groups with whatever the operator has

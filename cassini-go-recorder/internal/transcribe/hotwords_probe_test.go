@@ -39,8 +39,8 @@ func TestProbeHotwordsOnRealAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := func(terms []string, force string) string {
-		dec, prov, err := resolveDecoder(t.TempDir(), terms, paths)
+	run := func(vocabulary decoderVocabulary, force string) string {
+		dec, prov, err := resolveDecoderVocabulary(t.TempDir(), vocabulary, paths)
 		if force != "" && dec != nil {
 			dec.Method = force
 			if force == decodingGreedySearch {
@@ -79,7 +79,13 @@ func TestProbeHotwordsOnRealAudio(t *testing.T) {
 	if v := os.Getenv("CASSINI_PROBE_TERMS"); v != "" {
 		terms = strings.Split(v, ",")
 	}
-	t.Logf("GREEDY-NOHINTS: %s", run(nil, decodingGreedySearch))
-	t.Logf("BEAM-NOHINTS:   %s", run(nil, ""))
-	t.Logf("BEAM-HINTS:     %s", run(terms, ""))
+	var participantStreams []AudioStream
+	if v := os.Getenv("CASSINI_PROBE_PARTICIPANTS"); v != "" {
+		for _, label := range strings.Split(v, ",") {
+			participantStreams = append(participantStreams, AudioStream{SpeakerLabel: label})
+		}
+	}
+	t.Logf("GREEDY-NOHINTS: %s", run(decoderVocabulary{}, decodingGreedySearch))
+	t.Logf("BEAM-NOHINTS:   %s", run(decoderVocabulary{}, ""))
+	t.Logf("BEAM-HINTS:     %s", run(vocabularyForBuild(terms, participantStreams), ""))
 }

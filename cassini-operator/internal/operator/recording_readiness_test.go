@@ -248,10 +248,15 @@ func TestRecordingSetupRefusalIsAConflictBeforeJobCreation(t *testing.T) {
 }
 
 func TestReadinessRoutesMountedAtRootAndPrefix(t *testing.T) {
+	// main moved route registration into a table, so mounting now takes the
+	// patterns explicitly rather than deriving them (operatorAPIRoutes). Naming
+	// them here makes the test stricter than it was: it now fails if a readiness
+	// route is dropped from the table, not merely if the mount is wrong.
+	readinessRoutes := []string{"/readiness", "/readiness/check", "/talk/setup"}
 	for _, base := range []string{"", "/", "/operator"} {
 		root := http.NewServeMux()
-		mountBasePathOnto(root, base, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
-		for _, route := range []string{"/readiness", "/readiness/check", "/talk/setup"} {
+		mountBasePathOnto(root, base, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }), readinessRoutes)
+		for _, route := range readinessRoutes {
 			rec := httptest.NewRecorder()
 			root.ServeHTTP(rec, httptest.NewRequest("GET", strings.TrimRight(base, "/")+route, nil))
 			if rec.Code != http.StatusNoContent {

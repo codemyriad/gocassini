@@ -178,6 +178,12 @@ describe("StaticCatalogProvider", () => {
     expect(provider.loadContextBundle).toBeUndefined();
   });
 
+  it("does not offer a retry, because there is no operator behind a static export to run one", () => {
+    const provider = new StaticCatalogProvider();
+    expect("retryInsight" in provider).toBe(false);
+    expect(provider.retryInsight).toBeUndefined();
+  });
+
   it("does not offer insights, because a static export has nowhere to have stored one", () => {
     // Same contract-by-absence (D-721), and the distinction it protects: a
     // build that cannot list insights must not be shown as a build with none.
@@ -186,6 +192,21 @@ describe("StaticCatalogProvider", () => {
     const provider: Record<string, unknown> = new StaticCatalogProvider() as never;
     expect(provider.listInsights).toBeUndefined();
     expect(provider.loadInsightDocument).toBeUndefined();
+  });
+
+  it("does not offer tags, because only an operator writes marks", () => {
+    const provider: Record<string, unknown> = new StaticCatalogProvider() as never;
+    for (const method of [
+      "loadTagVocabulary",
+      "loadMeetingAnnotations",
+      "applyAnnotationOps",
+      "updateTag",
+      "mergeTag",
+      "deleteTag",
+      "loadTagJob",
+    ]) {
+      expect(provider[method], method).toBeUndefined();
+    }
   });
 
   it("gives each provider instance its own store so cache state is not shared", async () => {

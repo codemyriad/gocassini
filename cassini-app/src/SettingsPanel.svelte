@@ -12,10 +12,17 @@
   // (`<base>/settings/llm`). Save writes whichever of the two is dirty, so the
   // page has one Save the way the design does, and a failure in one does not
   // silently roll back the other — each reports itself.
-  import { createEventDispatcher, onMount } from "svelte";
-  import { RefreshCw } from "@lucide/svelte";
+  import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { fly } from "svelte/transition";
+  import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
+  import { ChevronDown, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import ModelCombobox from "./ModelCombobox.svelte";
+  // D-757: "Who can see recordings" is a section of the Settings panel, above
+  // the pipeline it applies to. Its own component because it is a page's worth
+  // of state — a switch, its prerequisites, its progress — and none of it is
+  // shared with the settings below.
+  import RecordingAccessPanel from "./RecordingAccessPanel.svelte";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
@@ -30,7 +37,7 @@
 
   export let operatorClient: OperatorClient | null = null;
 
-  const dispatch = createEventDispatcher<{ openProviders: void }>();
+  const dispatch = createEventDispatcher<{ openProviders: void; openTemplates: void }>();
 
   interface QualityOption {
     value: SettingsQuality;
@@ -207,6 +214,10 @@
     savedSummary = JSON.stringify(summary);
   }
 
+  function prefersReducedMotion(): boolean {
+    return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
   async function handleSave() {
     if (!operatorClient || saving) {
       return;
@@ -270,10 +281,10 @@
 
   function sourceLabel(source: string): string {
     if (source === "user") {
-      return "User override";
+      return "Set by an administrator";
     }
     if (source === "auto") {
-      return "Auto-detected";
+      return "Chosen automatically";
     }
     return source || "—";
   }
@@ -284,6 +295,10 @@
   // id the registry resolves, so a build that stopped shipping this one opens
   // on a different template instead of on an error.
   const SHIPPED_SUMMARY_TEMPLATE = "summarise";
+  // Off until the publish pipeline reads the chosen template back (D-719):
+  // internal/transcribe/summary.go still runs the shipped prompt, so the
+  // choice would be saved and ignored. The policy still resolves and saves it.
+  const SUMMARY_TEMPLATE_CHOICE = false;
 
   // The templates this step can actually run: every one EXCEPT a freeform one.
   //
@@ -317,6 +332,16 @@
   function providerName(id: string): string {
     const provider = llm?.providers.find((row) => row.id === id);
     return provider ? provider.name || provider.base_url || provider.id : id;
+  }
+
+  // What an empty model field on this step means, said in the field: the
+  // provider's default model is what runs (D-749), and the placeholder names
+  // it rather than the older "endpoint default", which named nothing.
+  function providerModelPlaceholder(id: string): string {
+    const model = llm?.providers.find((row) => row.id === id)?.model ?? "";
+    return model !== ""
+      ? `${model} (the provider's default)`
+      : "no default model set on this provider";
   }
 
   // Switching the step on with nothing chosen would send a body the operator
@@ -359,114 +384,158 @@
       searchAliasesText !== savedSearchAliasesText);
   $: summaryDirty = llm !== null && JSON.stringify(summary) !== savedSummary;
   $: isDirty = sttDirty || summaryDirty;
+  $: unsavedChanges.set(isDirty);
+
+  // The address this page was on when its edits began. A back or forward
+  // while they are unsaved is put back here until the prompt is answered.
+  let stableHref = typeof window !== "undefined" ? window.location.href : "";
+  $: if (!isDirty && typeof window !== "undefined") {
+    stableHref = window.location.href;
+  }
+
+  function holdHistory(event: PopStateEvent) {
+    if (!isDirty) {
+      return;
+    }
+    const target = window.location.href;
+    if (target === stableHref) {
+      return;
+    }
+    event.stopImmediatePropagation();
+    window.history.pushState({}, "", stableHref);
+    guardLeave(() => {
+      window.history.pushState({}, "", target);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+  }
+
+  let stayButton: HTMLButtonElement;
+  $: if ($leavePrompt) {
+    void tick().then(() => stayButton?.focus());
+  }
+
+  function handleLeaveKeydown(event: KeyboardEvent) {
+    if ($leavePrompt && event.key === "Escape") {
+      event.preventDefault();
+      cancelLeave();
+    }
+  }
+
+  function warnBeforeUnload(event: BeforeUnloadEvent) {
+    if (!isDirty) {
+      return;
+    }
+    event.preventDefault();
+    event.returnValue = "";
+  }
+
+  onMount(() => {
+    window.addEventListener("popstate", holdHistory, { capture: true });
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    window.addEventListener("keydown", handleLeaveKeydown);
+  });
+
+  onDestroy(() => {
+    unsavedChanges.set(false);
+    window.removeEventListener("popstate", holdHistory, { capture: true });
+    window.removeEventListener("beforeunload", warnBeforeUnload);
+    window.removeEventListener("keydown", handleLeaveKeydown);
+    cancelLeave();
+  });
 </script>
 
-<section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
-  <header class="flex items-start justify-between gap-3 px-4 py-3">
+<header class="op-panel-head">
     <div>
-      <h2 class="font-semibold">Publish pipeline</h2>
-      <p class="text-xs text-base-content/60">
+      <div class="op-panel-title">
+        <h1>Publish pipeline</h1>
+      </div>
+      <p>
         Every step between the call ending and the meeting being published. These apply to
         every room.
       </p>
     </div>
-    <div class="flex items-center gap-2">
-      {#if settings}
-        <button
-          class="btn btn-primary btn-sm hidden text-sm sm:inline-flex"
-          type="button"
-          disabled={saving || !isDirty}
-          on:click={handleSave}
-        >
-          {#if saving}
-            <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-            Saving…
-          {:else}
-            Save
-          {/if}
-        </button>
-      {/if}
+    <div class="op-panel-actions">
       <button
-        class="btn btn-ghost btn-sm btn-square"
+        class="icon-btn"
         type="button"
         on:click={loadAll}
         disabled={loading || !operatorClient}
         aria-label="Reload the publish pipeline"
       >
-        <RefreshCw size={16} aria-hidden="true" />
+        <RefreshCw size={15} aria-hidden="true" />
       </button>
     </div>
   </header>
 
+<RecordingAccessPanel {operatorClient} />
+
   {#if loadError}
-    <div class="px-4 py-4">
-      <div class="alert alert-error text-sm">{loadError}</div>
-    </div>
+    <div class="err-box" role="alert">{loadError}</div>
   {:else if loading}
-    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">Loading settings…</div>
+    <p class="op-state">Loading settings…</p>
   {:else if !settings}
-    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">No settings available.</div>
+    <p class="op-state">Settings aren't available.</p>
   {:else}
-    <div class="grid gap-4 p-4">
+    <div class="pipe-body">
       <!-- What the operator found, and — the part the tier alone does not
            answer — what the next build will actually do with it. The device is
            auto-selected, and on a host with no usable GPU that answer is the
            CPU: slower, but a transcript. Saying so here is what keeps the
            fallback explicit rather than something an admin discovers from a
            blocked build (D-702). -->
-      <section class="rounded-box border border-base-300 bg-base-200 p-3">
-        <p class="text-sm font-semibold">Detected hardware</p>
-        <p class="text-xs text-base-content/60">What the operator found on this host.</p>
-        <dl class="mt-2 flex flex-wrap items-center gap-x-6 gap-y-2">
-          <div class="flex items-center gap-2">
-            <dt class="text-sm text-base-content/60">GPU</dt>
-            <dd class="text-sm">
+      <section class="op-tint hw-card">
+        <p class="set-row-name op-card-title">Hardware</p>
+        <p class="set-row-sub">What Cassini found on the machine it runs on, and how it will transcribe.</p>
+        <dl class="hw-facts">
+          <div class="hw-fact">
+            <dt>GPU</dt>
+            <dd>
               {#if settings.detected_gpu}
-                <span class="badge badge-success badge-outline badge-sm">Yes</span>
+                <span class="pill yes">Yes</span>
               {:else}
-                <span class="badge badge-outline badge-sm border-base-content/20 text-base-content">No</span>
+                <span class="pill">No</span>
               {/if}
             </dd>
           </div>
-          <div class="flex items-center gap-2">
-            <dt class="text-sm text-base-content/60">CPU cores</dt>
-            <dd class="text-sm">
-              <span class="badge badge-outline badge-sm border-base-content/20 text-base-content"
+          <div class="hw-fact">
+            <dt>CPU cores</dt>
+            <dd>
+              <span class="pill"
                 >{settings.cores}</span
               >
             </dd>
           </div>
-          <div class="flex items-center gap-2">
-            <dt class="text-sm text-base-content/60">Source</dt>
-            <dd class="text-sm">
-              <span class="badge badge-outline badge-sm border-base-content/20 text-base-content"
+          <div class="hw-fact">
+            <dt>Settings</dt>
+            <dd>
+              <span class="pill"
                 >{sourceLabel(settings.source)}</span
               >
             </dd>
           </div>
         </dl>
-        <div class="mt-3 border-t border-base-300 pt-3">
-          <p class="text-sm">
-            Transcribes on
-            <span class="font-semibold">{deviceLabel(settings.effective.device)}</span>
+        <div class="hw-section">
+          <p class="hw-effective">
+            Transcribes on the
+            <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>
             {#if settings.effective.model}
-              using <code class="text-xs">{settings.effective.model}</code>
+              with the <code class="pipe-code">{settings.effective.model}</code> model
             {/if}
           </p>
           {#if settings.effective.min_free_memory_mb > 0}
-            <p class="mt-1 text-xs text-base-content/60">
-              A build of this tier starts when {formatMemory(settings.effective.min_free_memory_mb)}
+            <p class="set-row-sub">
+              Each recording is processed once {formatMemory(settings.effective.min_free_memory_mb)}
               of memory is free.
             </p>
           {/if}
           {#if settings.effective.model_download_mb > 0}
-            <p class="mt-1 text-xs text-warning">
-              This image does not carry that model. The first build downloads it once,
-              about {settings.effective.model_download_mb} MB, and later builds start at once.
+            <p class="set-row-sub pipe-warn">
+              This model isn't included yet. The first recording downloads it once (about
+              {settings.effective.model_download_mb} MB); after that, processing starts straight away.
             </p>
           {/if}
           {#if settings.effective.note}
-            <p class="mt-1 text-xs text-base-content/60">{settings.effective.note}</p>
+            <p class="set-row-sub">{settings.effective.note}</p>
           {/if}
         </div>
 
@@ -475,59 +544,55 @@
              under the finding it corrects rather than three sections away from
              it. A rule rather than a card of its own, because on its own it
              would read as a step in the pipeline, which it is not. -->
-        <div class="mt-3 border-t border-base-300 pt-3">
-          <p class="text-sm font-semibold">Device override</p>
-          <p class="text-xs text-base-content/60">
-            Leave this on the default unless the detected hardware is wrong. Auto uses the GPU
-            when this host has a usable one; pinning a device the host cannot provide blocks
-            builds rather than quietly using the other.
-          </p>
-          <label class="mt-2 flex w-full max-w-xs flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Device</span>
-            <select bind:value={deviceOverride} class="select select-sm w-full border-base-300 shadow-none">
+        <div class="hw-section">
+          <label class="op-field hw-device" for="stt-device">
+            <span class="set-row-name">Override transcription device</span>
+          </label>
+          <span class="op-select hw-device-select">
+            <select id="stt-device" bind:value={deviceOverride} class="op-input">
               <option value="">Auto</option>
               <option value="cpu">CPU</option>
-              <option value="cuda">CUDA</option>
+              <option value="cuda">GPU (CUDA)</option>
             </select>
-          </label>
+            <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
+          </span>
+          <p class="set-row-sub hw-device-note">
+            Leave on Auto unless the hardware above is wrong. Auto uses the GPU when one is
+            available. If you choose a device this machine doesn't have, recordings won't be
+            processed.
+          </p>
         </div>
       </section>
 
-      <!-- One card per step, in pipeline order: transcribe, then summarise.
-           They were rows of one shared card separated by hairlines, which made
-           two independent settings — one of which sends text to a third party —
-           read as one block. A step is a thing you switch on and configure, so
-           it gets an edge of its own. -->
-      <section class="rounded-box border border-base-300 bg-base-200 p-3">
-        <div>
-          <p id="stt-quality-heading" class="text-sm font-semibold">Quality</p>
-          <p class="text-xs text-base-content/60">
-            Applies to every recording on this host.
+      <!-- One row per step, in pipeline order: transcribe, then summarise.
+           Each step is its own row under a full rule with extra space above,
+           so two independent settings — one of which sends text to a third
+           party — do not read as one block, without a card around each. -->
+      <section class="op-tint pipe-step">
+        <div class="set-row-main">
+          <p id="stt-quality-heading" class="set-row-name op-card-title">Quality</p>
+          <p class="set-row-sub">
+            Applies to every recording on this machine.
             {#if runsOnGPU}
-              Every tier loads the same fp32 model on CUDA — this choice takes effect on CPU
-              builds.
+              On the GPU, every quality setting uses the same full-precision model, so this only
+              changes transcription on the CPU.
             {:else}
-              A higher tier loads a larger model: more accurate, and slower here.
+              Higher quality uses a larger model: more accurate, but slower on this machine.
             {/if}
           </p>
-          <div class="mt-2 grid gap-2" role="radiogroup" aria-labelledby="stt-quality-heading">
+          <div class="q-list" role="radiogroup" aria-labelledby="stt-quality-heading">
             {#each QUALITY_OPTIONS as option}
-              <label
-                class="flex cursor-pointer items-center gap-2.5 rounded-box border px-3 py-2 transition {quality ===
-                option.value
-                  ? 'border-primary bg-primary/25 ring-1 ring-inset ring-primary'
-                  : 'border-base-300 bg-base-100 hover:border-primary/50'}"
-              >
+              <label class="q-opt" class:selected={quality === option.value}>
                 <input
                   type="radio"
                   name="stt-quality"
-                  class="radio radio-primary radio-xs shrink-0"
+                  class="q-radio"
                   value={option.value}
                   bind:group={quality}
                 />
-                <span class="min-w-0 flex-1">
-                  <span class="text-sm font-medium">{option.label}</span>
-                  <span class="ml-2 text-xs text-base-content/60">{option.description}</span>
+                <span class="q-main">
+                  <span class="q-label">{option.label}</span>
+                  <span class="q-desc">{option.description}</span>
                 </span>
               </label>
             {/each}
@@ -539,50 +604,53 @@
       <!-- Summarisation. The switch belongs to the name, not to the far edge of
            the row: what is being turned on is the step, and the row is the
            step. -->
-      <section class="rounded-box border border-base-300 bg-base-200 p-3">
-        <div>
-          <div class="flex items-center gap-2.5">
-            <p class="text-sm font-semibold" class:opacity-50={hasProvider === false}>
+      <section class="op-tint pipe-step">
+        <div class="set-row-main">
+          <div class="step-head">
+            <p class="set-row-name op-card-title" class:off={hasProvider === false}>
               Summarisation
             </p>
             <input
               type="checkbox"
-              class="toggle toggle-primary toggle-sm"
+              class="op-switch"
               aria-label="Summarise every meeting"
               disabled={hasProvider !== true}
               checked={summary.enabled && hasProvider === true}
               on:change={(event) => toggleSummary(event.currentTarget.checked)}
             />
           </div>
-          <p class="text-xs text-base-content/60" class:opacity-50={hasProvider === false}>
+          <p class="set-row-sub" class:off={hasProvider === false}>
             Sends each transcript to the provider and writes the summary shown on the meeting.
           </p>
 
           {#if llmError}
-            <p class="mt-2 text-xs text-warning">
-              The AI settings could not be read, so this step cannot be shown or changed:
+            <p class="set-row-sub pipe-warn pipe-gap">
+              Couldn't load the AI provider settings, so this step can't be shown or changed:
               {llmError}
             </p>
           {:else if hasProvider === false}
-            <div class="mt-3">
+            <div class="pipe-gap-lg">
               <NeedsProviderCard
                 title="Add a provider to write summaries"
                 on:open={() => dispatch("openProviders")}
               />
             </div>
           {:else if hasProvider === true && summary.enabled}
-            <div class="mt-3 grid gap-3 sm:grid-cols-3">
-              <label class="flex w-full flex-col gap-1">
-                <span class="text-xs font-medium text-base-content/70">Provider</span>
-                <select
-                  class="select select-sm w-full border-base-300 shadow-none"
-                  value={summary.provider}
-                  on:change={(event) => chooseProvider(event.currentTarget.value)}
-                >
-                  {#each providers as provider (provider.id)}
-                    <option value={provider.id}>{providerName(provider.id)}</option>
-                  {/each}
-                </select>
+            <div class="step-config">
+              <label class="op-field">
+                <span class="op-field-label">Provider</span>
+                <span class="op-select">
+                  <select
+                    class="op-input"
+                    value={summary.provider}
+                    on:change={(event) => chooseProvider(event.currentTarget.value)}
+                  >
+                    {#each providers as provider (provider.id)}
+                      <option value={provider.id}>{providerName(provider.id)}</option>
+                    {/each}
+                  </select>
+                  <ChevronDown size={14} class="op-select-chevron" aria-hidden="true" />
+                </span>
               </label>
 
               <ModelCombobox
@@ -590,6 +658,7 @@
                 models={summaryModels}
                 loading={loadingModelsFor === summary.provider}
                 error={modelsErrorByProvider[summary.provider] ?? ""}
+                placeholder={providerModelPlaceholder(summary.provider)}
                 on:open={() => void loadModels(summary.provider)}
               />
 
@@ -597,11 +666,12 @@
                    template it runs rather than hiding a prompt of its own. A
                    free-text "workflow" field asked an administrator to know an
                    id the registry could have told them. -->
-              <label class="flex w-full flex-col gap-1">
-                <span class="text-xs font-medium text-base-content/70">Insight template</span>
+              {#if SUMMARY_TEMPLATE_CHOICE}
+              <label class="op-field">
+                <span class="op-field-label">Insight template</span>
                 <select
                   bind:value={summary.template}
-                  class="select select-sm w-full border-base-300 shadow-none"
+                  class="op-input"
                   disabled={!workflowsKnown}
                 >
                   <!-- No synthetic "default" row. It named no template and
@@ -627,8 +697,8 @@
                   {/if}
                 </select>
                 {#if !workflowsKnown}
-                  <span class="text-xs text-base-content/50">
-                    The template list could not be read, so this keeps what was saved.
+                  <span class="pipe-help">
+                    Templates could not be listed.
                   </span>
                 {/if}
                 <!-- The field is saved and served; the publish pipeline does not
@@ -636,88 +706,456 @@
                      shipped prompt directly). Saying so beats a control that
                      silently does nothing — delete this line when the pipeline
                      reads it back (D-719). -->
-                <span class="text-xs text-base-content/50">
-                  Saved with the policy. The publish pipeline still runs the summary prompt
-                  Cassini ships.
+                <span class="pipe-help">
+                  Your choice is saved, but summaries still use the built-in template for now.
                 </span>
+                <button type="button" class="link-btn pipe-link" on:click={() => dispatch("openTemplates")}>
+                  View insight templates
+                </button>
               </label>
+              {/if}
             </div>
           {/if}
         </div>
 
       </section>
 
-      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
-        <div>
-          <h3 class="text-sm font-semibold">Participant and project vocabulary</h3>
-          <p class="text-xs text-base-content/60">
-            Preferred spellings for names and terms. The transcriber is biased towards them,
-            so it can write words it would otherwise get wrong.
-          </p>
+      <section class="op-tint pipe-step">
+        <div class="set-row-main pipe-text-step">
+          <div>
+            <h3 class="set-row-name op-card-title">Vocabulary</h3>
+            <p class="set-row-sub">Names and terms the transcriber should spell correctly.</p>
+          </div>
+          <label class="op-field">
+            <span class="pipe-field-head">
+              <span class="op-field-label">One term per line</span>
+              <span class="pipe-limit">(up to 100, 100 characters each)</span>
+            </span>
+            <textarea
+              bind:value={transcriptionTermsText}
+              class="op-input pipe-textarea"
+              maxlength={10_100}
+              placeholder={'Gocassini\nNextcloud Talk\nProject Cassini'}
+            ></textarea>
+          </label>
+          <ul class="pipe-notes">
+            <li>Participant names are added automatically.</li>
+            <li>Only used where the audio matches, so it never adds words.</li>
+            <li>Not available on the <em>Fast</em> quality setting. If a term can't be used, the recording notes why.</li>
+          </ul>
         </div>
-        <label class="flex w-full flex-col gap-1">
-          <span class="text-xs font-medium text-base-content/70">One term per line</span>
-          <textarea
-            bind:value={transcriptionTermsText}
-            class="textarea min-h-28 w-full border-base-300 shadow-none"
-            maxlength={10_100}
-            placeholder={'Gocassini\nNextcloud Talk\nProject Cassini'}
-          ></textarea>
-          <span class="text-xs text-base-content/60">
-            Up to 100 terms and 100 characters per term. Participant display names are supplied
-            automatically. A term is only written where the audio already supports it, so this
-            corrects spellings without putting words in anyone's mouth. It needs a transcription
-            model that ships a BPE vocabulary, which the <em>fast</em> tier never does; when a
-            vocabulary cannot be used, the build records that and says why.
-          </span>
-        </label>
       </section>
 
-      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
-        <div>
-          <h3 class="text-sm font-semibold">Search spellings</h3>
-          <p class="text-xs text-base-content/60">
-            What transcription writes when it mishears a name. Searching for the name also
-            finds the recordings where it came out differently.
-          </p>
+      <section class="op-tint pipe-step">
+        <div class="set-row-main pipe-text-step">
+          <div>
+            <h3 class="set-row-name op-card-title">Search spellings</h3>
+            <p class="set-row-sub">Common mishearings of a name, so searching for the name finds them too.</p>
+          </div>
+          <label class="op-field">
+            <span class="pipe-field-head">
+              <span class="op-field-label">One name per line, then its spellings, separated by commas</span>
+              <span class="pipe-limit">(up to 100 names, 25 spellings each)</span>
+            </span>
+            <textarea
+              bind:value={searchAliasesText}
+              class="op-input pipe-textarea"
+              maxlength={10_100}
+              placeholder={'Cassini, casino, casini\nEisbuk, ice book, icebook'}
+            ></textarea>
+          </label>
+          <ul class="pipe-notes">
+            <li>Doesn't change any transcript, only what search finds.</li>
+            <li>Results say when they matched one of these spellings.</li>
+            <li>To get the name right in new recordings, add it to Vocabulary above.</li>
+          </ul>
         </div>
-        <label class="flex w-full flex-col gap-1">
-          <span class="text-xs font-medium text-base-content/70">
-            One name per line, spellings separated by commas
-          </span>
-          <textarea
-            bind:value={searchAliasesText}
-            class="textarea min-h-28 w-full border-base-300 shadow-none"
-            maxlength={10_100}
-            placeholder={'Cassini, casino, casini\nEisbuk, ice book, icebook'}
-          ></textarea>
-          <span class="text-xs text-base-content/60">
-            Up to 100 names and 25 spellings each. This does not change any recording — it
-            only widens what a search looks for, and a result says whether it matched what you
-            typed or one of these. Add a spelling when you notice a transcript using it. The
-            vocabulary above is the other half: it biases new transcriptions so the name comes
-            out right next time.
-          </span>
-        </label>
       </section>
-
-      <button
-        class="btn btn-primary w-full text-sm sm:hidden"
-        type="button"
-        disabled={saving || !isDirty}
-        on:click={handleSave}
-      >
-        {#if saving}
-          <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-          Saving…
-        {:else}
-          Save
-        {/if}
-      </button>
 
       {#if saveError}
-        <div class="alert alert-error text-sm">{saveError}</div>
+        <div class="err-box" role="alert">{saveError}</div>
       {/if}
     </div>
+
+    {#if isDirty || saving}
+      <div
+        class="save-bar"
+        class:asking={$leavePrompt !== null}
+        role={$leavePrompt ? "alertdialog" : "region"}
+        aria-label={$leavePrompt ? "Leave without saving?" : "Unsaved changes"}
+        transition:fly={{ y: 16, duration: prefersReducedMotion() ? 0 : 180 }}
+      >
+        {#if $leavePrompt}
+          <TriangleAlert size={16} class="save-bar-icon" aria-hidden="true" />
+          <p class="save-bar-text">You have unsaved changes. Leave without saving?</p>
+          <div class="save-bar-actions">
+            <button bind:this={stayButton} class="sb-btn sb-light" type="button" on:click={cancelLeave}>
+              Stay
+            </button>
+            <button class="sb-btn sb-danger" type="button" on:click={confirmLeave}>Leave</button>
+          </div>
+        {:else}
+          <p class="save-bar-text">{saving ? "Saving changes…" : "You have unsaved changes"}</p>
+          <button class="sb-btn sb-light" type="button" disabled={saving || !isDirty} on:click={handleSave}>
+            {#if saving}
+              <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              Saving…
+            {:else}
+              Save
+            {/if}
+          </button>
+        {/if}
+      </div>
+    {/if}
   {/if}
-</section>
+
+<style>
+  .pipe-body {
+    display: grid;
+    gap: calc(var(--op-x, 20px) + 8px);
+    margin-top: calc(var(--op-x, 20px) + 8px - 16px);
+  }
+  .hw-card {
+    padding: 14px 16px;
+  }
+  .hw-facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 22px;
+    margin: 11px 0 0;
+    padding: 10px 12px;
+    background-color: var(--op-inset);
+    border: 1px solid var(--op-inset-border);
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .hw-fact {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .hw-fact dt {
+    font-size: 12.5px;
+    line-height: 20px;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .hw-fact dd {
+    display: flex;
+    align-items: center;
+    margin: 0;
+  }
+  .pill {
+    display: inline-block;
+    padding: 4px 7px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-200));
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 22%, var(--color-base-200));
+    border-radius: var(--radius-selector, 0.25rem);
+  }
+  .pill.yes {
+    color: var(--color-success);
+    border-color: var(--color-success);
+  }
+  .hw-section {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
+  }
+  .hw-effective {
+    margin: 0;
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+  .pipe-code {
+    padding: 1px 5px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+    background-color: var(--op-code-bg);
+    border: 1px solid var(--op-code-border);
+    border-radius: var(--radius-selector, 0.25rem);
+  }
+  .pipe-warn {
+    color: var(--color-warning);
+  }
+  .set-row-sub {
+    display: block;
+    text-wrap: pretty;
+  }
+  .hw-device-select {
+    display: block;
+    max-width: 20rem;
+    margin-top: 8px;
+  }
+  .hw-device-note {
+    margin-top: 6px;
+  }
+
+  .pipe-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 16px;
+  }
+  .step-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .pipe-gap {
+    margin-top: 8px;
+  }
+  .pipe-gap-lg {
+    margin-top: 12px;
+  }
+  .step-config {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-top: 10px;
+  }
+  .pipe-help {
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+  }
+  .pipe-text-step {
+    display: grid;
+    gap: 10px;
+  }
+
+  .pipe-link {
+    align-self: flex-start;
+    font-weight: 500;
+    color: var(--color-base-content);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
+    text-underline-offset: 2px;
+  }
+  .pipe-link:hover {
+    text-decoration-color: currentColor;
+  }
+  .pipe-field-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 6px;
+  }
+  .pipe-limit {
+    font-size: 11.5px;
+    color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+  }
+  .pipe-notes {
+    display: grid;
+    gap: 3px;
+    margin: -4px 0 0;
+    padding-left: 16px;
+    list-style: disc;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .pipe-notes li::marker {
+    color: color-mix(in oklch, var(--color-base-content) 35%, transparent);
+  }
+  .pipe-textarea {
+    min-height: 7rem;
+    resize: vertical;
+  }
+
+  .q-list {
+    display: grid;
+    gap: 6px;
+    margin-top: 11px;
+  }
+  .q-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    cursor: pointer;
+    background-color: var(--op-inset);
+    border: 1px solid var(--op-inset-border);
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .q-opt:hover {
+    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
+  }
+  .q-opt.selected {
+    background-color: color-mix(in srgb, var(--color-primary) 14%, var(--color-base-100));
+    border-color: var(--color-primary);
+  }
+  .q-radio {
+    position: relative;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    background: var(--color-base-100);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 26%, transparent);
+    border-radius: 50%;
+  }
+  .q-radio:checked {
+    border-color: var(--color-primary);
+  }
+  .q-radio:checked::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 8px;
+    height: 8px;
+    background: var(--color-primary);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .q-radio:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  .q-main {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 10px;
+    min-width: 0;
+  }
+  .q-label {
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .q-desc {
+    font-size: 12.5px;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+
+  .op-switch {
+    position: relative;
+    flex: none;
+    width: 30px;
+    height: 17px;
+    margin: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    background: var(--color-base-300);
+    border: 1px solid var(--color-base-300);
+    border-radius: 999px;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+  .op-switch::after {
+    content: "";
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 13px;
+    height: 13px;
+    background: var(--color-base-100);
+    border-radius: 50%;
+    box-shadow: 0 1px 2px oklch(0% 0 0 / 0.25);
+    transition: transform 0.15s ease;
+  }
+  .op-switch:checked {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+  .op-switch:checked::after {
+    transform: translateX(13px);
+  }
+  .op-switch:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  .op-switch:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .save-bar {
+    position: sticky;
+    bottom: 16px;
+    z-index: 20;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px 14px;
+    align-self: center;
+    max-width: 100%;
+    margin-top: 8px;
+    padding: 8px 8px 8px 18px;
+    color: var(--color-base-100);
+    background-color: var(--color-base-content);
+    border-radius: var(--radius-box, 0.5rem);
+    box-shadow:
+      0 1px 3px oklch(0% 0 0 / 0.18),
+      0 8px 24px oklch(0% 0 0 / 0.24);
+  }
+  .save-bar.asking {
+    padding: 10px 10px 10px 16px;
+    box-shadow:
+      0 0 0 2px var(--color-error),
+      0 8px 24px oklch(0% 0 0 / 0.24);
+  }
+  .save-bar :global(.save-bar-icon) {
+    flex: none;
+    color: var(--color-error);
+  }
+  .save-bar-text {
+    min-width: 0;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .save-bar-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .sb-btn {
+    padding: 6px 14px;
+    cursor: pointer;
+    border: 0;
+    border-radius: var(--radius-field, 0.5rem);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .sb-light {
+    color: var(--color-base-content);
+    background-color: var(--color-base-100);
+  }
+  .sb-light:not(:disabled):hover {
+    background-color: color-mix(in oklch, var(--color-base-100) 85%, var(--color-base-content));
+  }
+  .sb-light:disabled {
+    cursor: default;
+    opacity: 0.7;
+  }
+  .sb-danger {
+    color: var(--color-error-content, #fff);
+    background-color: var(--color-error);
+  }
+  .sb-danger:hover {
+    background-color: color-mix(in oklch, var(--color-error) 85%, black);
+  }
+  .sb-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .op-switch,
+    .op-switch::after {
+      transition: none;
+    }
+  }
+</style>

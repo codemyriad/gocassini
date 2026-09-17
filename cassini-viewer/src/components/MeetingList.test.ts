@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { render } from "svelte/server";
 
+import { tagsByMeeting, type VocabularyTag } from "../viewer/annotations";
+import MeetingList from "./MeetingList.svelte";
 import meetingListSource from "./MeetingList.svelte?raw";
 
 // Source-level assertions, for the reason MeetingView.transcript.test.ts gives:
@@ -26,9 +29,9 @@ describe("MeetingList rows", () => {
   });
 
   it("keeps the open state on the element the row's styling is keyed to", () => {
-    // `.meeting-row[aria-current="page"]` is what both this file and app.css's
-    // Nextcloud-theme override select on. Moving it off the row would silently
-    // strip the open row's fill in the NC build.
+    // `.meeting-row[aria-current="page"]` is what this file and app.css's
+    // high-contrast hover rule select on. Moving it off the row would silently
+    // strip the open row's tint.
     expect(meetingListSource).toMatch(
       /class="meeting-row"[\s\S]{0,120}aria-current=\{meeting\.id === selectedMeetingId/,
     );
@@ -109,9 +112,9 @@ describe("MeetingList insights", () => {
     // has come back, the failure when it did not, and nothing while the first
     // is still in flight.
     expect(meetingListSource).toContain("{#if insightsError}");
-    expect(meetingListSource).toContain("Insights could not be listed:");
+    expect(meetingListSource).toContain("Insights could not be listed.");
     expect(meetingListSource).toMatch(
-      /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
+      /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,400}\{:else if insightsOffered && insightsError\}/,
     );
   });
 
@@ -126,15 +129,41 @@ describe("MeetingList insights", () => {
     );
   });
 
-  it("names the search box after the kinds it is narrowing", () => {
+  it("names the search box after the kinds it is narrowing, and after what it can reach", () => {
     // It narrows insights too, and narrows insights ALONE when the Meetings
-    // toggle is off.
+    // toggle is off — so the kinds stay in the label.
+    //
+    // What changed in D-736 is the second half: with an operator behind it the
+    // box also searches what was SAID, and the placeholder has to say so or the
+    // reader never learns the capability exists. Without one (a standalone
+    // export) it must NOT say so, because there is nothing to ask and the
+    // promise would be empty.
     expect(meetingListSource).toContain(
-      "placeholder={`Search ${matchNounPlural} by name or date`}",
+      "`Search ${matchNounPlural} and what was said in them`",
     );
     expect(meetingListSource).toContain(
-      "aria-label={`Search ${matchNounPlural} by name or date`}",
+      "`Search ${matchNounPlural} by name or date`",
     );
+    expect(meetingListSource).toContain("searchOffered");
+  });
+
+  // A failure must never be rendered as an empty result: "nothing was said
+  // about that" and "the archive is unreachable" are opposite answers.
+  it("keeps a search failure visually distinct from nothing matching", () => {
+    expect(meetingListSource).toContain("searchProblem");
+    expect(meetingListSource).toContain('searchState === "rateLimited"');
+    expect(meetingListSource).toContain('searchState === "indexUnavailable"');
+    expect(meetingListSource).toContain('searchState === "failed"');
+  });
+
+  // A button inside a button is invalid markup browsers resolve by dropping
+  // one, so the moments sit outside the row's own open button.
+  it("renders matched moments outside the row open button", () => {
+    const openButton = meetingListSource.indexOf('class="row-open"');
+    const moments = meetingListSource.indexOf('class="row-moments"');
+    const openButtonEnd = meetingListSource.indexOf("</button>", openButton);
+    expect(openButton).toBeGreaterThan(-1);
+    expect(moments).toBeGreaterThan(openButtonEnd);
   });
 
   it("counts an insight's sources with a number the shell resolved", () => {
@@ -143,5 +172,139 @@ describe("MeetingList insights", () => {
     expect(meetingListSource).toContain(
       "sourceCount={insightSourceCounts.get(item.insight.id) ?? 0}",
     );
+  });
+
+  // A promise the build cannot keep is worse than no promise: a standalone
+  // export has no operator, so the box must not offer to search transcripts.
+  it("gates the transcript promise on there being something to ask", () => {
+    expect(meetingListSource).toContain("export let searchOffered = false;");
+    // The label is built once and used for both placeholder and aria-label, so
+    // assert the branch rather than the markup: without an operator the box
+    // must offer names and dates and claim nothing about transcripts.
+    expect(meetingListSource).toMatch(
+      /searchBoxLabel = searchOffered[\s\S]{0,400}by name or date`;/,
+    );
+    expect(meetingListSource).toContain("placeholder={searchBoxLabel}");
+    expect(meetingListSource).toContain("aria-label={searchBoxLabel}");
+  });
+
+  // "Nothing matches" is a claim about the whole archive. After a failed search
+  // it is a claim the search never got to make, and after a partial one it is
+  // false — the design's invariant 4 is that coverage is never overstated.
+  it("will not say nothing matched when the search could not say so", () => {
+    expect(meetingListSource).toContain("searchCoveredEverything");
+    expect(meetingListSource).toContain("{:else if trimmedFilter && searchProblem}");
+    expect(meetingListSource).toContain("{:else if trimmedFilter && !searchCoveredEverything}");
+  });
+
+  it("forwards a card's retry to the shell with the record, and decides nothing", () => {
+    // The shell owns the provider and the request; the list only says which
+    // card asked (D-749).
+    expect(meetingListSource).toContain('on:retry={() => dispatch("retryInsight", item.insight)}');
+    expect(meetingListSource).toContain("canRetry={insightsRetryable}");
+    expect(meetingListSource).toContain("retrying={retryingInsightId === item.insight.id}");
+  });
+});
+
+// Who can see the recordings (D-756) moved to the rooms rail; the list must
+// not state it a second time.
+describe("MeetingList audience", () => {
+  it("leaves the audience notice to the rooms rail", () => {
+    expect(meetingListSource).not.toContain("audience");
+  });
+});
+
+describe("MeetingList tags", () => {
+  const tag = (tagId: string): VocabularyTag => ({
+    tagId,
+    namespace: "ns",
+    label: `tag-${tagId}`,
+    meetings: 1,
+    marks: 1,
+    color: "teal",
+    icon: "",
+    changedBy: "",
+    changedAtUtc: "",
+  });
+  const tags = ["a", "b", "c", "d"].map(tag);
+  const meetingTags = tagsByMeeting({
+    tags,
+    meetings: [
+      {
+        meetingId: "m1",
+        tags: [
+          { tagId: "a", whole: true, stretches: 0 },
+          { tagId: "b", whole: false, stretches: 3 },
+          { tagId: "c", whole: true, stretches: 0 },
+          { tagId: "d", whole: false, stretches: 1 },
+        ],
+      },
+    ],
+    coverage: { visible: 1, indexed: 1 },
+  });
+  const meetings = [{ id: "m1", title: "Hiring sync", dateLabel: "2026-09-01" }];
+  const html = (props: Record<string, unknown>) =>
+    render(MeetingList as never, { props: { meetings, totalCount: 1, ...props } } as never).body;
+
+  it("shows three chips on a row, whole-meeting tags first, then how many more", () => {
+    const row = html({ meetingTags, tags });
+    expect(row.match(/class="tag-chip[\s"]/g)).toHaveLength(3);
+    // One look for every tag: where a tag sits in the meeting is the
+    // transcript's to show, not the chip's.
+    expect(row).not.toMatch(/class="tag-chip\s[^"]*\bwhole\b/);
+    expect(row).not.toContain("stretches");
+    expect(row).toMatch(/title="tag-d"[^>]*>\+1</);
+  });
+
+  it("offers a tag button on each row only where tagging is", () => {
+    expect(html({ meetingTags, tags })).toContain('aria-label="Tag Hiring sync"');
+    const plain = html({});
+    expect(plain).not.toContain("row-tag");
+    expect(plain).not.toContain("tag-chip");
+  });
+
+  it("toggles whole-meeting tags from the row, ticking the ones already on it", () => {
+    expect(meetingListSource).toContain("selected={wholeTagState(meetingTags, [meeting.id]).selected}");
+    expect(meetingListSource).toContain('dispatch("tagMeeting", { meeting, pick: event.detail })');
+  });
+
+  it("says when the tag filter is what emptied the list", () => {
+    expect(html({ meetings: [], tagFilterCount: 2, tags })).toContain("No meeting here has those tags.");
+  });
+});
+
+describe("MeetingList tag filter over insights", () => {
+  it("says why a tag filter empties a list showing only insights", () => {
+    const body = render(MeetingList as never, {
+      props: {
+        meetings: [],
+        totalCount: 1,
+        insightsOffered: true,
+        insightsLoaded: true,
+        totalInsightCount: 2,
+        types: { meetings: false, insights: true },
+        tagFilterCount: 1,
+      },
+    } as never).body;
+    expect(body).toContain("Insights carry no tags, so a tag filter hides them.");
+    expect(body).not.toContain("No meeting here has");
+  });
+
+  // D-772: the box finds meetings by the names of their tags, not only by
+  // title, date and what was said.
+  it("unions tag-name matches into what the list shows", () => {
+    expect(meetingListSource).toContain("filterByTagLabel(meetings, meetingTags, filter)");
+    // Filtering the narrowed array by an id set, rather than concatenating two
+    // results: keeps catalog order and cannot list a meeting twice when it
+    // matched both ways.
+    expect(meetingListSource).toContain("localMatchIds.has(meeting.id)");
+  });
+
+  it("names tags in the box only where there are tags to find", () => {
+    // An install with no tags would otherwise promise something that cannot
+    // match — the same empty promise searchOffered avoids.
+    expect(meetingListSource).toContain("tagsSearchable = meetingTags.size > 0");
+    expect(meetingListSource).toContain("their tags and what was said in them");
+    expect(meetingListSource).toContain("by name, date or tag");
   });
 });

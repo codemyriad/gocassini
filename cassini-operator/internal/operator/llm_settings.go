@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,6 +41,12 @@ type LLMSettings struct {
 	// insights off is removing the endpoint, exactly as it is for the summary
 	// (D-719).
 	Insight LLMStep `json:"insight"`
+	// SummaryAutoEnabled records that the first-endpoint rule has had its one
+	// chance (enableSummaryOnFirstProvider). Persisted, because the rule is
+	// "once in a deployment's life" and a rule keyed on the transition alone
+	// fires again after every endpoint is removed and one is re-added. Not
+	// served: it is bookkeeping, not policy.
+	SummaryAutoEnabled bool `json:"summary_auto_enabled,omitempty"`
 }
 
 // LLMProvider is one OpenAI-compatible chat-completions endpoint.
@@ -56,10 +63,16 @@ type LLMProvider struct {
 	// hosted API.
 	TimeoutSec int `json:"timeout_sec,omitempty"`
 	MaxTokens  int `json:"max_tokens,omitempty"`
+	// Model is the endpoint's default model: what every step on this endpoint
+	// asks for unless the step names one of its own. One place to choose a
+	// model for one endpoint, instead of one per step and one per insight run
+	// (D-749).
+	Model string `json:"model,omitempty"`
 }
 
 // LLMStep is the policy for one LLM step: whether it runs, on which provider,
-// with which model. An empty model leaves the recorder's default in place.
+// with which model. An empty model means the provider's default model, and
+// only when the provider has none does the recorder's own default apply.
 type LLMStep struct {
 	Enabled  bool   `json:"enabled"`
 	Provider string `json:"provider,omitempty"`
@@ -91,9 +104,12 @@ const (
 
 	maxLLMProviders      = 20
 	maxLLMFieldRunes     = 200
-	llmDiscoveryTimeout  = 20 * time.Second
 	llmDiscoveryMaxBytes = 8 << 20
 )
+
+// llmDiscoveryTimeout bounds one GET {base}/models. A variable so a test can
+// make an endpoint that never answers time out in milliseconds.
+var llmDiscoveryTimeout = 20 * time.Second
 
 var llmProviderIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
@@ -152,16 +168,16 @@ func envIntFrom(getenv func(string) string, key string) int {
 	return n
 }
 
-// llmProviderNameFor derives a display name from an endpoint URL.
-func llmProviderNameFor(base string) string {
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" {
-		return "Default"
-	}
-	if host := strings.ToLower(u.Hostname()); host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai") {
-		return "OpenRouter"
-	}
-	return u.Host
+// llmProviderDefaultName is the display name a provider gets when the
+// administrator gave it none: its position in the list, and nothing about it.
+//
+// Never derived from the URL. The name is the one field of a provider that
+// every signed-in user sees — GET /ai/providers serves it so the Prepare panel
+// can offer a choice — and a name that repeated the host would hand the whole
+// audience an internal hostname the settings surface withholds. "Endpoint 1"
+// says nothing and is what an administrator is expected to rename (D-740).
+func llmProviderDefaultName(position int) string {
+	return fmt.Sprintf("Endpoint %d", position)
 }
 
 // SeedLLMSettings derives the first-start policy from the deploy environment,
@@ -188,7 +204,7 @@ func SeedLLMSettings(getenv func(string) string) LLMSettings {
 		return s
 	}
 	provider := LLMProvider{
-		ID: "default", Name: llmProviderNameFor(base), BaseURL: base, APIKey: key,
+		ID: "default", Name: llmProviderDefaultName(1), BaseURL: base, APIKey: key,
 		TimeoutSec: envIntFrom(getenv, envLLMTimeoutSec),
 		MaxTokens:  envIntFrom(getenv, envLLMMaxTokens),
 	}
@@ -198,6 +214,10 @@ func SeedLLMSettings(getenv func(string) string) LLMSettings {
 		summaryModel = strings.TrimSpace(getenv(envLLMModel))
 	}
 	s.Summary = LLMStep{Enabled: !envBoolFrom(getenv, envSummaryDisabled), Provider: provider.ID, Model: summaryModel}
+	// The seed IS the first endpoint, and the environment has already said
+	// whether summarising runs on it; the first-save rule has nothing left to
+	// decide for this deployment.
+	s.SummaryAutoEnabled = true
 	return s
 }
 
@@ -268,6 +288,7 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 		p.Name = strings.Join(strings.Fields(p.Name), " ")
 		p.BaseURL = strings.TrimSpace(p.BaseURL)
 		p.APIKey = strings.TrimSpace(p.APIKey)
+		p.Model = strings.TrimSpace(p.Model)
 		if !llmProviderIDPattern.MatchString(p.ID) {
 			return s, fmt.Errorf("provider id %q must be letters, digits, '.', '_' or '-'", p.ID)
 		}
@@ -279,17 +300,19 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 			return s, fmt.Errorf("provider %q: %w", p.ID, err)
 		}
 		if p.Name == "" {
-			p.Name = llmProviderNameFor(p.BaseURL)
+			p.Name = llmProviderDefaultName(len(providers) + 1)
 		}
+		// Messages name the field by its label in AI providers, not by its wire
+		// name: they land in the panel's alert as written.
 		if p.TimeoutSec < 0 {
-			return s, fmt.Errorf("provider %q: timeout_sec must not be negative", p.ID)
+			return s, fmt.Errorf("provider %q: Request timeout must not be negative", p.ID)
 		}
 		if p.MaxTokens < 0 {
-			return s, fmt.Errorf("provider %q: max_tokens must not be negative", p.ID)
+			return s, fmt.Errorf("provider %q: Response token limit must not be negative", p.ID)
 		}
-		for _, f := range []struct{ name, value string }{{"id", p.ID}, {"name", p.Name}, {"base_url", p.BaseURL}} {
+		for _, f := range []struct{ label, value string }{{"Provider id", p.ID}, {"Provider name", p.Name}, {"Base URL", p.BaseURL}, {"Default model", p.Model}} {
 			if utf8.RuneCountInString(f.value) > maxLLMFieldRunes {
-				return s, fmt.Errorf("provider %q: %s exceeds %d characters", p.ID, f.name, maxLLMFieldRunes)
+				return s, fmt.Errorf("provider %q: %s is longer than %d characters", p.ID, f.label, maxLLMFieldRunes)
 			}
 		}
 		providers = append(providers, p)
@@ -310,20 +333,20 @@ func normalizeLLMStep(name string, step LLMStep, providers map[string]struct{}) 
 	step.Model = strings.TrimSpace(step.Model)
 	step.Template = strings.TrimSpace(step.Template)
 	if utf8.RuneCountInString(step.Model) > maxLLMFieldRunes {
-		return step, fmt.Errorf("%s: model exceeds %d characters", name, maxLLMFieldRunes)
+		return step, fmt.Errorf("The %s model is longer than %d characters", name, maxLLMFieldRunes)
 	}
 	if step.Template != "" && !llmTemplateIDPattern.MatchString(step.Template) {
-		return step, fmt.Errorf("%s: template %q must be letters, digits, '.', '_' or '-'", name, step.Template)
+		return step, fmt.Errorf("The %s template %q must be letters, digits, '.', '_' or '-'", name, step.Template)
 	}
 	if utf8.RuneCountInString(step.Template) > maxLLMFieldRunes {
-		return step, fmt.Errorf("%s: template exceeds %d characters", name, maxLLMFieldRunes)
+		return step, fmt.Errorf("The %s template is longer than %d characters", name, maxLLMFieldRunes)
 	}
 	if _, ok := providers[step.Provider]; !ok {
 		if step.Enabled {
 			if step.Provider == "" {
-				return step, fmt.Errorf("%s is enabled but has no provider", name)
+				return step, fmt.Errorf("The %s step is on but has no provider", name)
 			}
-			return step, fmt.Errorf("%s refers to unknown provider %q", name, step.Provider)
+			return step, fmt.Errorf("The %s step refers to an unknown provider %q", name, step.Provider)
 		}
 		// A disabled step may outlive its provider; forget the reference.
 		step.Provider = ""
@@ -333,14 +356,25 @@ func normalizeLLMStep(name string, step LLMStep, providers map[string]struct{}) 
 
 func validLLMBaseURL(raw string) error {
 	if raw == "" {
-		return errors.New("base_url must not be empty")
+		return errors.New("Base URL must not be empty")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("base_url: %w", err)
+		return errors.New("Base URL must be an http(s) URL")
 	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("base_url %q must be an http(s) URL", raw)
+		return errors.New("Base URL must be an http(s) URL")
+	}
+	// The recorder appends /chat/completions and the model list appends
+	// /models itself, so a base URL that already ends in one of them reaches
+	// nothing: .../chat/completions/models is a 404 on every provider. It is
+	// the most common way to copy an endpoint out of a provider's docs, and
+	// the 502 it used to produce named nothing (D-749).
+	path := strings.TrimRight(strings.ToLower(u.Path), "/")
+	for _, suffix := range []string{"/chat/completions", "/models"} {
+		if strings.HasSuffix(path, suffix) {
+			return fmt.Errorf("Base URL ends in %s. Give the API root instead, for example https://openrouter.ai/api/v1", suffix)
+		}
 	}
 	return nil
 }
@@ -373,6 +407,25 @@ func newLLMProviderID() string {
 // `ok` false means no provider is registered at all, which is the only state in
 // which an insight has nothing to ask.
 func (s LLMSettings) insightEndpoint() (LLMProvider, string, bool) {
+	p, model, ok := s.insightEndpointRaw()
+	return p, modelFor(p, model), ok
+}
+
+// modelFor is the model a step on provider p asks for: the step's own when it
+// names one, else the provider's default. Explicit beats default; nothing else
+// is consulted, so a model can never arrive at an endpoint it was not chosen
+// for (D-749).
+func modelFor(p LLMProvider, stepModel string) string {
+	if m := strings.TrimSpace(stepModel); m != "" {
+		return m
+	}
+	return p.Model
+}
+
+// insightEndpointRaw is insightEndpoint before the provider default is
+// applied: the endpoint and the model the resolving step names, which may be
+// empty.
+func (s LLMSettings) insightEndpointRaw() (LLMProvider, string, bool) {
 	if p, ok := s.provider(s.Insight); ok {
 		return p, s.Insight.Model, true
 	}
@@ -454,7 +507,7 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 		out = append(out, kv)
 	}
 	summaryProvider, summaryOK := s.provider(s.Summary)
-	out = s.appendStepEnv(out, llmStepSummary, summaryProvider, s.Summary.Model, summaryOK)
+	out = s.appendStepEnv(out, llmStepSummary, summaryProvider, modelFor(summaryProvider, s.Summary.Model), summaryOK)
 	insightProvider, insightModel, insightOK := s.insightEndpoint()
 	out = s.appendStepEnv(out, llmStepInsight, insightProvider, insightModel, insightOK)
 	return out
@@ -491,19 +544,24 @@ func (s LLMSettings) appendStepEnv(out []string, name string, p LLMProvider, mod
 // is reachable in one go rather than in two, which is what the design prototype
 // does when its first endpoint lands.
 //
-// Only on the transition from NO providers to some, and only when the step is
-// not already enabled and names nothing. Those guards are the whole safety of
-// it: an administrator who deliberately switched summarising off must not have
-// it switched back on by adding a second endpoint, or by any later save. It can
-// therefore fire at most once in a deployment's life, on the save that takes it
-// from having no endpoint to having one.
+// The rule is ONE-SHOT, and the shot is recorded: SummaryAutoEnabled is set on
+// the first save that takes the deployment from no endpoint to one, whether the
+// step was switched on by it or the save had already decided, and the rule
+// never fires again once it is set. The transition alone was not enough —
+// removing every endpoint and adding one back is a second transition, and
+// normalisation clears the step's dangling provider on the removal, so an
+// administrator who had switched summarising off found it switched back on by
+// re-registering an endpoint (D-740). The other guards stay: a second endpoint
+// never fires it, and a save that already enabled the step or named a provider
+// for it is left alone.
 //
 // docs/privacy.md carries this: registering the first endpoint is the opt-in,
 // not a step you separately arm afterwards.
 func enableSummaryOnFirstProvider(before, after LLMSettings) LLMSettings {
-	if len(before.Providers) > 0 || len(after.Providers) == 0 {
+	if before.SummaryAutoEnabled || len(before.Providers) > 0 || len(after.Providers) == 0 {
 		return after
 	}
+	after.SummaryAutoEnabled = true
 	if after.Summary.Enabled || strings.TrimSpace(after.Summary.Provider) != "" {
 		return after
 	}
@@ -544,6 +602,7 @@ type llmProviderView struct {
 	APIKeyConfigured bool   `json:"api_key_configured"`
 	TimeoutSec       int    `json:"timeout_sec"`
 	MaxTokens        int    `json:"max_tokens"`
+	Model            string `json:"model"`
 }
 
 // llmEffectiveStep is what the recorder will actually receive for a step; nil
@@ -577,7 +636,7 @@ func (s LLMSettings) view() llmSettingsResponse {
 	for _, p := range s.Providers {
 		providers = append(providers, llmProviderView{
 			ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, APIKeyConfigured: p.APIKey != "",
-			TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens,
+			TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens, Model: p.Model,
 		})
 	}
 	return llmSettingsResponse{
@@ -617,7 +676,7 @@ func (s LLMSettings) effectiveStep(step LLMStep) *llmEffectiveStep {
 	if !ok {
 		return nil
 	}
-	return &llmEffectiveStep{Provider: p.ID, BaseURL: p.BaseURL, Model: step.Model, APIKeyConfigured: p.APIKey != ""}
+	return &llmEffectiveStep{Provider: p.ID, BaseURL: p.BaseURL, Model: modelFor(p, step.Model), APIKeyConfigured: p.APIKey != ""}
 }
 
 // llmProviderUpdate is one provider in a PUT body. APIKey distinguishes
@@ -629,6 +688,7 @@ type llmProviderUpdate struct {
 	APIKey     *string `json:"api_key"`
 	TimeoutSec int     `json:"timeout_sec"`
 	MaxTokens  int     `json:"max_tokens"`
+	Model      string  `json:"model"`
 }
 
 // llmSettingsUpdate is the PUT body. Every field is optional; a present
@@ -683,12 +743,12 @@ func (rt *Runtime) handleGetLLMSettings(w http.ResponseWriter) {
 func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("read request body: %v", err))
+		writeJSONError(w, http.StatusBadRequest, "The request could not be read.")
 		return
 	}
 	var in llmSettingsUpdate
 	if err := json.Unmarshal(raw, &in); err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid request JSON: %v", err))
+		writeJSONError(w, http.StatusBadRequest, "The request could not be read.")
 		return
 	}
 
@@ -704,7 +764,7 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 			if id == "" {
 				id = newLLMProviderID()
 			}
-			next := LLMProvider{ID: id, Name: p.Name, BaseURL: p.BaseURL, TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens}
+			next := LLMProvider{ID: id, Name: p.Name, BaseURL: p.BaseURL, TimeoutSec: p.TimeoutSec, MaxTokens: p.MaxTokens, Model: p.Model}
 			if p.APIKey != nil {
 				next.APIKey = *p.APIKey
 			} else if old, ok := stored[id]; ok {
@@ -760,10 +820,77 @@ func (rt *Runtime) handleLLMProviderModels(w http.ResponseWriter, r *http.Reques
 	}
 	models, err := listLLMModels(r.Context(), *provider)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, fmt.Sprintf("list models from %s: %v", provider.Name, err))
+		// "{name} ({host}) {reason}": the host because an administrator may see
+		// it and one endpoint is easily mistaken for another; the reason in
+		// plain words, never Go's transport text (llmTransportError).
+		writeJSONError(w, http.StatusBadGateway, fmt.Sprintf("%s (%s) %v", provider.Name, llmProviderHost(provider.BaseURL), err))
 		return
 	}
 	writeJSON(w, http.StatusOK, llmModelsResponse{Provider: id, Models: models})
+}
+
+// llmUpstreamStatusError is the endpoint answering the model list with
+// something other than a 2xx. Typed so the USER route can say which status it
+// was without repeating anything else the error might carry.
+type llmUpstreamStatusError struct {
+	Status int
+}
+
+func (e *llmUpstreamStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d", e.Status)
+}
+
+// sanitisedLLMModelsError is what a non-administrator is told when the model
+// list could not be fetched. Fixed sentences on purpose: a transport error
+// carries the endpoint's full URL in its text (*url.Error prints it), and the
+// base URL is administrator-only on every surface a signed-in user can reach.
+// The status is kept because "HTTP 401" and "unreachable" are different things
+// to tell an administrator about; the detail goes to the server log (D-740).
+func sanitisedLLMModelsError(err error) string {
+	var upstream *llmUpstreamStatusError
+	if errors.As(err, &upstream) {
+		return fmt.Sprintf("the endpoint returned HTTP %d", upstream.Status)
+	}
+	return "the endpoint could not be reached"
+}
+
+// llmTransportError turns the error http.Client.Do returns when no response
+// came back into words a settings page can show. What Do returns is a
+// *url.Error whose text is `Get "http://host/v1/models": context deadline
+// exceeded` — the method, the whole URL and a Go idiom, none of which tells an
+// administrator what to do. A timeout says how long was waited (the only
+// number that helps: raise the endpoint's limit or fix the endpoint), and
+// anything else — refused, no such host, TLS — keeps only its innermost
+// reason, which is the plain-words part.
+func llmTransportError(err error) error {
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		return fmt.Errorf("did not answer within %s seconds", strconv.FormatFloat(llmDiscoveryTimeout.Seconds(), 'f', -1, 64))
+	}
+	return fmt.Errorf("could not be reached (%s)", innermostError(err))
+}
+
+// innermostError is the text of the last error in err's Unwrap chain: for a
+// refused dial that is "connection refused", not the *url.Error and
+// *net.OpError wrappers that repeat the URL around it.
+func innermostError(err error) string {
+	for {
+		next := errors.Unwrap(err)
+		if next == nil {
+			return err.Error()
+		}
+		err = next
+	}
+}
+
+// llmProviderHost is the host[:port] of an endpoint, for an error message that
+// names which endpoint failed without repeating the whole URL.
+func llmProviderHost(base string) string {
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return base
+	}
+	return u.Host
 }
 
 // listLLMModels asks an OpenAI-compatible endpoint what it serves. Hosted
@@ -783,7 +910,7 @@ func listLLMModels(ctx context.Context, p LLMProvider) ([]llmModel, error) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, llmTransportError(err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, llmDiscoveryMaxBytes+1))
@@ -794,7 +921,7 @@ func listLLMModels(ctx context.Context, p LLMProvider) ([]llmModel, error) {
 		return nil, errors.New("response too large")
 	}
 	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, &llmUpstreamStatusError{Status: resp.StatusCode}
 	}
 	var payload struct {
 		Data []struct {
@@ -841,9 +968,12 @@ func listLLMModels(ctx context.Context, p LLMProvider) ([]llmModel, error) {
 // ADMIN route makes, against the same provider record.
 
 // llmProviderChoice is one endpoint as somebody choosing between them sees it.
+// Model is the endpoint's default, which is what their insight will ask for:
+// choosing an endpoint is choosing a model, and they are owed that answer.
 type llmProviderChoice struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Model string `json:"model,omitempty"`
 }
 
 func (rt *Runtime) aiProvidersHandler(w http.ResponseWriter, r *http.Request) {
@@ -854,7 +984,7 @@ func (rt *Runtime) aiProvidersHandler(w http.ResponseWriter, r *http.Request) {
 	settings := rt.currentLLMSettings()
 	choices := make([]llmProviderChoice, 0, len(settings.Providers))
 	for _, p := range settings.Providers {
-		choices = append(choices, llmProviderChoice{ID: p.ID, Name: p.Name})
+		choices = append(choices, llmProviderChoice{ID: p.ID, Name: p.Name, Model: p.Model})
 	}
 	// no-store for the reason /setup is: this answer changes the moment an
 	// administrator registers or removes an endpoint, and AppAPI caches a
@@ -875,5 +1005,21 @@ func (rt *Runtime) aiProviderModelsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	rt.handleLLMProviderModels(w, r, id)
+	provider, ok := rt.currentLLMSettings().providerByID(id)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, fmt.Sprintf("unknown provider %q", id))
+		return
+	}
+	models, err := listLLMModels(r.Context(), provider)
+	if err != nil {
+		// The detail — which carries the URL — is for the log and the ADMIN
+		// twin under /settings/llm/providers/{id}/models, not for whoever is
+		// signed in.
+		if rt.logger != nil {
+			rt.logger.Printf("ai: list models from provider=%s (%s): %v", id, provider.BaseURL, err)
+		}
+		writeJSONError(w, http.StatusBadGateway, sanitisedLLMModelsError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, llmModelsResponse{Provider: id, Models: models})
 }

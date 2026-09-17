@@ -1,13 +1,20 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
   import type { PortableMeetingSummary } from "./viewer/loadArtifact";
   import {
+    filterMeetingCatalogEntries,
     sortMeetingCatalogEntries,
     type MeetingCatalogEntry,
   } from "./viewer/catalog";
   import { StaticCatalogProvider, type DataProvider } from "./viewer/dataProvider";
+  import {
+    groupHitsByMeeting,
+    isAbortError,
+    isMeetingSearchAvailable,
+    type MeetingSearchHit,
+  } from "./viewer/meetingSearch";
   import { isEmbeddedViewer } from "./viewer/appBase";
   import { resolveCatalogSelection } from "./viewer/catalogSelection";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
@@ -39,12 +46,35 @@
     type BrowseTypeFilter,
     type InsightRecord,
   } from "./viewer/insights";
+  import {
+    describeAnnotationError,
+    mergeVocabularyTags,
+    tagsByMeeting,
+    type AnnotationRequest,
+    type MeetingAnnotations,
+    type TagPick,
+    type TagVocabulary,
+  } from "./viewer/annotations";
+  import {
+    applyEach,
+    bulkReport,
+    createTagLoader,
+    createWriteQueue,
+    filterByTags,
+    planBulkTag,
+    wholeTagState,
+    withMeetingResult,
+    type MeetingTags,
+    type TagMatch,
+  } from "./viewer/listTags";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
   import PreparePanel from "./components/PreparePanel.svelte";
+  import TagManager from "./components/tags/TagManager.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
+  import { focusLayer } from "./components/ui/focusLayer";
 
   // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
   // is selected, which meeting is open, the `meeting` hash param, theme, and
@@ -68,6 +98,14 @@
   // one keep working unchanged; main.ts / embedded.ts construct and pass one
   // explicitly. It is threaded down to MeetingView for artifact loads.
   export let dataProvider: DataProvider = new StaticCatalogProvider();
+
+  // Who can see the recordings this viewer is listing (D-756). Part of the
+  // viewing layer's public surface because the chip that states it belongs
+  // beside the meeting count, and passed down rather than resolved here: the
+  // fact comes from the deployment's operator, which this layer cannot reach
+  // and a standalone export does not have. "" is "nobody said", and the chip
+  // renders nothing.
+  export let audience: "" | "everyone" | "participants" = "";
 
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";
@@ -113,6 +151,32 @@
   // next click — and a selection is a thing you are doing, not a place you are.
   let selection: MeetingSelection = EMPTY_SELECTION;
   let prepareOpen = false;
+  // The floating bar's real height, so the list can leave exactly that much
+  // room under its last row.
+  let selectionDockHeight = 0;
+  // Said to whoever mounts this shell, each time Prepare opens: the panel's
+  // readiness slot is filled from a fact only the shell around it has (whether
+  // this deployment has an AI endpoint), and that fact is read once at mount.
+  // A reader who was told "no endpoint" and comes back after an administrator
+  // configured one is otherwise told it again until they reload (D-749).
+  const dispatch = createEventDispatcher<{ prepareOpen: void; overlay: boolean }>();
+
+  // Whether something is open over the browse surface. The shell above this
+  // component draws the Browse/Operator tabs, which a scrim positioned inside
+  // here cannot reach: told this, it can dim and blur them with everything
+  // else, so an overlay covers the app rather than most of it.
+  // The rooms drawer is not one of them: it is a part of this surface sliding
+  // into view, not a thing over it, and the tabs stay usable while it is open.
+  $: overlayOpen = prepareOpen || tagManagerOpen || Boolean(selectedInsight || selectedMeetingId);
+  // Which layer is on top, in the order they stack: the meeting sheet, then
+  // Prepare, then the rooms drawer (only ever open on a phone), then Manage
+  // tags. Everything under it is inert, so neither Tab nor a screen reader
+  // wanders into a page the reader cannot see for the drawer over it.
+  $: topLayer = tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  $: dispatch("overlay", overlayOpen);
+  $: if (prepareOpen) {
+    dispatch("prepareOpen");
+  }
   // What the list is actually showing, reported by MeetingList: its text filter
   // is list-local, so this is the only way the shell can say how many picked
   // meetings the current narrowing hides.
@@ -124,6 +188,27 @@
   // come back at least once, `insightsError` says the last one did not, and
   // neither of them is "there are no insights". The list is told all three
   // because "we could not ask" and "there are none" look identical otherwise.
+  // Cross-meeting search (D-736). The shell owns it because it is a request,
+  // and because the list is presentational.
+  let searchQuery = "";
+  let searchState: "idle" | "searching" | "ok" | "rateLimited" | "indexUnavailable" | "failed" = "idle";
+  let searchMessage = "";
+  let transcriptHits: ReadonlyMap<string, readonly MeetingSearchHit[]> = new Map();
+  let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
+  let searchCoverage: { visible: number; searched: number } | null = null;
+  let lastNarrowingKey = "";
+  let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+  // Only the newest query may write the results. Without this a slow earlier
+  // request can land after a faster later one and repaint the list with answers
+  // to a question the user has already moved on from.
+  let searchRun = 0;
+  let searchAbort: AbortController | undefined;
+  // Carried into MeetingView when a moment is opened from a search result, so
+  // the meeting lands already filtered to the lines that matched. Cleared on
+  // any ordinary open, because a meeting opened from the list is not a search
+  // result and should show the whole transcript.
+  let transcriptQueryForMeeting = "";
+
   let insights: InsightRecord[] = [];
   let insightsLoaded = false;
   let insightsError = "";
@@ -145,6 +230,15 @@
   let insightDocumentKey = "";
   let insightDocumentError = "";
   let insightDocumentLoading = false;
+
+  // Tags (D-746). A failed reload keeps the last vocabulary that loaded.
+  let tagVocabulary: TagVocabulary | null = null;
+  let tagsFailed = false;
+  let selectedTagIds: string[] = [];
+  let tagMatch: TagMatch = "any";
+  let tagNotice = "";
+  let tagReport = "";
+  let tagManagerOpen = false;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
@@ -196,7 +290,12 @@
   // it covers unreachable and read as a page rather than a layer. A percentage
   // transform (rather than svelte/transition's fly, which needs pixels) travels
   // exactly the sheet's own width at whatever size it resolved to.
-  function sheetSlide(_node: Element, { duration = 320 }: { duration?: number }) {
+  // One duration for everything that opens over a surface — the panel, the
+  // scrim under it and the tabs the shell dims — so an overlay reads as a
+  // single move rather than three that finish at different moments.
+  const OVERLAY_MS = 260;
+
+  function sheetSlide(_node: Element, { duration = OVERLAY_MS }: { duration?: number }) {
     if (prefersReducedMotion) {
       return { duration: 0 };
     }
@@ -209,7 +308,7 @@
   }
 
   function scrimFade() {
-    return prefersReducedMotion ? { duration: 0 } : { duration: 200 };
+    return prefersReducedMotion ? { duration: 0 } : { duration: OVERLAY_MS, easing: cubicOut };
   }
 
   // Routing is hash-only (see src/viewer/hashRouting.ts for why and the wire
@@ -291,6 +390,7 @@
   // open, while the room chip changes, and while the search narrows past it.
   function handlePick(event: CustomEvent<MeetingCatalogEntry>) {
     selection = toggleSelected(selection, event.detail.id);
+    tagReport = "";
     if (selection.ids.length === 0) {
       // Nothing left to prepare; the panel would be describing an empty set.
       prepareOpen = false;
@@ -300,6 +400,77 @@
   function handleClearSelection() {
     selection = clearSelection();
     prepareOpen = false;
+    tagReport = "";
+  }
+
+  const tagLoader = createTagLoader(
+    () => dataProvider.loadTagVocabulary!(),
+    (vocabulary) => {
+      tagVocabulary = vocabulary ?? tagVocabulary;
+      tagsFailed = !vocabulary;
+    },
+  );
+
+  // On open, on return to the tab and after writes; not on the catalog's timer.
+  function refreshTags(fresh = false) {
+    if (dataProvider.loadTagVocabulary) {
+      void tagLoader.reload(fresh);
+    }
+  }
+
+  const queueTagWrite = createWriteQueue(() => refreshTags(true));
+
+  function applied(result: MeetingAnnotations) {
+    if (tagVocabulary) {
+      tagVocabulary = withMeetingResult(tagVocabulary, result);
+    }
+  }
+
+  // Both plan from what the picker showed when it was clicked.
+  function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
+    const { remove, request } = planBulkTag([meeting], meetingTags, pick);
+    tagNotice = "";
+    void queueTagWrite(async () => {
+      try {
+        applied(await dataProvider.applyAnnotationOps!(meeting, request));
+      } catch (error) {
+        tagNotice = `Could not ${remove ? "untag" : "tag"} “${meeting.title}”: ${describeAnnotationError(error)}`;
+      }
+    });
+  }
+
+  function tagSelection(pick: TagPick) {
+    const plan = planBulkTag(pickedMeetings, meetingTags, pick);
+    void queueTagWrite(async () => {
+      const { done } = await applyEach(plan.targets, async (entry) =>
+        applied(await dataProvider.applyAnnotationOps!(entry, plan.request)),
+      );
+      tagReport = bulkReport(plan.remove, done, plan.targets.length);
+    });
+  }
+
+  function toggleTagFilter(tagId: string) {
+    selectedTagIds = activeTagIds.includes(tagId)
+      ? activeTagIds.filter((id) => id !== tagId)
+      : [...activeTagIds, tagId];
+  }
+
+  // Bound to an id rather than the entry, so a catalog refresh does not hand the meeting view new functions.
+  function bindAnnotations(provider: DataProvider, meetingId: string) {
+    if (!meetingId || !provider.loadMeetingAnnotations || !provider.applyAnnotationOps) {
+      return { load: null, apply: null };
+    }
+    const entry = async () => {
+      const found = catalogMeetings.find((meeting) => meeting.id === meetingId);
+      if (!found) {
+        throw new Error(`Meeting not found in catalog: ${meetingId}`);
+      }
+      return found;
+    };
+    return {
+      load: async () => provider.loadMeetingAnnotations!(await entry()),
+      apply: async (request: AnnotationRequest) => provider.applyAnnotationOps!(await entry(), request),
+    };
   }
 
   // syncSelectionToCatalog is called from a reactive statement rather than
@@ -375,10 +546,175 @@
     }
   }
 
+  // SEARCH_DEBOUNCE_MS: long enough that typing a word is one request rather
+  // than six, short enough that the list does not feel stuck. Each search costs
+  // the operator a whole-archive PROPFIND as the caller, which is also why the
+  // endpoint rate-limits: this is the client-side half of not doing that.
+  const SEARCH_DEBOUNCE_MS = 220;
+  // A meeting contributes at most this many moments to the list. The server
+  // caps it so one talkative meeting cannot crowd every other one out of the
+  // page; this is the number the rows have room to show.
+  const SEARCH_HITS_PER_MEETING = 3;
+
+  // Two independent reasons there may be nothing to ask, and both have to turn
+  // the promise in the placeholder off:
+  //
+  //  1. No operator base at all — a standalone export. Known up front.
+  //  2. An operator that does not serve the route (older than D-623, or on the
+  //     local sink), which only shows up as a 404 on the first real search.
+  //
+  // Feature-detecting the provider method answers neither: every provider here
+  // defines it, because the module decides at call time.
+  let searchRouteServed = true;
+  // What of the current narrowing the SERVER can apply. Sending it matters
+  // more than it looks: the endpoint bounds its visible set before the
+  // statement, so LIMIT applies to the narrowed population. Narrowing only the
+  // answer would let a caller with a tight filter be told nothing matched while
+  // matches sat just below a page ranked over everything they can read.
+  //
+  // Only some narrowings are expressible. Room keys are prefixed by roomKeyOf:
+  // `id:<roomId>` is a real room the endpoint knows, while `name:` (a room with
+  // a name and no id) and `no-room` are viewer-side groupings with nothing to
+  // send. The endpoint takes one tag, so several picked tags — or "all" mode —
+  // stay client-side too. Those cases still narrow correctly, because the list
+  // resolves hits against the narrowed set; they can just under-report on a
+  // corpus large enough to fill the page from outside the filter.
+  $: searchNarrowing = {
+    roomId: selectedRoomKey?.startsWith("id:") ? selectedRoomKey.slice(3) : "",
+    tag: activeTagIds.length === 1 ? activeTagIds[0] : "",
+  };
+  // Re-run when the narrowing changes under a live query. Without this, picking
+  // a tag after searching leaves the previous answer on screen — which is what
+  // "filtering after a search does nothing" looked like from the outside.
+  $: narrowingKey = `${searchNarrowing.roomId}\u0000${searchNarrowing.tag}`;
+  $: if (narrowingKey !== lastNarrowingKey) {
+    lastNarrowingKey = narrowingKey;
+    if (searchQuery.trim() !== "" && searchOffered) {
+      void runSearch(searchQuery);
+    }
+  }
+
+  $: searchOffered =
+    typeof dataProvider.searchMeetings === "function" &&
+    isMeetingSearchAvailable() &&
+    searchRouteServed;
+
+  function handleSearchQuery(query: string) {
+    searchQuery = query;
+    clearTimeout(searchDebounce);
+    // Abort whatever is in flight: its answer is about the previous question.
+    searchAbort?.abort();
+    searchAbort = undefined;
+
+    if (query.trim() === "" || !dataProvider.searchMeetings) {
+      searchRun += 1;
+      searchState = "idle";
+      searchMessage = "";
+      transcriptHits = new Map();
+      transcriptOnlyMeetings = [];
+      searchCoverage = null;
+      return;
+    }
+    searchState = "searching";
+    searchDebounce = setTimeout(() => void runSearch(query), SEARCH_DEBOUNCE_MS);
+  }
+
+  async function runSearch(query: string) {
+    const search = dataProvider.searchMeetings;
+    if (!search) {
+      return;
+    }
+    const run = ++searchRun;
+    const controller = new AbortController();
+    searchAbort = controller;
+
+    let outcome;
+    try {
+      outcome = await search(query, {
+        perMeeting: SEARCH_HITS_PER_MEETING,
+        roomId: searchNarrowing.roomId,
+        tag: searchNarrowing.tag,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        // Superseded by a later keystroke. Saying anything here would overwrite
+        // the newer request's state with the older one's.
+        return;
+      }
+      if (run === searchRun) {
+        searchState = "failed";
+        searchMessage = "Could not search the meetings.";
+      }
+      return;
+    }
+    if (run !== searchRun) {
+      return;
+    }
+
+    if (outcome.status === "unsupported") {
+      // The route is not served here. Stop claiming it in the placeholder:
+      // going on promising a search that answers nothing is worse than never
+      // having offered it. The box still narrows names and dates.
+      searchRouteServed = false;
+      searchState = "idle";
+      searchMessage = "";
+      transcriptHits = new Map();
+      transcriptOnlyMeetings = [];
+      return;
+    }
+    if (outcome.status !== "ok") {
+      // Keep whatever moments are on screen: they were true for this query a
+      // moment ago, and blanking them would look like "nothing matched" —
+      // which is the one thing this state must not be confused with.
+      searchState = outcome.status;
+      searchMessage = outcome.message;
+      return;
+    }
+
+    searchState = "ok";
+    searchMessage = "";
+    searchCoverage = outcome.coverage;
+    const grouped = groupHitsByMeeting(outcome.hits);
+    transcriptHits = new Map(grouped.map((match) => [match.meetingId, match.hits]));
+    // Meetings the name/date filter will not produce, in the server's rank
+    // order. The list concatenates them after its own matches.
+    // The NARROWED set, not the whole catalog. Resolving here against every
+    // meeting is what let a transcript-only hit render outside the caller's own
+    // room or tag filter, so picking a tag after searching appeared to do
+    // nothing (D-771). A search result is not a reason to override a narrowing
+    // the reader asked for.
+    const known = new Map(roomMeetings.map((meeting) => [meeting.id, meeting]));
+    const nameMatched = new Set(
+      filterMeetingCatalogEntries(roomMeetings, query).map((meeting) => meeting.id),
+    );
+    transcriptOnlyMeetings = grouped
+      .filter((match) => !nameMatched.has(match.meetingId))
+      .map((match) => known.get(match.meetingId))
+      .filter((meeting): meeting is MeetingCatalogEntry => Boolean(meeting));
+  }
+
+  // Open a meeting AT a matched moment, carrying the query through so the
+  // meeting view's own filter shows the matching lines in full. The words are
+  // fetched there as the caller, so Nextcloud re-checks the ACL on the bytes —
+  // which is why the list can show a short quote and the meeting can show the
+  // whole line without those being the same disclosure.
+  function openSearchMoment(detail: { entry: MeetingCatalogEntry; startMs: number; query: string }) {
+    notFoundMessage = "";
+    window.history.pushState(
+      {},
+      "",
+      viewerHref(buildViewerHash({ meeting: detail.entry.id, timeMs: detail.startMs })),
+    );
+    selectedMeetingId = detail.entry.id;
+    transcriptQueryForMeeting = detail.query;
+  }
+
   function loadCatalogMeeting(meeting: MeetingCatalogEntry) {
     notFoundMessage = "";
     pushMeetingUrl(meeting.id);
     selectedMeetingId = meeting.id;
+    transcriptQueryForMeeting = "";
   }
 
   // MeetingView reports the real speaker/segment/duration counts once a meeting
@@ -568,6 +904,64 @@
     }
   }
 
+  // retryInsightRun asks the provider to retry a failed run and puts the
+  // record it answers with — queued again, attempt incremented — in the list
+  // in place of the failed one, from wherever the reader pressed Retry: the
+  // browse card or the document sheet (D-749). A refresh follows so the card
+  // keeps moving on the shared tick. One retry at a time: the button is the
+  // lock on this side, as the run's status is on the operator's.
+  let retryingInsightId = "";
+  let insightRetryError: { id: string; message: string } | null = null;
+
+  async function retryInsightRun(record: InsightRecord) {
+    const provider = dataProvider;
+    if (!provider.retryInsight || retryingInsightId !== "") {
+      return;
+    }
+    retryingInsightId = record.id;
+    insightRetryError = null;
+    try {
+      const updated = await provider.retryInsight(record.id);
+      if (destroyed) {
+        return;
+      }
+      insights = insights.map((row) => (row.id === updated.id ? updated : row));
+    } catch (error) {
+      if (destroyed) {
+        return;
+      }
+      // Whatever the provider said — a 409 "already running" included, which
+      // is an answer rather than a failure and is followed by the refresh that
+      // shows the run moving.
+      insightRetryError = {
+        id: record.id,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      retryingInsightId = "";
+    }
+    void refreshInsights();
+  }
+
+  function retrySelectedInsight() {
+    if (selectedInsight) {
+      void retryInsightRun(selectedInsight);
+    }
+  }
+
+  // handleInsightCreated is what Generate does once the operator has answered
+  // (D-749): the new record goes to the top of the list, where every insight
+  // is shown, and the Prepare panel closes — the question has been asked, and
+  // the panel's subject was the set it was asked of. Optimistic, so the card
+  // is on screen before the shared refresh tick; the refresh that follows
+  // replaces it with the operator's own listing. dropMissingInsight cannot
+  // close a sheet over it: nothing is open, and the listing will carry it.
+  function handleInsightCreated(record: InsightRecord) {
+    insights = [record, ...insights.filter((row) => row.id !== record.id)];
+    prepareOpen = false;
+    void refreshInsights();
+  }
+
   // ensureInsightDocument fetches the open insight's answer once per attempt.
   // Only a succeeded run has one: a queued, running or failed run has nothing
   // to fetch, and asking for it would turn "not finished" into an error.
@@ -614,6 +1008,15 @@
     }
   }
 
+  // Tags reload on return rather than on the timer: each load spends one of the
+  // caller's searches (annotations/tags shares search's rate budget).
+  function refreshOnReturn() {
+    refreshCatalogWhenVisible();
+    if (document.visibilityState === "visible") {
+      refreshTags();
+    }
+  }
+
   $: roomBuckets = buildRoomBuckets(catalogMeetings);
   // A room the catalog no longer describes (its last meeting was removed, or a
   // refresh re-tagged it) must not leave the list narrowed to nothing with no
@@ -627,7 +1030,24 @@
   $: selectedRoomName =
     roomBuckets.find((bucket: RoomBucket) => bucket.key === selectedRoomKey)?.name ??
     null;
-  $: roomMeetings = filterMeetingsByRoom(catalogMeetings, selectedRoomKey);
+  $: canTag =
+    typeof dataProvider.loadTagVocabulary === "function" &&
+    typeof dataProvider.applyAnnotationOps === "function";
+  $: vocabularyTags = canTag ? (tagVocabulary ? mergeVocabularyTags(tagVocabulary.tags) : null) : null;
+  $: meetingTags = (tagVocabulary ? tagsByMeeting(tagVocabulary) : new Map()) as MeetingTags;
+  // A tag deleted or merged away must not leave the list narrowed by a box that is gone.
+  $: activeTagIds = selectedTagIds.filter((id) => vocabularyTags?.some((tag) => tag.tagId === id));
+  $: if (activeTagIds.length < 2) {
+    tagMatch = "any";
+  }
+  $: roomMeetings = filterByTags(
+    filterMeetingsByRoom(catalogMeetings, selectedRoomKey),
+    meetingTags,
+    activeTagIds,
+    tagMatch,
+  );
+  $: bulkTagState = wholeTagState(meetingTags, selection.ids);
+  $: annotationCalls = bindAnnotations(dataProvider, selectedMeetingId);
 
   // A picked meeting can leave the archive under a 15-second refresh; run this
   // against every catalog the shell observes.
@@ -637,6 +1057,11 @@
   $: selectionTotals = summarizeSelection(pickedMeetings);
   $: selectionGaps = describeSelectionGaps(selectionTotals);
   $: hiddenSelectedCount = countHiddenByView(selection, visibleMeetings);
+  // The same question as countHiddenByView, answered per meeting, for the list
+  // behind the bar's count: a pick the current room or search is not showing
+  // says so beside its own row rather than only in a total.
+  $: shownMeetingIds = new Set(visibleMeetings.map((meeting) => meeting.id));
+  $: hiddenSelectedIds = new Set(selection.ids.filter((id) => !shownMeetingIds.has(id)));
   // Not `selection.ids.length > 0`: the bar is the only surface that reports a
   // meeting having left the archive, so it has to survive a loss that took the
   // last pick with it (selectionModel.shouldShowSelectionBar).
@@ -663,6 +1088,9 @@
     browseTypes = ALL_BROWSE_TYPES;
   }
   $: canLoadInsightDocument = typeof dataProvider.loadInsightDocument === "function";
+  // Retry is offered exactly where something can perform it: the card and the
+  // sheet render the control only when the provider has the method.
+  $: canRetryInsight = typeof dataProvider.retryInsight === "function";
   // Resolved against the WHOLE catalog, not the room-narrowed list: an insight
   // spanning rooms names sources in each of them, and counting only the ones in
   // the room being looked at would make the same insight claim a different
@@ -671,7 +1099,8 @@
   $: insightSourceCounts = new Map(
     [...insightSources].map(([id, sources]) => [id, sources.length]),
   );
-  $: roomInsights = filterInsightsByRoom(insights, selectedRoomKey);
+  // An insight carries no tags, so a tag filter leaves none of them.
+  $: roomInsights = activeTagIds.length > 0 ? [] : filterInsightsByRoom(insights, selectedRoomKey);
   // Called from a reactive statement rather than being one, for the reason
   // syncSelectionToCatalog is: it writes the id that `selectedInsight` is
   // derived from, and a `$:` doing both would be a cycle.
@@ -729,8 +1158,8 @@
       // entry appears without a hard browser reload. Gated on `embedded`, not
       // ncMode: an ExApp with Theming off still needs this, and it is the only
       // thing that recovers a catalog that was absent at mount (D-543).
-      window.addEventListener("focus", refreshCatalogWhenVisible);
-      document.addEventListener("visibilitychange", refreshCatalogWhenVisible);
+      window.addEventListener("focus", refreshOnReturn);
+      document.addEventListener("visibilitychange", refreshOnReturn);
       catalogRefreshTimer = window.setInterval(
         refreshCatalogWhenVisible,
         CATALOG_REFRESH_INTERVAL_MS,
@@ -750,6 +1179,7 @@
     // Independent of the catalog load below, and started beside it: the two
     // lists come from two places and neither is a precondition for the other.
     void refreshInsights();
+    refreshTags();
 
     const initialMeetingId = currentViewerHash().meeting || null;
     const viewerConfig = window as typeof window & {
@@ -801,8 +1231,9 @@
     destroyed = true;
     window.removeEventListener("popstate", handlePopState);
     window.removeEventListener("hashchange", handlePopState);
-    window.removeEventListener("focus", refreshCatalogWhenVisible);
-    document.removeEventListener("visibilitychange", refreshCatalogWhenVisible);
+    window.removeEventListener("focus", refreshOnReturn);
+    document.removeEventListener("visibilitychange", refreshOnReturn);
+    tagLoader.stop();
     if (catalogRefreshTimer !== undefined) {
       window.clearInterval(catalogRefreshTimer);
     }
@@ -836,6 +1267,7 @@
        IS the page, so it keeps the full-bleed layout it has always had. -->
   <div class="grid grid-cols-1 grid-rows-1 h-full bg-base-200 overflow-x-clip">
     <MeetingView
+      initialQuery={transcriptQueryForMeeting}
       {dataProvider}
       meeting={selectedMeeting}
       bundled={true}
@@ -849,6 +1281,7 @@
   </div>
 {:else}
   <div class="browse-shell">
+    <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
       {selectedRoomKey}
@@ -861,8 +1294,19 @@
       on:select={handleRoomSelect}
       on:close={() => (railOpen = false)}
       on:toggleType={(event) => (browseTypes = toggleBrowseType(browseTypes, event.detail as BrowseType))}
+      tagsOffered={canTag}
+      tags={vocabularyTags}
+      {tagsFailed}
+      selectedTagIds={activeTagIds}
+      {tagMatch}
+      {audience}
+      on:toggleTag={(event) => toggleTagFilter(event.detail)}
+      on:tagMatch={(event) => (tagMatch = event.detail)}
+      on:manageTags={() => (tagManagerOpen = true)}
     />
+    </div>
 
+    <div class="contents" inert={topLayer > 0}>
     <MeetingList
       meetings={roomMeetings}
       types={browseTypes}
@@ -873,34 +1317,67 @@
       {insightsLoaded}
       {insightsError}
       {insightSourceCounts}
+      insightsRetryable={canRetryInsight}
+      {retryingInsightId}
+      {insightRetryError}
       {selectedInsightId}
       {selectedRoomName}
       {selectedMeetingId}
       {pickedIds}
       selectable={canPrepare}
       bottomOverlay={selectionBarUp}
+      bottomOverlayHeight={selectionDockHeight}
       {ncMode}
       {themeMode}
       errorMessage={listError}
+      {searchOffered}
+      {searchState}
+      {searchMessage}
+      {transcriptHits}
+      {transcriptOnlyMeetings}
+      {searchCoverage}
+      on:query={(event) => handleSearchQuery(event.detail)}
+      on:openMoment={(event) => openSearchMoment(event.detail)}
       on:select={(event) => loadCatalogMeeting(event.detail)}
       on:pick={handlePick}
       on:openInsight={(event) => openInsight(event.detail)}
+      on:retryInsight={(event) => void retryInsightRun(event.detail)}
       on:visible={(event) => (visibleMeetings = event.detail)}
       on:counts={(event) => (browseCounts = event.detail)}
       on:clearRoom={() => (selectedRoomKey = null)}
       on:openRooms={() => (railOpen = true)}
       on:toggleTheme={toggleTheme}
+      {meetingTags}
+      tags={vocabularyTags}
+      tagFilterCount={activeTagIds.length}
+      tagFilterIds={activeTagIds}
+      on:removeTag={(event) => toggleTagFilter(event.detail)}
+      {tagNotice}
+      on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
+      on:clearTags={() => (selectedTagIds = [])}
+      on:dismissTagNotice={() => (tagNotice = "")}
     />
+    </div>
 
     {#if selectionBarUp}
-      <div class="selection-dock">
+      <div class="selection-dock" bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
         <SelectionBar
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
           droppedCount={selection.dropped.length}
+          entries={pickedMeetings}
+          hiddenIds={hiddenSelectedIds}
+          {meetingTags}
+          on:unpick={(event) => handlePick(event)}
+          on:open={(event) => loadCatalogMeeting(event.detail)}
           on:clear={handleClearSelection}
           on:prepare={() => (prepareOpen = true)}
           on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
+          tags={vocabularyTags}
+          tagSelected={bulkTagState.selected}
+          tagMixed={bulkTagState.mixed}
+          {tagReport}
+          on:tag={(event) => tagSelection(event.detail)}
         />
       </div>
     {/if}
@@ -909,6 +1386,8 @@
       <button
         type="button"
         class="shell-scrim rail-scrim"
+        tabindex="-1"
+        inert={topLayer > 3}
         aria-label="Close the room list"
         transition:fade={scrimFade()}
         on:click={() => (railOpen = false)}
@@ -926,11 +1405,19 @@
       <button
         type="button"
         class="shell-scrim sheet-scrim"
+        tabindex="-1"
+        inert={topLayer > 1}
         aria-label={selectedInsight ? "Close the insight" : "Close the meeting"}
         transition:fade={scrimFade()}
         on:click={closeSheet}
       ></button>
-      <aside class="meeting-sheet" transition:sheetSlide={{}}>
+      <aside
+        class="meeting-sheet"
+        class:tagging={!selectedInsight && Boolean(dataProvider.loadMeetingAnnotations)}
+        inert={topLayer > 1}
+        use:focusLayer
+        transition:sheetSlide={{}}
+      >
         {#if selectedInsight}
           <InsightDocument
             insight={selectedInsight}
@@ -939,8 +1426,12 @@
             documentError={insightDocumentError}
             documentLoading={insightDocumentLoading}
             canLoadDocument={canLoadInsightDocument}
+            canRetry={canRetryInsight}
+            retrying={retryingInsightId === selectedInsight.id}
+            retryError={insightRetryError?.id === selectedInsight.id ? insightRetryError.message : ""}
             on:close={closeSheet}
             on:openSource={openInsightSource}
+            on:retry={retrySelectedInsight}
           />
         {:else}
           <!-- The other direction (D-721): a meeting says which insights read
@@ -950,6 +1441,7 @@
                than the artifact's — what a meeting was used FOR is not part of
                the recording — so it is handed down rather than looked up. -->
           <MeetingView
+            initialQuery={transcriptQueryForMeeting}
             {dataProvider}
             meeting={selectedMeeting}
             bundled={false}
@@ -963,6 +1455,10 @@
             on:back={handleBackToList}
             on:enriched={handleEnriched}
             on:openInsight={(event) => openInsight(event.detail)}
+            tagVocabulary={vocabularyTags ?? []}
+            loadAnnotations={annotationCalls.load}
+            applyAnnotations={annotationCalls.apply}
+            on:tagsChanged={(event) => (applied(event.detail), refreshTags(true))}
           />
         {/if}
       </aside>
@@ -972,16 +1468,19 @@
       <button
         type="button"
         class="shell-scrim prepare-scrim"
+        tabindex="-1"
+        inert={topLayer > 2}
         aria-label="Close Prepare"
         transition:fade={scrimFade()}
         on:click={() => (prepareOpen = false)}
       ></button>
-      <aside class="prepare-sheet" transition:sheetSlide={{}}>
+      <aside class="prepare-sheet" inert={topLayer > 2} use:focusLayer transition:sheetSlide={{}}>
         <PreparePanel
           entries={pickedMeetings}
           totals={selectionTotals}
           gaps={selectionGaps}
           loadBundle={loadSelectedBundle}
+          on:unpick={(event) => handlePick(event)}
           on:close={() => (prepareOpen = false)}
         >
           <!-- Forwarded, not decided (D-722). Whether this deployment can be
@@ -995,10 +1494,21 @@
                this panel is describing, and `let:` is what carries a slot prop
                across the two levels. -->
           <svelte:fragment slot="generate" let:entries>
-            <slot name="prepare-generate" {entries} />
+            <slot name="prepare-generate" {entries} onInsightCreated={handleInsightCreated} />
           </svelte:fragment>
         </PreparePanel>
       </aside>
+    {/if}
+
+    <!-- Kept mounted while closed, so a job started before closing still reports. -->
+    {#if dataProvider.updateTag}
+      <TagManager
+        tags={vocabularyTags}
+        provider={dataProvider}
+        open={tagManagerOpen}
+        on:close={() => (tagManagerOpen = false)}
+        on:changed={() => refreshTags(true)}
+      />
     {/if}
   </div>
 {/if}
@@ -1028,6 +1538,12 @@
     cursor: pointer;
     background-color: oklch(0% 0 0 / 0.55);
   }
+  .sheet-scrim,
+  .prepare-scrim,
+  .rail-scrim {
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+  }
   .sheet-scrim {
     z-index: 20;
   }
@@ -1047,12 +1563,19 @@
     right: 0;
     bottom: 0;
     z-index: 30;
-    width: min(680px, 100%);
+    /* Never the whole width: a strip of the blurred list always shows beside
+       it, the thing a reader clicks to go back. */
+    --sheet-peek: 48px;
+    width: min(680px, calc(100% - var(--sheet-peek)));
     display: flex;
     flex-direction: column;
     background-color: var(--color-base-200);
     border-left: 1px solid var(--color-base-300);
     box-shadow: -8px 0 30px oklch(0% 0 0 / 0.22);
+  }
+  /* Room for the marking rail on the left and the brackets on the right (D-746). */
+  .meeting-sheet.tagging {
+    width: min(940px, calc(100% - var(--sheet-peek)));
   }
 
   /* The selection bar floats over the list it belongs to — inset past the rail
@@ -1061,8 +1584,8 @@
      the rail's 268px plus the bar's own margin. */
   .selection-dock {
     position: absolute;
-    left: 288px;
-    right: 20px;
+    left: 276px;
+    right: 8px;
     bottom: 14px;
     z-index: 15;
   }
@@ -1090,8 +1613,8 @@
     }
     /* No rail track to clear. */
     .selection-dock {
-      left: 12px;
-      right: 12px;
+      left: 8px;
+      right: 8px;
     }
     .prepare-sheet {
       top: auto;
@@ -1106,8 +1629,10 @@
       box-shadow: 0 -8px 30px oklch(0% 0 0 / 0.22);
     }
     /* A side drawer on a phone leaves the content it covers unreachable and
-       reads as a page; a bottom sheet reads as a layer over the list. */
+       reads as a page; a bottom sheet reads as a layer over the list, which
+       shows above it rather than beside it. */
     .meeting-sheet {
+      --sheet-peek: 0px;
       top: auto;
       left: 0;
       right: 0;

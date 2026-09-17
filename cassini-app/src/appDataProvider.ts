@@ -4,8 +4,22 @@ import {
   type InsightRecord,
   type MeetingCatalogEntry,
 } from "cassini-viewer/dataProvider";
+import {
+  AnnotationError,
+  type AnnotationRequest,
+  type AnnotationResult,
+  type MeetingAnnotations,
+  type TagJob,
+  type TagUpdate,
+  type TagVocabulary,
+  type VocabularyTag,
+} from "cassini-viewer/annotations";
 
-import { listInsights as fetchInsightRuns, readInsight } from "./insights/client";
+import {
+  listInsights as fetchInsightRuns,
+  readInsight,
+  retryInsight as postInsightRetry,
+} from "./insights/client";
 
 // The in-Nextcloud shell's data provider (D-626).
 //
@@ -82,6 +96,82 @@ export class AppDataProvider extends StaticCatalogProvider {
   async loadInsightDocument(id: string): Promise<string> {
     return (await readInsight(id)).document;
   }
+
+  // The annotation routes (D-746).
+  loadTagVocabulary(): Promise<TagVocabulary> {
+    return requestAnnotations("tags");
+  }
+
+  loadMeetingAnnotations(entry: MeetingCatalogEntry): Promise<MeetingAnnotations> {
+    return requestAnnotations(meetingPath(entry));
+  }
+
+  applyAnnotationOps(entry: MeetingCatalogEntry, request: AnnotationRequest): Promise<AnnotationResult> {
+    return requestAnnotations(meetingPath(entry), request);
+  }
+
+  updateTag(tagId: string, update: TagUpdate): Promise<{ tag: VocabularyTag; job: TagJob | null }> {
+    return requestAnnotations(tagPath(tagId), update);
+  }
+
+  async mergeTag(tagId: string, intoTagId: string): Promise<TagJob> {
+    return (await requestAnnotations<{ job: TagJob }>(`${tagPath(tagId)}/merge`, { into: intoTagId })).job;
+  }
+
+  async deleteTag(tagId: string): Promise<TagJob> {
+    return (await requestAnnotations<{ job: TagJob }>(`${tagPath(tagId)}/delete`, {})).job;
+  }
+
+  async loadTagJob(): Promise<TagJob | null> {
+    return (await requestAnnotations<{ job: TagJob | null }>("tags/job")).job;
+  }
+
+  // POST insights/<id>/retry (D-749). The run record comes back as the
+  // operator now holds it — `queued`, attempt incremented — and the viewer
+  // puts it in the list in place of the failed one. A 409 arrives as the
+  // operator's own sentence (running, or already answered), which is an
+  // answer rather than a failure.
+  async retryInsight(id: string): Promise<InsightRecord> {
+    return postInsightRetry(id);
+  }
+}
+
+const meetingPath = (entry: MeetingCatalogEntry) => `meetings/${encodeURIComponent(entry.id)}`;
+const tagPath = (tagId: string) => `tags/${encodeURIComponent(tagId)}`;
+
+// A sibling of the published archive, as the insight routes are. A body makes
+// it a POST.
+async function requestAnnotations<T>(path: string, body?: object): Promise<T> {
+  const url = new URL(`../annotations/${path}`, resolvePublishedUrl("")).toString();
+  const init: RequestInit =
+    body === undefined
+      ? { headers: { Accept: "application/json" } }
+      : {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        };
+  // no-store: AppAPI caches a proxied GET for an hour.
+  const response = await fetch(url, { ...init, cache: "no-store" });
+  if (!response.ok) {
+    throw await readAnnotationError(response);
+  }
+  return (await response.json()) as T;
+}
+
+async function readAnnotationError(response: Response): Promise<AnnotationError> {
+  let payload: unknown = null;
+  try {
+    payload = JSON.parse(await response.text());
+  } catch {
+    // Not JSON: the status is all there is.
+  }
+  const body = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+  return new AnnotationError(
+    response.status,
+    typeof body.error === "string" ? body.error : "",
+    typeof body.tagId === "string" ? body.tagId : undefined,
+  );
 }
 
 // describeBundleFailure turns a refusal into something a reader can act on.

@@ -109,7 +109,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   env is creation-time only, so a release adding a _required_ env var is a
   breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
-- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — the two storage modes, each with its own recordings root (`CassiniNoACL/Recordings` for the default one, `Cassini/Recordings` in the Team folder for access control), how switching copies an archive between them, what per-participant access control needs (Team folders + Everyone Group, a `cassini` service account, a mapped Team folder — none of which Cassini creates for you), and how to manage who can see each recording.
+- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — who can see a recording: anyone with an account on this Nextcloud (`CassiniNoACL/Recordings`, nothing extra installed), or only the people who were in the call (`Cassini/Recordings` in the Team folder, which needs Team folders + Everyone Group, a `cassini` service account and a mapped Team folder). Also how Cassini resolves that when the app is enabled, how switching copies an archive between the two roots, and how to manage who can see each recording.
 - **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the one optional step that sends data off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
@@ -117,15 +117,16 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 
 ### CPU vs GPU image choice
 
-- **Portable**: tag `X.Y.Z`. Captures, transcribes and publishes on a host with
-  no GPU. It bakes the model of its default tier (0.6B int8, "Balanced"). Fast
+- **Portable**: tag `X.Y.Z`. Multi-arch (`linux/amd64`, `linux/arm64`). Captures,
+  transcribes and publishes on a host with no GPU (supporting x86_64 and 64-bit
+  ARM servers). It bakes the model of its default tier (0.6B int8, "Balanced"). Fast
   and Best download once into the model cache on the persistent volume when an
   administrator selects them, so the image stays small and every tier still
   runs. Best on a CPU is slower than the meeting it transcribes, which is why
   Balanced is the default. Moving to the `-cuda` image later is a device change,
   not a data migration: use **Rerun** in Cassini Admin to re-transcribe an
   existing recording on the GPU.
-- **GPU/CUDA**: tag `X.Y.Z-cuda`. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
+- **GPU/CUDA**: tag `X.Y.Z-cuda`. x86_64 only. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
   `CASSINI_STT_DEVICE=cuda` baked in. Set the deploy daemon's **Compute device**
   to CUDA and AppAPI pulls the `-cuda` image automatically — the device is a
   property of the _daemon_, so a CPU and a GPU install differ by that one
@@ -204,8 +205,8 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 
 Flagged so readers do not mistake intent for current behavior:
 
-- **Group folders ACL inheritance is version-sensitive.** Per-recording access
-  control is one of two storage modes, and the one that requires the Team
+- **Group folders ACL inheritance is version-sensitive.** Limiting a recording
+  to the people who were in the call is the audience that requires the Team
   folders and Everyone Group apps plus a Team folder an administrator sets up.
   It is worth validating traversal on your own instance — the runbook has a
   checklist.

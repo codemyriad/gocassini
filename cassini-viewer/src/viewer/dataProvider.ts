@@ -27,11 +27,25 @@ import {
 } from "./catalog";
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import type { InsightRecord } from "./insights";
+import type {
+  AnnotationRequest,
+  AnnotationResult,
+  MeetingAnnotations,
+  TagJob,
+  TagUpdate,
+  TagVocabulary,
+  VocabularyTag,
+} from "./annotations";
+import {
+  searchMeetingTranscripts,
+  type MeetingSearchOptions,
+  type MeetingSearchOutcome,
+} from "./meetingSearch";
 
 // Re-exported so a provider implemented outside this package (cassini-app's,
 // which has an operator behind it) can type its methods without reaching past
 // the viewing layer's published entry points.
-export type { MeetingCatalogEntry, InsightRecord };
+export type { MeetingCatalogEntry, InsightRecord, MeetingSearchOptions, MeetingSearchOutcome };
 
 // DataProvider mirrors ONLY what App.svelte actually calls. Every method is
 // keyed off a MeetingCatalogEntry (or nothing) so the caller never has to know
@@ -91,6 +105,47 @@ export interface DataProvider {
   // document is a coherent state — the cards still appear, and the sheet says
   // it cannot show the answer here rather than showing an empty page.
   loadInsightDocument?(id: string): Promise<string>;
+
+  // OPTIONAL (D-746): tags and marks. The operator writes them into the
+  // recordings, so a standalone export has none of these and hides tagging.
+  // Each rejects with an AnnotationError when the operator refuses.
+  loadTagVocabulary?(): Promise<TagVocabulary>;
+  loadMeetingAnnotations?(entry: MeetingCatalogEntry): Promise<MeetingAnnotations>;
+  applyAnnotationOps?(
+    entry: MeetingCatalogEntry,
+    request: AnnotationRequest,
+  ): Promise<AnnotationResult>;
+
+  // OPTIONAL (D-746): managing a tag across every recording that carries it.
+  // A rename, merge or delete runs as a job; loadTagJob polls it.
+  updateTag?(tagId: string, update: TagUpdate): Promise<{ tag: VocabularyTag; job: TagJob | null }>;
+  mergeTag?(tagId: string, intoTagId: string): Promise<TagJob>;
+  deleteTag?(tagId: string): Promise<TagJob>;
+  loadTagJob?(): Promise<TagJob | null>;
+
+  // OPTIONAL (D-736): what was SAID across the meetings this caller can read —
+  // `GET published/search`.
+  //
+  // Optional for the same reason the two above are: a standalone export has no
+  // operator, so there is nothing to ask, and the absence of this method is how
+  // the shell knows to keep offering the local title/date filter alone rather
+  // than a transcript search that can only ever answer nothing.
+  //
+  // The outcome is a tagged union rather than a hit array precisely because
+  // "the archive is unreachable" and "nothing was said about that" must not
+  // arrive here as the same value.
+  searchMeetings?(query: string, options?: MeetingSearchOptions): Promise<MeetingSearchOutcome>;
+
+  // OPTIONAL (D-749): retry a FAILED run — `POST insights/<id>/retry` — and
+  // return the run as it now stands. The operator answers 409 for a run that
+  // is not failed, which the implementation reports as its own sentence.
+  //
+  // Optional for the same reason the two above are: a retry is an operator
+  // doing work, and a build with no operator offers no Retry control rather
+  // than one that fails. The browse card and the document sheet both render it
+  // when this exists, so a failed run is recoverable from wherever it is seen
+  // rather than only from the panel that started it.
+  retryInsight?(id: string): Promise<InsightRecord>;
 }
 
 // resolvePublishedUrl locates a file in the operator's published archive.
@@ -128,11 +183,20 @@ export function resolvePublishedUrl(path: string): string {
 // insights failed to load are different states (D-721), and the way this one
 // says which it is, is by not offering the capability at all — so the type
 // filter is absent rather than reading "Insights 0".
+//
+// Nor does it implement the tag methods: only an operator writes marks.
 export class StaticCatalogProvider implements DataProvider {
   private readonly portableStore = new PortableMeetingStore();
 
   loadCatalog(): Promise<MeetingCatalog | null> {
     return loadMeetingCatalog();
+  }
+
+  // Offered unconditionally: the module itself answers `unsupported` when there
+  // is no operator base to resolve, which is the same answer this method would
+  // have to give and keeps the decision in one place.
+  searchMeetings(query: string, options?: MeetingSearchOptions): Promise<MeetingSearchOutcome> {
+    return searchMeetingTranscripts(query, options);
   }
 
   async loadMeetingForEntry(entry: MeetingCatalogEntry): Promise<LoadedArtifact> {

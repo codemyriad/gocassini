@@ -582,7 +582,7 @@ func TestEffectiveDeviceReportsThePinnedDevice(t *testing.T) {
 	if device != deviceCUDA {
 		t.Errorf("effectiveDevice(cuda) = %q, want cuda", device)
 	}
-	if !strings.Contains(note, "no usable CUDA runtime") {
+	if !strings.Contains(note, "no usable GPU") {
 		t.Errorf("effectiveDevice(cuda) note = %q, want an explanation of why it cannot run", note)
 	}
 	if device, _ := effectiveDevice(""); device != deviceCPU {

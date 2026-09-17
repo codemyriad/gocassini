@@ -113,7 +113,7 @@
       {id}
       {disabled}
       {placeholder}
-      class="input input-sm w-full border-base-300 pr-7 shadow-none"
+      class="op-input input input-sm w-full border-base-300 pr-7 shadow-none"
       {...$input}
       use:$input.action
     />
@@ -134,10 +134,7 @@
       {:else if models.length === 0}
         <li class="model-note">This endpoint listed no models. Type a model ID.</li>
       {:else if visible.length === 0}
-        <li class="model-note">
-          No model matches “{$inputValue}”. It is still accepted — the list is the
-          endpoint's, not a limit on what you may send.
-        </li>
+        <li class="model-note">No match for “{$inputValue}”. It will be used as typed.</li>
       {:else}
         {#each visible as model (model.id)}
           {@const opt = $option({ value: model.id, label: model.id })}
@@ -170,9 +167,9 @@
     min-width: 0;
   }
   .model-label {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+    font-size: 12.5px;
+    font-weight: 550;
+    color: color-mix(in oklch, var(--color-base-content) 85%, transparent);
   }
   .model-input {
     position: relative;

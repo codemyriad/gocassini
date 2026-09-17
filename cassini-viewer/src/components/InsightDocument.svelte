@@ -2,10 +2,12 @@
   import { createEventDispatcher } from "svelte";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Calendar, FileText, MessageSquare, X } from "@lucide/svelte";
-  import { formatMeetingDateShort, type MeetingCatalogEntry } from "../viewer/catalog";
+  import { Calendar, FileText, MessageSquare } from "@lucide/svelte";
+  import CloseButton from "./ui/CloseButton.svelte";
+  import { formatMeetingDateWithDay, type MeetingCatalogEntry } from "../viewer/catalog";
   import { roomLabelOf } from "../viewer/rooms";
   import {
+    describeInsightFailure,
     formatInsightCreated,
     formatInsightStatus,
     insightHeadline,
@@ -38,16 +40,26 @@
   // False where the build can list insights but cannot fetch one's document.
   // Then the panel says so, rather than rendering an answer-shaped blank.
   export let canLoadDocument = true;
+  // Whether a failed run can be retried from here (D-749): true where the
+  // provider offers it, and only then is the control rendered. The shell owns
+  // the request; this only asks.
+  export let canRetry = false;
+  export let retrying = false;
+  export let retryError = "";
 
   const dispatch = createEventDispatcher<{
     close: void;
     openSource: MeetingCatalogEntry;
+    retry: void;
   }>();
 
   $: question = insight.question?.trim() ?? "";
   $: headline = insightHeadline(insight);
   $: pending = insight.status === "queued" || insight.status === "running";
   $: failed = insight.status === "failed";
+  // Never `insight.error` raw: the operator records a reason token and this
+  // build owns every word said for it (insights.ts, INSIGHT_FAILURE_COPY).
+  $: failure = failed ? describeInsightFailure(insight) : null;
 
   // The mock files an insight under one room. A real one can span them —
   // spanning rooms is the whole premise of asking one question of several
@@ -95,9 +107,7 @@
   <header class="ins-head">
     <div class="ins-head-top">
       <h2>{headline}</h2>
-      <button type="button" on:click={() => dispatch("close")} aria-label="Close the insight">
-        <X size={16} aria-hidden="true" />
-      </button>
+      <CloseButton label="Close the insight" on:click={() => dispatch("close")} />
     </div>
     <div class="ins-head-meta">
       {#if room}
@@ -120,18 +130,19 @@
     <!-- 1. The question the panel exists to answer, so it reads as the heading
          of the brief rather than as a caption on it. A workflow can be run with
          no question of its own, and then there is no quote to show. -->
+    <!-- A template with a question of its own leads with it. One without —
+         "summarise these" — led with a sentence naming the workflow id, which
+         is a fact about the run rather than the brief, and the answer below it
+         says what it is. -->
     {#if question}
       <p class="ins-question">“{question}”</p>
-    {:else}
-      <p class="ins-question ins-question-none">
-        Ran the <code>{insight.workflowId}</code> workflow, with no question of its own.
-      </p>
     {/if}
 
     <!-- 2. The material. -->
     {#if sources.length > 0}
-      <section class="ins-sources">
-        <h3 class="ins-eyebrow">
+      <!-- One card: the count heads the list it counts, inside it. -->
+      <section class="ins-sources ins-card">
+        <h3 class="ins-card-title">
           Context from {sources.length}
           {sources.length === 1 ? "meeting" : "meetings"}
         </h3>
@@ -144,7 +155,7 @@
                 <FileText size={14} aria-hidden="true" />
                 <span class="ins-source-title">{source.title}</span>
                 <span class="ins-source-meta">
-                  {formatMeetingDateShort(source.dateLabel)} · {roomLabelOf(source)}
+                  {formatMeetingDateWithDay(source.dateLabel)}
                 </span>
               </button>
             </li>
@@ -156,13 +167,28 @@
     <!-- 3. The answer, or the honest reason there is not one yet. -->
     {#if pending}
       <p class="ins-note" role="status">
-        This run is {formatInsightStatus(insight.status).toLowerCase()}. The answer appears
-        here when it finishes — the list keeps checking.
+        {formatInsightStatus(insight.status)}. The answer appears here when it finishes.
       </p>
-    {:else if failed}
-      <p class="ins-note ins-note-error" role="status">
-        This run failed{insight.error ? `: ${insight.error}` : "."}
-      </p>
+    {:else if failure}
+      <div class="ins-note ins-note-error" role="status">
+        <p class="ins-failure-title">{failure.title}</p>
+        <p>{failure.line}</p>
+        {#if canRetry}
+          <!-- Retry from where the failure is seen, not only from the panel
+               that started the run — which is gone by the time most people
+               notice (D-749). A retry re-runs the request: the endpoint this
+               insight asked for, falling back to the deployment's own only if
+               that endpoint has since been removed. -->
+          <div class="ins-retry">
+            <button type="button" disabled={retrying} on:click={() => dispatch("retry")}>
+              {retrying ? "Retrying…" : "Retry"}
+            </button>
+          </div>
+          {#if retryError}
+            <p class="ins-failure-detail">{retryError}</p>
+          {/if}
+        {/if}
+      </div>
     {:else if !canLoadDocument}
       <p class="ins-note" role="status">
         This build cannot fetch the document — the run and what it read are all it can show.
@@ -197,8 +223,13 @@
           [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-base-300"
       >{@html documentHtml}</div>
     {:else}
+      <!-- A succeeded run always has a path — the operator refuses to record
+           a success without one — so an empty document here means the file
+           is not where it was written, not that the model wrote nothing. It
+           is the requester's own file; they may have moved or deleted it. -->
       <p class="ins-note" role="status">
-        This run succeeded but its document is empty.
+        This run succeeded, but its document is no longer at
+        <code>{insight.documentPath}</code> in your Nextcloud files.
       </p>
     {/if}
 
@@ -211,7 +242,7 @@
          asked for it and how it ended have to be ON the document or two
          attempts are indistinguishable. -->
     <section class="ins-prov">
-      <h3 class="ins-eyebrow">This run</h3>
+      <h3 class="ins-title">This run</h3>
       <dl>
         <div>
           <dt>Asked by</dt>
@@ -248,10 +279,12 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    background-color: var(--color-base-100);
-    /* The insight reads on the same surface its cards use elsewhere, so the
-       panel itself says which of the two kinds of thing the sheet is holding. */
-    border-left: 4px solid var(--color-secondary);
+    /* The drawer ground the Prepare panel and the meeting sheet use, with what
+       is lifted off it on the lighter card surface. The insight used to be the
+       other way up, which made one sheet read as two different surfaces
+       depending on what it was holding. */
+    background-color: var(--color-base-200);
+    border-left: 4px solid var(--color-primary);
   }
 
   .ins-head {
@@ -287,24 +320,17 @@
     align-items: center;
     gap: 0.375rem;
   }
+  /* The chip the insight card's provider and model wear, so the model reads
+     as the name of a thing rather than as another fact in the row. */
   .ins-head-model {
-    font-family: monospace;
-    font-size: 0.75rem;
+    padding: 1px 6px;
+    background-color: var(--color-base-100);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-100));
+    border-radius: 5px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11.5px;
     overflow-wrap: anywhere;
-  }
-  .ins-head button {
-    display: inline-flex;
-    flex: none;
-    padding: 4px;
-    cursor: pointer;
-    background: none;
-    border: 0;
-    border-radius: var(--radius-field, 0.5rem);
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
-  }
-  .ins-head button:hover {
-    background-color: var(--color-base-200);
-    color: var(--color-base-content);
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
   }
 
   .ins-body {
@@ -325,32 +351,45 @@
     line-height: 1.4;
     color: var(--color-base-content);
   }
-  .ins-question-none {
-    font-size: 0.9375rem;
-    font-weight: 450;
-    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+
+  /* The meeting sheet's section heading (MeetingView's .mv-section-title),
+     0.5rem over what it heads. */
+  .ins-title {
+    margin: 0 0 0.5rem;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-base-content);
   }
 
-  .ins-eyebrow {
-    margin: 0 0 0.5rem;
+  /* The meeting sheet's card (its .mv-card), which is the operator's: a tint
+     of the ink over the drawer's ground. */
+  .ins-card {
+    background-color: color-mix(in oklch, var(--color-base-content) 4%, var(--color-base-200));
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  /* A list of documents, held close as the meeting sheet's insights are: 4px
+     of card round rows whose hover corners sit inside its own, under a title
+     that starts where their icons do. */
+  .ins-sources {
+    padding: 4px;
+  }
+  /* A label on the card rather than a heading over it: the drawer's small
+     capitals. */
+  .ins-card-title {
+    margin: 0;
+    padding: 8px 8px 10px;
     font-size: 11px;
     font-weight: 650;
+    line-height: 1.2;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
-
-  /* Lifted off the insight's own panel, because this is the material rather
-     than the writing. */
-  .ins-sources {
-    padding: 0.75rem;
-    background-color: var(--color-base-200);
-    border-radius: var(--radius-box, 0.75rem);
-  }
   .ins-sources ul {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 0;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -360,16 +399,16 @@
     align-items: baseline;
     gap: 0.5rem;
     width: 100%;
-    padding: 6px 8px;
+    padding: 4px 8px;
     text-align: left;
     cursor: pointer;
     background: none;
     border: 0;
-    border-radius: var(--radius-field, 0.5rem);
+    border-radius: calc(var(--radius-box, 0.5rem) - 4px);
     color: var(--color-base-content);
   }
   .ins-sources button:hover {
-    background-color: var(--color-base-100);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
   .ins-source-title {
     flex: 1;
@@ -387,18 +426,61 @@
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
 
+  /* On the same card as the sources. */
   .ins-note {
     margin: 0;
     padding: 0.75rem;
     font-size: 0.875rem;
     line-height: 1.5;
-    background-color: var(--color-base-200);
-    border-radius: var(--radius-box, 0.75rem);
+    background-color: color-mix(in oklch, var(--color-base-content) 4%, var(--color-base-200));
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 9%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.5rem);
     color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
   }
   .ins-note-error {
     background-color: color-mix(in oklch, var(--color-error) 18%, transparent);
+    border-color: color-mix(in oklch, var(--color-error) 30%, transparent);
     color: var(--color-base-content);
+  }
+  .ins-note-error p {
+    margin: 0;
+  }
+  .ins-note-error p + p {
+    margin-top: 0.375rem;
+  }
+  .ins-failure-title {
+    font-weight: 600;
+  }
+  .ins-failure-detail {
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+    overflow-wrap: anywhere;
+  }
+  .ins-retry {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.625rem;
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .ins-retry button {
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 550;
+    background-color: var(--color-base-100);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    color: var(--color-base-content);
+  }
+  .ins-retry button:hover:not(:disabled) {
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
+  }
+  .ins-retry button:disabled {
+    cursor: default;
+    opacity: 0.6;
   }
 
   .ins-prov {

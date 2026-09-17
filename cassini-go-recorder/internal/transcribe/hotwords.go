@@ -13,10 +13,9 @@ import (
 //
 // This is contextual biasing, not correction. sherpa-onnx builds a context
 // graph from the terms and adds a per-token bonus while the beam search is
-// running, so a term is only ever emitted where the acoustics already support
-// it: no pass rewrites finished text, and a term nobody said cannot appear.
-// That is the whole reason the vocabulary moved here from the deleted LLM
-// cleanup step, which could and did invent text.
+// running. It is still a prior: too large a bonus can overwhelm weak acoustic
+// evidence and make the decoder repeat a hinted word. That is why automatic
+// participant names use a smaller score than terms an operator chose.
 //
 // Two hard requirements come from sherpa-onnx itself
 // (offline-recognizer-transducer-nemo-impl.h):
@@ -45,6 +44,13 @@ const (
 	// The bonus fights the acoustic score, so it stays modest: a large boost is
 	// how contextual biasing starts inventing its own vocabulary.
 	defaultHotwordsScore = 2.0
+
+	// automaticParticipantHotwordsScore caps the bonus for participant display
+	// names added from the recording metadata. A score of 2 made a one-word
+	// name win hundreds of low-confidence token decisions in real meetings.
+	// Full-meeting comparisons found that 1 still produced repeated runs while
+	// 0.5 retained the spelling nudge without making the name self-sustaining.
+	automaticParticipantHotwordsScore = 0.5
 
 	// hotwordsMaxActivePaths is the beam width used when hints are on. Beam
 	// search is the price of hotwords, and a wider beam costs decode time for
@@ -78,6 +84,12 @@ type DecoderConfig struct {
 	Score float32
 	// TermCount is how many terms HotwordsFile holds, for provenance.
 	TermCount int
+	// ParticipantTermCount is how many trailing terms came automatically from
+	// participant metadata rather than the operator's configured vocabulary.
+	ParticipantTermCount int
+	// ParticipantScore is their effective per-token bonus. The hotwords file
+	// carries it as a per-phrase override of Score.
+	ParticipantScore float32
 	// BpeVocabFile is the vocabulary the terms are encoded with. Held here
 	// rather than read back off ModelPaths so the recognizer uses the
 	// vocabulary these hints were actually resolved against.
@@ -143,32 +155,105 @@ func NormalizeVocabulary(terms []string) []string {
 // mangled and the ones an operator should not have to retype, but they are
 // appended after the configured list so an explicit spelling always wins the
 // de-duplication.
-func vocabularyForBuild(configured []string, streams []AudioStream) []string {
+type decoderVocabulary struct {
+	Terms                []string
+	ParticipantTermCount int
+}
+
+// withoutParticipant returns the vocabulary for one participant's track. A
+// participant label is useful on everybody else's track, but is a poor prior
+// on its owner's: people rarely say their own name, and weak audio can
+// otherwise turn that short name into a repeated decoder path. A matching term
+// is omitted even when the operator also entered that spelling; it still keeps
+// its configured score on every other participant's track.
+func (v decoderVocabulary) withoutParticipant(label string) decoderVocabulary {
+	participantStart := len(v.Terms) - v.ParticipantTermCount
+	if participantStart < 0 || participantStart > len(v.Terms) {
+		return v
+	}
+	out := decoderVocabulary{Terms: make([]string, 0, len(v.Terms))}
+	for i, term := range v.Terms {
+		if strings.EqualFold(term, label) {
+			continue
+		}
+		out.Terms = append(out.Terms, term)
+		if i >= participantStart {
+			out.ParticipantTermCount++
+		}
+	}
+	return out
+}
+
+func vocabularyForBuild(configured []string, streams []AudioStream) decoderVocabulary {
+	configured = NormalizeVocabulary(configured)
 	combined := make([]string, 0, len(configured)+len(streams))
 	combined = append(combined, configured...)
 	for _, stream := range streams {
 		combined = append(combined, stream.SpeakerLabel)
 	}
-	return NormalizeVocabulary(combined)
+	terms := NormalizeVocabulary(combined)
+	return decoderVocabulary{
+		Terms:                terms,
+		ParticipantTermCount: len(terms) - len(configured),
+	}
 }
 
 // writeHotwordsFile writes one term per line in the format sherpa-onnx expects.
 // Terms are written verbatim: the models we ship emit cased, punctuated text,
 // so the spelling an operator wants to see is the spelling to bias towards.
-func writeHotwordsFile(dir string, terms []string) (string, error) {
-	if len(terms) == 0 {
+func writeHotwordsFile(dir string, vocabulary decoderVocabulary, participantScore float32) (string, error) {
+	return writeHotwordsFileNamed(dir, hotwordsFileName, vocabulary, participantScore)
+}
+
+func writeHotwordsFileNamed(dir, name string, vocabulary decoderVocabulary, participantScore float32) (string, error) {
+	if len(vocabulary.Terms) == 0 {
 		return "", nil
 	}
-	path := filepath.Join(dir, hotwordsFileName)
+	path := filepath.Join(dir, name)
 	var sb strings.Builder
-	for _, term := range terms {
+	participantStart := len(vocabulary.Terms) - vocabulary.ParticipantTermCount
+	for i, term := range vocabulary.Terms {
 		sb.WriteString(term)
+		if i >= participantStart {
+			fmt.Fprintf(&sb, " :%g", participantScore)
+		}
 		sb.WriteByte('\n')
 	}
 	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
 		return "", fmt.Errorf("write hotwords file: %w", err)
 	}
 	return path, nil
+}
+
+// speakerDecoders derives the hotword configuration for each participant
+// stream while keeping the all-participant decoder for merged fallback audio.
+// The map is empty when none of the resolved terms matches a participant.
+func speakerDecoders(workDir string, vocabulary decoderVocabulary, streams []AudioStream, base *DecoderConfig) (map[int]*DecoderConfig, error) {
+	if base == nil || !base.Biased() {
+		return nil, nil
+	}
+	decoders := make(map[int]*DecoderConfig, len(streams))
+	for ordinal, stream := range streams {
+		filtered := vocabulary.withoutParticipant(stream.SpeakerLabel)
+		if len(filtered.Terms) == len(vocabulary.Terms) {
+			continue
+		}
+		path, err := writeHotwordsFileNamed(
+			workDir,
+			fmt.Sprintf("hotwords-participant-%03d.txt", ordinal+1),
+			filtered,
+			base.ParticipantScore,
+		)
+		if err != nil {
+			return nil, err
+		}
+		cfg := *base
+		cfg.HotwordsFile = path
+		cfg.TermCount = len(filtered.Terms)
+		cfg.ParticipantTermCount = filtered.ParticipantTermCount
+		decoders[stream.Index] = &cfg
+	}
+	return decoders, nil
 }
 
 // resolveHints turns a configured vocabulary into either a usable DecoderHints
@@ -178,6 +263,11 @@ func writeHotwordsFile(dir string, terms []string) (string, error) {
 // cannot take is an operator-visible fact, not a build failure. Only a genuine
 // I/O failure writing the file is an error.
 func resolveDecoder(workDir string, terms []string, paths ModelPaths) (*DecoderConfig, *HintsProvenance, error) {
+	return resolveDecoderVocabulary(workDir, decoderVocabulary{Terms: terms}, paths)
+}
+
+func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, paths ModelPaths) (*DecoderConfig, *HintsProvenance, error) {
+	terms := vocabulary.Terms
 	// A CTC model cannot beam-search for hotwords in sherpa, so it keeps the
 	// decoder it has always had. If a vocabulary is configured, say plainly
 	// that this tier cannot use it.
@@ -187,9 +277,10 @@ func resolveDecoder(workDir string, terms []string, paths ModelPaths) (*DecoderC
 			return cfg, nil, nil
 		}
 		return cfg, &HintsProvenance{
-			TermCount: len(terms),
-			Applied:   false,
-			Reason:    "this quality tier uses a CTC model, which cannot take decoder hints; choose balanced or best",
+			TermCount:            len(terms),
+			ParticipantTermCount: vocabulary.ParticipantTermCount,
+			Applied:              false,
+			Reason:               "this quality tier uses a CTC model, which cannot take decoder hints; choose balanced or best",
 		}, nil
 	}
 
@@ -208,10 +299,11 @@ func resolveDecoder(workDir string, terms []string, paths ModelPaths) (*DecoderC
 		// one thing a kill switch has to be able to do.
 		cfg = &DecoderConfig{Method: decodingGreedySearch}
 		return cfg, &HintsProvenance{
-			TermCount:      len(terms),
-			DecodingMethod: cfg.Method,
-			Applied:        false,
-			Reason:         "disabled by configuration (" + envHintsDisabled + ")",
+			TermCount:            len(terms),
+			ParticipantTermCount: vocabulary.ParticipantTermCount,
+			DecodingMethod:       cfg.Method,
+			Applied:              false,
+			Reason:               "disabled by configuration (" + envHintsDisabled + ")",
 		}, nil
 	}
 	if paths.BpeVocabFile == "" {
@@ -220,27 +312,37 @@ func resolveDecoder(workDir string, terms []string, paths ModelPaths) (*DecoderC
 		// wrongly and bias nothing while the recognizer looks healthy. Refusing
 		// to claim the hints is what keeps that failure visible.
 		return cfg, &HintsProvenance{
-			TermCount:      len(terms),
-			DecodingMethod: cfg.Method,
-			Applied:        false,
+			TermCount:            len(terms),
+			ParticipantTermCount: vocabulary.ParticipantTermCount,
+			DecodingMethod:       cfg.Method,
+			Applied:              false,
 			Reason: "this model bundle ships no bpe.vocab, which the decoder needs to encode the terms; " +
 				"rebuild the bundle with upstream scripts/nemo/generate_bpe_vocab.py",
 		}, nil
 	}
 
-	path, err := writeHotwordsFile(workDir, terms)
+	score := hintsScore()
+	var participantScore float32
+	if vocabulary.ParticipantTermCount > 0 {
+		participantScore = min(score, float32(automaticParticipantHotwordsScore))
+	}
+	path, err := writeHotwordsFile(workDir, vocabulary, participantScore)
 	if err != nil {
 		return nil, nil, err
 	}
 	cfg.HotwordsFile = path
-	cfg.Score = hintsScore()
+	cfg.Score = score
 	cfg.TermCount = len(terms)
+	cfg.ParticipantTermCount = vocabulary.ParticipantTermCount
+	cfg.ParticipantScore = participantScore
 	cfg.BpeVocabFile = paths.BpeVocabFile
 	return cfg, &HintsProvenance{
-		TermCount:      len(terms),
-		Score:          cfg.Score,
-		DecodingMethod: cfg.Method,
-		Applied:        true,
+		TermCount:            len(terms),
+		Score:                cfg.Score,
+		ParticipantTermCount: cfg.ParticipantTermCount,
+		ParticipantScore:     cfg.ParticipantScore,
+		DecodingMethod:       cfg.Method,
+		Applied:              true,
 	}, nil
 }
 

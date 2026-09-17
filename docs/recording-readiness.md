@@ -7,8 +7,9 @@ available when the recording connection needs attention.
 ## Before installation
 
 The Nextcloud ExApp requires Nextcloud 32–35, administrator access, and a working
-AppAPI deploy daemon. Published images currently target Linux amd64. CPU
-transcription is supported; NVIDIA/CUDA is optional. Live Talk capture requires
+AppAPI deploy daemon. Published images are multi-arch: linux/amd64 and
+linux/arm64 (D-764). CPU transcription is supported on both; NVIDIA/CUDA is
+optional and x86_64-only. Live Talk capture requires
 standalone signaling with HPB media support and its internal client secret.
 Installing AppAPI alone does not configure its deploy daemon.
 

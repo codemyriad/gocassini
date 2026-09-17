@@ -37,34 +37,57 @@ describe("InsightCard", () => {
     expect(insightCardSource).not.toMatch(/\{insight\.meetingIds/);
   });
 
-  it("takes its accent from a token the Nextcloud theme does not remap", () => {
-    // primary is already the open row and the active-narrowing chips, and in
-    // the embedded build it becomes the instance's own accent — an insight has
-    // to stay visibly a different kind of thing under any theming.
-    expect(insightCardSource).toContain("var(--color-secondary)");
-    expect(insightCardSource).not.toContain("var(--color-primary)");
+  it("takes its accent from the app's own colour", () => {
+    // An insight is the app's headline object, so it wears the app's colour —
+    // in the embedded build, the instance's own accent. It was amber to stay
+    // distinct from primary under any theming, which made the one thing
+    // Cassini produces the one thing that looked borrowed.
+    expect(insightCardSource).toContain("var(--color-primary)");
+    expect(insightCardSource).not.toContain("var(--color-secondary)");
   });
 });
 
 describe("InsightCard surface", () => {
-  it("is filled, not outlined", () => {
-    // On the list's own ground a base-100 fill is the same colour as everything
-    // around it, leaving the left rule to do all the work of saying "different
-    // kind of thing". Mixed INTO base-100 rather than into transparent so it
-    // stays opaque over the row separators and stable in both themes.
-    expect(insightCardSource).toContain(
-      "background-color: color-mix(in oklch, var(--color-secondary) 10%, var(--color-base-100));",
-    );
-    expect(insightCardSource).not.toContain("background-color: var(--color-base-100);");
+  it("sits on the rail's shade, with no outline, the accent only down its side", () => {
+    // The design exploration's card: a different kind of thing from the rows
+    // around it by its shade and its rule, not by a border of its own.
+    expect(insightCardSource).toContain("background-color: var(--color-base-200);");
+    expect(insightCardSource).toContain("border-left: 3px solid var(--color-primary);");
+    expect(insightCardSource).not.toMatch(/\.insight-card \{[^}]*\bborder:/);
   });
 
   it("keeps the open card distinguishable from a hovered one", () => {
     // Three states on one surface, so the wash has to step rather than repeat.
     expect(insightCardSource).toContain(
-      "background-color: color-mix(in oklch, var(--color-secondary) 18%, var(--color-base-100));",
+      "background-color: color-mix(in oklch, var(--color-primary) 14%, var(--color-base-200));",
     );
     expect(insightCardSource).toContain(
-      "background-color: color-mix(in oklch, var(--color-secondary) 26%, var(--color-base-100));",
+      "background-color: color-mix(in oklch, var(--color-primary) 24%, var(--color-base-200));",
     );
+  });
+
+  it("lets a failed run be retried on the card, without a button inside a button", () => {
+    // The card is a container holding the open control and, for a failed run
+    // where the provider can retry, a Retry control beside it (D-749). They
+    // are siblings: the open button is closed before Retry begins.
+    expect(insightCardSource).toMatch(/<div class="insight-card"/);
+    expect(insightCardSource).not.toMatch(/<button[^>]*class="insight-card"/);
+    const open = insightCardSource.indexOf('class="insight-open"');
+    const openEnd = insightCardSource.indexOf("</button>", open);
+    const retry = insightCardSource.indexOf("{#if failed && canRetry}");
+    const cardEnd = insightCardSource.indexOf("</div>", retry);
+    expect(retry).toBeGreaterThan(openEnd);
+    expect(cardEnd).toBeGreaterThan(retry);
+    expect(insightCardSource.slice(retry, cardEnd)).toContain('class="insight-retry"');
+    expect(insightCardSource).toContain('dispatch("retry")');
+    expect(insightCardSource).toContain("export let canRetry = false;");
+  });
+
+  it("puts Retry on the header row, right-aligned, and the whole card stays the open target", () => {
+    // Laid over the card rather than taking a flex slot from the open button.
+    expect(insightCardSource).toContain(".insight-card {\n    position: relative;");
+    expect(insightCardSource).toContain(".insight-retry {\n    position: absolute;");
+    expect(insightCardSource).toContain('{retrying ? "Retrying…" : "Retry"}');
+    expect(insightCardSource).toContain('<p class="insight-retry-error" role="status">{retryError}</p>');
   });
 });

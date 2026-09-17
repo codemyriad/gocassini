@@ -257,6 +257,51 @@ func TestHTTPHandlerMountsRoutesUnderConfiguredBasePath(t *testing.T) {
 	}
 }
 
+// The USER AI routes must answer under both base paths. The ExApp image mounts
+// the API under /operator, where a prefix strip covers every pattern at once;
+// the plain compose stack mounts it under /, where each pattern is registered
+// by name — and /ai/* was missing from that list, so the Prepare panel's
+// provider picker 404ed on exactly the stack a developer runs (D-740).
+func TestHTTPHandlerMountsTheAIRoutesUnderEveryBasePath(t *testing.T) {
+	clearLLMEnv(t)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"alpha"}]}`))
+	}))
+	defer upstream.Close()
+	t.Setenv(envLLMBaseURL, upstream.URL+"/v1")
+
+	for _, basePath := range []string{"/", "/operator"} {
+		t.Run("base path "+basePath, func(t *testing.T) {
+			rt, cleanup := newTestRuntime(t)
+			defer cleanup()
+			rt.cfg.BasePath = basePath
+			handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, ExAppConfig{})
+			prefix := strings.TrimSuffix(basePath, "/")
+
+			for _, tc := range []struct {
+				path string
+				want string
+			}{
+				{prefix + "/ai/providers", `"id":"default"`},
+				{prefix + "/ai/providers/default/models", `"id":"alpha"`},
+			} {
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("GET %s = %d, want 200: %s", tc.path, rec.Code, rec.Body.String())
+				}
+				if !strings.Contains(rec.Body.String(), tc.want) {
+					t.Fatalf("GET %s body = %s, want it to carry %s", tc.path, rec.Body.String(), tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestJobDetailHandlerReturnsNotFound(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()

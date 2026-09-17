@@ -1,7 +1,12 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { Lock, Settings, Users } from "@lucide/svelte";
   import type { RoomBucket } from "../viewer/rooms";
   import { isLastBrowseType, type BrowseType, type BrowseTypeFilter } from "../viewer/insights";
+  import { matchTags, type VocabularyTag } from "../viewer/annotations";
+  import type { TagMatch } from "../viewer/listTags";
+  import { colorFor } from "../viewer/tagPalette";
+  import TagChip from "./tags/TagChip.svelte";
 
   // The rooms nav (D-654), and under it the two kinds the list holds.
   //
@@ -34,11 +39,45 @@
   export let meetingCount = 0;
   export let insightCount = 0;
 
+  export let tagsOffered = false;
+  // Null until the vocabulary loads; the operator answers 503 while it first indexes.
+  export let tags: readonly VocabularyTag[] | null = null;
+  export let tagsFailed = false;
+  export let selectedTagIds: readonly string[] = [];
+  export let tagMatch: TagMatch = "any";
+
   const dispatch = createEventDispatcher<{
     select: string | null;
     close: void;
     toggleType: BrowseType;
+    toggleTag: string;
+    tagMatch: TagMatch;
+    manageTags: void;
   }>();
+
+  const TAG_MATCHES: TagMatch[] = ["any", "all"];
+  $: tagRows = tags ? matchTags(tags, "") : null;
+
+  export let audience: "" | "everyone" | "participants" = "";
+  const AUDIENCE = {
+    everyone: {
+      label: "Visible to all users",
+      detail:
+        "Anyone with an account on this Nextcloud can open every meeting here, including its recording and transcript, and see which room it came from. Guests can't.",
+    },
+    participants: {
+      label: "Members only",
+      detail:
+        "A recording can be opened by the people in its room when it was saved, including anyone invited who didn't join the call. Guests, and people added to the room later, can't open it. Recordings from public rooms are open to anyone with an account.",
+    },
+  } as const;
+  const AUDIENCE_FOOTNOTE = "This is an organisation-wide setting. Contact your Nextcloud admin to change it.";
+  let audienceEl: HTMLElement;
+  let audienceOpen = false;
+
+  function closeAudienceOutside(event: MouseEvent) {
+    if (audienceOpen && !event.composedPath().includes(audienceEl)) audienceOpen = false;
+  }
 
   function select(key: string | null) {
     dispatch("select", key);
@@ -48,8 +87,37 @@
   }
 </script>
 
+<svelte:window on:click={closeAudienceOutside} />
+
 <nav aria-label="Rooms" class="rooms-rail" data-open={open}>
-  <h2 class="rail-head">Rooms</h2>
+  <div class="rail-head rail-head-row rooms-head">
+    <h2>Rooms</h2>
+    {#if audience}
+      <span class="audience" bind:this={audienceEl}>
+        <button
+          type="button"
+          class="audience-note"
+          aria-expanded={audienceOpen}
+          aria-describedby="audience-detail"
+          on:click={() => (audienceOpen = !audienceOpen)}
+          on:keydown={(event) => {
+            if (event.key === "Escape") audienceOpen = false;
+          }}
+        >
+          {#if audience === "everyone"}
+            <Users size={11} aria-hidden="true" />
+          {:else}
+            <Lock size={11} aria-hidden="true" />
+          {/if}
+          {AUDIENCE[audience].label}
+        </button>
+        <span id="audience-detail" role="tooltip" class="tag-popover audience-detail" class:open={audienceOpen}>
+          {AUDIENCE[audience].detail}
+          <span class="audience-foot">{AUDIENCE_FOOTNOTE}</span>
+        </span>
+      </span>
+    {/if}
+  </div>
 
   <div class="rail-list">
     <button
@@ -76,6 +144,59 @@
     {/each}
   </div>
 
+  {#if tagsOffered}
+    <div class="rail-head rail-head-sub rail-head-row">
+      <h2>Tags</h2>
+      <button
+        type="button"
+        class="manage-tags"
+        aria-label="Manage tags"
+        title="Manage tags"
+        on:click={() => dispatch("manageTags")}
+      >
+        <Settings size={14} aria-hidden="true" />
+      </button>
+    </div>
+    {#if tagRows}
+      <div class="rail-list" role="group" aria-label="Filter by tag">
+        {#each tagRows as tag (tag.tagId)}
+          <label class="type-row" data-tag-color={colorFor(tag)}>
+            <input
+              type="checkbox"
+              class="cassini-check tag-box"
+              checked={selectedTagIds.includes(tag.tagId)}
+              on:change={() => dispatch("toggleTag", tag.tagId)}
+            />
+            <span class="rail-tag">
+              <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
+            </span>
+            <span class="room-count">{tag.meetings}</span>
+          </label>
+        {:else}
+          <p class="rail-note">No tags yet.</p>
+        {/each}
+      </div>
+      {#if selectedTagIds.length >= 2}
+        <div class="tag-match">
+          <span class="tag-match-label" aria-hidden="true">Match</span>
+          <div class="segmented" role="group" aria-label="Show meetings with">
+            {#each TAG_MATCHES as mode}
+              <button
+                type="button"
+                aria-pressed={tagMatch === mode}
+                aria-label={`${mode} of the ticked tags`}
+                class="segment"
+                on:click={() => dispatch("tagMatch", mode)}>{mode}</button
+              >
+            {/each}
+          </div>
+        </div>
+      {/if}
+    {:else if tagsFailed}
+      <p class="rail-note">Tags are unavailable right now.</p>
+    {/if}
+  {/if}
+
   {#if insightsOffered}
     <h2 class="rail-head rail-head-sub">Show</h2>
     <div class="rail-list" role="group" aria-label="Show">
@@ -85,6 +206,7 @@
       <label class="type-row">
         <input
           type="checkbox"
+          class="cassini-check"
           data-type="meetings"
           checked={types.meetings}
           disabled={isLastBrowseType(types, "meetings")}
@@ -96,6 +218,7 @@
       <label class="type-row">
         <input
           type="checkbox"
+          class="cassini-check"
           data-type="insights"
           checked={types.insights}
           disabled={isLastBrowseType(types, "insights")}
@@ -109,15 +232,15 @@
 </nav>
 
 <style>
-  /* Plain CSS rather than Tailwind utilities: aria-pressed drives four
-     properties at once (fill, text, weight, the inset marker), which reads
+  /* Plain CSS rather than Tailwind utilities: aria-pressed drives two
+     properties at once (fill and the inset marker), which reads
      better as one rule than as a stack of aria-[pressed=true]: variants, and
      the narrow-viewport drawer needs a media query either way. */
   .rooms-rail {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding: 0.875rem 0;
+    padding: 16px 0 0.875rem;
     overflow-y: auto;
     overscroll-behavior: contain;
     background-color: var(--color-base-200);
@@ -157,9 +280,10 @@
     cursor: pointer;
     color: var(--color-base-content);
     font-size: 0.875rem;
+    line-height: 20px;
   }
   .type-row:hover {
-    background-color: var(--color-base-300);
+    background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
   }
   .type-row:has(input:disabled) {
     cursor: default;
@@ -169,51 +293,161 @@
     background: none;
   }
 
-  .type-row input[type="checkbox"] {
-    position: relative;
-    flex: none;
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    appearance: none;
-    -webkit-appearance: none;
-    cursor: pointer;
-    background: transparent;
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 25%, transparent);
-    border-radius: var(--radius-selector, 0.25rem);
-  }
-  /* Each box takes the colour of the thing it shows, so the filter reads
-     against the list rather than against itself: base-content for a meeting
-     row, secondary — this theme's amber, and the colour every insight surface
-     uses — for an insight card. */
-  .type-row input[data-type="meetings"]:checked {
+  .type-row input[data-type]:checked {
     background-color: var(--color-base-content);
     border-color: var(--color-base-content);
   }
-  .type-row input[data-type="insights"]:checked {
-    background-color: var(--color-secondary);
-    border-color: var(--color-secondary);
-  }
-  .type-row input[type="checkbox"]:checked::after {
-    content: "";
-    position: absolute;
-    top: 1px;
-    left: 4.5px;
-    width: 3.5px;
-    height: 8px;
-    border-style: solid;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
-  }
-  .type-row input[data-type="meetings"]:checked::after {
+  .type-row input[data-type]:checked::after {
     border-color: var(--color-base-100);
   }
-  .type-row input[data-type="insights"]:checked::after {
-    border-color: var(--color-secondary-content);
+  .type-row input.tag-box:checked {
+    background-color: var(--tag);
+    border-color: var(--tag);
   }
-  .type-row input[type="checkbox"]:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
+  .type-row input.tag-box:checked::after {
+    border-color: var(--color-base-100);
+  }
+  .rail-tag {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  .rail-tag :global(span.tag-chip) {
+    flex: 0 1 auto;
+  }
+  .rail-tag :global(.tag-chip span.tag-dot) {
+    translate: none;
+  }
+
+  .tag-match {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 16px 4px;
+  }
+  .tag-match-label {
+    font-size: 0.75rem;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .segmented {
+    flex: 1;
+    display: flex;
+    gap: 3px;
+    padding: 4px;
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    border-radius: var(--radius-field, 0.5rem);
+  }
+  .segment {
+    flex: 1;
+    padding: 2px 8px;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: calc(var(--radius-field, 0.5rem) - 4px);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+    transition: background-color 0.12s ease, color 0.12s ease;
+  }
+  .segment:hover {
+    color: var(--color-base-content);
+  }
+  .segment[aria-pressed="true"] {
+    background-color: var(--color-base-200);
+    color: var(--color-base-content);
+    box-shadow:
+      0 1px 2px oklch(0% 0 0 / 0.12),
+      0 0 0 1px color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .segment {
+      transition: none;
+    }
+  }
+
+  .rail-head-row.rooms-head {
+    position: relative;
+    gap: 6px;
+  }
+  .audience-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: -3px 0;
+    padding: 2px 6px;
+    cursor: help;
+    background-color: color-mix(in oklch, var(--color-base-content) 7%, transparent);
+    border: 0;
+    border-radius: 5px;
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 14px;
+    letter-spacing: normal;
+    text-transform: none;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  .audience-note:hover,
+  .audience-note[aria-expanded="true"] {
+    background-color: color-mix(in oklch, var(--color-base-content) 12%, transparent);
+    color: var(--color-base-content);
+  }
+  .audience-detail {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 8px;
+    right: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    letter-spacing: normal;
+    text-transform: none;
+    text-wrap: pretty;
+    color: var(--color-base-content);
+  }
+  .audience-foot {
+    display: block;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--color-base-300);
+    font-size: 11px;
+    text-wrap: balance;
+    color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+  }
+  .audience:hover .audience-detail,
+  .audience:focus-within .audience-detail,
+  .audience-detail.open {
+    display: block;
+  }
+
+  .rail-head-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .manage-tags {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin: -6px 0;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-selector, 0.25rem);
+    color: inherit;
+  }
+  .manage-tags:hover {
+    color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
+  }
+  .rail-note {
+    padding: 4px 16px;
+    font-size: 0.8125rem;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
 
   .room-button {
@@ -230,17 +464,11 @@
     font-size: 0.875rem;
   }
   .room-button:hover {
-    background-color: var(--color-base-300);
+    background-color: color-mix(in oklch, var(--color-base-content) 6%, transparent);
   }
   .room-button[aria-pressed="true"] {
-    background-color: color-mix(
-      in oklch,
-      var(--color-primary) 15%,
-      transparent
-    );
-    color: var(--color-primary);
-    font-weight: 600;
-    box-shadow: inset 2px 0 0 var(--color-primary);
+    background-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+    box-shadow: inset 3px 0 0 var(--color-primary);
   }
 
   /* "No room" is the absence of a room, not a room — italic so it does not read
@@ -265,9 +493,6 @@
     font-size: 0.6875rem;
     font-variant-numeric: tabular-nums;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
-  }
-  .room-button[aria-pressed="true"] .room-count {
-    color: var(--color-primary);
   }
 
   /* Narrow: the rail becomes the drawer. visibility (not just the transform)

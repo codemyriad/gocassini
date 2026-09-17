@@ -123,6 +123,12 @@ func (c ExAppConfig) meetingsContextHandler(logger *log.Logger) http.Handler {
 }
 
 func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request, client *http.Client, logger *log.Logger) {
+	// Set once, before any answer: AppAPI caches a proxied GET for an hour, and
+	// a cached refusal is worse than a cached document — a 404 from an ACL that
+	// has since been granted, or a 502 from an outage that has since cleared,
+	// would be served for the rest of the hour (D-740).
+	w.Header().Set("Cache-Control", "no-store")
+
 	request, err := parseMeetingsContextRequest(r.URL.Query())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -147,7 +153,16 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 	defer cancel()
 
 	readable, catalog, ok := c.readableMeetingsForCaller(ctx, client, caller, logger)
-	if !ok {
+	if !ok || len(readable) == 0 {
+		// Empty is an outage here, not an answer — the same guard the insight
+		// handler has. serveFilteredCatalog fails CLOSED, so a per-caller scan
+		// that errored arrives as an empty catalog with ok=true, and the loop
+		// below would then serve a substrate failure as "not one of yours".
+		// Nobody reaches this route without having just listed their own
+		// meetings, so a readable set of nothing is the failure, not the fact.
+		if logger != nil {
+			logger.Printf("meetings context: caller=%s has no readable meetings (ok=%t) — refusing as an outage rather than a denial", caller, ok)
+		}
 		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
 		return
 	}
@@ -219,7 +234,6 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", request.contentType())
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
@@ -257,7 +271,7 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 	raw := query["id"]
 	if joined := strings.TrimSpace(query.Get("ids")); joined != "" {
 		if len(raw) > 0 {
-			return request, errors.New("give ids as one comma-separated `ids`, or as repeated `id`, not both")
+			return request, errors.New("meeting ids were given both as one list and one by one")
 		}
 		raw = strings.Split(joined, ",")
 	}
@@ -286,7 +300,7 @@ func parseMeetingsContextRequest(query url.Values) (meetingsContextRequest, erro
 		request.ids = append(request.ids, id)
 	}
 	if len(request.ids) == 0 {
-		return request, errors.New("at least one meeting id is required, as `ids=<id>,<id>`")
+		return request, errors.New("at least one meeting id is required")
 	}
 	if len(request.ids) > maxContextMeetings {
 		return request, fmt.Errorf("a context bundle holds at most %d meetings, got %d", maxContextMeetings, len(request.ids))
@@ -343,11 +357,12 @@ func isPlainMeetingID(id string) bool {
 // what makes the two documents identical rather than merely similar.
 //
 // A failed per-caller scan reaches here as an EMPTY catalog, not as an error —
-// serveFilteredCatalog fails closed — so every requested id then answers 404.
-// That is the safe direction (over-restriction, never disclosure) and it is
-// indistinguishable from a denial, which is the same thing every other read of
-// this archive says. See followups: telling a scan failure apart needs the
-// resolveCatalogForCaller extraction D-701 makes.
+// serveFilteredCatalog fails closed — so the readable set comes back empty with
+// ok=true. That is the safe direction (over-restriction, never disclosure), and
+// both callers treat an empty set as the outage it almost always is and answer
+// 502 rather than 404: a caller who has just listed their own meetings and now
+// reads none of them has hit a failure, not a permission change. Telling the
+// two apart exactly needs the resolveCatalogForCaller extraction D-701 makes.
 //
 // Which model this instance runs is resolved inside that same resolution, so
 // this reads the caller's slice under access control and the whole archive under
@@ -405,49 +420,36 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 
 // stageMeetingForContext downloads one recording into destPath under the same
 // identity the read proxy would use: AS THE CALLER under access control, so
-// Nextcloud enforces the per-file ACL a second time and the catalog intersect is
-// not the only thing standing between a caller and a recording; as the owner
-// under the default model, where there is no mount in anybody's home and reading
-// as the caller would find nothing at all.
-//
-// It returns the upstream status so the caller can keep denied and absent
-// indistinguishable, and draws down a shared byte budget so one request cannot
-// stage the archive.
+// Nextcloud enforces the per-file ACL a second time; as the owner under the
+// default model, where reading as the caller would find nothing at all. It draws
+// down a shared byte budget so one request cannot stage the archive.
 func (c ExAppConfig) stageMeetingForContext(ctx context.Context, client *http.Client, caller, relPath, destPath string, budget *int64) (int, error) {
 	readAs, _ := ncArchiveReadIdentity(caller)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(readAs, relPath), nil)
+	written, status, err := c.stageRecording(ctx, client, readAs, relPath, destPath, *budget)
 	if err != nil {
-		return 0, err
-	}
-	c.setAppAPIDAVHeadersForUser(req, readAs)
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer drainClose(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("GET %s -> %d", relPath, resp.StatusCode)
-	}
-
-	file, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return resp.StatusCode, err
-	}
-	defer file.Close()
-	// One past the budget, so exhausting it is detectable rather than a silently
-	// truncated recording that fails to parse and blames the file.
-	written, err := io.Copy(file, io.LimitReader(resp.Body, *budget+1))
-	if err != nil {
-		return resp.StatusCode, err
-	}
-	if written > *budget {
-		return resp.StatusCode, fmt.Errorf("the requested meetings exceed the %d MiB a single bundle may stage", maxContextStagedBytes>>20)
-	}
-	if written == 0 {
-		return resp.StatusCode, fmt.Errorf("GET %s returned an empty recording", relPath)
+		return status, err
 	}
 	*budget -= written
-	return resp.StatusCode, file.Close()
+	return status, nil
+}
+
+// stageRecording downloads relPath, read as readAs, for the CLI to read. It
+// refuses more than limit bytes, and an empty body, because no recording the
+// CLI can read is empty. status is upstream's, so a caller can keep denied and
+// absent indistinguishable.
+func (c ExAppConfig) stageRecording(ctx context.Context, client *http.Client, readAs, relPath, destPath string, limit int64) (written int64, status int, err error) {
+	if limit <= 0 {
+		// davDownloadFile reads zero as "no limit".
+		return 0, 0, fmt.Errorf("GET %s: no staging budget left", relPath)
+	}
+	_, written, status, err = c.davDownloadFile(ctx, client, readAs, relPath, destPath, limit)
+	if err != nil {
+		return written, status, err
+	}
+	if written == 0 {
+		return 0, status, fmt.Errorf("GET %s returned an empty recording", relPath)
+	}
+	return written, status, nil
 }
 
 // renderMeetingsContext runs the CLI over the staged recordings and returns the

@@ -1,6 +1,6 @@
 ---
 name: cassini-meetings
-description: Read Cassini meeting recordings — list the rooms, list meetings (filtered by room and date), pull one meeting's transcript and summary as context, pull several meetings as one document, or download a portable .opus — using the `cassini meetings` CLI against a Nextcloud instance. Use when the user asks what was said or decided in a meeting, asks you to turn a recorded conversation into a plan, issues, notes or a summary, asks which rooms or conversations have recordings, asks for the meetings from a particular room or between two dates, or refers to "the recording", "the call", "last week's meeting", "the standup", or a meeting by name, room or date.
+description: Read Cassini meeting recordings — list the rooms, list meetings (filtered by room and date), pull one meeting's transcript and summary as context, pull several meetings as one document, or download a portable .opus — using the `cassini meetings` CLI against a Nextcloud instance. Use when the user asks what was said or decided in a meeting, asks you to turn a recorded conversation into a plan, issues, notes or a summary, asks which rooms or conversations have recordings, asks for the meetings from a particular room or between two dates, or refers to "the recording", "the call", "last week's meeting", "the standup", or a meeting by name, room or date. Also finds where something was said across meetings (`meetings search`), lists and reads the tags and marks on meetings, narrows any of it to a tag, and — only when the user asks — marks a meeting or a stretch of one (`meetings annotate`). Use when the user asks to search their meetings, find the meetings tagged something, or tag, label or mark a meeting or part of one.
 ---
 
 # Read Cassini meeting recordings
@@ -229,6 +229,54 @@ To keep the meeting file itself — to play the audio, or to inspect it:
 ./bin/cassini inspect "./Meeting.opus"
 ```
 
+## Find by what was said, or by tag
+
+```bash
+./bin/cassini meetings search "offer letter"                 # where was this said?
+./bin/cassini meetings search "offer" --tag hiring           # ...only in meetings tagged hiring
+./bin/cassini meetings list --tag hiring --from 2026-08-01   # the meetings carrying a tag
+./bin/cassini meetings tags                                  # the tags on meetings I may read
+./bin/cassini meetings annotations <meeting-id>              # what is marked in one meeting, and by whom
+```
+
+Search answers with **references** — a meeting and a time — never transcript
+text. Read what was said with `meetings context`. With `--json`, a hit that
+falls inside a marked stretch carries the tags that cover it.
+
+Every answer states how many of the meetings you may read it actually covered.
+When that is partial, say so: "no match" over partial coverage is not a no.
+
+## Mark what matters
+
+**Only when the user asks you to.** A mark is shared — everyone who can open
+the meeting sees it — and it is written into the recording file itself, so it
+travels with every copy of the meeting.
+
+```bash
+./bin/cassini meetings annotate <meeting-id> --ops ./ops.json --json
+```
+
+```json
+{"ops":[
+  {"op":"mark","tag":{"label":"hiring"},"target":{"kind":"meeting"}},
+  {"op":"mark","tag":{"label":"budget"},"target":{"kind":"time-range","startMs":869000,"endMs":884000}}
+]}
+```
+
+- **One batch, one write.** Put everything for a meeting into one call.
+- **Times are milliseconds into the recording**, and a stretch is
+  `[startMs, endMs)`. Take them from `meetings context --json` segment timings.
+- **Re-running the same batch is safe**: a mark that already exists is not
+  added twice.
+- **Your marks are recorded as an agent's**, under this account, with one
+  operation id, which the result reports. Tell the user the id:
+  `{"ops":[{"op":"undo-operation","operationId":"op_..."}]}` removes the whole
+  batch.
+- **Exit 3** means the meeting's marks changed since you read them (with
+  `--expect-revision`) — read them again. **Exit 4** means the batch is invalid,
+  and says why. **Exit 5** means the marks were made against audio that has
+  since changed — stop and tell the user.
+
 ## How to use what you get
 
 **The transcript is derived, not edited.** Both output modes label it
@@ -309,8 +357,9 @@ The Cassini app reads exactly the same documents through the operator's own
 one implementation, and what you read is what the app shows. There is nothing
 for you to call there; it is named here so you do not build a second reader.
 
-This surface is **read-only**. There is no command here to start, stop, delete or
-re-run a recording, and there is no way to read a meeting the account may not
+This surface reads, and it writes exactly one thing: **marks**, through
+`meetings annotate`, on meetings this account may read. There is no command here
+to start, stop, delete or re-run a recording, and there is no way to read a meeting the account may not
 read. `meetings rooms` enumerates rooms, but only the ones this account already
 has readable recordings from — it is a view of the same permitted set, not a
 directory of the instance's conversations. If the user needs any of that, tell them it is an administrator action in

@@ -7,7 +7,7 @@ import meetingViewSource from "./MeetingView.svelte?raw";
 // has to keep saying while the transcript scrolls under it.
 
 describe("MeetingView header", () => {
-  it("keeps the meeting's name on screen while the transcript scrolls", () => {
+  it("keeps the meeting's name and its tags on screen while the transcript scrolls", () => {
     // It used to be a strip of status badges with the title in a SECOND,
     // scrolling header below it, so the one thing saying which meeting you were
     // reading left the screen the moment you started reading it.
@@ -16,10 +16,17 @@ describe("MeetingView header", () => {
       meetingViewSource.indexOf("</header>"),
     );
     expect(header).toContain('{meeting ? meeting.title : "Meeting transcript viewer"}');
-    expect(header).toContain("roomLabelOf(meeting)");
-    expect(header).toContain("formatMeetingDate(meeting.dateLabel)");
-    expect(header).toContain("formatClockTime(clampedDurationMs)");
-    expect(header).toContain("{#each speakerNames as name}");
+    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
+    // When it happened, where, how long and who was in it are read once on
+    // arrival, so they scroll away with the transcript rather than holding a
+    // third of the screen through it.
+    expect(header).not.toContain("formatMeetingDate(meeting.dateLabel)");
+    expect(meetingViewSource).toContain('<div class="mv-meta px-4 min-[981px]:px-6">');
+    const meta = meetingViewSource.slice(meetingViewSource.indexOf('class="mv-meta'));
+    expect(meta).toContain("roomLabelOf(meeting)");
+    expect(meta).toContain("formatMeetingDate(meeting.dateLabel)");
+    expect(meta).toContain("formatClockTime(clampedDurationMs)");
+    expect(meta).toContain("{#each speakerNames as name}");
     // And there is no second header left to scroll away.
     expect(meetingViewSource).not.toContain('class="m-4 mb-8 min-[981px]:mx-8');
   });
@@ -39,6 +46,38 @@ describe("MeetingView header", () => {
   });
 });
 
+describe("MeetingView tagging", () => {
+  it("works unwired: every tagging prop has a default, and no loader means no tagging", () => {
+    expect(meetingViewSource).toContain("export let tagVocabulary: VocabularyTag[] = [];");
+    expect(meetingViewSource).toContain("export let loadAnnotations: LoadAnnotations | null = null;");
+    expect(meetingViewSource).toContain("export let applyAnnotations: ApplyAnnotations | null = null;");
+    // A null loader leaves the session off, and an off session draws nothing
+    // (marking.components.test.ts renders both states).
+    expect(meetingViewSource).toContain('$: marksFor = loadAnnotations ? (meeting?.id ?? "") : null;');
+    expect(meetingViewSource).toContain("void marks.open(loadAnnotations, applyAnnotations);");
+  });
+
+  it("says the tags changed after every write that succeeded", () => {
+    expect(meetingViewSource).toContain(
+      'const marks = createMarksSession((result) => dispatch("tagsChanged", result));',
+    );
+  });
+
+  it("keeps whole-meeting tags in the header and wraps the transcript in the marking frame", () => {
+    const header = meetingViewSource.slice(
+      meetingViewSource.indexOf('<header class="sticky'),
+      meetingViewSource.indexOf("</header>"),
+    );
+    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
+    const frameAt = meetingViewSource.indexOf("<TranscriptFrame");
+    expect(frameAt).toBeGreaterThan(-1);
+    expect(meetingViewSource.indexOf("{#each transcriptRows as row (row.key)}")).toBeGreaterThan(frameAt);
+    expect(meetingViewSource.indexOf("</TranscriptFrame>")).toBeGreaterThan(
+      meetingViewSource.indexOf("{#each transcriptRows as row (row.key)}"),
+    );
+  });
+});
+
 describe("MeetingView linked insights", () => {
   it("shows what a meeting was used for under its summary, not under its transcript", () => {
     // It was a strip pinned to the bottom of the sheet, below the whole
@@ -47,7 +86,7 @@ describe("MeetingView linked insights", () => {
     const summaryAt = meetingViewSource.indexOf("{@html summaryHtml}");
     const insightsAt = meetingViewSource.indexOf("{#if linkedInsights.length > 0}");
     const transcriptAt = meetingViewSource.indexOf(
-      '<p class="text-xl font-semibold text-base-content">Transcript</p>',
+      '<p class="mv-section-title mv-section-title-bar">Transcript</p>',
     );
     expect(summaryAt).toBeGreaterThan(-1);
     expect(insightsAt).toBeGreaterThan(summaryAt);

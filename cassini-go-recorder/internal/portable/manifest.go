@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -58,6 +59,10 @@ type Manifest struct {
 	// summary.md content lives in Attachments, not here.
 	Summary     map[string]any   `json:"summary,omitempty"`
 	Attachments []map[string]any `json:"attachments,omitempty"`
+	// Annotations is the optional tags-and-marks document (D-737). It is kept as
+	// raw JSON so that no reader fails to open a recording because of it; see
+	// ParseAnnotations.
+	Annotations json.RawMessage `json:"annotations,omitempty"`
 }
 
 type Provenance struct {
@@ -142,11 +147,14 @@ type ProcessingStep struct {
 // HintsProvenance says what decoder biasing a speech-to-text pass actually
 // applied, and when it could not, why. Absent means the pass ran unbiased.
 type HintsProvenance struct {
-	TermCount      int     `json:"termCount"`
-	Score          float32 `json:"score,omitempty"`
-	DecodingMethod string  `json:"decodingMethod,omitempty"`
-	Applied        bool    `json:"applied"`
-	Reason         string  `json:"reason,omitempty"`
+	TermCount            int     `json:"termCount"`
+	Score                float32 `json:"score,omitempty"`
+	ParticipantTermCount int     `json:"participantTermCount,omitempty"`
+	ParticipantScore     float32 `json:"participantScore,omitempty"`
+	OwnNameExcluded      bool    `json:"ownNameExcluded,omitempty"`
+	DecodingMethod       string  `json:"decodingMethod,omitempty"`
+	Applied              bool    `json:"applied"`
+	Reason               string  `json:"reason,omitempty"`
 }
 
 type Meeting struct {

@@ -23,8 +23,13 @@
   export let sourceCount = 0;
   // Whether this insight is the one the sheet is holding.
   export let selected = false;
+  // Whether a failed run can be retried from the card (D-749). Only where the
+  // provider offers it; the shell owns the request.
+  export let canRetry = false;
+  export let retrying = false;
+  export let retryError = "";
 
-  const dispatch = createEventDispatcher<{ open: void }>();
+  const dispatch = createEventDispatcher<{ open: void; retry: void }>();
 
   $: headline = insightHeadline(insight);
   // A finished run says what it is by having a document to open, so the badge
@@ -32,77 +37,137 @@
   // readable answer. Without it a queued run is a card with nothing behind it,
   // and a failed one is indistinguishable from a good one.
   $: pending = insight.status !== "succeeded";
+  $: failed = insight.status === "failed";
 </script>
 
+<!-- The card is a container, not a control, for the reason the meeting row is
+     one: Retry has to sit inside the card, and a button cannot hold another.
+     The open button fills the card; Retry is its sibling, laid over the header
+     row beside the status pill. `.insight-card` and aria-current stay on THIS
+     element because the card's open state is styled from that pair; the open
+     button repeats aria-current because that is the element a screen reader
+     lands on. -->
 <div class="insight-row">
-  <button
-    type="button"
-    class="insight-card"
-    aria-current={selected ? "page" : undefined}
-    on:click={() => dispatch("open")}
-  >
-    <span class="insight-eyebrow">
-      <span class="insight-kind">Insight</span>
-      {#if pending}
-        <span class="insight-status" data-status={insight.status}>
-          {formatInsightStatus(insight.status)}
+  <div class="insight-card" aria-current={selected ? "page" : undefined}>
+    <button
+      type="button"
+      class="insight-open"
+      aria-current={selected ? "page" : undefined}
+      on:click={() => dispatch("open")}
+    >
+      <span class="insight-eyebrow">
+        <span class="insight-kind">Insight</span>
+        {#if pending}
+          <span class="insight-status" data-status={insight.status}>
+            {formatInsightStatus(insight.status)}
+          </span>
+        {/if}
+      </span>
+      <span class="insight-line">
+        <span class="insight-title">{headline}</span>
+        <span class="insight-meta">
+          <span>{formatInsightCreated(insight)}</span>
+        <!-- Nothing at all when no source is readable: an insight whose meetings
+             this caller cannot see does not report how many there were. -->
+          {#if sourceCount > 0}
+            <span class="rule" aria-hidden="true"></span>
+            <span>{sourceCount} {sourceCount === 1 ? "meeting" : "meetings"}</span>
+          {/if}
         </span>
+      </span>
+    </button>
+    <!-- A failed run is recoverable from the list it is seen in, not only from
+         the panel that started it (D-749). Only for a failed run, and only
+         where the provider can retry. -->
+    {#if failed && canRetry}
+      <button
+        type="button"
+        class="insight-retry"
+        disabled={retrying}
+        on:click={() => dispatch("retry")}
+      >
+        {retrying ? "Retrying…" : "Retry"}
+      </button>
+      {#if retryError}
+        <p class="insight-retry-error" role="status">{retryError}</p>
       {/if}
-    </span>
-    <span class="insight-title">{headline}</span>
-    <span class="insight-meta">
-      <span>{formatInsightCreated(insight)}</span>
-      <!-- Nothing at all when no source is readable: an insight whose meetings
-           this caller cannot see does not report how many there were. -->
-      {#if sourceCount > 0}
-        <span class="dot" aria-hidden="true"></span>
-        <span>{sourceCount} {sourceCount === 1 ? "meeting" : "meetings"}</span>
-      {/if}
-    </span>
-  </button>
+    {/if}
+  </div>
 </div>
 
 <style>
   /* Inset from the list's full-bleed rows, so the card reads as an object
      sitting in the stream rather than another row of it. */
   .insight-row {
-    padding: 6px 20px;
+    /* Enough air that a row tinted by selection directly above or below does
+       not read as touching the card. */
+    padding: 10px var(--list-x, 20px);
   }
 
-  /* Secondary, not primary: the open row and the active-narrowing chips are
-     already primary, and an insight has to read as a different KIND of thing
-     rather than as a selected meeting. Secondary is this theme's amber — the
-     colour the prototype gives insights — and, unlike primary, it is not
-     remapped to the Nextcloud accent in the embedded build, so the distinction
-     survives whatever the instance is themed. */
-  /* Filled, not outlined. On the list's own ground an insight card with a
-     base-100 fill is the same colour as everything around it, and the left rule
-     alone is doing all the work of saying "different kind of thing". A wash of
-     the secondary — this theme's amber, and the colour every insight surface
-     already uses — carries that at a glance, and mixing INTO base-100 rather
-     than into transparent keeps it opaque over the row separators and stable in
-     both themes. */
-  .insight-card {
+  /* The open control fills the card and draws nothing of its own: the surface
+     is the card's, so the card looks the same whether or not Retry is on it. */
+  .insight-open {
     display: flex;
     flex-direction: column;
     gap: 3px;
     width: 100%;
-    padding: 10px 12px;
+    padding: 11px 14px;
     text-align: left;
     cursor: pointer;
-    background-color: color-mix(in oklch, var(--color-secondary) 10%, var(--color-base-100));
-    border: 1px solid color-mix(in oklch, var(--color-secondary) 22%, var(--color-base-300));
-    border-left: 3px solid var(--color-secondary);
+    background: transparent;
+    border: 0;
+    border-radius: inherit;
+    color: inherit;
+    font: inherit;
+  }
+
+  /* On the header row, right-aligned, beside the Failed pill. Absolute rather
+     than a flex sibling so the open control keeps the whole card as its
+     target; the title sits on the next line, so nothing runs under it. */
+  .insight-retry {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    padding: 2px 10px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 550;
+    line-height: 1.3;
+    background: transparent;
+    border: 1px solid var(--color-base-300);
     border-radius: var(--radius-field, 0.5rem);
     color: var(--color-base-content);
   }
+  .insight-retry:hover:not(:disabled) {
+    background-color: var(--color-base-200);
+  }
+  .insight-retry:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  .insight-retry-error {
+    margin: 0;
+    padding: 0 12px 8px;
+    font-size: 0.75rem;
+    color: var(--color-error);
+  }
+
+  /* The design exploration's card: the rail's shade (the sheet's ground),
+     darker than the list it sits in where the theme is dark, with no outline
+     and square corners, and the accent only down its left edge. Hover and open
+     tint that same shade with the accent. */
+  .insight-card {
+    position: relative;
+    background-color: var(--color-base-200);
+    border-left: 3px solid var(--color-primary);
+    border-radius: 0;
+    color: var(--color-base-content);
+  }
   .insight-card:hover {
-    background-color: color-mix(in oklch, var(--color-secondary) 18%, var(--color-base-100));
+    background-color: color-mix(in oklch, var(--color-primary) 14%, var(--color-base-200));
   }
   .insight-card[aria-current="page"] {
-    background-color: color-mix(in oklch, var(--color-secondary) 26%, var(--color-base-100));
-    border-color: color-mix(in oklch, var(--color-secondary) 55%, transparent);
-    border-left-color: var(--color-secondary);
+    background-color: color-mix(in oklch, var(--color-primary) 24%, var(--color-base-200));
   }
 
   .insight-eyebrow {
@@ -117,7 +182,7 @@
     line-height: 1;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: color-mix(in oklch, var(--color-secondary) 80%, var(--color-base-content));
+    color: color-mix(in oklch, var(--color-primary) 80%, var(--color-base-content));
   }
 
   .insight-status {
@@ -135,7 +200,27 @@
     color: var(--color-base-content);
   }
 
+  /* Wide enough for both: the metadata reads along the title rather than
+     under it, which keeps a card the height of the rows around it. */
+  .insight-line {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  @media (min-width: 721px) {
+    .insight-line {
+      flex-direction: row;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .insight-meta {
+      flex: none;
+    }
+  }
+
   .insight-title {
+    min-width: 0;
     font-weight: 550;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -151,11 +236,13 @@
     font-variant-numeric: tabular-nums;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
-  .insight-meta .dot {
+  /* The meeting rows' own separator, so the two kinds of row in one list
+     punctuate their metadata the same way. */
+  .insight-meta .rule {
     flex: none;
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background-color: currentColor;
+    width: 1px;
+    height: 10px;
+    margin: 0 2px;
+    background-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
   }
 </style>

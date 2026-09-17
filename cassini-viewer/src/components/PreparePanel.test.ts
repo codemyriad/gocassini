@@ -93,7 +93,9 @@ describe("PreparePanel", () => {
   // renders nothing.
   it("has its generate slot forwarded by the App that mounts it", () => {
     expect(appSource).toContain('<svelte:fragment slot="generate" let:entries>');
-    expect(appSource).toContain('<slot name="prepare-generate" {entries} />');
+    expect(appSource).toContain(
+      '<slot name="prepare-generate" {entries} onInsightCreated={handleInsightCreated} />',
+    );
     // The readiness slot beside it, so a change that drops one is visible here
     // rather than as a card that silently stops appearing.
     expect(appSource).toContain('<slot name="prepare-readiness" slot="readiness" />');
@@ -124,5 +126,32 @@ describe("PreparePanel", () => {
     expect(preparePanelSource).not.toContain("features");
     expect(preparePanelSource).not.toContain("fetch(");
     expect(preparePanelSource).not.toContain("administrator");
+  });
+
+  it("stamps the bundle with the selection it was assembled for, not the one it landed in", () => {
+    // The list is live behind the panel. The key is read before the await and
+    // the bytes are discarded if the selection moved under them (D-749).
+    const ensure = preparePanelSource.slice(
+      preparePanelSource.indexOf("async function ensureBundle"),
+      preparePanelSource.indexOf("function describeError"),
+    );
+    expect(ensure.indexOf("const key = selectionKey;")).toBeLessThan(ensure.indexOf("await loadBundle()"));
+    expect(ensure).toContain("bundleKey = key;");
+    expect(ensure).not.toContain("bundleKey = selectionKey;");
+    expect(ensure).toContain("if (key !== selectionKey) {");
+  });
+
+  it("withholds every action the operator would refuse", () => {
+    // Above twenty, and with a meeting that has no single-file recording:
+    // both make the request for the SET fail, so Copy, Download and the
+    // generate slot follow the sentence that says why rather than offering an
+    // action that 404s. A row marked "Blocks Prepare" beside a working Copy
+    // button was the panel disagreeing with itself.
+    expect(preparePanelSource).toContain("$: overCap = entries.length > MAX_SELECTED_MEETINGS;");
+    expect(preparePanelSource).toContain(
+      "$: blocked = overCap || entries.some((entry) => lacksPortableAudio(entry));",
+    );
+    expect(preparePanelSource.match(/disabled=\{busy \|\| blocked\}/g) ?? []).toHaveLength(2);
+    expect(preparePanelSource).toContain("{#if !blocked}\n      <slot name=\"generate\" {entries} />");
   });
 });

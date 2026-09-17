@@ -31,6 +31,12 @@ export interface MeetingSelection {
 
 export const EMPTY_SELECTION: MeetingSelection = { ids: [], dropped: [] };
 
+// MAX_SELECTED_MEETINGS mirrors the operator's cap on one bundle
+// (maxContextMeetings in published_context.go, which the insight route shares):
+// above it the request is refused before any Nextcloud call. Said here, before
+// the request, rather than discovered as a 400 after it (D-749).
+export const MAX_SELECTED_MEETINGS = 20;
+
 export function isSelected(selection: MeetingSelection, id: string): boolean {
   return selection.ids.includes(id);
 }
@@ -237,11 +243,12 @@ export function formatSelectionWordCount(totals: SelectionTotals): string {
 // wrong is the failure this panel exists to prevent.
 export function describeSelectionGaps(totals: SelectionTotals): string[] {
   const gaps: string[] = [];
-  if (totals.withoutSummary > 0) {
+  // First, because it is the one gap that stops everything: the operator
+  // refuses a bundle, and a question, over more than this many meetings.
+  if (totals.count > MAX_SELECTED_MEETINGS) {
+    const excess = totals.count - MAX_SELECTED_MEETINGS;
     gaps.push(
-      totals.withoutSummary === 1
-        ? "One of these has no summary. Its transcript is complete; only the summary section is missing."
-        : `${totals.withoutSummary} of these have no summary. Their transcripts are complete; only the summary section is missing.`,
+      `You can work with up to ${MAX_SELECTED_MEETINGS} meetings at once. Unpick ${excess === 1 ? "one" : excess}.`,
     );
   }
   // summaryUnknown is deliberately NOT a sentence, though it is still counted.
@@ -269,16 +276,10 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
     // to unpick can be found without counting.
     gaps.push(
       totals.withoutPortableAudio === 1
-        ? "One of these predates the single-file format — it is marked in the list. The bundle is read from that file, so Prepare will fail for the whole selection until you unpick it."
-        : `${totals.withoutPortableAudio} of these predate the single-file format — they are marked in the list. The bundle is read from those files, so Prepare will fail for the whole selection until you unpick them.`,
-    );
-  }
-  if (totals.meetingsWithoutWordCount > 0 && totals.meetingsWithWordCount > 0) {
-    gaps.push(
-      totals.meetingsWithoutWordCount === 1
-        ? "One of these does not record its length, so the total is a floor."
-        : `${totals.meetingsWithoutWordCount} of these do not record their length, so the total is a floor.`,
+        ? "One of these predates the single-file format (marked in the list). Unpick it to prepare."
+        : `${totals.withoutPortableAudio} of these predate the single-file format (marked in the list). Unpick them to prepare.`,
     );
   }
   return gaps;
 }
+
