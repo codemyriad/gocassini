@@ -360,3 +360,69 @@ func deltaMS(a int64, b int64) int64 {
 	}
 	return b - a
 }
+
+func TestProbeFirstDecodedFrameStopsAndReapsProducer(t *testing.T) {
+	binDir := t.TempDir()
+	script := `#!/bin/sh
+printf '%s\n' 'decoder warning' >&2
+if [ "${FAKE_EMPTY_FRAME:-}" = 1 ]; then exit 0; fi
+printf '%s\n' '30.003000'
+while :; do printf '%s\n' '30.023000'; done
+`
+	if err := os.WriteFile(filepath.Join(binDir, "ffprobe"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got, err := probeFirstDecodedFrameTimeMS("sparse.mkv", 1)
+	if err != nil || got != 30_003 {
+		t.Fatalf("first decoded frame: got %d, %v", got, err)
+	}
+	t.Setenv("FAKE_EMPTY_FRAME", "1")
+	got, err = probeFirstDecodedFrameTimeMS("empty.mkv", 1)
+	if err != nil || got != 0 {
+		t.Fatalf("empty decoded track: got %d, %v", got, err)
+	}
+}
+
+func TestSparseTimelinePreservesGapConsumedByOpusPreSkip(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	encoded := filepath.Join(dir, "encoded.mkv")
+	mkv := filepath.Join(dir, "sparse-preskip.mkv")
+	// Low-delay Opus has 120 samples of pre-skip, exactly one 2.5ms packet.
+	// Keep that first (entirely discarded) packet at 10s, then remove the one
+	// packet before the 20s mute gap. The first decoded frame is now at 30s.
+	// This reproduces real sparse Opus pre-skip without private recording data.
+	if err := runMediaCommand("ffmpeg", "-v", "error", "-y", "-copyts",
+		"-f", "lavfi", "-i", "sine=frequency=500:sample_rate=48000:duration=0.1",
+		"-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000:duration=0.1,asetnsamples=n=120:p=1,asetpts=PTS+10/TB+gte(N\\,120)*20/TB",
+		"-map", "0:a", "-map", "1:a", "-c:a", "libopus", "-application", "lowdelay",
+		"-frame_duration", "2.5", "-avoid_negative_ts", "disabled", encoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := runMediaCommand("ffmpeg", "-v", "error", "-y", "-copyts", "-i", encoded,
+		"-map", "0", "-c", "copy", "-bsf:a:1", "noise=drop=eq(n\\,1)",
+		"-avoid_negative_ts", "disabled", mkv); err != nil {
+		t.Fatal(err)
+	}
+	streams, _, err := ProbeMKV(mkv)
+	if err != nil || len(streams) != 2 {
+		t.Fatalf("probe sparse pre-skip fixture: %v, %v", streams, err)
+	}
+	stream := streams[1]
+	if stream.FirstPacketTimeMS < 9900 || stream.FirstPacketTimeMS > 10100 ||
+		stream.FirstDecodedFrameTimeMS < 30000 || stream.FirstDecodedFrameTimeMS > 30100 {
+		t.Fatalf("fixture failed to separate packet and decoded-frame anchors: %+v", stream)
+	}
+	samples, err := ExtractSpeakerFloats(mkv, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstSignalMS := firstSignalSample(samples, 0.01) * 1000 / 16000
+	if firstSignalMS < 29980 || firstSignalMS > 30030 {
+		t.Fatalf("pre-skip collapsed mute gap: first speech at %dms, want 30003ms", firstSignalMS)
+	}
+	if durationMS := len(samples) * 1000 / 16000; durationMS < 30050 || durationMS > 30200 {
+		t.Fatalf("decoded timeline duration %dms, want about 30100ms", durationMS)
+	}
+}

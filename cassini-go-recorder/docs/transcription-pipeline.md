@@ -193,3 +193,18 @@ When terms exist and either requirement does not hold, the build records
 `provenance.speechToText.hints` with
 `applied: false` and a reason, and decodes unbiased. A vocabulary that could not
 be applied is always visible in the manifest rather than silently ignored.
+
+
+### Sparse track PCM anchors
+
+Packet timing and decoded PCM timing can differ: Opus pre-skip consumes samples
+across packets, including sparse packets separated by mute gaps. Before rebasing
+a late track with `asetpts=PTS-STARTPTS`, Cassini probes its first decoded frame
+and restores that frame's timestamp with a separate streaming silence prefix.
+Using the first packet instead can shift subsequent speech minutes earlier.
+The separate prefix retains compatibility with FFmpeg 4.4, whose resampler can
+crash when asked to synthesize a very large initial gap in one compensation.
+The probe stops and reaps FFprobe after one decoded timestamp, keeps stderr
+bounded, and accepts empty tracks. Original packet timestamps and RTP wall-clock
+anchors remain unchanged. PCM consumers (transcription, mix, attribution and
+challenge audio) share this corrected decoded-frame anchor.

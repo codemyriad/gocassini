@@ -2,3 +2,5 @@
 - Fix duplicated overlap words when adjacent decodes disagree only on sentence-final punctuation.
 - Include the corrected native runtime in CPU/CUDA builds and the developer CLI. Parakeet v3 now reports vocabulary and participant hints as unapplied because its greedy decoder does not support hotword bias.
 - Add recorded-audio comparisons and resumable full-meeting GPU validation tools.
+
+Preserve speech timing after long mute gaps when Opus pre-skip discards initial packets, by aligning audio to its first decoded frame.

@@ -1,7 +1,7 @@
-# Full-meeting GPU replay
+# Full-meeting replay and audio identity audit
 
-`replay-stt-meetings.py` runs **every audio stream**, including empty and bleed-only
-tracks, sequentially through the tagged Go benchmark. It never requests models
+`replay-stt-meetings.py` runs **every audio stream** by default, including empty
+and bleed-only tracks, sequentially through the tagged Go benchmark. It never requests models
 or credentials. Use an existing model root containing `models/<model-id>/` and
 `vad/silero_vad.onnx`, a compiled `boundarybench` test binary, and compatible CUDA
 libraries. Compile the same revision for both profiles.
@@ -50,3 +50,28 @@ JSONL file. Do not run two processes against one output directory.
 Word counts and disagreement identify audit targets; they do not establish
 recognition quality. Review the largest changes against audio and independent
 references. Keep recordings, references and all result directories outside git.
+
+## Audio-only identity audit
+
+`--profile audio-audit` extracts each track with the actual `ExtractSpeakerFloats`
+helper and records sample count plus SHA-256 of little-endian float32 PCM. It
+performs **no model loading, VAD, recognition, warmup or GPU inference**. Rows
+explicitly say `pipeline=audio-audit`, `device=none`, and contain an empty word
+list. The native runtime argument remains necessary to load the tagged Go binary;
+model-root/model arguments are unused in this mode. Probe results are cached once
+per MKV within the benchmark. Audio-audit fixtures must not contain sample limits.
+
+When an extraction helper changes, compare both PCM hash and sample count with
+prior inference rows. Byte-identical audio can reuse prior results only when the
+model, decoder and boundary policy also remain identical. Changed audio requires
+new inference. Audit rows themselves are not transcription results.
+
+## Targeted replay
+
+A manifest entry may include `"streamIndices": [1, 5]` to select changed audio
+tracks for a later replay. The list must be nonempty, unique nonnegative integers,
+and every selected index must exist and be audio. Omit it to process all audio.
+Status records `availableTracks`, `availableStreamIndices`, selected
+`expectedTracks`/`streamIndices`, and `targetedReplay`. A successful targeted
+replay is **not** proof that every track in the meeting was tested: the caller
+must combine it with verified unchanged results and check complete coverage.

@@ -94,12 +94,15 @@ padding; other models retain their existing policies.
 - `ablation` (default): explicit conditions and optional decoder override, using
   the private legacy constructor so production v3 defaults cannot override an experiment.
 - `legacy`: prior beam decoder, ten-second VAD windows and 500 ms synthetic tail.
+- `audio-audit`: full-track PCM extraction and SHA-256 only; no model, VAD,
+  recognizer or warmup. Emits `device=none` and empty words; rejects sample limits.
 - `production`: the normal model-specific constructor and boundary policy; v3
   requires the marked Cassini reference runtime and uses greedy decoding, whole
   VAD spans, 30 ms real context and no synthetic padding. Hotwords are unapplied.
 
-The last two profiles do not need `CASSINI_BOUNDARY_POLICIES` and ignore decoder
-and condition overrides. They emit the effective policy in each row. For a
+The named production, legacy and audio-audit profiles do not need
+`CASSINI_BOUNDARY_POLICIES` and ignore decoder and condition overrides. Inference
+profiles emit the effective policy; audio-audit emits its profile ID. For a
 full meeting, omit sample limits and scoring intervals and provide every track.
 Compare legacy against the original runtime and production against the packaged
 reference runtime; record both library hashes. The profile flag alone does not

@@ -4,6 +4,27 @@ The missing September 14 passages are reproducible, but changing a padding const
 
 The recorded comparisons used Cassini source snapshot `61fb8f94` and the production native libraries described below. The clip results below describe controlled comparisons against that snapshot. Full-meeting validation of the integrated production path is reported separately below.
 
+## Normal-build validation
+
+The production path now includes the corrected native frontend in CPU/CUDA packages and the developer CLI. Parakeet v3 uses greedy decoding, complete VAD spans with recorded boundary context, and no synthetic decoder tail. Configured vocabulary hints are recorded as unapplied. Inputs too short to produce two feature frames return no words instead of passing an empty tensor to the native decoder.
+
+Completed build checks include the recorder Go suite, CPU/CUDA native packages, a complete CPU operator image with an actual transcription and artifact readback, and an ARM64 image transcription test. The production native frontend reproduces the validated feature tensors exactly. macOS has not been exercised on hardware.
+
+A separate INT8 CPU comparison used the same 19 recorded fixtures, keeping vocabulary bias disabled in both paths because that model bundle lacks a BPE vocabulary. Results retain the earlier development/holdout split:
+
+| INT8 CPU path | Development disagreements / 712 | Development deletions | Held-out disagreements / 248 | Held-out deletions | False-speech control tokens |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Previous frontend, beam search, boundaries | 244 | 193 | 48 | 16 | 0 |
+| Reference frontend, greedy, whole VAD + recorded context | 117 | 49 | 31 | 4 | 0 |
+
+These are disagreements against model-generated references, not human-certified accuracy. Development insertions increased from 10 to 21, and individual clips can regress. One legacy test process exited 137; its remaining four fixtures completed in separate processes. All 19 production fixtures completed together. One fixture has no usable reference and is excluded from scores.
+
+The full-length GPU replay of all 138 archived meetings is in progress. It covers individual participant tracks through the public production recognizer; it does not generate meeting summaries. Source integrity is checked separately from decoded duration: timestamp-preserving silence can hide missing packets in a damaged recording. Twenty truncated historical MKVs were reconstructed from retained packet archives. All 5,517,760 audio packets across their 127 tracks were verified before replay; the original recordings were left untouched.
+
+Archive testing also found a separate extraction defect: Opus pre-skip can consume sparse initial packets across a long mute gap. Rebasing decoded audio but restoring the first encoded packet timestamp moved one track’s speech about eleven minutes earlier. Extraction now restores the first decoded frame timestamp, preserving the meeting clock. Synthetic and recorded-source regressions pass. Earlier GPU results are retained only when the corrected extraction produces byte-identical PCM; every changed track is rerun.
+
+Additional blind audio checks have confirmed an omitted passage recovered by the new path, genuine repeated greetings, and removal of a repetition present in the published transcript. A Gemini response hallucinated speech over a near-silent clip (about −92 dBFS RMS); that response is excluded from scoring. Published transcripts and model references are audit aids, not ground truth.
+
 ## What was tested
 
 The benchmark replays recorded audio through Cassini's actual Go transcription path, including participant extraction, VAD, decoding, timestamps, overlap reconciliation, and filtering. It compared:

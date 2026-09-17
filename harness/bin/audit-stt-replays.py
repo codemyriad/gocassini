@@ -36,7 +36,7 @@ def word_stats(words, duration):
             'timestampErrors': dict(errors)}
 
 
-def summarize(root, published=None):
+def audit(root, published=None):
     meetings = []
     states = Counter()
     for status_path in sorted(root.glob('*/status.json')):
@@ -77,7 +77,9 @@ def summarize(root, published=None):
                 meeting['publishedWords'] = sum(map(len, old_by_label.values()))
                 meeting['wordCountDelta'] = meeting['words'] - meeting['publishedWords']
                 comparisons = []
-                for label in sorted(set(old_by_label) | set(new_by_label)):
+                published_labels = set(labels.values())
+                replay_labels = set(new_by_label)
+                for label in sorted(set(old_by_label) | replay_labels):
                     old_words, new_words = old_by_label[label], new_by_label[label]
                     bins = defaultdict(lambda: [0, 0])
                     for side, words in enumerate((old_words, new_words)):
@@ -86,7 +88,7 @@ def summarize(root, published=None):
                             bins[int(start // 30000) * 30000][side] += 1
                     windows = [{'startMs': start, 'endMs': start + 30000, 'publishedWords': counts[0],
                                 'replayWords': counts[1], 'delta': counts[1] - counts[0]} for start, counts in bins.items()]
-                    comparisons.append({'label': label, 'labelMatched': bool(old_words) and bool(new_words), 'published': word_stats(old_words, status['expectedDurationMs']),
+                    comparisons.append({'label': label, 'labelMatched': label in published_labels and label in replay_labels, 'published': word_stats(old_words, status['expectedDurationMs']),
                                         'replay': word_stats(sorted(new_words, key=lambda w: w['StartMS']), status['expectedDurationMs']),
                                         'largestCountChanges': sorted(windows, key=lambda w: abs(w['delta']), reverse=True)[:8]})
                 meeting['publishedComparison'] = comparisons
@@ -106,7 +108,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True, help='private audit JSON')
     args = parser.parse_args()
     os.umask(0o077)
-    result = summarize(args.output_dir, args.published_root)
+    result = audit(args.output_dir, args.published_root)
     with open(args.output, 'w') as f: json.dump(result, f, indent=2)
     os.chmod(args.output, 0o600)
     print(json.dumps({k: v for k, v in result.items() if k != 'meetings'}))

@@ -45,7 +45,7 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 	if pipeline == "" {
 		pipeline = "ablation"
 	}
-	if pipeline != "ablation" && pipeline != "production" && pipeline != "legacy" {
+	if pipeline != "ablation" && pipeline != "production" && pipeline != "legacy" && pipeline != "audio-audit" {
 		t.Fatal("unsupported benchmark pipeline")
 	}
 	warmup := os.Getenv("CASSINI_BOUNDARY_SKIP_WARMUP") != "1"
@@ -84,16 +84,21 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 	if device == "" {
 		device = "cpu"
 	}
-	paths, err := EnsureModel(cache, model, os.Stderr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if paths.EncoderFile == "" || paths.SampleRate != 16000 {
-		t.Fatal("benchmark requires a 16 kHz transducer model")
-	}
-	vad, err := EnsureVAD(cache, os.Stderr)
-	if err != nil {
-		t.Fatal(err)
+	var paths ModelPaths
+	var vad string
+	var err error
+	if pipeline != "audio-audit" {
+		paths, err = EnsureModel(cache, model, os.Stderr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if paths.EncoderFile == "" || paths.SampleRate != 16000 {
+			t.Fatal("benchmark requires a 16 kHz transducer model")
+		}
+		vad, err = EnsureVAD(cache, os.Stderr)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	out, err := os.OpenFile(os.Getenv("CASSINI_BOUNDARY_OUTPUT"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
@@ -101,12 +106,24 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 	}
 	defer out.Close()
 	enc := json.NewEncoder(out)
+	// Metadata can inspect every stream's decoded onset. Cache once per MKV so
+	// a multi-track fixture list does not repeat those probes for every track.
+	probeCache := make(map[string][]AudioStream)
 	for _, fixture := range fixtures {
+		extractionStart := time.Now()
+		if pipeline == "audio-audit" && fixture.SampleLimitMS > 0 {
+			t.Fatal("audio-audit requires full tracks; remove sampleLimitMs")
+		}
 		var samples []float32
 		if fixture.MKVPath != "" {
-			streams, _, e := ProbeMKV(fixture.MKVPath)
-			if e != nil {
-				t.Fatal(e)
+			streams, cached := probeCache[fixture.MKVPath]
+			if !cached {
+				var e error
+				streams, _, e = ProbeMKV(fixture.MKVPath)
+				if e != nil {
+					t.Fatal(e)
+				}
+				probeCache[fixture.MKVPath] = streams
 			}
 			found := false
 			for _, stream := range streams {
@@ -133,6 +150,23 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 		for _, s := range samples {
 			binary.LittleEndian.PutUint32(raw[:], math.Float32bits(s))
 			hash.Write(raw[:])
+		}
+		if pipeline == "audio-audit" {
+			row := map[string]any{
+				"pipeline": pipeline, "warmup": false, "fixture": fixture.ID,
+				"condition": boundaryCondition{ID: pipeline}, "decoder": "", "model": "",
+				"device": "none", "hotwordsSha256": "", "hotwordScore": 0, "beamWidth": 0,
+				"pcmSha256": fmt.Sprintf("%x", hash.Sum(nil)), "samples": len(samples),
+				"seconds": time.Since(extractionStart).Seconds(), "words": []Word{},
+			}
+			if err = enc.Encode(row); err != nil {
+				t.Fatal(err)
+			}
+			if err = out.Sync(); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("%s / audio-audit: %d samples (no inference)", fixture.ID, len(samples))
+			continue
 		}
 		method := os.Getenv("CASSINI_BOUNDARY_DECODER")
 		if method == "" {

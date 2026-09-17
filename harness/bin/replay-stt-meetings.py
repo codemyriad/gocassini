@@ -68,6 +68,11 @@ def run(args):
         seen.add(mid)
         if bool(meeting.get('mkvPath')) == bool(meeting.get('remoteMkvPath')):
             raise ValueError(f'{mid}: specify exactly one MKV path')
+        if 'streamIndices' in meeting:
+            selected = meeting['streamIndices']
+            if (not isinstance(selected, list) or not selected or
+                    any(type(i) is not int or i < 0 for i in selected) or len(set(selected)) != len(selected)):
+                raise ValueError(f'{mid}: streamIndices must be nonempty unique nonnegative integers')
         if meeting.get('remoteMkvPath') and not args.ssh_host:
             raise ValueError('remoteMkvPath requires --ssh-host')
         if not isinstance(meeting.get('expectedDurationMs'), (int, float)) or meeting['expectedDurationMs'] <= 0:
@@ -100,7 +105,7 @@ def run(args):
         'LD_LIBRARY_PATH': os.pathsep.join(str(Path(p).resolve()) for p in [args.runtime_lib, args.ffmpeg_lib, *args.cuda_lib]),
         'CASSINI_BOUNDARY_PIPELINE': args.profile, 'CASSINI_BOUNDARY_SKIP_WARMUP': '1',
         'CASSINI_DISALLOW_MODEL_DOWNLOAD': '1',
-        'CASSINI_BOUNDARY_DEVICE': 'cuda', 'CASSINI_BOUNDARY_MODEL': args.model,
+        'CASSINI_BOUNDARY_DEVICE': 'none' if args.profile == 'audio-audit' else 'cuda', 'CASSINI_BOUNDARY_MODEL': args.model,
         'CASSINI_BUNDLED_MODEL_ROOT': str(Path(args.model_root).resolve()),
         'CASSINI_BUNDLED_MODELS': args.model, 'CASSINI_CACHE_ROOT': str(Path(args.model_root).resolve()),
     })
@@ -140,6 +145,14 @@ def run(args):
                 streams = [s for s in metadata['streams'] if s['codec_type'] == 'audio']
                 if not streams:
                     raise ValueError('recording has no audio streams')
+                status['availableTracks'] = len(streams)
+                status['availableStreamIndices'] = [s['index'] for s in streams]
+                if 'streamIndices' in meeting:
+                    selected = set(meeting['streamIndices'])
+                    if not selected.issubset(status['availableStreamIndices']):
+                        raise ValueError('streamIndices contains absent or non-audio stream indices')
+                    streams = [s for s in streams if s['index'] in selected]
+                status['targetedReplay'] = 'streamIndices' in meeting
                 fixtures = []
                 for stream in streams:
                     fixture = {'id': f'{mid}/stream-{stream["index"]}', 'mkvPath': str(mkv), 'streamIndex': stream['index']}
@@ -194,7 +207,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ('manifest', 'test-binary', 'runtime-lib', 'ffmpeg-bin', 'ffmpeg-lib', 'model-root', 'output-dir'):
         parser.add_argument('--' + flag, required=True)
-    parser.add_argument('--profile', choices=('legacy', 'production'), required=True)
+    parser.add_argument('--profile', choices=('legacy', 'production', 'audio-audit'), required=True)
     parser.add_argument('--cuda-lib', action='append', default=[])
     parser.add_argument('--ssh-host')
     parser.add_argument('--ssh-sudo', action='store_true')
