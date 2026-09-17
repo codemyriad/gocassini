@@ -1,116 +1,113 @@
 # Cassini
 
-![Browsing recorded meetings inside Nextcloud](img/screenshots/gocassini-browse.png)
-
 **Cassini is a recording backend for Nextcloud Talk that puts you in control of your meeting data.**
 
-- **Record and transcribe on your own infrastructure**, on the hardware you give
-  it. Speech-to-text runs in-process with sherpa-onnx and NVIDIA Parakeet
-  models, from a CPU image or a CUDA image.
-- **AI is opt-in.** Summaries and insights run only once you configure a model —
-  local or third-party — in the app.
+- **Record and transcribe on your own infrastructure.** Cassini runs on the hardware you give
+  it. Speech-to-text runs in-process with _sherpa-onnx_ and _NVIDIA Parakeet_
+  models, from a CPU or a CUDA image.
+- **AI is opt-in.** Summaries and LLM-powered insights run only once you configure a model -
+  local or third-party - in the app.
 - **A self-contained, portable meeting file**: audio, transcript, summary and
-  tags in one file, so you can take a meeting with you.
+  tags are packed into one file, so you can take your meetings with you.
 
-Cassini is built for the span between full control and full service. It runs on
-the hardware you have, and you decide where it runs, which model it uses, and
-whether a language model is involved at all.
+Meetings are where decisions get made, and these are easily lost unless someone writes it down afterwards. We believe voice is the most valuable context a team produces, and the least captured. In an LLM age you should be able to build on it without handing your meetings to a third party.
 
 ## What you get
 
-- Any Nextcloud Talk room, group calls and 1:1 calls. Press Record; Cassini is
-  the recording server behind the same button.
-- Transcripts with synced audio playback and the right name on every line. Names
-  come from Talk's signalling, one stream per participant.
-- Who can see a recording is Nextcloud's decision: two audiences, an
-  administrator's setting, enforced by Nextcloud Files.
-- One portable meeting file per meeting.
-- Search, tags and insights across meetings.
-- In-app AI providers for per-meeting summaries and cross-meeting insights.
-- A CLI and a skill, so an external harness reads the same meetings with the
-  same permissions a person has.
+Cassini is an ExApp which can be installed from the Nextcloud App Store. Once it's running, it shows up as a new app icon inside your Nextcloud suite:
 
-## Caveats
+![Browsing recorded meetings inside Nextcloud](img/screenshots/gocassini-browse.png)
 
-- **No live transcription or captions.** Cassini does its work after the call.
-- **Audio only.** Cassini does not record video.
+- Works with any Nextcloud Talk room, group calls and 1:1 calls. Just press _Record_ and Cassini is listening.
+- Transcripts and synced audio playback with speaker IDs.
+- Access control scoped to the room: a published meeting is readable by that room's participants and no one else, using Nextcloud Files permissions.
+- One portable meeting file per meeting that can be opened without Cassini.
+- Search and tags across meetings.
+- Configure in-app AI providers for per-meeting summaries and cross-meeting insights.
+- A CLI and an agent skill, to build workflows with an external harness.
 
-## Requirements and install
+## Limitations
 
-- Nextcloud 32 to 35, with AppAPI and a HaRP deploy daemon.
-- Install from the App Store: <https://apps.nextcloud.com/apps/gocassini>
-- Two images: `ghcr.io/codemyriad/gocassini:X.Y.Z` (amd64 and arm64, CPU) and
-  `ghcr.io/codemyriad/gocassini:X.Y.Z-cuda` (x86_64). Set the deploy daemon's
-  **Compute device** to CUDA and AppAPI pulls the `-cuda` image; the device is a
-  property of the daemon, so a CPU install and a GPU install differ by that one
-  setting.
-- Two secrets have to match Nextcloud's own:
-  `CASSINI_TALK_RECORDING_SECRET` (the secret in Talk's `recording_servers`
-  setting) and `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` (the signalling
-  server's `internalsecret`).
-- A `cassini` service account owns the archive. Nextcloud 34.0.2 and later will
-  not let an app create it, so an administrator does.
-- Pointing Talk at Cassini is one `recording_servers` setting, and it is
-  reversible: back up the current value before you switch, and you can put it
-  back.
-
-The full walkthrough — deploy daemon, registration, the verification checklist,
-the Talk handoff and GPU setup — is in
-[docs/exapp-install.md](docs/exapp-install.md).
+- **No live transcription or captions.** Transcription starts when the call ends, so it never competes with the call for resources.
+- **Audio only.** Cassini records the video streams, but the meeting file, transcript and viewer are audio only for now.
 
 ## What leaves your server
 
-Recording and transcription run inside your own infrastructure: no audio and no
-transcript leaves the host for those steps. When you switch a language model on,
-the transcript text goes to that endpoint — that is the only step that sends
-anything anywhere, and with no endpoint configured nothing does.
+Recording and transcription run on your own hardware. No audio and no transcript leaves the host for those steps.
 
-The full note is in [docs/privacy.md](docs/privacy.md).
+If you configure a language model, transcript text goes to it in two cases: automatically, to summarise each meeting, and on request, when someone asks a question about meetings they have access to.
 
-## CLI and skills
+There is no telemetry.
 
-`cassini meetings` reads published recordings back out of Nextcloud as a
-Nextcloud user, authenticated with an app password. It sees exactly what that
-account may see; a recording you may not read reports as not found.
-
-```text
-cassini meetings list | rooms | search | fetch | context | summarize | tags | annotations | annotate
-cassini insight run
-```
-
-A Claude skill ships in the repo at
-[`.claude/skills/cassini-meetings/SKILL.md`](.claude/skills/cassini-meetings/SKILL.md).
-
-Setup, the environment variables and worked examples are in
-[docs/agent-meeting-access.md](docs/agent-meeting-access.md).
+Full details are in [docs/privacy.md](docs/privacy.md).
 
 ## The meeting file
 
-Each published meeting is an ordinary Ogg Opus file. The transcript, the summary
-and the tags travel in the file's OpusTags header, so any player plays the
-audio and any reader that knows the format gets the rest.
+Each published meeting is one ordinary `.opus` file. Any audio player plays it.
 
-The format is specified at <https://format.gocassini.com>; what Cassini writes
-is described in
-[docs/portable-meeting-format.md](docs/portable-meeting-format.md).
+The transcript, speaker names, summary and tags travel inside the same file, so a meeting you copy off your server is still a complete meeting, and it stays readable without Cassini.
+
+The format is an open specification at [format.gocassini.com](https://format.gocassini.com).
+
+What Cassini writes is described in [docs/portable-meeting-format.md](docs/portable-meeting-format.md).
+
+## Requirements
+
+- Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
+- Talk with the High-performance backend (standalone signalling). Cassini joins
+   calls as an internal signalling client, so it needs the signalling server's
+   `internalsecret`. This is the one value you have to supply by hand.
+- _Optional_: the [Team folders](https://apps.nextcloud.com/apps/groupfolders)
+   and [Everyone Group](https://apps.nextcloud.com/apps/group_everyone) apps, which
+   let Cassini restrict each recording to the people who were in the meeting.
+   Without them, every account on the instance can see every recording.
+- _Optional_: an NVIDIA GPU with the Container Toolkit (x86_64) for faster
+   transcription. CPU is the default and runs on amd64 and arm64.
+
+## Install
+1. **Install Cassini from the [App
+  Store](https://apps.nextcloud.com/apps/gocassini).**
+   In the deploy options, paste your signalling server's `internalsecret`.  On Nextcloud _All-in-One_, print it with `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. On a standalone signalling server, it is internalsecret under `[clients]` in `server.conf`.
+   Every other option can stay empty.
+2. **Open Cassini as an administrator.** It creates the `cassini` service
+   account that owns the meeting archive. Nextcloud 34.0.2 and later ask you to
+   confirm with your password first.
+3. **Choose who can see recordings**, under Operator › Settings. A fresh install makes every recording visible to everyone with an account on your Nextcloud. To limit each recording to the people who were in that meeting, enable the "Team folders" and "Everyone Group" apps first, then change the setting to "meeting participants". Cassini sets up the folder and permissions itself.
+4. **Point Talk at Cassini.** Back up Talk's current `recording_servers`
+   value, then apply the one Cassini generates for you.
+5. **Record a test call** in a private room and watch it arrive in Cassini.
+
+
+Each step, with the commands, the verification checklist and GPU setup, is in
+[docs/exapp-install.md](docs/exapp-install.md).
+
+## CLI and skills
+
+`cassini meetings` reads published recordings from outside Nextcloud, as a Nextcloud user with an app password. It sees exactly what that account can see in the app, and nothing more.
+
+```bash
+cassini meetings list --from 2026-08-01
+cassini meetings search "offer" --tag hiring   # finds where it was said
+cassini meetings context <meeting-id>          # transcript and summary, ready for an agent
+cassini meetings fetch <meeting-id> --out standup.opus
+```
+
+An agent skill ships at `.claude/skills/cassini-meetings/SKILL.md`. It teaches a coding agent when and how to use these commands. Claude Code loads it from a checkout; for other agents, point them at the file.
+
+Setup and worked examples are in [docs/agent-meeting-access.md](docs/agent-meeting-access.md).
 
 ## Development
 
-Go 1.24. `./bin/cassini` builds the CLI from this checkout and runs it from your
-current working directory.
+You need Go 1.24. From a checkout, `./bin/cassini` builds the CLI and runs it in your current directory:
 
 ```bash
 ./bin/cassini --help
-./bin/cassini doctor
+./bin/cassini doctor     # checks your environment before a long build
 ```
-
-- [docs/README.md](docs/README.md) — the documentation index for contributors
-- [docs/cli.md](docs/cli.md) — the `cassini` CLI from a checkout: record, build,
-  publish, serve, inspect
-- [harness/README.md](harness/README.md) — the local Talk lab, driven by
-  `cassini dev`
-- [deployment/README.md](deployment/README.md) — the Docker Compose bundle for
-  development and staging, not the Nextcloud app install
+- docs/README.md: the documentation index for contributors
+- docs/cli.md: record, build, publish, serve and inspect from a checkout
+- harness/README.md: a local Nextcloud Talk lab, driven by `cassini dev`
+- deployment/README.md: a Docker Compose bundle for development and staging. To run Cassini on a Nextcloud, use the app install above.
 
 ## Contributing
 
