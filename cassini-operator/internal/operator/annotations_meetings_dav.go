@@ -28,8 +28,8 @@ func annotationInPrivateRoot(relPath string) bool {
 }
 
 // annotationWriteLocks serialises writes to one recording within this process.
-// If-Match is what makes a concurrent write safe; this only makes it cheap, so
-// two writers here do not both rewrite tens of megabytes and one redo it.
+// Workers, imports and republish share it. If-Match and content verification
+// remain necessary, but ETags alone are not sufficient writer coordination.
 var annotationWriteLocks keyedLocks
 
 // keyedLocks is a set of mutexes by key, each existing only while held or

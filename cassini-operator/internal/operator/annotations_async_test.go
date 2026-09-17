@@ -295,3 +295,87 @@ func TestAnnotationBulkResumeDoesNotReplayCompletedMutation(t *testing.T) {
 		t.Fatal("durable target not executed")
 	}
 }
+
+func TestAnnotationReceiptRetentionAndSnapshotCollection(t *testing.T) {
+	_, s, h, store := asyncFixture(t)
+	first := postAsync(t, h, markRequest("one", "req1"))
+	if _, err := store.db.Exec(`UPDATE annotation_receipt SET created_at=unixepoch()-700000`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.collectSnapshots(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	replay := postAsync(t, h, markRequest("one", "req1"))
+	if replay.StateToken != first.StateToken {
+		t.Fatal("pending receipt expired")
+	}
+	if err := s.syncAnnotation(context.Background(), "MEETING1.opus"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.collectSnapshots(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var receipts, snapshots int
+	store.db.QueryRow(`SELECT COUNT(*) FROM annotation_receipt`).Scan(&receipts)
+	store.db.QueryRow(`SELECT COUNT(*) FROM annotation_snapshot`).Scan(&snapshots)
+	if receipts != 0 || snapshots != 1 {
+		t.Fatalf("unreferenced history retained: receipts=%d snapshots=%d", receipts, snapshots)
+	}
+}
+func TestAnnotationRetryPreservesDocumentAndRequiresAccess(t *testing.T) {
+	nc, _, h, store := asyncFixture(t)
+	first := postAsync(t, h, markRequest("one", "req1"))
+	store.db.Exec(`UPDATE annotation_head SET blocked=1,attempts=2,retry_at=unixepoch()+3600,last_error='repair'`)
+	retried := postAsync(t, h, `{"ops":[],"retrySync":true}`)
+	if retried.StateToken != first.StateToken || !sameAnnotationDocument(retried.Annotations, first.Annotations) || retried.Sync.State != "pending" {
+		t.Fatalf("retry changed desired: %+v", retried)
+	}
+	nc.frontMu.Lock()
+	delete(nc.visible, "MEETING1.opus")
+	nc.frontMu.Unlock()
+	if r := annTestCall(h, http.MethodPost, "MEETING1", "alice", `{"ops":[],"retrySync":true}`); r.Code != 404 {
+		t.Fatalf("unauthorized retry: %d", r.Code)
+	}
+}
+
+func TestAnnotationValidationIsAtomicAndDuplicateMarkIsNoop(t *testing.T) {
+	_, _, h, store := asyncFixture(t)
+	first := postAsync(t, h, markRequest("one", "req1"))
+	again := postAsync(t, h, markRequest("one", "req2"))
+	if again.StateToken != first.StateToken || len(again.Added) != 0 {
+		t.Fatal("duplicate mark created another desired version")
+	}
+	for _, ops := range []string{
+		`[{"op":"mark","tag":{"label":"bad range"},"target":{"kind":"time-range","startMs":0,"endMs":60001}}]`,
+		`[{"op":"mark","tag":{"label":"valid"},"target":{"kind":"meeting"}},{"op":"unmark","itemid":"typo"}]`,
+		`[{"op":"mark","tag":{"label":" "},"target":{"kind":"meeting"}}]`,
+	} {
+		if r := annTestCall(h, http.MethodPost, "MEETING1", "alice", `{"ops":`+ops+`}`); r.Code != 400 {
+			t.Fatalf("invalid batch: %d %s", r.Code, r.Body.String())
+		}
+	}
+	got, _ := store.document(context.Background(), "MEETING1.opus")
+	if got.StateToken != first.StateToken {
+		t.Fatal("invalid batch partially committed")
+	}
+}
+
+func TestAnnotationDueRetryIsNotStarvedByFreshEdits(t *testing.T) {
+	_, s, h, store := asyncFixture(t)
+	postAsync(t, h, markRequest("one", "req1"))
+	store.db.Exec(`UPDATE annotation_head SET attempts=1,retry_at=unixepoch()-1 WHERE opus_name='MEETING1.opus'`)
+	empty := annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000}
+	recordMarks(t, store, "OTHER.opus", empty)
+	if _, err := store.db.Exec(`INSERT INTO annotation_snapshot(opus_name,result_json) SELECT 'OTHER.opus',result_json FROM annotation_snapshot WHERE id=(SELECT desired FROM annotation_head WHERE opus_name='OTHER.opus');UPDATE annotation_head SET desired=last_insert_rowid() WHERE opus_name='OTHER.opus'`); err != nil {
+		t.Fatal(err)
+	}
+	name, err := s.nextAnnotation()
+	if err != nil || name != "MEETING1.opus" {
+		t.Fatalf("due retry starved: %q %v", name, err)
+	}
+	s.claimed.Delete(name)
+	next := postAsync(t, h, markRequest("two", "req2"))
+	if next.Sync.State != "delayed" {
+		t.Fatalf("response hides retry state: %+v", next.Sync)
+	}
+}

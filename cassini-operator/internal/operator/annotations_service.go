@@ -14,7 +14,7 @@ import (
 const annotationsURLPath = "/annotations"
 
 // annotationService serves a meeting's annotations and the tag vocabulary.
-// rt.annotations is the rebuildable projection, and may be nil.
+// rt.annotations is the durable document store, and may be unavailable.
 type annotationService struct {
 	rt           *Runtime
 	exapp        ExAppConfig

@@ -19,7 +19,7 @@ func (s *annotationService) updateTagJob(job *tagJob) error {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.rt.ctx), annotateIndexTimeout)
 	defer cancel()
-	_, err = s.rt.annotationReads().db.ExecContext(ctx, `UPDATE annotation_tag_job SET job_json=? WHERE caller=?`, data, job.Actor)
+	_, err = s.rt.annotationReads().db.ExecContext(ctx, `UPDATE annotation_tag_job SET job_json=? WHERE caller=? AND json_extract(job_json,'$.id')=?`, data, job.Actor, job.ID)
 	return err
 }
 func (s *annotationService) restoreTagJobs() {

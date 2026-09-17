@@ -21,7 +21,7 @@ func openDurableAnnotationDB(path string) (sidecarDB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return sidecarDB{}, err
 	}
-	db, err := openSidecarAt(path, "annotations")
+	db, err := openSidecarAt(path, "annotations", true)
 	if err != nil {
 		return db, err
 	}
@@ -183,4 +183,19 @@ func refreshAnnotationAudio(ctx context.Context, tx *sql.Tx, name string, delive
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE meeting_annotations SET resolved=?,container_sha256=? WHERE opus_name=?`, resolved, delivered.ContainerSHA256, name)
 	return err
+}
+
+// Keep original responses for seven days, and longer while work is unresolved.
+// Snapshot collection only removes states no durable pointer or receipt needs.
+func (s *annotationStore) collectSnapshots(ctx context.Context) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM annotation_receipt WHERE created_at<unixepoch()-604800
+ AND NOT EXISTS(SELECT 1 FROM annotation_head h WHERE h.opus_name=annotation_receipt.opus_name AND h.desired!=h.confirmed)
+ AND NOT EXISTS(SELECT 1 FROM annotation_tag_job j WHERE j.caller=annotation_receipt.caller AND json_extract(j.job_json,'$.state')!='finished')`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM annotation_snapshot WHERE id NOT IN (
+ SELECT desired FROM annotation_head UNION SELECT confirmed FROM annotation_head UNION SELECT in_flight FROM annotation_head WHERE in_flight IS NOT NULL UNION SELECT snapshot FROM annotation_receipt)`)
+		return err
+	})
 }

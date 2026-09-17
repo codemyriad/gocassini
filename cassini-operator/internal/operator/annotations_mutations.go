@@ -36,6 +36,13 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 			return annotateResult{}, err
 		}
 	}
+	if request.RetrySync {
+		if _, err := store.db.ExecContext(ctx, `UPDATE annotation_head SET blocked=0,retry_at=0,attempts=0,last_error='' WHERE opus_name=?`, path.Base(relPath)); err != nil {
+			return annotateResult{}, err
+		}
+		s.wakeAnnotations()
+		return store.document(ctx, path.Base(relPath))
+	}
 	// Independent of the media lock: an upload never blocks a short DB commit.
 	release, err := annotationMutationLocks.acquire(ctx, store.path)
 	if err != nil {
@@ -100,8 +107,10 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 		}
 		var data []byte
 		var desired, confirmed int64
+		var attempts, blocked int
+		var lastError string
 		var generation string
-		if err := tx.QueryRowContext(ctx, `SELECT s.result_json,h.desired,h.confirmed FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE h.opus_name=?`, name).Scan(&data, &desired, &confirmed); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT s.result_json,h.desired,h.confirmed,h.attempts,h.blocked,h.last_error FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE h.opus_name=?`, name).Scan(&data, &desired, &confirmed, &attempts, &blocked, &lastError); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT value FROM annotations_meta WHERE key='generation'`).Scan(&generation); err != nil {
@@ -187,10 +196,16 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 		}
 		result.StateToken = fmt.Sprintf("%s:%d", generation, desired)
 		state := "pending"
+		if attempts > 0 {
+			state = "delayed"
+		}
+		if blocked != 0 {
+			state = "blocked"
+		}
 		if desired == confirmed {
 			state = "saved"
 		}
-		result.Sync = &annotationSyncStatus{State: state, Desired: desired, Confirmed: confirmed}
+		result.Sync = &annotationSyncStatus{State: state, Desired: desired, Confirmed: confirmed, Error: lastError}
 		if request.RequestID != "" {
 			receipt, err := json.Marshal(result)
 			if err != nil {

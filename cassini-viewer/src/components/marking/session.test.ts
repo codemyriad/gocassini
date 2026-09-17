@@ -84,7 +84,7 @@ describe("a meeting's marks session", () => {
     expect(get(session).status).toBe("ready");
 
     expect(await session.write(removeRequest(["i1"]))).toBe(true);
-    expect(sent).toEqual([removeRequest(["i1"])]);
+    expect(sent).toEqual([expect.objectContaining({ ...removeRequest(["i1"]), requestId: expect.any(String) })]);
     expect(changed).toEqual([answer]);
     expect(get(session).annotations).toBe(answer);
     expect(get(session).busy).toBe(false);
@@ -126,7 +126,7 @@ describe("a meeting's marks session", () => {
     expect(await session.write(removeRequest(["i2"]))).toBe(false);
     finish(result());
     expect(await first).toBe(true);
-    expect(sent).toEqual([removeRequest(["i1"])]);
+    expect(sent).toEqual([expect.objectContaining({ ...removeRequest(["i1"]), requestId: expect.any(String) })]);
     expect(get(session).busy).toBe(false);
   });
 
@@ -152,6 +152,67 @@ describe("a meeting's marks session", () => {
     await first;
     expect(get(session).annotations?.annotations).toBeNull();
   });
+  it("polls pending sync and stops once the archive is saved", async () => {
+    vi.useFakeTimers();
+    const load = vi.fn().mockResolvedValueOnce({ ...meeting(), sync: { state: "pending", desired: 4, confirmed: 3 } })
+      .mockResolvedValue({ ...meeting(), sync: { state: "saved", desired: 4, confirmed: 4 } });
+    const session = createMarksSession(() => {});
+    await session.open(load, null);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(get(session).annotations?.sync?.state).toBe("saved");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(load).toHaveBeenCalledTimes(2);
+    await session.close();
+  });
+
+  it("reuses the request key and token after a lost response", async () => {
+    const sent: AnnotationRequest[] = [];
+    const session = createMarksSession(() => {});
+    await session.open(async () => ({ ...meeting(), stateToken: "epoch:3" }), async (request) => {
+      sent.push(request);
+      if (sent.length === 1) throw new TypeError("network failed");
+      return result();
+    });
+    const request = removeRequest(["i1"]);
+    expect(await session.write(request)).toBe(false);
+    expect(await session.write(request)).toBe(true);
+    expect(sent[1]).toEqual(sent[0]);
+    expect(sent[0].stateToken).toBe("epoch:3");
+  });
+
+  it("ignores a poll that finishes after a newer POST response", async () => {
+    vi.useFakeTimers();
+    let complete: (value: MeetingAnnotations) => void = () => {};
+    const pending = { ...meeting(), sync: { state: "pending" as const, desired: 3, confirmed: 2 } };
+    const load = vi.fn().mockResolvedValueOnce(pending).mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    const newer = { ...result(), stateToken: "epoch:4", sync: { state: "pending" as const, desired: 4, confirmed: 2 } };
+    const session = createMarksSession(() => {});
+    await session.open(load, async () => newer);
+    await vi.advanceTimersByTimeAsync(1000);
+    await session.write(removeRequest(["i1"]));
+    complete(pending);
+    await Promise.resolve();
+    expect(get(session).annotations).toBe(newer);
+    await session.close();
+  });
+
+  it("refreshes the precondition after a conflict", async () => {
+    const sent: AnnotationRequest[] = [];
+    const load = vi.fn().mockResolvedValueOnce({ ...meeting(), stateToken: "epoch:3" })
+      .mockResolvedValue({ ...meeting(), stateToken: "epoch:4" });
+    const session = createMarksSession(() => {});
+    await session.open(load, async (request) => {
+      sent.push(request);
+      if (sent.length === 1) throw new AnnotationError(409, "annotations changed");
+      return result();
+    });
+    await session.write(removeRequest(["i1"]));
+    await Promise.resolve();
+    await session.write(removeRequest(["i1"]));
+    expect(sent[1].stateToken).toBe("epoch:4");
+    expect(sent[1].requestId).not.toBe(sent[0].requestId);
+  });
+
 });
 
 describe("what the view draws", () => {

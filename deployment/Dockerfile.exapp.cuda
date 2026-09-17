@@ -45,6 +45,7 @@ RUN FFMPEG_BUILD_JOBS="${FFMPEG_BUILD_JOBS}" \
 FROM golang:1.24-bookworm AS go-builder
 WORKDIR /src
 
+COPY cassini-annotations ./cassini-annotations
 COPY cassini-go-recorder/go.mod cassini-go-recorder/go.sum ./cassini-go-recorder/
 COPY cassini-operator/go.mod cassini-operator/go.sum ./cassini-operator/
 RUN go -C cassini-go-recorder mod download \

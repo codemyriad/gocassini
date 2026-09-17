@@ -38,6 +38,7 @@ func (s *annotationService) startAnnotationWorkers() {
 }
 func (s *annotationService) annotationWorker() {
 	defer s.rt.workerWG.Done()
+	ticks := 0
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -47,6 +48,12 @@ func (s *annotationService) annotationWorker() {
 		case <-s.wake:
 		case <-ticker.C:
 		}
+		if ticks%120 == 0 {
+			if err := s.rt.annotationReads().collectSnapshots(s.rt.ctx); err != nil {
+				s.logf("annotations: snapshot collection: %v", err)
+			}
+		}
+		ticks++
 		for s.rt.ctx.Err() == nil {
 			name, err := s.nextAnnotation()
 			if err != nil {
@@ -67,7 +74,7 @@ func (s *annotationService) annotationWorker() {
 	}
 }
 func (s *annotationService) nextAnnotation() (string, error) {
-	rows, err := s.rt.annotationReads().db.QueryContext(s.rt.ctx, `SELECT opus_name FROM annotation_head WHERE desired!=confirmed AND blocked=0 AND retry_at<=unixepoch() ORDER BY retry_at,desired LIMIT 100`)
+	rows, err := s.rt.annotationReads().db.QueryContext(s.rt.ctx, `SELECT h.opus_name FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE h.desired!=h.confirmed AND h.blocked=0 AND h.retry_at<=unixepoch() ORDER BY CASE WHEN h.retry_at=0 THEN s.created_at ELSE h.retry_at END,h.desired LIMIT 100`)
 	if err != nil {
 		return "", err
 	}
@@ -212,13 +219,25 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 			}
 			confirmed = flight.Int64
 			previous = attempted
-			if confirmed == desired {
-				return nil
-			}
 		}
 	}
 	if !sameAnnotationDocument(remote.Annotations, previous.Annotations) {
 		return &annotationBlocked{"archive annotations differ from the last confirmed state; repair before retrying"}
+	}
+	// Republish may have committed new audio just before a crash prevented its
+	// DB callback. Reconcile metadata from the validated baseline before writing.
+	if err = store.inTx(ctx, func(tx *sql.Tx) error { return refreshAnnotationAudio(ctx, tx, name, remote) }); err != nil {
+		return err
+	}
+	if err = store.db.QueryRowContext(ctx, `SELECT desired FROM annotation_head WHERE opus_name=?`, name).Scan(&desired); err != nil {
+		return err
+	}
+	if desired == confirmed {
+		return nil
+	}
+	target, err = s.snapshot(ctx, desired)
+	if err != nil {
+		return err
 	}
 	rendered, err := runAnnotate(ctx, s.bin, target.Annotations, "snapshot", "--out", out, "--json", in)
 	if err != nil {

@@ -72,6 +72,8 @@ func (s *annotationService) importDocument(caller, meetingID, relPath string) {
 		if _, err := store.document(ctx, path.Base(relPath)); err == nil {
 			return
 		}
+		provisionMu.RLock()
+		defer provisionMu.RUnlock()
 		// File writers and importers must agree on which delivered version was read.
 		unlock, err := annotationWriteLocks.acquire(ctx, path.Base(relPath))
 		if err != nil {

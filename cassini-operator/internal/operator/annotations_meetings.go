@@ -28,17 +28,11 @@ import (
 // Status discipline is search's: failure is loud (502), denial is empty (404).
 
 const (
-	// annotateWriteAttempts: ops are idempotent, so every round after the first
-	// is safe.
-	annotateWriteAttempts = 3
-
-	// annotateRequestTimeout bounds three rounds of download, rewrite and upload
-	// of a recording of tens of megabytes, while holding the meeting's lock.
+	// annotateRequestTimeout bounds an archive attempt or an HTTP request.
+	// HTTP mutations only perform access checks and a local transaction.
 	annotateRequestTimeout = 5 * time.Minute
 
-	// annotateIndexTimeout bounds recording a committed write, which runs
-	// detached from the request so a caller who hangs up after the PUT does not
-	// leave the projection describing the old file.
+	// annotateIndexTimeout bounds detached retry/job bookkeeping on shutdown.
 	annotateIndexTimeout = 30 * time.Second
 )
 
@@ -74,9 +68,6 @@ type annotateFailure struct {
 	status int
 	public string
 	cause  error
-	// committed: the file was already rewritten, so the projection no longer
-	// describes it.
-	committed bool
 }
 
 func (f *annotateFailure) Error() string { return f.cause.Error() }
