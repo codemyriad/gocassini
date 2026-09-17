@@ -350,6 +350,17 @@
       // and is resolved before anyone reaches a switch. The refusal is the
       // operator's own sentence, shown as an error, and it stops there.
       status = await operatorClient.putStorage(mode === PARTICIPANTS);
+      // A storage-mode switch rewrites every recording leaf. In particular, a
+      // participants -> everyone -> participants round trip deliberately
+      // removes any per-recording restrictions we applied earlier. The open
+      // recordings list is a snapshot from a PROPFIND, so keeping the earlier
+      // snapshot here would hide the recordings that became open again until
+      // the whole component happened to be reloaded (D-769).
+      //
+      // Do not re-fetch eagerly: the list is deliberately paid for only when
+      // an administrator opens its disclosure. Resetting makes the next open
+      // ask the server about the newly authoritative archive.
+      resetOpenRecordings();
       switched = true;
       migration = null;
       flow = null;
@@ -557,6 +568,21 @@
     } finally {
       openLoading = false;
     }
+  }
+
+  // resetOpenRecordings forgets a PROPFIND result after an operation that
+  // changes the archive beneath it. `openAsked` is part of the cache: leaving
+  // it true would make the newly rendered disclosure look loaded but prevent
+  // its first expansion from asking the operator again.
+  function resetOpenRecordings(): void {
+    openRecordings = null;
+    openLoading = false;
+    openError = null;
+    openAsked = false;
+    selected = {};
+    restrictFlow = null;
+    restrictResults = [];
+    ignoring = "";
   }
 
   // pruneSelection drops ticks for rows that are no longer there to tick. The

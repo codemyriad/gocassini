@@ -650,4 +650,20 @@ describe("the open-recordings list", () => {
     // what makes the list survive a reload, and it should survive the write too.
     expect(panelSource).toContain("openRecordings = next.open_recordings");
   });
+
+  it("forgets a prior list after a storage-mode switch", () => {
+    // A participants -> everyone -> participants round trip deliberately
+    // reopens the leaves. Keeping the list that was fetched before the first
+    // switch would omit rows narrowed earlier in the session.
+    const confirm = panelSource.slice(
+      panelSource.indexOf("async function confirmSwitch()"),
+      panelSource.indexOf("async function resume()"),
+    );
+    expect(confirm.indexOf("operatorClient.putStorage(mode === PARTICIPANTS)")).toBeLessThan(
+      confirm.indexOf("resetOpenRecordings();"),
+    );
+    expect(panelSource).toContain("function resetOpenRecordings(): void");
+    expect(panelSource).toContain("openAsked = false;");
+    expect(panelSource).toContain("openRecordings = null;");
+  });
 });
