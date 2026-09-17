@@ -100,9 +100,15 @@ func validatePublishSinkName(name string) error {
 	return fmt.Errorf("unknown publish sink %q (known sinks: %s)", name, strings.Join(publishSinkNames(), ", "))
 }
 
-// newPublishSink constructs the named sink. It is total over the names
-// validatePublishSinkName accepts, so callers that validated first cannot fail
-// here.
+// newPublishSink constructs a sink that needs nothing but the Config.
+//
+// It is NOT total over the names validatePublishSinkName accepts, and the
+// comment here used to claim it was. `nextcloud-files` is a known name that
+// this constructor cannot build, because that sink needs the ExApp config and
+// the runtime; newPublishSinkFor is the one that knows how. Anything calling
+// this with a validated name can therefore still get an error, and the caller
+// that believed otherwise logged a false "using local" on every correctly
+// configured ExApp (D-747).
 //
 // The empty name deliberately resolves to the default rather than erroring:
 // "unset" is not "wrong". Tests construct Config literals directly without
@@ -412,12 +418,16 @@ func replaceSiteShellFile(source, destination string, mode os.FileMode) error {
 
 // sink returns the runtime's publish sink, defaulting when it is unset.
 //
-// NewRuntime always populates publishSink, so nil here means a Runtime built
-// as a struct literal — which several tests do to exercise the publish worker
-// in isolation. Treating that as "unset" rather than panicking keeps the seam
-// invisible to code that has no opinion about the destination, and matches the
-// rule newPublishSink follows: unset is not wrong, only a non-empty unknown
-// name is.
+// Nil means one of two things, and neither is an error: a Runtime built as a
+// struct literal, which several tests do to exercise the publish worker in
+// isolation; or a Runtime that Run has not yet handed its constructed sink to
+// (D-747 — NewRuntime deliberately no longer guesses one). Nothing publishes in
+// that window, so the default here is a statement about struct-literal
+// Runtimes rather than a destination anything actually uses.
+//
+// Treating unset as the default rather than panicking keeps the seam invisible
+// to code with no opinion about the destination, and matches the rule
+// newPublishSink follows: unset is not wrong, only a non-empty unknown name is.
 func (rt *Runtime) sink() publishSink {
 	if rt.publishSink != nil {
 		return rt.publishSink
