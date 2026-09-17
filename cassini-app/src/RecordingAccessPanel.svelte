@@ -165,7 +165,13 @@
     loading = true;
     loadError = null;
     try {
-      status = await operatorClient.getStorage();
+      // Storage status deliberately returns the last preflight snapshot. That
+      // makes an ordinary status reader cheap, but the archive total in this
+      // panel is an administrator-facing fact: recordings may have published
+      // since that snapshot was taken. Entering this panel therefore asks
+      // Nextcloud for a fresh archive listing rather than calling "0" the
+      // number from the enabled edge.
+      status = await operatorClient.recheckStorage();
       watchRunningSwitch();
     } catch (error) {
       loadError = asFailure(error);
@@ -195,16 +201,40 @@
     }
   }
 
-  function choose(mode: AccessMode): void {
-    if (busy || status === null || status.mode === mode) {
+  async function choose(mode: AccessMode): Promise<void> {
+    if (!operatorClient || busy || status === null || status.mode === mode) {
       return;
     }
+    // A mode change moves the complete archive. Recheck immediately before
+    // showing its confirmation, not only when the page was opened: an
+    // administrator can leave Settings open while new recordings publish.
+    // The confirmation's number and the actual source tree now start from the
+    // same fresh view of Nextcloud.
+    loading = true;
     actionError = null;
-    done = "";
-    target = mode;
-    // The checklist is only for the two apps, and only while one is missing.
-    // Everything else this mode needs is done during the switch.
-    void openPanel(needsPrerequisites(status, mode) ? "prereqs" : "confirm");
+    try {
+      const fresh = await operatorClient.recheckStorage();
+      status = fresh;
+      watchRunningSwitch();
+      // A second administrator may have completed the requested switch while
+      // this request was out. Do not open a confirmation that now describes a
+      // no-op, or one while their migration is running.
+      if (fresh.mode === mode || fresh.migration !== null) {
+        return;
+      }
+      done = "";
+      target = mode;
+      // The checklist is only for the two apps, and only while one is missing.
+      // Everything else this mode needs is done during the switch.
+      void openPanel(needsPrerequisites(fresh, mode) ? "prereqs" : "confirm");
+    } catch (error) {
+      // Do not fall back to the old count: opening a destructive confirmation
+      // on a stale archive inventory is worse than asking the administrator to
+      // try its fresh check again.
+      actionError = asFailure(error);
+    } finally {
+      loading = false;
+    }
   }
 
   // openPanel shows one of the two alertdialogs and puts the focus on its first
@@ -869,7 +899,7 @@
             role="radio"
             aria-checked={option.current}
             disabled={busy}
-            on:click={() => choose(option.mode)}
+            on:click={() => void choose(option.mode)}
           >
             <span class="flex items-center gap-2">
               <span class="text-sm font-semibold">{option.title}</span>

@@ -60,6 +60,15 @@ describe("the section", () => {
     expect(panelSource.indexOf("{existingLine}")).toBeGreaterThan(panelSource.indexOf("{#if done}"));
     expect(panelSource).toContain('role="radiogroup"');
   });
+
+  it("refreshes the archive facts when the panel opens", () => {
+    const load = panelSource.slice(
+      panelSource.indexOf("async function load()"),
+      panelSource.indexOf("async function recheck()"),
+    );
+    expect(load).toContain("operatorClient.recheckStorage()");
+    expect(load).not.toContain("operatorClient.getStorage()");
+  });
 });
 
 describe("choosing the other option", () => {
@@ -69,7 +78,7 @@ describe("choosing the other option", () => {
     // instance on one click.
     expect(panelSource).toContain("function choose(mode: AccessMode)");
     expect(panelSource).toContain("async function confirmSwitch()");
-    expect(panelSource).toContain("on:click={() => choose(option.mode)}");
+    expect(panelSource).toContain("on:click={() => void choose(option.mode)}");
     expect(panelSource).toContain("on:click={confirmSwitch}");
     const putCalls = panelSource.match(/operatorClient\.putStorage\(/g) ?? [];
     expect(putCalls).toHaveLength(1);
@@ -78,7 +87,8 @@ describe("choosing the other option", () => {
       panelSource.indexOf("function cancel()"),
     );
     expect(choose).not.toContain("putStorage");
-    expect(choose).toContain("needsPrerequisites(status, mode)");
+    expect(choose).toContain("operatorClient.recheckStorage()");
+    expect(choose).toContain("needsPrerequisites(fresh, mode)");
   });
 
   // The whole app runs inside a shadow root on Nextcloud's embedded page, where
@@ -513,7 +523,7 @@ describe("the alertdialog panels", () => {
     expect(panelSource).toContain(
       '(next === "prereqs" ? prereqsFocus : confirmFocus)?.focus();',
     );
-    expect(panelSource).toContain('void openPanel(needsPrerequisites(status, mode) ? "prereqs" : "confirm");');
+    expect(panelSource).toContain('void openPanel(needsPrerequisites(fresh, mode) ? "prereqs" : "confirm");');
     expect(panelSource).toContain('void openPanel("confirm");');
     // After the DOM the panel is in exists.
     const open = panelSource.slice(
