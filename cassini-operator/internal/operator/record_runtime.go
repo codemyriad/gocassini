@@ -264,6 +264,9 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
 	cmd.Env = rt.recordChildEnv()
+	if rt.cfg.RecordingPriority {
+		cmd.Env = setEnvKey(cmd.Env, "CASSINI_RECORD_FINALIZE_LOCK", filepath.Join(rt.cfg.WorkRoot, ".record-finalize.lock"))
+	}
 	// Run the recorder in its own process group so a hard kill also reaps
 	// ffmpeg children spawned during compose instead of leaking them.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

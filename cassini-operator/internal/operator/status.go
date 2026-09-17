@@ -55,7 +55,8 @@ const (
 )
 
 type statusResponse struct {
-	OK bool `json:"ok"`
+	Scheduling statusScheduling `json:"scheduling"`
+	OK         bool             `json:"ok"`
 	// Version is APP_VERSION as injected by AppAPI from the manifest. CI
 	// enforces that releases pin info.xml's <image-tag> to the same value,
 	// so it doubles as the image tag.
@@ -197,6 +198,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	effective := rt.effectiveFor(settings)
 	usable, detail := rt.effectiveComputeStatus(settings, effective.Device)
 	resp := statusResponse{
+		Scheduling:  rt.schedulingStatus(),
 		Version:     strings.TrimSpace(os.Getenv(envAppVersion)),
 		VCSRevision: buildVCSRevision(),
 		STT: statusSTT{

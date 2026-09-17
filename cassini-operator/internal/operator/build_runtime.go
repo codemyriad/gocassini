@@ -58,6 +58,11 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		return
 	}
 
+	buildCtx, release, admissionErr := rt.beginBackgroundBuild()
+	if admissionErr != nil {
+		return
+	}
+	defer release()
 	startedAt := nowUTCString()
 	claimed, err := rt.store.ClaimBuildRunning(context.Background(), task, startedAt)
 	if err != nil {
@@ -73,8 +78,29 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	}
 	rt.logger.Printf("build started id=%s attempt=%d worker=%d run=%s", task.JobID, task.AttemptNumber, workerIndex, task.ArtifactRunPath)
 
-	attemptMeetingPath, err := rt.buildJobFn(rt.ctx, task)
+	builtMeetingPath, err := rt.buildJobFn(buildCtx, task)
 	finishedAt := nowUTCString()
+	if err != nil && errors.Is(context.Cause(buildCtx), errRecordingPriority) {
+		// Only discard this interrupted attempt's derived output; the canonical
+		// capture and all published artifacts are untouched. The child process
+		// group has exited before buildJobFn returns.
+		if cleanErr := os.RemoveAll(attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)); cleanErr != nil {
+			rt.logger.Printf("build priority cleanup failed id=%s: %v", task.JobID, cleanErr)
+			_ = rt.store.MarkBuildFailed(context.Background(), task.JobID, "", cleanErr.Error(), finishedAt)
+			return
+		}
+		retry := time.Now().UTC()
+		queued, queueErr := rt.store.MarkBuildDeferred(context.Background(), task, task.DeferralCount, errRecordingPriority.Error(), finishedAt, formatUTCString(retry))
+		if queueErr != nil {
+			rt.logger.Printf("build priority requeue failed id=%s: %v", task.JobID, queueErr)
+			return
+		}
+		if queued {
+			rt.logger.Printf("build yielded for recording id=%s", task.JobID)
+			rt.scheduleDeferredBuild(task, retry)
+		}
+		return
+	}
 	if err != nil {
 		var unavailable *resourceUnavailableError
 		if errors.As(err, &unavailable) {
@@ -121,9 +147,9 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 			rt.scheduleDeferredBuild(task, retryNotBefore)
 			return
 		}
-		detail := rt.extractBuildFailureDetail(attemptMeetingPath, err)
+		detail := rt.extractBuildFailureDetail(builtMeetingPath, err)
 		rt.logger.Printf("build failed id=%s attempt=%d worker=%d: %s", task.JobID, task.AttemptNumber, workerIndex, detail)
-		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, attemptMeetingPath, detail, finishedAt); updateErr != nil {
+		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, builtMeetingPath, detail, finishedAt); updateErr != nil {
 			rt.logger.Printf("build fail update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
 		return
@@ -140,13 +166,13 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// through `cassini publish <bundle>` would otherwise carry.
 	// Best-effort: a failed stamp costs the room, never the meeting.
 	roomToken, meetingTitle := rt.talkRoomForJob(task.JobID)
-	if err := SetMeetingBundleRoom(attemptMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
-		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, attemptMeetingPath, err)
+	if err := SetMeetingBundleRoom(builtMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
+		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, builtMeetingPath, err)
 	}
-	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, attemptMeetingPath, task.JobID)
+	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, builtMeetingPath, task.JobID)
 	if promoteErr != nil {
-		rt.logger.Printf("build promote failed id=%s attempt=%d worker=%d meeting=%s: %v", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, promoteErr)
-		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, attemptMeetingPath, promoteErr.Error(), finishedAt); updateErr != nil {
+		rt.logger.Printf("build promote failed id=%s attempt=%d worker=%d meeting=%s: %v", task.JobID, task.AttemptNumber, workerIndex, builtMeetingPath, promoteErr)
+		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, builtMeetingPath, promoteErr.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("build promote failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
 		return
@@ -158,14 +184,14 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// publishable (D-583). The hand-off is still non-blocking, so the reason it
 	// was detached in the first place — a single build worker starved by an
 	// ffmpeg pack — still does not apply.
-	if err := rt.enqueueSealJobNonBlocking(task.JobID, task.AttemptNumber, canonicalMeetingPath, attemptMeetingPath, finishedAt); err != nil {
+	if err := rt.enqueueSealJobNonBlocking(task.JobID, task.AttemptNumber, canonicalMeetingPath, builtMeetingPath, finishedAt); err != nil {
 		rt.logger.Printf("seal queue update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, err)
 		if updateErr := rt.store.MarkSealFailed(context.Background(), task.JobID, "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("seal queue failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
 		return
 	}
-	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, canonicalMeetingPath, finishedAt)
+	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, builtMeetingPath, canonicalMeetingPath, finishedAt)
 }
 
 func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Duration {

@@ -56,6 +56,8 @@ type Config struct {
 	TalkRecordingBackendURL string
 	MaxRecordWorkers        int
 	MaxBuildWorkers         int
+	RecordingPriority       bool
+	RecordingIdleGrace      time.Duration
 	// BundledModelRoot is the read-only directory where the image baked its
 	// models, and ModelCacheRoot is the writable cache that receives a tier the
 	// image does not carry. Under an AppAPI deploy the cache lands on the
@@ -120,11 +122,14 @@ type Runtime struct {
 	// VRAM headroom probe are not safely reservable between concurrent workers.
 	// Serializing here makes the resource check and ensuing launch atomic with
 	// respect to every other build in this operator process.
-	buildExecutionMu sync.Mutex
-	talkRooms        map[string]*talkRoomState
-	talkJobs         map[string]*talkRoomState
-	recordJobFn      func(context.Context, Job, TriggerRequest) (recordResult, error)
-	buildJobFn       func(context.Context, buildTask) (string, error)
+	buildExecutionMu    sync.Mutex
+	priorityMu          sync.Mutex
+	priorityBuildCancel context.CancelCauseFunc
+	lastRecordFinished  time.Time
+	talkRooms           map[string]*talkRoomState
+	talkJobs            map[string]*talkRoomState
+	recordJobFn         func(context.Context, Job, TriggerRequest) (recordResult, error)
+	buildJobFn          func(context.Context, buildTask) (string, error)
 	// buildResourceRetryDelay bounds transient RAM/VRAM retry frequency.
 	// Tests shorten it; production uses defaultBuildResourceRetryDelay.
 	buildResourceRetryDelay time.Duration
@@ -513,7 +518,13 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs := flag.NewFlagSet("cassini-operator", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
+	idleGrace, err := time.ParseDuration(envOrDefaultAny([]string{"CASSINI_RECORDING_IDLE_GRACE"}, "5s"))
+	if err != nil {
+		return Config{}, 2, fmt.Errorf("recording idle grace: %w", err)
+	}
 	cfg := Config{RepoRoot: repoRoot}
+	fs.BoolVar(&cfg.RecordingPriority, "recording-priority", envBool("CASSINI_RECORDING_PRIORITY"), "defer builds while recording; yield running builds to new recordings")
+	fs.DurationVar(&cfg.RecordingIdleGrace, "recording-idle-grace", idleGrace, "quiet period after the last recording before background work")
 	// Not flags: these describe the image the operator is running inside, not a
 	// choice an invocation makes.
 	cfg.BundledModelRoot = envOrDefaultAny([]string{"CASSINI_BUNDLED_MODEL_ROOT"}, "")
@@ -587,6 +598,9 @@ Flags:
 	cfg.SiteRoot = resolveConfigPath(repoRoot, cfg.SiteRoot)
 	cfg.CassiniBin = resolveConfigPath(repoRoot, cfg.CassiniBin)
 	cfg.TalkBackendURL = strings.TrimRight(strings.TrimSpace(cfg.TalkBackendURL), "/")
+	if cfg.RecordingIdleGrace < 0 {
+		return Config{}, 2, fmt.Errorf("recording-idle-grace must not be negative")
+	}
 	if cfg.MaxRecordWorkers < 1 {
 		return Config{}, 2, errors.New("--max-record-workers must be >= 1")
 	}
@@ -1081,7 +1095,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	// releaseSlot call below): post-record bookkeeping — Talk delivery with
 	// its retry schedule, the build handoff — must not hold recording
 	// capacity hostage (D-367). The deferred call covers early-error returns.
-	releaseSlot := sync.OnceFunc(func() { <-rt.recordSlots })
+	releaseSlot := sync.OnceFunc(rt.releaseRecordSlot)
 	defer releaseSlot()
 	defer rt.clearTalkRoomJobByID(job.ID)
 
@@ -1166,9 +1180,7 @@ func (rt *Runtime) acceptRecordJob(ctx context.Context, provider, requestBody st
 // Talk room binding, keyed by job ID — do so between prepare and start, so a
 // fast-failing job can never race past a not-yet-bound room entry (D-364).
 func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody string, req TriggerRequest) (createJobResponse, func(), error) {
-	select {
-	case rt.recordSlots <- struct{}{}:
-	default:
+	if !rt.reserveRecordSlot() {
 		return createJobResponse{}, nil, errRecordBusy
 	}
 
@@ -1187,7 +1199,7 @@ func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody s
 		RecordQueuedAt:       &now,
 	}
 	if err := rt.store.InsertQueuedJob(ctx, job); err != nil {
-		<-rt.recordSlots
+		rt.releaseRecordSlot()
 		return createJobResponse{}, nil, fmt.Errorf("create job: %w", err)
 	}
 
