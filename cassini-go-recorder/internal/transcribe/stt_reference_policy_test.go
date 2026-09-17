@@ -64,3 +64,20 @@ func TestReferenceDecoderReportsUnappliedVocabulary(t *testing.T) {
 		}
 	}
 }
+
+// No native recognizer is needed: a short reference chunk must return before
+// constructing a stream. This covers the former zero-frame native abort.
+func TestReferenceSkipsChunksWithoutTwoFeatureFrames(t *testing.T) {
+	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+		policy := vadDecodePolicyForModel(id)
+		for _, n := range []int{0, 1, 159, 160, 319} {
+			for _, vadSegment := range []bool{false, true} {
+				rec := &Recognizer{}
+				words, err := rec.transcribeSegmentWithPolicy(make([]float32, n), 16000, 1000, vadSegment, policy)
+				if err != nil || len(words) != 0 {
+					t.Fatalf("model=%s samples=%d vad=%v: words=%v err=%v", id, n, vadSegment, words, err)
+				}
+			}
+		}
+	}
+}

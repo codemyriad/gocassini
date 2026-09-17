@@ -145,7 +145,8 @@ const maxSafeSegmentSamples = 16000 * 55
 // bad span can no longer zero the whole transcript. The 0.5s overlap ensures a
 // word straddling a window boundary is captured by at least one window; the
 // overlap is de-duplicated by order-preserving text/time alignment (see
-// transcribeNonVADChunked).
+// transcribeNonVADChunked). The vadDecode* constants retain the legacy policy
+// for other models and controlled comparisons; v3 preserves whole VAD spans.
 const (
 	nonVADWindowSamples        = 16000 * 15 // 15s window at 16 kHz
 	nonVADWindowOverlapSamples = 16000 / 2  // 0.5s overlap at 16 kHz
@@ -693,12 +694,17 @@ func (r *Recognizer) transcribeSegmentWithPolicy(samples []float32, sampleRate i
 		}
 		chunk := samples[start:end]
 
-		// Parakeet TDT v3 can return zero or partial tokens when a chunk ends
-		// abruptly. VAD deliberately strips the closing silence from every
-		// speech segment, including long segments forced closed at Silero's
-		// MaxSpeechDuration, so every VAD decode needs a short synthetic tail.
-		// Non-VAD windows retain the established short-chunk workaround while
-		// avoiding a decode change for the normal 15s sliding windows.
+		// The v3 reference frontend needs two 10ms frames to compute sample
+		// variance. Shorter input yields no features; passing that empty tensor
+		// to ONNX aborts in native code instead of returning a Go error.
+		if policy.disableSyntheticPadding && sampleRate > 0 &&
+			int64(len(chunk))*1000 < int64(sampleRate)*20 {
+			continue
+		}
+
+		// Preserve legacy padding for other models. The v3 reference policy
+		// overrides both VAD and non-VAD padding: appended zeros change its
+		// utterance-wide feature normalization and can suppress real speech.
 		decoderTailPaddingSamples := decoderTailPadSamples(len(chunk), sampleRate, vadSegment)
 		decoderHeadPaddingSamples := 0
 		if vadSegment || policy.disableSyntheticPadding {

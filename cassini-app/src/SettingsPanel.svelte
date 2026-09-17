@@ -724,7 +724,7 @@
         <div class="set-row-main pipe-text-step">
           <div>
             <h3 class="set-row-name op-card-title">Vocabulary</h3>
-            <p class="set-row-sub">Names and terms the transcriber should spell correctly.</p>
+            <p class="set-row-sub">Saved names and preferred spellings for transcription hints.</p>
           </div>
           <label class="op-field">
             <span class="pipe-field-head">
@@ -739,9 +739,8 @@
             ></textarea>
           </label>
           <ul class="pipe-notes">
-            <li>Participant names are added automatically.</li>
-            <li>Only used where the audio matches, so it never adds words.</li>
-            <li>Not available on the <em>Fast</em> quality setting. If a term can't be used, the recording notes why.</li>
+            <li>The bundled transcription models currently do not apply vocabulary or participant-name hints. Your saved terms are retained.</li>
+            <li>When hints cannot be used, the recording notes why.</li>
           </ul>
         </div>
       </section>
@@ -767,7 +766,7 @@
           <ul class="pipe-notes">
             <li>Doesn't change any transcript, only what search finds.</li>
             <li>Results say when they matched one of these spellings.</li>
-            <li>To get the name right in new recordings, add it to Vocabulary above.</li>
+            <li>Use these spellings when the transcriber mishears a name.</li>
           </ul>
         </div>
       </section>
