@@ -196,6 +196,7 @@
   let transcriptHits: ReadonlyMap<string, readonly MeetingSearchHit[]> = new Map();
   let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
   let searchCoverage: { visible: number; searched: number } | null = null;
+  let lastNarrowingKey = "";
   let searchDebounce: ReturnType<typeof setTimeout> | undefined;
   // Only the newest query may write the results. Without this a slow earlier
   // request can land after a faster later one and repaint the list with answers
@@ -565,6 +566,34 @@
   // Feature-detecting the provider method answers neither: every provider here
   // defines it, because the module decides at call time.
   let searchRouteServed = true;
+  // What of the current narrowing the SERVER can apply. Sending it matters
+  // more than it looks: the endpoint bounds its visible set before the
+  // statement, so LIMIT applies to the narrowed population. Narrowing only the
+  // answer would let a caller with a tight filter be told nothing matched while
+  // matches sat just below a page ranked over everything they can read.
+  //
+  // Only some narrowings are expressible. Room keys are prefixed by roomKeyOf:
+  // `id:<roomId>` is a real room the endpoint knows, while `name:` (a room with
+  // a name and no id) and `no-room` are viewer-side groupings with nothing to
+  // send. The endpoint takes one tag, so several picked tags — or "all" mode —
+  // stay client-side too. Those cases still narrow correctly, because the list
+  // resolves hits against the narrowed set; they can just under-report on a
+  // corpus large enough to fill the page from outside the filter.
+  $: searchNarrowing = {
+    roomId: selectedRoomKey?.startsWith("id:") ? selectedRoomKey.slice(3) : "",
+    tag: activeTagIds.length === 1 ? activeTagIds[0] : "",
+  };
+  // Re-run when the narrowing changes under a live query. Without this, picking
+  // a tag after searching leaves the previous answer on screen — which is what
+  // "filtering after a search does nothing" looked like from the outside.
+  $: narrowingKey = `${searchNarrowing.roomId}\u0000${searchNarrowing.tag}`;
+  $: if (narrowingKey !== lastNarrowingKey) {
+    lastNarrowingKey = narrowingKey;
+    if (searchQuery.trim() !== "" && searchOffered) {
+      void runSearch(searchQuery);
+    }
+  }
+
   $: searchOffered =
     typeof dataProvider.searchMeetings === "function" &&
     isMeetingSearchAvailable() &&
@@ -603,6 +632,8 @@
     try {
       outcome = await search(query, {
         perMeeting: SEARCH_HITS_PER_MEETING,
+        roomId: searchNarrowing.roomId,
+        tag: searchNarrowing.tag,
         signal: controller.signal,
       });
     } catch (error) {
@@ -648,7 +679,12 @@
     transcriptHits = new Map(grouped.map((match) => [match.meetingId, match.hits]));
     // Meetings the name/date filter will not produce, in the server's rank
     // order. The list concatenates them after its own matches.
-    const known = new Map(catalogMeetings.map((meeting) => [meeting.id, meeting]));
+    // The NARROWED set, not the whole catalog. Resolving here against every
+    // meeting is what let a transcript-only hit render outside the caller's own
+    // room or tag filter, so picking a tag after searching appeared to do
+    // nothing (D-771). A search result is not a reason to override a narrowing
+    // the reader asked for.
+    const known = new Map(roomMeetings.map((meeting) => [meeting.id, meeting]));
     const nameMatched = new Set(
       filterMeetingCatalogEntries(roomMeetings, query).map((meeting) => meeting.id),
     );

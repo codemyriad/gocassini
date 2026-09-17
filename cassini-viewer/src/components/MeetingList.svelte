@@ -2,7 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import { Sun, Moon, Search, PanelLeft, Tag, TriangleAlert, Users, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
-  import { wholeTagState, type MeetingTags } from "../viewer/listTags";
+  import { filterByTagLabel, wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
   import TagChip from "./tags/TagChip.svelte";
   import TagPicker from "./tags/TagPicker.svelte";
@@ -166,7 +166,32 @@
   // words are not in this array — which is also what finally makes the old
   // comment's worry ("a hit the list cannot show") moot, since a hit now
   // arrives WITH the quote that justifies it.
-  $: nameMatches = filterMeetingCatalogEntries(meetings, filter);
+  // What the list can answer locally: the meeting's name or date, and now the
+  // names of the tags it carries (D-772). Unioned by filtering the narrowed
+  // array itself rather than concatenating two results, which keeps the
+  // catalog's order and cannot list a meeting twice when it matched both ways.
+  //
+  // A tag match needs no new row furniture: the row already renders its chips,
+  // so the reason a meeting is here is on screen — which is the rule the
+  // original title/date-only filter was written to protect.
+  // Tags join the promise only where there are any. An install with no tags
+  // yet would otherwise offer to search something that cannot match, which is
+  // the same empty promise searchOffered exists to avoid.
+  $: tagsSearchable = meetingTags.size > 0;
+  $: searchBoxLabel = searchOffered
+    ? tagsSearchable
+      ? `Search ${matchNounPlural}, their tags and what was said in them`
+      : `Search ${matchNounPlural} and what was said in them`
+    : tagsSearchable
+      ? `Search ${matchNounPlural} by name, date or tag`
+      : `Search ${matchNounPlural} by name or date`;
+
+  $: localMatchIds = new Set([
+    ...filterMeetingCatalogEntries(meetings, filter).map((meeting) => meeting.id),
+    ...filterByTagLabel(meetings, meetingTags, filter).map((meeting) => meeting.id),
+  ]);
+  $: nameMatches =
+    filter.trim() === "" ? meetings : meetings.filter((meeting) => localMatchIds.has(meeting.id));
   // Name/date matches keep the catalog's order and come first; meetings that
   // matched only on what was said follow, in the server's rank order.
   $: visibleMeetings = filter.trim() === "" ? nameMatches : [...nameMatches, ...transcriptOnlyMeetings];
@@ -278,12 +303,8 @@
              Meetings toggle is off. -->
         <input
           type="search"
-          placeholder={searchOffered
-            ? `Search ${matchNounPlural} and what was said in them`
-            : `Search ${matchNounPlural} by name or date`}
-          aria-label={searchOffered
-            ? `Search ${matchNounPlural} and what was said in them`
-            : `Search ${matchNounPlural} by name or date`}
+          placeholder={searchBoxLabel}
+          aria-label={searchBoxLabel}
           bind:value={filter}
         />
         {#if isSearching}

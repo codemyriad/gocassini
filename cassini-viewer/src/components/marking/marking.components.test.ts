@@ -5,6 +5,7 @@ import { AnnotationError, type AnnotationItem, type MeetingAnnotations } from ".
 import MeetingTags from "./MeetingTags.svelte";
 import StretchToolbar from "./StretchToolbar.svelte";
 import TranscriptFrame from "./TranscriptFrame.svelte";
+import transcriptFrameSource from "./TranscriptFrame.svelte?raw";
 import { createMarksSession, viewMarks } from "./session";
 
 // Rendered through Svelte's server renderer, as TranscriptWords.test.ts does:
@@ -141,5 +142,24 @@ describe("the stretch toolbar", () => {
     expect(moved).toContain("Save changes");
     expect(moved).toContain("Remove");
     expect(moved).toContain("Cancel");
+  });
+});
+
+// The host page listens for this chord too — in the ExApp build that is
+// Nextcloud, whose unified search opened instead of the transcript find.
+describe("claiming Ctrl+F from the host page", () => {
+  it("takes the event out of the propagation path, not just its default", () => {
+    // preventDefault only cancels the browser's own find bar. Another
+    // listener on the page still runs unless propagation is stopped, which is
+    // why the shortcut appeared not to work at all in Nextcloud.
+    expect(transcriptFrameSource).toContain("event.preventDefault();");
+    expect(transcriptFrameSource).toContain("event.stopPropagation();");
+    expect(transcriptFrameSource).toContain("event.stopImmediatePropagation();");
+  });
+
+  it("listens where it can get there first", () => {
+    // Window, capture phase: the first point any handler sees the event, so
+    // stopping here reaches every other listener including the host's.
+    expect(transcriptFrameSource).toContain('window.addEventListener("keydown", onKeydown, true)');
   });
 });
