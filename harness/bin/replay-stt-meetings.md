@@ -42,7 +42,7 @@ continues with subsequent meetings; its exit status is nonzero if any fail.
 
 Reruns resume only completed meetings with matching configuration and result
 hashes. The fingerprint includes binary, manifest, runtime, FFmpeg and hotword
-hashes, model root, CUDA library paths and local MKV size/mtime. Treat remote
+hashes, hint-disable/score environment, model root, CUDA library paths and local MKV size/mtime. Treat remote
 recordings, model contents and CUDA directories as immutable for one output
 directory. Incomplete meetings restart in full, preserving the prior partial
 JSONL file. Do not run two processes against one output directory.
@@ -75,3 +75,26 @@ Status records `availableTracks`, `availableStreamIndices`, selected
 `expectedTracks`/`streamIndices`, and `targetedReplay`. A successful targeted
 replay is **not** proof that every track in the meeting was tested: the caller
 must combine it with verified unchanged results and check complete coverage.
+
+Production replay derives participant hints from the complete MKV stream metadata
+by default, using the build's vocabulary resolver and per-speaker own-name
+exclusion. A meeting manifest may supply `configuredVocabulary: ["Project name"]`
+and explicitly set `deriveParticipantHints: false`. Historical configured
+vocabulary is not recoverable from audio and is never guessed: when absent,
+only recorded participant labels are available. Output `hints` describes the
+build-level resolution; the selected stream's hotword hash and score describe
+its actual decoder input. A policy that disables hints records that fact.
+
+Explicit `hotwordsFiles` remains a manual override for the supplied streams;
+file contents are not regenerated. Combining manual files with configured
+vocabulary or explicit automatic hint derivation is rejected. At the fixture
+level the corresponding fields are `hotwordsFile`, `configuredVocabulary`, and
+`deriveParticipantHints`; automatic resolution is supported by the production
+profile only. Manual score ablations remain separate from production vocabulary,
+which follows the normal operator score configuration.
+
+Recorded benchmark fixtures also accept `useVAD: false` for the merged-audio
+fallback path; omission defaults to `true` for individual tracks. Every inference
+row records the effective value. Ablation conditions install the same boundary
+policy on the recognizer before non-VAD decoding, so that path measures the
+requested condition rather than the recognizer's original policy.

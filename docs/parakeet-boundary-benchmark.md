@@ -84,7 +84,7 @@ span plus its requested real context. Window length, overlap, grace and terminal
 window settings are ignored. The existing VAD maximum (25 seconds) and decoder
 safety fallback (55 seconds at 16 kHz) remain in place. This tests utterance
 preservation without choosing a new lexical window constant. Production Parakeet
-v3 now uses this policy with 30 ms real context, greedy decoding and no synthetic
+v3 now uses this policy with 30 ms real context, modified beam search and no synthetic
 padding; other models retain their existing policies.
 
 ## Running
@@ -97,8 +97,8 @@ padding; other models retain their existing policies.
 - `audio-audit`: full-track PCM extraction and SHA-256 only; no model, VAD,
   recognizer or warmup. Emits `device=none` and empty words; rejects sample limits.
 - `production`: the normal model-specific constructor and boundary policy; v3
-  requires the marked Cassini reference runtime and uses greedy decoding, whole
-  VAD spans, 30 ms real context and no synthetic padding. Hotwords are unapplied.
+  requires the marked Cassini reference runtime and retains beam decoding, whole
+  VAD spans, 30 ms real context and no synthetic padding. Supported vocabulary and participant hints are applied through the normal build resolver. The tokenizer-less INT8 bundle and mixed-audio recovery fallback retain greedy decoding.
 
 The named production, legacy and audio-audit profiles do not need
 `CASSINI_BOUNDARY_POLICIES` and ignore decoder and condition overrides. Inference

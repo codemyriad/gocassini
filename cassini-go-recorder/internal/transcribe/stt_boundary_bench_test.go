@@ -11,29 +11,34 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 )
 
 type boundaryFixture struct {
-	ID            string   `json:"id"`
-	AudioPath     string   `json:"audioPath"`
-	MKVPath       string   `json:"mkvPath"`
-	StreamIndex   int      `json:"streamIndex"`
-	SampleLimitMS int      `json:"sampleLimitMs"`
-	HotwordsFile  string   `json:"hotwordsFile"`
-	HotwordScore  *float32 `json:"hotwordScore,omitempty"`
-	ScoreStartMS  int64    `json:"scoreStartMs"`
-	ScoreEndMS    int64    `json:"scoreEndMs"`
+	UseVAD                 *bool    `json:"useVAD,omitempty"`
+	ConfiguredVocabulary   []string `json:"configuredVocabulary,omitempty"`
+	DeriveParticipantHints bool     `json:"deriveParticipantHints,omitempty"`
+	ID                     string   `json:"id"`
+	AudioPath              string   `json:"audioPath"`
+	MKVPath                string   `json:"mkvPath"`
+	StreamIndex            int      `json:"streamIndex"`
+	SampleLimitMS          int      `json:"sampleLimitMs"`
+	HotwordsFile           string   `json:"hotwordsFile"`
+	HotwordScore           *float32 `json:"hotwordScore,omitempty"`
+	ScoreStartMS           int64    `json:"scoreStartMs"`
+	ScoreEndMS             int64    `json:"scoreEndMs"`
 }
 type boundaryCondition struct {
-	ID              string `json:"id"`
-	WindowMS        int    `json:"windowMs"`
-	OverlapMS       int    `json:"overlapMs"`
-	HeadMS          int    `json:"headMs"`
-	TailMS          int    `json:"tailMs"`
-	ContextMS       int    `json:"contextMs"`
-	PreserveVADSpan bool   `json:"preserveVADSpan"`
+	ID                      string `json:"id"`
+	WindowMS                int    `json:"windowMs"`
+	OverlapMS               int    `json:"overlapMs"`
+	HeadMS                  int    `json:"headMs"`
+	TailMS                  int    `json:"tailMs"`
+	ContextMS               int    `json:"contextMs"`
+	PreserveVADSpan         bool   `json:"preserveVADSpan"`
+	DisableSyntheticPadding bool   `json:"disableSyntheticPadding"`
 }
 
 func TestRecordedBoundaryBenchmark(t *testing.T) {
@@ -111,6 +116,19 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 	probeCache := make(map[string][]AudioStream)
 	for _, fixture := range fixtures {
 		extractionStart := time.Now()
+		useVAD := true
+		if fixture.UseVAD != nil {
+			useVAD = *fixture.UseVAD
+		}
+		if pipeline != "production" && pipeline != "audio-audit" && (fixture.DeriveParticipantHints || len(fixture.ConfiguredVocabulary) > 0) {
+			t.Fatal("derived/configured vocabulary requires production profile")
+		}
+		if fixture.HotwordsFile != "" && (fixture.DeriveParticipantHints || len(fixture.ConfiguredVocabulary) > 0) {
+			t.Fatal("manual hotwordsFile cannot be combined with derived/configured vocabulary")
+		}
+		if fixture.DeriveParticipantHints && fixture.MKVPath == "" {
+			t.Fatal("participant hints require MKV metadata")
+		}
 		if pipeline == "audio-audit" && fixture.SampleLimitMS > 0 {
 			t.Fatal("audio-audit requires full tracks; remove sampleLimitMs")
 		}
@@ -178,9 +196,6 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 		if pipeline == "legacy" {
 			method = decodingModifiedBeamSearch
 		}
-		if pipeline == "production" && usesParakeetV3ReferencePolicy(paths.ModelID) {
-			method = decodingGreedySearch
-		}
 		score := float32(defaultHotwordsScore)
 		if fixture.HotwordScore != nil {
 			score = *fixture.HotwordScore
@@ -189,6 +204,22 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 		if method == decodingGreedySearch {
 			decoder.HotwordsFile = ""
 			decoder.MaxActivePaths = 0
+		}
+		var hintsProv *HintsProvenance
+		if pipeline == "production" && fixture.HotwordsFile == "" {
+			if fixture.HotwordScore != nil {
+				t.Fatal("production vocabulary uses operator score configuration, not hotwordScore")
+			}
+			decoder, hintsProv, err = boundaryProductionDecoder(t.TempDir(), fixture, probeCache[fixture.MKVPath], paths)
+			if err != nil {
+				t.Fatal(err)
+			}
+			method = decoder.Method
+		}
+		if pipeline == "production" && !useVAD {
+			decoder = mergedFallbackDecoder(paths, decoder)
+			hintsProv = mergedFallbackHints(paths, hintsProv, true)
+			method = decoder.Method
 		}
 		var hotwordsHash string
 		if decoder.Biased() {
@@ -207,20 +238,24 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 		// Warm the loaded recognizer before timing conditions. Timings remain
 		// diagnostic; accuracy comparisons do not depend on them.
 		if warmup {
-			if _, e = rec.Transcribe(samples, 16000, true); e != nil {
+			if _, e = rec.Transcribe(samples, 16000, useVAD); e != nil {
 				t.Fatal(e)
 			}
 		}
 		for _, condition := range conditions {
-			policy := vadDecodePolicy{windowSamples: condition.WindowMS * 16, overlapSamples: condition.OverlapMS * 16, graceSamples: 8000, minTerminalSamples: min(5000, condition.WindowMS/2) * 16, headPaddingMS: condition.HeadMS, tailPaddingMS: condition.TailMS, contextMS: condition.ContextMS, preserveVADSpan: condition.PreserveVADSpan}
+			policy := vadDecodePolicy{windowSamples: condition.WindowMS * 16, overlapSamples: condition.OverlapMS * 16, graceSamples: 8000, minTerminalSamples: min(5000, condition.WindowMS/2) * 16, headPaddingMS: condition.HeadMS, tailPaddingMS: condition.TailMS, contextMS: condition.ContextMS, preserveVADSpan: condition.PreserveVADSpan, disableSyntheticPadding: condition.DisableSyntheticPadding}
 			// Preserve the established 5s terminal policy for >=10s windows; smaller
 			// windows use half a window so rebalancing cannot exceed the main window.
 			if pipeline != "ablation" {
 				policy = rec.decodePolicy()
-				condition = boundaryCondition{ID: pipeline, WindowMS: policy.windowSamples / 16, OverlapMS: policy.overlapSamples / 16, HeadMS: policy.headPaddingMS, TailMS: policy.tailPaddingMS, ContextMS: policy.contextMS, PreserveVADSpan: policy.preserveVADSpan}
+				condition = boundaryCondition{ID: pipeline, WindowMS: policy.windowSamples / 16, OverlapMS: policy.overlapSamples / 16, HeadMS: policy.headPaddingMS, TailMS: policy.tailPaddingMS, ContextMS: policy.contextMS, PreserveVADSpan: policy.preserveVADSpan, DisableSyntheticPadding: policy.disableSyntheticPadding}
+			}
+			// Non-VAD chunk decoding reads the recognizer policy internally.
+			if pipeline == "ablation" {
+				rec.boundaryPolicy = &policy
 			}
 			before := time.Now()
-			words, e := rec.transcribeWithVADPolicy(samples, 16000, true, policy)
+			words, e := rec.transcribeWithVADPolicy(samples, 16000, useVAD, policy)
 			elapsed := time.Since(before)
 			if e != nil {
 				t.Fatal(e)
@@ -249,7 +284,9 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 				Samples        int               `json:"samples"`
 				Seconds        float64           `json:"seconds"`
 				Words          []Word            `json:"words"`
-			}{pipeline, warmup, fixture.ID, condition, method, hotwordsHash, decoder.Score, decoder.MaxActivePaths, model, device, fmt.Sprintf("%x", hash.Sum(nil)), len(samples), elapsed.Seconds(), words}
+				Hints          *HintsProvenance  `json:"hints,omitempty"`
+				UseVAD         bool              `json:"useVAD"`
+			}{pipeline, warmup, fixture.ID, condition, method, hotwordsHash, decoder.Score, decoder.MaxActivePaths, model, device, fmt.Sprintf("%x", hash.Sum(nil)), len(samples), elapsed.Seconds(), words, hintsProv, useVAD}
 			if e = enc.Encode(row); e != nil {
 				t.Fatal(e)
 			}
@@ -259,5 +296,78 @@ func TestRecordedBoundaryBenchmark(t *testing.T) {
 			t.Logf("%s / %s: %d words, %.2fs", fixture.ID, condition.ID, len(words), elapsed.Seconds())
 		}
 		rec.Close()
+	}
+}
+
+// Use the same vocabulary and per-speaker exclusion path as Transcribe.
+func boundaryProductionDecoder(dir string, fixture boundaryFixture, streams []AudioStream, paths ModelPaths) (*DecoderConfig, *HintsProvenance, error) {
+	if fixture.HotwordsFile != "" {
+		return nil, nil, fmt.Errorf("manual hotwords must use the explicit ablation path")
+	}
+	hintStreams := streams
+	if !fixture.DeriveParticipantHints {
+		hintStreams = nil
+	}
+	vocabulary := vocabularyForBuild(fixture.ConfiguredVocabulary, hintStreams)
+	decoder, provenance, err := resolveDecoderVocabulary(dir, vocabulary, paths)
+	if err != nil {
+		return nil, nil, err
+	}
+	speakers, err := speakerDecoders(dir, vocabulary, streams, decoder)
+	if err != nil {
+		return nil, nil, err
+	}
+	if provenance != nil && provenance.Applied && len(speakers) > 0 {
+		provenance.OwnNameExcluded = true
+	}
+	if specific := speakers[fixture.StreamIndex]; specific != nil {
+		decoder = specific
+	}
+	return decoder, provenance, nil
+}
+
+func TestBoundaryProductionVocabularyMatchesBuild(t *testing.T) {
+	t.Setenv(envHintsDisabled, "")
+	t.Setenv(envHintsScore, "2")
+	streams := []AudioStream{{Index: 2, SpeakerLabel: "Silvio"}, {Index: 5, SpeakerLabel: "Chris"}}
+	fixture := boundaryFixture{StreamIndex: 2, DeriveParticipantHints: true, ConfiguredVocabulary: []string{"Librocco"}}
+	paths := transducerPaths(t)
+	got, prov, err := boundaryProductionDecoder(t.TempDir(), fixture, streams, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	vocabulary := vocabularyForBuild(fixture.ConfiguredVocabulary, streams)
+	base, wantProv, err := resolveDecoderVocabulary(dir, vocabulary, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perSpeaker, err := speakerDecoders(dir, vocabulary, streams, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wantProv != nil && wantProv.Applied && len(perSpeaker) > 0 {
+		wantProv.OwnNameExcluded = true
+	}
+	want := perSpeaker[2]
+	a, err := os.ReadFile(got.HotwordsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(want.HotwordsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(a) != "Librocco\nChris :0.5\n" || string(a) != string(b) || !reflect.DeepEqual(prov, wantProv) {
+		t.Fatalf("vocabulary/provenance mismatch: %q %+v", a, prov)
+	}
+	got.HotwordsFile = ""
+	want.HotwordsFile = ""
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoder mismatch: %+v %+v", got, want)
+	}
+	fixture.HotwordsFile = "manual.txt"
+	if _, _, err = boundaryProductionDecoder(t.TempDir(), fixture, streams, paths); err == nil {
+		t.Fatal("accepted contradictory manual and automatic hints")
 	}
 }

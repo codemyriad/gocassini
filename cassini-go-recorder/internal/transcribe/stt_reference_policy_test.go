@@ -38,7 +38,7 @@ func TestReferenceRuntimeRequirement(t *testing.T) {
 	}
 }
 
-func TestReferenceDecoderReportsUnappliedVocabulary(t *testing.T) {
+func TestReferenceFrontendRetainsVocabularyHints(t *testing.T) {
 	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
 		dir := t.TempDir()
 		paths := transducerPaths(t)
@@ -48,19 +48,19 @@ func TestReferenceDecoderReportsUnappliedVocabulary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if decoder.Method != decodingGreedySearch || decoder.Biased() || decoder.MaxActivePaths != 0 {
-			t.Fatalf("unexpected decoder %+v", decoder)
+		if decoder.Method != decodingModifiedBeamSearch || !decoder.Biased() || decoder.MaxActivePaths != hotwordsMaxActivePaths {
+			t.Fatalf("lost vocabulary decoder: %+v", decoder)
 		}
-		if provenance == nil || provenance.Applied || provenance.TermCount != 2 || provenance.ParticipantTermCount != 1 || provenance.DecodingMethod != decodingGreedySearch || !strings.Contains(provenance.Reason, "not applied") {
-			t.Fatalf("misleading provenance: %+v", provenance)
+		if provenance == nil || !provenance.Applied || provenance.TermCount != 2 || provenance.ParticipantTermCount != 1 {
+			t.Fatalf("incorrect hint provenance: %+v", provenance)
 		}
-		entries, err := os.ReadDir(dir)
-		if err != nil || len(entries) != 0 {
-			t.Fatalf("wrote unused hints: %v, %v", entries, err)
+		data, err := os.ReadFile(decoder.HotwordsFile)
+		if err != nil || !strings.Contains(string(data), "Librocco") || !strings.Contains(string(data), "Chris :0.5") {
+			t.Fatalf("missing scored vocabulary: %q, %v", data, err)
 		}
-		_, provenance, err = resolveDecoderVocabulary(dir, decoderVocabulary{}, paths)
-		if err != nil || provenance != nil {
-			t.Fatalf("empty vocabulary: %+v, %v", provenance, err)
+		decoder, provenance, err = resolveDecoderVocabulary(dir, decoderVocabulary{}, paths)
+		if err != nil || provenance != nil || decoder.Method != decodingModifiedBeamSearch {
+			t.Fatalf("empty vocabulary changed decoder: %+v, %+v, %v", decoder, provenance, err)
 		}
 	}
 }
@@ -78,6 +78,25 @@ func TestReferenceSkipsChunksWithoutTwoFeatureFrames(t *testing.T) {
 					t.Fatalf("model=%s samples=%d vad=%v: words=%v err=%v", id, n, vadSegment, words, err)
 				}
 			}
+		}
+	}
+}
+
+func TestReferenceINT8WithoutHintTokenizerUsesGreedy(t *testing.T) {
+	paths := transducerPaths(t)
+	paths.ModelID = ModelParakeet06BV3Int8
+	paths.BpeVocabFile = ""
+	for _, terms := range [][]string{nil, {"Librocco"}} {
+		decoder, provenance, err := resolveDecoder(t.TempDir(), terms, paths)
+		if err != nil || decoder.Method != decodingGreedySearch || decoder.Biased() || decoder.MaxActivePaths != 0 {
+			t.Fatalf("unsupported INT8 hint bundle: %+v, %v", decoder, err)
+		}
+		if len(terms) == 0 {
+			if provenance != nil {
+				t.Fatalf("unexpected empty-hint provenance: %+v", provenance)
+			}
+		} else if provenance == nil || provenance.Applied || provenance.DecodingMethod != decodingGreedySearch || !strings.Contains(provenance.Reason, "bpe.vocab") {
+			t.Fatalf("missing unsupported-hint explanation: %+v", provenance)
 		}
 	}
 }

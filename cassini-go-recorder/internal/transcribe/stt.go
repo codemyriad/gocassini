@@ -253,9 +253,6 @@ func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, n
 		if err := validateReferenceRuntime(paths.ModelID, sherpa.GetVersion()); err != nil {
 			return nil, err
 		}
-		if usesParakeetV3ReferencePolicy(paths.ModelID) {
-			decoder = &DecoderConfig{Method: decodingGreedySearch}
-		}
 	}
 	if numThreads < 1 {
 		numThreads = 4

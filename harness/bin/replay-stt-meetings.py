@@ -77,6 +77,12 @@ def run(args):
             raise ValueError('remoteMkvPath requires --ssh-host')
         if not isinstance(meeting.get('expectedDurationMs'), (int, float)) or meeting['expectedDurationMs'] <= 0:
             raise ValueError(f'{mid}: expectedDurationMs must be positive')
+        if 'configuredVocabulary' in meeting and (not isinstance(meeting['configuredVocabulary'], list) or any(not isinstance(x, str) for x in meeting['configuredVocabulary'])):
+            raise ValueError(f'{mid}: configuredVocabulary must be a list of strings')
+        if 'deriveParticipantHints' in meeting and type(meeting['deriveParticipantHints']) is not bool:
+            raise ValueError(f'{mid}: deriveParticipantHints must be boolean')
+        if meeting.get('hotwordsFiles') and (meeting.get('configuredVocabulary') or meeting.get('deriveParticipantHints') is True):
+            raise ValueError(f'{mid}: manual hotwordsFiles conflict with automatic/configured vocabulary')
         item = {'id': mid, 'hotwords': {str(k): digest(v) for k, v in meeting.get('hotwordsFiles', {}).items()}}
         if meeting.get('mkvPath'):
             st = Path(meeting['mkvPath']).stat()
@@ -90,6 +96,7 @@ def run(args):
         'cudaLibs': [str(Path(p).resolve()) for p in args.cuda_lib],
         'modelRoot': str(Path(args.model_root).resolve()), 'model': args.model,
         'sshHost': args.ssh_host, 'sshSudo': args.ssh_sudo, 'inputs': inputs,
+        'hintEnvironment': {key: os.environ.get(key, '') for key in ('CASSINI_STT_HINTS_DISABLED', 'CASSINI_STT_HINTS_SCORE')},
     }
     if not config['runtimeHashes']:
         raise ValueError('--runtime-lib contains no shared libraries')
@@ -159,6 +166,9 @@ def run(args):
                     hotwords = meeting.get('hotwordsFiles', {}).get(str(stream['index']))
                     if hotwords:
                         fixture['hotwordsFile'] = str(Path(hotwords).resolve())
+                    elif args.profile == 'production':
+                        fixture['deriveParticipantHints'] = meeting.get('deriveParticipantHints', True)
+                        fixture['configuredVocabulary'] = meeting.get('configuredVocabulary', [])
                     fixtures.append(fixture)
                 expected = [f['id'] for f in fixtures]
                 status.update(expectedTracks=len(fixtures), streamIndices=[s['index'] for s in streams],

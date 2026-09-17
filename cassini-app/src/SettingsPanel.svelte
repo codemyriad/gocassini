@@ -739,8 +739,8 @@
             ></textarea>
           </label>
           <ul class="pipe-notes">
-            <li>The bundled transcription models currently do not apply vocabulary or participant-name hints. Your saved terms are retained.</li>
-            <li>When hints cannot be used, the recording notes why.</li>
+            <li>Participant names are added automatically on models that support hints.</li>
+            <li>Hints guide recognition toward preferred spellings; they do not guarantee the correct word. When hints cannot be used, the recording notes why.</li>
           </ul>
         </div>
       </section>

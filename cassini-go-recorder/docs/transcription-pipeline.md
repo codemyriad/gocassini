@@ -149,15 +149,15 @@ The operator-configured vocabulary reaches the recorder as
 `CASSINI_TRANSCRIPTION_TERMS`, a JSON array of preferred spellings. It is
 applied to supported **decoders**, not to finished text.
 
-Parakeet v3 (FP32 and INT8) uses the reference frontend and greedy decoding to
-reduce missing speech. It cannot apply vocabulary or automatic participant
-hints. When terms are configured, the build logs that they were not applied
-and records the reason in `provenance.speechToText.hints`. Its detected speech
-spans retain 30 ms of surrounding recorded audio, remain whole within VAD
-resource limits, and receive no synthetic decoder tail. Normal CPU/CUDA builds
-and the developer CLI include the required patched native runtime.
+Parakeet v3 (FP32 and INT8) uses the model-reference frontend while retaining
+modified beam search and supported vocabulary hints on participant tracks. The
+validated INT8 bundle without `bpe.vocab` retains greedy decoding: it cannot
+encode hints, and unbiased beam search lost more speech in recorded tests. Its detected speech spans
+retain 30 ms of surrounding recorded audio, remain whole within VAD resource
+limits, and receive no synthetic decoder tail. Normal CPU/CUDA builds and the
+developer CLI include the required patched native runtime.
 
-Other transducer models decode with `modified_beam_search` by default, whether or not
+Hint-capable participant transducers use `modified_beam_search`, whether or not
 a vocabulary is set. Hotwords are only read under beam search, and a decoder
 that changed under the operator depending on whether a text box happened to be
 empty would be worse than one that is simply stable. When a vocabulary is set
@@ -169,7 +169,12 @@ automatically from the recording metadata are capped at 0.5: stronger scores
 made short names overwhelm weak evidence and repeat, while 0.5 kept them as a
 nudge in full-meeting comparisons. Each participant track omits its speaker's
 own name and retains the other participant names; the mixed fallback
-keeps the full set because it has no single speaker. With non-empty terms,
+has no single speaker. Parakeet v3’s merged-audio recovery fallback uses unbiased
+greedy decoding because beam search lost speech in its separate non-VAD tests.
+Only an accepted fallback replaces the final hint provenance with an explicit
+unapplied reason; an attempted but rejected fallback leaves participant hints
+reported as applied. Other model families retain their existing fallback policy.
+With non-empty terms,
 `CASSINI_STT_HINTS_DISABLED=1` restores the previous `greedy_search` decoder as
 well as disabling the hints.
 
@@ -179,7 +184,7 @@ the wider beam would cost decode time and buy nothing.
 Applying hints requires both of these model properties:
 
 1. the model must use a supported beam-search transducer decoder. Parakeet v3
-   and the `nemo_ctc` tier use greedy decoding and cannot be biased.
+   supports hints; the `nemo_ctc` tier uses greedy decoding and cannot be biased.
 2. the model bundle must ship `bpe.vocab`, and `modeling_unit` must be `bpe`.
    These two are the dangerous pair: with an empty `bpe_vocab` sherpa fails to
    construct the recognizer (loud), but with `modeling_unit` left unset the

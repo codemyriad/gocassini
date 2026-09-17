@@ -7,7 +7,14 @@ package transcribe
 // CI flake-hunt run 26210020184 matrix #5 produced 1 word total and
 // skipped fallback, taking the e2e suite red.
 
-import "testing"
+import (
+	"context"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
 
 func segmentsWithWords(n int) []Segment {
 	if n <= 0 {
@@ -165,5 +172,61 @@ func TestChooseMergedFallbackAcceptsEmptyPassRecoveryAndMeaningfulGain(t *testin
 				t.Fatalf("selected transcript has %d words, want %d", CountWords(got), test.mergedWords)
 			}
 		})
+	}
+}
+
+func TestMergedFallbackDecoderAndProvenance(t *testing.T) {
+	paths := ModelPaths{ModelID: ModelParakeet06BV3, SampleRate: 16000}
+	base := &DecoderConfig{Method: decodingModifiedBeamSearch, HotwordsFile: "participant.txt", Score: 2, MaxActivePaths: 4}
+	before := *base
+	prov := &HintsProvenance{TermCount: 3, ParticipantTermCount: 2, Score: 2, ParticipantScore: 0.5, OwnNameExcluded: true, Applied: true, DecodingMethod: decodingModifiedBeamSearch}
+	original := *prov
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ffmpeg"), []byte("#!/bin/sh\nprintf '\\000\\000'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tc := range []struct {
+		name     string
+		words    int
+		accepted bool
+	}{{"accepted", 100, true}, {"rejected", 0, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := "test-merged-" + tc.name
+			var seen *DecoderConfig
+			if err := RegisterRecognizerBackend(backend, func(_ ModelPaths, _ string, _ string, _ int, d *DecoderConfig) (SpeechRecognizer, error) {
+				seen = d
+				words := make([]Word, tc.words)
+				for i := range words {
+					words[i] = Word{Text: "speech", StartMS: int64(i * 100), EndMS: int64(i*100 + 90)}
+				}
+				return &stubRecognizer{words: words}, nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { backendMu.Lock(); delete(backendRegistry, backend); backendMu.Unlock() })
+			pass := passConfig{Guarantee: &wordEndGuarantee{}, ModelPaths: paths, Backend: backend, Decoder: base, SpeakerDecoders: map[int]*DecoderConfig{1: base}}
+			_, _, accepted, err := ensureMergedFallback(context.Background(), "unused.wav", nil, segmentsWithWords(1), pass, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if accepted != tc.accepted || seen.Method != decodingGreedySearch || seen.HotwordsFile != "" {
+				t.Fatalf("wrong fallback: %v %+v", accepted, seen)
+			}
+			got := mergedFallbackHints(paths, prov, accepted)
+			if accepted {
+				if got.Applied || got.DecodingMethod != decodingGreedySearch || got.Score != 0 || got.ParticipantScore != 0 || got.OwnNameExcluded || got.TermCount != 3 || got.Reason == "" {
+					t.Fatalf("misleading provenance: %+v", got)
+				}
+			} else if got != prov {
+				t.Fatal("rejected fallback changed provenance")
+			}
+			if *base != before || !reflect.DeepEqual(*prov, original) || pass.SpeakerDecoders[1] != base {
+				t.Fatal("fallback mutated participant configuration")
+			}
+		})
+	}
+	if mergedFallbackDecoder(ModelPaths{}, base) != base || mergedFallbackHints(ModelPaths{}, prov, true) != prov {
+		t.Fatal("changed another model's decoder/provenance")
 	}
 }
