@@ -16,7 +16,7 @@ func (rt *Runtime) reserveRecordSlot() bool {
 	defer rt.priorityMu.Unlock()
 	select {
 	case rt.recordSlots <- struct{}{}:
-		if rt.cfg.RecordingPriority && rt.priorityBuildCancel != nil {
+		if rt.priorityBuildCancel != nil && (rt.processingPolicy() == policyRecordingFirst || (rt.processingPolicy() == policyAuto && (!rt.autoFreshLocked() || !rt.autoCanContinue))) {
 			rt.priorityBuildCancel(errRecordingPriority)
 		}
 		return true
@@ -44,7 +44,7 @@ func (rt *Runtime) beginBackgroundBuild() (context.Context, func(), error) {
 			return nil, nil, rt.ctx.Err()
 		}
 		rt.priorityMu.Lock()
-		if !rt.cfg.RecordingPriority || rt.recordingIdleLocked() {
+		if rt.processingPolicy() == policyConcurrent || rt.recordingIdleLocked() || (rt.processingPolicy() == policyAuto && rt.autoFreshLocked() && rt.autoCanStart) {
 			ctx, cancel := context.WithCancelCause(rt.ctx)
 			rt.priorityBuildCancel = cancel
 			rt.priorityMu.Unlock()
@@ -70,7 +70,7 @@ func (rt *Runtime) waitForRecordingIdle() error {
 			return rt.ctx.Err()
 		}
 		rt.priorityMu.Lock()
-		ready := !rt.cfg.RecordingPriority || rt.recordingIdleLocked()
+		ready := rt.processingPolicy() == policyConcurrent || rt.recordingIdleLocked() || (rt.processingPolicy() == policyAuto && rt.autoFreshLocked() && rt.autoCanContinue)
 		rt.priorityMu.Unlock()
 		if ready {
 			return nil
@@ -84,15 +84,20 @@ func (rt *Runtime) waitForRecordingIdle() error {
 }
 
 type statusScheduling struct {
+	Policy                    string  `json:"policy"`
 	RecordingPriority         bool    `json:"recording_priority"`
 	RecordingIdleGraceSeconds float64 `json:"recording_idle_grace_seconds"`
 	RecordWorkers             int     `json:"record_workers"`
 	BuildWorkers              int     `json:"build_workers"`
 	ActiveRecordings          int     `json:"active_recordings"`
+	AutoTelemetryFresh        bool    `json:"auto_telemetry_fresh"`
+	AutoCanStart              bool    `json:"auto_can_start"`
+	AutoFreeCPU               float64 `json:"auto_free_cpu_cores"`
+	AutoFreeMemMB             int     `json:"auto_free_memory_mb"`
 }
 
 func (rt *Runtime) schedulingStatus() statusScheduling {
 	rt.priorityMu.Lock()
 	defer rt.priorityMu.Unlock()
-	return statusScheduling{rt.cfg.RecordingPriority, rt.cfg.RecordingIdleGrace.Seconds(), rt.cfg.MaxRecordWorkers, rt.cfg.MaxBuildWorkers, len(rt.recordSlots)}
+	return statusScheduling{Policy: rt.processingPolicy(), RecordingPriority: rt.processingPolicy() == policyRecordingFirst, RecordingIdleGraceSeconds: rt.cfg.RecordingIdleGrace.Seconds(), RecordWorkers: rt.cfg.MaxRecordWorkers, BuildWorkers: rt.cfg.MaxBuildWorkers, ActiveRecordings: len(rt.recordSlots), AutoTelemetryFresh: rt.autoFreshLocked(), AutoCanStart: rt.autoCanStart, AutoFreeCPU: rt.autoFreeCPU, AutoFreeMemMB: rt.autoFreeMemMB}
 }

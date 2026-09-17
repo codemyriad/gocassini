@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -58,6 +59,9 @@ type Config struct {
 	MaxBuildWorkers         int
 	RecordingPriority       bool
 	RecordingIdleGrace      time.Duration
+	ProcessingPolicy        string
+	ProcessingCPUReserve    float64
+	ProcessingMemReserveMB  int
 	// BundledModelRoot is the read-only directory where the image baked its
 	// models, and ModelCacheRoot is the writable cache that receives a tier the
 	// image does not carry. Under an AppAPI deploy the cache lands on the
@@ -122,14 +126,18 @@ type Runtime struct {
 	// VRAM headroom probe are not safely reservable between concurrent workers.
 	// Serializing here makes the resource check and ensuing launch atomic with
 	// respect to every other build in this operator process.
-	buildExecutionMu    sync.Mutex
-	priorityMu          sync.Mutex
-	priorityBuildCancel context.CancelCauseFunc
-	lastRecordFinished  time.Time
-	talkRooms           map[string]*talkRoomState
-	talkJobs            map[string]*talkRoomState
-	recordJobFn         func(context.Context, Job, TriggerRequest) (recordResult, error)
-	buildJobFn          func(context.Context, buildTask) (string, error)
+	buildExecutionMu              sync.Mutex
+	priorityMu                    sync.Mutex
+	priorityBuildCancel           context.CancelCauseFunc
+	lastRecordFinished            time.Time
+	autoSampleAt                  time.Time
+	autoCanStart, autoCanContinue bool
+	autoFreeCPU                   float64
+	autoFreeMemMB                 int
+	talkRooms                     map[string]*talkRoomState
+	talkJobs                      map[string]*talkRoomState
+	recordJobFn                   func(context.Context, Job, TriggerRequest) (recordResult, error)
+	buildJobFn                    func(context.Context, buildTask) (string, error)
 	// buildResourceRetryDelay bounds transient RAM/VRAM retry frequency.
 	// Tests shorten it; production uses defaultBuildResourceRetryDelay.
 	buildResourceRetryDelay time.Duration
@@ -522,7 +530,18 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	if err != nil {
 		return Config{}, 2, fmt.Errorf("recording idle grace: %w", err)
 	}
+	cpuReserve, err := strconv.ParseFloat(envOrDefaultAny([]string{"CASSINI_PROCESSING_CPU_RESERVE"}, "1"), 64)
+	if err != nil {
+		return Config{}, 2, fmt.Errorf("processing CPU reserve: %w", err)
+	}
+	memReserve, err := strconv.Atoi(envOrDefaultAny([]string{"CASSINI_PROCESSING_MEM_RESERVE_MB"}, "512"))
+	if err != nil {
+		return Config{}, 2, fmt.Errorf("processing memory reserve: %w", err)
+	}
 	cfg := Config{RepoRoot: repoRoot}
+	fs.StringVar(&cfg.ProcessingPolicy, "processing-policy", envOrDefaultAny([]string{"CASSINI_PROCESSING_POLICY"}, ""), "background processing policy: concurrent (default), recording-first, or auto")
+	fs.Float64Var(&cfg.ProcessingCPUReserve, "processing-cpu-reserve", cpuReserve, "auto policy free CPU cores to reserve for live services")
+	fs.IntVar(&cfg.ProcessingMemReserveMB, "processing-mem-reserve-mb", memReserve, "auto policy free MiB to reserve while a build runs")
 	fs.BoolVar(&cfg.RecordingPriority, "recording-priority", envBool("CASSINI_RECORDING_PRIORITY"), "defer builds while recording; yield running builds to new recordings")
 	fs.DurationVar(&cfg.RecordingIdleGrace, "recording-idle-grace", idleGrace, "quiet period after the last recording before background work")
 	// Not flags: these describe the image the operator is running inside, not a
@@ -598,6 +617,15 @@ Flags:
 	cfg.SiteRoot = resolveConfigPath(repoRoot, cfg.SiteRoot)
 	cfg.CassiniBin = resolveConfigPath(repoRoot, cfg.CassiniBin)
 	cfg.TalkBackendURL = strings.TrimRight(strings.TrimSpace(cfg.TalkBackendURL), "/")
+	if cfg.ProcessingPolicy != "" && cfg.ProcessingPolicy != policyAuto && cfg.ProcessingPolicy != policyConcurrent && cfg.ProcessingPolicy != policyRecordingFirst {
+		return Config{}, 2, fmt.Errorf("unknown processing policy %q", cfg.ProcessingPolicy)
+	}
+	if cfg.RecordingPriority && cfg.ProcessingPolicy != "" && cfg.ProcessingPolicy != policyRecordingFirst {
+		return Config{}, 2, fmt.Errorf("recording-priority conflicts with processing-policy")
+	}
+	if math.IsNaN(cfg.ProcessingCPUReserve) || math.IsInf(cfg.ProcessingCPUReserve, 0) || cfg.ProcessingCPUReserve < 0 || cfg.ProcessingMemReserveMB < 0 {
+		return Config{}, 2, fmt.Errorf("processing reserves must be finite and nonnegative")
+	}
 	if cfg.RecordingIdleGrace < 0 {
 		return Config{}, 2, fmt.Errorf("recording-idle-grace must not be negative")
 	}
@@ -832,6 +860,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		}
 		return rt.runRecordDoctorContext(probeCtx)
 	})
+	rt.startProcessingMonitor()
 	rt.startBuildWorkers()
 	rt.startSealWorker()
 	rt.startPublishWorker()

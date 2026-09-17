@@ -1,8 +1,34 @@
 # Recording-first processing on shared Talk hosts
 
-Enable `CASSINI_RECORDING_PRIORITY=true` (or `--recording-priority`) when live
-capture matters more than immediate transcription/publication. The default is
-off, preserving existing deployments' scheduling policy.
+Choose `CASSINI_PROCESSING_POLICY` (or `--processing-policy`):
+
+| Policy | Behavior |
+| --- | --- |
+| `concurrent` (default) | Preserve existing overlap between recording and background work. No shared finalization lock. |
+| `recording-first` | Defer builds until recordings finish; yield a running build when a new capture arrives; serialize recorder remuxes. Intended for small shared hosts. |
+| `auto` | Allow overlap when measured host **and cgroup** CPU and memory have headroom. Use a smaller host CPU budget for GPU inference, retaining the existing VRAM admission check. |
+
+`CASSINI_RECORDING_PRIORITY=true` / `--recording-priority` is a compatibility
+alias for `recording-first`. Conflicting explicit policies are rejected.
+
+Auto samples CPU usage every second, requires two sufficient samples before
+starting during capture, and yields a running build after three insufficient
+samples while capture is active. A new recording can overlap a running build
+only with a fresh, sufficient observation. CPU headroom is the smaller of host
+idle cores and the container quota minus current container usage, so a large
+host with a small container is still treated as constrained. Unknown/stale
+telemetry prevents overlap; no-recording periods can drain the queue normally.
+Linux cgroup v2 telemetry is required for automatic overlap.
+
+`CASSINI_PROCESSING_CPU_RESERVE=1` reserves a free core for live services;
+`CASSINI_PROCESSING_MEM_RESERVE_MB=512` reserves free RAM while a build is running.
+At launch, auto also budgets the CPU build's configured inference threads (one
+host thread for CUDA), and the model-specific memory admission floor. It does
+not charge a running build for its already-allocated CPU/model a second time.
+GPU builds still need host CPU for decoding and host RAM. This policy monitors
+headroom; it is not a hard CPU reservation or a guarantee against brief spikes.
+Auto and concurrent retain parallel recorder finalization; only recording-first
+adds the shared remux lock. The demo explicitly uses recording-first.
 
 - `CASSINI_MAX_RECORD_WORKERS` bounds admitted recorder processes, including
   finalization. Raise this only after measuring the target's media capacity.
@@ -10,6 +36,8 @@ off, preserving existing deployments' scheduling policy.
   more queue consumers are configured.
 - `CASSINI_RECORDING_IDLE_GRACE=5s` (or `--recording-idle-grace`) requires a quiet
   interval after the last recorder exits. Negative/invalid values are rejected.
+The following describes `recording-first`:
+
 - Builds remain durably `build/queued` while recording. Seal and publication
   workers also wait before starting a new job; an already-running seal/upload
   is allowed to finish.
