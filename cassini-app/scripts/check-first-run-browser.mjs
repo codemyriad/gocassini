@@ -336,6 +336,32 @@ try {
       if (url.pathname === "/operator/settings/llm") return json({});
       if (url.pathname === "/operator/settings/workflows") return json([]);
 
+      // D-763's readiness checks now render inside the Publish pipeline panel,
+      // above recording access, so every scenario that opens that panel reaches
+      // these. Answered as a healthy, fully verified install: this check is
+      // about the first-run ACCESS flow, and a readiness card reporting work to
+      // do would put a second call to action on the screen it is measuring.
+      if (url.pathname === "/operator/readiness" || url.pathname === "/operator/readiness/check") {
+        return json({
+          state: "passed",
+          checks: [],
+          secret_configured: true,
+          secret_source: "env",
+          test_room_url: "",
+          test: { state: "idle", published: false },
+        });
+      }
+      if (url.pathname === "/operator/talk/setup") {
+        return json({
+          state: "passed",
+          checks: [],
+          secret_configured: true,
+          secret_source: "env",
+          test_room_url: "",
+          test: { state: "idle", published: false },
+        });
+      }
+
       if (url.pathname.endsWith("/catalog.json")) return json(catalog);
       if (url.pathname === "/insights") return json({ insights: [] });
       if (url.pathname === "/annotations/tags") {
