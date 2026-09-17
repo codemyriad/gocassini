@@ -426,3 +426,59 @@ func TestSparseTimelinePreservesGapConsumedByOpusPreSkip(t *testing.T) {
 		t.Fatalf("decoded timeline duration %dms, want about 30100ms", durationMS)
 	}
 }
+
+func TestSparseTimelinePreservesPositiveContainerOrigin(t *testing.T) {
+	requireFFMediaTools(t)
+	mkv := filepath.Join(t.TempDir(), "positive-origin.mkv")
+	// Both sources begin after the recorder's timeline zero. The early track
+	// uses direct resampling; the late track uses the streaming silence prefix.
+	// FFmpeg's default container-start subtraction must not give them different
+	// origins. Opus rounding may move both anchors by a millisecond.
+	if err := runMediaCommand("ffmpeg", "-v", "error", "-y", "-copyts",
+		"-f", "lavfi", "-i", "sine=frequency=500:sample_rate=48000:duration=0.1,asetpts=PTS+0.160/TB",
+		"-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000:duration=0.1,asetpts=PTS+10.160/TB",
+		"-map", "0:a", "-map", "1:a", "-c:a", "libopus",
+		"-avoid_negative_ts", "disabled", mkv); err != nil {
+		t.Fatal(err)
+	}
+	streams, _, err := ProbeMKV(mkv)
+	if err != nil || len(streams) != 2 {
+		t.Fatalf("probe positive-origin fixture: %v, %v", streams, err)
+	}
+	var starts [2]int64
+	for i, stream := range streams {
+		want := int64(160 + i*10000)
+		if deltaMS(stream.FirstDecodedFrameTimeMS, want) > 2 {
+			t.Fatalf("fixture track %d anchor = %dms, want about %dms", i, stream.FirstDecodedFrameTimeMS, want)
+		}
+		samples, err := ExtractSpeakerFloats(mkv, stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		starts[i] = int64(firstSignalSample(samples, 0.01)) * 1000 / 16000
+		if deltaMS(starts[i], stream.FirstDecodedFrameTimeMS) > 2 {
+			t.Fatalf("track %d starts at %dms, decoded anchor %dms", i, starts[i], stream.FirstDecodedFrameTimeMS)
+		}
+		// Mix/challenge extraction uses the same helper but writes a WAV.
+		wav := filepath.Join(t.TempDir(), "track.wav")
+		if err := decodeTrackWithSparseGaps(mkv, stream, 16000, wav); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("ffmpeg", "-v", "error", "-i", wav, "-f", "s16le", "pipe:1")
+		fromWAV, err := runPCM16LECommand(cmd, len(samples))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(fromWAV) != len(samples) {
+			t.Fatalf("track %d mix length %d != transcription length %d", i, len(fromWAV), len(samples))
+		}
+		for j := range samples {
+			if fromWAV[j] != samples[j] {
+				t.Fatalf("track %d mix/transcription PCM differs at sample %d", i, j)
+			}
+		}
+	}
+	if deltaMS(starts[1]-starts[0], 10000) > 2 {
+		t.Fatalf("relative speaker delay = %dms, want 10000ms", starts[1]-starts[0])
+	}
+}

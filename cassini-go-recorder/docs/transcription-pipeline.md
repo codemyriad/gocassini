@@ -208,3 +208,9 @@ The probe stops and reaps FFprobe after one decoded timestamp, keeps stderr
 bounded, and accepts empty tracks. Original packet timestamps and RTP wall-clock
 anchors remain unchanged. PCM consumers (transcription, mix, attribution and
 challenge audio) share this corrected decoded-frame anchor.
+
+Every decode preserves the recorder's absolute meeting PTS with `-copyts`.
+Container `format.start_time` is not the meeting origin: subtracting it on early
+tracks while restoring absolute PTS on late tracks shifts speakers relative to
+one another. The shared origin also preserves the existing RTP/wall-clock
+anchors; no container-start adjustment is applied to those anchors.

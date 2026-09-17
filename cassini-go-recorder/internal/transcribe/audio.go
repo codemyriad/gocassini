@@ -624,12 +624,16 @@ func sparseTimelineDecodeArgs(stream AudioStream, sampleRate int) []string {
 			stream.Index,
 			sampleRate,
 		)
-		return []string{"-filter_complex", filter, "-map", "[cassini_audio]"}
+		return []string{"-copyts", "-filter_complex", filter, "-map", "[cassini_audio]"}
 	}
 
-	// Packet PTS already includes the small initial offset. Do not add
-	// stream.start_time as a separate delay or late streams shift twice.
+	// Preserve the recorder's absolute meeting PTS in both branches. Without
+	// copyts FFmpeg subtracts format.start_time before filtering, which moves
+	// early tracks while the late-track prefix above restores absolute PTS.
+	// RTP/wall-clock anchors use the same absolute meeting timeline. Do not
+	// add stream.start_time as a separate delay or late streams shift twice.
 	return []string{
+		"-copyts",
 		"-map", fmt.Sprintf("0:%d", stream.Index),
 		"-af", "aresample=async=1:first_pts=0",
 	}
