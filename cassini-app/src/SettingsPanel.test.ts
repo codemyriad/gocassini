@@ -6,7 +6,7 @@ describe("SettingsPanel device policy", () => {
   it("offers auto, CPU and CUDA as device overrides, and no model override", () => {
     expect(settingsPanelSource).toContain('<option value="">Auto</option>');
     expect(settingsPanelSource).toContain('<option value="cpu">CPU</option>');
-    expect(settingsPanelSource).toContain('<option value="cuda">CUDA</option>');
+    expect(settingsPanelSource).toContain('<option value="cuda">GPU (CUDA)</option>');
     // The model override accepted only the three models the quality tiers
     // already reach, so it duplicated the tier selector with no discoverability
     // and was removed (D-702). The design prototype draws it back in beside the
@@ -39,7 +39,7 @@ describe("SettingsPanel search spellings", () => {
     // It widens a search; it never rewrites a recording. An admin who thought
     // this fixed transcripts would use it for the wrong job — the vocabulary
     // above is that one.
-    expect(settingsPanelSource).toContain("does not change any recording");
+    expect(settingsPanelSource).toContain("Doesn't change any transcript, only what search finds.");
   });
 });
 
@@ -109,22 +109,22 @@ describe("SettingsPanel layout", () => {
     // It is the answer to "what the operator found is wrong", so it sits under
     // the finding rather than at the end of the page — and under a rule rather
     // than in a card of its own, which would read as a pipeline step.
-    const hardwareAt = settingsPanelSource.indexOf(">Detected hardware<");
-    const deviceAt = settingsPanelSource.indexOf(">Device override<");
+    const hardwareAt = settingsPanelSource.indexOf(">Hardware<");
+    const deviceAt = settingsPanelSource.indexOf(">Override transcription device<");
     const qualityAt = settingsPanelSource.indexOf(">Quality<");
     expect(hardwareAt).toBeGreaterThan(-1);
     expect(deviceAt).toBeGreaterThan(hardwareAt);
     expect(deviceAt).toBeLessThan(qualityAt);
   });
 
-  it("gives each pipeline step an edge of its own", () => {
-    // Quality and Summarisation were rows of one shared card separated by
-    // hairlines, which made two independent settings — one of which sends text
-    // to a third party — read as one block.
-    const cards = settingsPanelSource.match(
-      /<section class="rounded-box border border-base-300 bg-base-200 p-3">/g,
-    );
-    expect(cards?.length).toBe(3);
+  it("gives each pipeline step a card of its own", () => {
+    // Quality and Summarisation once shared one card separated by hairlines,
+    // which made two independent settings — one of which sends text to a third
+    // party — read as one block. Each step is its own tinted card, as each
+    // template is on Insight templates.
+    const steps = settingsPanelSource.match(/<section class="op-tint pipe-step">/g);
+    expect(steps?.length).toBe(4);
+    expect(settingsPanelSource).not.toContain("rounded-box border border-base-300 bg-base-200 p-3");
   });
 });
 
@@ -158,11 +158,18 @@ describe("SettingsPanel template picker", () => {
     expect(settingsPanelSource).toContain("{#each summaryTemplates as workflow (workflow.id)}");
   });
 
+  it("hides the template choice until the pipeline reads it back", () => {
+    // D-719: the summary step still runs the shipped prompt, so a choice here
+    // would be saved and ignored. The field stays in the source behind one flag.
+    expect(settingsPanelSource).toContain("const SUMMARY_TEMPLATE_CHOICE = false;");
+    expect(settingsPanelSource).toContain("{#if SUMMARY_TEMPLATE_CHOICE}");
+  });
+
   it("still says the pipeline does not read the template back", () => {
     // internal/transcribe/summary.go splices the shipped prompt directly. A
     // control that silently does nothing is worse than one that admits it.
     expect(settingsPanelSource).toContain(
-      "The publish pipeline still runs the summary prompt",
+      "summaries still use the built-in template for now",
     );
   });
 

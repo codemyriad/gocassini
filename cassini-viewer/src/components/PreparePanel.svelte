@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { Copy, Download, FileText, TriangleAlert, X } from "@lucide/svelte";
+  import CloseButton from "./ui/CloseButton.svelte";
   import type { MeetingCatalogEntry } from "../viewer/catalog";
   import {
     MAX_SELECTED_MEETINGS,
@@ -33,7 +34,7 @@
   // of it. It is not called until Copy or Download is pressed.
   export let loadBundle: () => Promise<string>;
 
-  const dispatch = createEventDispatcher<{ close: void }>();
+  const dispatch = createEventDispatcher<{ close: void; unpick: MeetingCatalogEntry }>();
 
   type StatusTone = "ok" | "warn" | "error";
   let status: { tone: StatusTone; text: string } | null = null;
@@ -59,6 +60,11 @@
   // cap while it is open. Every action below is refused above it — the gap
   // sentence says so — and the controls follow (D-749).
   $: overCap = entries.length > MAX_SELECTED_MEETINGS;
+  // A meeting with no single-file recording is not in the operator's readable
+  // set, so the request for the SET answers 404: the bundle cannot be assembled
+  // at all, and neither can a question be asked of it. The row says "Blocks
+  // Prepare", and the actions have to agree with it.
+  $: blocked = overCap || entries.some((entry) => lacksPortableAudio(entry));
 
   $: downloadName = `cassini-context-${new Date().toISOString().slice(0, 10)}.md`;
 
@@ -183,14 +189,12 @@
 <aside class="prepare-panel" aria-label="Prepare context">
   <header class="prep-head">
     <h2>Prepare context</h2>
-    <button type="button" on:click={() => dispatch("close")} aria-label="Close Prepare">
-      <X size={16} aria-hidden="true" />
-    </button>
+    <CloseButton label="Close Prepare" on:click={() => dispatch("close")} />
   </header>
 
   <div class="prep-body">
     <!-- 1. What was picked. -->
-    <section class="prep-section">
+    <section class="prep-section prep-card">
       <h3 class="prep-eyebrow">In this bundle</h3>
       <ul class="prep-list">
         {#each entries as entry (entry.id)}
@@ -207,14 +211,36 @@
                   Blocks Prepare
                 </span>
               {/if}
-              <span class="prep-row-words">{formatWordCount(entry.wordCount)}</span>
+              <!-- A row says the length it knows, or a dash where nobody
+                   recorded one: the sentence belongs on the total, where it is
+                   said once instead of on every row that is missing it. -->
+              {#if entry.wordCount === undefined}
+                <span class="prep-row-words unknown" title="Length not recorded"
+                  aria-label="Length not recorded">—</span
+                >
+              {:else}
+                <span class="prep-row-words">{formatWordCount(entry.wordCount)}</span>
+              {/if}
+              <!-- The row the gap sentence points at is the row you unpick, so
+                   the way out is here rather than back in the list behind this
+                   panel. -->
+              <button
+                type="button"
+                class="prep-row-drop"
+                aria-label={`Unpick ${entry.title}`}
+                on:click={() => dispatch("unpick", entry)}
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
             </span>
           </li>
         {/each}
       </ul>
       <p class="prep-total">
         <span>Total</span>
-        <span>{formatSelectionWordCount(totals)}</span>
+        <span class:unknown={totals.meetingsWithoutWordCount > 0}
+          >{formatSelectionWordCount(totals)}</span
+        >
       </p>
     </section>
 
@@ -233,14 +259,14 @@
     <!-- Two equal outputs directly under the set: the same bytes either way,
          and the way out on a deployment with no model configured at all. -->
     <section class="prep-section prep-actions">
-      <button type="button" class="prep-action" disabled={busy || overCap} on:click={handleCopy}>
+      <button type="button" class="prep-action" disabled={busy || blocked} on:click={handleCopy}>
         <Copy size={14} aria-hidden="true" />
         Copy
       </button>
       <button
         type="button"
         class="prep-action"
-        disabled={busy || overCap}
+        disabled={busy || blocked}
         on:click={handleDownload}
       >
         <Download size={14} aria-hidden="true" />
@@ -276,18 +302,20 @@
          rather than the viewport: this app mounts into a shadow root inside
          Nextcloud's page, where viewport-anchored chrome escapes the app and
          covers Nextcloud's own (see App.svelte). -->
-    {#if !overCap}
+    {#if !blocked}
       <slot name="generate" {entries} />
     {/if}
   </div>
 </aside>
 
 <style>
+  /* The drawer is the ground and its sections are cards on it, the way the
+     operator's settings pages read. */
   .prepare-panel {
     display: flex;
     flex-direction: column;
     height: 100%;
-    background-color: var(--color-base-100);
+    background-color: var(--color-base-200);
   }
 
   .prep-head {
@@ -304,31 +332,23 @@
     font-weight: 650;
     color: var(--color-base-content);
   }
-  .prep-head button {
-    display: inline-flex;
-    flex: none;
-    padding: 4px;
-    cursor: pointer;
-    background: none;
-    border: 0;
-    border-radius: var(--radius-field, 0.5rem);
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
-  }
-  .prep-head button:hover {
-    background-color: var(--color-base-200);
-    color: var(--color-base-content);
-  }
 
   .prep-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 1rem 1.25rem 1.5rem;
+    padding: 1.25rem 1.25rem 1.5rem;
   }
 
   .prep-section {
     margin-bottom: 1.25rem;
+  }
+  .prep-card {
+    padding: 12px 14px;
+    background-color: var(--color-base-100);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 12%, var(--color-base-200));
+    border-radius: var(--radius-box, 0.75rem);
   }
 
   .prep-eyebrow {
@@ -375,8 +395,30 @@
     font-variant-numeric: tabular-nums;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
+  /* A length nobody recorded is the same warning as the sentence below the
+     list, not another quiet number beside the ones that are known. */
+  .prep-row-words.unknown,
+  .prep-total .unknown {
+    font-weight: 600;
+    color: var(--color-warning, #b45309);
+  }
   /* The warning colour of the gap sentence that counts these rows, so the two
      read as one statement rather than two unrelated warnings. */
+  .prep-row-drop {
+    display: inline-flex;
+    flex: none;
+    padding: 4px;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-field, 0.5rem);
+    color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
+  }
+  .prep-row-drop:hover {
+    color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+
   .prep-row-flag {
     display: inline-flex;
     flex: none;
@@ -410,12 +452,16 @@
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
     gap: 0.5rem;
-    padding: 0.5rem 0.625rem;
-    border-left: 3px solid var(--color-warning, #d97706);
+    padding: 10px 12px;
     background-color: color-mix(in oklch, var(--color-warning, #d97706) 10%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-warning, #d97706) 45%, transparent);
+    border-radius: var(--radius-box, 0.75rem);
     font-size: 0.75rem;
     line-height: 1.45;
     color: var(--color-base-content);
+  }
+  .prep-gap :global(svg) {
+    color: var(--color-warning, #b45309);
   }
 
   .prep-actions {
@@ -432,19 +478,19 @@
     padding: 8px 12px;
     cursor: pointer;
     background-color: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
     border-radius: var(--radius-field, 0.5rem);
     font-size: 0.8125rem;
     font-weight: 550;
     color: var(--color-base-content);
   }
   .prep-action:hover:not(:disabled) {
-    border-color: var(--color-primary);
-    color: var(--color-primary);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
+    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
   }
   .prep-action:disabled {
-    cursor: progress;
-    opacity: 0.6;
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 
   /* Reserved whether or not there is anything to say, so a status line arriving

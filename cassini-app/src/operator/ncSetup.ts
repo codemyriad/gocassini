@@ -112,7 +112,7 @@ export function confirmPassword(): Promise<void> {
     return Promise.reject(
       new NcSetupError(
         "unavailable",
-        "Nextcloud's password-confirmation dialog is not available on this page.",
+        "Nextcloud's password confirmation isn't available on this page.",
       ),
     );
   }
@@ -218,10 +218,10 @@ async function ncRequest(
   if (response.status === 403 || code === 403) {
     throw new NcSetupError(
       "denied",
-      `Nextcloud refused: ${message}. Your confirmation may have expired — try again.`,
+      `Nextcloud rejected the change: ${message}. Your password confirmation may have expired, so try again.`,
     );
   }
-  throw new NcSetupError("failed", `Nextcloud refused: ${message}`);
+  throw new NcSetupError("failed", `Nextcloud rejected the change: ${message}`);
 }
 
 // randomPassword mints the service account's credential, in the browser, from
@@ -338,7 +338,7 @@ export async function runSetupPlan(
   if (!isSetupAvailable()) {
     throw new NcSetupError(
       "unavailable",
-      "This page cannot perform the setup: Nextcloud's own scripts are not available here.",
+      "Setup can't run on this page because Nextcloud's scripts aren't loaded here.",
     );
   }
 
@@ -373,7 +373,7 @@ export async function runSetupPlan(
     const mount = step.args?.mount ?? "";
     const id = await folders.resolve(mount);
     if (id === null) {
-      throw new NcSetupError("failed", `Could not find the ${mount} Team folder.`, step.id);
+      throw new NcSetupError("failed", `Couldn't find the ${mount} Team folder.`, step.id);
     }
     return id;
   };
@@ -447,7 +447,7 @@ export async function resetServiceAccountPassword(
   if (!isSetupAvailable()) {
     throw new NcSetupError(
       "unavailable",
-      "This page cannot change the account's password: Nextcloud's own scripts are not available here.",
+      "The password can't be changed on this page because Nextcloud's scripts aren't loaded here.",
     );
   }
   await confirmPassword();
@@ -557,6 +557,6 @@ async function runStep(
     default:
       // An action this build does not know. Skipping would silently produce a
       // half-built substrate that later reads as healthy.
-      throw new NcSetupError("failed", `This version of Cassini cannot perform "${step.action}".`, step.id);
+      throw new NcSetupError("failed", `This version of Cassini can't run the "${step.action}" step.`, step.id);
   }
 }

@@ -266,14 +266,16 @@ describe("describeSelectionGaps", () => {
     expect(describeSelectionGaps(totals)).toEqual([]);
   });
 
-  it("states a missing summary as missing", () => {
+  it("says nothing about a missing summary", () => {
+    // It stops nothing — the transcript is whole and the bundle carries it —
+    // and the panel promises no summaries to begin with. As a sentence it wore
+    // the warning of the two that DO stop Prepare, and fired on ordinary
+    // meetings, which taught a reader to skim all of them.
     const totals = summarizeSelection([
       meeting({ id: "a", hasSummary: false, wordCount: 10 }),
       meeting({ id: "b", hasSummary: false, wordCount: 20 }),
     ]);
-    expect(describeSelectionGaps(totals)).toEqual([
-      "2 of these have no summary. Their transcripts are complete; only the summary section is missing.",
-    ]);
+    expect(describeSelectionGaps(totals)).toEqual([]);
   });
 
   it("never counts an unknown summary as a missing one", () => {
@@ -304,9 +306,7 @@ describe("describeSelectionGaps", () => {
     ]);
     expect(totals.withoutSummary).toBe(1);
     expect(totals.summaryUnknown).toBe(1);
-    expect(describeSelectionGaps(totals)).toEqual([
-      "One of these has no summary. Its transcript is complete; only the summary section is missing.",
-    ]);
+    expect(describeSelectionGaps(totals)).toEqual([]);
   });
 
   it("states that a pre-single-file meeting fails the whole bundle, not just itself", () => {
@@ -332,19 +332,15 @@ describe("describeSelectionGaps", () => {
     );
   });
 
-  it("says the total is a floor when part of it is unknown", () => {
+  it("leaves an unmeasured length to the total's own wording", () => {
+    // "At least 12,000 words" already says the total is a floor, and the row
+    // it came from shows a dash where its length would be.
     const totals = summarizeSelection([
       meeting({ id: "a", hasSummary: true, wordCount: 10 }),
       meeting({ id: "b", hasSummary: true }),
     ]);
-    expect(describeSelectionGaps(totals)).toEqual([
-      "One of these does not record its length, so the total is a floor.",
-    ]);
-  });
-
-  it("does not call a wholly unmeasured total a floor — there is no total to floor", () => {
-    const totals = summarizeSelection([meeting({ id: "a", hasSummary: true })]);
     expect(describeSelectionGaps(totals)).toEqual([]);
+    expect(formatSelectionWordCount(totals)).toBe("At least 10 words");
   });
 });
 
@@ -359,17 +355,17 @@ describe("the meeting cap", () => {
     const atCap = summarizeSelection(
       Array.from({ length: MAX_SELECTED_MEETINGS }, (_, i) => meeting({ id: `m${i}` })),
     );
-    expect(describeSelectionGaps(atCap).some((gap) => gap.includes("at most"))).toBe(false);
+    expect(describeSelectionGaps(atCap).some((gap) => gap.includes("up to"))).toBe(false);
 
     const over = summarizeSelection(
       Array.from({ length: MAX_SELECTED_MEETINGS + 2 }, (_, i) =>
         meeting({ id: `m${i}`, hasSummary: false }),
       ),
     );
-    const gaps = describeSelectionGaps(over);
-    expect(gaps[0]).toBe(
-      "A bundle holds at most 20 meetings. Unpick 2.",
-    );
-    expect(gaps.length).toBeGreaterThan(1);
+    // The cap is the whole of the gap list here: a missing summary is a note
+    // now, and the gaps are the sentences that stop Prepare.
+    expect(describeSelectionGaps(over)).toEqual([
+      "You can work with up to 20 meetings at once. Unpick 2.",
+    ]);
   });
 });

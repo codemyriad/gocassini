@@ -117,7 +117,7 @@
                           type="button"
                           on:click={() => dispatch("navigate", "settings")}
                         >
-                          Open Operator › Settings
+                          Open Operator › Publish pipeline
                         </button>
                       {/if}
                       {#if step.commands.length > 0}
@@ -201,7 +201,7 @@
                       type="button"
                       on:click={() => dispatch("navigate", "settings")}
                     >
-                      Open Operator › Settings
+                      Open Operator › Publish pipeline
                     </button>
                   {/if}
                   {#if step.commands.length > 0}

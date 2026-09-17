@@ -41,6 +41,7 @@
   // inherit a model chosen for a different endpoint the way an empty per-run
   // field once let it.
   import { createEventDispatcher } from "svelte";
+  import { ChevronDown } from "@lucide/svelte";
   import type { MeetingCatalogEntry } from "cassini-viewer/dataProvider";
 
   import ModelCombobox from "./ModelCombobox.svelte";
@@ -211,6 +212,12 @@
     chosenModel = defaultModelOf(id);
   }
 
+  // What the folded control says it will use, so the choice inside it need not
+  // be opened to be known.
+  function providerName(providerId: string): string {
+    return providers.find((entry) => entry.id === providerId)?.name ?? "";
+  }
+
   function defaultModelOf(providerId: string): string {
     return providers.find((provider) => provider.id === providerId)?.model ?? "";
   }
@@ -289,13 +296,16 @@
       <!-- One box: the template you pick and what it will ask are the same
            decision, so they are not two controls with a gap between them. -->
       <div class="tpl-box">
-        <label class="tpl-field">
+        <label class="tpl-field tpl-field-row">
           <span>Insight template</span>
-          <select class="select select-sm select-bordered w-full" bind:value={chosenWorkflow}>
-            {#each workflows as workflow (workflow.id)}
-              <option value={workflow.id}>{workflow.name}</option>
-            {/each}
-          </select>
+          <span class="gc-select">
+            <select class="gc-input" bind:value={chosenWorkflow}>
+              {#each workflows as workflow (workflow.id)}
+                <option value={workflow.id}>{workflow.name}</option>
+              {/each}
+            </select>
+            <ChevronDown size={14} class="gc-select-chevron" aria-hidden="true" />
+          </span>
         </label>
 
         {#if questionAccepted}
@@ -305,7 +315,7 @@
           <label class="tpl-field">
             <span>Question</span>
             <textarea
-              class="textarea textarea-sm textarea-bordered w-full"
+              class="tpl-question-box textarea textarea-sm textarea-bordered w-full"
               rows="3"
               placeholder="What should this insight answer?"
               bind:value={question}
@@ -316,10 +326,10 @@
                affordance — the name says nothing about what the model is asked
                to do — so it carries the weight, and the shape of the document
                reads under it. -->
-          <p class="tpl-question">“{chosenWorkflowEntry.question}”</p>
-          {#if chosenWorkflowEntry.description}
-            <p class="tpl-description">{chosenWorkflowEntry.description}</p>
-          {/if}
+          <!-- Quoted and inset: it is what the template will actually ask,
+               not a note about it. The registry's own description said the
+               same thing a second time, so it is gone. -->
+          <p class="tpl-question">{chosenWorkflowEntry.question}</p>
         {/if}
       </div>
 
@@ -340,18 +350,37 @@
          choice is theirs. Absent only where there is nothing to choose — no
          endpoint at all, or a list that could not be read. -->
     {#if providers.length > 0}
-      <div class="ins-endpoint">
-        <label class="tpl-field">
+      <!-- Folded away: the first provider and its default model answer the
+           question for most people, and the ones who want another are the ones
+           who will open this. -->
+      <details class="ins-endpoint">
+        <summary class="ins-endpoint-toggle">
+          <span class="ins-endpoint-chev" aria-hidden="true"></span>
+          <span class="ins-endpoint-name">Provider and model</span>
+          <span class="ins-endpoint-now">
+            {#if providerName(chosenProvider)}
+              <code>{providerName(chosenProvider)}</code>
+            {/if}
+            {#if chosenModel}
+              <code>{chosenModel}</code>
+            {/if}
+          </span>
+        </summary>
+        <div class="ins-endpoint-body">
+        <label class="tpl-field tpl-field-row">
           <span>Provider</span>
-          <select
-            class="select select-sm select-bordered w-full"
-            value={chosenProvider}
-            on:change={(event) => chooseProvider(event.currentTarget.value)}
-          >
-            {#each providers as provider (provider.id)}
-              <option value={provider.id}>{provider.name}</option>
-            {/each}
-          </select>
+          <span class="gc-select">
+            <select
+              class="gc-input"
+              value={chosenProvider}
+              on:change={(event) => chooseProvider(event.currentTarget.value)}
+            >
+              {#each providers as provider (provider.id)}
+                <option value={provider.id}>{provider.name}</option>
+              {/each}
+            </select>
+            <ChevronDown size={14} class="gc-select-chevron" aria-hidden="true" />
+          </span>
         </label>
         <!-- Pre-filled with the endpoint's default, editable for this run.
              Opening the field lists what the endpoint serves; the list narrows
@@ -365,7 +394,8 @@
           placeholder="endpoint default"
           on:open={() => void loadModels(chosenProvider)}
         />
-      </div>
+        </div>
+      </details>
     {/if}
     {#if providersError}
       <p class="ins-card-note">{providersError}</p>
@@ -389,7 +419,8 @@
       <!-- Where the transcripts go and where the answer lands, said before
            the run rather than discovered after it (D-700). -->
       <p class="ins-card-note">
-        Transcripts go to the endpoint you pick. The answer is saved to your Nextcloud files.
+        These meetings' transcripts are sent to the AI provider to be read. The insight comes
+        back as a document in your Nextcloud files.
       </p>
     </div>
 
@@ -424,43 +455,222 @@
     color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
   }
 
+  /* A card on the drawer's ground, like the bundle list above it. */
   .tpl-box {
     display: grid;
     gap: 12px;
     padding: 14px;
-    background-color: color-mix(in oklch, var(--color-base-content) 4%, var(--color-base-100));
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-100));
+    background-color: var(--color-base-100);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 12%, var(--color-base-200));
     border-radius: var(--radius-box, 0.75rem);
   }
   .tpl-field {
     display: grid;
     gap: 5px;
   }
+  /* The label and the control are one line while there is room for both: a
+     picker under its own name reads as a form where this is one choice. */
+  .tpl-field-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+  .tpl-field-row > span {
+    flex: none;
+  }
+  .tpl-field-row > .gc-select {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+  /* One field shape for the two pickers and the model box: same height, same
+     border, same chevron, drawn rather than left to the browser. */
+  .gc-select {
+    position: relative;
+    display: flex;
+    min-width: 0;
+  }
+  .gc-input {
+    width: 100%;
+    min-width: 0;
+    height: 2rem;
+    padding: 0 28px 0 10px;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: none;
+    background-color: var(--color-base-100);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+    font-size: 0.875rem;
+    color: var(--color-base-content);
+  }
+  .gc-input:focus,
+  .gc-input:focus-visible {
+    outline: none;
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-base-content) 11%, var(--color-base-100));
+  }
+  .gc-select :global(.gc-select-chevron) {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
   .tpl-field > span {
     font-size: 12px;
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
-  /* The question carries the weight: it is what the template will actually ask. */
-  .tpl-question {
-    font-size: 13.5px;
-    font-weight: 600;
-    line-height: 1.45;
-    color: var(--color-base-content);
+  /* Typed into, so it reads at the size of the fields rather than of a note. */
+  .tpl-question-box {
+    font-size: 0.875rem;
+    line-height: 1.5;
   }
-  /* And the shape of the document reads under it, tight enough to belong to it. */
-  .tpl-description {
-    margin-top: -7px;
-    font-size: 12.5px;
-    line-height: 1.55;
-    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+
+  /* The question carries the weight: it is what the template will actually
+     ask, so it is set as the quotation it is. */
+  .tpl-question {
+    padding: 8px 12px 8px 11px;
+    background-color: var(--color-base-200);
+    border-left: 2px solid color-mix(in oklch, var(--color-base-content) 30%, transparent);
+    border-radius: 0 var(--radius-field, 0.5rem) var(--radius-field, 0.5rem) 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
   }
 
   .ins-endpoint {
     display: grid;
+    gap: 12px;
+  }
+  /* The fields line up with the summary's own text, not with its chevron. */
+  .ins-endpoint-body {
+    display: grid;
+    gap: 12px;
+    /* The open fields keep the same air under them as the closed summary has,
+       so the button does not sit tighter to the last field than to the row it
+       replaced. */
+    padding: 0 14px 8px;
+  }
+  .ins-endpoint-toggle {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 12.5px;
+    font-weight: 550;
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+  }
+  .ins-endpoint-toggle::-webkit-details-marker {
+    display: none;
+  }
+  .ins-endpoint-chev {
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 120ms ease;
+  }
+  .ins-endpoint[open] .ins-endpoint-chev {
+    transform: rotate(45deg);
+  }
+  /* The model field takes the same shape as the two selects above it: its
+     name on the left, its control on the right, and a box that matches theirs
+     rather than the settings pages' own input. */
+  .ins-endpoint :global(.model-field) {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+  .ins-endpoint :global(.model-label) {
+    flex: none;
+    font-size: 12px;
+    font-weight: 400;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .ins-endpoint :global(.model-input) {
+    flex: 1 1 160px;
+  }
+  .ins-endpoint :global(.model-input input) {
+    height: 2rem;
+    padding-block: 0;
+    font-size: 0.875rem;
+    background-color: var(--color-base-100);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-field, 0.5rem);
+  }
+  .ins-endpoint :global(.model-chevron) {
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+
+  /* On its own line: the summary names the control, and what it is set to is
+     a value under it rather than a tail that squeezes the name. */
+  .ins-endpoint-name {
+    flex: none;
+    white-space: nowrap;
+  }
+  /* Beside the name where the panel is wide enough for both, under it when it
+     is not. */
+  .ins-endpoint-now {
+    display: flex;
+    flex-wrap: wrap;
     gap: 6px;
+    min-width: 0;
+  }
+  @media (max-width: 720px) {
+    .ins-endpoint-now {
+      flex-basis: 100%;
+      padding-left: 14px;
+    }
+  }
+  .ins-endpoint-now code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 1px 6px;
+    background-color: var(--color-base-200);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 14%, var(--color-base-200));
+    border-radius: 5px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11.5px;
+    font-weight: 400;
+    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+  }
+
+  /* Narrow enough that a label and its control share a line badly: the two
+     stack, and the control takes the width. */
+  @media (max-width: 720px) {
+    .tpl-field-row {
+      display: grid;
+      gap: 5px;
+    }
+    .ins-endpoint :global(.model-field) {
+      display: grid;
+      gap: 5px;
+    }
+    /* Stacked, the rows need the space between them that a shared line gave
+       them side by side. */
+    .tpl-box {
+      gap: 16px;
+    }
+    .ins-endpoint-body {
+      gap: 16px;
+    }
+    /* Stacked, a control takes the row it is on. */
+    .tpl-field-row > .gc-select,
+    .ins-endpoint :global(.model-input) {
+      width: 100%;
+    }
   }
 
   .ins-card-foot {
+    margin-top: 4px;
     display: flex;
     flex-direction: column;
     gap: 8px;

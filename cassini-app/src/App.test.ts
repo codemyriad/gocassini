@@ -117,9 +117,11 @@ describe("the shell after the Setup tab", () => {
 
   it("sends the setup notice's own button somewhere that exists", () => {
     // The broken-install branches carry a step with `action: "settings"` since
-    // D-759, and it opens the operator surface, where "Who can see recordings"
-    // and the service-account controls live (D-757).
-    expect(appSource).toContain('on:navigate={() => selectSurface("operator")}');
+    // D-759. It opens Operator › Publish pipeline, where "Who can see
+    // recordings" and the service-account controls live (D-757), rather than
+    // the operator's default Recordings panel.
+    expect(appSource).toContain("on:navigate={openPublishPipeline}");
+    expect(appSource).not.toContain('on:navigate={() => selectSurface("operator")}');
   });
 
   // "Try again" on the notice is the operator's own re-check (D-759), not

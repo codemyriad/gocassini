@@ -87,10 +87,10 @@ export type InsightReason =
 // the first words, not the last.
 export const INSIGHT_FAILURE_COPY: Record<InsightReason, { title: string; line: string }> = {
   "bad-request": { title: "This request could not be run", line: "Check the app log." },
-  "no-provider": { title: "No AI endpoint", line: "Add one under AI providers." },
+  "no-provider": { title: "No AI endpoint", line: "Add one under Operator › AI providers." },
   "provider-refused": {
     title: "The endpoint refused the request",
-    line: "Check its key, quota or model name under AI providers.",
+    line: "Check its key, quota or model name under Operator › AI providers.",
   },
   "model-failed": { title: "The model did not answer", line: "Retry, or pick fewer meetings." },
   "write-failed": {

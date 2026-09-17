@@ -85,84 +85,140 @@
   }
 </script>
 
-<section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
-  <header class="flex items-start justify-between gap-3 px-4 py-3">
-    <div>
-      <h2 class="font-semibold">Insight templates</h2>
-      <p class="text-xs text-base-content/60">
-        Used by insights and by the summary step. Templates ship with Cassini for now.
-      </p>
+<header class="op-panel-head">
+  <div>
+    <div class="op-panel-title">
+      <h1>Insight templates</h1>
     </div>
+    <p>Used for insights and meeting summaries. For now, only the templates that come with Cassini are available.</p>
+  </div>
+  <div class="op-panel-actions">
     <button
-      class="btn btn-ghost btn-sm btn-square"
+      class="icon-btn"
       type="button"
       on:click={load}
       disabled={loading || !client}
       aria-label="Reload insight templates"
     >
-      <RefreshCw size={16} aria-hidden="true" />
+      <RefreshCw size={15} aria-hidden="true" />
     </button>
-  </header>
-
-  <div class="grid gap-4 border-t border-base-300 p-4">
-    {#if hasProvider === false}
-      <NeedsProviderCard
-        title="Add a provider to use these templates"
-        on:open={() => dispatch("openProviders")}
-      />
-    {/if}
-    {#if loadError}
-      <div class="alert alert-error text-sm">Templates could not be listed.</div>
-    {:else if loading}
-      <div class="flex items-center justify-center p-6 text-sm text-base-content/60">
-        Loading insight templates…
-      </div>
-    {:else if workflows.length === 0}
-      <div
-        class="grid content-start justify-items-center gap-2 rounded-box border border-base-300 bg-base-200 px-4 py-8 text-center"
-      >
-        <FileText size={20} class="text-base-content/40" aria-hidden="true" />
-        <p class="text-sm font-medium">This build ships no templates.</p>
-      </div>
-    {:else}
-      <!-- Dimmed rather than hidden while there is no endpoint: the templates
-           are real and worth reading, they just have nowhere to be sent. -->
-      <div class="grid gap-2" class:opacity-60={hasProvider === false}>
-        {#each workflows as workflow (workflow.id)}
-          <article class="rounded-box border border-base-300 bg-base-200 p-3">
-            <div class="flex flex-wrap items-start justify-between gap-2">
-              <h3 class="text-sm font-semibold">{workflow.name}</h3>
-              <div
-                class="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs text-base-content/60"
-              >
-                <span>{workflow.id}</span>
-                <span aria-hidden="true">·</span>
-                <span>{workflow.version}</span>
-                <span aria-hidden="true">·</span>
-                <span title={workflow.sha256}>{shortHash(workflow.sha256)}</span>
-                {#if workflow.origin}
-                  <span class="badge badge-ghost badge-sm font-sans">{workflow.origin}</span>
-                {/if}
-              </div>
-            </div>
-
-            {#if workflow.description}
-              <p class="mt-1 text-xs text-base-content/60">{workflow.description}</p>
-            {/if}
-
-            <!-- The question is the affordance: it says what the template asks,
-                 and opening it says how it asks for it. A template with no
-                 question of its own (the asker's) opens on a plain label. -->
-            <details class="mt-2">
-              <summary class="cursor-pointer text-sm">
-                {#if workflow.question}“{workflow.question}”{:else}Prompt{/if}
-              </summary>
-              <pre
-                class="mt-2 max-h-96 overflow-auto rounded-box border border-base-300 bg-base-100 p-3 text-xs whitespace-pre-wrap">{workflow.instruction}</pre>
-            </details>
-          </article>
-        {/each}
-      </div>
-    {/if}
   </div>
-</section>
+</header>
+
+{#if hasProvider === false}
+  <NeedsProviderCard
+    title="Add a provider to use these templates"
+    on:open={() => dispatch("openProviders")}
+  />
+{/if}
+{#if loadError}
+  <div class="err-box" role="alert">Templates could not be listed.</div>
+{:else if loading}
+  <p class="op-state">Loading insight templates…</p>
+{:else if workflows.length === 0}
+  <div class="op-empty">
+    <FileText size={20} aria-hidden="true" />
+    <p class="t">This build ships no templates.</p>
+  </div>
+{:else}
+  <!-- Dimmed rather than hidden while there is no endpoint: the templates
+       are real and worth reading, they just have nowhere to be sent. -->
+  <section class="tpl-list">
+    {#each workflows as workflow (workflow.id)}
+      <article class="op-tint tpl-card" class:off={hasProvider === false}>
+        <div class="set-row-main">
+          <h3 class="set-row-name">{workflow.name}</h3>
+          {#if workflow.description}
+            <p class="set-row-sub">{workflow.description}</p>
+          {/if}
+        </div>
+
+        {#if workflow.origin}
+          <div class="tpl-origin">{workflow.origin}</div>
+        {/if}
+
+        <!-- The question is the affordance: it says what the template asks,
+             and opening it says how it asks for it. A template with no
+             question of its own (the asker's) opens on a plain label. -->
+        <details class="tpl-prompt">
+          <summary class="tpl-toggle">
+            <span class="tpl-chev" aria-hidden="true"></span>
+            {#if workflow.question}“{workflow.question}”{:else}Prompt{/if}
+          </summary>
+          <div class="tpl-body">
+            <pre class="tpl-instruction">{workflow.instruction}</pre>
+            <p class="tpl-ident">
+              <code>{workflow.id}</code>
+              <code>{workflow.version}</code>
+              <code title={workflow.sha256}>{shortHash(workflow.sha256)}</code>
+            </p>
+          </div>
+        </details>
+      </article>
+    {/each}
+  </section>
+{/if}
+
+<style>
+  .tpl-list {
+    display: grid;
+    gap: 12px;
+  }
+  .tpl-card {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0 14px;
+    padding: 14px 16px;
+  }
+  .tpl-prompt {
+    flex-basis: 100%;
+    min-width: 0;
+    margin-top: 8px;
+  }
+  .tpl-body {
+    margin-top: 9px;
+  }
+  .tpl-ident {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 10px 0 0;
+  }
+  .tpl-ident code {
+    padding: 2px 6px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+    background-color: var(--op-code-bg);
+    border: 1px solid var(--op-code-border);
+    border-radius: var(--radius-selector, 0.25rem);
+  }
+  .tpl-instruction {
+    max-height: 24rem;
+    margin: 0;
+    padding: 8px 12px 8px 11px;
+    background-color: var(--op-inset);
+    border-left: 2px solid var(--color-base-300);
+    border-radius: 0 var(--radius-field, 0.5rem) var(--radius-field, 0.5rem) 0;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+    overflow: auto;
+    font-family: inherit;
+    white-space: pre-wrap;
+  }
+  .tpl-origin {
+    flex: none;
+    margin-top: 1px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-selector, 0.25rem);
+  }
+</style>

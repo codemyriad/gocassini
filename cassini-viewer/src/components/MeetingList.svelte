@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import { Sun, Moon, Search, PanelLeft, Tag, X } from "@lucide/svelte";
+  import { Sun, Moon, Search, PanelLeft, Tag, TriangleAlert, Users, X } from "@lucide/svelte";
   import { plural, type TagPick, type VocabularyTag } from "../viewer/annotations";
   import { filterByTagLabel, wholeTagState, type MeetingTags } from "../viewer/listTags";
   import { colorFor } from "../viewer/tagPalette";
@@ -8,7 +8,7 @@
   import TagPicker from "./tags/TagPicker.svelte";
   import {
     filterMeetingCatalogEntries,
-    formatMeetingDateShort,
+    formatMeetingDateWithDay,
     formatMeetingDuration,
     type MeetingCatalogEntry,
   } from "../viewer/catalog";
@@ -58,6 +58,11 @@
   // last rows need room to clear it. The list does not know what it is; it only
   // knows not to hide its own last row under it.
   export let bottomOverlay = false;
+  // How tall that overlay actually is, measured by the shell. The inset used
+  // to be a fixed 96px guess, which a bar carrying a second line — a loss
+  // notice, the cap refusal — grew past, leaving the last rows to scroll under
+  // it with no way to reach them.
+  export let bottomOverlayHeight = 0;
 
   // The insights drawn from the meetings in this room (D-721) — already
   // narrowed by the shell, for the same reason the meetings are: the room
@@ -88,20 +93,12 @@
   export let retryingInsightId = "";
   export let insightRetryError: { id: string; message: string } | null = null;
 
-  // Who can see the recordings in this list (D-756). The shell resolves it from
-  // the deployment's storage mode and hands down the audience, never the mode
-  // itself: the storage enum is the operator's word for where the bytes live,
-  // and this layer has no business knowing it.
-  //
-  // "" is "nobody said" — a standalone export, which has no operator to ask,
-  // and an operator too old to report it — and it renders nothing. A chip is a
-  // claim about who can read a recording, and there is no safe guess.
-  export let audience: "" | "everyone" | "participants" = "";
-
   export let meetingTags: MeetingTags = new Map();
   // Null offers no row tag button: the build cannot tag, or the vocabulary has not loaded.
   export let tags: readonly VocabularyTag[] | null = null;
   export let tagFilterCount = 0;
+  // The tags the list is narrowed by, in the order they were picked.
+  export let tagFilterIds: readonly string[] = [];
   export let tagNotice = "";
   let tagging: { meeting: MeetingCatalogEntry; anchor: HTMLElement } | null = null;
 
@@ -149,6 +146,7 @@
     toggleTheme: void;
     tagMeeting: { meeting: MeetingCatalogEntry; pick: TagPick };
     clearTags: void;
+    removeTag: string;
     dismissTagNotice: void;
     // What was typed. The shell debounces it and asks the operator.
     query: string;
@@ -229,6 +227,22 @@
   });
   $: feedGroups = groupBrowseFeedByMonth(feedItems);
   $: trimmedFilter = filter.trim();
+  $: filterTags = tagFilterIds
+    .map((id) => tags?.find((tag) => tag.tagId === id))
+    .filter((tag): tag is VocabularyTag => tag !== undefined);
+  $: shownFilterTags = filterTags.length > 3 ? filterTags.slice(0, 2) : filterTags;
+  $: moreFilterTags = filterTags.length - shownFilterTags.length;
+  $: narrowed = selectedRoomName !== null || trimmedFilter !== "" || tagFilterCount > 0;
+
+  function clearFilters(): void {
+    filter = "";
+    if (selectedRoomName !== null) {
+      dispatch("clearRoom");
+    }
+    if (tagFilterCount > 0) {
+      dispatch("clearTags");
+    }
+  }
   // The one narrowing that can empty the list without the search doing it.
   $: insightsOnly = insightsOffered && types.insights && !types.meetings;
   // The empty state names what it looked for, so a list showing both kinds
@@ -296,6 +310,13 @@
         {#if isSearching}
           <span class="search-status" aria-live="polite">Searching…</span>
         {/if}
+        <!-- Our own, because the one the browser draws for type="search" is
+             unthemeable: a blue gradient disc in the middle of a dark field. -->
+        {#if trimmedFilter}
+          <button type="button" class="search-clear" aria-label="Clear search" on:click={() => (filter = "")}>
+            <X size={14} aria-hidden="true" />
+          </button>
+        {/if}
       </label>
 
       {#if !ncMode}
@@ -320,33 +341,20 @@
     <!-- Fixed height: a chip appearing must not push the list down under the
          pointer. -->
     <div class="resultline" role="status">
-      <span>{visibleMeetings.length} of {totalCount} meetings</span>
-      <!-- Three states, and none of them is the other two: a count once a
-           listing has come back, the fact that it did not when it failed, and
-           nothing at all while the first one is still in flight. A "0" that was
-           never loaded would be a claim nobody made. -->
-      {#if insightsOffered && insightsLoaded}
-        <span class="dot" aria-hidden="true"></span>
-        <span>{visibleInsights.length} of {totalInsightCount} insights</span>
-      {:else if insightsOffered && insightsError}
-        <span class="dot" aria-hidden="true"></span>
-        <span>Insights could not be listed.</span>
+      {#if types.meetings}
+        <span>{narrowed ? `${visibleMeetings.length} of ${totalCount} meetings` : plural(totalCount, "meeting")}</span>
       {/if}
-      <!-- The permanent disclosure, before the transient ones: this is the only
-           thing on the browse surface that says who can see these recordings,
-           and it says the same to everybody. Hiding it from non-admins is what
-           D-670 was raised to stop. -->
-      {#if audience === "everyone"}
-        <span
-          class="chip audience"
-          title="Anyone with an account on this Nextcloud can see every recording and the name of the room it came from"
-        >
-          Visible to anyone with a Nextcloud account
-        </span>
-      {:else if audience === "participants"}
-        <span class="chip audience limited" title="Only the people in each call can see its recording">
-          Visible to meeting participants
-        </span>
+      <!-- A count once a listing has come back and there is something to
+           count, the fact that it did not when it failed, and nothing at all
+           while the first one is still in flight. -->
+      {#if insightsOffered && insightsLoaded}
+        {#if types.insights && totalInsightCount > 0}
+          {#if types.meetings}<span class="rule" aria-hidden="true"></span>{/if}
+          <span>{narrowed ? `${visibleInsights.length} of ${totalInsightCount} insights` : plural(totalInsightCount, "insight")}</span>
+        {/if}
+      {:else if insightsOffered && insightsError}
+        <span class="rule" aria-hidden="true"></span>
+        <span>Insights could not be listed.</span>
       {/if}
       {#if selectedRoomName !== null}
         <span class="chip">
@@ -360,6 +368,27 @@
           </button>
         </span>
       {/if}
+      {#each shownFilterTags as tag (tag.tagId)}
+        <TagChip
+          label={tag.label}
+          color={colorFor(tag)}
+          icon={tag.icon}
+          removable
+          on:remove={() => dispatch("removeTag", tag.tagId)}
+        />
+      {/each}
+      {#if moreFilterTags > 0}
+        <span class="chip" title={filterTags.slice(shownFilterTags.length).map((tag) => tag.label).join(", ")}>
+          +{moreFilterTags}
+        </span>
+      {:else if tagFilterCount > 0 && filterTags.length === 0}
+        <span class="chip">
+          {plural(tagFilterCount, "tag")}
+          <button type="button" on:click={() => dispatch("clearTags")} aria-label="Clear tag filters">
+            <X size={12} aria-hidden="true" />
+          </button>
+        </span>
+      {/if}
       {#if trimmedFilter}
         <span class="chip">
           “{trimmedFilter}”
@@ -368,23 +397,33 @@
           </button>
         </span>
       {/if}
+      {#if narrowed}
+        <button type="button" class="clear-filters" on:click={clearFilters}>Clear filters</button>
+      {/if}
     </div>
   </header>
 
   <div
     class="list-scroll flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable"
     class:list-scroll-inset={bottomOverlay}
+    style={bottomOverlay ? `--list-bottom-inset: ${Math.round(bottomOverlayHeight) + 24}px` : undefined}
   >
     <!-- Stated here rather than swallowed: the list below is complete for
          meetings and incomplete for insights, and only one of those two things
          went wrong. -->
     {#if insightsError}
-      <p class="list-note" role="status">Insights could not be listed.</p>
+      <p class="list-note list-note-error" role="status">
+        <TriangleAlert size={14} aria-hidden="true" />
+        <span>Insights could not be listed.</span>
+      </p>
     {/if}
     {#if tagNotice}
       <p class="list-note" role="status">
-        {tagNotice}
-        <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+        <TriangleAlert size={14} aria-hidden="true" />
+        <span>
+          {tagNotice}
+          <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+        </span>
       </p>
     {/if}
     {#if totalCount === 0 && totalInsightCount === 0}
@@ -482,23 +521,27 @@
           {:else}
             {@const meeting = item.meeting}
             {@const rowTags = meetingTags.get(meeting.id) ?? []}
+            {@const rowRoom = roomLabelOf(meeting)}
+            {@const showRoom = selectedRoomName === null && rowRoom !== meeting.title}
             <!-- The row is a container, not a control, so that picking and
                  opening can sit side by side: a checkbox cannot live inside a
                  button, and demoting the whole row to a click-handling div would
                  cost it keyboard focus. `.meeting-row` and aria-current stay on
                  THIS element because that pair is what the row's open state is
-                 styled from, in this file and in app.css's Nextcloud-theme
-                 override; the open button repeats aria-current because that is
+                 styled from, in this file and in app.css's high-contrast
+                 hover rule; the open button repeats aria-current because that is
                  the element a screen reader lands on. -->
             <div
               class="meeting-row"
               class:row-pickable={selectable}
               aria-current={meeting.id === selectedMeetingId ? "page" : undefined}
+              class:row-picked={selectable && pickedIds.has(meeting.id)}
             >
               {#if selectable}
                 <label class="row-pick">
                   <input
                     type="checkbox"
+                    class="cassini-check"
                     checked={pickedIds.has(meeting.id)}
                     aria-label={`Select ${meeting.title}`}
                     on:change={() => dispatch("pick", meeting)}
@@ -514,38 +557,35 @@
                 <span class="row-main">
                   <span class="row-title">{meeting.title}</span>
                   <span class="row-meta">
-                    <span>{formatMeetingDateShort(meeting.dateLabel)}</span>
-                    <span class="dot" aria-hidden="true"></span>
-                    <span class="row-room">{roomLabelOf(meeting)}</span>
-                    {#if typeof meeting.speakerCount === "number"}
-                      <span class="dot" aria-hidden="true"></span>
-                      <span>{meeting.speakerCount} speakers</span>
+                    <span>{formatMeetingDateWithDay(meeting.dateLabel)}</span>
+                    {#if showRoom}
+                      <span class="rule" aria-hidden="true"></span>
+                      <span class="row-room">{rowRoom}</span>
                     {/if}
-                    {#if rowTags.length > 0}
-                      <span class="row-tags">
-                        {#each rowTags.slice(0, 3) as { tag, whole, stretches } (tag.tagId)}
-                          <TagChip
-                            label={tag.label}
-                            color={colorFor(tag)}
-                            icon={tag.icon}
-                            variant={whole ? "whole" : "stretch"}
-                            count={stretches}
-                          />
-                        {/each}
-                        {#if rowTags.length > 3}
-                          <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}
-                            >+{rowTags.length - 3}</span
-                          >
-                        {/if}
+                    {#if typeof meeting.speakerCount === "number"}
+                      <span class="rule" aria-hidden="true"></span>
+                      <span
+                        class="row-speakers"
+                        title={plural(meeting.speakerCount, "speaker")}
+                        aria-label={plural(meeting.speakerCount, "speaker")}
+                      >
+                        <Users size={12} aria-hidden="true" />{meeting.speakerCount}
                       </span>
                     {/if}
                   </span>
+                  {#if rowTags.length > 0}
+                    <span class="row-tags">
+                      {#each rowTags.slice(0, 3) as { tag } (tag.tagId)}
+                        <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
+                      {/each}
+                      {#if rowTags.length > 3}
+                        <span class="row-tags-more" title={rowTags.slice(3).map(({ tag }) => tag.label).join(", ")}
+                          >+{rowTags.length - 3}</span
+                        >
+                      {/if}
+                    </span>
+                  {/if}
                 </span>
-                {#if typeof meeting.digestDurationMs === "number"}
-                  <span class="row-duration">
-                    {formatMeetingDuration(meeting.digestDurationMs)}
-                  </span>
-                {/if}
               </button>
               {#if tags}
                 <button
@@ -557,8 +597,13 @@
                   title="Tag this meeting"
                   on:click={(event) => toggleTagging(meeting, event.currentTarget)}
                 >
-                  <Tag size={15} aria-hidden="true" />
+                  <Tag size={16} aria-hidden="true" />
                 </button>
+              {/if}
+              {#if typeof meeting.digestDurationMs === "number"}
+                <span class="row-duration">
+                  {formatMeetingDuration(meeting.digestDurationMs)}
+                </span>
               {/if}
               <!-- OUTSIDE row-open on purpose: each moment is its own button,
                    and a button inside a button is invalid markup that browsers
@@ -630,6 +675,15 @@
 </section>
 
 <style>
+  .meeting-list {
+    --list-x: 20px;
+  }
+  @media (max-width: 720px) {
+    .meeting-list {
+      --list-x: 1rem;
+    }
+  }
+
   /* Plain CSS for the list surface: the rows are a repeated, dense layout with
      a hairline rule and three interlocking states (hover, open, group heading),
      which is shorter and easier to keep coherent here than as utility stacks
@@ -643,7 +697,7 @@
 
   .search-problem {
     flex: none;
-    margin: 0 1.25rem 0.5rem;
+    margin: 0 var(--list-x) 0.5rem;
     padding: 0.5rem 0.75rem;
     border-radius: 0.5rem;
     font-size: 0.75rem;
@@ -700,7 +754,7 @@
 
   .searchbar {
     z-index: 5;
-    padding: 1rem 1.25rem 0.75rem;
+    padding: 1rem var(--list-x) 6px;
     background-color: var(--color-base-100);
     border-bottom: 1px solid var(--color-base-300);
   }
@@ -742,19 +796,16 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0 0.75rem;
-    height: 2.375rem;
-    /* Same ground as the list below it: the border defines the field, not a
-       change of surface. */
-    background-color: var(--color-base-100);
-    border: 1px solid var(--color-base-300);
+    padding: 0 12px;
+    height: 40px;
+    background-color: var(--color-base-200);
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
     border-radius: var(--radius-field, 0.5rem);
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
   }
   .search-field:focus-within {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px
-      color-mix(in oklch, var(--color-primary) 15%, transparent);
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-base-content) 11%, var(--color-base-100));
   }
   .search-field input {
     flex: 1;
@@ -765,6 +816,27 @@
     font-size: 0.9375rem;
     color: var(--color-base-content);
   }
+  .search-field input::-webkit-search-cancel-button,
+  .search-field input::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .search-clear {
+    display: inline-flex;
+    flex: none;
+    padding: 4px;
+    margin-right: -4px;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-field, 0.5rem);
+    color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  .search-clear:hover {
+    color: var(--color-base-content);
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
+  }
+
   .search-field input::placeholder {
     color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
   }
@@ -782,7 +854,7 @@
     align-items: center;
     gap: 0.625rem;
     height: 30px;
-    margin-top: 0.5rem;
+    margin-top: 6px;
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -790,89 +862,110 @@
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
 
-  /* An active narrowing is state, not decoration: primary-coloured so it is
-     obvious the list is filtered rather than complete. */
+  .clear-filters {
+    flex: none;
+    padding: 0;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    font-size: 0.75rem;
+    font-weight: 550;
+    color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  }
+  .clear-filters:hover {
+    color: var(--color-base-content);
+  }
+
+  /* Sized like a tag chip (TagChip.svelte), without the dot: a filter is not
+     one of the vocabulary's colours. */
   .chip {
     display: inline-flex;
+    flex: none;
     align-items: center;
-    gap: 0.375rem;
+    gap: 4px;
     min-width: 0;
-    padding: 3px 8px;
-    border-radius: 20px;
-    background-color: color-mix(
-      in oklch,
-      var(--color-primary) 15%,
-      transparent
-    );
-    border: 1px solid
-      color-mix(in oklch, var(--color-primary) 38%, transparent);
-    font-size: 0.71875rem;
+    max-width: 16rem;
+    box-sizing: border-box;
+    height: 22px;
+    padding: 0 7px 0 8px;
+    font-size: 11.5px;
     font-weight: 550;
-    color: var(--color-primary);
+    line-height: 1;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  /* The audience chip is not a narrowing: nothing was filtered and there is
-     nothing to clear, so it drops the primary fill that means "this list is
-     incomplete" and reads as the standing fact it is. Same shape, so the line
-     stays one row of chips. */
-  .chip.audience {
+    color: color-mix(in oklch, var(--color-base-content) 85%, transparent);
     background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
-    border-color: color-mix(in oklch, var(--color-base-content) 20%, transparent);
-    color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
-    font-weight: 500;
-    white-space: nowrap;
+    border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, transparent);
+    border-radius: 5px;
   }
 
-  /* The narrower audience is the one worth colouring: a recording only its
-     participants can see is the exception on a Nextcloud, and the chip is how
-     you tell the two apart at a glance. */
-  .chip.audience.limited {
-    background-color: color-mix(in oklch, var(--color-success) 15%, transparent);
-    border-color: color-mix(in oklch, var(--color-success) 38%, transparent);
-    color: var(--color-success);
+  .resultline :global(.tag-chip) {
+    height: 22px;
+    gap: 4px;
+    padding: 0 7px 0 8px;
   }
 
   .chip button {
     display: inline-flex;
     flex: none;
-    padding: 0;
+    margin: -2px 0;
+    padding: 0 0 0 2px;
     background: none;
     border: 0;
     cursor: pointer;
-    color: color-mix(in oklch, var(--color-primary) 70%, transparent);
+    color: inherit;
+    opacity: 0.7;
   }
   .chip button:hover {
-    color: var(--color-primary);
+    opacity: 1;
   }
 
-  .resultline .dot {
+  /* The rows' own separator, so one list punctuates its counts and its rows
+     the same way. */
+  .resultline .rule {
     flex: none;
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background-color: currentColor;
+    width: 1px;
+    height: 10px;
+    margin: 0 2px;
+    background-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
   }
 
   /* An incomplete list says so where the list is, not in the footer with the
      catalog's own errors: the two failures are independent and either one can
      happen without the other. */
   .list-note {
-    margin: 0.75rem 1.25rem 0;
-    padding: 0.5rem 0.75rem;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0.5rem;
+    margin: 1rem var(--list-x) 0;
+    padding: 0.625rem 0.75rem;
     font-size: 0.8125rem;
     line-height: 1.45;
     background-color: color-mix(in oklch, var(--color-warning) 20%, transparent);
     border-radius: var(--radius-field, 0.5rem);
     color: var(--color-base-content);
   }
+  .list-note :global(svg) {
+    margin-top: 1px;
+    color: var(--color-warning, #b45309);
+  }
+  /* A listing that failed is not a notice about the archive: nothing here is
+     going to fill that gap until it is fixed. */
+  .list-note-error {
+    background-color: color-mix(in oklch, var(--color-error) 15%, transparent);
+    border: 1px solid color-mix(in oklch, var(--color-error) 45%, transparent);
+  }
+  .list-note-error :global(svg) {
+    color: var(--color-error);
+  }
 
   .group-head {
     position: sticky;
     top: 0;
-    z-index: 1;
-    padding: 1.875rem 1.25rem 0.5rem;
+    z-index: 2;
+    padding: var(--list-x) var(--list-x) 0.5rem;
     font-size: 11px;
     font-weight: 650;
     line-height: 1;
@@ -885,7 +978,7 @@
   /* Room for whatever floats over the bottom of the list, so its last row can
      be scrolled clear of it rather than sitting permanently underneath. */
   .list-scroll-inset {
-    padding-bottom: 96px;
+    padding-bottom: var(--list-bottom-inset, 96px);
   }
 
   .meeting-row {
@@ -893,17 +986,22 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-auto-flow: column;
-    column-gap: 0.5rem;
+    column-gap: 0.25rem;
     align-items: center;
     width: 100%;
-    padding: 9px 20px;
+    padding: 9px var(--list-x);
     color: var(--color-base-content);
+    transition: background-color 0.15s ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .meeting-row {
+      transition: none;
+    }
   }
   /* Only when picking is offered: without the checkbox the row keeps exactly
      the geometry it had before D-626. */
   .row-pickable {
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.5rem;
   }
 
   /* The open action fills the rest of the row, so a click anywhere but the
@@ -911,7 +1009,7 @@
      pixel. */
   .row-open {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     align-items: center;
     gap: 0.75rem;
     width: 100%;
@@ -945,34 +1043,27 @@
     /* Padding, not a bigger box: the hit target has to be thumb-sized without
        pushing the title off its baseline. */
     padding: 6px;
-    margin: -6px 0;
+    margin: -6px 0.5rem -6px -6px;
     cursor: pointer;
   }
-  .row-pick input {
-    width: 15px;
-    height: 15px;
-    margin: 0;
-    cursor: pointer;
-    accent-color: var(--color-primary);
+  .row-pick:hover input:not(:checked),
+  .meeting-row:hover .row-pick input:not(:checked) {
+    border-color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
   }
-  .row-pick input:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
+  .row-pick input:checked {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
   }
-  /* The open row is a solid primary fill under Nextcloud theming (app.css), so
-     a primary checkbox would vanish into it. currentColor is whatever that
-     row's text resolved to — primary-content there, base-content in the
-     viewer's own themes, where the open row is only a tint. */
-  .meeting-row[aria-current="page"] .row-pick input {
-    accent-color: currentColor;
+  .row-pick input:checked::after {
+    border-color: var(--color-primary-content);
   }
   /* Inset to the row's padding so the rule separates rows rather than cutting
      the column edge to edge. */
   .meeting-row::after {
     content: "";
     position: absolute;
-    left: 20px;
-    right: 20px;
+    left: var(--list-x);
+    right: var(--list-x);
     bottom: 0;
     height: 1px;
     /* Decoration: it is painted over the open action's hit area, and a rule
@@ -980,25 +1071,34 @@
     pointer-events: none;
     background-color: var(--color-base-300);
   }
+  /* Hover is the rail's shade and nothing more; picked and open are the
+     insight card's open tint (24% of the accent in that shade), and the colour
+     alone says it: no rule down the side. */
   .meeting-row:hover {
     background-color: var(--color-base-200);
   }
+  .meeting-row.row-picked::after,
+  .meeting-row[aria-current="page"]::after {
+    background-color: color-mix(in oklch, var(--color-base-content) 14%, transparent);
+  }
+  .meeting-row.row-picked,
   .meeting-row[aria-current="page"] {
-    background-color: color-mix(
-      in oklch,
-      var(--color-primary) 15%,
-      transparent
-    );
-    box-shadow: inset 2px 0 0 var(--color-primary);
+    background-color: color-mix(in oklch, var(--color-primary) 24%, var(--color-base-200));
+  }
+  .meeting-row[aria-current="page"] {
+    transition: none;
   }
 
   .row-main {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 2px 12px;
     min-width: 0;
   }
   .row-title {
+    grid-column: 1 / -1;
+    line-height: 22px;
     font-weight: 550;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1012,20 +1112,26 @@
     gap: 2px 8px;
     min-width: 0;
     font-size: 0.75rem;
+    line-height: 18px;
     font-variant-numeric: tabular-nums;
     color: color-mix(in oklch, var(--color-base-content) 55%, transparent);
+  }
+  .row-speakers {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
   }
   .row-room {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .row-meta .dot {
+  .row-meta .rule {
     flex: none;
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background-color: currentColor;
+    width: 1px;
+    height: 10px;
+    margin: 0 2px;
+    background-color: color-mix(in oklch, var(--color-base-content) 22%, transparent);
   }
   .row-tags {
     display: inline-flex;
@@ -1044,8 +1150,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     cursor: pointer;
     background: none;
@@ -1061,13 +1167,15 @@
     background-color: var(--color-base-100);
     border-color: var(--color-base-300);
   }
-  @media (hover: none) {
+  @media (hover: none), (max-width: 720px) {
     .row-tag {
       opacity: 1;
     }
   }
   .row-duration {
     flex: none;
+    min-width: 4.5ch;
+    text-align: right;
     font-size: 0.75rem;
     font-weight: 500;
     font-variant-numeric: tabular-nums;
@@ -1079,7 +1187,7 @@
     flex-direction: column;
     align-items: center;
     gap: 0.5rem;
-    padding: 3rem 1.25rem;
+    padding: 3rem var(--list-x);
     text-align: center;
     color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
   }
@@ -1095,19 +1203,53 @@
     background: none;
     border: 1px solid var(--color-base-300);
     border-radius: var(--radius-field, 0.5rem);
-    color: var(--color-primary);
+    color: var(--color-base-content);
   }
   .list-empty-action:hover {
-    background-color: color-mix(
-      in oklch,
-      var(--color-primary) 15%,
-      transparent
-    );
+    background-color: color-mix(in oklch, var(--color-base-content) 8%, transparent);
   }
 
   @media (max-width: 720px) {
     .rooms-button {
       display: flex;
+    }
+    /* The row's own controls line up with the title's line, not with the
+       middle of a block that has grown a second and third line under it. A row
+       whose text fits on one line is unchanged: its first line IS the row. */
+    .meeting-row {
+      align-items: start;
+    }
+    .row-pick,
+    .row-tag,
+    .row-duration {
+      align-self: start;
+      min-height: 22px;
+      display: flex;
+      align-items: center;
+    }
+    /* Two pixels below the title's own centre: the title's cap height sits
+       high in its line box, so a mathematically centred control reads as
+       riding above the word beside it. */
+    .row-tag,
+    .row-duration {
+      margin-top: 2px;
+    }
+    /* The checkbox's hit area hangs 6px above its box, which at the top of the
+       row is 6px above the title's line rather than around it. */
+    .row-pick {
+      margin-top: -1px;
+    }
+    .row-tag {
+      width: 22px;
+      height: 22px;
+    }
+    .row-main {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .row-tag :global(svg) {
+      width: 14px;
+      height: 14px;
     }
   }
 </style>

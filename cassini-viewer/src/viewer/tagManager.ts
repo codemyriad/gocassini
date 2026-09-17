@@ -15,11 +15,23 @@ export type JobStatus = { text: string; failed: string[]; rerun: TagAction | nul
 
 export const BUSY = "You already have a change running.";
 
-export const countsLine = (tag: VocabularyTag) => `${plural(tag.meetings, "meeting")} · ${plural(tag.marks, "mark")}`;
+// How much of the archive a tag is on. "Marks" — one per whole-meeting tag and
+// one per tagged stretch of a transcript — was the operator's word for it, and
+// named nothing the reader had ever seen in the app.
+export const countsLine = (tag: VocabularyTag) => {
+  const meetings = plural(tag.meetings, "meeting");
+  if (tag.meetings === 0) {
+    return "Not used yet";
+  }
+  if (tag.marks <= tag.meetings) {
+    return `Used in ${meetings}`;
+  }
+  return `Used ${tag.marks} times in ${meetings}`;
+};
 
 export function confirmLine(meetings: number): string {
   if (meetings === 0) return "None of your meetings use it.";
-  return `Updates ${meetings === 1 ? "one" : meetings} of your meetings. Meetings in rooms you can't open keep it.`;
+  return `Updates ${meetings === 1 ? "one" : meetings} of your meetings. Meetings that are in rooms you can't access will keep the old tag.`;
 }
 
 const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
