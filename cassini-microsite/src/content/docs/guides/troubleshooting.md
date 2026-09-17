@@ -41,7 +41,7 @@ sentence and no buttons.
 proxy is not routing `/exapps/*` to HaRP, so AppAPI's `PUT /enabled?enabled=1`
 callback never arrives and Cassini never registers its navigation entries. Fix
 the route — see
-[Step 1b](/docs/getting-started/install#step-1b--route-exapps-to-harp-at-your-reverse-proxy).
+[Route `/exapps/*` to HaRP](/docs/getting-started/install#route-exapps-to-harp-at-your-reverse-proxy).
 Do not test it with an unauthenticated `curl https://…/exapps/…`: that returns
 502 whether the route is right or wrong. Check `nextcloud.log` and look for
 `PUT /enabled` in the container log instead.

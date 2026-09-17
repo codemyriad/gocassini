@@ -5,12 +5,20 @@ source: docs/agent-meeting-access.md
 copied: "2026-09-17"
 ---
 
-Everything a person reads in the Cassini app is also readable from a terminal.
-The `cassini meetings` commands are a client for the app's read surface: they
-authenticate as a Nextcloud account with an app password, and they see exactly
-what that account sees. This is how you point a script — or an agent — at your
-meetings without giving it a browser session or a way around Nextcloud's
-permissions.
+`cassini meetings` reads published recordings from outside Nextcloud, as a
+Nextcloud user with an app password. It sees exactly what that account can see
+in the app, and nothing more.
+
+```bash
+cassini meetings list --from 2026-08-01
+cassini meetings search "offer" --tag hiring   # finds where it was said
+cassini meetings context <meeting-id>          # transcript and summary, ready for an agent
+cassini meetings fetch <meeting-id> --out standup.opus
+```
+
+An agent skill ships at `.claude/skills/cassini-meetings/SKILL.md`. It teaches a
+coding agent when and how to use these commands. Claude Code loads it from a
+checkout; for other agents, point them at the file.
 
 | Command | What it answers |
 |---------|-----------------|
@@ -295,14 +303,13 @@ Before an agent writes marks, know that:
 
 A batch is at most 64 KiB and 200 ops.
 
-## The Claude skill
+## The agent skill
 
-A skill ships in the repository at `.claude/skills/cassini-meetings/SKILL.md`. It
-teaches an agent when to reach for these commands and how to read the output, so
-"what did we decide about the pricing change?" turns into a `meetings search`
-followed by a `meetings context` rather than a guess. It is Claude-specific
-today; the commands themselves are not, and any harness that can run a binary can
-use them.
+The skill teaches an agent how to read the output as well as which command to
+run, so "what did we decide about the pricing change?" turns into a
+`meetings search` followed by a `meetings context` rather than a guess. It is
+written for Claude; the commands themselves are not, and any harness that can
+run a binary can use them.
 
 A worked example — an agent given a month of meetings and asked what changed —
 is being written up, and will be linked here when it is.

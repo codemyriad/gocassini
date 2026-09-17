@@ -1,14 +1,20 @@
 ---
 title: CPU or GPU
-description: Two images, one daemon setting, the same transcript. What the GPU buys you and how to move an existing install onto it.
+description: CPU is the default and a GPU is optional; what the GPU changes, and how to move an existing install onto one.
 source: docs/README.md
 copied: "2026-09-17"
 ---
 
+CPU is the default. The portable image runs transcription on amd64 and arm64
+with no GPU at all, and that is what an install gets unless you ask for
+something else.
+
+A GPU is optional: an NVIDIA card with the Container Toolkit, on x86_64, for
+faster transcription.
+
 Transcription runs inside your own infrastructure either way: sherpa-onnx with
 NVIDIA Parakeet models and Silero VAD, in-process, with no audio and no
-transcript leaving the host. What you choose here is how long you are willing to
-wait for a meeting to come back, not what the transcript says.
+transcript leaving the host.
 
 ## Two images, one setting
 
@@ -38,7 +44,7 @@ actually running on.
 
 | Tier | On a CPU | On a GPU |
 |---|---|---|
-| Fast | the small 110M CTC model, English only, faster and less accurate | fp32 Parakeet 0.6B v3 |
+| Fast | a small English model (110M CTC) | fp32 Parakeet 0.6B v3 |
 | **Balanced** (the default) | int8 Parakeet 0.6B v3, bundled in the image | fp32 Parakeet 0.6B v3 |
 | Best | fp32 Parakeet 0.6B v3, downloaded once when selected | fp32 Parakeet 0.6B v3 |
 
@@ -54,8 +60,9 @@ starting and failing at the network.
 
 ## What the GPU buys, and what it does not
 
-- **It does not change the transcript.** Pick by how long you are willing to
-  wait, not by what you expect to read.
+- **The device does not decide the transcript; the tier does.** At Balanced and
+  Best both devices run Parakeet 0.6B v3, at a different precision. Pick a
+  device by how long you are willing to wait.
 - **It accelerates transcription only.** Live capture is CPU-bound either way,
   so recording a call is not the part a GPU helps with.
 - **arm64 is CPU only.** There is no ARM CUDA image; a 64-bit ARM server runs

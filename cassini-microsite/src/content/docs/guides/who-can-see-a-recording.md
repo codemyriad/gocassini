@@ -5,11 +5,17 @@ source: docs/exapp-nextcloud-recordings-permissions.md
 copied: "2026-09-17"
 ---
 
-Recordings are ordinary files in Nextcloud Files, so Nextcloud decides who may
-open them. Which of two audiences is in force is one setting in the Cassini app,
-under **Operator › Settings › Who can see recordings**. This page covers the two
-answers, what each needs, how to move between them, and what a recording you may
-not read looks like.
+Access control is scoped to the room: a published meeting is readable by that
+room's participants and no one else, using Nextcloud Files permissions. That is
+one of two audiences, and which one is in force is one setting in the Cassini
+app, under **Operator › Settings › Who can see recordings**. The other is
+everyone with an account on your Nextcloud, which is what a fresh install gets.
+
+Scoping a recording to its room needs the Team folders and Everyone Group apps.
+Without them, every account on the instance can see every recording.
+
+This page covers the two audiences, what each needs, how to move between them,
+and what a recording you may not read looks like.
 
 ## The two audiences
 

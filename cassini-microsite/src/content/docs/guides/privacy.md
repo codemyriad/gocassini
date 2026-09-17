@@ -5,16 +5,20 @@ source: docs/privacy.md
 copied: "2026-09-17"
 ---
 
-This page is the single reference for an administrator deciding whether Cassini
-is acceptable for their instance: what data Cassini stores, where it lives, what
-(if anything) leaves your infrastructure, and what happens on deletion.
+Recording and transcription run on your own hardware. No audio and no transcript
+leaves the host for those steps.
 
-Cassini records Nextcloud Talk meetings, transcribes them, optionally summarises
-them, and publishes a readable archive. Recording and transcription happen
-entirely within your own infrastructure. The only steps that send data to a
-third party are the ones that call a language model — the automatic meeting
-summary, and an insight somebody asks for in the app. Both are optional, both
-are off until you configure an endpoint, and both send text, never audio.
+If you configure a language model, transcript text goes to it in two cases:
+automatically, to summarise each meeting, and on request, when someone asks a
+question about meetings they have access to.
+
+There is no telemetry.
+
+This page is the detail behind those three sentences, for an administrator
+deciding whether Cassini is acceptable on their instance: what Cassini stores,
+where it lives, what leaves your infrastructure and when, and what happens on
+deletion. Both language-model steps are optional, both are off until you
+configure an endpoint, and both send text, never audio.
 
 ## Summary
 

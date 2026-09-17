@@ -1,6 +1,6 @@
 ---
 title: Install on Nextcloud
-description: The production install — a HaRP deploy daemon, the app registration, the verification checklist, and the reversible Talk handoff.
+description: The requirements, the five install steps, and the long form of each one.
 source: docs/exapp-install.md
 copied: "2026-09-17"
 ---
@@ -14,57 +14,57 @@ The flow is deliberately two-phase and reversible. First you install and verify
 the app, with Talk untouched. Then you hand Talk's recording over to Cassini,
 having backed up what was there before.
 
-All `occ …` commands below are shorthand for however your deployment invokes occ
-(for example `sudo -u www-data php occ …` or
+## Requirements
+
+- Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
+- Talk with the High-performance backend (standalone signalling). Cassini joins
+  calls as an internal signalling client, so it needs the signalling server's
+  `internalsecret`. This is the one value you have to supply by hand.
+- _Optional_: the [Team folders](https://apps.nextcloud.com/apps/groupfolders)
+  and [Everyone Group](https://apps.nextcloud.com/apps/group_everyone) apps,
+  which let Cassini restrict each recording to the people who were in the
+  meeting. Without them, every account on the instance can see every recording.
+- _Optional_: an NVIDIA GPU with the Container Toolkit (x86_64) for faster
+  transcription. CPU is the default and runs on amd64 and arm64.
+
+Cassini's manifest declares Nextcloud 32 as its minimum and 35 as its maximum;
+it is developed and tested against 33 and later.
+
+## The five steps
+
+1. **Install Cassini from the
+   [App Store](https://apps.nextcloud.com/apps/gocassini).** In the deploy
+   options, paste your signalling server's `internalsecret`. Every other option
+   can stay empty.
+2. **Open Cassini as an administrator.** It creates the `cassini` service
+   account that owns the meeting archive.
+3. **Choose who can see recordings**, under Operator › Settings.
+4. **Point Talk at Cassini.** Back up Talk's current `recording_servers` value,
+   then apply the one Cassini generates for you.
+5. **Record a test call** in a private room and watch it arrive in Cassini.
+
+Each step is below in full, with its commands and its checks.
+
+All `occ …` commands are shorthand for however your deployment invokes occ (for
+example `sudo -u www-data php occ …` or
 `docker exec -u www-data <nc-container> php occ …`).
 
-## Prerequisites
+## Step 1 — Install Cassini from the App Store
 
-- **Nextcloud 32 or newer** (the manifest's `min-version`; Cassini targets and is
-  tested against Nextcloud 33+), with the **AppAPI** app installed and enabled.
-- A registered AppAPI **deploy daemon** — see Step 1.
-- **A `cassini` service account.** Every recording is written and read as it, in
-  either audience. Cassini tries to create it and its `cassini` group itself when
-  the app is enabled, which works on releases that let an external app write to
-  user administration. Nextcloud 34.0.2 and later refuse that request, and then
-  Cassini creates it from your browser instead: open **Cassini** as an
-  administrator and press **Create the account and start**, and it makes the
-  account as you, after Nextcloud's own password prompt. By hand instead:
-
-  ```bash
-  occ group:add cassini
-  occ user:add --group=cassini cassini
-  ```
-
-- **Only for recordings visible to meeting participants:** the native **Group
-  folders / Team folders** (`groupfolders`) and **Everyone Group**
-  (`group_everyone`) apps, plus a `Cassini` Team folder mapped and ACL-enabled.
-  Cassini builds the folder, its mappings and its permissions for you, as you,
-  when you pick that audience. It cannot install the two apps. Without them
-  Cassini still records and publishes, and its recordings are visible to anyone
-  with an account on this Nextcloud. See
-  [Who can see a recording](/docs/guides/who-can-see-a-recording).
-- **An administrator account Cassini can act as**, to check how the instance is
-  set up: which apps are enabled, whether the `cassini` account exists, whether
-  there is a Team folder. That check is read-only, and the archive itself is
-  never touched as an administrator — every recording is written, read and moved
-  as `cassini`. In almost every case this needs no configuration; set
-  `CASSINI_NC_ADMIN_USER` only when discovery cannot find an administrator or
-  picks the wrong account.
-- **A Docker engine** for the container. For GPU transcription it also needs the
-  NVIDIA driver and Container Toolkit — see
-  [CPU or GPU](/docs/guides/cpu-or-gpu).
-- **Standalone Talk signalling / HPB** with an internal client secret
-  (`[clients] internalsecret`), for private, group and one-to-one recording.
-  Cassini's default recorder path uses this HPB-internal mode.
+Install **Cassini** from Nextcloud's app store, on a deploy daemon (below). In
+the deploy options, paste your signalling server's `internalsecret` as
+`CASSINI_TALK_SIGNALING_INTERNAL_SECRET`. Every other option can stay empty:
+the Talk recording secret is generated on first start and read back in Step 4,
+and the rest have working defaults.
 
 Persistent storage is automatic: AppAPI creates a named volume for every
 docker-deployed external app, and the operator stores all durable data under it.
 
-## Step 1 — Register a deploy daemon (HaRP)
+### The deploy daemon (HaRP)
 
-Use a **HaRP** daemon. Upstream AppAPI recommends HaRP; the older Docker Socket
-Proxy daemon is deprecated and scheduled for removal in Nextcloud 35.
+AppAPI needs a registered deploy daemon before it can install any external app.
+Use a **HaRP** daemon: upstream AppAPI recommends it, and the older Docker
+Socket Proxy daemon is deprecated and scheduled for removal in Nextcloud 35.
 
 Run HaRP next to a Docker engine (full options in the
 [HaRP README](https://github.com/nextcloud/HaRP)):
@@ -86,7 +86,7 @@ Daemon** (template "HaRP Proxy"), and run **Test deploy** from the daemon's
 three-dot menu before going further. `occ app_api:daemon:list` should show it
 afterwards.
 
-### Step 1b — Route `/exapps/*` to HaRP at your reverse proxy
+### Route `/exapps/*` to HaRP at your reverse proxy
 
 **Required for every HaRP daemon**, local or remote. AppAPI does not talk to a
 HaRP-hosted app over an internal address — it builds a **public** URL and dials
@@ -128,7 +128,33 @@ Do not test this with an unauthenticated `curl https://…/exapps/…`. It retur
 502 whether the route is right or wrong. Verify with `occ` plus `nextcloud.log`,
 and by looking for `PUT /enabled` in the container log.
 
-## Step 2 — Pick an image tag
+### Finding the signalling internal secret
+
+`CASSINI_TALK_SIGNALING_INTERNAL_SECRET` must equal your Talk signalling / HPB
+server's `[clients] internalsecret`. It is the one value Cassini cannot
+self-provision: the invisible HPB-internal recorder authenticates to the
+signalling server with this shared secret, and no API exposes it, so you supply
+it once.
+
+- **Nextcloud All-in-One:** `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`
+- **Standalone signalling server:** the `internalsecret` under `[clients]` in the
+  signalling server's config, for example `server.conf`. If you are setting
+  signalling up at the same time, generate the value once and put it in both
+  places.
+
+If it is missing, the operator logs
+`WARNING: talk_signaling_internal_secret_set -> false: …` at startup, and
+`GET /operator/status` returns `"signaling_internal_secret_configured": false`
+with a hint. Recording stays disabled until it is set.
+
+This is not the same as the Talk **recording** secret, which Cassini generates
+and persists for itself. `CASSINI_TALK_RECORDING_SECRET` authenticates Talk's
+recording-backend HTTP protocol; the signalling secret authenticates Cassini as
+an internal signalling client for call capture. Supply a recording secret
+explicitly only when you want to manage it out of band; an explicit value always
+wins.
+
+### Which image AppAPI pulls
 
 CI publishes to `ghcr.io/codemyriad/gocassini`:
 
@@ -151,86 +177,18 @@ capture, the status endpoint reports CUDA unavailable, and build jobs enter
 `build/blocked` with instructions to install the matching `-cuda` image, instead
 of decoding on the CPU.
 
-The checked-in manifest already pins the current release. To install a different
-build, download `appinfo/info.xml`, set `<image-tag>` to the `sha-…` or release
-tag you want, and register from that local copy.
-
-## Step 3 — Register the app
-
-The Talk recording secret is **optional**: if you omit
-`CASSINI_TALK_RECORDING_SECRET`, the operator generates one on first start and
-persists it on the AppAPI volume, and Step 5 reads it back from the operator's
-provisioning endpoint — so nobody has to invent or copy it. Supply one explicitly
-only when you want to manage it out of band; an explicit value always wins:
-
-```bash
-# Optional — omit to let Cassini self-generate. Never reuse an example value.
-CASSINI_SECRET="$(openssl rand -hex 32)"
-```
-
-### Finding the signalling internal secret
-
-`CASSINI_TALK_SIGNALING_INTERNAL_SECRET` must equal your Talk signalling / HPB
-server's `[clients] internalsecret`. It is the one value Cassini cannot
-self-provision: the invisible HPB-internal recorder authenticates to the
-signalling server with this shared secret, and no API exposes it, so you supply
-it once.
-
-- **Nextcloud All-in-One:** `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`
-- **Standalone HPB:** the `[clients] internalsecret` in the signalling server's
-  config (for example `server.conf`). If you are setting signalling up at the
-  same time, generate the value once and put it in both places.
-
-```bash
-SIGNALING_INTERNAL_SECRET="<value from the command / config above>"
-```
-
-These are two different secrets. `CASSINI_SECRET` authenticates Talk's
-recording-backend HTTP protocol; `SIGNALING_INTERNAL_SECRET` authenticates
-Cassini as an internal signalling client for HPB-internal call capture.
-
-If the signalling secret is missing, the operator logs
-`WARNING: talk_signaling_internal_secret_set -> false: …` at startup, and
-`GET /operator/status` returns `"signaling_internal_secret_configured": false`
-with a hint. Recording stays disabled until it is set.
-
-### Register from a pinned manifest
-
-`--info-xml` accepts a local path or a raw URL; pin a tag or commit SHA, not a
-moving branch.
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/codemyriad/gocassini/<tag-or-sha>/appinfo/info.xml" \
-    -o /tmp/gocassini-info.xml
-
-occ app_api:app:register gocassini <daemon-name> \
-    --info-xml /tmp/gocassini-info.xml \
-    --env CASSINI_TALK_SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET}" \
-    --wait-finish
-    # Optionally add: --env CASSINI_TALK_RECORDING_SECRET="${CASSINI_SECRET}"
-```
-
-If `occ` runs inside a container, copy the manifest in first
-(`docker cp /tmp/gocassini-info.xml <nc-container>:/tmp/`) or pass the raw URL
-straight to `--info-xml`.
-
-`<daemon-name>` is the `Name` column of `occ app_api:daemon:list`. AppAPI pulls
-the image, creates the persistent volume, starts the container
-(`nc_app_gocassini`), and enables the app once the container answers its
-heartbeat and reports init completion.
-
-### App configuration (`--env`)
+### The rest of the deploy options
 
 These variables are declared under `<environment-variables>` in
 `appinfo/info.xml`. That declaration is what makes them settable at all: AppAPI
-only passes declared variables to the container, and `--env` values for
-undeclared keys are **silently dropped**. Set them at registration time, on the
-command line as above or in the External Apps admin UI (Deploy Options).
+only passes declared variables to the container, and values for undeclared keys
+are **silently dropped**. Set them at install time, in the External Apps admin
+UI (Deploy Options) or with `--env` on the command line.
 
 | Variable | Required | What it does |
 |---|---|---|
-| `CASSINI_TALK_RECORDING_SECRET` | No (auto-generated) | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). If omitted the operator generates and persists one. An explicit value wins and is treated as externally managed |
-| `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal (default) Talk recording | Internal client secret for standalone Talk signalling / HPB; must match `[clients] internalsecret`. Required for private, group and one-to-one recording |
+| `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | Yes | Internal client secret for standalone Talk signalling / HPB; must match `[clients] internalsecret`. Required for private, group and one-to-one recording |
+| `CASSINI_TALK_RECORDING_SECRET` | No (auto-generated) | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 4). If omitted the operator generates and persists one. An explicit value wins and is treated as externally managed |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks. Leave empty to use the backend URL Talk sends with each request |
 | `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | The account Cassini acts as when it checks how the instance is set up. That check creates nothing. Recordings are still owned, written and managed by `cassini` |
 | `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in Nextcloud Files; `local` keeps them on the app's own volume. Set `local` only deliberately |
@@ -246,22 +204,89 @@ injects on its own, is in
 and
 [`docs/exapp-talk-env-vars.md`](https://github.com/codemyriad/gocassini/blob/main/docs/exapp-talk-env-vars.md).
 
-### Updating deploy options after install
+### Installing from the command line instead
+
+`occ app_api:app:register` takes the same options. `--info-xml` accepts a local
+path or a raw URL; pin a tag or commit SHA, not a moving branch.
+
+```bash
+SIGNALING_INTERNAL_SECRET="<the value found above>"
+
+curl -fsSL "https://raw.githubusercontent.com/codemyriad/gocassini/<tag-or-sha>/appinfo/info.xml" \
+    -o /tmp/gocassini-info.xml
+
+occ app_api:app:register gocassini <daemon-name> \
+    --info-xml /tmp/gocassini-info.xml \
+    --env CASSINI_TALK_SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET}" \
+    --wait-finish
+```
+
+If `occ` runs inside a container, copy the manifest in first
+(`docker cp /tmp/gocassini-info.xml <nc-container>:/tmp/`) or pass the raw URL
+straight to `--info-xml`.
+
+`<daemon-name>` is the `Name` column of `occ app_api:daemon:list`. AppAPI pulls
+the image, creates the persistent volume, starts the container
+(`nc_app_gocassini`), and enables the app once the container answers its
+heartbeat and reports init completion.
+
+To install a build other than the pinned release, download `appinfo/info.xml`,
+set `<image-tag>` to the `sha-…` or release tag you want, and register from that
+local copy.
+
+### Changing deploy options after install
 
 AppAPI deploy environment is container-creation-time configuration, not live
 Nextcloud app config. Changing Talk's `spreed.recording_servers.secret` does
 **not** update `CASSINI_TALK_RECORDING_SECRET` in a deployed container, and
 changing the signalling `internalsecret` does not update its variable either.
 
-For secret rotation, recreate or redeploy the app with all required `--env`
-values while preserving the AppAPI persistent volume. `app_api:app:update`
-reuses stored deploy options and has no `--env` flag.
+For secret rotation, recreate or redeploy the app with all required values while
+preserving the AppAPI persistent volume. `app_api:app:update` reuses stored
+deploy options and has no `--env` flag.
 
 Because deploy environment is creation-time only, **a release that adds a new
 *required* environment variable cannot be delivered by the admin UI's Update
 button** — it is a breaking change that needs a redeploy.
 
-### Where recordings live
+## Step 2 — Open Cassini as an administrator
+
+Open **Cassini** from the Nextcloud app menu, signed in as an administrator. It
+creates the `cassini` service account that owns the meeting archive: every
+recording is written and read as that account, under either audience.
+
+Cassini tries to create the account and its `cassini` group itself when the app
+is enabled, which works on releases that let an external app write to user
+administration. Nextcloud 34.0.2 and later refuse that request, and then Cassini
+creates it from your browser instead: press **Create the account and start**, and
+it makes the account as you, after Nextcloud's own password prompt. By hand
+instead:
+
+```bash
+occ group:add cassini
+occ user:add --group=cassini cassini
+```
+
+To check how the instance is set up — which apps are enabled, whether the
+`cassini` account exists, whether there is a Team folder — Cassini also acts as
+an administrator account it discovers. That check is read-only, and the archive
+itself is never touched as an administrator. In almost every case this needs no
+configuration; set `CASSINI_NC_ADMIN_USER` only when discovery cannot find an
+administrator or picks the wrong account.
+
+## Step 3 — Choose who can see recordings
+
+Who can see a recording is one setting in the app, under **Operator › Settings ›
+Who can see recordings**. A fresh install makes every recording visible to
+everyone with an account on your Nextcloud.
+
+To limit each recording to the people who were in that meeting, enable the
+**Team folders** and **Everyone Group** apps first, then change the setting to
+**meeting participants**. Cassini sets up the folder and permissions itself: it
+lists every change it is about to make, asks Nextcloud to confirm your password,
+and then makes them as you. It cannot install the two apps — those routes need
+your password on the request itself — so it sends you to Nextcloud's Apps page
+for that.
 
 Each audience has its own root inside the `cassini` account's Files, and the two
 are deliberately different paths:
@@ -282,12 +307,14 @@ the `cassini` service account's Files
 Both have the same shape inside: `meetings/<job-id>.opus` beside a
 `catalog.json`. Cassini resolves which one an install gets when the app is
 enabled, from what is already on the instance, and never widens an existing
-archive on its own. Full detail, and how to switch, is in
+archive on its own. Full detail, and how to switch later, is in
 [Who can see a recording](/docs/guides/who-can-see-a-recording).
 
-## Step 4 — Verify the install (before touching Talk)
+## Step 4 — Point Talk at Cassini
 
-All of these must pass before the Talk handoff.
+### Check the install first
+
+All of these must pass before the handoff.
 
 1. `occ app_api:daemon:list` shows the daemon and its **Test deploy** passes.
 2. `occ app_api:app:list` shows `gocassini` enabled.
@@ -331,14 +358,14 @@ All of these must pass before the Talk handoff.
 
    `secret_source` is `generated` when the operator made the recording secret
    itself, or `env` when you supplied one. `recording_backend_url` is the value
-   to register in Step 5 — never the secret itself, which comes from the
-   provisioning endpoint below.
+   to register below — never the secret itself, which comes from the
+   provisioning endpoint.
 
 7. CUDA installs only: the image tag ends in `-cuda` and the container can see
    the GPU (`docker exec nc_app_gocassini nvidia-smi`). The status endpoint must
    show `"device": "cuda"` with `"device_usable": true`.
 
-## Step 5 — Talk handoff (reversible)
+### The handoff
 
 Point Talk's recording backend at the AppAPI proxy base. The `api/v1/welcome` and
 `api/v1/room/*` routes are declared PUBLIC in the manifest, so Talk's recording
@@ -364,25 +391,14 @@ occ config:app:set spreed recording_servers --value="$RS"
 occ config:app:set spreed call_recording --value=yes
 ```
 
-If you supplied `CASSINI_TALK_RECORDING_SECRET` yourself in Step 3, you can set
+If you supplied `CASSINI_TALK_RECORDING_SECRET` yourself in Step 1, you can set
 `recording_servers` directly with that secret and the `recording_backend_url`
 from the status endpoint.
 
-**A controlled test.** Use a non-critical private, group or one-to-one
-conversation, so the HPB-internal path is exercised.
+### Rollback
 
-1. Pick a test conversation with at least one speaking participant.
-2. Start recording from Talk's **Record** button.
-3. Confirm a Cassini job appears in the app's Operator surface.
-4. Speak for a minute, then stop the recording or leave the call.
-5. Watch the job progress through record → build → seal → publish. Talk receives
-   started and stopped status per its recording-backend protocol and nothing
-   else; the meeting itself is published as a portable `.opus` into Nextcloud
-   Files.
-6. Run a second recording and confirm both transcripts stay visible.
-
-**Rollback.** Restore the saved value and Talk records through the previous
-backend again; the Cassini app can stay installed.
+Restore the saved value and Talk records through the previous backend again; the
+Cassini app can stay installed.
 
 ```bash
 occ config:app:set spreed recording_servers --value="$(cat /root/recording_servers.backup)"
@@ -401,11 +417,26 @@ For the Talk recording secret: pause recordings, update
 `CASSINI_TALK_RECORDING_SECRET`, confirm `/operator/status` reports
 `secret_configured: true`, and run a controlled recording.
 
-For the signalling internal secret: update the HPB `[clients] internalsecret` and
-restart signalling, redeploy Cassini with the same value as
-`CASSINI_TALK_SIGNALING_INTERNAL_SECRET`, confirm `/operator/status` reports
+For the signalling internal secret: update the signalling server's
+`[clients] internalsecret` and restart it, redeploy Cassini with the same value
+as `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`, confirm `/operator/status` reports
 `signaling_internal_secret_configured: true`, and run a private, group or
 one-to-one recording.
+
+## Step 5 — Record a test call
+
+Use a non-critical private, group or one-to-one conversation, so the
+signalling-internal path is exercised.
+
+1. Pick a test conversation with at least one speaking participant.
+2. Start recording from Talk's **Record** button.
+3. Confirm a Cassini job appears in the app's Operator surface.
+4. Speak for a minute, then stop the recording or leave the call.
+5. Watch the job progress through record → build → seal → publish. Talk receives
+   started and stopped status per its recording-backend protocol and nothing
+   else; the meeting itself is published as a portable `.opus` into Nextcloud
+   Files.
+6. Run a second recording and confirm both transcripts stay visible.
 
 ## GPU transcription
 
@@ -443,7 +474,7 @@ effective data path sits on an ephemeral filesystem.
 
 ## Uninstall
 
-Restore Talk's previous recording backend first (the rollback command in Step 5),
+Restore Talk's previous recording backend first (the rollback command in Step 4),
 then:
 
 ```bash

@@ -5,14 +5,15 @@ source: docs/reference/configuration.md
 copied: "2026-09-17"
 ---
 
-Cassini calls a language model in two places, and neither happens until you
-configure an endpoint. A **summary** is written automatically when a meeting
-publishes. An **insight** is a question somebody asks of meetings they pick.
-Both are the same act underneath — one call to an OpenAI-compatible endpoint —
-and both send text, never audio.
+Nothing here happens until you configure a language model. Once you do,
+transcript text goes to it in two cases: automatically, to summarise each
+meeting, and on request, when someone asks a question about meetings they have
+access to.
 
-Transcription never leaves your server. When you switch a language model on, the
-transcript text goes to that endpoint.
+The first is a **summary**, written when a meeting publishes. The second is an
+**insight**, a question somebody asks of meetings they pick. Both are the same
+act underneath — one call to an OpenAI-compatible endpoint — and both send text,
+never audio. Recording and transcription stay on your own hardware either way.
 
 ## Registering an endpoint
 
@@ -29,12 +30,11 @@ default model, and the request bounds.
 - **Each provider carries a default model.** Summaries and insights use it
   unless a step names its own, and the model field in the app opens pre-filled
   with it. A saved endpoint reports whether its model list actually came back;
-  an endpoint with no `/models` route still answers completions, and the page
-  says so plainly instead of calling it broken.
+  an endpoint with no `/models` route still answers completions, and is not
+  treated as broken.
 - **Registering your first endpoint switches meeting summaries on**, pointed at
-  it. That fires once in a deployment's life — on the save that takes it from
-  having no endpoint to having one — so an administrator who turns summarising
-  off keeps it off, whatever they save afterwards.
+  it. That happens once in a deployment's life, so an administrator who turns
+  summarising off keeps it off.
 
 The rule to hold on to: **every endpoint you register is one an insight may
 reach.** There is no separate switch that turns insights off while an endpoint
@@ -67,10 +67,9 @@ keeps whatever endpoint it is layered over.
 `INSIGHT_*` layers over `SUMMARY_*`, not just over the shared values, so a
 deployment that only ever configured a summary endpoint can still run insights —
 they run on the summary endpoint. Set `INSIGHT_BASE_URL` when insights should go
-elsewhere, which is the case worth having: a small local model can write every
-meeting's summary while a larger hosted one answers a question you ask by hand.
-The bounds are per step for the same reason — a CPU-bound local model needs a
-far longer leash than a hosted API.
+elsewhere: a local model can write every meeting's summary while a hosted one
+answers a question somebody asks by hand. The bounds are per step for the same
+reason — a local model needs a longer timeout than a hosted API.
 
 Which endpoint an insight will actually reach is reported by
 `GET /operator/settings/llm` as `effective.insight`, with `inherited: true`
@@ -81,7 +80,7 @@ endpoint configured. It means "publish meetings without a summary", so it does
 not disable insights; leave the endpoint unset if the intent is that nothing
 calls a model at all.
 
-## The privacy caveat
+## What the endpoint sees
 
 When a summary or an insight runs, the **full transcript text of the meetings
 involved is sent to the configured endpoint**. If that endpoint is external, its
@@ -91,7 +90,7 @@ configuring it.
 Call audio and the recording itself are never sent off your infrastructure for
 either step. With no endpoint configured, nothing leaves: the local transcript is
 still produced and published, the summary is skipped, and the app offers no way
-to ask a question.
+to ask a question. There is no telemetry.
 
 Anyone who is not an administrator can check this for themselves.
 `GET /operator/setup` is readable by any logged-in Nextcloud account and carries
@@ -105,14 +104,12 @@ An insight asks one question of several meetings and keeps the answer.
 
 1. **Pick the meetings** in Browse. The selection is bounded to 20 meetings, and
    the app says how many to unpick if you go over.
-2. **Open Prepare context.** Alongside Copy and Download there is a Generate
-   card.
+2. **Open Prepare context**, and pick the Generate card.
 3. **Choose a template**, and the provider and model that will answer. Choosing a
    template shows the question it puts to the meetings and the shape of the
    document that comes back. One shipped template, **Ask your own question**,
    takes a question you type: the answer in at most three sentences, the
-   evidence with who said what, and what these meetings do not answer. The
-   question box appears for that template and no other.
+   evidence with who said what, and what these meetings do not answer.
 
    Picking the provider is offered to everyone, not only administrators: which
    of the configured endpoints sees your transcripts is the asker's decision.
@@ -120,19 +117,15 @@ An insight asks one question of several meetings and keeps the answer.
    an administrator sees no template picker, because the template registry is
    admin-only; their run uses the template the administrator configured, and the
    card says so.
-4. **Press Generate.** The run appears at the top of the Browse list and reports
-   itself honestly — `queued`, then `running`, then a result or a failure. A
-   local model over five meetings takes minutes, and the card says so rather
-   than implying seconds. Two runs are performed at a time; the rest wait, and
-   say they are queued.
+4. **Press Generate.** The run appears at the top of the Browse list as
+   `queued`, then `running`, then a result or a failure. Two runs are performed
+   at a time; the rest wait, and say they are queued.
 5. **The answer is written into your own Nextcloud Files**, under a **Cassini
-   Insights** folder in your home. You own the file outright, so Nextcloud's own
-   sharing works on it and nothing new decides who may read it. It is
-   deliberately not filed beside the recordings. A document is never
+   Insights** folder in your home. You own the file, so Nextcloud's own sharing
+   works on it and nothing new decides who may read it. A document is never
    overwritten: each file is named for the day, the template and the run it came
-   from. The document records its own provenance — which meetings it read, which
-   prompt and which model answered — and the app shows the same facts in the
-   run's header.
+   from, and records which meetings it read, which prompt and which model
+   answered.
 
 Every meeting an insight covers is fetched **as you**, over WebDAV, at the moment
 the run happens. Nextcloud's own per-file permissions decide what is in the
@@ -140,13 +133,13 @@ bundle, so a run can only ever be assembled out of meetings you could already
 open yourself. A retry re-checks that: a meeting you can no longer read stops the
 run rather than quietly dropping out of the answer.
 
-A failed run names the cause in words you can act on — no endpoint configured,
-the endpoint refused the request, the model did not answer, the answer could not
-be written, or the request itself — and carries **Retry**, from its card in the
-Browse list as well as from the panel that started it. For an administrator it
-links straight to the AI providers panel. Retry replays the request as you made
-it, to the endpoint you picked; it falls back to the deployment's configured
-endpoint only if you picked none, or the one you picked has since been removed.
+A failed run names the cause — no endpoint configured, the endpoint refused the
+request, the model did not answer, the answer could not be written, or the
+request itself — and carries **Retry**, from its card in the Browse list and
+from the panel that started it. For an administrator it links to the AI
+providers panel. Retry replays the request as you made it, to the endpoint you
+picked; it falls back to the deployment's configured endpoint only if you picked
+none, or the one you picked has since been removed.
 
 Outside the app, `cassini insight run` asks the same question of a context
 bundle — the document `cassini meetings context` prints. See

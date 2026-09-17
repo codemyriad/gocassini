@@ -1,57 +1,66 @@
 ---
 title: Introduction
-description: Cassini is a Nextcloud app that records Talk calls, transcribes them on your own server, and publishes each meeting as one file in Nextcloud Files.
+description: Cassini is a recording backend for Nextcloud Talk that records, transcribes and publishes each meeting as one file on your own server.
 source: docs/README.md
 copied: "2026-09-17"
 ---
 
-Cassini is a Nextcloud app. It registers as Nextcloud Talk's recording server, so
-your people press the Record button they already have. It records the call,
-transcribes it on your own infrastructure, and publishes each meeting as one
-file in Nextcloud Files.
+Cassini is a recording backend for Nextcloud Talk that puts you in control of
+your meeting data. It installs as a Nextcloud app, shows up as a new app icon
+inside your Nextcloud suite, and takes over the Record button your people
+already have. Meetings are where decisions get made, and they are easily lost
+unless someone writes them down afterwards.
 
-## What happens when you press Record
+## When you press Record
 
-1. Talk asks Cassini to record the conversation. Cassini joins as an internal
-   client of the signalling server, not as a participant: nobody sees an extra
-   person in the call.
-2. Every participant arrives as a separate audio stream, carrying the display
-   name Talk sent with it.
-3. When the call ends, Cassini transcribes the audio in-process, on the hardware
-   you gave it, and puts each participant's name on their own lines.
-4. If you have configured a language model, it writes a summary.
-5. The meeting is published into Nextcloud Files as one Ogg Opus file, and
-   appears in the Cassini entry in the Nextcloud app menu.
+Cassini works with any Nextcloud Talk room, group calls and 1:1 calls. Just
+press _Record_ and Cassini is listening.
+
+1. Cassini joins the call as an internal client of the signalling server, not as
+   a participant, so nobody sees an extra person in the room.
+2. Each participant arrives as their own audio stream, carrying the name Talk
+   sent with it.
+3. When the call ends, Cassini transcribes the audio on the hardware you gave
+   it, in-process, with sherpa-onnx and NVIDIA Parakeet models.
+4. The meeting is published into Nextcloud Files as one `.opus` file, with a
+   summary if you have configured a language model.
 
 ## What you get
 
-- A transcript with the right name on every line, playable against the audio.
-- One portable file per meeting, holding the audio, the transcript, the summary
-  and any tags.
-- Search, tags and insights across the meetings you can read.
-- The same meetings through a CLI, for a script or an agent outside Nextcloud.
+- Transcripts and synced audio playback with speaker IDs.
+- Access control scoped to the room: a published meeting is readable by that
+  room's participants and no one else, using Nextcloud Files permissions.
+- One portable meeting file per meeting that can be opened without Cassini.
+- Search and tags across meetings.
+- In-app AI providers for per-meeting summaries and cross-meeting insights.
+- A CLI and an agent skill, to build workflows with an external harness.
 
-## Three things that are always true
+## Limitations
 
-- **Transcription never leaves your server.** Speech-to-text runs in-process
-  with sherpa-onnx and NVIDIA Parakeet models. When you switch a language model
-  on, the transcript text goes to that endpoint — that step, and only that step,
-  sends anything anywhere.
-- **Speaker labels come from signalling.** One audio stream per participant,
-  with the name Talk sent. Nothing is inferred from the sound of a voice.
-- **Nextcloud decides who can see a recording.** Recordings are ordinary files
-  in Nextcloud Files, under one of two audiences an administrator picks.
+- **No live transcription or captions.** Transcription starts when the call
+  ends, so it never competes with the call for resources.
+- **Audio only.** Cassini records the video streams, but the meeting file, the
+  transcript and the viewer are audio only for now.
 
-Cassini records audio, not video, and it works after the call rather than
-during it: there is no live transcription and there are no live captions.
+## What leaves your server
 
-## Where to go next
+Recording and transcription run on your own hardware. No audio and no transcript
+leaves the host for those steps.
 
-- [Install on Nextcloud](/docs/getting-started/install) — the production install:
-  deploy daemon, registration, the Talk handoff.
+If you configure a language model, transcript text goes to it in two cases:
+automatically, to summarise each meeting, and on request, when someone asks a
+question about meetings they have access to.
+
+There is no telemetry.
+
+## Where next
+
+- [Install on Nextcloud](/docs/getting-started/install) — the requirements and
+  the five install steps in full.
 - [Who can see a recording](/docs/guides/who-can-see-a-recording) — the two
-  audiences and how to switch between them.
+  audiences, and how to switch.
 - [AI providers, summaries and insights](/docs/guides/ai-providers) — what to
-  configure, and what leaves your deployment when you do.
-- [Privacy and data processing](/docs/guides/privacy) — the full note for an
-  administrator deciding whether Cassini is acceptable on their instance.
+  configure, and what a model then sees.
+- [The meeting file](/docs/guides/meeting-file) — what is inside the `.opus`.
+- [Agent access via the CLI](/docs/guides/agent-access) — reading meetings from
+  outside Nextcloud.
