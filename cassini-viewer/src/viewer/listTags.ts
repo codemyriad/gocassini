@@ -15,6 +15,39 @@ import {
 export type TagMatch = "any" | "all";
 export type MeetingTags = ReadonlyMap<string, readonly MeetingTag[]>;
 
+// filterByTagLabel narrows to the meetings carrying a tag whose NAME matches
+// what was typed (D-772).
+//
+// Distinct from filterByTags, which narrows by tag ids the reader picked from
+// the vocabulary. This is the search box: you type "dail" and expect the Daily
+// meetings, without having gone looking for the chip first.
+//
+// Partial and case-insensitive, matching how the box already treats titles and
+// dates — an exact match would be right for a filter and wrong for a search,
+// where the whole point is finding the tag before you can name it exactly. That
+// is also why this cannot reuse the server's taggedMeetings, which resolves
+// `tag_id = ? OR label_folded = folded(?)` exactly.
+//
+// A blank query matches NOTHING here rather than everything: this is one half
+// of a union with the title/date filter, and that filter already owns the rule
+// that an empty box means "no filter". Returning everything from both halves
+// would work by accident and break the moment the union changed.
+export function filterByTagLabel<T extends { id: string }>(
+  meetings: readonly T[],
+  byMeeting: MeetingTags,
+  query: string,
+): T[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") {
+    return [];
+  }
+  return meetings.filter((meeting) =>
+    (byMeeting.get(meeting.id) ?? []).some((held) =>
+      held.tag.label.toLowerCase().includes(needle),
+    ),
+  );
+}
+
 export function filterByTags<T extends { id: string }>(
   meetings: T[],
   byMeeting: MeetingTags,

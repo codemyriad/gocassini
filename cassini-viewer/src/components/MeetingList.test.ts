@@ -178,9 +178,14 @@ describe("MeetingList insights", () => {
   // export has no operator, so the box must not offer to search transcripts.
   it("gates the transcript promise on there being something to ask", () => {
     expect(meetingListSource).toContain("export let searchOffered = false;");
+    // The label is built once and used for both placeholder and aria-label, so
+    // assert the branch rather than the markup: without an operator the box
+    // must offer names and dates and claim nothing about transcripts.
     expect(meetingListSource).toMatch(
-      /placeholder=\{searchOffered[\s\S]{0,160}what was said in them[\s\S]{0,80}by name or date`\}/,
+      /searchBoxLabel = searchOffered[\s\S]{0,400}by name or date`;/,
     );
+    expect(meetingListSource).toContain("placeholder={searchBoxLabel}");
+    expect(meetingListSource).toContain("aria-label={searchBoxLabel}");
   });
 
   // "Nothing matches" is a claim about the whole archive. After a failed search
@@ -322,5 +327,23 @@ describe("MeetingList tag filter over insights", () => {
     } as never).body;
     expect(body).toContain("Insights carry no tags, so a tag filter hides them.");
     expect(body).not.toContain("No meeting here has");
+  });
+
+  // D-772: the box finds meetings by the names of their tags, not only by
+  // title, date and what was said.
+  it("unions tag-name matches into what the list shows", () => {
+    expect(meetingListSource).toContain("filterByTagLabel(meetings, meetingTags, filter)");
+    // Filtering the narrowed array by an id set, rather than concatenating two
+    // results: keeps catalog order and cannot list a meeting twice when it
+    // matched both ways.
+    expect(meetingListSource).toContain("localMatchIds.has(meeting.id)");
+  });
+
+  it("names tags in the box only where there are tags to find", () => {
+    // An install with no tags would otherwise promise something that cannot
+    // match — the same empty promise searchOffered avoids.
+    expect(meetingListSource).toContain("tagsSearchable = meetingTags.size > 0");
+    expect(meetingListSource).toContain("their tags and what was said in them");
+    expect(meetingListSource).toContain("by name, date or tag");
   });
 });
