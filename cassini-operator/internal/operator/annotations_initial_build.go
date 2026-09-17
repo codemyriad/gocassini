@@ -27,7 +27,9 @@ func (rt *Runtime) startInitialAnnotationBuild(exapp ExAppConfig, logger *log.Lo
 		return
 	}
 	store.rebuildPending.Store(true)
+	rt.workerWG.Add(1)
 	go func() {
+		defer rt.workerWG.Done()
 		delay := time.Minute
 		for {
 			err := rt.buildAnnotationIndexOnce(exapp, store, logger)

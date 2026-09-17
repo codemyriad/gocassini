@@ -86,7 +86,7 @@ func annotatedFile(t *testing.T, container, namespace string, tags []testTag, ma
 	resolved := true
 	return annotateResult{
 		Format: annotateResultFormat, Annotations: raw, Revision: 3, Resolved: &resolved,
-		AudioOpusSHA256: testAudioDigest, ContainerSHA256: container,
+		AudioOpusSHA256: testAudioDigest, ContainerSHA256: container, DurationMS: 60000,
 	}
 }
 

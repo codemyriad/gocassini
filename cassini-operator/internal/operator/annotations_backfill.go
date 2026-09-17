@@ -227,7 +227,19 @@ func forgetVanishedAnnotations(
 		if present[name] {
 			continue
 		}
-		if err := store.inTx(ctx, func(tx *sql.Tx) error { return deleteAnnotationRows(ctx, tx, name) }); err != nil {
+		if err := store.inTx(ctx, func(tx *sql.Tx) error {
+			var pending int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND desired!=confirmed`, name).Scan(&pending); err != nil {
+				return err
+			}
+			if pending > 0 {
+				return nil
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM annotation_head WHERE opus_name=?`, name); err != nil {
+				return err
+			}
+			return deleteAnnotationRows(ctx, tx, name)
+		}); err != nil {
 			return forgotten, err
 		}
 		logger.Printf("annotations backfill: %s is no longer in the archive; dropped from the index", name)

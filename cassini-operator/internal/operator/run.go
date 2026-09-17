@@ -803,7 +803,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
 	// nil *annotationStore inside the interface would be a non-nil index.
 	if annotationIndex, err := openAnnotationStore(sidecarPath(cfg.DBPath, annotationsStoreFilename), logger); err != nil {
-		logger.Printf("annotations index unavailable (%v); marks will still be written to recordings, but the tag vocabulary and tag narrowing are not served", err)
+		logger.Printf("durable annotations store unavailable (%v); annotation reads and writes are unavailable", err)
 	} else {
 		rt.annotations = annotationIndex
 	}
@@ -977,8 +977,8 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and
 	// unmounted, wherever a mark could not be served (see newAnnotationService).
 	if annotations := newAnnotationService(rt, exappCfg, logger); annotations != nil {
-		annotations.register(root)
 		rt.startInitialAnnotationBuild(exappCfg, logger)
+		annotations.register(root)
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)

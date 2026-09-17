@@ -33,6 +33,9 @@ var annotateOpIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 // purpose: the actor is always the authenticated caller (format §1), and a body
 // claiming otherwise is answered as if it had not.
 type annotateWriteRequest struct {
+	Accepted       bool              `json:"-"`
+	RequestID      string            `json:"requestId"`
+	StateToken     string            `json:"stateToken"`
 	Ops            []json.RawMessage `json:"ops"`
 	ExpectRevision *int              `json:"expectRevision"`
 	ActorKind      string            `json:"actorKind"`

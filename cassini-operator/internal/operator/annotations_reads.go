@@ -64,7 +64,7 @@ func (s *annotationService) importDocument(caller, meetingID, relPath string) {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(ctx, annotateRequestTimeout)
-	go func() {
+	if !s.background(func() {
 		defer cancel()
 		defer s.imports.Delete(relPath)
 		defer func() { <-annotationImportSlots }()
@@ -85,5 +85,9 @@ func (s *annotationService) importDocument(caller, meetingID, relPath string) {
 		if err != nil {
 			s.logf("annotations: import meeting=%s: %v", meetingID, err)
 		}
-	}()
+	}) {
+		cancel()
+		s.imports.Delete(relPath)
+		<-annotationImportSlots
+	}
 }

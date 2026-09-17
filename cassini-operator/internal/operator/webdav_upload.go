@@ -282,12 +282,15 @@ func (c ExAppConfig) davPutFileIfMatch(ctx context.Context, client *http.Client,
 // the empty leaf an interrupted first publish leaves, in order to replace it;
 // callers for whom an empty recording is an error say so themselves
 // (stageRecording).
-func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, userID, relPath, destPath string, limit int64) (digest string, written int64, status int, err error) {
+func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, userID, relPath, destPath string, limit int64, expectedETag ...string) (digest string, written int64, status int, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
 	if err != nil {
 		return "", 0, 0, err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
+	if len(expectedETag) > 0 {
+		req.Header.Set("If-Match", expectedETag[0])
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", 0, 0, err

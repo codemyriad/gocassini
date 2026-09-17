@@ -322,7 +322,7 @@ already exists is not added twice, so re-running a batch is safe.
 	}
 	request := meetingsAnnotateRequest{ExpectRevision: expect, ActorKind: kind, OperationID: strings.TrimSpace(*operationID)}
 	for _, op := range ops {
-		request.Ops = append(request.Ops, op.raw)
+		request.Ops = append(request.Ops, op.Raw)
 	}
 	body, err := json.Marshal(request)
 	if err != nil {

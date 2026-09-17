@@ -158,6 +158,11 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	// ncFilesAccessApplier targets. attemptOpusPath hardcodes <jobID>.opus; if
 	// that drifts this fails closed, because createProtectedLeaf still denies.
 	opusRemote := root + "/meetings/" + d.JobID + ".opus"
+	releaseAnnotation, err := annotationWriteLocks.acquire(ctx, path.Base(opusRemote))
+	if err != nil {
+		return "", err
+	}
+	defer releaseAnnotation()
 	audienceNeeded := false
 
 	// A leaf at exactly the owner-only baseline is ambiguous: an unfinished

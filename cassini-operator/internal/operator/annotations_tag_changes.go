@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -316,7 +317,12 @@ func (s *annotationService) startTagJob(w http.ResponseWriter, r *http.Request, 
 	for _, entry := range scope.entries {
 		titles[entry.opusName] = entry.title
 	}
-	go s.runTagJob(&job, targets, raw, titles)
+	if err := s.persistTagJob(&job, targets, raw, titles); err != nil {
+		s.jobs.finish(&job, tagJobInterrupted)
+		writeJSONError(w, 503, "could not save tag job")
+		return nil
+	}
+	s.background(func() { s.runTagJob(&job, targets, raw, titles) })
 	return s.jobs.snapshot(scope.caller)
 }
 
@@ -325,15 +331,17 @@ func (s *annotationService) startTagJob(w http.ResponseWriter, r *http.Request, 
 func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.RawMessage, titles map[string]string) {
 	// The process's context, not the request's: the job outlives the POST.
 	base := s.rt.ctx
-	request := annotateWriteRequest{Ops: []json.RawMessage{op}, ActorKind: "person", OperationID: job.ID}
+	request := annotateWriteRequest{Ops: []json.RawMessage{op}, ActorKind: "person", OperationID: job.ID, Accepted: true}
 	_, root := ncArchiveReadIdentity(job.Actor)
 	state := tagJobFinished
-	for _, name := range targets {
+	for _, name := range targets[job.Done:] {
 		if base.Err() != nil {
 			state = tagJobInterrupted
 			break
 		}
 		ctx, cancel := context.WithTimeout(base, annotateRequestTimeout)
+		sum := sha256.Sum256([]byte(job.ID + "/" + name))
+		request.RequestID = hex.EncodeToString(sum[:])
 		_, err := s.commitAndRecord(ctx, name, root+"/meetings/"+name, nil, job.Actor, request)
 		cancel()
 		var failure *tagJobFailure
@@ -342,11 +350,16 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 			failure = &tagJobFailure{Meeting: cmp.Or(titles[name], name), Error: tagJobError(err)}
 		}
 		s.jobs.progress(job, failure)
+		if err := s.updateTagJob(job); err != nil {
+			s.logf("annotations: persist tag progress: %v", err)
+			return
+		}
 	}
 	if state == tagJobFinished {
 		s.settleTagStyles(base, job)
 	}
 	s.jobs.finish(job, state)
+	_ = s.updateTagJob(job)
 }
 
 // settleTagStyles follows a finished job into tag-styles.json: a rename or

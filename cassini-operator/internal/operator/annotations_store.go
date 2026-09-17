@@ -22,7 +22,7 @@ const (
 	annotationsStoreFilename = "annotations.sqlite3"
 
 	// annotationsSchemaVersion is upgraded through managed migrations.
-	annotationsSchemaVersion = 3
+	annotationsSchemaVersion = 4
 
 	annotationsStateIndexed = "indexed"
 	// annotationsStateUnavailable: the meeting is known but its marks could not
@@ -235,6 +235,9 @@ func (s *annotationStore) Record(ctx context.Context, opusName string, result an
 // is the truth even if older.
 func (s *annotationStore) record(ctx context.Context, opusName string, result annotateResult, onlyIfNewer bool) (string, error) {
 	projected := projectAnnotations(result.Annotations, result.Resolved, result.AudioOpusSHA256)
+	if result.Unsupported {
+		projected.unreadable = true
+	}
 	if projected.revision == 0 {
 		projected.revision = result.Revision
 	}
@@ -267,6 +270,9 @@ func (s *annotationStore) replace(ctx context.Context, opusName string, m projec
 		}
 		if pending != 0 {
 			skipped = true
+			if len(documents) > 0 && documents[0] != nil && !m.unreadable {
+				return refreshAnnotationAudio(ctx, tx, name, *documents[0])
+			}
 			return nil
 		}
 		if onlyIfNewer {
@@ -281,28 +287,8 @@ func (s *annotationStore) replace(ctx context.Context, opusName string, m projec
 				return nil
 			}
 		}
-		if err := deleteAnnotationRows(ctx, tx, name); err != nil {
+		if err := replaceAnnotationProjection(ctx, tx, name, m, container, state); err != nil {
 			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO meeting_annotations (opus_name, state, revision, resolved, namespace, container_sha256)
-VALUES (?, ?, ?, ?, ?, ?)`, name, state, m.revision, m.resolved, m.namespace,
-			strings.ToLower(strings.TrimSpace(container))); err != nil {
-			return fmt.Errorf("record meeting annotations: %w", err)
-		}
-		for _, tag := range m.tags {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO annotation_tag (opus_name, tag_id, label, label_folded) VALUES (?, ?, ?, ?)`,
-				name, tag.id, tag.label, foldTagLabel(tag.label)); err != nil {
-				return fmt.Errorf("insert tag: %w", err)
-			}
-		}
-		for _, item := range m.items {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO annotation_item (opus_name, tag_id, kind, start_ms, end_ms) VALUES (?, ?, ?, ?, ?)`,
-				name, item.tagID, item.kind, item.startMS, item.endMS); err != nil {
-				return fmt.Errorf("insert mark: %w", err)
-			}
 		}
 		if len(documents) > 0 && documents[0] != nil && !m.unreadable {
 			return importAnnotationSnapshot(ctx, tx, name, *documents[0])
@@ -817,4 +803,32 @@ func uniqueNames(values []string) []string {
 func namesJSON(names []string) string {
 	encoded, _ := json.Marshal(uniqueNames(names))
 	return string(encoded)
+}
+
+func replaceAnnotationProjection(ctx context.Context, tx *sql.Tx, name string, m projectedMeeting, container, state string) error {
+	if err := deleteAnnotationRows(ctx, tx, name); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO meeting_annotations (opus_name, state, revision, resolved, namespace, container_sha256)
+VALUES (?, ?, ?, ?, ?, ?)`, name, state, m.revision, m.resolved, m.namespace,
+		strings.ToLower(strings.TrimSpace(container))); err != nil {
+		return fmt.Errorf("record meeting annotations: %w", err)
+	}
+	for _, tag := range m.tags {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO annotation_tag (opus_name, tag_id, label, label_folded) VALUES (?, ?, ?, ?)`,
+			name, tag.id, tag.label, foldTagLabel(tag.label)); err != nil {
+			return fmt.Errorf("insert tag: %w", err)
+		}
+	}
+	for _, item := range m.items {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO annotation_item (opus_name, tag_id, kind, start_ms, end_ms) VALUES (?, ?, ?, ?, ?)`,
+			name, item.tagID, item.kind, item.startMS, item.endMS); err != nil {
+			return fmt.Errorf("insert mark: %w", err)
+		}
+	}
+
+	return nil
 }
