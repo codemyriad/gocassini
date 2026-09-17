@@ -1,0 +1,3 @@
+# Patch context includes significant whitespace and upstream CRLF line endings.
+# Preserve these bytes so git apply reproduces the tested upstream sources.
+*.patch -text -whitespace

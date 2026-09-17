@@ -1,0 +1,4 @@
+- Fix duplicated overlap words when adjacent decodes disagree only on sentence-final periods (for example, `morning.` versus `morning,`).
+- Add an opt-in recorded-audio benchmark for Parakeet window length, overlap, real context, synthetic padding, and decoder controls, with reference-disagreement scoring and held-out evaluation. Default decoding parameters are unchanged.
+- Add a separate, opt-in ONNX frontend diagnostic to distinguish model preprocessing effects from boundary and decoder changes. It is not used by production transcription.
+- Add isolated native reference-frontend and beam-search diagnostic patches, a compiled feature probe, and whole-VAD benchmark controls. Recorded-corpus validation is documented; production inference remains unchanged.
