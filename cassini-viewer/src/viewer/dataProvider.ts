@@ -13,6 +13,7 @@ import {
   loadArtifactFromDirectory,
   loadBundledArtifact,
   loadPortableArtifactFromAudioPath,
+  loadPortableMeetingAnnotations,
   loadPortableMeetingSummary,
   switchPortableTranscript,
   PortableMeetingStore,
@@ -184,7 +185,13 @@ export function resolvePublishedUrl(path: string): string {
 // says which it is, is by not offering the capability at all — so the type
 // filter is absent rather than reading "Insights 0".
 //
-// Nor does it implement the tag methods: only an operator writes marks.
+// It reads the tag methods it can and offers none of the ones it cannot. A
+// recording carries its own tags and marks, so loadMeetingAnnotations answers
+// from the file — but only an operator writes marks, and only an operator holds
+// the vocabulary that gives a tag its colour and icon. Offering the read and
+// withholding the writes is what makes the surface honestly read-only: the
+// marks draw, and every control that would change them is absent rather than
+// present and inert (D-775).
 export class StaticCatalogProvider implements DataProvider {
   private readonly portableStore = new PortableMeetingStore();
 
@@ -218,6 +225,42 @@ export class StaticCatalogProvider implements DataProvider {
       return Promise.resolve(null);
     }
     return loadPortableMeetingSummary(entry.audioPath, this.portableStore);
+  }
+
+  // The file's own tags, in the shape the operator's route returns, so the
+  // marks session cannot tell where they came from.
+  //
+  // A loose artifact directory (artifactPath) has no manifest to carry them, and
+  // an unannotated recording has none to carry: both read as "none", which is a
+  // different state from "this build cannot show tags" — that one is said by
+  // this method not existing at all.
+  async loadMeetingAnnotations(entry: MeetingCatalogEntry): Promise<MeetingAnnotations> {
+    const none: MeetingAnnotations = {
+      meetingId: entry.id,
+      revision: 0,
+      annotations: null,
+      resolved: null,
+    };
+    if (!entry.audioPath) {
+      return none;
+    }
+    const portable = await loadPortableMeetingAnnotations(entry.audioPath, this.portableStore);
+    if (!portable) {
+      return none;
+    }
+    return {
+      meetingId: entry.id,
+      revision: portable.revision,
+      annotations: {
+        format: portable.format,
+        revision: portable.revision,
+        audioOpusSha256: portable.audioOpusSha256,
+        tagNamespace: portable.tagNamespace,
+        tags: portable.tags.map((tag) => ({ ...tag })),
+        items: portable.items.map((item) => ({ ...item, target: { ...item.target } })),
+      },
+      resolved: portable.resolved,
+    };
   }
 
   switchTranscript(entry: MeetingCatalogEntry, transcriptId: string): Promise<LoadedArtifact> {

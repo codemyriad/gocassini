@@ -2030,6 +2030,17 @@ func (r *Recorder) ensureSessionCapture(remoteSessionID string) (*sessionCapture
 }
 
 func (r *Recorder) composeFinalOutput() error {
+	// Capture has already closed and flushed. Do not reuse cleanup's short
+	// network deadline: queued remuxes may legitimately take longer. Preserve
+	// session artifacts on any failure; the operator retains its stop ceiling.
+	lockCtx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	release, err := acquireFinalizeLock(lockCtx, os.Getenv("CASSINI_RECORD_FINALIZE_LOCK"))
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	r.artifactRemux = nil
 	if r.sessionPath == "" {
 		return errors.New("session artifact is not available")

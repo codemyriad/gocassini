@@ -32,28 +32,32 @@
           label={look.tag.label}
           color={look.color}
           icon={look.icon}
-          removable={!$session.busy}
+          removable={$session.editable && !$session.busy}
           on:remove={() => session.write(untagMeetingRequest(look.tag.id))}
         />
       {/each}
-      <button
-        bind:this={addButton}
-        type="button"
-        class="btn btn-ghost btn-xs h-auto min-h-0 gap-1 border border-dashed border-base-content/30 px-2 py-0.5 font-medium"
-        aria-haspopup="dialog"
-        aria-expanded={adding}
-        disabled={$session.busy}
-        on:click={() => (adding = !adding)}
-      >
-        <Plus size={12} aria-hidden="true" />Add tag
-      </button>
+      {#if $session.editable}
+        <button
+          bind:this={addButton}
+          type="button"
+          class="btn btn-ghost btn-xs h-auto min-h-0 gap-1 border border-dashed border-base-content/30 px-2 py-0.5 font-medium"
+          aria-haspopup="dialog"
+          aria-expanded={adding}
+          disabled={$session.busy}
+          on:click={() => (adding = !adding)}
+        >
+          <Plus size={12} aria-hidden="true" />Add tag
+        </button>
+      {/if}
       {#if lost > 0}
         <span class="inline-flex items-center gap-1.5 rounded-field bg-warning/15 px-2 py-0.5">
           <TriangleAlert size={12} class="text-warning" aria-hidden="true" />
           {plural(lost, "mark")} can't be placed on this recording
-          <button type="button" class="link" disabled={$session.busy} on:click={() => session.write(removeRequest(view.lost.map((item) => item.id)))}>
-            Remove {lost === 1 ? "it" : "them"}
-          </button>
+          {#if $session.editable}
+            <button type="button" class="link" disabled={$session.busy} on:click={() => session.write(removeRequest(view.lost.map((item) => item.id)))}>
+              Remove {lost === 1 ? "it" : "them"}
+            </button>
+          {/if}
         </span>
       {/if}
       {#if $session.error && $session.errorFrom === "meeting"}

@@ -580,4 +580,7 @@ func TestStorageRejectsAnUnknownAction(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), storageActionAcknowledgeFirstRun) {
 		t.Fatalf("the error does not offer the acknowledge action: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), storageActionIgnoreRecordings) {
+		t.Fatalf("the error does not offer the ignore action: %s", rec.Body.String())
+	}
 }

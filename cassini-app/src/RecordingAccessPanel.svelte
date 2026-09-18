@@ -35,9 +35,25 @@
     switchSteps,
     switchingLead,
     switchingTitle,
+    ignoredSummary,
+    openRecordingAudienceLine,
+    openRecordingDate,
+    openRecordingLabel,
+    openRecordingReasonLine,
+    openRecordingsSummary,
+    restrictButtonLabel,
+    restrictConfirmation,
+    restrictResultLine,
+    selectAllLabel,
   } from "./operator/recordingAccess";
   import type { AccessMode } from "./operator/recordingAccess";
-  import type { StorageMigration, StorageStatus } from "./operator/types";
+  import type {
+    OpenRecording,
+    OpenRecordings,
+    RestrictResult,
+    StorageMigration,
+    StorageStatus,
+  } from "./operator/types";
 
   // Operator › Settings › Who can see recordings (D-757, D-758).
   //
@@ -100,11 +116,29 @@
   // created here signs in through AppAPI's act-as-user header and needs none.
   let credential: { user: string; password: string } | null = null;
 
+  // D-769: the recordings a migration left readable by everyone.
+  //
+  // Loaded on first expand rather than with the section, because answering it
+  // costs the operator a PROPFIND of the Team folder and most visits to this
+  // page are not about it. Null means nobody has asked yet, which the summary
+  // renders as nothing at all — never as "none".
+  let openRecordings: OpenRecordings | null = null;
+  let openLoading = false;
+  let openError: LoadError | null = null;
+  let openAsked = false;
+  // The ticked rows, by id. Only narrowable rows can be in here.
+  let selected: Record<string, boolean> = {};
+  let restrictFlow: "confirm" | null = null;
+  let restricting = false;
+  let restrictResults: RestrictResult[] = [];
+  let ignoring = "";
+
   // The first button inside each inline alertdialog. The panels render further
   // down the page than the control that opened them, so an alertdialog nothing
   // focuses is one a keyboard reader is told about and cannot reach.
   let prereqsFocus: HTMLButtonElement | null = null;
   let confirmFocus: HTMLButtonElement | null = null;
+  let restrictFocus: HTMLButtonElement | null = null;
 
   // The full report. The operator's own /status, which is a sibling of every
   // route this client calls.
@@ -132,7 +166,13 @@
     loading = true;
     loadError = null;
     try {
-      status = await operatorClient.getStorage();
+      // Storage status deliberately returns the last preflight snapshot. That
+      // makes an ordinary status reader cheap, but the archive total in this
+      // panel is an administrator-facing fact: recordings may have published
+      // since that snapshot was taken. Entering this panel therefore asks
+      // Nextcloud for a fresh archive listing rather than calling "0" the
+      // number from the enabled edge.
+      status = await operatorClient.recheckStorage();
       watchRunningSwitch();
     } catch (error) {
       loadError = asFailure(error);
@@ -162,16 +202,40 @@
     }
   }
 
-  function choose(mode: AccessMode): void {
-    if (busy || status === null || status.mode === mode) {
+  async function choose(mode: AccessMode): Promise<void> {
+    if (!operatorClient || busy || status === null || status.mode === mode) {
       return;
     }
+    // A mode change moves the complete archive. Recheck immediately before
+    // showing its confirmation, not only when the page was opened: an
+    // administrator can leave Settings open while new recordings publish.
+    // The confirmation's number and the actual source tree now start from the
+    // same fresh view of Nextcloud.
+    loading = true;
     actionError = null;
-    done = "";
-    target = mode;
-    // The checklist is only for the two apps, and only while one is missing.
-    // Everything else this mode needs is done during the switch.
-    void openPanel(needsPrerequisites(status, mode) ? "prereqs" : "confirm");
+    try {
+      const fresh = await operatorClient.recheckStorage();
+      status = fresh;
+      watchRunningSwitch();
+      // A second administrator may have completed the requested switch while
+      // this request was out. Do not open a confirmation that now describes a
+      // no-op, or one while their migration is running.
+      if (fresh.mode === mode || fresh.migration !== null) {
+        return;
+      }
+      done = "";
+      target = mode;
+      // The checklist is only for the two apps, and only while one is missing.
+      // Everything else this mode needs is done during the switch.
+      void openPanel(needsPrerequisites(fresh, mode) ? "prereqs" : "confirm");
+    } catch (error) {
+      // Do not fall back to the old count: opening a destructive confirmation
+      // on a stale archive inventory is worse than asking the administrator to
+      // try its fresh check again.
+      actionError = asFailure(error);
+    } finally {
+      loading = false;
+    }
   }
 
   // openPanel shows one of the two alertdialogs and puts the focus on its first
@@ -317,6 +381,17 @@
       // and is resolved before anyone reaches a switch. The refusal is the
       // operator's own sentence, shown as an error, and it stops there.
       status = await operatorClient.putStorage(mode === PARTICIPANTS);
+      // A storage-mode switch rewrites every recording leaf. In particular, a
+      // participants -> everyone -> participants round trip deliberately
+      // removes any per-recording restrictions we applied earlier. The open
+      // recordings list is a snapshot from a PROPFIND, so keeping the earlier
+      // snapshot here would hide the recordings that became open again until
+      // the whole component happened to be reloaded (D-769).
+      //
+      // Do not re-fetch eagerly: the list is deliberately paid for only when
+      // an administrator opens its disclosure. Resetting makes the next open
+      // ask the server about the newly authoritative archive.
+      resetOpenRecordings();
       switched = true;
       migration = null;
       flow = null;
@@ -501,6 +576,141 @@
     return { title: LOAD_ERROR_TITLE, summary, detail };
   }
 
+  // --- D-769: listing, limiting and ignoring open recordings ----------------
+
+  // openRecordingsApplicable gates the whole section. The question only has a
+  // meaning under Room members — in the other model everything is
+  // readable by everyone by design — and only once the instance is settled,
+  // because during an unfinished migration which root is authoritative is
+  // exactly what is unresolved.
+  $: openRecordingsApplicable =
+    status !== null && status.mode === PARTICIPANTS && status.migration_clean;
+
+  async function loadOpenRecordings(): Promise<void> {
+    if (!operatorClient || !openRecordingsApplicable || openLoading) {
+      return;
+    }
+    openLoading = true;
+    openError = null;
+    openAsked = true;
+    try {
+      const next = await operatorClient.listOpenRecordings();
+      status = next;
+      openRecordings = next.open_recordings;
+      pruneSelection();
+    } catch (error) {
+      // Not swallowed into an empty list: "Cassini could not look" and "nothing
+      // is open" are opposite answers and only one of them is reassuring.
+      openError = asFailure(error);
+      openRecordings = null;
+    } finally {
+      openLoading = false;
+    }
+  }
+
+  // resetOpenRecordings forgets a PROPFIND result after an operation that
+  // changes the archive beneath it. `openAsked` is part of the cache: leaving
+  // it true would make the newly rendered disclosure look loaded but prevent
+  // its first expansion from asking the operator again.
+  function resetOpenRecordings(): void {
+    openRecordings = null;
+    openLoading = false;
+    openError = null;
+    openAsked = false;
+    selected = {};
+    restrictFlow = null;
+    restrictResults = [];
+    ignoring = "";
+  }
+
+  // pruneSelection drops ticks for rows that are no longer there to tick. The
+  // list is re-derived after every write, so a restricted recording disappears
+  // from it — and a selection that outlived its row would send an id the
+  // operator would only refuse.
+  function pruneSelection(): void {
+    const live = new Set((openRecordings?.recordings ?? []).filter((r) => r.narrowable).map((r) => r.id));
+    const next: Record<string, boolean> = {};
+    for (const [id, ticked] of Object.entries(selected)) {
+      if (ticked && live.has(id)) {
+        next[id] = true;
+      }
+    }
+    selected = next;
+  }
+
+  function toggleSelected(id: string): void {
+    selected = { ...selected, [id]: !selected[id] };
+  }
+
+  function toggleAll(): void {
+    if (selectedIds.length === narrowableRows.length) {
+      selected = {};
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const row of narrowableRows) {
+      next[row.id] = true;
+    }
+    selected = next;
+  }
+
+  async function openRestrictConfirm(): Promise<void> {
+    restrictResults = [];
+    restrictFlow = "confirm";
+    await tick();
+    restrictFocus?.focus();
+  }
+
+  async function applyRestrict(): Promise<void> {
+    if (!operatorClient) {
+      return;
+    }
+    restricting = true;
+    openError = null;
+    try {
+      const meetings = narrowableRows
+        .filter((row) => selected[row.id])
+        .map((row) => ({ id: row.id, audience_digest: row.audience_digest }));
+      const next = await operatorClient.restrictRecordings(meetings);
+      status = next;
+      restrictResults = next.restricted;
+      openRecordings = next.open_recordings ?? openRecordings;
+      selected = {};
+      pruneSelection();
+      restrictFlow = null;
+    } catch (error) {
+      openError = asFailure(error);
+      restrictFlow = null;
+    } finally {
+      restricting = false;
+    }
+  }
+
+  async function setIgnored(id: string, ignored: boolean): Promise<void> {
+    if (!operatorClient) {
+      return;
+    }
+    ignoring = id;
+    openError = null;
+    try {
+      const next = await operatorClient.ignoreRecordings([id], ignored);
+      status = next;
+      openRecordings = next.open_recordings ?? openRecordings;
+      pruneSelection();
+    } catch (error) {
+      openError = asFailure(error);
+    } finally {
+      ignoring = "";
+    }
+  }
+
+  function resultLabelFor(id: string): string {
+    const known = [...(openRecordings?.recordings ?? []), ...(openRecordings?.ignored ?? [])].find(
+      (row) => row.id === id,
+    );
+    return known ? openRecordingLabel(known) : id;
+  }
+
   $: options = accessOptions(status);
 
   $: if ($pendingAccessChoice && status && !loading && !busy) {
@@ -509,6 +719,21 @@
     choose(next);
   }
   $: existingLine = existingRecordingsLine(status, switched);
+  $: narrowableRows = (openRecordings?.recordings ?? []).filter(
+    (row: OpenRecording) => row.narrowable,
+  );
+  $: selectedIds = narrowableRows.filter((row: OpenRecording) => selected[row.id]).map((row) => row.id);
+  $: openSummary = openRecordingsSummary(openRecordings);
+  $: ignoredLine = ignoredSummary(openRecordings);
+  $: restrictDialog = restrictConfirmation(selectedIds.length);
+  // Derived booleans rather than length comparisons in the markup: the rule in
+  // this file is that a number on screen comes from the tested module beside
+  // it, and a condition that counts is one edit away from being a number.
+  $: hasOpenRows = (openRecordings?.recordings ?? []).length > 0;
+  $: offerSelectAll = narrowableRows.length > 1;
+  $: allSelected = narrowableRows.length > 0 && selectedIds.length === narrowableRows.length;
+  $: nothingSelected = selectedIds.length === 0;
+  $: hasResults = restrictResults.length > 0;
   $: apps = requiredApps(status);
   $: missing = missingApps(status);
   $: confirmation = switchConfirmation(status, target ?? PARTICIPANTS);
@@ -689,7 +914,7 @@
             role="radio"
             aria-checked={option.current}
             disabled={busy}
-            on:click={() => choose(option.mode)}
+            on:click={() => void choose(option.mode)}
           >
             <span class="access-radio" class:checked={option.current} aria-hidden="true"></span>
             <span class="access-opt-body">
@@ -705,6 +930,197 @@
            exist. It stays on screen permanently, not only after a switch. -->
       {#if existingLine}
         <p class="set-row-sub access-existing">{existingLine}</p>
+      {/if}
+
+      <!-- D-769. Collapsed by default: a migration can leave dozens of rows
+           here, and this is not what most visits to the page are about. The
+           list is derived on the operator from the archive's own permissions,
+           so a recording leaves it by actually being limited rather than by
+           this page removing a row. -->
+      {#if openRecordingsApplicable}
+        <details
+          class="op-tint access-panel"
+          on:toggle={(event) => {
+            if ((event.currentTarget as HTMLDetailsElement).open && !openAsked) {
+              void loadOpenRecordings();
+            }
+          }}
+        >
+          <summary class="cursor-pointer text-sm font-semibold">
+            {#if openLoading && openRecordings === null}
+              Checking which recordings are visible to everyone…
+            {:else if openSummary}
+              {openSummary}
+            {:else if openAsked && openError === null}
+              Every recording is restricted to its room members
+            {:else}
+              Recordings visible to everyone
+            {/if}
+          </summary>
+
+          <div class="mt-3 flex flex-col gap-3">
+            {#if openError}
+              <div class="alert alert-warning text-sm" role="alert">
+                <TriangleAlert class="size-4 shrink-0" aria-hidden="true" />
+                <span>{openError.summary}</span>
+              </div>
+              <div>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  type="button"
+                  disabled={openLoading}
+                  on:click={() => void loadOpenRecordings()}
+                >
+                  Try again
+                </button>
+              </div>
+            {/if}
+
+            {#if hasResults}
+              <ul class="flex flex-col gap-1 text-sm">
+                {#each restrictResults as result (result.id)}
+                  <li class:text-error={result.outcome === "failed"}>
+                    {restrictResultLine(result, resultLabelFor(result.id))}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+
+            {#if openRecordings !== null && hasOpenRows}
+              <p class="text-sm text-base-content/70">
+                These are the people who had access to each room when it was recorded. Later
+                changes to a room do not affect them. To manage access in more detail (for example,
+                to add additional permissions), go to Nextcloud Files:
+                <code>Cassini/Meetings/&lt;meeting-id&gt;.opus</code> → Details → Advanced permissions.
+              </p>
+
+              {#if offerSelectAll}
+                <label class="flex items-center gap-2 text-sm">
+                  <input
+                    class="checkbox checkbox-sm"
+                    type="checkbox"
+                    checked={allSelected}
+                    on:change={toggleAll}
+                  />
+                  <span>{selectAllLabel(narrowableRows.length)}</span>
+                </label>
+              {/if}
+
+              <ul class="flex flex-col gap-2">
+                {#each openRecordings.recordings as row (row.id)}
+                  <li class="flex items-start justify-between gap-3 border-t border-base-300 pt-2">
+                    <div class="flex items-start gap-2">
+                      {#if row.narrowable}
+                        <input
+                          class="checkbox checkbox-sm mt-1"
+                          type="checkbox"
+                          checked={selected[row.id] === true}
+                          on:change={() => toggleSelected(row.id)}
+                          aria-label={`Restrict ${openRecordingLabel(row)}`}
+                        />
+                      {:else}
+                        <!-- No control at all. The row is a statement: this
+                             recording is open and Cassini cannot narrow it. -->
+                        <span class="mt-1 inline-block size-4" aria-hidden="true"></span>
+                      {/if}
+                      <div class="text-sm">
+                        <div class="font-medium">
+                          {openRecordingLabel(row)}
+                          <span class="ml-2 text-xs text-base-content/60">{openRecordingDate(row)}</span>
+                        </div>
+                        {#if row.narrowable}
+                          <div class="text-xs text-base-content/70">{openRecordingAudienceLine(row)}</div>
+                        {:else}
+                          <div class="text-xs text-base-content/70">{openRecordingReasonLine(row)}</div>
+                        {/if}
+                      </div>
+                    </div>
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      type="button"
+                      disabled={ignoring === row.id}
+                      on:click={() => void setIgnored(row.id, true)}
+                    >
+                      Ignore
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+
+              <div>
+                <button
+                  class="btn btn-sm btn-primary"
+                  type="button"
+                  disabled={nothingSelected || restricting}
+                  on:click={() => void openRestrictConfirm()}
+                >
+                  {restrictButtonLabel(selectedIds.length)}
+                </button>
+              </div>
+            {:else if openAsked && !openLoading && openError === null}
+              <p class="text-sm text-base-content/70">
+                Nothing is visible to everyone. Every recording is restricted to its room members.
+              </p>
+            {/if}
+
+            {#if ignoredLine}
+              <details>
+                <summary class="cursor-pointer text-xs">{ignoredLine}</summary>
+                <ul class="mt-2 flex flex-col gap-1">
+                  {#each openRecordings?.ignored ?? [] as row (row.id)}
+                    <li class="flex items-center justify-between gap-3 text-sm">
+                      <span>
+                        {openRecordingLabel(row)}
+                        <span class="ml-2 text-xs text-base-content/60">{openRecordingDate(row)}</span>
+                      </span>
+                      <button
+                        class="btn btn-ghost btn-xs"
+                        type="button"
+                        disabled={ignoring === row.id}
+                        on:click={() => void setIgnored(row.id, false)}
+                      >
+                        Stop ignoring
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              </details>
+            {/if}
+          </div>
+        </details>
+      {/if}
+
+      {#if restrictFlow === "confirm"}
+        <!-- The same inline alertdialog shape the switch confirmations use, and
+             deliberately NOT the danger variant: this narrows access, which is
+             the direction that cannot disclose anything. -->
+        <div class="op-tint access-panel" role="alertdialog" aria-label={restrictDialog.title}>
+          <p class="font-semibold">{restrictDialog.title}</p>
+          <ul class="mt-2 flex list-disc flex-col gap-1 pl-5 text-sm">
+            {#each restrictDialog.lines as line}
+              <li>{line}</li>
+            {/each}
+          </ul>
+          <div class="mt-3 flex gap-2">
+            <button
+              class="btn btn-sm btn-primary"
+              type="button"
+              bind:this={restrictFocus}
+              disabled={restricting}
+              on:click={() => void applyRestrict()}
+            >
+              {restricting ? "Restricting…" : restrictDialog.confirmLabel}
+            </button>
+            <button
+              class="btn btn-sm btn-ghost"
+              type="button"
+              disabled={restricting}
+              on:click={() => (restrictFlow = null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       {/if}
 
       {#if flow === "prereqs"}

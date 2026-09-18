@@ -80,6 +80,12 @@
   const painted = new Map<string, Map<HTMLElement, string>>();
 
   $: marking = $session.status === "ready";
+  // Seeing marks and making them are separate (D-775). `marking` still governs
+  // everything that DRAWS — the rail, the brackets, the marks list — so a
+  // published export shows exactly what the recording carries. `editing` governs
+  // everything that would CHANGE a mark, and a session with nowhere to write has
+  // none of it: not disabled, absent.
+  $: editing = marking && $session.editable;
   $: view = marking ? viewMarks($session, vocabulary) : null;
   $: wide = width >= 720;
   // What the sticky bars cover of the view: the tag bar at the top where the
@@ -120,7 +126,7 @@
   $: selectedMark = view?.placed.find((mark) => mark.item.id === selection?.itemId) ?? null;
   $: hoverMark = view?.placed.find((mark) => mark.item.id === hoverId) ?? null;
   $: selColor = selectedMark?.color ?? "slate";
-  $: stretchProps = marking &&
+  $: stretchProps = editing &&
     range && {
       startMs: range.startMs,
       endMs: range.endMs,
@@ -379,7 +385,7 @@
       const live = readerRange();
       const ends = live && touched(live);
       nativeLive = Boolean(ends);
-      if (!marking) return;
+      if (!editing) return;
       const span = ends && spanForPage(page.map((element) => element.dataset.wordId!), indexById, ends[0], ends[1]);
       if (!span || (selection?.native && selection.from === span.from && selection.to === span.to)) return;
       selection = { ...span, native: true };
@@ -454,7 +460,7 @@
   function textDown(event: PointerEvent) {
     textDrag = null;
     dragClick = false;
-    if (event.pointerType !== "mouse" || event.button !== 0 || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!editing || event.pointerType !== "mouse" || event.button !== 0 || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return;
     const word = (event.target as Element | null)?.closest?.<HTMLElement>(".cassini-word");
     const anchor = word ? pageAt.get(word.dataset.wordId ?? "") : undefined;
     if (anchor !== undefined) textDrag = { anchor, x: event.clientX, y: event.clientY, moved: false };
@@ -630,7 +636,7 @@
       return;
     }
     const inField = path.some((node) => node instanceof HTMLElement && node.matches("input, textarea, select, [role='dialog']"));
-    if (!marking || inField) return;
+    if (!editing || inField) return;
     if (event.key === "Escape") {
       if (selection) void clearSelection();
       else return;
@@ -746,6 +752,7 @@
             stops={stops.map((found) => found.ms)}
             current={stop}
             labels={wide}
+            grabbing={editing}
             visible={seen}
             on:grab={(event) => grab(event.detail.aMs, event.detail.bMs, event.detail.handle)}
             on:pick={(event) => pickTurn(event.detail)}
@@ -770,7 +777,7 @@
       on:click={textClick}
     >
       <slot {chips} openMark={selectMark} />
-      {#if marking && pins && range && !(nativeLive && !wide)}
+      {#if editing && pins && range && !(nativeLive && !wide)}
         {#each EDGES as edge (edge)}
           {@const ms = edge === "from" ? range.startMs : range.endMs}
           <span

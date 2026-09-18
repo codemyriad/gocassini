@@ -20,6 +20,7 @@ on:
   pull_request:
     paths:
       - 'cassini-microsite/**'
+      - 'cassini-viewer/**'
       - '.github/workflows/microsite.yml'
 
 permissions:
@@ -55,3 +56,28 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # The public embed (D-775) is built from cassini-viewer and COMMITTED under
+  # cassini-microsite/public/embed/v1/, because the microsite is deployed by a
+  # Cloudflare-side build command this repo does not control. Committed build
+  # output drifts unless something checks it, so this is that something: it
+  # rebuilds the bundle and fails if the committed pair is not what the source
+  # produces. See cassini-microsite/scripts/sync-embed.mjs for why it is
+  # committed at all.
+  embed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: cassini-microsite/.nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install the web workspace
+        run: npm ci
+
+      - name: The committed embed is what the source builds
+        run: node cassini-microsite/scripts/sync-embed.mjs --check
