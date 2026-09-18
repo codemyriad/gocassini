@@ -92,3 +92,20 @@ func TestPreserveVADSpanRetainsWholeSourceWithoutChangingDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestWordsOverlappingSpeechExcludesContextOnlyWords(t *testing.T) {
+	words := []Word{
+		{Text: "before", StartMS: 0, EndMS: 100},
+		{Text: "onset", StartMS: 90, EndMS: 150},
+		{Text: "inside", StartMS: 150, EndMS: 200},
+		{Text: "offset", StartMS: 200, EndMS: 310},
+		{Text: "after", StartMS: 300, EndMS: 400},
+	}
+	got := wordsOverlappingSpeech(words, 100, 300)
+	if len(got) != 3 || got[0].Text != "onset" || got[1].Text != "inside" || got[2].Text != "offset" {
+		t.Fatalf("context words leaked or boundary words lost: %+v", got)
+	}
+	if got[0].StartMS != 90 || got[2].EndMS != 310 {
+		t.Fatalf("recording timestamps changed: %+v", got)
+	}
+}

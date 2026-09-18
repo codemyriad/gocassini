@@ -105,8 +105,9 @@ func newSyntheticRegressionRecognizer(t *testing.T) *Recognizer {
 	return recognizer
 }
 
-// This is deliberately a failing regression on c580c394: the previous source
-// recognizes the acknowledgement but the new pipeline emits no words.
+// The tight VAD crop emitted no words on c580c394 even though decoding the
+// complete waveform recognized the acknowledgement. Test recording boundaries
+// and neighbouring speech as well as the original counterexample.
 func TestSyntheticAcknowledgementRetainsSpeech(t *testing.T) {
 	recognizer := newSyntheticRegressionRecognizer(t)
 	fixture := filepath.Join("testdata", "synthetic-boundary", "acknowledgement.wav")
@@ -121,17 +122,44 @@ func TestSyntheticAcknowledgementRetainsSpeech(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	words, err := recognizer.Transcribe(samples, 16000, true)
-	if err != nil {
-		t.Fatal(err)
+	withSilence := func(head, tail int) []float32 {
+		out := make([]float32, head+len(samples)+tail)
+		copy(out[head:], samples)
+		return out
 	}
-	var text strings.Builder
-	for _, word := range words {
-		text.WriteString(word.Text)
-		text.WriteByte(' ')
-	}
-	normalized := strings.ToLower(strings.Join(strings.FieldsFunc(text.String(), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }), " "))
-	if !strings.Contains(" "+normalized+" ", " right that makes sense ") {
-		t.Fatalf("missing synthetic acknowledgement; transcript: %s", text.String())
+	repeated := append(withSilence(0, 16000), samples...)
+	for _, tc := range []struct {
+		name    string
+		samples []float32
+		want    int
+	}{
+		{"recording-edges", samples, 1},
+		{"recording-end", withSilence(16000, 0), 1},
+		{"recording-start", withSilence(0, 16000), 1},
+		{"interior", withSilence(16000, 16000), 1},
+		{"two-turns", repeated, 2},
+		{"silence", make([]float32, 32000), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			words, err := recognizer.Transcribe(tc.samples, 16000, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var text strings.Builder
+			for _, word := range words {
+				text.WriteString(word.Text)
+				text.WriteByte(' ')
+				if word.StartMS < 0 || word.EndMS < word.StartMS || word.EndMS > int64(len(tc.samples))*1000/16000 {
+					t.Errorf("word outside recording timeline: %+v", word)
+				}
+			}
+			normalized := strings.ToLower(strings.Join(strings.FieldsFunc(text.String(), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }), " "))
+			if got := strings.Count(normalized, "right that makes sense"); got != tc.want {
+				t.Fatalf("acknowledgement count=%d, want %d; transcript: %s", got, tc.want, text.String())
+			}
+			if tc.want == 0 && len(words) != 0 {
+				t.Fatalf("hallucinated speech on silence: %s", text.String())
+			}
+		})
 	}
 }

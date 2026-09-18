@@ -80,6 +80,7 @@ const vadWindowSamples = 512
 const (
 	vadSpeechThreshold       = 0.18
 	vadMinSpeechDuration     = 0.10
+	vadMinSilenceDurationMS  = 500
 	minimumWordPeakAmplitude = 0.001  // -60 dBFS
 	minimumWordRMSAmplitude  = 0.0001 // -80 dBFS
 	minimumActiveAmplitude   = 0.0005 // -66 dBFS
@@ -208,7 +209,7 @@ func newVADModelConfig(modelPath string, sampleRate int) sherpa.VadModelConfig {
 	cfg := sherpa.VadModelConfig{}
 	cfg.SileroVad.Model = modelPath
 	cfg.SileroVad.Threshold = vadSpeechThreshold
-	cfg.SileroVad.MinSilenceDuration = 0.5
+	cfg.SileroVad.MinSilenceDuration = float32(vadMinSilenceDurationMS) / 1000
 	cfg.SileroVad.MinSpeechDuration = vadMinSpeechDuration
 	cfg.SileroVad.WindowSize = vadWindowSamples
 	cfg.SileroVad.MaxSpeechDuration = 25.0
@@ -404,6 +405,26 @@ func (r *Recognizer) transcribeWithVADPolicy(samples []float32, sampleRate int, 
 			words, err := r.transcribeSegmentWithPolicy(decodeSamples, sampleRate, segOffsetMS, true, policy)
 			if err != nil {
 				return err
+			}
+			// A tight VAD crop can make the utterance-normalized v3 decoder
+			// emit only blanks. Retry an empty hypothesis once with recorded
+			// context spanning the detector's silence decision interval. Keep
+			// the same decoder/hints and add no synthetic silence. Successful
+			// hypotheses are untouched; the normal energy gate still applies.
+			if len(words) == 0 && policy.preserveVADSpan && policy.disableSyntheticPadding {
+				retry := vadContextBounds(seg.Start, seg.Start+len(seg.Samples), len(samples), sampleRate, vadMinSilenceDurationMS)
+				if retry.start < decodeStart || retry.end > decodeEnd {
+					retryOffsetMS := int64(retry.start) * 1000 / int64(sampleRate)
+					recovered, retryErr := r.transcribeSegmentWithPolicy(samples[retry.start:retry.end], sampleRate, retryOffsetMS, true, policy)
+					if retryErr != nil {
+						return retryErr
+					}
+					// Context can contain a neighbouring turn. Only retain words
+					// overlapping the original speech span, not context-only words.
+					words = wordsOverlappingSpeech(recovered, int64(seg.Start)*1000/int64(sampleRate), int64(min(len(samples), seg.Start+len(seg.Samples)))*1000/int64(sampleRate))
+					decodeStart, decodeEnd = retry.start, retry.end
+					segOffsetMS = retryOffsetMS
+				}
 			}
 			if policy.contextMS > 0 && previousDecodeEnd > decodeStart {
 				overlapMS := int64(previousDecodeEnd-decodeStart) * 1000 / int64(sampleRate)
@@ -758,6 +779,19 @@ func offsetDecoderWords(words []Word, offsetMS, headPaddingMS int64) {
 		words[i].EndMS += offsetMS
 		words[i].extentCap += offsetMS
 	}
+}
+
+// wordsOverlappingSpeech excludes hypotheses belonging entirely to context.
+// Use strict overlap so a word ending at the boundary cannot be attributed to
+// the following speech segment. Preserve timestamps on the recording clock.
+func wordsOverlappingSpeech(words []Word, startMS, endMS int64) []Word {
+	kept := words[:0]
+	for _, word := range words {
+		if word.StartMS < endMS && word.EndMS > startMS {
+			kept = append(kept, word)
+		}
+	}
+	return kept
 }
 
 func vadContextBounds(start, end, total, sampleRate, contextMS int) windowBound {

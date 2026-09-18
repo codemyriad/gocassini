@@ -58,19 +58,25 @@ download on the next run. Results are uploaded as `synthetic-asr-cpu-results`.
 The garden test took about eight seconds locally with already-cached models. The checked-in
 fixture is about 208 KiB; synthesizer weights are unnecessary to run the test.
 
-## A second synthetic case currently fails the PR
+## Empty-decode acknowledgement regression
 
 `acknowledgement.wav` is 1.621 seconds of stock `am_adam` synthetic speech:
 “Mm-hmm, right, that makes sense.” The test asserts only “right that makes
 sense”; it does not require a particular spelling of the nasal acknowledgement.
 The waveform has a fixed −6 dB gain adjustment and no added silence.
 
-`TestSyntheticAcknowledgementRetainsSpeech` **passes on the actual old source
-and fails on this PR**, on CPU and on three CUDA runs. The PR returns no words.
-This is a preserved, unresolved counterexample, not an expected-failure test:
-running the entire `asrregression` suite must stay red until the omission is
-fixed. Nothing is skipped or inverted to hide it. The preceding garden test
-continues to pass on the PR and fail on the old source.
+`TestSyntheticAcknowledgementRetainsSpeech` passed on the actual old source
+but failed on PR commit `2600c9a7`, on CPU and on three CUDA runs. The tight VAD
+crop returned no words, while decoding the complete waveform retained the phrase.
+The fix retries an empty v3 VAD decode once with available recorded context,
+using the detector's existing 500 ms silence interval. It preserves the same
+decoder and hints, adds no synthetic silence, and excludes words belonging
+entirely to neighbouring context. Successful initial decodes remain unchanged.
+
+The regression also checks recording-start, recording-end, interior, repeated
+turns and silence variants, including word counts and recording timestamp bounds.
+Assertions remain strict; there are no skipped or expected-failure cases. The
+garden test continues to check the original recovered interior phrase.
 
 ```sh
 CASSINI_CACHE_ROOT="$HOME/.cache/cassini" \
