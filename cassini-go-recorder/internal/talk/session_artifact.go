@@ -303,6 +303,7 @@ func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, parti
 			altPID := sanitizeSessionPathPart(remoteSessionID)
 			if altIdx, altOK := a.participants[altPID]; altOK {
 				idx = altIdx
+				pid = altPID
 				ok = true
 			}
 		}
@@ -310,6 +311,7 @@ func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, parti
 			altPID := sanitizeSessionPathPart(participantID)
 			if altIdx, altOK := a.participants[altPID]; altOK {
 				idx = altIdx
+				pid = altPID
 				ok = true
 			}
 		}

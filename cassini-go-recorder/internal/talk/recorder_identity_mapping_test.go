@@ -216,3 +216,51 @@ func TestParticipantsUpdateCallStateUnknownPreservesIdentity(t *testing.T) {
 		t.Fatalf("expected artifact display = %q, got %q", "Desktop computer", display)
 	}
 }
+
+func TestResolveRemoteSessionIDAndForgetParticipantIdentity(t *testing.T) {
+	r := &Recorder{
+		sessionsByRemote:    make(map[string]*sessionCapture),
+		identityByRemote:    make(map[string]participantIdentity),
+		remoteByRoomSession: make(map[string]string),
+		remoteByParticipant: make(map[string]string),
+	}
+
+	remoteSessionID := "remote-session-1"
+	roomSessionID := "room-session-1"
+	participantID := "actor-guest-1"
+
+	r.sessionMu.Lock()
+	r.mapRemoteSessionLocked(remoteSessionID, roomSessionID, participantID)
+	r.sessionMu.Unlock()
+	r.rememberParticipantIdentity(remoteSessionID, "Alice", participantID)
+
+	// 1. Direct match by remote signaling session ID
+	if got := r.resolveRemoteSessionID(remoteSessionID, "", ""); got != remoteSessionID {
+		t.Fatalf("expected %q, got %q", remoteSessionID, got)
+	}
+
+	// 2. Match via room session ID
+	if got := r.resolveRemoteSessionID("", roomSessionID, ""); got != remoteSessionID {
+		t.Fatalf("expected %q, got %q", remoteSessionID, got)
+	}
+
+	// 3. Fallback to participantID only when sessionID and roomSessionID are empty
+	if got := r.resolveRemoteSessionID("", "", participantID); got != remoteSessionID {
+		t.Fatalf("expected %q, got %q", remoteSessionID, got)
+	}
+
+	// 4. If sessionID is provided (e.g. unknown session of same user), do NOT alias via participantID to remote-session-1
+	if got := r.resolveRemoteSessionID("unknown-session-2", "", participantID); got != "unknown-session-2" {
+		t.Fatalf("expected unknown session to retain its own session ID without aliasing, got %q", got)
+	}
+
+	// 5. forgetParticipantIdentity prunes identity and index maps so roomSessionID and participantID no longer map to remoteSessionID
+	r.forgetParticipantIdentity(remoteSessionID)
+
+	if got := r.resolveRemoteSessionID("", roomSessionID, ""); got != roomSessionID {
+		t.Fatalf("expected roomSessionID to return itself after forget, got %q", got)
+	}
+	if got := r.resolveRemoteSessionID("", "", participantID); got != participantID {
+		t.Fatalf("expected participantID to return itself after forget, got %q", got)
+	}
+}

@@ -247,9 +247,9 @@ type subscriberPeer struct {
 
 func Run(ctx context.Context, cfg config.Config) error {
 	r := &Recorder{
-		cfg:               cfg,
-		subscribers:       make(map[string]*subscriberPeer),
-		inCallEver:        make(map[string]struct{}),
+		cfg:                 cfg,
+		subscribers:         make(map[string]*subscriberPeer),
+		inCallEver:          make(map[string]struct{}),
 		sessionsByRemote:    make(map[string]*sessionCapture),
 		identityByRemote:    make(map[string]participantIdentity),
 		remoteByRoomSession: make(map[string]string),
@@ -1663,7 +1663,7 @@ func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, par
 		if participantID == "" && session.ParticipantID != "" {
 			participantID = session.ParticipantID
 		}
-		if displayName != "" && (session.ParticipantName != displayName || isPlaceholderParticipantName(session.ParticipantName, session.ParticipantID)) {
+		if displayName != "" && session.ParticipantName != displayName {
 			session.ParticipantName = displayName
 			shouldUpdateArtifact = true
 		}
@@ -1686,6 +1686,16 @@ func (r *Recorder) forgetParticipantIdentity(remoteSessionID string) {
 	}
 	r.sessionMu.Lock()
 	delete(r.identityByRemote, remoteSessionID)
+	for roomSession, remote := range r.remoteByRoomSession {
+		if remote == remoteSessionID {
+			delete(r.remoteByRoomSession, roomSession)
+		}
+	}
+	for participant, remote := range r.remoteByParticipant {
+		if remote == remoteSessionID {
+			delete(r.remoteByParticipant, participant)
+		}
+	}
 	r.sessionMu.Unlock()
 }
 
@@ -1729,7 +1739,7 @@ func (r *Recorder) resolveRemoteSessionID(sessionID, roomSessionID, participantI
 			return remote
 		}
 	}
-	if participantID != "" {
+	if sessionID == "" && roomSessionID == "" && participantID != "" {
 		if remote, ok := r.remoteByParticipant[participantID]; ok && remote != "" {
 			return remote
 		}
@@ -2223,6 +2233,10 @@ func (r *Recorder) sendRequestOffer(remoteSessionID string) error {
 }
 
 func (r *Recorder) sendPeerMessage(toSession, msgType string, payload map[string]any, sid string) error {
+	if r.signaling == nil {
+		return errors.New("signaling not connected")
+	}
+
 	data := map[string]any{
 		"to":       toSession,
 		"roomType": "video",
@@ -2247,9 +2261,6 @@ func (r *Recorder) sendPeerMessage(toSession, msgType string, payload map[string
 			},
 			"data": data,
 		},
-	}
-	if r.signaling == nil {
-		return errors.New("signaling not connected")
 	}
 	return r.signaling.Send(wrapper)
 }
