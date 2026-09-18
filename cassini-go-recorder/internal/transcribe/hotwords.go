@@ -20,8 +20,8 @@ import (
 // Two hard requirements come from sherpa-onnx itself
 // (offline-recognizer-transducer-nemo-impl.h):
 //
-//  1. hotwords are read only under decoding_method=modified_beam_search. Every
-//     transducer pass therefore runs beam search, whether or not a vocabulary
+//  1. hotwords are read only under decoding_method=modified_beam_search. Hint-capable
+//     participant transducer passes therefore use beam search, whether or not a vocabulary
 //     is set: one decoder for everyone, rather than a decoder that changes
 //     under the operator depending on whether a text box is empty.
 //  2. modeling_unit must be "bpe" AND bpe_vocab must name a real file. With
@@ -70,9 +70,8 @@ const (
 // to run, and the hotword biasing to run it with. A nil *DecoderConfig leaves
 // sherpa on its own default, which is greedy search.
 type DecoderConfig struct {
-	// Method is the sherpa decoding_method. Transducer models always run
-	// modified beam search; CTC models keep greedy search because sherpa has no
-	// hotword support for them and the wider beam would buy nothing.
+	// Method is the sherpa decoding_method. Hint-capable participant models use
+	// beam search; CTC, tokenizer-less v3 INT8, and v3 merged fallback use greedy.
 	Method string
 	// MaxActivePaths is the beam width, meaningful only under beam search.
 	MaxActivePaths int
@@ -284,20 +283,26 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 		}, nil
 	}
 
-	// Every transducer pass runs modified beam search, vocabulary or not. One
+	// Hint-capable participant transducers use beam search, vocabulary or not. One
 	// code path is the point: the decoder does not change under the operator
 	// depending on whether a text box happens to be empty.
 	cfg := &DecoderConfig{Method: decodingModifiedBeamSearch, MaxActivePaths: hotwordsMaxActivePaths}
-
-	if len(terms) == 0 {
-		return cfg, nil, nil
+	// The validated INT8 archive lacks the tokenizer needed for hints. Its
+	// unbiased beam decoder omits more speech than greedy in recorded tests.
+	// Keep greedy for that bundle; a hint-capable bundle retains beam search.
+	if paths.ModelID == ModelParakeet06BV3Int8 && paths.BpeVocabFile == "" {
+		cfg = &DecoderConfig{Method: decodingGreedySearch}
 	}
+
 	if envBool(envHintsDisabled) {
 		// The kill switch restores the previous decoder as well as dropping the
 		// hotwords. Turning biasing off while leaving beam search on would give
 		// an operator no way back to the output they had before, which is the
 		// one thing a kill switch has to be able to do.
 		cfg = &DecoderConfig{Method: decodingGreedySearch}
+		if len(terms) == 0 {
+			return cfg, nil, nil
+		}
 		return cfg, &HintsProvenance{
 			TermCount:            len(terms),
 			ParticipantTermCount: vocabulary.ParticipantTermCount,
@@ -305,6 +310,9 @@ func resolveDecoderVocabulary(workDir string, vocabulary decoderVocabulary, path
 			Applied:              false,
 			Reason:               "disabled by configuration (" + envHintsDisabled + ")",
 		}, nil
+	}
+	if len(terms) == 0 {
+		return cfg, nil, nil
 	}
 	if paths.BpeVocabFile == "" {
 		// The loud half of the silent-no-op guard. Without bpe.vocab the terms

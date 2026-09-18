@@ -97,6 +97,12 @@ RUN set -eux; \
 
 # ---- Runtime stage: the prebuilt CUDA base + thin per-commit layers ----
 FROM ${BASE_IMAGE}
+# Fail closed when a manually supplied/cached base predates the current patch.
+COPY deployment/sherpa /tmp/cassini-native-inputs
+RUN expected=$(/tmp/cassini-native-inputs/build.sh --fingerprint) \
+ && { test "$expected" = "$(cat /opt/cassini/lib/cassini-native-inputs.sha256 2>/dev/null)" \
+      || { echo "CUDA base lacks current Cassini native frontend; rebuild the base." >&2; exit 1; }; } \
+ && rm -rf /tmp/cassini-native-inputs
 ARG CASSINI_BUNDLED_MODELS
 ARG CASSINI_BUNDLED_MODEL_ID
 ARG FFMPEG_VERSION

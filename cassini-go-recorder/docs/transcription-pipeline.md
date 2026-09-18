@@ -13,7 +13,7 @@ This document describes the post-recording transcription pipeline that turns a f
 | Audio + STT | `internal/transcribe/audio.go`, `models.go`, `stt.go` | ffmpeg probe/mix, model download/cache, sherpa-onnx recognizer |
 | Segmentation + format | `internal/transcribe/format.go` | Segment assembly, JSON/VTT emitters, manifest writer |
 | LLM integration | `internal/transcribe/llm.go` | OpenAI-compatible HTTP client for the summary call |
-| Decoder hints | `internal/transcribe/hotwords.go` | Turns the configured vocabulary into sherpa-onnx contextual biasing |
+| Decoder hints | `internal/transcribe/hotwords.go` | Applies vocabulary where supported; records why hints cannot be used otherwise |
 | Summary generation (V4) | `internal/transcribe/summary.go` | System prompt assembly and transcript flattening; the prompt bytes come from the workflow registry |
 | Template (V0 contract) | `internal/insight/workflows/prompts/summarise-template.v0.md` | The summary's section structure — single source of truth |
 
@@ -94,7 +94,7 @@ type BuildConfig struct {
     ModelID      ModelID   // STT model
     CacheDir     string    // model cache root
     SummaryLLM   LLMConfig // step 9
-    Vocabulary   []string  // preferred spellings, biases the decoder
+    Vocabulary   []string  // preferred spellings, applied only by supported decoders
     NumThreads   int
 }
 ```
@@ -147,9 +147,17 @@ The acceptance criteria from D-242 map to:
 
 The operator-configured vocabulary reaches the recorder as
 `CASSINI_TRANSCRIPTION_TERMS`, a JSON array of preferred spellings. It is
-applied to the **decoder**, not to finished text.
+applied to supported **decoders**, not to finished text.
 
-Transducer models decode with `modified_beam_search` by default, whether or not
+Parakeet v3 (FP32 and INT8) uses the model-reference frontend while retaining
+modified beam search and supported vocabulary hints on participant tracks. The
+validated INT8 bundle without `bpe.vocab` retains greedy decoding: it cannot
+encode hints, and unbiased beam search lost more speech in recorded tests. Its detected speech spans
+retain 30 ms of surrounding recorded audio, remain whole within VAD resource
+limits, and receive no synthetic decoder tail. Normal CPU/CUDA builds and the
+developer CLI include the required patched native runtime.
+
+Hint-capable participant transducers use `modified_beam_search`, whether or not
 a vocabulary is set. Hotwords are only read under beam search, and a decoder
 that changed under the operator depending on whether a text box happened to be
 empty would be worse than one that is simply stable. When a vocabulary is set
@@ -161,16 +169,23 @@ automatically from the recording metadata are capped at 0.5: stronger scores
 made short names overwhelm weak evidence and repeat, while 0.5 kept them as a
 nudge in full-meeting comparisons. Each participant track omits its speaker's
 own name and retains the other participant names; the mixed fallback
-keeps the full set because it has no single speaker. With non-empty terms,
-`CASSINI_STT_HINTS_DISABLED=1` restores the previous `greedy_search` decoder as
-well as disabling the hints.
+has no single speaker. Parakeet v3’s merged-audio recovery fallback uses unbiased
+greedy decoding because beam search lost speech in its separate non-VAD tests.
+Only an accepted fallback replaces the final hint provenance with an explicit
+unapplied reason; an attempted but rejected fallback leaves participant hints
+reported as applied. Other model families retain their existing fallback policy.
+`CASSINI_STT_HINTS_DISABLED=1` restores the previous `greedy_search` decoder
+with or without configured terms. When terms were requested, provenance records
+that the switch disabled them. An accepted fallback with no requested hints does
+not invent a hint-provenance record.
 
 The CTC tier keeps greedy search. sherpa-onnx has no hotword support for CTC, so
 the wider beam would cost decode time and buy nothing.
 
 Applying hints requires both of these model properties:
 
-1. the model must be a transducer. The `nemo_ctc` tier cannot be biased.
+1. the model must use a supported beam-search transducer decoder. Parakeet v3
+   supports hints; the `nemo_ctc` tier uses greedy decoding and cannot be biased.
 2. the model bundle must ship `bpe.vocab`, and `modeling_unit` must be `bpe`.
    These two are the dangerous pair: with an empty `bpe_vocab` sherpa fails to
    construct the recognizer (loud), but with `modeling_unit` left unset the
@@ -184,3 +199,24 @@ When terms exist and either requirement does not hold, the build records
 `provenance.speechToText.hints` with
 `applied: false` and a reason, and decodes unbiased. A vocabulary that could not
 be applied is always visible in the manifest rather than silently ignored.
+
+
+### Sparse track PCM anchors
+
+Packet timing and decoded PCM timing can differ: Opus pre-skip consumes samples
+across packets, including sparse packets separated by mute gaps. Before rebasing
+a late track with `asetpts=PTS-STARTPTS`, Cassini probes its first decoded frame
+and restores that frame's timestamp with a separate streaming silence prefix.
+Using the first packet instead can shift subsequent speech minutes earlier.
+The separate prefix retains compatibility with FFmpeg 4.4, whose resampler can
+crash when asked to synthesize a very large initial gap in one compensation.
+The probe stops and reaps FFprobe after one decoded timestamp, keeps stderr
+bounded, and accepts empty tracks. Original packet timestamps and RTP wall-clock
+anchors remain unchanged. PCM consumers (transcription, mix, attribution and
+challenge audio) share this corrected decoded-frame anchor.
+
+Every decode preserves the recorder's absolute meeting PTS with `-copyts`.
+Container `format.start_time` is not the meeting origin: subtracting it on early
+tracks while restoring absolute PTS on late tracks shifts speakers relative to
+one another. The shared origin also preserves the existing RTP/wall-clock
+anchors; no container-start adjustment is applied to those anchors.
