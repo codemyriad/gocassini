@@ -1,0 +1,53 @@
+{
+  "id": "syn_02_quiet_ack_mmhmm",
+  "referenceText": "Mm-hmm, right, that makes sense.",
+  "directSpeech": true,
+  "voice": "am_adam",
+  "langCode": "en-us",
+  "category": "quiet acknowledgment",
+  "gainDb": -6.0,
+  "durationMs": 1621,
+  "sampleRate": 16000,
+  "channels": 1,
+  "sha256": "169654b8fadb4255c8f835a6f89e1df348b6c93162aa2051fde7a54a510b23cb",
+  "description": "Invented synthetic acknowledgement. No private meeting text, audio, or voice cloning.",
+  "requiredPhrase": "right that makes sense",
+  "oldRevision": "010768e6bad8e1401e9b5981502e0ee2e187ad62",
+  "prRevision": "c580c39402842a4a6462f8feb8f418dcb82e24a2",
+  "generator": "kokoro-onnx 0.6.1; requirements pinned in acknowledgement-requirements.txt; same model assets as manifest.json",
+  "validation": [
+    {
+      "name": "old-ack-gpu",
+      "expectedExit": 0,
+      "actualExit": 0,
+      "valid": true,
+      "repeats": 3,
+      "librarySha256": "f0f9793dac7c0703a09be6a73ea224117957853e8cc4d2139b45c9405b2f841a"
+    },
+    {
+      "name": "current-ack-gpu",
+      "expectedExit": 1,
+      "actualExit": 1,
+      "valid": true,
+      "repeats": 3,
+      "librarySha256": "c9b42519b8b4b86715dd950c9c6467b58d8e5af8fcff88508c2d8a462bad7bfd"
+    },
+    {
+      "name": "current-ack-cpu",
+      "expectedExit": 1,
+      "actualExit": 1,
+      "valid": true,
+      "repeats": 1,
+      "librarySha256": "8b0ef5b54472142e1cae73f2abd428e85503d95beee5e0dccbfdb24e725ba19f"
+    },
+    {
+      "name": "old-ack-cpu",
+      "expectedExit": 0,
+      "actualExit": 0,
+      "valid": true,
+      "repeats": 1,
+      "librarySha256": "f0f9793dac7c0703a09be6a73ea224117957853e8cc4d2139b45c9405b2f841a"
+    }
+  ],
+  "regeneratedFixtureHashMatches": true
+}
