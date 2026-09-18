@@ -139,7 +139,6 @@ type Recorder struct {
 	sessionOrder        []*sessionCapture
 	identityByRemote    map[string]participantIdentity
 	remoteByRoomSession map[string]string
-	remoteByParticipant map[string]string
 
 	mu          sync.Mutex
 	subscribers map[string]*subscriberPeer
@@ -253,7 +252,6 @@ func Run(ctx context.Context, cfg config.Config) error {
 		sessionsByRemote:    make(map[string]*sessionCapture),
 		identityByRemote:    make(map[string]participantIdentity),
 		remoteByRoomSession: make(map[string]string),
-		remoteByParticipant: make(map[string]string),
 		startedAt:           time.Now().UTC(),
 		subscriberUpdates:   make(chan struct{}, 1),
 	}
@@ -1693,11 +1691,6 @@ func (r *Recorder) forgetParticipantIdentity(remoteSessionID string) {
 			delete(r.remoteByRoomSession, roomSession)
 		}
 	}
-	for participant, remote := range r.remoteByParticipant {
-		if remote == remoteSessionID {
-			delete(r.remoteByParticipant, participant)
-		}
-	}
 	r.sessionMu.Unlock()
 }
 
@@ -1707,9 +1700,6 @@ func (r *Recorder) mapRemoteSessionLocked(remoteSessionID, roomSessionID, partic
 	}
 	if r.remoteByRoomSession == nil {
 		r.remoteByRoomSession = make(map[string]string)
-	}
-	if r.remoteByParticipant == nil {
-		r.remoteByParticipant = make(map[string]string)
 	}
 	if roomSessionID != "" && roomSessionID != remoteSessionID {
 		r.remoteByRoomSession[roomSessionID] = remoteSessionID
@@ -1726,15 +1716,9 @@ func (r *Recorder) mapRemoteSessionLocked(remoteSessionID, roomSessionID, partic
 			if session := r.sessionsByRemote[remoteSessionID]; session != nil && curr.DisplayName != "" {
 				if session.ParticipantName != curr.DisplayName && (session.ParticipantName == "" || isPlaceholderParticipantName(session.ParticipantName, remoteSessionID, session.ParticipantID)) {
 					session.ParticipantName = curr.DisplayName
-					if r.sessionArtifact != nil {
-						_ = r.sessionArtifact.updateParticipantDisplay(remoteSessionID, session.ParticipantID, curr.DisplayName)
-					}
 				}
 			}
 		}
-	}
-	if participantID != "" && participantID != remoteSessionID {
-		r.remoteByParticipant[participantID] = remoteSessionID
 	}
 }
 
@@ -1753,11 +1737,6 @@ func (r *Recorder) resolveRemoteSessionLocked(sessionID, roomSessionID, particip
 		}
 		if _, ok := r.identityByRemote[sessionID]; ok {
 			return sessionID
-		}
-	}
-	if sessionID == "" && roomSessionID == "" && participantID != "" {
-		if remote, ok := r.remoteByParticipant[participantID]; ok && remote != "" {
-			return remote
 		}
 	}
 	if sessionID != "" {

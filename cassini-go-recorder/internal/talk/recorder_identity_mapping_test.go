@@ -29,7 +29,6 @@ func TestGuestParticipantDisplayNameDecoupledSessionID(t *testing.T) {
 		sessionsByRemote:    make(map[string]*sessionCapture),
 		identityByRemote:    make(map[string]participantIdentity),
 		remoteByRoomSession: make(map[string]string),
-		remoteByParticipant: make(map[string]string),
 	}
 
 	signalingSessionID := "sXHFMabV7NOPjrF_VqGx8qzQ_jEnMozJrLpHrYliUxY1h1-HAaptquQgfCW78K3IXg"
@@ -141,7 +140,6 @@ func TestParticipantsUpdateCallStateUnknownPreservesIdentity(t *testing.T) {
 		sessionsByRemote:    make(map[string]*sessionCapture),
 		identityByRemote:    make(map[string]participantIdentity),
 		remoteByRoomSession: make(map[string]string),
-		remoteByParticipant: make(map[string]string),
 	}
 
 	signalingSessionID := "remote-user-xyz"
@@ -222,7 +220,6 @@ func TestResolveRemoteSessionIDAndForgetParticipantIdentity(t *testing.T) {
 		sessionsByRemote:    make(map[string]*sessionCapture),
 		identityByRemote:    make(map[string]participantIdentity),
 		remoteByRoomSession: make(map[string]string),
-		remoteByParticipant: make(map[string]string),
 	}
 
 	remoteSessionID := "remote-session-1"
@@ -244,24 +241,16 @@ func TestResolveRemoteSessionIDAndForgetParticipantIdentity(t *testing.T) {
 		t.Fatalf("expected %q, got %q", remoteSessionID, got)
 	}
 
-	// 3. Fallback to participantID only when sessionID and roomSessionID are empty
-	if got := r.resolveRemoteSessionID("", "", participantID); got != remoteSessionID {
-		t.Fatalf("expected %q, got %q", remoteSessionID, got)
-	}
-
-	// 4. If sessionID is provided (e.g. unknown session of same user), do NOT alias via participantID to remote-session-1
+	// 3. Fallback when sessionID and roomSessionID are unknown
 	if got := r.resolveRemoteSessionID("unknown-session-2", "", participantID); got != "unknown-session-2" {
 		t.Fatalf("expected unknown session to retain its own session ID without aliasing, got %q", got)
 	}
 
-	// 5. forgetParticipantIdentity prunes identity and index maps so roomSessionID and participantID no longer map to remoteSessionID
+	// 4. forgetParticipantIdentity prunes identity and index maps
 	r.forgetParticipantIdentity(remoteSessionID)
 
 	if got := r.resolveRemoteSessionID("", roomSessionID, ""); got != roomSessionID {
 		t.Fatalf("expected roomSessionID to return itself after forget, got %q", got)
-	}
-	if got := r.resolveRemoteSessionID("", "", participantID); got != participantID {
-		t.Fatalf("expected participantID to return itself after forget, got %q", got)
 	}
 }
 
@@ -284,7 +273,6 @@ func TestPresenceUpdateBeforeSignalingJoinResolvesCorrectly(t *testing.T) {
 		sessionsByRemote:    make(map[string]*sessionCapture),
 		identityByRemote:    make(map[string]participantIdentity),
 		remoteByRoomSession: make(map[string]string),
-		remoteByParticipant: make(map[string]string),
 	}
 
 	signalingSessionID := "signaling-sess-123"
