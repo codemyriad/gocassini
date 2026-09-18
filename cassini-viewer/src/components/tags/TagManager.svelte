@@ -1,12 +1,14 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from "svelte";
   import { fade } from "svelte/transition";
-  import { Ellipsis, X } from "@lucide/svelte";
+  import { cubicOut } from "svelte/easing";
+  import { Ellipsis, History } from "@lucide/svelte";
+  import CloseButton from "../ui/CloseButton.svelte";
 
   import { plural, type TagPick, type TagUpdate, type VocabularyTag } from "../../viewer/annotations";
   import { changedLine, confirmLine, countsLine, createJobTracker, jobStatus, type TagAction, type TagProvider } from "../../viewer/tagManager";
   import { colorFor } from "../../viewer/tagPalette";
-  import TagIcon from "./TagIcon.svelte";
+  import TagChip from "./TagChip.svelte";
   import TagPicker from "./TagPicker.svelte";
   import TagEditor from "./manager/TagEditor.svelte";
   import { popover, stepIndex } from "./popover";
@@ -24,6 +26,9 @@
   let menuEl: HTMLElement;
   let menu: { tag: VocabularyTag; anchor: HTMLElement } | null = null;
   let merging: typeof menu = null;
+  // The tag whose last change is being read, and the icon it hangs off. One at
+  // a time: it is a footnote, not a column.
+  let history: { tag: VocabularyTag; anchor: HTMLElement; line: string } | null = null;
   let editing: { tagId: string; choosing: "color" | null; conflict: { tagId: string; label: string } | null } | null = null;
   let confirming: { action: TagAction; title: string; verb: string } | null = null;
 
@@ -108,22 +113,39 @@
     return { destroy: () => (back as HTMLElement | null)?.focus() };
   }
 
+  const matches = (query: string) => typeof window !== "undefined" && window.matchMedia(query).matches;
+
+  // The shell's own overlay timing (App.svelte): this sheet opens over the
+  // same surface, so it moves with it rather than on a clock of its own.
+  const OVERLAY_MS = 260;
+
+  function sheetSlide(_node: Element) {
+    if (matches("(prefers-reduced-motion: reduce)")) return { duration: 0 };
+    const axis = matches("(max-width: 720px)") ? "Y" : "X";
+    return { duration: OVERLAY_MS, easing: cubicOut, css: (_t: number, u: number) => `transform: translate${axis}(${u * 100}%)` };
+  }
+
+  const scrimFade = () =>
+    matches("(prefers-reduced-motion: reduce)")
+      ? { duration: 0 }
+      : { duration: OVERLAY_MS, easing: cubicOut };
+
   const focus = (node: HTMLElement, on = true) => {
     if (on) node.focus();
   };
 </script>
 
 {#if open}
-  <button type="button" tabindex="-1" class="absolute inset-0 z-41 cursor-pointer bg-black/55" aria-label="Close Manage tags"
-    transition:fade={{ duration: 150 }} on:click={() => dispatch("close")}></button>
+  <button type="button" tabindex="-1" class="absolute inset-0 z-41 cursor-pointer bg-black/55 backdrop-blur-[3px]" aria-label="Close Manage tags"
+    transition:fade={scrimFade()} on:click={() => dispatch("close")}></button>
   <div bind:this={sheet} use:modal role="dialog" aria-modal="true" aria-labelledby="tag-manager-title" tabindex="-1"
-    transition:fade={{ duration: 150 }} on:keydown={onKeydown}
+    transition:sheetSlide on:keydown={onKeydown}
     class="absolute inset-y-0 right-0 z-42 flex w-[min(560px,100%)] flex-col border-base-300 bg-base-100 shadow-2xl min-[721px]:border-l max-[720px]:top-auto max-[720px]:h-[92%] max-[720px]:w-full max-[720px]:rounded-t-box max-[720px]:border-t">
-    <header class="flex items-center gap-2.5 border-b border-base-300 px-5 pb-3 pt-4 max-[720px]:px-4">
+    <header class="tm-head flex items-center gap-2.5 border-b border-base-300 px-5 pb-3 pt-4 max-[720px]:px-4">
       <h2 id="tag-manager-title" class="flex flex-1 items-center gap-2.5 text-[17px] font-semibold">
-        Manage tags <span class="badge badge-outline badge-sm font-mono uppercase">{plural(tags.length, "tag")}</span>
+        Manage tags <span class="badge badge-outline badge-sm font-medium">{plural(tags.length, "tag")}</span>
       </h2>
-      <button type="button" data-close class="btn btn-square btn-ghost btn-sm" aria-label="Close" on:click={() => dispatch("close")}><X size={16} /></button>
+      <CloseButton label="Close" data-close on:click={() => dispatch("close")} />
     </header>
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-8 pt-1.5 max-[720px]:px-2">
       {#if $jobs.notice}<p role="alert" class="alert alert-warning alert-soft sticky top-0 z-10 my-1.5 py-2 text-sm">{$jobs.notice}</p>{/if}
@@ -132,19 +154,28 @@
         {#each tags as tag (tag.tagId)}
           {@const status = jobStatus($jobs, tag.tagId)}
           {@const changed = changedLine(tag)}
-          <li class="flex min-h-13 flex-wrap items-center gap-x-2.5 gap-y-0.5 border-b border-base-content/7 py-2 pl-2.5 pr-1 last:border-b-0" data-tag-color={colorFor(tag)}>
+          <li class="tm-row relative flex min-h-13 flex-wrap items-center gap-x-2.5 gap-y-0.5 py-2 pl-2.5 pr-1" data-tag-color={colorFor(tag)}>
             {#if editing?.tagId === tag.tagId}
-              <div class="-ml-1.5 basis-full rounded-box border border-base-300 bg-base-200 p-2">
+              <div class="basis-full py-0.5">
                 <TagEditor {tag} conflict={editing.conflict} choosing={editing.choosing} on:save={(event) => save(tag, event.detail)}
                   on:cancel={dismiss} on:merge={(event) => run({ kind: "merge", tagId: tag.tagId, into: event.detail })} />
               </div>
             {:else}
-              <span class="grid w-4 place-items-center text-(--tag)"><TagIcon icon={tag.icon} size={15} /></span>
-              <span class="grid min-w-0 flex-1">
-                <span class="truncate font-medium">{tag.label}</span>
-                {#if changed}<span class="truncate text-xs text-base-content/55">{changed}</span>{/if}
-              </span>
-              <span class="whitespace-nowrap text-xs tabular-nums text-base-content/65 max-sm:order-1 max-sm:basis-full max-sm:pl-6.5">{countsLine(tag)}</span>
+              <!-- The chip is the tag, so it is what opens the tag's own
+                   colour, icon and name. The menu still holds the same Rename,
+                   and everything else a chip cannot say. -->
+              <button type="button" class="tm-chip flex min-w-0 flex-1 cursor-pointer items-center" aria-label={`Edit ${tag.label}`}
+                on:click={() => (editing = { tagId: tag.tagId, choosing: null, conflict: null })}>
+                <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
+              </button>
+              <span class="whitespace-nowrap text-xs tabular-nums text-base-content/65">{countsLine(tag)}</span>
+              {#if changed}
+                <button type="button" class="btn btn-square btn-ghost btn-sm text-base-content/55" aria-label={`Last change to ${tag.label}`}
+                  aria-haspopup="dialog" aria-expanded={history?.tag.tagId === tag.tagId}
+                  on:click={(event) => (history = history?.anchor === event.currentTarget ? null : { tag, anchor: event.currentTarget, line: changed })}>
+                  <History size={15} />
+                </button>
+              {/if}
               <button type="button" data-tag-menu={tag.tagId} class="btn btn-square btn-ghost btn-sm" aria-label={`Actions for ${tag.label}`} aria-haspopup="menu"
                 aria-expanded={menu?.tag.tagId === tag.tagId} on:click={(event) => (menu = menu?.anchor === event.currentTarget ? null : { tag, anchor: event.currentTarget })}>
                 <Ellipsis size={16} />
@@ -152,7 +183,7 @@
             {/if}
             {#if status}
               {@const rerun = status.rerun}
-              <p role="status" class="order-2 basis-full pl-6.5 text-xs text-base-content/75">
+              <p role="status" class="order-2 basis-full text-xs text-base-content/75">
                 {status.text}{#if status.failed.length > 0}: {status.failed.join(", ")}{/if}
                 {#if rerun}<button type="button" class="link ml-1 font-medium" on:click={() => run(rerun)}>Run again</button>{/if}
               </p>
@@ -178,9 +209,16 @@
         aria-label={`Actions for ${menu.tag.label}`} class="tag-popover grid w-44 p-1" on:keydown={onMenuKeydown}>
         {#each MENU as [id, text], index (id)}
           <button type="button" role="menuitem" use:focus={index === 0} disabled={id === "merge" && tags.length < 2} class:text-error={id === "delete"}
-            class="rounded-field px-2.5 py-1.5 text-left text-sm hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none disabled:opacity-40"
+            class="rounded-field px-2.5 py-1.5 text-left text-sm hover:bg-base-content/8 focus-visible:bg-base-content/8 focus-visible:outline-none disabled:opacity-40"
             on:click={() => choose(id)}>{text}</button>
         {/each}
+      </div>
+    {/if}
+    {#if history}
+      {@const shown = history}
+      <div use:popover={{ anchor: shown.anchor, close: () => (history = null) }} role="dialog"
+        aria-label={`Last change to ${shown.tag.label}`} class="tag-popover w-56 p-2.5 text-xs">
+        {shown.line}
       </div>
     {/if}
     {#if merging}
@@ -190,3 +228,32 @@
     {/if}
   </div>
 {/if}
+
+<style>
+  /* Drawn between the content, not the row box: the row is padded so the chip
+     and the menu button sit inside it, and a border on the box itself ran past
+     both of them. */
+  .tm-row:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 4px;
+    bottom: 0;
+    border-bottom: 1px solid var(--tm-line, color-mix(in oklch, var(--color-base-content) 7%, transparent));
+  }
+
+  .tm-chip {
+    justify-content: flex-start;
+  }
+  .tm-chip:hover :global(.tag-chip),
+  .tm-chip:focus-visible :global(.tag-chip) {
+    box-shadow: 0 0 0 1px var(--tag);
+  }
+
+  .tm-chip :global(.tag-chip) {
+    height: 22px;
+    gap: 4px;
+    padding: 0 7px;
+    font-size: 12.5px;
+  }
+</style>

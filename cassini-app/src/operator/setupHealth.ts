@@ -207,7 +207,7 @@ const SERVICE_ACCOUNT_SETUP: SetupNoticeStep = {
 // the controls it carried are a section of the operator's own settings now.
 const SETTINGS_OFFER: SetupNoticeStep = {
   label:
-    "Open Operator › Settings. Cassini can make these changes for you, and Nextcloud will ask you " +
+    "Open Operator › Publish pipeline. Cassini can make these changes for you, and Nextcloud will ask you " +
     "to confirm your password. Cassini never sees it",
   commands: [],
   action: "settings",
@@ -550,7 +550,7 @@ function adminNotice(
       steps: [
         {
           label:
-            "Open Operator › Settings and pick who should be able to see recordings. Switching carries the recordings that are already published, and nothing is removed until they have arrived",
+            "Open Operator › Publish pipeline and pick who should be able to see recordings. Switching carries the recordings that are already published, and nothing is removed until they have arrived",
           commands: [],
           action: "settings",
         },

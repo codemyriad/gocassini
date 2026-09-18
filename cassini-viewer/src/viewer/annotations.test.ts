@@ -8,6 +8,7 @@ import {
   groupByTag,
   markRequest,
   matchTags,
+  mergeVocabularyTags,
   moveStretchOps,
   plural,
   removeRequest,
@@ -157,5 +158,53 @@ describe("describeAnnotationError", () => {
 describe("plural", () => {
   it("counts in the singular only for one", () => {
     expect([0, 1, 2].map((n) => plural(n, "meeting"))).toEqual(["0 meetings", "1 meeting", "2 meetings"]);
+  });
+});
+
+describe("mergeVocabularyTags", () => {
+  const tag = (over: Partial<VocabularyTag> = {}): VocabularyTag => ({
+    tagId: "tag_a",
+    namespace: "urn:uuid:one",
+    label: "test",
+    meetings: 1,
+    marks: 1,
+    color: "",
+    icon: "",
+    changedBy: "",
+    changedAtUtc: "",
+    ...over,
+  });
+
+  it("folds one tag listed per namespace into one row, with the counts added up", () => {
+    // The operator answers per (namespace, tagId), and everything in the app
+    // addresses a tag by tagId alone — including keyed each blocks, which throw
+    // on a repeat.
+    const merged = mergeVocabularyTags([
+      tag({ namespace: "urn:uuid:one", meetings: 2, marks: 3 }),
+      tag({ namespace: "urn:uuid:two", meetings: 1, marks: 1 }),
+      tag({ tagId: "tag_b", label: "other" }),
+    ]);
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toMatchObject({ tagId: "tag_a", meetings: 3, marks: 4 });
+    expect(merged[1].tagId).toBe("tag_b");
+  });
+
+  it("keeps the most recent change, and the first style either namespace has", () => {
+    const merged = mergeVocabularyTags([
+      tag({ namespace: "urn:uuid:one", color: "", icon: "", changedBy: "", changedAtUtc: "" }),
+      tag({
+        namespace: "urn:uuid:two",
+        color: "red",
+        icon: "flag",
+        changedBy: "Priya",
+        changedAtUtc: "2026-09-15T22:23:10Z",
+      }),
+    ]);
+    expect(merged[0]).toMatchObject({
+      color: "red",
+      icon: "flag",
+      changedBy: "Priya",
+      changedAtUtc: "2026-09-15T22:23:10Z",
+    });
   });
 });

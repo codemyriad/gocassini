@@ -393,6 +393,7 @@ export function filterMeetingCatalogEntries(
       meeting.title,
       meeting.dateLabel,
       formatMeetingDateShort(meeting.dateLabel),
+      formatMeetingDateWithDay(meeting.dateLabel),
     ].some((haystack) => haystack.toLowerCase().includes(needle)),
   );
 }
@@ -478,6 +479,24 @@ export function formatMeetingDateShort(dateLabel: string): string {
     return day;
   }
   return `${day}, ${h}:${mn}`;
+}
+
+// The weekday, for surfaces with room for it. "Wed 16 Sept 2026, 10:31" reads
+// as a day somebody was in a meeting, where the compact form reads as a record.
+const WEEKDAY_FORMAT = new Intl.DateTimeFormat("en-GB", { weekday: "short" });
+
+export function formatMeetingDateWithDay(dateLabel: string): string {
+  const short = formatMeetingDateShort(dateLabel);
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateLabel);
+  if (!match || short === dateLabel) {
+    return short;
+  }
+  const [, y, m, d] = match;
+  const date = new Date(Number(y), Number(m) - 1, Number(d));
+  if (Number.isNaN(date.getTime())) {
+    return short;
+  }
+  return `${WEEKDAY_FORMAT.format(date)} ${short}`;
 }
 
 // formatMeetingDuration renders a catalog entry's duration the way the browse

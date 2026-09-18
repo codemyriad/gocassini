@@ -248,14 +248,7 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
   if (totals.count > MAX_SELECTED_MEETINGS) {
     const excess = totals.count - MAX_SELECTED_MEETINGS;
     gaps.push(
-      `A bundle holds at most ${MAX_SELECTED_MEETINGS} meetings. Unpick ${excess === 1 ? "one" : excess}.`,
-    );
-  }
-  if (totals.withoutSummary > 0) {
-    gaps.push(
-      totals.withoutSummary === 1
-        ? "One of these has no summary. Its transcript is complete; only the summary section is missing."
-        : `${totals.withoutSummary} of these have no summary. Their transcripts are complete; only the summary section is missing.`,
+      `You can work with up to ${MAX_SELECTED_MEETINGS} meetings at once. Unpick ${excess === 1 ? "one" : excess}.`,
     );
   }
   // summaryUnknown is deliberately NOT a sentence, though it is still counted.
@@ -287,12 +280,6 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
         : `${totals.withoutPortableAudio} of these predate the single-file format (marked in the list). Unpick them to prepare.`,
     );
   }
-  if (totals.meetingsWithoutWordCount > 0 && totals.meetingsWithWordCount > 0) {
-    gaps.push(
-      totals.meetingsWithoutWordCount === 1
-        ? "One of these does not record its length, so the total is a floor."
-        : `${totals.meetingsWithoutWordCount} of these do not record their length, so the total is a floor.`,
-    );
-  }
   return gaps;
 }
+

@@ -10,7 +10,7 @@ import type { StorageMigration, StorageMode, StorageStatus } from "./types";
 // a unit test rather than a grep for a substring.
 //
 // The vocabulary is fixed (D-751): "Everyone with a Nextcloud account" and
-// "Meeting participants", never the enum names, which appear only under
+// "Room members", never the enum names, which appear only under
 // "Details for administrators" as a plain label.
 
 // AccessMode is a mode somebody can actually choose. `""` — no mode resolved —
@@ -21,7 +21,7 @@ export const EVERYONE: AccessMode = "default";
 export const PARTICIPANTS: AccessMode = "access_controlled";
 
 export const EVERYONE_TITLE = "Everyone with a Nextcloud account";
-export const PARTICIPANTS_TITLE = "Meeting participants";
+export const PARTICIPANTS_TITLE = "Room members";
 
 export interface AccessOptionView {
   mode: AccessMode;
@@ -37,13 +37,13 @@ const OPTION_COPY: readonly { mode: AccessMode; title: string; description: stri
     mode: EVERYONE,
     title: EVERYONE_TITLE,
     description:
-      "Anyone with an account on this Nextcloud can see every recording and the name of the room it came from. Works with nothing extra installed.",
+      "Anyone with an account on this Nextcloud can open every meeting, including its recording and transcript, and see which room it came from. Works with nothing extra installed.",
   },
   {
     mode: PARTICIPANTS,
     title: PARTICIPANTS_TITLE,
     description:
-      "Only the people who were in a call can see its recording. Needs two Nextcloud apps: Team folders and Everyone Group.",
+      "Only the room's members can open a recording, including people invited who didn't join. Guests and people added later can't. Needs two Nextcloud apps: Team folders and Everyone Group.",
   },
 ];
 
@@ -95,7 +95,7 @@ export function plural(n: number, noun: string): string {
 
 // existingRecordingsLine is the sentence that sits under the two options, and
 // it is the one an administrator will otherwise be surprised by later: a switch
-// to Meeting participants does NOT narrow the recordings that already exist.
+// to Room members does NOT narrow the recordings that already exist.
 //
 // `switched` means this page has just performed a switch, which is the only
 // moment the app can tell "before" from "after" — the operator records no
@@ -111,7 +111,7 @@ export function existingRecordingsLine(status: StorageStatus | null, switched = 
   }
   if (!known) {
     if (mode === PARTICIPANTS) {
-      return "Only the people in each call can see the recordings you already have.";
+      return "Only room members can see the recordings you already have.";
     }
     return "Anyone with a Nextcloud account can see the recordings you already have.";
   }
@@ -120,16 +120,16 @@ export function existingRecordingsLine(status: StorageStatus | null, switched = 
     // still worth saying, in the tense that fits: it is what the next recording
     // gets.
     if (mode === PARTICIPANTS) {
-      return "No recordings yet. Only the people in each call will be able to see them.";
+      return "No recordings yet. Only room members will be able to see them.";
     }
     return "No recordings yet. Anyone with a Nextcloud account will be able to see them.";
   }
   const have = `You have ${plural(count, "recording")}`;
   if (mode === PARTICIPANTS && switched) {
-    return `${have} from before the switch. Anyone with a Nextcloud account can still see them. New recordings are visible to their participants only.`;
+    return `${have} from before the switch. Anyone with a Nextcloud account can still see them. New recordings are visible to room members only.`;
   }
   if (mode === PARTICIPANTS) {
-    return `${have}. Only the people in each call can see them.`;
+    return `${have}. Only room members can see them.`;
   }
   return `${have}. Anyone with a Nextcloud account can see them.`;
 }
@@ -138,7 +138,7 @@ export function existingRecordingsLine(status: StorageStatus | null, switched = 
 // section will be rendering a moment later.
 export function doneMessage(mode: AccessMode): string {
   if (mode === PARTICIPANTS) {
-    return "Done. New recordings are visible to their participants only.";
+    return "Done. New recordings are visible to room members only.";
   }
   return "Done. New recordings are visible to anyone with a Nextcloud account.";
 }
@@ -160,7 +160,7 @@ const REQUIRED_APPS: readonly { id: string; name: string }[] = [
   { id: "group_everyone", name: "Everyone Group" },
 ];
 
-// requiredApps reads the plan the operator emitted for Meeting participants: an
+// requiredApps reads the plan the operator emitted for Room members: an
 // app with an `enable_app` step is one that is not there. Read from the plan
 // rather than from `installs`, which reports only what a past install ATTEMPT
 // produced and is empty on an instance nobody has tried to install on.
@@ -179,7 +179,7 @@ export function missingApps(status: StorageStatus | null): RequiredApp[] {
 }
 
 // needsPrerequisites is the gate on the checklist panel: it is shown only for
-// Meeting participants, and only while an app is actually missing. Everything
+// Room members, and only while an app is actually missing. Everything
 // else the mode needs (the Team folder, its mappings, the ACL, the manager) is
 // done by the browser during the switch and is one sentence, not a checklist.
 export function needsPrerequisites(status: StorageStatus | null, target: AccessMode): boolean {
@@ -208,8 +208,8 @@ export interface SwitchConfirmation {
 }
 
 const PAUSE_SHORT =
-  "Recording pauses while the switch runs, usually under a minute. You can close this page.";
-const PAUSE_LONG = "Recording pauses while the switch runs, usually a few minutes for this many.";
+  "Recording is paused while the switch runs, usually for under a minute. You can close this page.";
+const PAUSE_LONG = "Recording is paused while the switch runs, usually for a few minutes with this many.";
 
 export function switchConfirmation(
   status: StorageStatus | null,
@@ -218,9 +218,9 @@ export function switchConfirmation(
   if (target === PARTICIPANTS) {
     const { known, count } = recordingCount(status);
     return {
-      title: "Switch to Meeting participants?",
+      title: "Switch to Room members?",
       lines: [
-        "New recordings will only be visible to the people who were in each call.",
+        "New recordings will only be visible to the members of each room.",
         known
           ? `Your ${count} existing ${count === 1 ? "recording stays" : "recordings stay"} visible to everyone.`
           : "Your existing recordings stay visible to everyone.",
@@ -235,9 +235,9 @@ export function switchConfirmation(
     title: "Switch to Everyone with a Nextcloud account?",
     lines: [
       known
-        ? `All ${plural(count, "recording")}, including the ones currently limited to their participants, will become visible to anyone with an account on this Nextcloud.`
-        : "All recordings, including the ones currently limited to their participants, will become visible to anyone with an account on this Nextcloud.",
-      "Switching back later won't re-limit them.",
+        ? `All ${plural(count, "recording")}, including the ones currently limited to room members, will become visible to anyone with an account on this Nextcloud.`
+        : "All recordings, including the ones currently limited to room members, will become visible to anyone with an account on this Nextcloud.",
+      "Switching back later won't restrict them again.",
     ],
     pause: PAUSE_LONG,
     confirmLabel: known
@@ -267,8 +267,8 @@ export interface SwitchStep {
 // step it stopped at, a complete archive exists somewhere.
 const SWITCH_STEPS: readonly { phase: MigrationPhase; label: string }[] = [
   { phase: "copying", label: "Copy recordings to the new location" },
-  { phase: "verifying", label: "Check every file arrived" },
-  { phase: "switching", label: "Switch the rule" },
+  { phase: "verifying", label: "Check every file was copied" },
+  { phase: "switching", label: "Apply the new setting" },
   { phase: "clearing", label: "Remove the old copies" },
 ];
 
@@ -319,9 +319,9 @@ export function switchingTitle(target: AccessMode | null): string {
 export function switchingLead(migration: StorageMigration | null): string {
   const total = migration?.total ?? 0;
   if (total <= 0) {
-    return "You can close this page; the switch carries on.";
+    return "You can close this page and the switch will continue.";
   }
-  return `Moving ${plural(total, "recording")}. You can close this page; the switch carries on.`;
+  return `Moving ${plural(total, "recording")}. You can close this page and the switch will continue.`;
 }
 
 // --- Details for administrators ---------------------------------------------
@@ -349,13 +349,13 @@ export function appsInUse(status: StorageStatus | null): string {
 // mode from what it found on the instance: not a decision somebody took, and
 // not a fallback either, which is why it says when rather than who.
 export function modeSourceLabel(source: string): string {
-  if (source === "user") return "Chosen here";
-  if (source === "resolved_on_enable") return "Set when Cassini was enabled";
-  if (source === "env") return "Declared by a deploy option (development/CI)";
-  if (source === "migrating") return "Left by an interrupted switch";
-  if (source === "default") return "A fallback an older version recorded";
-  if (source === "derived") return "Detected from this Nextcloud by an older version";
-  if (source === "configured") return "Recorded, but Cassini cannot say by whom";
+  if (source === "user") return "On this page, by an administrator";
+  if (source === "resolved_on_enable") return "Automatically, when Cassini was enabled";
+  if (source === "env") return "By a deployment option (development/CI)";
+  if (source === "migrating") return "By a switch that didn't finish";
+  if (source === "default") return "As a fallback, by an older version";
+  if (source === "derived") return "Detected from this Nextcloud, by an older version";
+  if (source === "configured") return "Unknown";
   return source || "Not recorded yet";
 }
 

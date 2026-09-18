@@ -61,7 +61,7 @@ describe("SelectionBar", () => {
     expect(selectionBarSource).toContain('import { MAX_SELECTED_MEETINGS } from "../viewer/selectionModel";');
     expect(selectionBarSource).toContain("$: overCap = count > MAX_SELECTED_MEETINGS;");
     expect(selectionBarSource).toContain("disabled={overCap}");
-    expect(selectionBarSource).toContain("A bundle holds at most {MAX_SELECTED_MEETINGS}");
+    expect(selectionBarSource).toContain("You can work with up to {MAX_SELECTED_MEETINGS}");
   });
 });
 

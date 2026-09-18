@@ -140,7 +140,7 @@ var shipped = []spec{
 		SkillDir:     "cassini-meeting-summary",
 		Name:         "Meeting summary",
 		Question:     "Summarise what happened, what was decided, and what follows.",
-		Description:  "Overview, key points, decisions, action items, open questions and next step. Empty sections say “None.”",
+		Description:  "Overview, key points, decisions, actions, open questions and next steps.",
 	},
 	{
 		ID:           TodosID,
@@ -150,7 +150,7 @@ var shipped = []spec{
 		SkillDir:     "cassini-meeting-todos",
 		Name:         "Commitments and owners",
 		Question:     "List the commitments and who owns them.",
-		Description:  "What each speaker took on and when, then what was assigned but unanswered, then what nobody claimed.",
+		Description:  "What each person committed to and by when, plus anything unassigned.",
 	},
 	{
 		ID:           AskID,
@@ -164,7 +164,7 @@ var shipped = []spec{
 		// caller's. The panel reads an empty Question as "write it yourself"
 		// and shows the box; every other entry shows the question it asks.
 		Question:    "",
-		Description: "Answers your question in up to three sentences, with who said what and what the meetings do not answer.",
+		Description: "A short answer to your question, with who said what and any gaps.",
 	},
 }
 

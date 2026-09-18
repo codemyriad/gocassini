@@ -55,11 +55,20 @@ describe("GenerateCard", () => {
     expect(generateCardSource).toContain("workflows[0].id");
   });
 
-  it("shows what the chosen template will ask", () => {
-    // The name says nothing about what the model is asked to do; the question
-    // is the affordance, and the description says what comes back.
+  it("shows what the chosen template will ask, and nothing about it twice", () => {
+    // The name says nothing about what the model is asked to do, so the
+    // question is the affordance. The registry's description restated it in
+    // other words, which is a second sentence about one thing.
     expect(generateCardSource).toContain("chosenWorkflowEntry.question");
-    expect(generateCardSource).toContain("chosenWorkflowEntry.description");
+    expect(generateCardSource).not.toContain("chosenWorkflowEntry.description");
+  });
+
+  it("folds the provider and model away, under what they are set to", () => {
+    // The first provider and its default model are the right answer for most
+    // people; the ones who want another are the ones who open this.
+    expect(generateCardSource).toContain("Provider and model");
+    expect(generateCardSource).toContain("providerName(chosenProvider)");
+    expect(generateCardSource).toContain("<details class=\"ins-endpoint\">");
   });
 
   it("is contained by the panel it sits in", () => {
@@ -73,8 +82,8 @@ describe("GenerateCard", () => {
     // The model call uses the instance's key, so a run is attributable to the
     // deployment; the document lands in the requester's own files. Both are
     // said here rather than discovered afterwards.
-    expect(generateCardSource).toContain("Transcripts go to the endpoint you pick.");
-    expect(generateCardSource).toContain("saved to your Nextcloud files");
+    expect(generateCardSource).toContain("transcripts are sent to the AI provider");
+    expect(generateCardSource).toContain("document in your Nextcloud files");
   });
 
   it("never puts a raw workflow id in front of somebody who has no names", () => {

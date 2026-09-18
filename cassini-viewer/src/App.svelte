@@ -48,6 +48,7 @@
   } from "./viewer/insights";
   import {
     describeAnnotationError,
+    mergeVocabularyTags,
     tagsByMeeting,
     type AnnotationRequest,
     type MeetingAnnotations,
@@ -73,6 +74,7 @@
   import TagManager from "./components/tags/TagManager.svelte";
   import RoomsRail from "./components/RoomsRail.svelte";
   import SelectionBar from "./components/SelectionBar.svelte";
+  import { focusLayer } from "./components/ui/focusLayer";
 
   // The shell (D-420, re-laid-out in D-654): owns the catalog/list, which room
   // is selected, which meeting is open, the `meeting` hash param, theme, and
@@ -149,12 +151,29 @@
   // next click — and a selection is a thing you are doing, not a place you are.
   let selection: MeetingSelection = EMPTY_SELECTION;
   let prepareOpen = false;
+  // The floating bar's real height, so the list can leave exactly that much
+  // room under its last row.
+  let selectionDockHeight = 0;
   // Said to whoever mounts this shell, each time Prepare opens: the panel's
   // readiness slot is filled from a fact only the shell around it has (whether
   // this deployment has an AI endpoint), and that fact is read once at mount.
   // A reader who was told "no endpoint" and comes back after an administrator
   // configured one is otherwise told it again until they reload (D-749).
-  const dispatch = createEventDispatcher<{ prepareOpen: void }>();
+  const dispatch = createEventDispatcher<{ prepareOpen: void; overlay: boolean }>();
+
+  // Whether something is open over the browse surface. The shell above this
+  // component draws the Browse/Operator tabs, which a scrim positioned inside
+  // here cannot reach: told this, it can dim and blur them with everything
+  // else, so an overlay covers the app rather than most of it.
+  // The rooms drawer is not one of them: it is a part of this surface sliding
+  // into view, not a thing over it, and the tabs stay usable while it is open.
+  $: overlayOpen = prepareOpen || tagManagerOpen || Boolean(selectedInsight || selectedMeetingId);
+  // Which layer is on top, in the order they stack: the meeting sheet, then
+  // Prepare, then the rooms drawer (only ever open on a phone), then Manage
+  // tags. Everything under it is inert, so neither Tab nor a screen reader
+  // wanders into a page the reader cannot see for the drawer over it.
+  $: topLayer = tagManagerOpen ? 4 : railOpen ? 3 : prepareOpen ? 2 : selectedInsight || selectedMeetingId ? 1 : 0;
+  $: dispatch("overlay", overlayOpen);
   $: if (prepareOpen) {
     dispatch("prepareOpen");
   }
@@ -177,6 +196,7 @@
   let transcriptHits: ReadonlyMap<string, readonly MeetingSearchHit[]> = new Map();
   let transcriptOnlyMeetings: MeetingCatalogEntry[] = [];
   let searchCoverage: { visible: number; searched: number } | null = null;
+  let lastNarrowingKey = "";
   let searchDebounce: ReturnType<typeof setTimeout> | undefined;
   // Only the newest query may write the results. Without this a slow earlier
   // request can land after a faster later one and repaint the list with answers
@@ -270,7 +290,12 @@
   // it covers unreachable and read as a page rather than a layer. A percentage
   // transform (rather than svelte/transition's fly, which needs pixels) travels
   // exactly the sheet's own width at whatever size it resolved to.
-  function sheetSlide(_node: Element, { duration = 320 }: { duration?: number }) {
+  // One duration for everything that opens over a surface — the panel, the
+  // scrim under it and the tabs the shell dims — so an overlay reads as a
+  // single move rather than three that finish at different moments.
+  const OVERLAY_MS = 260;
+
+  function sheetSlide(_node: Element, { duration = OVERLAY_MS }: { duration?: number }) {
     if (prefersReducedMotion) {
       return { duration: 0 };
     }
@@ -283,7 +308,7 @@
   }
 
   function scrimFade() {
-    return prefersReducedMotion ? { duration: 0 } : { duration: 200 };
+    return prefersReducedMotion ? { duration: 0 } : { duration: OVERLAY_MS, easing: cubicOut };
   }
 
   // Routing is hash-only (see src/viewer/hashRouting.ts for why and the wire
@@ -548,6 +573,34 @@
   // Feature-detecting the provider method answers neither: every provider here
   // defines it, because the module decides at call time.
   let searchRouteServed = true;
+  // What of the current narrowing the SERVER can apply. Sending it matters
+  // more than it looks: the endpoint bounds its visible set before the
+  // statement, so LIMIT applies to the narrowed population. Narrowing only the
+  // answer would let a caller with a tight filter be told nothing matched while
+  // matches sat just below a page ranked over everything they can read.
+  //
+  // Only some narrowings are expressible. Room keys are prefixed by roomKeyOf:
+  // `id:<roomId>` is a real room the endpoint knows, while `name:` (a room with
+  // a name and no id) and `no-room` are viewer-side groupings with nothing to
+  // send. The endpoint takes one tag, so several picked tags — or "all" mode —
+  // stay client-side too. Those cases still narrow correctly, because the list
+  // resolves hits against the narrowed set; they can just under-report on a
+  // corpus large enough to fill the page from outside the filter.
+  $: searchNarrowing = {
+    roomId: selectedRoomKey?.startsWith("id:") ? selectedRoomKey.slice(3) : "",
+    tag: activeTagIds.length === 1 ? activeTagIds[0] : "",
+  };
+  // Re-run when the narrowing changes under a live query. Without this, picking
+  // a tag after searching leaves the previous answer on screen — which is what
+  // "filtering after a search does nothing" looked like from the outside.
+  $: narrowingKey = `${searchNarrowing.roomId}\u0000${searchNarrowing.tag}`;
+  $: if (narrowingKey !== lastNarrowingKey) {
+    lastNarrowingKey = narrowingKey;
+    if (searchQuery.trim() !== "" && searchOffered) {
+      void runSearch(searchQuery);
+    }
+  }
+
   $: searchOffered =
     typeof dataProvider.searchMeetings === "function" &&
     isMeetingSearchAvailable() &&
@@ -586,6 +639,8 @@
     try {
       outcome = await search(query, {
         perMeeting: SEARCH_HITS_PER_MEETING,
+        roomId: searchNarrowing.roomId,
+        tag: searchNarrowing.tag,
         signal: controller.signal,
       });
     } catch (error) {
@@ -631,7 +686,12 @@
     transcriptHits = new Map(grouped.map((match) => [match.meetingId, match.hits]));
     // Meetings the name/date filter will not produce, in the server's rank
     // order. The list concatenates them after its own matches.
-    const known = new Map(catalogMeetings.map((meeting) => [meeting.id, meeting]));
+    // The NARROWED set, not the whole catalog. Resolving here against every
+    // meeting is what let a transcript-only hit render outside the caller's own
+    // room or tag filter, so picking a tag after searching appeared to do
+    // nothing (D-771). A search result is not a reason to override a narrowing
+    // the reader asked for.
+    const known = new Map(roomMeetings.map((meeting) => [meeting.id, meeting]));
     const nameMatched = new Set(
       filterMeetingCatalogEntries(roomMeetings, query).map((meeting) => meeting.id),
     );
@@ -984,7 +1044,7 @@
   // value meant a provider that could read tags but not write them rendered
   // them unstyled. Nothing leaks by separating them: the tag filter and the
   // picker are gated on canTag where they are used.
-  $: vocabularyTags = tagVocabulary?.tags ?? null;
+  $: vocabularyTags = tagVocabulary ? mergeVocabularyTags(tagVocabulary.tags) : null;
   $: meetingTags = (tagVocabulary ? tagsByMeeting(tagVocabulary) : new Map()) as MeetingTags;
   // A tag deleted or merged away must not leave the list narrowed by a box that is gone.
   $: activeTagIds = selectedTagIds.filter((id) => vocabularyTags?.some((tag) => tag.tagId === id));
@@ -1008,6 +1068,11 @@
   $: selectionTotals = summarizeSelection(pickedMeetings);
   $: selectionGaps = describeSelectionGaps(selectionTotals);
   $: hiddenSelectedCount = countHiddenByView(selection, visibleMeetings);
+  // The same question as countHiddenByView, answered per meeting, for the list
+  // behind the bar's count: a pick the current room or search is not showing
+  // says so beside its own row rather than only in a total.
+  $: shownMeetingIds = new Set(visibleMeetings.map((meeting) => meeting.id));
+  $: hiddenSelectedIds = new Set(selection.ids.filter((id) => !shownMeetingIds.has(id)));
   // Not `selection.ids.length > 0`: the bar is the only surface that reports a
   // meeting having left the archive, so it has to survive a loss that took the
   // last pick with it (selectionModel.shouldShowSelectionBar).
@@ -1227,6 +1292,7 @@
   </div>
 {:else}
   <div class="browse-shell">
+    <div class="contents" inert={topLayer > 0 && topLayer !== 3}>
     <RoomsRail
       rooms={roomBuckets}
       {selectedRoomKey}
@@ -1244,16 +1310,18 @@
       {tagsFailed}
       selectedTagIds={activeTagIds}
       {tagMatch}
+      {audience}
       on:toggleTag={(event) => toggleTagFilter(event.detail)}
       on:tagMatch={(event) => (tagMatch = event.detail)}
       on:manageTags={() => (tagManagerOpen = true)}
     />
+    </div>
 
+    <div class="contents" inert={topLayer > 0}>
     <MeetingList
       meetings={roomMeetings}
       types={browseTypes}
       totalCount={catalogMeetings.length}
-      {audience}
       insights={roomInsights}
       totalInsightCount={insights.length}
       {insightsOffered}
@@ -1269,6 +1337,7 @@
       {pickedIds}
       selectable={canPrepare}
       bottomOverlay={selectionBarUp}
+      bottomOverlayHeight={selectionDockHeight}
       {ncMode}
       {themeMode}
       errorMessage={listError}
@@ -1292,18 +1361,26 @@
       {meetingTags}
       tags={vocabularyTags}
       tagFilterCount={activeTagIds.length}
+      tagFilterIds={activeTagIds}
+      on:removeTag={(event) => toggleTagFilter(event.detail)}
       {tagNotice}
       on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
       on:clearTags={() => (selectedTagIds = [])}
       on:dismissTagNotice={() => (tagNotice = "")}
     />
+    </div>
 
     {#if selectionBarUp}
-      <div class="selection-dock">
+      <div class="selection-dock" bind:offsetHeight={selectionDockHeight} inert={topLayer > 0}>
         <SelectionBar
           count={selection.ids.length}
           hiddenCount={hiddenSelectedCount}
           droppedCount={selection.dropped.length}
+          entries={pickedMeetings}
+          hiddenIds={hiddenSelectedIds}
+          {meetingTags}
+          on:unpick={(event) => handlePick(event)}
+          on:open={(event) => loadCatalogMeeting(event.detail)}
           on:clear={handleClearSelection}
           on:prepare={() => (prepareOpen = true)}
           on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
@@ -1320,6 +1397,8 @@
       <button
         type="button"
         class="shell-scrim rail-scrim"
+        tabindex="-1"
+        inert={topLayer > 3}
         aria-label="Close the room list"
         transition:fade={scrimFade()}
         on:click={() => (railOpen = false)}
@@ -1337,6 +1416,8 @@
       <button
         type="button"
         class="shell-scrim sheet-scrim"
+        tabindex="-1"
+        inert={topLayer > 1}
         aria-label={selectedInsight ? "Close the insight" : "Close the meeting"}
         transition:fade={scrimFade()}
         on:click={closeSheet}
@@ -1344,6 +1425,8 @@
       <aside
         class="meeting-sheet"
         class:tagging={!selectedInsight && Boolean(dataProvider.loadMeetingAnnotations)}
+        inert={topLayer > 1}
+        use:focusLayer
         transition:sheetSlide={{}}
       >
         {#if selectedInsight}
@@ -1396,16 +1479,19 @@
       <button
         type="button"
         class="shell-scrim prepare-scrim"
+        tabindex="-1"
+        inert={topLayer > 2}
         aria-label="Close Prepare"
         transition:fade={scrimFade()}
         on:click={() => (prepareOpen = false)}
       ></button>
-      <aside class="prepare-sheet" transition:sheetSlide={{}}>
+      <aside class="prepare-sheet" inert={topLayer > 2} use:focusLayer transition:sheetSlide={{}}>
         <PreparePanel
           entries={pickedMeetings}
           totals={selectionTotals}
           gaps={selectionGaps}
           loadBundle={loadSelectedBundle}
+          on:unpick={(event) => handlePick(event)}
           on:close={() => (prepareOpen = false)}
         >
           <!-- Forwarded, not decided (D-722). Whether this deployment can be
@@ -1463,6 +1549,12 @@
     cursor: pointer;
     background-color: oklch(0% 0 0 / 0.55);
   }
+  .sheet-scrim,
+  .prepare-scrim,
+  .rail-scrim {
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+  }
   .sheet-scrim {
     z-index: 20;
   }
@@ -1482,7 +1574,10 @@
     right: 0;
     bottom: 0;
     z-index: 30;
-    width: min(680px, 100%);
+    /* Never the whole width: a strip of the blurred list always shows beside
+       it, the thing a reader clicks to go back. */
+    --sheet-peek: 48px;
+    width: min(680px, calc(100% - var(--sheet-peek)));
     display: flex;
     flex-direction: column;
     background-color: var(--color-base-200);
@@ -1491,7 +1586,7 @@
   }
   /* Room for the marking rail on the left and the brackets on the right (D-746). */
   .meeting-sheet.tagging {
-    width: min(940px, 100%);
+    width: min(940px, calc(100% - var(--sheet-peek)));
   }
 
   /* The selection bar floats over the list it belongs to — inset past the rail
@@ -1500,8 +1595,8 @@
      the rail's 268px plus the bar's own margin. */
   .selection-dock {
     position: absolute;
-    left: 288px;
-    right: 20px;
+    left: 276px;
+    right: 8px;
     bottom: 14px;
     z-index: 15;
   }
@@ -1529,8 +1624,8 @@
     }
     /* No rail track to clear. */
     .selection-dock {
-      left: 12px;
-      right: 12px;
+      left: 8px;
+      right: 8px;
     }
     .prepare-sheet {
       top: auto;
@@ -1545,8 +1640,10 @@
       box-shadow: 0 -8px 30px oklch(0% 0 0 / 0.22);
     }
     /* A side drawer on a phone leaves the content it covers unreachable and
-       reads as a page; a bottom sheet reads as a layer over the list. */
+       reads as a page; a bottom sheet reads as a layer over the list, which
+       shows above it rather than beside it. */
     .meeting-sheet {
+      --sheet-peek: 0px;
       top: auto;
       left: 0;
       right: 0;

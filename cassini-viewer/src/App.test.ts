@@ -62,7 +62,36 @@ describe("the shell's answer to a created insight", () => {
 
 describe("the shell's Prepare panel", () => {
   it("announces each opening, so the shell around it can re-read what fills the panel", () => {
-    expect(appSource).toContain('const dispatch = createEventDispatcher<{ prepareOpen: void }>();');
+    expect(appSource).toContain(
+      'const dispatch = createEventDispatcher<{ prepareOpen: void; overlay: boolean }>();',
+    );
     expect(appSource).toContain('$: if (prepareOpen) {\n    dispatch("prepareOpen");\n  }');
+    // And whether anything is open at all, so the shell can cover the tabs it
+    // draws above this component with the same scrim.
+    expect(appSource).toContain('dispatch("overlay", overlayOpen);');
+  });
+
+  // D-771: a search result is not a reason to override the reader's own
+  // narrowing, and a narrowing change under a live query must re-ask.
+  it("resolves transcript-only hits against the narrowed set, not the whole catalog", () => {
+    // roomMeetings is room AND tag narrowed; catalogMeetings is everything.
+    // Resolving against the latter is what let a hit render outside the filter.
+    expect(appSource).toContain("const known = new Map(roomMeetings.map((meeting) => [meeting.id, meeting]));");
+    expect(appSource).not.toContain("const known = new Map(catalogMeetings.map");
+  });
+
+  it("sends the narrowing the server can apply, rather than filtering the answer", () => {
+    expect(appSource).toContain("roomId: searchNarrowing.roomId");
+    expect(appSource).toContain("tag: searchNarrowing.tag");
+    // Only an `id:` room key names a room the endpoint knows; `name:` and
+    // `no-room` are viewer-side groupings with nothing to send.
+    expect(appSource).toContain('selectedRoomKey?.startsWith("id:")');
+    // The endpoint takes one tag, so several picked tags stay client-side.
+    expect(appSource).toContain("activeTagIds.length === 1 ? activeTagIds[0]");
+  });
+
+  it("re-runs the search when the narrowing changes under a live query", () => {
+    expect(appSource).toContain("narrowingKey !== lastNarrowingKey");
+    expect(appSource).toMatch(/narrowingKey !== lastNarrowingKey[\s\S]{0,240}runSearch\(searchQuery\)/);
   });
 });

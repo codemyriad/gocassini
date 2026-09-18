@@ -101,7 +101,7 @@ describe("InsightTemplatesPanel", () => {
   it("keeps the panel's claim about where these templates are used true", () => {
     // The summary step runs a registry workflow by id, so this sentence
     // describes the code rather than an intention (D-718).
-    expect(insightTemplatesPanelSource).toContain("Used by insights and by the summary step.");
+    expect(insightTemplatesPanelSource).toContain("Used for insights and meeting summaries.");
   });
 
   it("keeps loading, an empty registry and a failed fetch as three answers", () => {

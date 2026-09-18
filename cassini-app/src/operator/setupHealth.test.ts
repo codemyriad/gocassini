@@ -689,10 +689,10 @@ describe("the details an administrator opens", () => {
 });
 
 // D-671 gave the notice a button instead of a recipe. D-756 took away the tab
-// the button opened, and D-757 put the controls in Operator › Settings, so the
+// the button opened, and D-757 put the controls in Operator › Publish pipeline, so the
 // offer names that and the prose stops sending anybody to a tab that is gone.
-describe("buildSetupNotice offers Operator › Settings", () => {
-  const OFFER = "Operator › Settings";
+describe("buildSetupNotice offers Operator › Publish pipeline", () => {
+  const OFFER = "Operator › Publish pipeline";
 
   it("leads with the offer when the service account is missing", () => {
     const notice = noticeFor("unavailable", accessAt("owner_account"));
@@ -839,7 +839,7 @@ describe("buildSetupNotice under the default storage model", () => {
 
   // Nothing is missing here — the recorded rule and the storage simply are not
   // the same thing, and the fix is a decision rather than an install.
-  it("points a mode mismatch at Operator › Settings rather than at a command", () => {
+  it("points a mode mismatch at Operator › Publish pipeline rather than at a command", () => {
     const notice = noticeFor(
       "unavailable",
       defaultModeAccess(
@@ -849,7 +849,7 @@ describe("buildSetupNotice under the default storage model", () => {
     );
 
     expect(notice?.cause).toContain("disagree");
-    expect(notice?.steps[0].label).toContain("Operator › Settings");
+    expect(notice?.steps[0].label).toContain("Operator › Publish pipeline");
     expect(notice?.steps[0].action).toBe("settings");
     expect((notice?.steps ?? []).flatMap((step) => step.commands)).toEqual([]);
   });

@@ -43,8 +43,8 @@ describe("the setup notice", () => {
 
   it("sends the step that is a navigation to the settings section", () => {
     // The Setup tab is gone (D-756) and the storage controls are a section of
-    // Operator › Settings (D-757).
-    expect(noticeSource).toContain("Open Operator › Settings");
+    // Operator › Publish pipeline (D-757).
+    expect(noticeSource).toContain("Open Operator › Publish pipeline");
     expect(noticeSource).not.toContain("Open the Setup tab");
     expect(noticeSource).toContain('dispatch("navigate", "settings")');
   });

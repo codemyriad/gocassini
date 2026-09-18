@@ -9,6 +9,7 @@
   import SetupNotice from "./SetupNotice.svelte";
   import { OperatorClient } from "./operator/client";
   import { loadConfig } from "./operator/config";
+  import { guardLeave } from "./operator/unsaved";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
   import { firstRunPlan } from "./operator/firstRun";
   import { isSetupAvailable } from "./operator/ncSetup";
@@ -68,6 +69,10 @@
   // shell chrome, byte-identical output.
   let operatorAvailable = false;
   let surface: Surface = "browse";
+  // Whether a surface below has something open over it — the rooms drawer, a
+  // meeting or insight sheet, Prepare, Manage tags, the operator's own section
+  // drawer. The tabs are this component's, so only it can cover them.
+  let overlayOpen = false;
 
   // setupNotice is non-null when this deployment's recordings substrate is not
   // proven (D-585). Where it renders depends on whether the archive can still be
@@ -221,6 +226,10 @@
     if (next === surface) {
       return;
     }
+    guardLeave(() => goToSurface(next));
+  }
+
+  function goToSurface(next: Surface): void {
     const previous = surface;
     surface = next;
     // Fragment-only pushState — same mechanism the viewer uses; gives history /
@@ -348,6 +357,12 @@
   // address instead of three updates that can disagree about where we are.
   function openRecordingAccess(): void {
     firstRunClosed = true;
+    openPublishPipeline();
+  }
+
+  // The setup notice's "Open Operator › Publish pipeline" steps: the same
+  // destination as the first-run dialog's button, without closing that dialog.
+  function openPublishPipeline(): void {
     if (!operatorAvailable) {
       return;
     }
@@ -476,7 +491,13 @@
 
 {#if operatorAvailable}
   <div class="cassini-shell">
-    <nav class="cassini-shell-nav" data-theme={themeMode} aria-label="Cassini surfaces">
+    <nav
+      class="cassini-shell-nav"
+      class:cassini-shell-nav-covered={overlayOpen}
+      inert={overlayOpen}
+      data-theme={themeMode}
+      aria-label="Cassini surfaces"
+    >
       <button
         type="button"
         class="cassini-shell-tab"
@@ -508,7 +529,7 @@
             tone={setupNotice.tone}
             busy={setupRetryBusy}
             on:retry={retrySetupCheck}
-            on:navigate={() => selectSurface("operator")}
+            on:navigate={openPublishPipeline}
           />
         </div>
       </div>
@@ -528,7 +549,7 @@
             tone={setupNotice.tone}
             busy={setupRetryBusy}
             on:retry={retrySetupCheck}
-            on:navigate={() => selectSurface("operator")}
+            on:navigate={openPublishPipeline}
           />
         </div>
       </div>
@@ -537,7 +558,7 @@
            hidden while an admin surface is active; those mount only when active
            so the operator's SSE stream + polling don't run in the background. -->
       <div class="cassini-shell-surface" class:cassini-shell-hidden={surface !== "browse"}>
-        <ViewerApp {ncMode} {dataProvider} {audience} on:prepareOpen={() => void refreshSetupFeatures()}>
+        <ViewerApp {ncMode} {dataProvider} {audience} on:prepareOpen={() => void refreshSetupFeatures()} on:overlay={(event) => (overlayOpen = event.detail)}>
           <NeedsSetupCard slot="prepare-readiness" notice={insightsNotice} on:open={handleOpenPanel} />
           <!-- Its opposite, driven by the same bit (D-700): the readiness card
                says a question cannot be asked here, this one asks it. The Prepare
@@ -567,6 +588,7 @@
         <FirstRunDialog
           {operatorClient}
           plan={firstRun}
+          mode={storageStatus?.mode ?? ""}
           on:done={() => (firstRunClosed = true)}
           on:settings={openRecordingAccess}
         />
@@ -600,7 +622,7 @@
         tone={setupNotice.tone}
         busy={setupRetryBusy}
         on:retry={retrySetupCheck}
-        on:navigate={() => selectSurface("operator")}
+        on:navigate={openPublishPipeline}
       />
     </div>
   </div>
@@ -616,7 +638,7 @@
           tone={setupNotice.tone}
           busy={setupRetryBusy}
           on:retry={retrySetupCheck}
-          on:navigate={() => selectSurface("operator")}
+          on:navigate={openPublishPipeline}
         />
       </div>
     </div>
@@ -671,10 +693,6 @@
     min-height: 100%;
   }
 
-  /* Deliberately compact: this bar is persistent chrome above a viewer that
-     wants every pixel of height (the player sits at the bottom edge), and it
-     switches between only two surfaces — so it is sized as a control, not as
-     primary navigation. */
   /* Colours resolve through a three-step chain, outermost wins:
        1. Nextcloud's own vars (--color-main-background etc.) — these inherit
           through the shadow boundary from the host page :root (see the D-414
@@ -686,46 +704,61 @@
           and all three fall through to the hardcoded light values below — which
           is why the whole toolbar stayed light in dark mode.
        3. a hardcoded light default, for a build with neither. */
+  /* On a phone an overlay is the whole screen, so the tabs go under it with
+     everything else — the scrims are positioned inside the surface below this
+     bar and cannot reach it on their own. On a wider screen a sheet covers
+     part of the page and the tabs stay where they are. */
   .cassini-shell-nav {
+    transition: filter 260ms cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cassini-shell-nav {
+      transition: none;
+    }
+  }
+  @media (max-width: 720px) {
+    .cassini-shell-nav-covered {
+      filter: blur(3px) brightness(0.45);
+      pointer-events: none;
+    }
+  }
+  .cassini-shell-nav {
+    --shell-ink: var(--color-main-text, var(--color-base-content, #1f2937));
+    --shell-panel: var(--color-main-background, var(--color-base-100, #ffffff));
     display: flex;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
+    align-items: stretch;
+    gap: 0;
+    min-height: 34px;
+    padding: 0 16px 0 0;
     border-bottom: 1px solid var(--color-border-dark, var(--color-base-300, #e5e7eb));
-    background: var(--color-main-background, var(--color-base-100, #ffffff));
+    background: var(--shell-panel);
   }
 
   .cassini-shell-tab {
     appearance: none;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
     border: 0;
+    border-radius: 0;
     background: transparent;
     cursor: pointer;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
     font: inherit;
-    font-size: 0.8125rem;
-    line-height: 1.35;
-    font-weight: 600;
-    color: var(--color-main-text, var(--color-base-content, #1f2937));
-    opacity: 0.7;
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: 550;
+    color: color-mix(in oklch, var(--shell-ink) 65%, var(--shell-panel));
   }
 
   .cassini-shell-tab:hover {
-    background: var(--color-background-hover, var(--color-base-200, #f3f4f6));
-    opacity: 1;
+    background: color-mix(in oklch, var(--shell-ink) 4%, var(--shell-panel));
+    color: var(--shell-ink);
   }
 
-  /* Neutral high-contrast highlight rather than the theme accent: in Nextcloud
-     --color-primary is the SAME colour as the app header, so an accent-filled tab
-     stacked two heavy accent blocks and read louder than the content it switches.
-
-     Swapping the foreground and background tokens inverts the fill for free —
-     near-black on white in light mode, near-white on black in dark — and it
-     tracks whichever theme system is live (NC's or daisyUI's) instead of needing
-     a hardcoded dark-mode branch. */
   .cassini-shell-tab[aria-current="page"] {
-    background: var(--color-main-text, var(--color-base-content, #000000));
-    color: var(--color-main-background, var(--color-base-100, #ffffff));
-    opacity: 1;
+    background: color-mix(in oklch, var(--shell-ink) 7%, var(--shell-panel));
+    color: var(--shell-ink);
+    box-shadow: inset 0 -2px 0 color-mix(in oklch, var(--shell-ink) 65%, var(--shell-panel));
   }
 
   .cassini-shell-surface {

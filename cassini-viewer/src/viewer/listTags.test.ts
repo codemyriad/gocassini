@@ -18,6 +18,7 @@ import {
   planBulkTag,
   wholeTagState,
   withMeetingResult,
+  filterByTagLabel,
 } from "./listTags";
 import { filterMeetingsByRoom } from "./rooms";
 
@@ -71,6 +72,50 @@ describe("filterByTags", () => {
     expect(ids(filterByTags(inRoom, byMeeting, ["t_h"], "any"))).toEqual(["m1"]);
     const tagged = filterByTags(meetings, byMeeting, ["t_b"], "any");
     expect(ids(filterMeetingCatalogEntries(tagged, "hiring"))).toEqual(["m3"]);
+  });
+});
+
+// D-772: typing a tag's name should find the meetings carrying it. Distinct
+// from filterByTags, which narrows by tags the reader has already picked.
+describe("filterByTagLabel", () => {
+  it("finds the meetings carrying a tag by its name", () => {
+    expect(ids(filterByTagLabel(meetings, byMeeting, "hiring"))).toEqual(["m1", "m3"]);
+  });
+
+  // A search box, not a filter: you type part of a name to find the tag you
+  // could not have named exactly.
+  it("matches part of a name, case-insensitively", () => {
+    expect(ids(filterByTagLabel(meetings, byMeeting, "hir"))).toEqual(["m1", "m3"]);
+    expect(ids(filterByTagLabel(meetings, byMeeting, "BUDG"))).toEqual(["m2", "m3"]);
+  });
+
+  it("counts a tag that only marks stretches, not just whole-meeting tags", () => {
+    // m2 carries t_b on stretches only.
+    expect(ids(filterByTagLabel(meetings, byMeeting, "budget"))).toContain("m2");
+  });
+
+  it("finds nothing for a tag nobody carries", () => {
+    expect(filterByTagLabel(meetings, byMeeting, "exec")).toEqual([]);
+  });
+
+  // The union's other half owns the blank-query rule, so this must not claim
+  // everything matches.
+  it("matches nothing on a blank query", () => {
+    expect(filterByTagLabel(meetings, byMeeting, "")).toEqual([]);
+    expect(filterByTagLabel(meetings, byMeeting, "   ")).toEqual([]);
+  });
+
+  it("is unbothered by a meeting with no tags at all", () => {
+    expect(ids(filterByTagLabel(meetings, byMeeting, "hiring"))).not.toContain("m4");
+  });
+
+  // What the list actually renders: name/date OR tag, in catalog order and
+  // never twice. "budget" is both a title word and a tag name here.
+  it("unions with the name filter without duplicating or reordering", () => {
+    const byName = new Set(ids(filterMeetingCatalogEntries(meetings, "budget")));
+    const byTag = new Set(ids(filterByTagLabel(meetings, byMeeting, "budget")));
+    const shown = meetings.filter((m) => byName.has(m.id) || byTag.has(m.id));
+    expect(ids(shown)).toEqual(["m2", "m3"]);
   });
 });
 

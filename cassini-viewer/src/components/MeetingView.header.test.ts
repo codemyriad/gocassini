@@ -7,7 +7,7 @@ import meetingViewSource from "./MeetingView.svelte?raw";
 // has to keep saying while the transcript scrolls under it.
 
 describe("MeetingView header", () => {
-  it("keeps the meeting's name on screen while the transcript scrolls", () => {
+  it("keeps the meeting's name and its tags on screen while the transcript scrolls", () => {
     // It used to be a strip of status badges with the title in a SECOND,
     // scrolling header below it, so the one thing saying which meeting you were
     // reading left the screen the moment you started reading it.
@@ -16,10 +16,17 @@ describe("MeetingView header", () => {
       meetingViewSource.indexOf("</header>"),
     );
     expect(header).toContain('{meeting ? meeting.title : "Meeting transcript viewer"}');
-    expect(header).toContain("roomLabelOf(meeting)");
-    expect(header).toContain("formatMeetingDate(meeting.dateLabel)");
-    expect(header).toContain("formatClockTime(clampedDurationMs)");
-    expect(header).toContain("{#each speakerNames as name}");
+    expect(header).toContain("<MeetingTags session={marks} vocabulary={tagVocabulary} />");
+    // When it happened, where, how long and who was in it are read once on
+    // arrival, so they scroll away with the transcript rather than holding a
+    // third of the screen through it.
+    expect(header).not.toContain("formatMeetingDate(meeting.dateLabel)");
+    expect(meetingViewSource).toContain('<div class="mv-meta px-4 min-[981px]:px-6">');
+    const meta = meetingViewSource.slice(meetingViewSource.indexOf('class="mv-meta'));
+    expect(meta).toContain("roomLabelOf(meeting)");
+    expect(meta).toContain("formatMeetingDate(meeting.dateLabel)");
+    expect(meta).toContain("formatClockTime(clampedDurationMs)");
+    expect(meta).toContain("{#each speakerNames as name}");
     // And there is no second header left to scroll away.
     expect(meetingViewSource).not.toContain('class="m-4 mb-8 min-[981px]:mx-8');
   });
@@ -43,16 +50,9 @@ describe("MeetingView header", () => {
     expect(meetingViewSource).toContain("{#if hasMeetingDate(meeting.dateLabel)}");
   });
 
-  it("keeps the operator's diagnostics off a public page", () => {
-    // formatArtifactMode() says which transcript variant is loaded — "Canonical
-    // transcript", or "Viewer ready" before one is. True, useful to an operator,
-    // and on someone else's page it is a fact about our plumbing (D-775).
+  it("supports the surface prop for embed mode", () => {
+    // Defaulting to "app" is what keeps every existing mount unchanged (D-775).
     expect(meetingViewSource).toContain('export let surface: "app" | "embed" = "app";');
-    expect(meetingViewSource).toContain('{#if surface === "app"}');
-    const badge = meetingViewSource.indexOf("formatArtifactMode()}");
-    const gate = meetingViewSource.lastIndexOf('{#if surface === "app"}', badge);
-    expect(gate).toBeGreaterThan(-1);
-    // Defaulting to "app" is what keeps every existing mount unchanged.
     expect(meetingViewSource).not.toContain('export let surface: "app" | "embed";');
   });
 });
@@ -97,7 +97,7 @@ describe("MeetingView linked insights", () => {
     const summaryAt = meetingViewSource.indexOf("{@html summaryHtml}");
     const insightsAt = meetingViewSource.indexOf("{#if linkedInsights.length > 0}");
     const transcriptAt = meetingViewSource.indexOf(
-      '<p class="text-xl font-semibold text-base-content">Transcript</p>',
+      '<p class="mv-section-title mv-section-title-bar">Transcript</p>',
     );
     expect(summaryAt).toBeGreaterThan(-1);
     expect(insightsAt).toBeGreaterThan(summaryAt);
