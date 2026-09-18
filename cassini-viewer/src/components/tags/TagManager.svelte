@@ -26,9 +26,7 @@
   let menuEl: HTMLElement;
   let menu: { tag: VocabularyTag; anchor: HTMLElement } | null = null;
   let merging: typeof menu = null;
-  // The tag whose last change is being read, and the icon it hangs off. One at
-  // a time: it is a footnote, not a column.
-  let history: { tag: VocabularyTag; anchor: HTMLElement; line: string } | null = null;
+	let history: { tag: VocabularyTag; anchor: HTMLElement; line: string } | null = null;
   let editing: { tagId: string; choosing: "color" | null; conflict: { tagId: string; label: string } | null } | null = null;
   let confirming: { action: TagAction; title: string; verb: string } | null = null;
 
@@ -153,7 +151,7 @@
       <ul>
         {#each tags as tag (tag.tagId)}
           {@const status = jobStatus($jobs, tag.tagId)}
-          {@const changed = changedLine(tag)}
+			{@const changed = changedLine(tag)}
           <li class="tm-row relative flex min-h-13 flex-wrap items-center gap-x-2.5 gap-y-0.5 py-2 pl-2.5 pr-1" data-tag-color={colorFor(tag)}>
             {#if editing?.tagId === tag.tagId}
               <div class="basis-full py-0.5">
@@ -169,13 +167,13 @@
                 <TagChip label={tag.label} color={colorFor(tag)} icon={tag.icon} />
               </button>
               <span class="whitespace-nowrap text-xs tabular-nums text-base-content/65">{countsLine(tag)}</span>
-              {#if changed}
-                <button type="button" class="btn btn-square btn-ghost btn-sm text-base-content/55" aria-label={`Last change to ${tag.label}`}
-                  aria-haspopup="dialog" aria-expanded={history?.tag.tagId === tag.tagId}
-                  on:click={(event) => (history = history?.anchor === event.currentTarget ? null : { tag, anchor: event.currentTarget, line: changed })}>
-                  <History size={15} />
-                </button>
-              {/if}
+				{#if changed}
+					<button type="button" class="btn btn-square btn-ghost btn-sm text-base-content/55" aria-label={`Last change to ${tag.label}`}
+						aria-haspopup="dialog" aria-expanded={history?.tag.tagId === tag.tagId}
+						on:click={(event) => (history = history?.anchor === event.currentTarget ? null : { tag, anchor: event.currentTarget, line: changed })}>
+						<History size={15} />
+					</button>
+				{/if}
               <button type="button" data-tag-menu={tag.tagId} class="btn btn-square btn-ghost btn-sm" aria-label={`Actions for ${tag.label}`} aria-haspopup="menu"
                 aria-expanded={menu?.tag.tagId === tag.tagId} on:click={(event) => (menu = menu?.anchor === event.currentTarget ? null : { tag, anchor: event.currentTarget })}>
                 <Ellipsis size={16} />
@@ -214,13 +212,13 @@
         {/each}
       </div>
     {/if}
-    {#if history}
-      {@const shown = history}
-      <div use:popover={{ anchor: shown.anchor, close: () => (history = null) }} role="dialog"
-        aria-label={`Last change to ${shown.tag.label}`} class="tag-popover w-56 p-2.5 text-xs">
-        {shown.line}
-      </div>
-    {/if}
+		{#if history}
+			{@const shown = history}
+			<div use:popover={{ anchor: shown.anchor, close: () => (history = null) }} role="dialog"
+				aria-label={`Last change to ${shown.tag.label}`} class="tag-popover w-56 p-2.5 text-xs">
+				{shown.line}
+			</div>
+		{/if}
     {#if merging}
       {@const from = merging.tag}
       <TagPicker tags={tags.filter((tag) => tag.tagId !== from.tagId)} creatable={false} label={`Merge “${from.label}” into`}

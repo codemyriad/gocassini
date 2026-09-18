@@ -16,7 +16,7 @@ import {
   type TagPick,
   type VocabularyTag,
 } from "../../viewer/annotations";
-import { colorFor, leastUsedColor, type TagColorId, type TagIconId } from "../../viewer/tagPalette";
+import { colorFor, leastUsedColor, TAG_ICONS, type TagColorId, type TagIconId } from "../../viewer/tagPalette";
 
 export function pickColor(pick: TagPick, vocabulary: readonly VocabularyTag[]): TagColorId {
   return "tagId" in pick
@@ -233,8 +233,8 @@ export function viewMarks(state: MarksState, vocabulary: readonly VocabularyTag[
     const dealtColor = dealt.get(tag.id);
     return {
       tag,
-      color: dealtColor ?? colorFor(entry ?? { id: tag.id, color: state.newColors[labelKey(tag.label)] }),
-      icon: entry?.icon ?? "",
+		color: dealtColor ?? colorFor({ id: tag.id, color: tag.color ?? entry?.color ?? state.newColors[labelKey(tag.label)] }),
+		icon: TAG_ICONS.includes(tag.icon as TagIconId) ? (tag.icon as TagIconId) : (entry?.icon ?? ""),
     };
   };
   const whole = groups.filter((group) => group.whole).map((group) => look(group.tag));

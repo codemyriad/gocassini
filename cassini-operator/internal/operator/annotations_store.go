@@ -538,6 +538,8 @@ type meetingTagMarks struct {
 	TagID     string `json:"tagId"`
 	Whole     bool   `json:"whole"`
 	Stretches int    `json:"stretches"`
+	Color     *string `json:"color,omitempty"`
+	Icon      *string `json:"icon,omitempty"`
 }
 
 // meetingTags is, per visible meeting whose marks are resolved, the tags it
@@ -549,10 +551,11 @@ func (s *annotationStore) meetingTags(ctx context.Context, visible []string) (ma
 		return out, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT i.opus_name, i.tag_id, MAX(i.kind = ?3), SUM(i.kind = ?4)
+SELECT i.opus_name, i.tag_id, MAX(i.kind = ?3), SUM(i.kind = ?4), t.color, t.icon
   FROM annotation_item i
   JOIN json_each(?1) v       ON v.value = i.opus_name
   JOIN meeting_annotations m ON m.opus_name = i.opus_name AND m.state = ?2 AND m.resolved = 1
+  JOIN annotation_tag t      ON t.opus_name = i.opus_name AND t.tag_id = i.tag_id
  GROUP BY i.opus_name, i.tag_id
  ORDER BY i.opus_name, i.tag_id`, namesJSON(names), annotationsStateIndexed, annotationsTargetMeeting, annotationsTargetTimeRange)
 	if err != nil {
@@ -562,8 +565,15 @@ SELECT i.opus_name, i.tag_id, MAX(i.kind = ?3), SUM(i.kind = ?4)
 	for rows.Next() {
 		var name string
 		var entry meetingTagMarks
-		if err := rows.Scan(&name, &entry.TagID, &entry.Whole, &entry.Stretches); err != nil {
+		var color, icon sql.NullString
+		if err := rows.Scan(&name, &entry.TagID, &entry.Whole, &entry.Stretches, &color, &icon); err != nil {
 			return nil, fmt.Errorf("scan meeting tags: %w", err)
+		}
+		if color.Valid {
+			entry.Color = &color.String
+		}
+		if icon.Valid {
+			entry.Icon = &icon.String
 		}
 		out[name] = append(out[name], entry)
 	}

@@ -443,7 +443,7 @@ func TestTagVocabularyListsEachVisibleMeetingsTags(t *testing.T) {
 		meetingMark("m1", "tag_h"), rangeMark("m2", "tag_h", 0, 1000), rangeMark("m3", "tag_h", 2000, 3000), rangeMark("m4", "tag_b", 0, 500)))
 	other := annotatedFile(t, "c2", testTagNamespaceA, []testTag{{"tag_s", "layoffs"}}, meetingMark("m1", "tag_s"))
 	recordMarks(t, store, "JOB2.opus", other)
-	const want = "[{MeetingID:MEET-1 Tags:[{TagID:tag_b Whole:false Stretches:1} {TagID:tag_h Whole:true Stretches:2}]}]"
+	const want = "[{MeetingID:MEET-1 Tags:[{TagID:tag_b Whole:false Stretches:1 Color:<nil> Icon:<nil>} {TagID:tag_h Whole:true Stretches:2 Color:<nil> Icon:<nil>}]}]"
 	tags := func(visible ...string) tagVocabularyResponse {
 		srv := searchUpstream{catalog: searchTestCatalog, visible: visible}.server(t)
 		t.Cleanup(srv.Close)
