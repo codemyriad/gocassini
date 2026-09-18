@@ -47,6 +47,7 @@
     "models/parakeet-tdt-0.6b-v3/encoder.onnx": "7f30e635992b69c55df74fcd69d6af8dde0b0c07756a77c1b1f19c9354fb8283",
     "models/parakeet-tdt-0.6b-v3/joiner.onnx": "24c96f15bc55f8a72039e0d4683983ae66d17d47432c26e147f4f8d945d63192",
     "models/parakeet-tdt-0.6b-v3/tokens.txt": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
-    "vad/silero_vad.onnx": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+    "vad/silero_vad.onnx": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+    "models/parakeet-tdt-0.6b-v3/encoder.weights": "3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8"
   }
 }

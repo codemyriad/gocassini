@@ -32,8 +32,10 @@ actual old source, not that emulation.
 
 ## Run
 
-These are explicit model tests: ordinary unit tests do not load gigabytes of
-weights. Selecting the build tag requires the models and fails if they are
+These model tests run automatically in the normal `CI` workflow, in the
+`Unit tests (cassini-go-recorder)` job, on every code PR and main/master push.
+They use FP32 Parakeet on the hosted CPU runner; no `full-ci` label or GPU is
+needed. Fast local unit runs can still omit the model-test build tag. Selecting the build tag requires the models and fails if they are
 missing; it does not silently skip the speech assertion or download models.
 FFmpeg/ffprobe and the cached FP32 `parakeet-tdt-0.6b-v3` and Silero models are
 required. From `cassini-go-recorder`:
@@ -48,8 +50,12 @@ For the CUDA native package, add `--backend cuda` before `--test` and set
 `CASSINI_ASR_REGRESSION_DEVICE=cuda`. Tests use the FP32 model on either device;
 this fixture does not certify the separately quantized INT8 bundle.
 
-The test is opt-in and is not yet wired into an automatic CI job. Its measured
-CPU run took about eight seconds with already-cached models. The checked-in
+CI caches the model weights and production CPU native library. It verifies
+all inference model files against `models.sha256`, including the external
+encoder weights, before running the tests. Verified caches are saved before
+recognition assertions so a genuine test failure does not cause another large
+download on the next run. Results are uploaded as `synthetic-asr-cpu-results`.
+The garden test took about eight seconds locally with already-cached models. The checked-in
 fixture is about 208 KiB; synthesizer weights are unnecessary to run the test.
 
 ## A second synthetic case currently fails the PR

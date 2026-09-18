@@ -213,6 +213,89 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test -race ./...
 
+      # Real recognition belongs in ordinary PR CI. FP32 runs on the hosted
+      # CPU runner; neither full-ci nor a self-hosted GPU is needed. The tag
+      # keeps model loading out of fast local unit runs, not out of CI.
+      - name: Restore synthetic ASR models
+        if: matrix.module == 'cassini-go-recorder'
+        id: asr-models
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/synthetic-asr-models
+          key: synthetic-asr-fp32-v1-${{ hashFiles('deployment/models/fetch-models.sh', 'cassini-go-recorder/internal/transcribe/testdata/synthetic-boundary/models.sha256') }}
+      - name: Prepare and verify synthetic ASR models
+        if: matrix.module == 'cassini-go-recorder'
+        timeout-minutes: 15
+        env:
+          CASSINI_CACHE_ROOT: ${{ runner.temp }}/synthetic-asr-models
+        run: |
+          set -euo pipefail
+          if [[ ! -d "$CASSINI_CACHE_ROOT/models/parakeet-tdt-0.6b-v3" ]]; then
+            ./deployment/models/fetch-models.sh "$CASSINI_CACHE_ROOT" parakeet-tdt-0.6b-v3
+          fi
+          mkdir -p "$CASSINI_CACHE_ROOT/vad"
+          if [[ ! -s "$CASSINI_CACHE_ROOT/vad/silero_vad.onnx" ]]; then
+            curl --fail --location --retry 3 \
+              https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx \
+              -o "$CASSINI_CACHE_ROOT/vad/silero_vad.onnx"
+          fi
+          cd "$CASSINI_CACHE_ROOT"
+          sha256sum --check "$GITHUB_WORKSPACE/cassini-go-recorder/internal/transcribe/testdata/synthetic-boundary/models.sha256"
+      # Save verified inputs before assertions: a real recognition failure
+      # must not force another multi-gigabyte download on the next run.
+      - name: Cache verified synthetic ASR models
+        if: matrix.module == 'cassini-go-recorder' && steps.asr-models.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/synthetic-asr-models
+          key: ${{ steps.asr-models.outputs.cache-primary-key }}
+      - name: Restore synthetic ASR native runtime
+        if: matrix.module == 'cassini-go-recorder'
+        id: asr-native
+        uses: actions/cache/restore@v4
+        with:
+          path: cassini-go-recorder/.build-cache/native-cpu/lib
+          key: ${{ runner.os }}-${{ runner.arch }}-synthetic-asr-native-v1-${{ hashFiles('deployment/sherpa/build.sh', 'deployment/sherpa/parakeet-v3-reference.patch', 'cassini-go-recorder/scripts/build-cassini-bin.sh', 'cassini-go-recorder/go.mod') }}
+      - name: Build synthetic ASR regression tests
+        if: matrix.module == 'cassini-go-recorder'
+        timeout-minutes: 20
+        env:
+          ASR_TEST_BINARY: ${{ runner.temp }}/synthetic-asr.test
+        run: |
+          sudo apt-get install -y --no-install-recommends build-essential cmake curl unzip
+          cassini-go-recorder/scripts/build-cassini-bin.sh --test \
+            -c -p 2 -tags asrregression -o "$ASR_TEST_BINARY" ./internal/transcribe
+      - name: Cache synthetic ASR native runtime
+        if: matrix.module == 'cassini-go-recorder' && steps.asr-native.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: cassini-go-recorder/.build-cache/native-cpu/lib
+          key: ${{ steps.asr-native.outputs.cache-primary-key }}
+      - name: Run synthetic speech regressions (CPU, FP32)
+        if: matrix.module == 'cassini-go-recorder'
+        timeout-minutes: 5
+        working-directory: cassini-go-recorder/internal/transcribe
+        env:
+          CASSINI_CACHE_ROOT: ${{ runner.temp }}/synthetic-asr-models
+          CASSINI_BUNDLED_MODEL_ROOT: ${{ runner.temp }}/synthetic-asr-models
+          CASSINI_BUNDLED_MODELS: parakeet-tdt-0.6b-v3
+          CASSINI_DISALLOW_MODEL_DOWNLOAD: "1"
+          CASSINI_ASR_REGRESSION_DEVICE: cpu
+          LD_LIBRARY_PATH: ${{ github.workspace }}/cassini-go-recorder/dist
+          ASR_TEST_BINARY: ${{ runner.temp }}/synthetic-asr.test
+          ASR_TEST_LOG: ${{ runner.temp }}/synthetic-asr.log
+        run: |
+          set -euo pipefail
+          "$ASR_TEST_BINARY" -test.run '^TestSynthetic' -test.count=1 -test.v -test.timeout=5m 2>&1 | tee "$ASR_TEST_LOG"
+      - name: Upload synthetic ASR results
+        if: always() && matrix.module == 'cassini-go-recorder'
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-asr-cpu-results
+          path: ${{ runner.temp }}/synthetic-asr.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   integration:
     name: "Integration (${{ matrix.script }}${{ matrix.nextcloud_image && format(', {0}', matrix.nextcloud_image) || '' }})"
     runs-on: ubuntu-latest
