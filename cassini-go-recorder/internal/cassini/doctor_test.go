@@ -90,3 +90,16 @@ func TestModelFilesCheckWarnsForAnUnknownModel(t *testing.T) {
 		t.Fatalf("modelFilesCheck(unknown) = %v, want warn", check.status)
 	}
 }
+
+func TestNativeRuntimeCheckNeverFails(t *testing.T) {
+	check := nativeRuntimeCheck()
+	if check.status == doctorFail {
+		t.Fatalf("nativeRuntimeCheck returned fail: %+v", check)
+	}
+	if check.status != doctorOK && check.status != doctorWarn {
+		t.Fatalf("unexpected doctor status: %s", check.status)
+	}
+	if !strings.Contains(check.summary, "speech engine runtime") {
+		t.Fatalf("unexpected check summary: %s", check.summary)
+	}
+}

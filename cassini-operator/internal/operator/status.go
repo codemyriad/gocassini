@@ -26,9 +26,10 @@ import (
 // short TTL; the record doctor subprocess remains opt-in via /healthz.
 
 const (
-	envSTTDevice      = "CASSINI_STT_DEVICE"
-	envSTTModel       = "CASSINI_STT_MODEL"
-	envSTTCUDACapable = "CASSINI_STT_CUDA_CAPABLE"
+	envSTTDevice       = "CASSINI_STT_DEVICE"
+	envSTTModel        = "CASSINI_STT_MODEL"
+	envSTTCUDACapable  = "CASSINI_STT_CUDA_CAPABLE"
+	envNativeBuildInfo = "CASSINI_NATIVE_BUILDINFO"
 
 	envTalkSignalingInternalSecret = "CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
 
@@ -142,11 +143,13 @@ type statusPrerequisite struct {
 }
 
 type statusSTT struct {
-	Device       string `json:"device"`
-	Quality      string `json:"quality"`
-	ModelID      string `json:"model_id,omitempty"`
-	DeviceUsable bool   `json:"device_usable"`
-	Detail       string `json:"detail,omitempty"`
+	Device            string `json:"device"`
+	Quality           string `json:"quality"`
+	ModelID           string `json:"model_id,omitempty"`
+	DeviceUsable      bool   `json:"device_usable"`
+	Detail            string `json:"detail,omitempty"`
+	ReferenceFrontend *bool  `json:"reference_frontend,omitempty"`
+	Warning           string `json:"warning,omitempty"`
 }
 
 type statusTalk struct {
@@ -171,6 +174,20 @@ type statusTalk struct {
 // secret (required for invisible HPB-internal recording) is set.
 func signalingInternalSecretConfigured() bool {
 	return strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != ""
+}
+
+// probeReferenceFrontend reports whether the active sherpa native library
+// buildinfo indicates the Cassini Parakeet v3 reference frontend patch is present.
+func probeReferenceFrontend() (known bool, isReference bool) {
+	path := os.Getenv(envNativeBuildInfo)
+	if path == "" {
+		path = "/opt/cassini/lib/cassini-native-buildinfo.txt"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, false
+	}
+	return true, strings.Contains(string(data), "+cassini-parakeet-v3-reference-v1")
 }
 
 type statusCheck struct {
@@ -228,6 +245,14 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
+	}
+	if effective.Model == modelParakeetV3Fp32 || effective.Model == modelParakeetV3Int8 {
+		if known, isRef := probeReferenceFrontend(); known {
+			resp.STT.ReferenceFrontend = &isRef
+			if !isRef {
+				resp.STT.Warning = "Parakeet v3 running on upstream sherpa runtime; reference frontend optimization is inactive; falling back to standard decode profile"
+			}
+		}
 	}
 	resp.ImageTag = resp.Version
 	resp.DB = statusCheck{OK: true, Path: rt.cfg.DBPath}

@@ -113,10 +113,26 @@ func collectDoctorChecks(target string) []doctorCheck {
 	if target == "all" || target == "build" {
 		checks = append(checks, commandCheck("ffmpeg"))
 		checks = append(checks, commandCheck("ffprobe"))
+		checks = append(checks, nativeRuntimeCheck())
 		checks = append(checks, sttModelCacheChecks()...)
 	}
 
 	return checks
+}
+
+func nativeRuntimeCheck() doctorCheck {
+	ver := transcribe.RuntimeVersion()
+	if transcribe.HasReferenceRuntime() {
+		return doctorCheck{
+			status:  doctorOK,
+			summary: fmt.Sprintf("speech engine runtime %s (reference frontend active)", ver),
+		}
+	}
+	return doctorCheck{
+		status:  doctorWarn,
+		summary: fmt.Sprintf("speech engine runtime %s (reference frontend optimization inactive; falling back to standard decode profile)", ver),
+		advice:  "rebuild with cassini-go-recorder/scripts/build-cassini-bin.sh to enable Parakeet v3 reference frontend optimizations",
+	}
 }
 
 func writableDirCheck(path string, label string) doctorCheck {

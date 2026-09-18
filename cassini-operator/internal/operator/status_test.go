@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1274,5 +1276,67 @@ func TestStatusHandlerReportsATierTheImageMustDownloadAsReady(t *testing.T) {
 	}
 	if !rt.modelNeedsDownload(resp.STT.ModelID) {
 		t.Fatal("this fixture must describe a model that is in neither root")
+	}
+}
+
+func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.BundledModelRoot = t.TempDir()
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
+	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser})
+	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
+
+	tmp := t.TempDir()
+	infoPatched := filepath.Join(tmp, "buildinfo-patched.txt")
+	if err := os.WriteFile(infoPatched, []byte("sherpa=1.13.7\nfrontend=+cassini-parakeet-v3-reference-v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	infoUnpatched := filepath.Join(tmp, "buildinfo-unpatched.txt")
+	if err := os.WriteFile(infoUnpatched, []byte("sherpa=1.13.7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test with patched library
+	t.Setenv(envNativeBuildInfo, infoPatched)
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.STT.ReferenceFrontend == nil || !*resp.STT.ReferenceFrontend {
+		t.Fatalf("expected reference_frontend=true, got %#v", resp.STT.ReferenceFrontend)
+	}
+	if resp.STT.Warning != "" {
+		t.Fatalf("expected empty warning, got %q", resp.STT.Warning)
+	}
+	if !resp.OK {
+		t.Fatalf("expected ok=true, got %#v", resp)
+	}
+
+	// Test with unpatched library
+	t.Setenv(envNativeBuildInfo, infoUnpatched)
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.STT.ReferenceFrontend == nil || *resp.STT.ReferenceFrontend {
+		t.Fatalf("expected reference_frontend=false, got %#v", resp.STT.ReferenceFrontend)
+	}
+	if !strings.Contains(resp.STT.Warning, "upstream sherpa runtime") {
+		t.Fatalf("expected warning about upstream runtime, got %q", resp.STT.Warning)
+	}
+	if !resp.OK {
+		t.Fatalf("unpatched runtime warning must NOT set ok=false: %#v", resp)
 	}
 }

@@ -24,17 +24,42 @@ func TestReferencePolicyPreservesUtterancesOnlyForV3(t *testing.T) {
 	}
 }
 
-func TestReferenceRuntimeRequirement(t *testing.T) {
+func TestReferenceRuntimeValidation(t *testing.T) {
 	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
-		if err := validateReferenceRuntime(id, "1.13.7"); err == nil || !strings.Contains(err.Error(), "build-cassini-bin.sh") {
-			t.Fatalf("missing actionable rejection: %v", err)
+		isRef, warn := checkReferenceRuntime(id, "1.13.7")
+		if isRef || warn == "" || !strings.Contains(warn, parakeetReferenceRuntimeMarker) {
+			t.Fatalf("expected warning for unpatched runtime on %s, got isRef=%v, warn=%q", id, isRef, warn)
 		}
-		if err := validateReferenceRuntime(id, "1.13.7"+parakeetReferenceRuntimeMarker); err != nil {
-			t.Fatal(err)
+		if legacyWarn := validateReferenceRuntime(id, "1.13.7"); legacyWarn != warn {
+			t.Fatalf("validateReferenceRuntime mismatch: got %q, want %q", legacyWarn, warn)
+		}
+		isRef, warn = checkReferenceRuntime(id, "1.13.7"+parakeetReferenceRuntimeMarker)
+		if !isRef || warn != "" {
+			t.Fatalf("expected reference runtime satisfied for %s, got isRef=%v, warn=%q", id, isRef, warn)
+		}
+		if legacyWarn := validateReferenceRuntime(id, "1.13.7"+parakeetReferenceRuntimeMarker); legacyWarn != "" {
+			t.Fatalf("expected empty warning for patched runtime, got %q", legacyWarn)
 		}
 	}
-	if err := validateReferenceRuntime("other", "1.13.7"); err != nil {
-		t.Fatal(err)
+	isRef, warn := checkReferenceRuntime("other", "1.13.7")
+	if !isRef || warn != "" {
+		t.Fatalf("expected non-v3 model to not require reference runtime, got isRef=%v, warn=%q", isRef, warn)
+	}
+}
+
+func TestUnpatchedRuntimeDegradesGracefullyToStandardPolicy(t *testing.T) {
+	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+		isRef, warn := checkReferenceRuntime(id, "1.13.7")
+		if isRef || warn == "" {
+			t.Fatalf("expected unpatched runtime to return isRef=false with warning")
+		}
+		policy := defaultVADDecodePolicy()
+		if isRef {
+			policy = vadDecodePolicyForModel(id)
+		}
+		if policy.preserveVADSpan {
+			t.Fatalf("fallback policy should have preserveVADSpan=false, got %+v", policy)
+		}
 	}
 }
 

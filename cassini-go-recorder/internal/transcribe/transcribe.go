@@ -131,6 +131,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// records what its decoder declared, and the claim survives only if all of
 	// them made it. See wordEndGuarantee in backend.go.
 	wordEnds := &wordEndGuarantee{}
+	refGuarantee := &referenceFrontendGuarantee{}
 
 	// Resolve the vocabulary pool once before any pass runs. Each participant
 	// track derives a decoder that omits its own name; the manifest
@@ -162,14 +163,15 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		}
 	}
 	pass := passConfig{
-		ModelPaths:      modelPaths,
-		VADPath:         vadPath,
-		Backend:         backend,
-		Device:          cfg.Device,
-		NumThreads:      cfg.NumThreads,
-		Decoder:         decoder,
-		SpeakerDecoders: speakerDecoderMap,
-		Guarantee:       wordEnds,
+		ModelPaths:         modelPaths,
+		VADPath:            vadPath,
+		Backend:            backend,
+		Device:             cfg.Device,
+		NumThreads:         cfg.NumThreads,
+		Decoder:            decoder,
+		SpeakerDecoders:    speakerDecoderMap,
+		Guarantee:          wordEnds,
+		ReferenceGuarantee: refGuarantee,
 	}
 
 	segments, err := transcribePass(ctx, mkvPath, streams, pass, stdout)
@@ -256,8 +258,9 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		SummaryModel:     cfg.SummaryLLM.Model,
 		HasSummary:       hasSummary,
 		Additional:       additionalTranscripts,
-		Attribution:      attrProv,
-		WordTimings:      wordEnds.provenance(),
+		Attribution:       attrProv,
+		WordTimings:       wordEnds.provenance(),
+		ReferenceFrontend: refGuarantee.provenance(cfg.ModelID),
 	}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
@@ -325,8 +328,9 @@ type passConfig struct {
 	// SpeakerDecoders overrides Decoder for participant streams whose own
 	// label was removed. Mixed fallback has no speaker to exclude and selects
 	// its decoder separately through mergedFallbackDecoder.
-	SpeakerDecoders map[int]*DecoderConfig
-	Guarantee       *wordEndGuarantee
+	SpeakerDecoders    map[int]*DecoderConfig
+	Guarantee          *wordEndGuarantee
+	ReferenceGuarantee *referenceFrontendGuarantee
 }
 
 // withThreads returns a copy running on a different thread budget, for the
@@ -337,7 +341,7 @@ func (p passConfig) withThreads(n int) passConfig {
 }
 
 func (p passConfig) newRecognizer() (SpeechRecognizer, error) {
-	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee)
+	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee, p.ReferenceGuarantee)
 }
 
 func (p passConfig) decoderForStream(stream AudioStream) *DecoderConfig {
