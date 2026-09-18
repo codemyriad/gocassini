@@ -34,7 +34,7 @@ func openDurableAnnotationDB(path string) (sidecarDB, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if version > annotationsSchemaVersion || (version != 0 && version != 2 && version != 3 && version != 4 && version != 5) {
+	if version > annotationsSchemaVersion || (version != 0 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6) {
 		return fail(fmt.Errorf("unsupported annotations schema %d; preserving database", version))
 	}
 	if version == annotationsSchemaVersion {
@@ -88,7 +88,8 @@ DELETE FROM annotations_meta WHERE key='built';
 				return err
 			}
 		}
-		if _, err := tx.Exec(`CREATE TABLE annotation_batch_receipt (
+		if version < 5 {
+			if _, err := tx.Exec(`CREATE TABLE annotation_batch_receipt (
  caller TEXT NOT NULL, request_id TEXT NOT NULL, request_hash TEXT NOT NULL,
  response BLOB NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()),
  PRIMARY KEY(caller,request_id)
@@ -99,7 +100,15 @@ CREATE TABLE annotation_batch_target (
  PRIMARY KEY(caller,request_id,opus_name),
  FOREIGN KEY(caller,request_id) REFERENCES annotation_batch_receipt(caller,request_id) ON DELETE CASCADE
 );`); err != nil {
-			return err
+				return err
+			}
+		}
+		if version >= 3 && version < 6 {
+			for _, statement := range []string{`ALTER TABLE annotation_tag ADD COLUMN color TEXT`, `ALTER TABLE annotation_tag ADD COLUMN icon TEXT`, `CREATE INDEX IF NOT EXISTS annotation_tag_by_id ON annotation_tag(tag_id, opus_name)`} {
+				if _, err := tx.Exec(statement); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+					return err
+				}
+			}
 		}
 		_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", annotationsSchemaVersion))
 		return err

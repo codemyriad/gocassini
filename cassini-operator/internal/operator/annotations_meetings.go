@@ -166,11 +166,7 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 // commitAndRecord is the one write path, for a batch of marks and a tag job
 // alike: commit the batch, keep the colours of tags it created, index it.
 func (s *annotationService) commitAndRecord(ctx context.Context, meetingID, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
-	result, err := s.commitDocument(ctx, meetingID, relPath, visible, caller, request)
-	if err == nil && !result.Replayed {
-		s.styleNewTags(ctx, request, result)
-	}
-	return result, err
+	return s.commitDocument(ctx, meetingID, relPath, visible, caller, request)
 }
 
 // styleNewTags keeps the colour a batch chose for each tag it created: one no

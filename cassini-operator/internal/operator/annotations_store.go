@@ -22,7 +22,7 @@ const (
 	annotationsStoreFilename = "annotations.sqlite3"
 
 	// annotationsSchemaVersion is upgraded through managed migrations.
-	annotationsSchemaVersion = 5
+	annotationsSchemaVersion = 6
 
 	annotationsStateIndexed = "indexed"
 	// annotationsStateUnavailable: the meeting is known but its marks could not
@@ -72,8 +72,10 @@ CREATE TABLE IF NOT EXISTS annotation_tag (
   opus_name    TEXT NOT NULL REFERENCES meeting_annotations(opus_name) ON DELETE CASCADE,
   tag_id       TEXT NOT NULL,
   label        TEXT NOT NULL,
-  -- foldTagLabel(label): SQLite's NOCASE folds ASCII only.
-  label_folded TEXT NOT NULL,
+	-- foldTagLabel(label): SQLite's NOCASE folds ASCII only.
+	label_folded TEXT NOT NULL,
+	color        TEXT,
+	icon         TEXT,
   PRIMARY KEY (opus_name, tag_id)
 );
 
@@ -87,6 +89,7 @@ CREATE TABLE IF NOT EXISTS annotation_item (
 
 CREATE INDEX IF NOT EXISTS annotation_item_by_meeting ON annotation_item(opus_name, tag_id);
 CREATE INDEX IF NOT EXISTS annotation_tag_by_label ON annotation_tag(label_folded);
+CREATE INDEX IF NOT EXISTS annotation_tag_by_id ON annotation_tag(tag_id, opus_name);
 `
 
 // annotationStore implements annotationIndex for the write paths, and serves
@@ -133,8 +136,10 @@ type projectedDocument struct {
 	AudioOpusSHA256 string `json:"audioOpusSha256"`
 	TagNamespace    string `json:"tagNamespace"`
 	Tags            []struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
+		ID    string  `json:"id"`
+		Label string  `json:"label"`
+		Color *string `json:"color"`
+		Icon  *string `json:"icon"`
 	} `json:"tags"`
 	Items []struct {
 		ID     string `json:"id"`
@@ -147,7 +152,10 @@ type projectedDocument struct {
 	} `json:"items"`
 }
 
-type projectedTag struct{ id, label string }
+type projectedTag struct {
+	id, label   string
+	color, icon *string
+}
 
 type projectedItem struct {
 	tagID, kind    string
@@ -194,7 +202,7 @@ func projectAnnotations(raw json.RawMessage, cliResolved *bool, fileAudio string
 			continue
 		}
 		defined[id] = true
-		out.tags = append(out.tags, projectedTag{id: id, label: label})
+		out.tags = append(out.tags, projectedTag{id: id, label: label, color: tag.Color, icon: tag.Icon})
 	}
 	seen := make(map[string]bool, len(doc.Items))
 	for _, item := range doc.Items {
@@ -810,8 +818,8 @@ VALUES (?, ?, ?, ?, ?, ?)`, name, state, m.revision, m.resolved, m.namespace,
 	}
 	for _, tag := range m.tags {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO annotation_tag (opus_name, tag_id, label, label_folded) VALUES (?, ?, ?, ?)`,
-			name, tag.id, tag.label, foldTagLabel(tag.label)); err != nil {
+			`INSERT INTO annotation_tag (opus_name, tag_id, label, label_folded, color, icon) VALUES (?, ?, ?, ?, ?, ?)`,
+			name, tag.id, tag.label, foldTagLabel(tag.label), tag.color, tag.icon); err != nil {
 			return fmt.Errorf("insert tag: %w", err)
 		}
 	}
