@@ -320,19 +320,15 @@ func deleteAnnotationRows(ctx context.Context, tx *sql.Tx, opusName string) erro
 // --- the installation's vocabulary -----------------------------------------
 
 // ResolveLabel maps a label to the tag id the caller's visible meetings already
-// use for it, within the archive's namespace (annotationIndex). Hidden meetings
+// use for it across document namespaces (annotationIndex). Hidden meetings
 // are never consulted: getting an id back would reveal that a meeting the
 // caller cannot open carries the word. Several ids with one label — files
 // tagged before the index existed — resolve to the one on the most meetings,
-// then the smallest id.
+// preferring exact spelling, then frequency, then the smallest id.
 func (s *annotationStore) ResolveLabel(ctx context.Context, label string, visible []string) (string, bool, error) {
 	folded := foldTagLabel(label)
 	if folded == "" {
 		return "", false, nil
-	}
-	namespace, err := s.archiveNamespace(ctx)
-	if err != nil {
-		return "", false, err
 	}
 	query := `
 SELECT t.tag_id
@@ -340,14 +336,10 @@ SELECT t.tag_id
   JOIN meeting_annotations m ON m.opus_name = t.opus_name AND m.state = ?2
   JOIN json_each(?3) v ON v.value = t.opus_name
  WHERE t.label_folded = ?1`
-	args := []any{folded, annotationsStateIndexed, namesJSON(visible)}
-	if namespace != "" {
-		query += ` AND m.namespace = ?4`
-		args = append(args, namespace)
-	}
+	args := []any{folded, annotationsStateIndexed, namesJSON(visible), strings.TrimSpace(label)}
 	query += `
  GROUP BY t.tag_id
- ORDER BY COUNT(*) DESC, t.tag_id
+ ORDER BY SUM(t.label = ?4) DESC, COUNT(*) DESC, t.tag_id
  LIMIT 1`
 	var tagID string
 	switch err := s.db.QueryRowContext(ctx, query, args...).Scan(&tagID); {
@@ -434,7 +426,7 @@ SELECT COUNT(*) FROM meeting_annotations m
 }
 
 // Vocabulary lists the tags marked on the caller's visible meetings, counted
-// over those meetings only, keyed by (namespace, tag id). A tag whose every
+// over those meetings only, keyed by tag ID, like writes and styles. A tag whose every
 // mark is of a kind this reader does not know has nothing to point at and is
 // not listed.
 func (s *annotationStore) Vocabulary(ctx context.Context, visible []string) ([]tagVocabularyEntry, error) {
@@ -454,28 +446,28 @@ SELECT m.namespace, t.tag_id, t.label, COUNT(*)
 	}
 	defer rows.Close()
 
-	type key struct{ namespace, tagID string }
 	type tally struct {
-		entry  tagVocabularyEntry
-		labels map[string]int
+		entry      tagVocabularyEntry
+		labels     map[string]int
+		namespaces map[string]int
 	}
-	tallies := map[key]*tally{}
+	tallies := map[string]*tally{}
 	for rows.Next() {
 		var namespace, tagID, label string
 		var marks int
 		if err := rows.Scan(&namespace, &tagID, &label, &marks); err != nil {
 			return nil, fmt.Errorf("scan tag vocabulary: %w", err)
 		}
-		k := key{namespace, tagID}
-		t := tallies[k]
+		t := tallies[tagID]
 		if t == nil {
-			t = &tally{entry: tagVocabularyEntry{TagID: tagID, Namespace: namespace}, labels: map[string]int{}}
-			tallies[k] = t
+			t = &tally{entry: tagVocabularyEntry{TagID: tagID}, labels: map[string]int{}, namespaces: map[string]int{}}
+			tallies[tagID] = t
 		}
 		// One row per (meeting, tag).
 		t.entry.Meetings++
 		t.entry.Marks += marks
 		t.labels[label]++
+		t.namespaces[namespace]++
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read tag vocabulary: %w", err)
@@ -484,6 +476,7 @@ SELECT m.namespace, t.tag_id, t.label, COUNT(*)
 	out := make([]tagVocabularyEntry, 0, len(tallies))
 	for _, t := range tallies {
 		t.entry.Label = mostCommonLabel(t.labels)
+		t.entry.Namespace = mostCommonLabel(t.namespaces)
 		out = append(out, t.entry)
 	}
 	sort.Slice(out, func(i, j int) bool {

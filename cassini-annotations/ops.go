@@ -194,7 +194,7 @@ func ApplyOps(current *Annotations, ops []Op, durationMS int64, stamp Stamp) (Ou
 	return outcome, nil
 }
 
-// applyMarkOp finds the tag by id, else by label (a mark is not a rename), else
+// applyMarkOp honors an explicit ID; only an absent ID resolves by label, else
 // defines it, then adds the item unless an identical one is already there —
 // which is what makes a retry after a lost response safe. Mapping a label to
 // one id across the archive is the operator's job, before it calls this.
@@ -409,6 +409,7 @@ func findAnnotationTag(doc *Annotations, id, label string, hasLabel bool) string
 				return tag.ID
 			}
 		}
+		return "" // A selected tag must not turn into a different local tag.
 	}
 	if hasLabel {
 		for _, tag := range doc.Tags {

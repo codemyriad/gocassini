@@ -286,14 +286,14 @@ func TestAnnotationStoreResolveLabelPrefersTheMostUsedID(t *testing.T) {
 	}
 }
 
-// A label resolves only within the namespace most of the archive carries.
-func TestAnnotationStoreResolveLabelStaysInTheArchivesNamespace(t *testing.T) {
+// Label identity follows the visible set, regardless of document namespace.
+func TestAnnotationStoreResolveLabelAcrossNamespaces(t *testing.T) {
 	store := newTestAnnotationStore(t)
 	recordMarks(t, store, "JOB1.opus", annotatedFile(t, "c1", testTagNamespaceB, []testTag{{"tag_b", "hiring"}}, meetingMark("m", "tag_b")))
 	recordMarks(t, store, "JOB2.opus", annotatedFile(t, "c2", testTagNamespaceB, []testTag{{"tag_b", "hiring"}}, meetingMark("m", "tag_b")))
 	recordMarks(t, store, "JOB3.opus", annotatedFile(t, "c3", testTagNamespaceA, []testTag{{"tag_a", "hiring"}}, meetingMark("m", "tag_a")))
-	if got, ok, _ := store.ResolveLabel(context.Background(), "hiring", []string{"JOB1.opus", "JOB3.opus"}); !ok || got != "tag_b" {
-		t.Fatalf("resolve = %q/%v, want tag_b from the archive's namespace", got, ok)
+	if got, ok, _ := store.ResolveLabel(context.Background(), "hiring", []string{"JOB1.opus", "JOB3.opus"}); !ok || got != "tag_a" {
+		t.Fatalf("resolve = %q/%v, want tag_a from the visible tie", got, ok)
 	}
 }
 
