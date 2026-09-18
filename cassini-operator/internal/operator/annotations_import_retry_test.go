@@ -7,7 +7,49 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+func TestAnnotationImportWaitsForCapacity(t *testing.T) {
+	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
+	store := newTestAnnotationStore(t)
+	s, handler := tagChangeService(t, nc.url, fakeCassini(t, annTestCLIPrints(annTestApplied)), store)
+	// Occupy both download slots, as two slow seeded recordings would.
+	for i := 0; i < cap(annotationImportSlots); i++ {
+		annotationImportSlots <- struct{}{}
+	}
+	held := true
+	defer func() {
+		if held {
+			for i := 0; i < cap(annotationImportSlots); i++ {
+				<-annotationImportSlots
+			}
+		}
+		s.backgroundWG.Wait()
+	}()
+	response := annTestCall(handler, http.MethodGet, "MEETING1", "alice", "")
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("preparing: %d %s", response.Code, response.Body.String())
+	}
+	if _, queued := s.imports.Load(annTestRecording); !queued {
+		t.Fatal("discovered recording was dropped while imports were busy")
+	}
+	for i := 0; i < cap(annotationImportSlots); i++ {
+		<-annotationImportSlots
+	}
+	held = false
+	done := make(chan struct{})
+	go func() { s.backgroundWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued import never completed")
+	}
+	// No second read/list request should be needed to start the import.
+	if _, err := store.document(context.Background(), "MEETING1.opus"); err != nil {
+		t.Fatalf("queued document missing: %v", err)
+	}
+}
 
 func TestAnnotationBackfillRetriesTransientFailuresBeforeMarkingBuilt(t *testing.T) {
 	store := newTestAnnotationStore(t)

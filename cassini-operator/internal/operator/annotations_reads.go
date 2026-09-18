@@ -93,21 +93,22 @@ func (s *annotationService) importDocument(caller, meetingID, relPath string) {
 	if _, busy := s.imports.LoadOrStore(relPath, true); busy {
 		return
 	}
-	select {
-	case annotationImportSlots <- struct{}{}:
-	default:
-		s.imports.Delete(relPath)
-		return
-	}
 	ctx := s.rt.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, annotateRequestTimeout)
 	if !s.background(func() {
-		defer cancel()
 		defer s.imports.Delete(relPath)
+		// Keep discovered imports queued instead of dropping every recording
+		// beyond the two active downloads. Shutdown cancels queued work too.
+		select {
+		case annotationImportSlots <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
 		defer func() { <-annotationImportSlots }()
+		ctx, cancel := context.WithTimeout(ctx, annotateRequestTimeout)
+		defer cancel()
 		store := s.rt.annotationReads()
 		if _, err := store.document(ctx, path.Base(relPath)); err == nil {
 			return
@@ -134,8 +135,6 @@ func (s *annotationService) importDocument(caller, meetingID, relPath string) {
 			s.logf("annotations: import meeting=%s: %v", meetingID, err)
 		}
 	}) {
-		cancel()
 		s.imports.Delete(relPath)
-		<-annotationImportSlots
 	}
 }

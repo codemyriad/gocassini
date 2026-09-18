@@ -1,6 +1,6 @@
 import { get, writable } from "svelte/store";
 import {
-  AnnotationError, describeAnnotationError, groupByTag, plural,
+  AnnotationError, describeAnnotationError, groupByTag, plural, retryDelay,
   type AnnotationBatchRequest, type AnnotationBatchResult, type AnnotationRequest,
   type TagVocabulary,
 } from "./annotations";
@@ -45,7 +45,18 @@ export function createBulkTagSession(
     const count = request.meetingIds.length;
     state.set({ busy: true, retryable: false, report: `${remove ? "Removing tag from" : "Tagging"} ${plural(count, "meeting")}…` });
     try {
-      const result = await apply(request);
+      let result: AnnotationBatchResult;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          result = await apply(request);
+          break;
+        } catch (error) {
+          const delay = retryDelay(error, attempt);
+          if (delay === null || attempt >= 5) throw error;
+          state.set({ busy: true, retryable: false, report: `Waiting to update tags for ${plural(count, "meeting")}… ${describeAnnotationError(error)}` });
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
       committed(result);
       pending = null;
       state.set({ busy: false, retryable: false, report: `${remove ? "Untagged" : "Tagged"} ${plural(count, "meeting")}` });

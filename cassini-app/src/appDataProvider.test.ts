@@ -36,6 +36,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("AppDataProvider.loadCatalog", () => {
+  it("uses the operator list so browsing starts missing annotation imports", async () => {
+    const fetchMock = respondWith(JSON.stringify({ version: "cassini.viewer.catalog.v1", meetings: [] }));
+    await new AppDataProvider().loadCatalog();
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(`${PROXY_BASE}published/meetings-list`, { cache: "no-store" });
+  });
+});
+
 describe("AppDataProvider.loadContextBundle", () => {
   it("asks the published endpoint for the picked ids, in pick order", async () => {
     const fetchMock = respondWith("# Meeting b\n");
