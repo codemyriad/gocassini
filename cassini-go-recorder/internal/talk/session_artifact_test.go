@@ -648,8 +648,8 @@ func TestIsPlaceholderParticipantName(t *testing.T) {
 			want:    true,
 		},
 		{
-			name:    "real guest name Phone is not placeholder",
-			display: "Phone",
+			name:    "real guest name Lisa is not placeholder",
+			display: "Lisa",
 			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79", "sXHFMabV7NOPjrF_VqGx8qzQ_jEnMozJrLpHrYliUxY1h1-HAaptquQgfCW78K3IXg"},
 			want:    false,
 		},
@@ -660,8 +660,8 @@ func TestIsPlaceholderParticipantName(t *testing.T) {
 			want:    false,
 		},
 		{
-			name:    "real guest name Desktop computer is not placeholder",
-			display: "Desktop computer",
+			name:    "real guest name Mark is not placeholder",
+			display: "Mark",
 			ids:     []string{"1fd2cfb4ad0f235b10a39780db1f83c2956a8c4f"},
 			want:    false,
 		},
@@ -710,8 +710,8 @@ func TestSessionArtifactUpdateParticipantDisplayReplacesSyntheticShortIDPlacehol
 		t.Fatalf("open stream: %v", err)
 	}
 
-	// Participant display name arrives late (e.g. guest entered "Phone" in Talk UI)
-	if err := artifact.updateParticipantDisplay(remoteSessionID, participantID, "Phone"); err != nil {
+	// Participant display name arrives late (e.g. guest entered "Lisa" in Talk UI)
+	if err := artifact.updateParticipantDisplay(remoteSessionID, participantID, "Lisa"); err != nil {
 		t.Fatalf("update participant display: %v", err)
 	}
 
@@ -722,15 +722,15 @@ func TestSessionArtifactUpdateParticipantDisplayReplacesSyntheticShortIDPlacehol
 	if len(participants) != 1 {
 		t.Fatalf("expected one participant, got=%d", len(participants))
 	}
-	if participants[0].Display != "Phone" {
-		t.Fatalf("unexpected participant display: got=%q, want %q", participants[0].Display, "Phone")
+	if participants[0].Display != "Lisa" {
+		t.Fatalf("unexpected participant display: got=%q, want %q", participants[0].Display, "Lisa")
 	}
 
 	raw, err := os.ReadFile(artifact.sessionPath)
 	if err != nil {
 		t.Fatalf("read session json: %v", err)
 	}
-	if !strings.Contains(string(raw), `"display": "Phone"`) {
+	if !strings.Contains(string(raw), `"display": "Lisa"`) {
 		t.Fatalf("expected persisted participant display in session json: %s", string(raw))
 	}
 }

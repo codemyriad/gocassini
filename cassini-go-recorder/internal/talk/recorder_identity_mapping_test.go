@@ -74,13 +74,13 @@ func TestGuestParticipantDisplayNameDecoupledSessionID(t *testing.T) {
 		t.Fatalf("expected non-empty streamID")
 	}
 
-	// 3. Participants update arrives from Nextcloud Talk with roomSessionID ("2NAEY4lj..."), guestActorID, and "Phone".
+	// 3. Participants update arrives from Nextcloud Talk with roomSessionID ("2NAEY4lj..."), guestActorID, and "Lisa".
 	err = r.handleParticipantsEvent(map[string]any{
 		"users": []any{
 			map[string]any{
 				"sessionId":   nextcloudRoomSessionID,
 				"actorId":     guestActorID,
-				"displayName": "Phone",
+				"displayName": "Lisa",
 				"inCall":      float64(1),
 			},
 		},
@@ -89,35 +89,35 @@ func TestGuestParticipantDisplayNameDecoupledSessionID(t *testing.T) {
 		t.Fatalf("handleParticipantsEvent: %v", err)
 	}
 
-	// 4. Verify recorder's in-memory session capture was updated to "Phone".
+	// 4. Verify recorder's in-memory session capture was updated to "Lisa".
 	r.sessionMu.Lock()
 	updatedSession := r.sessionsByRemote[signalingSessionID]
 	r.sessionMu.Unlock()
 	if updatedSession == nil {
 		t.Fatalf("expected sessionCapture for %s", signalingSessionID)
 	}
-	if updatedSession.ParticipantName != "Phone" {
-		t.Fatalf("expected session ParticipantName = %q, got %q", "Phone", updatedSession.ParticipantName)
+	if updatedSession.ParticipantName != "Lisa" {
+		t.Fatalf("expected session ParticipantName = %q, got %q", "Lisa", updatedSession.ParticipantName)
 	}
 
-	// 5. Verify session artifact in-memory metadata was updated to "Phone".
+	// 5. Verify session artifact in-memory metadata was updated to "Lisa".
 	artifact.mu.Lock()
 	participants := append([]session.Participant(nil), artifact.sessionMeta.Participants...)
 	artifact.mu.Unlock()
 	if len(participants) != 1 {
 		t.Fatalf("expected 1 participant, got %d", len(participants))
 	}
-	if participants[0].Display != "Phone" {
-		t.Fatalf("expected participant display %q, got %q", "Phone", participants[0].Display)
+	if participants[0].Display != "Lisa" {
+		t.Fatalf("expected participant display %q, got %q", "Lisa", participants[0].Display)
 	}
 
-	// 6. Verify session.json file on disk was persisted with "Phone".
+	// 6. Verify session.json file on disk was persisted with "Lisa".
 	raw, err := os.ReadFile(artifact.sessionPath)
 	if err != nil {
 		t.Fatalf("read session.json: %v", err)
 	}
-	if !strings.Contains(string(raw), `"display": "Phone"`) {
-		t.Fatalf("expected session.json to contain Phone: %s", string(raw))
+	if !strings.Contains(string(raw), `"display": "Lisa"`) {
+		t.Fatalf("expected session.json to contain Lisa: %s", string(raw))
 	}
 }
 
@@ -181,7 +181,7 @@ func TestParticipantsUpdateCallStateUnknownPreservesIdentity(t *testing.T) {
 			map[string]any{
 				"sessionId":   signalingSessionID,
 				"actorId":     actorID,
-				"displayName": "Desktop computer",
+				"displayName": "Mark",
 			},
 		},
 	})
@@ -200,18 +200,18 @@ func TestParticipantsUpdateCallStateUnknownPreservesIdentity(t *testing.T) {
 	sess := r.sessionsByRemote[signalingSessionID]
 	r.sessionMu.Unlock()
 
-	if ident.DisplayName != "Desktop computer" {
-		t.Fatalf("expected identity DisplayName = %q, got %q", "Desktop computer", ident.DisplayName)
+	if ident.DisplayName != "Mark" {
+		t.Fatalf("expected identity DisplayName = %q, got %q", "Mark", ident.DisplayName)
 	}
-	if sess.ParticipantName != "Desktop computer" {
-		t.Fatalf("expected session ParticipantName = %q, got %q", "Desktop computer", sess.ParticipantName)
+	if sess.ParticipantName != "Mark" {
+		t.Fatalf("expected session ParticipantName = %q, got %q", "Mark", sess.ParticipantName)
 	}
 
 	artifact.mu.Lock()
 	display := artifact.sessionMeta.Participants[0].Display
 	artifact.mu.Unlock()
-	if display != "Desktop computer" {
-		t.Fatalf("expected artifact display = %q, got %q", "Desktop computer", display)
+	if display != "Mark" {
+		t.Fatalf("expected artifact display = %q, got %q", "Mark", display)
 	}
 }
 
@@ -285,7 +285,7 @@ func TestPresenceUpdateBeforeSignalingJoinResolvesCorrectly(t *testing.T) {
 			map[string]any{
 				"sessionId":   ncRoomSessionID,
 				"actorId":     guestActorID,
-				"displayName": "Phone",
+				"displayName": "Lisa",
 			},
 		},
 	})
@@ -314,8 +314,8 @@ func TestPresenceUpdateBeforeSignalingJoinResolvesCorrectly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureSessionCapture: %v", err)
 	}
-	if sessionCap.ParticipantName != "Phone" {
-		t.Fatalf("expected ensureSessionCapture to have Phone, got %q", sessionCap.ParticipantName)
+	if sessionCap.ParticipantName != "Lisa" {
+		t.Fatalf("expected ensureSessionCapture to have Lisa, got %q", sessionCap.ParticipantName)
 	}
 
 	// 4. resolveRemoteSessionID for ncRoomSessionID must resolve to signalingSessionID
