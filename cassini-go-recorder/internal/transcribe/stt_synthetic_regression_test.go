@@ -17,38 +17,7 @@ import (
 // The pre-PR pipeline loses an interior phrase from the first track.
 // This is an audio regression, not an assertion about which policy is selected.
 func TestSyntheticMeetingRetainsInteriorSpeech(t *testing.T) {
-	cache := os.Getenv("CASSINI_CACHE_ROOT")
-	if cache == "" {
-		t.Fatal("asrregression requires CASSINI_CACHE_ROOT with cached Parakeet v3 and Silero models")
-	}
-	provider := os.Getenv("CASSINI_ASR_REGRESSION_DEVICE")
-	if provider == "" {
-		provider = "cpu"
-	}
-	if provider != "cpu" && provider != "cuda" {
-		t.Fatalf("unsupported ASR regression device %q", provider)
-	}
-	// Never make an explicit regression run silently download gigabytes or
-	// skip the recognition assertion because a model is missing.
-	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
-	t.Setenv(envHintsDisabled, "")
-	paths, err := EnsureModel(cache, ModelParakeet06BV3, os.Stderr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vad, err := EnsureVAD(cache, os.Stderr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoder, _, err := resolveDecoder(t.TempDir(), nil, paths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recognizer, err := NewRecognizer(paths, vad, provider, 2, decoder)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer recognizer.Close()
+	recognizer := newSyntheticRegressionRecognizer(t)
 	fixture := filepath.Join("testdata", "synthetic-boundary", "garden.mkv")
 	data, err := os.ReadFile(fixture)
 	if err != nil {
@@ -98,3 +67,71 @@ func TestSyntheticMeetingRetainsInteriorSpeech(t *testing.T) {
 }
 
 const syntheticGardenSHA256 = "12e309abe0d1d29f0248ebba88b8f2639ff1b870f907e1b9b856e7df6127e6b6"
+
+func newSyntheticRegressionRecognizer(t *testing.T) *Recognizer {
+	t.Helper()
+	cache := os.Getenv("CASSINI_CACHE_ROOT")
+	if cache == "" {
+		t.Fatal("asrregression requires CASSINI_CACHE_ROOT with cached Parakeet v3 and Silero models")
+	}
+	provider := os.Getenv("CASSINI_ASR_REGRESSION_DEVICE")
+	if provider == "" {
+		provider = "cpu"
+	}
+	if provider != "cpu" && provider != "cuda" {
+		t.Fatalf("unsupported ASR regression device %q", provider)
+	}
+	// Never make an explicit regression run silently download gigabytes or
+	// skip the recognition assertion because a model is missing.
+	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
+	t.Setenv(envHintsDisabled, "")
+	paths, err := EnsureModel(cache, ModelParakeet06BV3, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vad, err := EnsureVAD(cache, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, _, err := resolveDecoder(t.TempDir(), nil, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recognizer, err := NewRecognizer(paths, vad, provider, 2, decoder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(recognizer.Close)
+	return recognizer
+}
+
+// This is deliberately a failing regression on c580c394: the previous source
+// recognizes the acknowledgement but the new pipeline emits no words.
+func TestSyntheticAcknowledgementRetainsSpeech(t *testing.T) {
+	recognizer := newSyntheticRegressionRecognizer(t)
+	fixture := filepath.Join("testdata", "synthetic-boundary", "acknowledgement.wav")
+	data, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != "169654b8fadb4255c8f835a6f89e1df348b6c93162aa2051fde7a54a510b23cb" {
+		t.Fatalf("synthetic acknowledgement changed: sha256=%s", got)
+	}
+	samples, err := ExtractMixedFloats(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	words, err := recognizer.Transcribe(samples, 16000, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text strings.Builder
+	for _, word := range words {
+		text.WriteString(word.Text)
+		text.WriteByte(' ')
+	}
+	normalized := strings.ToLower(strings.Join(strings.FieldsFunc(text.String(), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }), " "))
+	if !strings.Contains(" "+normalized+" ", " right that makes sense ") {
+		t.Fatalf("missing synthetic acknowledgement; transcript: %s", text.String())
+	}
+}

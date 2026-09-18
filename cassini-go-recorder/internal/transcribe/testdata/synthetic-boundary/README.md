@@ -52,6 +52,37 @@ The test is opt-in and is not yet wired into an automatic CI job. Its measured
 CPU run took about eight seconds with already-cached models. The checked-in
 fixture is about 208 KiB; synthesizer weights are unnecessary to run the test.
 
+## A second synthetic case currently fails the PR
+
+`acknowledgement.wav` is 1.621 seconds of stock `am_adam` synthetic speech:
+“Mm-hmm, right, that makes sense.” The test asserts only “right that makes
+sense”; it does not require a particular spelling of the nasal acknowledgement.
+The waveform has a fixed −6 dB gain adjustment and no added silence.
+
+`TestSyntheticAcknowledgementRetainsSpeech` **passes on the actual old source
+and fails on this PR**, on CPU and on three CUDA runs. The PR returns no words.
+This is a preserved, unresolved counterexample, not an expected-failure test:
+running the entire `asrregression` suite must stay red until the omission is
+fixed. Nothing is skipped or inverted to hide it. The preceding garden test
+continues to pass on the PR and fail on the old source.
+
+```sh
+CASSINI_CACHE_ROOT="$HOME/.cache/cassini" \
+  scripts/build-cassini-bin.sh --test -tags asrregression \
+  -run '^TestSynthetic' -count=1 -v ./internal/transcribe
+```
+
+`acknowledgement.json` records the synthetic script, voice, waveform hash and
+old/new validation. This separate candidate used `kokoro-onnx` 0.6.1; do not
+regenerate it with the garden fixture's older TTS package versions:
+
+```sh
+uv run --python 3.12 --with-requirements acknowledgement-requirements.txt \
+  python generate_acknowledgement.py \
+  --assets "$HOME/.cache/gocassini/kokoro-onnx" \
+  --output /tmp/new-acknowledgement.wav
+```
+
 ## Provenance and regeneration
 
 Scripts, voices, package versions, source WAV hashes and fixture hash are in
