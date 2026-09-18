@@ -34,7 +34,7 @@ func openDurableAnnotationDB(path string) (sidecarDB, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if version > annotationsSchemaVersion || (version != 0 && version != 2 && version != 3 && version != 4 && version != 5) {
+	if version > annotationsSchemaVersion || version == 1 {
 		return fail(fmt.Errorf("unsupported annotations schema %d; preserving database", version))
 	}
 	if version == annotationsSchemaVersion {
@@ -88,7 +88,8 @@ DELETE FROM annotations_meta WHERE key='built';
 				return err
 			}
 		}
-		if _, err := tx.Exec(`CREATE TABLE annotation_batch_receipt (
+		if version < 5 {
+			if _, err := tx.Exec(`CREATE TABLE annotation_batch_receipt (
  caller TEXT NOT NULL, request_id TEXT NOT NULL, request_hash TEXT NOT NULL,
  response BLOB NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()),
  PRIMARY KEY(caller,request_id)
@@ -99,6 +100,10 @@ CREATE TABLE annotation_batch_target (
  PRIMARY KEY(caller,request_id,opus_name),
  FOREIGN KEY(caller,request_id) REFERENCES annotation_batch_receipt(caller,request_id) ON DELETE CASCADE
 );`); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`ALTER TABLE annotation_head ADD COLUMN republish_json BLOB`); err != nil {
 			return err
 		}
 		_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", annotationsSchemaVersion))
@@ -134,8 +139,9 @@ func (s *annotationStore) document(ctx context.Context, name string) (annotateRe
 	var status annotationSyncStatus
 	var generation string
 	var blocked, attempts int
-	err := s.db.QueryRowContext(ctx, `SELECT s.result_json,h.desired,h.confirmed,h.last_error,h.blocked,h.attempts,m.value
- FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired JOIN annotations_meta m ON m.key='generation' WHERE h.opus_name=?`, name).Scan(&data, &status.Desired, &status.Confirmed, &status.Error, &blocked, &attempts, &generation)
+	var republishing bool
+	err := s.db.QueryRowContext(ctx, `SELECT s.result_json,h.desired,h.confirmed,h.last_error,h.blocked,h.attempts,m.value,h.republish_json IS NOT NULL
+ FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired JOIN annotations_meta m ON m.key='generation' WHERE h.opus_name=?`, name).Scan(&data, &status.Desired, &status.Confirmed, &status.Error, &blocked, &attempts, &generation, &republishing)
 	if err != nil {
 		return annotateResult{}, err
 	}
@@ -144,7 +150,7 @@ func (s *annotationStore) document(ctx context.Context, name string) (annotateRe
 		return result, err
 	}
 	status.State = "saved"
-	if status.Desired != status.Confirmed {
+	if status.Desired != status.Confirmed || republishing {
 		status.State = "pending"
 		if attempts > 0 {
 			status.State = "delayed"
@@ -205,13 +211,13 @@ func refreshAnnotationAudio(ctx context.Context, tx *sql.Tx, name string, delive
 func (s *annotationStore) collectSnapshots(ctx context.Context) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM annotation_receipt WHERE created_at<unixepoch()-604800
- AND NOT EXISTS(SELECT 1 FROM annotation_head h WHERE h.opus_name=annotation_receipt.opus_name AND h.desired!=h.confirmed)
+ AND NOT EXISTS(SELECT 1 FROM annotation_head h WHERE h.opus_name=annotation_receipt.opus_name AND (h.desired!=h.confirmed OR h.republish_json IS NOT NULL))
  AND NOT EXISTS(SELECT 1 FROM annotation_tag_job j WHERE j.caller=annotation_receipt.caller AND json_extract(j.job_json,'$.state')!='finished')`); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM annotation_batch_receipt AS b WHERE created_at<unixepoch()-604800
  AND NOT EXISTS(SELECT 1 FROM annotation_batch_target t JOIN annotation_head h ON h.opus_name=t.opus_name
- WHERE t.caller=b.caller AND t.request_id=b.request_id AND h.desired!=h.confirmed)`); err != nil {
+ WHERE t.caller=b.caller AND t.request_id=b.request_id AND (h.desired!=h.confirmed OR h.republish_json IS NOT NULL))`); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM annotation_snapshot WHERE id NOT IN (

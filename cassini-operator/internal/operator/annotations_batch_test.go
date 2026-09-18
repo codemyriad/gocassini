@@ -174,7 +174,7 @@ func TestAnnotationBatchValidationAndRetention(t *testing.T) {
 func TestAnnotationBatchMigratesVersionFourWithoutLosingPending(t *testing.T) {
 	_, h, store, _ := batchFixture(t)
 	first := postAsync(t, h, markRequest("pending", "single"))
-	store.db.Exec(`DROP TABLE annotation_batch_target; DROP TABLE annotation_batch_receipt; PRAGMA user_version=4`)
+	store.db.Exec(`DROP TABLE annotation_batch_target; DROP TABLE annotation_batch_receipt; ALTER TABLE annotation_head DROP COLUMN republish_json; PRAGMA user_version=4`)
 	name := store.path
 	store.Close()
 	next, err := openAnnotationStore(name, nil)

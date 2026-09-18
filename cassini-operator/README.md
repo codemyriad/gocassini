@@ -715,6 +715,13 @@ once; each recording is limited to 1 GiB, with an input and output copy per work
 plus the CLI's temporary rewrite files. Budget disk space for those temporary
 copies. Shutdown waits for workers, importers, and accepted bulk jobs.
 
+Republishing a damaged recording with the same audio restores its durable desired
+annotations, even if they were previously marked synced. Replacement intent is
+persisted before upload and reconciled after content verification or restart.
+If a republish changes the audio digest, the replacement starts without the old
+annotations, including pending edits; changing audio under one meeting ID is an
+exceptional replacement, not an annotation migration.
+
 The UI retains saved tags while showing delayed/blocked archive status. After
 repairing a missing/unreadable recording, use **Retry recording update**, or POST
 `{"ops":[],"retrySync":true}` to the same meeting route. Retry rechecks the remote

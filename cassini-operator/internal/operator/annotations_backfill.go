@@ -231,7 +231,7 @@ func forgetVanishedAnnotations(
 		}
 		if err := store.inTx(ctx, func(tx *sql.Tx) error {
 			var pending int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND desired!=confirmed`, name).Scan(&pending); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND (desired!=confirmed OR republish_json IS NOT NULL)`, name).Scan(&pending); err != nil {
 				return err
 			}
 			if pending > 0 {

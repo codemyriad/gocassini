@@ -22,7 +22,7 @@ const (
 	annotationsStoreFilename = "annotations.sqlite3"
 
 	// annotationsSchemaVersion is upgraded through managed migrations.
-	annotationsSchemaVersion = 5
+	annotationsSchemaVersion = 6
 
 	annotationsStateIndexed = "indexed"
 	// annotationsStateUnavailable: the meeting is known but its marks could not
@@ -265,11 +265,18 @@ func (s *annotationStore) replace(ctx context.Context, opusName string, m projec
 	skipped := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var pending int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND desired != confirmed`, name).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND (desired != confirmed OR republish_json IS NOT NULL)`, name).Scan(&pending); err != nil {
 			return err
 		}
 		if pending != 0 {
 			skipped = true
+			var republishing bool
+			if err := tx.QueryRowContext(ctx, `SELECT republish_json IS NOT NULL FROM annotation_head WHERE opus_name=?`, name).Scan(&republishing); err != nil {
+				return err
+			}
+			if republishing {
+				return nil
+			}
 			if len(documents) > 0 && documents[0] != nil && !m.unreadable {
 				return refreshAnnotationAudio(ctx, tx, name, *documents[0])
 			}

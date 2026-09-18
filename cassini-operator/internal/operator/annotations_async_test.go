@@ -22,6 +22,10 @@ args=sys.argv[1:]
 if args[0]!='annotate':sys.exit(9)
 if args[1]=='show':
  data=open(args[2],'rb').read();r=json.loads(data)
+elif args[1]=='carry':
+ old=json.load(open(args[2]));r=json.load(open(args[3]));doc=old.get('annotations')
+ r.update(annotations=doc,revision=old.get('revision',0),resolved=not doc or doc['audioOpusSha256']==r['audioOpusSha256'])
+ data=json.dumps(r).encode();open(args[args.index('--out')+1],'wb').write(data)
 elif args[1]=='snapshot':
  out=args[args.index('--out')+1];r=json.load(open(args[-1]));doc=json.load(sys.stdin)
  r.update(annotations=doc,revision=doc['revision'],resolved=doc['audioOpusSha256']==r['audioOpusSha256'])

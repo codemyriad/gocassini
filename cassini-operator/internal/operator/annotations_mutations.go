@@ -132,7 +132,8 @@ func mutateAnnotationDocument(ctx context.Context, tx *sql.Tx, name, relPath, ca
 	var attempts, blocked int
 	var lastError string
 	var generation string
-	if err := tx.QueryRowContext(ctx, `SELECT s.result_json,h.desired,h.confirmed,h.attempts,h.blocked,h.last_error FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE h.opus_name=?`, name).Scan(&data, &desired, &confirmed, &attempts, &blocked, &lastError); err != nil {
+	var republishing bool
+	if err := tx.QueryRowContext(ctx, `SELECT s.result_json,h.desired,h.confirmed,h.attempts,h.blocked,h.last_error,h.republish_json IS NOT NULL FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE h.opus_name=?`, name).Scan(&data, &desired, &confirmed, &attempts, &blocked, &lastError, &republishing); err != nil {
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM annotations_meta WHERE key='generation'`).Scan(&generation); err != nil {
@@ -224,7 +225,7 @@ func mutateAnnotationDocument(ctx context.Context, tx *sql.Tx, name, relPath, ca
 	if blocked != 0 {
 		state = "blocked"
 	}
-	if desired == confirmed {
+	if desired == confirmed && !republishing {
 		state = "saved"
 	}
 	result.Sync = &annotationSyncStatus{State: state, Desired: desired, Confirmed: confirmed, Error: lastError}
