@@ -390,8 +390,10 @@ try {
   }
 
   const dialog = (page) => page.getByRole("dialog");
+  // The audience, stated beside the Rooms heading as a label whose detail opens
+  // on hover, focus or tap.
   const audienceChip = (page) =>
-    page.getByText("Visible to anyone with a Nextcloud account", { exact: true });
+    page.getByRole("button", { name: "Visible to all users", exact: true });
   const meeting = (page) => page.getByText("Project kickoff (demo recording)", { exact: true });
 
   // (a) A fresh install, as the administrator who enabled the app.
@@ -401,12 +403,13 @@ try {
     await visible(dialog(page));
     await visible(page.getByRole("heading", { name: "Cassini is ready to record", exact: true }));
     // Who can see recordings, and the rooms they came from, before anything
-    // about how Cassini works (11 September product decision).
-    await visible(
-      page.getByText(
-        "Recordings, and the names of the rooms they came from, will be visible to anyone with an account on this Nextcloud.",
-        { exact: false },
-      ),
+    // about how Cassini works (11 September product decision) — asked as a
+    // choice, with the audience in force already chosen, so starting keeps it.
+    await visible(page.getByRole("radiogroup", { name: "Who can see recordings", exact: true }));
+    assert.equal(
+      await page.getByRole("radio", { name: /^Everyone with a Nextcloud account/ }).getAttribute("aria-checked"),
+      "true",
+      "the audience in force is the one the dialog starts with",
     );
     // The archive is behind it, not replaced by it: this dialog is a
     // disclosure, not a gate on reading what is already published.
@@ -437,10 +440,13 @@ try {
     await visible(audienceChip(page));
   });
 
-  // (b) The other button. It changes nothing and answers nothing.
-  await scenario("change who can see first: nothing is acknowledged on the way out", {}, async (page, { actions, ncWrites }) => {
+  // (b) The other audience. Choosing it changes nothing here and answers
+  // nothing: the dialog hands the choice to the settings section, whose switch
+  // does the work, and the first run is acknowledged only once that completes.
+  await scenario("choose the other audience: nothing is acknowledged on the way out", {}, async (page, { actions, ncWrites }) => {
     await visible(dialog(page));
-    await page.getByRole("button", { name: "Change who can see first", exact: true }).click();
+    await page.getByRole("radio", { name: /^Room members/ }).click();
+    await page.getByRole("button", { name: "Continue in Publish pipeline", exact: true }).click();
     await dialog(page).waitFor({ state: "detached" });
 
     assert.deepEqual(ncWrites, [], "leaving for the settings writes nothing to Nextcloud");

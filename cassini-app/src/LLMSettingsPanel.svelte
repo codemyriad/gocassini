@@ -28,7 +28,6 @@
   import {
     CircleCheck,
     FileText,
-    Plus,
     RefreshCw,
     TextAlignStart,
     TriangleAlert,
@@ -234,7 +233,7 @@
   // field, never enforced: only OpenRouter's keys have a known shape.
   $: keyPrefixWarning =
     draft && hostOf(draft.baseUrl) === "openrouter.ai" && looksUnprefixed(draft.key)
-      ? "OpenRouter keys start with sk-or-v1-. Check the paste."
+      ? "OpenRouter keys start with sk-or-v1-. Check you pasted the whole key."
       : "";
 
   function hostOf(url: string): string {
@@ -393,9 +392,7 @@
   // operator computes it — insightEndpoint, which is also what builds the
   // child's environment — so this page and the run cannot say different things.
   $: effectiveInsight = settings?.effective.insight ?? null;
-  $: insightEndpointLabel = effectiveInsight
-    ? `${providerName(effectiveInsight.provider)}${effectiveInsight.model ? ` · ${effectiveInsight.model}` : ""}`
-    : "";
+  $: effectiveSummary = settings?.effective.summary ?? null;
 
   function providerName(id: string): string {
     const provider = providers.find((row) => row.id === id);
@@ -420,56 +417,55 @@
          fresh install's automatic draft replaced by another — resets its
          inputs rather than carrying the first draft's text into the second. -->
     {#key draft.id}
-      <section class="grid gap-3">
-        <h3 class="text-sm font-semibold">{heading}</h3>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Provider</span>
+      <section class="ep-form">
+        <div class="ep-form-head">
+          <h3 class="set-row-name ep-form-title">{heading}</h3>
+        </div>
+        <div class="ep-form-grid">
+          <label class="op-field">
+            <span class="op-field-label">Provider</span>
             <input
               bind:value={draft.name}
               type="text"
-              class="input input-sm w-full border-base-300 shadow-none"
+              class="op-input"
               placeholder="OpenRouter, local Qwen…"
             />
           </label>
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Base URL</span>
+          <label class="op-field">
+            <span class="op-field-label">Base URL</span>
             <input
               bind:value={draft.baseUrl}
               type="url"
-              class="input input-sm w-full border-base-300 shadow-none"
+              class="op-input"
               placeholder="https://openrouter.ai/api/v1 or http://your-host:8000/v1"
             />
           </label>
         </div>
-        <label class="flex w-full flex-col gap-1">
-          <span class="text-xs font-medium text-base-content/70">
+        <label class="op-field">
+          <span class="op-field-label">
             API key
             {#if draft.keyConfigured && !draft.keyCleared}
-              <span class="badge badge-success badge-outline badge-xs align-middle">
-                stored
-              </span>
+              <span class="ep-key-state ep-key-ok">stored</span>
             {:else if draft.keyCleared}
-              <span class="badge badge-warning badge-outline badge-xs align-middle">
-                will be removed
-              </span>
+              <span class="ep-key-state ep-key-warn">will be removed</span>
             {/if}
           </span>
           <input
             bind:value={draft.key}
             type="password"
             autocomplete="off"
-            class="input input-sm w-full border-base-300 shadow-none"
+            class="op-input"
             placeholder={draft.keyConfigured && !draft.keyCleared
-              ? "leave blank to keep the stored key"
-              : "Paste the full key, sk-or-v1-… for OpenRouter. Self-hosted servers usually need none."}
+              ? "Leave blank to keep the saved key"
+              : "Paste the full API key (sk-or-v1-… for OpenRouter). Self-hosted servers usually don't need one."}
           />
           {#if keyPrefixWarning}
-            <p class="text-xs text-warning">{keyPrefixWarning}</p>
+            <p class="ep-warn">{keyPrefixWarning}</p>
           {/if}
           {#if draft.keyConfigured}
             <button
-              class="link link-hover self-start text-xs text-base-content/60"
+              class="link-btn self-start"
+              class:ep-key-remove={!draft.keyCleared}
               type="button"
               on:click={() => {
                 if (draft) {
@@ -480,7 +476,7 @@
                 }
               }}
             >
-              {draft.keyCleared ? "Keep the stored key" : "Remove the stored key"}
+              {draft.keyCleared ? "Keep the saved key" : "Remove the saved key"}
             </button>
           {/if}
         </label>
@@ -505,40 +501,43 @@
              hosted API does. Nobody adding their first endpoint needs to
              decide either. -->
         <details bind:open={draft.advanced}>
-          <summary class="cursor-pointer text-xs text-base-content/60">
-            Request bounds
+          <summary class="tpl-toggle">
+            <span class="tpl-chev" aria-hidden="true"></span>
+            Request limits
           </summary>
-          <div class="mt-2 grid gap-3 sm:grid-cols-2">
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">
+          <div class="ep-form-grid ep-bounds">
+            <label class="op-field">
+              <span class="op-field-label">
                 Request timeout (s)
               </span>
               <input
                 bind:value={draft.timeoutSec}
                 type="number"
                 min="1"
-                class="input input-sm w-full border-base-300 shadow-none"
+                class="op-input"
                 placeholder="900 (default)"
               />
             </label>
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">
+            <label class="op-field">
+              <span class="op-field-label">
                 Response token limit
               </span>
               <input
                 bind:value={draft.maxTokens}
                 type="number"
                 min="1"
-                class="input input-sm w-full border-base-300 shadow-none"
+                class="op-input"
                 placeholder="4096 (default)"
               />
             </label>
           </div>
         </details>
 
-        <div class="flex items-center gap-2">
+        <!-- Under the form, not over it: the save belongs after the fields it
+             writes, which is where a reader's eye ends up. -->
+        <div class="ep-form-actions">
           <button
-            class="btn btn-primary btn-sm text-sm"
+            class="op-btn"
             type="button"
             disabled={!draftReady || saving}
             on:click={saveProvider}
@@ -552,7 +551,7 @@
           </button>
           {#if providers.length > 0}
             <button
-              class="btn btn-ghost btn-sm text-sm"
+              class="link-btn op-cancel"
               type="button"
               disabled={saving}
               on:click={() => (draft = null)}
@@ -566,97 +565,83 @@
   {/if}
 {/snippet}
 
-<section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
-  <header class="flex items-start justify-between gap-3 px-4 py-3">
+<header class="op-panel-head">
     <div>
-      <div class="flex items-center gap-2">
-        <h2 class="font-semibold">AI providers</h2>
+      <div class="op-panel-title">
+        <h1>AI providers</h1>
         <!-- Optional, and said out loud: recording and transcription need none
              of this, and an administrator who reads this page as a required
              step has been misled about what Cassini does on its own. -->
-        <span class="badge badge-outline badge-sm border-base-content/25 text-base-content/70">
-          Optional
-        </span>
+        <span class="panel-badge">Optional</span>
       </div>
       {#if showSubtitle}
-        <p class="text-xs text-base-content/60">
-          Where Cassini sends transcripts for summaries and insights.
-        </p>
+        <p>Where Cassini sends transcripts for summaries and insights.</p>
       {/if}
     </div>
-    <div class="flex items-center gap-2">
-      {#if settings && providers.length > 0 && draft === null}
-        <button
-          class="btn btn-primary btn-sm text-sm"
-          type="button"
-          on:click={() => (draft = freshDraft())}
-        >
-          <Plus size={14} aria-hidden="true" />
-          Add a provider
-        </button>
-      {/if}
+    <div class="op-panel-actions">
       <button
-        class="btn btn-ghost btn-sm btn-square"
+        class="icon-btn"
         type="button"
         on:click={load}
         disabled={loading || !operatorClient}
         aria-label="Reload AI providers"
       >
-        <RefreshCw size={16} aria-hidden="true" />
+        <RefreshCw size={15} aria-hidden="true" />
       </button>
+      {#if settings && providers.length > 0 && draft === null}
+        <button
+          class="op-btn"
+          type="button"
+          on:click={() => (draft = freshDraft())}
+        >
+          Add a provider
+        </button>
+      {/if}
     </div>
   </header>
 
   {#if loadError}
-    <div class="px-4 py-4">
-      <div class="alert alert-error text-sm">{loadError}</div>
-    </div>
+    <div class="err-box" role="alert">{loadError}</div>
   {:else if loading}
-    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">
-      Loading AI providers…
-    </div>
+    <p class="op-state">Loading AI providers…</p>
   {:else if !settings}
-    <div class="flex items-center justify-center p-6 text-sm text-base-content/60">
-      No AI provider settings available.
-    </div>
+    <p class="op-state">No AI provider settings available.</p>
   {:else}
-    <div class="grid gap-4 p-4">
+    <div class="ep-body">
       {#if providers.length === 0}
         <!-- Nobody arrives here knowing what an endpoint buys them, so the empty
              screen says it before it asks for a key. -->
-        <section class="grid gap-3">
-          <div class="grid gap-3 sm:grid-cols-2">
-            <div class="rounded-box border border-base-300 bg-base-200 p-3">
-              <TextAlignStart size={16} class="mb-2 text-secondary" aria-hidden="true" />
-              <p class="text-sm font-semibold">Summaries</p>
-              <p class="text-xs text-base-content/60">Shown at the top of every meeting.</p>
+        <section class="ep-explain">
+          <div class="ep-explain-grid">
+            <div class="op-tint ep-feat">
+              <TextAlignStart size={16} class="ep-feat-icon" aria-hidden="true" />
+              <strong>Summaries</strong>
+              <span>Shown at the top of every meeting.</span>
             </div>
-            <div class="rounded-box border border-base-300 bg-base-200 p-3">
-              <FileText size={16} class="mb-2 text-secondary" aria-hidden="true" />
-              <p class="text-sm font-semibold">Insights</p>
-              <p class="text-xs text-base-content/60">
-                Answers drawn from meetings you choose.
-              </p>
+            <div class="op-tint ep-feat">
+              <FileText size={16} class="ep-feat-icon" aria-hidden="true" />
+              <strong>Insights</strong>
+              <span>Answers drawn from meetings you choose.</span>
             </div>
           </div>
-          <p class="text-xs leading-relaxed text-base-content/70">
-            Recording and transcription run on your own infrastructure. An endpoint is only
-            needed for summaries and insights.
+          <p class="ep-note">
+            Recording and transcription run on your own servers. A provider is only needed for
+            summaries and insights.
           </p>
           <!-- Said before the save, not discovered after it. Registering the
                first endpoint switches summarising on — which is what a fresh
                install wants and what makes the configured state reachable in
                one go — and that is a decision about what leaves this
                deployment, so it is not a surprise worth saving for later. -->
-          <p class="text-xs leading-relaxed text-base-content/70">
-            Saving your first endpoint switches summaries on for every meeting. Turn that off
-            under Publish pipeline.
+          <p class="ep-note">
+            Saving your first provider turns on summaries for every meeting. You can turn them off in
+            <strong>Operator › Publish pipeline</strong>.
           </p>
         </section>
       {:else}
-        <ul class="grid gap-2">
+        <ul class="ep-list">
           {#each providers as provider (provider.id)}
-            <li class="rounded-box border border-base-300 bg-base-200 p-3">
+            <li class="op-tint ep-card">
               {#if draft?.existing && draft.id === provider.id}
                 <!-- Edited where it stands, so the form is unmistakably
                      this endpoint's and not a second one being added. -->
@@ -668,8 +653,8 @@
                      message has its own full-width line below instead. -->
                 <div class="flex items-start justify-between gap-2">
                   <div class="min-w-0">
-                    <div class="flex items-center gap-1.5">
-                      <span class="text-sm font-semibold">{providerLabel(provider)}</span>
+                    <div class="set-row-name">
+                      <span>{providerLabel(provider)}</span>
                       <!-- The tick is a listing that came back, not a row that
                            exists. A failure says so in its own words: an endpoint
                            with no /models route still answers completions, and
@@ -688,12 +673,10 @@
                         />
                       {/if}
                     </div>
-                    <div
-                      class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60"
-                    >
-                      <code class="font-mono">{provider.base_url}</code>
+                    <div class="set-row-sub">
+                      <code class="ep-code">{provider.base_url}</code>
                       <span>
-                        {provider.api_key_configured ? "Key stored" : "No key"}
+                        {provider.api_key_configured ? "Key saved" : "No key"}
                       </span>
                       <!-- The model every step on this endpoint asks for. Not
                            having one is worth seeing: the recorder then falls
@@ -709,7 +692,7 @@
                           {state.status === "ok" && state.count === 1 ? "model" : "models"}
                         </span>
                       {:else if probes[provider.id]?.status === "checking"}
-                        <span>listing models…</span>
+                        <span>Loading models…</span>
                       {/if}
                       {#if provider.timeout_sec > 0}
                         <span>{provider.timeout_sec}s timeout</span>
@@ -719,9 +702,9 @@
                       {/if}
                     </div>
                   </div>
-                  <div class="flex flex-none items-center gap-1">
+                  <div class="flex flex-none items-center gap-3">
                     <button
-                      class="btn btn-ghost btn-xs"
+                      class="link-btn"
                       type="button"
                       disabled={saving}
                       on:click={() => (draft = editDraft(provider))}
@@ -729,7 +712,7 @@
                       Edit
                     </button>
                     <button
-                      class="btn btn-ghost btn-xs text-error"
+                      class="link-btn danger"
                       type="button"
                       disabled={saving}
                       aria-expanded={pendingRemoval?.id === provider.id}
@@ -741,7 +724,7 @@
                 </div>
                 {#if probes[provider.id]?.status === "failed"}
                   {@const state = probes[provider.id]}
-                  <p class="mt-1 text-xs break-words text-warning">
+                  <p class="ep-warn ep-probe-fail">
                     {modelListUnavailable(state.status === "failed" ? state.message : "")}
                     You can still type a model ID.
                   </p>
@@ -755,34 +738,34 @@
                        step switched off here has to be switched on again in
                        Publish pipeline. -->
                   <div
-                    class="mt-3 grid gap-2 rounded-box border border-error bg-error/10 p-3"
+                    class="ep-confirm"
                     role="alertdialog"
                     aria-label="Confirm removing this endpoint"
                   >
                     <div class="flex items-start gap-2">
                       <TriangleAlert size={18} class="mt-0.5 shrink-0 text-error" aria-hidden="true" />
                       <div class="grid gap-1">
-                        <p class="text-sm font-semibold">
+                        <p class="ep-confirm-title">
                           Remove {provider.name || provider.base_url || provider.id}?
                         </p>
-                        <p class="text-xs break-words text-base-content/80">
-                          <code class="font-mono">{provider.base_url}</code>
+                        <p class="ep-confirm-text">
+                          <code class="ep-code">{provider.base_url}</code>
                         </p>
-                        <ul class="grid gap-1 text-xs text-base-content/80">
+                        <ul class="ep-confirm-text grid gap-1">
                           {#if provider.api_key_configured}
-                            <li>The stored key is destroyed. Cassini cannot show it to you first.</li>
+                            <li>The saved API key is deleted and can't be recovered.</li>
                           {/if}
                           {#if stepsRunningOn(provider).length > 0}
                             <li>
-                              It stops {stepsRunningOn(provider).join(" and ")}: nothing will run
-                              them until an endpoint is chosen again in Publish pipeline.
+                              This stops {stepsRunningOn(provider).join(" and ")} until you choose
+                              another provider in <strong>Operator › Publish pipeline</strong>.
                             </li>
                           {/if}
                           <li>Meetings already published keep their summaries.</li>
                         </ul>
                       </div>
                     </div>
-                    <div class="flex flex-wrap items-center gap-2">
+                    <div class="ep-confirm-actions flex flex-wrap items-center gap-3">
                       <button
                         class="btn btn-sm btn-error"
                         type="button"
@@ -792,7 +775,7 @@
                         Yes, remove it
                       </button>
                       <button
-                        class="btn btn-sm btn-ghost"
+                        class="link-btn op-cancel"
                         type="button"
                         disabled={saving}
                         on:click={() => (pendingRemoval = null)}
@@ -811,8 +794,8 @@
       {#if draft && !draft.existing}
         <!-- Only a NEW provider's form lives here, under the list; editing
              happens on the card itself. -->
-        <section class="rounded-box border border-base-300 bg-base-200 p-3">
-          {@render providerForm("New endpoint")}
+        <section class="ep-new" class:ep-new-ruled={providers.length > 0}>
+          {@render providerForm("New provider")}
         </section>
       {/if}
 
@@ -827,16 +810,224 @@
              registered provider, and every user is shown all of them. So every
              endpoint on this page is one somebody's transcripts can be sent to,
              and removing them all is still the off switch. -->
-        <p class="text-xs text-base-content/60">
-          Insights run on the endpoint the asker picks, or
-          <span class="font-medium">{insightEndpointLabel}</span> if none. Remove every endpoint
-          to switch insights off.
-        </p>
+        <div class="ep-usage">
+          <p class="ep-note">
+            {#if effectiveSummary}
+              Summaries use <span class="font-medium">{providerName(effectiveSummary.provider)}</span>{#if effectiveSummary.model}{" "}with
+                <code class="ep-model">{effectiveSummary.model}</code>{/if}.
+            {:else}
+              Summaries are off.
+            {/if}
+            Change this in <strong>Operator › Publish pipeline</strong>.
+          </p>
+          <p class="ep-note">
+            Whoever creates an insight picks which provider it uses. If they don't pick one, it uses
+            <span class="font-medium">{providerName(effectiveInsight.provider)}</span>{#if effectiveInsight.model}{" "}with
+              <code class="ep-model">{effectiveInsight.model}</code>{/if}.
+          </p>
+          <p class="ep-note">Remove all providers to turn off both summaries and insights.</p>
+        </div>
       {/if}
 
       {#if saveError}
-        <div class="alert alert-error text-sm">{saveError}</div>
+        <div class="err-box" role="alert">{saveError}</div>
       {/if}
     </div>
   {/if}
-</section>
+
+<style>
+  .ep-body {
+    display: grid;
+    gap: 16px;
+  }
+  .ep-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ep-card {
+    padding: 14px 16px;
+  }
+  .ep-code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+  .ep-model {
+    padding: 1px 5px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+    background-color: var(--op-code-bg);
+    border: 1px solid var(--op-code-border);
+    border-radius: var(--radius-selector, 0.25rem);
+  }
+  .ep-warn {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    color: var(--color-warning);
+  }
+  .ep-probe-fail {
+    margin-top: 4px;
+  }
+  .ep-confirm {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    background-color: color-mix(in oklch, var(--color-error) 16%, var(--color-base-100));
+    border: 1px solid var(--color-error);
+    border-radius: var(--radius-box, 0.5rem);
+  }
+  .ep-confirm :global(svg) {
+    color: var(--color-error);
+  }
+  .ep-confirm-actions {
+    padding-left: 26px;
+  }
+  .ep-confirm-title {
+    margin: 0;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--color-base-content);
+  }
+  .ep-confirm-text {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
+  }
+
+  .ep-explain {
+    display: grid;
+    gap: 0;
+    padding-bottom: 6px;
+  }
+  .ep-explain-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 8px;
+  }
+  .ep-feat {
+    display: grid;
+    align-content: start;
+    gap: 3px;
+    padding: 13px 14px;
+  }
+  .ep-feat :global(.ep-feat-icon) {
+    margin-bottom: 3px;
+    color: var(--color-secondary);
+  }
+  .ep-feat strong {
+    font-size: 13.5px;
+    font-weight: 620;
+    color: var(--color-base-content);
+  }
+  .ep-feat span {
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .ep-note {
+    margin: 10px 0 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: color-mix(in oklch, var(--color-base-content) 65%, transparent);
+  }
+  .ep-body > .ep-note {
+    margin-top: 0;
+  }
+  .ep-usage {
+    display: grid;
+    gap: 4px;
+  }
+  .ep-usage .ep-note {
+    margin: 0;
+  }
+
+  .ep-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ep-new {
+    padding: 0 0 6px;
+  }
+  .ep-new-ruled {
+    padding-top: 16px;
+    margin-top: 2px;
+    border-top: 1px solid var(--color-base-300);
+  }
+  .ep-form-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+    gap: 12px;
+  }
+  .ep-bounds {
+    margin-top: 10px;
+  }
+  /* The form's own heading: it names the thing being made, so it reads as a
+     title rather than as another row label. */
+  .ep-form-title {
+    font-size: 15px;
+    font-weight: 650;
+  }
+  .ep-form-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+  }
+  .ep-form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .ep-key-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    vertical-align: 1px;
+    border-radius: 5px;
+  }
+  .ep-key-ok {
+    color: var(--color-success);
+    background-color: color-mix(in srgb, var(--color-success) 16%, transparent);
+  }
+  .ep-key-warn {
+    color: var(--color-warning);
+    background-color: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  }
+  .ep-key-remove {
+    color: var(--color-base-content);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--color-base-content) 40%, transparent);
+    text-underline-offset: 2px;
+  }
+  .ep-key-remove:hover {
+    color: var(--color-error);
+    text-decoration-color: currentColor;
+  }
+
+  @media (max-width: 560px) {
+    .ep-form-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

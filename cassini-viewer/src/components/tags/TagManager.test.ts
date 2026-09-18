@@ -38,10 +38,13 @@ describe("TagManager", () => {
   it("lists each tag with its counts and a menu, and who changed it only once someone has", () => {
     const sheet = html(TagManager, { tags, provider, open: true });
     expect(sheet).toContain(">budget</span>");
-    expect(sheet).toContain("9 meetings · 14 marks");
-    expect(sheet).toContain("1 meeting · 0 marks");
-    expect(sheet).toContain("Changed by Priya · 2 days ago");
-    expect(sheet.match(/Changed by/g)).toHaveLength(1);
+    expect(sheet).toContain("Used 14 times in 9 meetings");
+    expect(sheet).toContain("Used in 1 meeting");
+    // The last change hangs off a history icon, and only where there has been
+    // one: a row nobody has touched claims nothing.
+    expect(sheet).toContain('aria-label="Last change to budget"');
+    expect(sheet).not.toContain('aria-label="Last change to hiring"');
+    expect(sheet).not.toContain("Changed by Priya");
     expect(sheet).toContain('aria-label="Actions for hiring" aria-haspopup="menu"');
     expect(sheet).toMatch(/data-tag-color="amber"/);
   });

@@ -116,13 +116,13 @@ describe("the two options", () => {
     const options = accessOptions(statusOf());
     expect(options.map((option) => option.title)).toEqual([
       "Everyone with a Nextcloud account",
-      "Meeting participants",
+      "Room members",
     ]);
     expect(options[0].description).toBe(
-      "Anyone with an account on this Nextcloud can see every recording and the name of the room it came from. Works with nothing extra installed.",
+      "Anyone with an account on this Nextcloud can open every meeting, including its recording and transcript, and see which room it came from. Works with nothing extra installed.",
     );
     expect(options[1].description).toBe(
-      "Only the people who were in a call can see its recording. Needs two Nextcloud apps: Team folders and Everyone Group.",
+      "Only the room's members can open a recording, including people invited who didn't join. Guests and people added later can't. Needs two Nextcloud apps: Team folders and Everyone Group.",
     );
   });
 
@@ -161,7 +161,7 @@ describe("the existing-recordings line", () => {
     );
   });
 
-  it("says who can see them under Meeting participants", () => {
+  it("says who can see them under Room members", () => {
     const status = statusOf({
       mode: "access_controlled",
       modes: [
@@ -174,7 +174,7 @@ describe("the existing-recordings line", () => {
       ],
     });
     expect(existingRecordingsLine(status)).toBe(
-      "You have 134 recordings. Only the people in each call can see them.",
+      "You have 134 recordings. Only room members can see them.",
     );
   });
 
@@ -193,7 +193,7 @@ describe("the existing-recordings line", () => {
       ],
     });
     expect(existingRecordingsLine(status, true)).toBe(
-      "You have 2 recordings from before the switch. Anyone with a Nextcloud account can still see them. New recordings are visible to their participants only.",
+      "You have 2 recordings from before the switch. Anyone with a Nextcloud account can still see them. New recordings are visible to room members only.",
     );
   });
 
@@ -221,11 +221,11 @@ describe("the existing-recordings line", () => {
       ],
     });
     expect(existingRecordingsLine(participants)).toBe(
-      "No recordings yet. Only the people in each call will be able to see them.",
+      "No recordings yet. Only room members will be able to see them.",
     );
     // Including on the way out of a switch that moved nothing.
     expect(existingRecordingsLine(participants, true)).toBe(
-      "No recordings yet. Only the people in each call will be able to see them.",
+      "No recordings yet. Only room members will be able to see them.",
     );
   });
 
@@ -290,7 +290,7 @@ describe("the prerequisite checklist", () => {
   // The checklist is about the two apps and nothing else. A mode whose only
   // outstanding steps are Cassini's own (the folder, the mappings, the ACL) is
   // not a question for an administrator.
-  it("is shown only for Meeting participants, and only for a missing app", () => {
+  it("is shown only for Room members, and only for a missing app", () => {
     expect(needsPrerequisites(missingOne, "access_controlled")).toBe(true);
     expect(needsPrerequisites(missingOne, "default")).toBe(false);
     const foldersOnly = statusOf({
@@ -310,13 +310,13 @@ describe("the prerequisite checklist", () => {
 describe("confirming a switch", () => {
   it("says what happens to new and to existing recordings, going in", () => {
     expect(switchConfirmation(statusOf(), "access_controlled")).toEqual({
-      title: "Switch to Meeting participants?",
+      title: "Switch to Room members?",
       lines: [
-        "New recordings will only be visible to the people who were in each call.",
+        "New recordings will only be visible to the members of each room.",
         "Your 2 existing recordings stay visible to everyone.",
       ],
       pause:
-        "Recording pauses while the switch runs, usually under a minute. You can close this page.",
+        "Recording is paused while the switch runs, usually for under a minute. You can close this page.",
       confirmLabel: "Switch",
       danger: false,
     });
@@ -340,10 +340,10 @@ describe("confirming a switch", () => {
     expect(switchConfirmation(status, "default")).toEqual({
       title: "Switch to Everyone with a Nextcloud account?",
       lines: [
-        "All 134 recordings, including the ones currently limited to their participants, will become visible to anyone with an account on this Nextcloud.",
-        "Switching back later won't re-limit them automatically, though you'll be able to limit them again from this page.",
+        "All 134 recordings, including the ones currently limited to room members, will become visible to anyone with an account on this Nextcloud.",
+        "Switching back later won't restrict them automatically, though you'll be able to restrict them again from this page.",
       ],
-      pause: "Recording pauses while the switch runs, usually a few minutes for this many.",
+      pause: "Recording is paused while the switch runs, usually for a few minutes with this many.",
       confirmLabel: "Make 134 recordings visible to everyone",
       danger: true,
     });
@@ -400,7 +400,7 @@ describe("confirming a switch", () => {
 
   it("says what it did, in the words the section will be rendering", () => {
     expect(doneMessage("access_controlled")).toBe(
-      "Done. New recordings are visible to their participants only.",
+      "Done. New recordings are visible to room members only.",
     );
     expect(doneMessage("default")).toBe(
       "Done. New recordings are visible to anyone with a Nextcloud account.",
@@ -413,8 +413,8 @@ describe("while the switch runs", () => {
     const steps = switchSteps({ active: true, phase: "switching", done: 12, total: 12 });
     expect(steps.map((step) => step.label)).toEqual([
       "Copy recordings to the new location",
-      "Check every file arrived",
-      "Switch the rule",
+      "Check every file was copied",
+      "Apply the new setting",
       "Remove the old copies",
     ]);
     expect(steps.map((step) => step.state)).toEqual(["done", "done", "now", "pending"]);
@@ -437,12 +437,12 @@ describe("while the switch runs", () => {
       "pending",
       "pending",
     ]);
-    expect(switchingLead(null)).toBe("You can close this page; the switch carries on.");
+    expect(switchingLead(null)).toBe("You can close this page and the switch will continue.");
   });
 
   it("names the count and the permission to walk away", () => {
     expect(switchingLead({ active: true, phase: "copying", done: 0, total: 2 })).toBe(
-      "Moving 2 recordings. You can close this page; the switch carries on.",
+      "Moving 2 recordings. You can close this page and the switch will continue.",
     );
   });
 
@@ -455,7 +455,7 @@ describe("while the switch runs", () => {
   });
 
   it("names where the switch is going, and stays quiet when it cannot", () => {
-    expect(switchingTitle("access_controlled")).toBe("Switching to Meeting participants");
+    expect(switchingTitle("access_controlled")).toBe("Switching to Room members");
     expect(switchingTitle("default")).toBe("Switching to Everyone with a Nextcloud account");
     expect(switchingTitle(null)).toBe("Switching who can see recordings");
   });
@@ -483,13 +483,13 @@ describe("details for administrators", () => {
   // value is the operator resolving it from what it found on enable (D-753) —
   // not a decision somebody took, and not a fallback either.
   it("maps every mode source to a plain label", () => {
-    expect(modeSourceLabel("resolved_on_enable")).toBe("Set when Cassini was enabled");
-    expect(modeSourceLabel("user")).toBe("Chosen here");
-    expect(modeSourceLabel("env")).toBe("Declared by a deploy option (development/CI)");
-    expect(modeSourceLabel("migrating")).toBe("Left by an interrupted switch");
-    expect(modeSourceLabel("default")).toBe("A fallback an older version recorded");
-    expect(modeSourceLabel("derived")).toBe("Detected from this Nextcloud by an older version");
-    expect(modeSourceLabel("configured")).toBe("Recorded, but Cassini cannot say by whom");
+    expect(modeSourceLabel("resolved_on_enable")).toBe("Automatically, when Cassini was enabled");
+    expect(modeSourceLabel("user")).toBe("On this page, by an administrator");
+    expect(modeSourceLabel("env")).toBe("By a deployment option (development/CI)");
+    expect(modeSourceLabel("migrating")).toBe("By a switch that didn't finish");
+    expect(modeSourceLabel("default")).toBe("As a fallback, by an older version");
+    expect(modeSourceLabel("derived")).toBe("Detected from this Nextcloud, by an older version");
+    expect(modeSourceLabel("configured")).toBe("Unknown");
     expect(modeSourceLabel("")).toBe("Not recorded yet");
   });
 
@@ -575,14 +575,14 @@ describe("open recordings summary", () => {
       narrowable: 1,
     });
     expect(openRecordingsSummary(open)).toBe(
-      "2 recordings are open to everyone on this Nextcloud; 1 recording can be limited to the people who took part in each meeting",
+      "2 recordings are open to everyone on this Nextcloud; 1 recording can be restricted to the members of each room",
     );
   });
 
   it("says when every listed recording can be limited", () => {
     const open = openRecordingsOf({ recordings: [openRecordingOf()], narrowable: 1 });
     expect(openRecordingsSummary(open)).toBe(
-      "1 recording is open to everyone on this Nextcloud and can be limited to the people who took part in each meeting",
+      "1 recording is open to everyone on this Nextcloud and can be restricted to the members of each room",
     );
   });
 
@@ -640,15 +640,15 @@ describe("open recording rows", () => {
 
 describe("limiting recordings", () => {
   it("counts the selection in the button", () => {
-    expect(restrictButtonLabel(0)).toBe("Limit to participants");
-    expect(restrictButtonLabel(1)).toBe("Limit 1 recording to their participants");
-    expect(restrictButtonLabel(4)).toBe("Limit 4 recordings to their participants");
+    expect(restrictButtonLabel(0)).toBe("Restrict to room members");
+    expect(restrictButtonLabel(1)).toBe("Restrict 1 recording to room members");
+    expect(restrictButtonLabel(4)).toBe("Restrict 4 recordings to room members");
   });
 
   it("confirms without dressing a narrowing up as a danger", () => {
     const confirmation = restrictConfirmation(3);
-    expect(confirmation.title).toBe("Limit 3 recordings?");
-    expect(confirmation.confirmLabel).toBe("Limit 3 recordings to their participants");
+    expect(confirmation.title).toBe("Restrict 3 recordings?");
+    expect(confirmation.confirmLabel).toBe("Restrict 3 recordings to room members");
     // The way back has to be on the dialog: this is the one thing the section
     // cannot undo for them.
     expect(confirmation.lines.some((line) => line.includes("Advanced permissions"))).toBe(true);
@@ -658,16 +658,16 @@ describe("limiting recordings", () => {
     const label = "Weekly sync";
     expect(
       restrictResultLine({ id: "a", outcome: "restricted", grants: 2, detail: "" }, label),
-    ).toBe("Weekly sync — now limited to 2 people.");
+    ).toBe("Weekly sync — now restricted to 2 people.");
     expect(
       restrictResultLine({ id: "a", outcome: "restricted", grants: 1, detail: "" }, label),
-    ).toBe("Weekly sync — now limited to 1 person.");
+    ).toBe("Weekly sync — now restricted to 1 person.");
     expect(
       restrictResultLine({ id: "a", outcome: "refused_stale", grants: 0, detail: "" }, label),
     ).toContain("changed while this page was open");
     expect(
       restrictResultLine({ id: "a", outcome: "refused_empty", grants: 0, detail: "" }, label),
-    ).toContain("nobody to limit it to");
+    ).toContain("nobody to restrict it to");
     expect(
       restrictResultLine({ id: "a", outcome: "failed", grants: 0, detail: "HTTP 500" }, label),
     ).toContain("HTTP 500");

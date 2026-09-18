@@ -96,44 +96,49 @@
 {/if}
 
 <style>
-  /* Secondary is this theme's amber — the colour the design gives everything
-     model-written, and the colour it gives this card. Unlike primary it is not
-     remapped to the Nextcloud accent in the embedded build, so a locked state
-     looks the same whatever the instance is themed. */
+  /* The card the operator's own panels draw (NeedsProviderCard): the app's
+     colour as a wash with no outline, because this stands in for the insight
+     that cannot be made yet rather than warning about one. */
+  /* One row: the title wraps before the action moves, so the card reads as a
+     sentence with its button rather than two stacked things. */
   .needs-key {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    background-color: color-mix(in oklch, var(--color-secondary) 14%, transparent);
-    border: 1px solid color-mix(in oklch, var(--color-secondary) 40%, transparent);
+    gap: 12px;
+    padding: 14px;
+    background-color: color-mix(in srgb, var(--color-primary) 9%, var(--color-base-100));
     border-radius: var(--radius-box, 0.75rem);
   }
   .needs-key :global(.needs-key-icon) {
     flex: none;
-    color: var(--color-secondary);
+    width: 22px;
+    height: 22px;
+    color: var(--color-primary);
   }
   .needs-key-title {
-    flex: 1;
+    flex: 1 1 auto;
     min-width: 0;
-    font-size: 0.875rem;
-    font-weight: 600;
+    text-wrap: pretty;
+    font-size: 13.5px;
+    font-weight: 650;
     color: var(--color-base-content);
   }
   /* An anchor, not a button, for the reason the prose form's link is one: it has
      a real address, so it can be copied and opened in a tab like any other. */
   .needs-key-go {
     flex: none;
-    padding: 6px 12px;
-    background-color: var(--color-secondary);
+    margin-left: auto;
+    padding: 7px 12px;
+    background-color: var(--color-base-content);
     border-radius: var(--radius-field, 0.5rem);
-    font-size: 0.8125rem;
+    font-size: 12.5px;
     font-weight: 600;
+    line-height: 1.2;
     text-decoration: none;
-    color: var(--color-secondary-content);
+    color: var(--color-base-100);
   }
   .needs-key-go:hover {
-    background-color: color-mix(in oklch, var(--color-secondary) 85%, black);
+    background-color: color-mix(in oklch, var(--color-base-content) 88%, var(--color-base-100));
   }
 </style>

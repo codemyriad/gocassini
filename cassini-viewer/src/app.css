@@ -204,6 +204,10 @@
   --color-base-content:    var(--color-main-text);
 }
 
+:host([data-nc-theme="light"]) .cassini-root {
+  --color-base-100:        var(--color-background-hover);
+}
+
 :host([data-nc-theme="dark"]),
 :host([data-nc-theme="dark-highcontrast"]) {
   color-scheme: dark;
@@ -217,22 +221,6 @@
 /* All NC modes: explicit borders using NC's border token (border-width resets to 0 in shadow DOM) */
 :host([data-nc-theme]) .cassini-root .card.border-base-300 {
   border: 1px solid var(--color-border-dark);
-}
-
-/* All NC modes: solid primary fill on the open meeting and the selected room.
- * D-654 replaced the list's cards with flat rows, so these are scoped to the
- * two things that actually carry a selected state — NOT to every button in the
- * list, which now also holds a search field, a rooms button and chip clears. */
-:host([data-nc-theme]) .cassini-root .meeting-row[aria-current="page"],
-:host([data-nc-theme]) .cassini-root .room-button[aria-pressed="true"] {
-  background-color: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-primary-content);
-  box-shadow: none;
-}
-:host([data-nc-theme]) .cassini-root .meeting-row[aria-current="page"] *,
-:host([data-nc-theme]) .cassini-root .room-button[aria-pressed="true"] * {
-  color: var(--color-primary-content);
 }
 
 /* HC: flatten all backgrounds to NC's main-background — clean white/black canvas */
@@ -250,7 +238,96 @@
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-row:not([aria-current="page"]):hover,
 :host([data-nc-theme*="highcontrast"]) .cassini-root .room-button:not([aria-pressed="true"]):hover {
-  background-color: var(--color-background-dark);
+  background-color: color-mix(in oklch, var(--color-primary) 38%, var(--color-main-background));
+}
+/* HC: the Operator settings pages layer by tint (card 4%, inner surfaces on the
+ * page colour), which HC's flattened backgrounds erase. Every edge takes NC's
+ * max-contrast border instead, so cards, fields, options and code boxes stay
+ * distinct without relying on a fill. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .op-settings {
+  --op-inset-border: var(--color-border-maxcontrast);
+  --op-code-border: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .op-settings :is(
+  .op-tint,
+  .pill,
+  .tpl-origin,
+  .panel-badge,
+  .icon-btn,
+  .q-radio,
+  .access-radio
+) {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.search-field, .resultline .chip, .selbar-clear, .selbar-tag, .tag-popover, .tag-popover input) {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.prep-card, .prep-action, .prep-gap, .tpl-box, .ins-sources, .ins-note) {
+  border: 1px solid var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.prep-head, .prep-row, .prep-total) {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .prep-row-words.unknown,
+:host([data-nc-theme*="highcontrast"]) .cassini-root .prep-row-flag {
+  color: var(--color-warning-text, var(--color-main-text));
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .insight-card {
+  background-color: transparent;
+  border: 1px solid var(--color-border-maxcontrast);
+  border-left: 3px solid var(--color-primary);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .insight-card:hover {
+  background-color: color-mix(in oklch, var(--color-primary) 30%, var(--color-main-background));
+  border-color: var(--color-primary);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .insight-card[aria-current="page"] {
+  background-color: color-mix(in oklch, var(--color-primary) 48%, var(--color-main-background));
+  border-color: var(--color-primary);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .segmented {
+  background-color: transparent;
+  border: 1px solid var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .segment {
+  color: var(--color-main-text);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .segment[aria-pressed="true"] {
+  background-color: var(--color-main-text);
+  color: var(--color-main-background);
+  box-shadow: none;
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .needs-key {
+  background-color: transparent;
+  border: 1px solid var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .needs-key :global(.needs-key-icon),
+:host([data-nc-theme*="highcontrast"]) .cassini-root .needs-key .needs-key-icon {
+  color: var(--color-main-text);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tag-chip {
+  border-color: var(--tag);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tm-save:not(:disabled) {
+  background-color: var(--color-main-text);
+  border-color: var(--color-main-text);
+  color: var(--color-main-background);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tm-head {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tm-row {
+  --tm-line: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .cassini-check:not(:checked) {
+  border-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .audience-note {
+  box-shadow: inset 0 0 0 1px var(--color-border-maxcontrast);
+  color: var(--color-main-text);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .op-settings :is(.hw-section, .set-card) {
+  border-top-color: var(--color-border-maxcontrast);
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root details.collapse {
   border: 1px solid var(--color-border-dark);
@@ -265,26 +342,121 @@
  * rule above — but they sit inside panels rather than alone in a list, so 2px of
  * --color-main-text reads louder than everything around them. Match the panels
  * instead: 1px of the same --color-border-dark that base-300 resolves to. */
+:host([data-nc-theme]) .cassini-root .op-recordings :is(.text-warning, .text-error, .text-success) {
+  font-weight: 600;
+}
 :host([data-nc-theme*="highcontrast"]) .cassini-root .recordings-list .card.border-base-300 {
   border: 1px solid var(--color-border-dark);
 }
 /* HC flattens base-100 and base-200 to one colour, so the selected card's
- * bg-base-200 tint carries no signal there. Invert it instead — the same
- * foreground/background swap .cassini-shell-tab[aria-current] uses, which tracks
- * whichever theme is live with no hardcoded light/dark branch.
- *
- * The descendant rule is required, not defensive: the status word and the
- * attempt badge set their own colour and border, and on an inverted fill both
- * land on top of their own colour and vanish. This costs the red/green status
- * tone while a card is selected — legibility on the flipped fill wins. */
+ * bg-base-200 tint carries no signal there. It takes a neutral selection built
+ * from the text colour (a light wash, a solid left edge and a solid border),
+ * rather than the instance's primary colour, which HC cannot guarantee
+ * contrasts, or an inverted card, which erased the red/green status words. */
 :host([data-nc-theme*="highcontrast"]) .cassini-root .recordings-list .card.border-base-300[aria-current="page"] {
-  background-color: var(--color-main-text);
-  border-color: var(--color-main-text);
-  color: var(--color-main-background);
+  background-color: color-mix(in oklch, var(--color-main-text) 10%, var(--color-main-background));
+  border: 2px solid var(--color-main-text);
+  box-shadow: inset 3px 0 0 var(--color-main-text);
 }
-:host([data-nc-theme*="highcontrast"]) .cassini-root .recordings-list .card.border-base-300[aria-current="page"] * {
-  color: var(--color-main-background);
-  border-color: var(--color-main-background);
+
+/* HC: the meeting and insight drawers, and the transcript in them. Their
+ * surfaces are tints of the ink over the drawer's ground, and their quieter
+ * text is the ink mixed down; high contrast flattens the one and asks for the
+ * other at full strength. Surfaces become an edge in the max-contrast border,
+ * an "on" state a solid edge in the text colour, and hover the accent wash the
+ * list's rows use. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(
+  .mv-card,
+  .mv-speaker,
+  .mv-speaker-name,
+  .mv-interjection:not(.border-warning),
+  .st-card,
+  .tt-matches,
+  .tf-marks-at,
+  .ins-card,
+  .ins-head-model
+) {
+  background-color: transparent;
+  border: 1px solid var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(
+  .mv-facts,
+  .mv-speaker,
+  .mv-speaker-count,
+  .mv-speaker-name,
+  .tt-count,
+  .tt-step,
+  .tf-marks,
+  .tf-marks-step,
+  .ins-head-meta,
+  .ins-card-title,
+  .ins-source-meta,
+  .ins-prov dt
+) {
+  color: var(--color-main-text);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.mv-rule, .insight-meta .rule) {
+  background-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(
+  .mv-insight:hover,
+  .ins-sources button:hover,
+  .mv-turn-time:hover
+) {
+  background-color: color-mix(in oklch, var(--color-primary) 38%, var(--color-main-background));
+  color: var(--color-main-text);
+}
+/* The switches' boxes: an edge at rest, a solid one when on. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.mv-toggle, .tt-only) {
+  background-color: transparent;
+  border: 1px solid var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.mv-toggle.on, .tt-only.on) {
+  border: 2px solid var(--color-main-text);
+}
+/* The player's track, which is a tenth of its ink. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .mv-scrub {
+  --range-bg: color-mix(in oklch, var(--color-main-text) 40%, transparent);
+}
+/* The turn being spoken: a ring in the text colour, not a third of it. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .mv-transcript article[aria-current="true"] {
+  --tw-ring-color: var(--color-main-text);
+}
+/* The rules under the search and tag bars. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root :is(.tf-bar, .tf-tagbar)::after {
+  border-bottom-color: var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .tf-marks-step,
+:host([data-nc-theme*="highcontrast"]) .cassini-root :not(.btn) > .cassini-kbd {
+  border-color: var(--color-border-maxcontrast);
+}
+/* The outlined actions: the ink's edge in full, and the tag's. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .ab-plain {
+  border-color: var(--color-main-text);
+  color: var(--color-main-text);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .ab-tag {
+  border-color: var(--tag);
+}
+/* The rail: the track and the on-screen box are edges, not washes. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .mr-track {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--color-border-maxcontrast);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .mr-seen {
+  background-color: transparent;
+  border-color: var(--color-main-text);
+}
+/* A tag's chip at the side at full strength, and a word's hover as a rule in
+ * the text colour rather than a grey wash under it. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .mb-label {
+  opacity: 1;
+}
+/* Only a plain word: one in a tagged, selected or found passage keeps its own
+ * rule and hover. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .cassini-word:not([data-active="true"], [data-sel], [data-lit], [data-rest], [data-find]):hover {
+  background: transparent;
+  box-shadow: 0 2px 0 var(--color-main-text);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -371,18 +543,43 @@ body {
   text-align: inherit;
   background: transparent;
   cursor: pointer;
+  /* A word is a button, and a button's text is not always selectable; on a
+   * narrow screen the reader's own selection is how a section is made. */
+  -webkit-user-select: text;
+  user-select: text;
 }
+/* Neither of these carries a hue any more. A tag's own colour and the amber of
+ * a search hit are the two things in a transcript that MEAN something; hover is
+ * a pointer's shadow and the playing word is a position, and both said it in
+ * the accent, which put three colours on the same words. */
 .cassini-word:hover {
-  background: color-mix(in srgb, var(--color-primary) 30%, transparent);
-  box-shadow: 0 1px 0 var(--color-primary);
+  background: color-mix(in oklch, var(--color-base-content) 14%, transparent);
+  box-shadow: 0 1px 0 color-mix(in oklch, var(--color-base-content) 35%, transparent);
 }
+/* Inverted rather than tinted: it is the one thing saying where the audio is,
+ * so it has to be unmistakable without being another colour. */
 .cassini-word[data-active="true"] {
   color: var(--color-base-100);
-  background: color-mix(in srgb, var(--color-primary) 70%, var(--color-base-content));
+  background: var(--color-base-content);
 }
+/* A timed word is a <button>, an atomic inline as tall as its line-height; an
+ * untimed word or a run of punctuation is a plain span, only as tall as the
+ * font. They take the same box here, so a rule drawn along a tagged passage
+ * has one bottom edge. Nothing wraps before one of these the way a line can
+ * begin with a space, so as inline-blocks they cannot indent a line. */
+span[data-word-id] {
+  display: inline-block;
+  line-height: inherit;
+}
+
+/* A word whose timing was estimated rather than measured. It used to carry a
+ * dashed amber underline, which on a recording transcribed without word
+ * timings is EVERY word: a page of broken underlines that read as damage and
+ * drowned the rule under a tagged passage. The fact is still told where it is
+ * useful — the header says "Passage-timed" or "Mixed timing" for the whole
+ * transcript, and each word keeps its own title. */
 .cassini-word-interpolated {
-  text-decoration: underline dashed var(--color-warning);
-  text-underline-offset: 0.2em;
+  text-decoration: none;
 }
 
 /* GPU-composited loading spinner. DaisyUI's loading-spinner uses a mask
@@ -408,6 +605,41 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .cassini-spinner {
     animation-duration: 2s;
+  }
+}
+
+.cassini-check {
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid color-mix(in oklch, var(--color-base-content) 25%, transparent);
+  border-radius: var(--radius-selector, 0.25rem);
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.cassini-check:checked::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 4.5px;
+  width: 3.5px;
+  height: 8px;
+  border-style: solid;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.cassini-check:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cassini-check {
+    transition: none;
   }
 }
 
@@ -507,7 +739,9 @@ body {
 /* The surface of every tag popover: the picker, the swatches, the icons, the manager's menu. */
 .tag-popover {
   z-index: 50;
-  background: var(--color-base-100);
+  /* The inset surface the settings fields and the search box use: darker than
+     the page in dark, lighter in light. */
+  background: var(--color-base-200);
   border: 1px solid var(--color-base-300);
   border-radius: var(--radius-box, 0.5rem);
   box-shadow:

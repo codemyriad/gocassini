@@ -11,7 +11,7 @@ import type { InsightRecord } from "../viewer/insights";
 describe("InsightDocument", () => {
   it("reads in the order the panel exists in: question, material, answer", () => {
     const question = insightDocumentSource.indexOf('class="ins-question"');
-    const sources = insightDocumentSource.indexOf('class="ins-sources"');
+    const sources = insightDocumentSource.indexOf('class="ins-sources');
     const answer = insightDocumentSource.indexOf("documentHtml}");
     expect(question).toBeGreaterThan(-1);
     expect(sources).toBeGreaterThan(question);
@@ -122,7 +122,7 @@ describe("InsightDocument", () => {
       }).body;
       const text = plainText(html);
       expect(text).toContain("The endpoint refused the request");
-      expect(text).toContain("Check its key, quota or model name under AI providers.");
+      expect(text).toContain("Check its key, quota or model name under Operator › AI providers.");
       expect(text).not.toContain("provider-refused");
     });
 

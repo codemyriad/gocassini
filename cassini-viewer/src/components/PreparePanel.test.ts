@@ -141,11 +141,17 @@ describe("PreparePanel", () => {
     expect(ensure).toContain("if (key !== selectionKey) {");
   });
 
-  it("withholds every action above the operator's cap", () => {
-    // Copy, Download and the generate slot are all refused server-side above
-    // twenty; the gap sentence says why, and the controls follow it.
+  it("withholds every action the operator would refuse", () => {
+    // Above twenty, and with a meeting that has no single-file recording:
+    // both make the request for the SET fail, so Copy, Download and the
+    // generate slot follow the sentence that says why rather than offering an
+    // action that 404s. A row marked "Blocks Prepare" beside a working Copy
+    // button was the panel disagreeing with itself.
     expect(preparePanelSource).toContain("$: overCap = entries.length > MAX_SELECTED_MEETINGS;");
-    expect(preparePanelSource.match(/disabled=\{busy \|\| overCap\}/g) ?? []).toHaveLength(2);
-    expect(preparePanelSource).toContain("{#if !overCap}\n      <slot name=\"generate\" {entries} />");
+    expect(preparePanelSource).toContain(
+      "$: blocked = overCap || entries.some((entry) => lacksPortableAudio(entry));",
+    );
+    expect(preparePanelSource.match(/disabled=\{busy \|\| blocked\}/g) ?? []).toHaveLength(2);
+    expect(preparePanelSource).toContain("{#if !blocked}\n      <slot name=\"generate\" {entries} />");
   });
 });

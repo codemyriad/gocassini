@@ -5,6 +5,7 @@ import { AnnotationError, type AnnotationItem, type MeetingAnnotations } from ".
 import MeetingTags from "./MeetingTags.svelte";
 import StretchToolbar from "./StretchToolbar.svelte";
 import TranscriptFrame from "./TranscriptFrame.svelte";
+import transcriptFrameSource from "./TranscriptFrame.svelte?raw";
 import { createMarksSession, viewMarks } from "./session";
 
 // Rendered through Svelte's server renderer, as TranscriptWords.test.ts does:
@@ -64,11 +65,19 @@ describe("a meeting view with no annotation loader", () => {
 });
 
 describe("a meeting view with its marks loaded", () => {
-  it("adds the rail, marking and the marks toggle to the transcript", async () => {
+  it("adds the rail and the tagged-sections count to the transcript, and no tagging mode to set first", async () => {
     const html = frame(await opened(async () => meeting(true)));
-    expect(html).toContain("The whole meeting. Drag down it to grab a stretch");
-    expect(html).toContain("Mark with a tag…");
-    expect(html).toMatch(/Marks <span[^>]*>2<\/span>/);
+    // Rendered with no width, the frame is laid out for a narrow screen, where
+    // the rail is a map of the tagged sections and the text does the grabbing.
+    expect(html).toContain('aria-label="Tagged sections across the whole meeting"');
+    expect(html.match(/class="mr-seg /g)).toHaveLength(2);
+    // On the section's own heading line, in words: "marks" was the data model's
+    // term for one application of a tag, and the only one a reader had to be
+    // taught.
+    expect(html).toMatch(/2\s+tagged sections/);
+    // Arming is chosen from a selection's own toolbar, at the moment somebody
+    // is tagging; in the search bar it was a mode with no readable purpose.
+    expect(html).not.toContain("Mark with a tag…");
   });
 
   it("puts the whole-meeting tags in the header, removable, with a way to add one", async () => {
@@ -84,7 +93,7 @@ describe("a meeting view with its marks loaded", () => {
     const html = render(MeetingTags, { props: { session } }).body;
     expect(html).toContain("2 marks can't be placed on this recording");
     expect(html).toContain("Remove them");
-    expect(frame(session)).toMatch(/Marks <span[^>]*>0<\/span>/);
+    expect(frame(session)).toMatch(/0\s+tagged sections/);
   });
 
   it("says quietly that tags are being prepared on a 503", async () => {
@@ -102,18 +111,21 @@ describe("the stretch toolbar", () => {
   const toolbar = (props: Record<string, unknown>) =>
     render(StretchToolbar, { props: { startMs: 1234, endMs: 5470, ...props } }).body;
 
-  it("offers to tag a new stretch, and to clear it, with its times", () => {
+  it("offers to tag a new section, and to clear it, with its times", () => {
     const html = toolbar({});
     expect(html).toContain("0:01.2");
     expect(html).toContain("0:05.4");
-    expect(html).toContain("Tag this stretch");
+    expect(html).toContain("Tag selection");
     expect(html).toContain("Clear");
+    // No mode to set before tagging, and nothing to offer again yet.
+    expect(html).not.toContain("Keep this tag ready");
+    expect(html).not.toContain("Tag as ");
   });
 
-  it("is prefilled with the tag in hand, which it still waits to confirm", () => {
-    const html = toolbar({ armed: { tagId: "t-hiring", label: "hiring" } });
-    expect(html).toContain("Tag as hiring");
-    expect(html).not.toContain("Tag this stretch");
+  it("offers the last tag used again, in one click, beside the way to pick any", () => {
+    const html = toolbar({ recent: { tagId: "t-hiring", label: "hiring" } });
+    expect(html).toContain('aria-label="Tag as hiring"');
+    expect(html).toContain("Tag selection");
   });
 
   it("saves a moved mark only when asked, and can remove it", async () => {
@@ -121,11 +133,33 @@ describe("the stretch toolbar", () => {
     let state = { status: "off" } as Parameters<typeof viewMarks>[0];
     session.subscribe((value) => (state = value))();
     const mark = viewMarks(state, []).placed[0]!;
-    expect(toolbar({ mark })).not.toContain("Save move");
+    expect(toolbar({ mark })).not.toContain("Save changes");
+    expect(toolbar({ mark })).not.toContain("Unsaved changes");
     expect(toolbar({ mark })).toContain("Done");
     const moved = toolbar({ mark, moved: true });
-    expect(moved).toContain("Save move");
+    // Said as a state, and saved with the strongest button on the card.
+    expect(moved).toContain("Unsaved changes");
+    expect(moved).toContain("Save changes");
     expect(moved).toContain("Remove");
     expect(moved).toContain("Cancel");
+  });
+});
+
+// The host page listens for this chord too — in the ExApp build that is
+// Nextcloud, whose unified search opened instead of the transcript find.
+describe("claiming Ctrl+F from the host page", () => {
+  it("takes the event out of the propagation path, not just its default", () => {
+    // preventDefault only cancels the browser's own find bar. Another
+    // listener on the page still runs unless propagation is stopped, which is
+    // why the shortcut appeared not to work at all in Nextcloud.
+    expect(transcriptFrameSource).toContain("event.preventDefault();");
+    expect(transcriptFrameSource).toContain("event.stopPropagation();");
+    expect(transcriptFrameSource).toContain("event.stopImmediatePropagation();");
+  });
+
+  it("listens where it can get there first", () => {
+    // Window, capture phase: the first point any handler sees the event, so
+    // stopping here reaches every other listener including the host's.
+    expect(transcriptFrameSource).toContain('window.addEventListener("keydown", onKeydown, true)');
   });
 });

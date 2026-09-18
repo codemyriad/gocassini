@@ -29,9 +29,9 @@ describe("MeetingList rows", () => {
   });
 
   it("keeps the open state on the element the row's styling is keyed to", () => {
-    // `.meeting-row[aria-current="page"]` is what both this file and app.css's
-    // Nextcloud-theme override select on. Moving it off the row would silently
-    // strip the open row's fill in the NC build.
+    // `.meeting-row[aria-current="page"]` is what this file and app.css's
+    // high-contrast hover rule select on. Moving it off the row would silently
+    // strip the open row's tint.
     expect(meetingListSource).toMatch(
       /class="meeting-row"[\s\S]{0,120}aria-current=\{meeting\.id === selectedMeetingId/,
     );
@@ -114,7 +114,7 @@ describe("MeetingList insights", () => {
     expect(meetingListSource).toContain("{#if insightsError}");
     expect(meetingListSource).toContain("Insights could not be listed.");
     expect(meetingListSource).toMatch(
-      /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,240}\{:else if insightsOffered && insightsError\}/,
+      /\{#if insightsOffered && insightsLoaded\}[\s\S]{0,400}\{:else if insightsOffered && insightsError\}/,
     );
   });
 
@@ -178,9 +178,14 @@ describe("MeetingList insights", () => {
   // export has no operator, so the box must not offer to search transcripts.
   it("gates the transcript promise on there being something to ask", () => {
     expect(meetingListSource).toContain("export let searchOffered = false;");
+    // The label is built once and used for both placeholder and aria-label, so
+    // assert the branch rather than the markup: without an operator the box
+    // must offer names and dates and claim nothing about transcripts.
     expect(meetingListSource).toMatch(
-      /placeholder=\{searchOffered[\s\S]{0,160}what was said in them[\s\S]{0,80}by name or date`\}/,
+      /searchBoxLabel = searchOffered[\s\S]{0,400}by name or date`;/,
     );
+    expect(meetingListSource).toContain("placeholder={searchBoxLabel}");
+    expect(meetingListSource).toContain("aria-label={searchBoxLabel}");
   });
 
   // "Nothing matches" is a claim about the whole archive. After a failed search
@@ -201,52 +206,11 @@ describe("MeetingList insights", () => {
   });
 });
 
-// The audience chip (D-756). It is the only permanent statement on the browse
-// surface of who can see these recordings, and it is the same for everybody:
-// an administrator and a non-administrator must never disagree about what is
-// true. D-670 exists because the previous behaviour was to say nothing.
-describe("MeetingList audience chip", () => {
-  it("names the two audiences in the words the whole product uses", () => {
-    expect(meetingListSource).toContain("Visible to anyone with a Nextcloud account");
-    expect(meetingListSource).toContain("Visible to meeting participants");
-    // Never the storage enum, and never "Everyone in Cassini": the viewing
-    // layer is handed an audience, not a mode.
-    expect(meetingListSource).not.toContain("access_controlled");
-    expect(meetingListSource).not.toContain("Everyone in Cassini");
-  });
-
-  it("explains each one in a sentence, in the chip's title", () => {
-    expect(meetingListSource).toContain(
-      'title="Anyone with an account on this Nextcloud can see every recording and the name of the room it came from"',
-    );
-    expect(meetingListSource).toContain(
-      'title="Only the people in each call can see its recording"',
-    );
-  });
-
-  it("renders nothing at all when nobody said", () => {
-    // A standalone export has no operator to ask, and an operator too old to
-    // report the mode said nothing either. Absence is not an audience, and a
-    // chip is a claim about who can read a recording.
-    expect(meetingListSource).toContain(
-      'export let audience: "" | "everyone" | "participants" = "";',
-    );
-    expect(meetingListSource).toMatch(
-      /\{#if audience === "everyone"\}[\s\S]{0,400}\{:else if audience === "participants"\}[\s\S]{0,400}\{\/if\}/,
-    );
-  });
-
-  it("sits in the result line, and does not look like a narrowing", () => {
-    // The other chips on that line are active filters with a clear button.
-    // This one filters nothing, so it drops the primary fill that means "this
-    // list is incomplete".
-    const resultline = meetingListSource.slice(
-      meetingListSource.indexOf('<div class="resultline"'),
-      meetingListSource.indexOf("</header>"),
-    );
-    expect(resultline).toContain('class="chip audience"');
-    expect(resultline).toContain('class="chip audience limited"');
-    expect(meetingListSource).toContain(".chip.audience {");
+// Who can see the recordings (D-756) moved to the rooms rail; the list must
+// not state it a second time.
+describe("MeetingList audience", () => {
+  it("leaves the audience notice to the rooms rail", () => {
+    expect(meetingListSource).not.toContain("audience");
   });
 });
 
@@ -285,8 +249,10 @@ describe("MeetingList tags", () => {
   it("shows three chips on a row, whole-meeting tags first, then how many more", () => {
     const row = html({ meetingTags, tags });
     expect(row.match(/class="tag-chip[\s"]/g)).toHaveLength(3);
-    expect(row.match(/class="tag-chip\s[^"]*\bwhole\b/g)).toHaveLength(2);
-    expect(row).toMatch(/>3<span class="sr-only[^"]*"> stretches</);
+    // One look for every tag: where a tag sits in the meeting is the
+    // transcript's to show, not the chip's.
+    expect(row).not.toMatch(/class="tag-chip\s[^"]*\bwhole\b/);
+    expect(row).not.toContain("stretches");
     expect(row).toMatch(/title="tag-d"[^>]*>\+1</);
   });
 
@@ -322,5 +288,23 @@ describe("MeetingList tag filter over insights", () => {
     } as never).body;
     expect(body).toContain("Insights carry no tags, so a tag filter hides them.");
     expect(body).not.toContain("No meeting here has");
+  });
+
+  // D-772: the box finds meetings by the names of their tags, not only by
+  // title, date and what was said.
+  it("unions tag-name matches into what the list shows", () => {
+    expect(meetingListSource).toContain("filterByTagLabel(meetings, meetingTags, filter)");
+    // Filtering the narrowed array by an id set, rather than concatenating two
+    // results: keeps catalog order and cannot list a meeting twice when it
+    // matched both ways.
+    expect(meetingListSource).toContain("localMatchIds.has(meeting.id)");
+  });
+
+  it("names tags in the box only where there are tags to find", () => {
+    // An install with no tags would otherwise promise something that cannot
+    // match — the same empty promise searchOffered avoids.
+    expect(meetingListSource).toContain("tagsSearchable = meetingTags.size > 0");
+    expect(meetingListSource).toContain("their tags and what was said in them");
+    expect(meetingListSource).toContain("by name, date or tag");
   });
 });

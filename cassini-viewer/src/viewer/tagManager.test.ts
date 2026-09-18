@@ -59,8 +59,10 @@ function fakeProvider() {
 
 describe("row lines", () => {
   it("counts meetings and marks", () => {
-    expect(countsLine(tag())).toBe("9 meetings · 14 marks");
-    expect(countsLine(tag({ meetings: 1, marks: 0 }))).toBe("1 meeting · 0 marks");
+    expect(countsLine(tag())).toBe("Used 14 times in 9 meetings");
+    expect(countsLine(tag({ meetings: 1, marks: 1 }))).toBe("Used in 1 meeting");
+    expect(countsLine(tag({ meetings: 1, marks: 0 }))).toBe("Used in 1 meeting");
+    expect(countsLine(tag({ meetings: 0, marks: 0 }))).toBe("Not used yet");
   });
 
   it("says who changed a tag last, and when, only once someone has", () => {
@@ -78,7 +80,7 @@ describe("row lines", () => {
   });
 
   it("confirms with one line about the caller's own meetings", () => {
-    expect(confirmLine(9)).toBe("Updates 9 of your meetings. Meetings in rooms you can't open keep it.");
+    expect(confirmLine(9)).toBe("Updates 9 of your meetings. Meetings that are in rooms you can't access will keep the old tag.");
     expect(confirmLine(1)).toMatch(/^Updates one of your meetings\./);
     expect(confirmLine(0)).toBe("None of your meetings use it.");
   });

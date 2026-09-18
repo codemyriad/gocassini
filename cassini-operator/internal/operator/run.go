@@ -788,15 +788,21 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.buildJobFn = rt.executeBuildCLI
 	rt.sealJobFn = rt.executeSealCLIWithTimeout
 	rt.publishJobFn = rt.executePublishCLIWithTimeout
-	// loadConfig already rejected an unknown name; a Config built directly (as
-	// tests do) carries an empty name, which resolves to the default. So this
-	// cannot fail in practice — but fall back rather than panic if it ever does.
-	sink, err := newPublishSink(cfg.PublishSink, cfg, logger)
-	if err != nil {
-		logger.Printf("publish sink %q unavailable (%v); using %s", cfg.PublishSink, err, defaultPublishSink)
-		sink, _ = newPublishSink(defaultPublishSink, cfg, logger)
-	}
-	rt.publishSink = sink
+	// The publish sink is deliberately NOT constructed here.
+	//
+	// It used to be, through newPublishSink — which knows only the local sink,
+	// because building the Nextcloud one needs the ExApp config and the runtime
+	// itself. So every correctly configured ExApp got an error here, logged a
+	// self-contradictory line naming `nextcloud-files` as both unknown and
+	// known, claimed it was "using local", and was then immediately overwritten
+	// by the real sink a few lines into Run. Behaviour was right and the log was
+	// false, which is the worst combination: it is the first line an on-call
+	// reads, and it says the archive is going somewhere it is not (D-747).
+	//
+	// Run assigns the sink it actually constructed, via newPublishSinkFor, and
+	// exits non-zero if that fails. Until then this stays nil, which both
+	// readers already handle — rt.sink() defaults to the local sink and
+	// resolvedPublishSinkName() renders the raw selection.
 	// Keep readiness live without spawning nvidia-smi for every status request:
 	// a short keyed TTL still reflects driver resets and device-policy changes.
 	rt.computeProbe = probeComputeDevice
