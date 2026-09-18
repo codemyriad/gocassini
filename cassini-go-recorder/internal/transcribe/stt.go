@@ -60,9 +60,10 @@ func (w Word) extentCapMS() int64 {
 
 // Recognizer wraps a sherpa-onnx offline recognizer with Silero VAD segmentation.
 type Recognizer struct {
-	r          *sherpa.OfflineRecognizer
-	vad        *sherpa.VoiceActivityDetector
-	sampleRate int
+	r              *sherpa.OfflineRecognizer
+	vad            *sherpa.VoiceActivityDetector
+	sampleRate     int
+	boundaryPolicy *vadDecodePolicy
 }
 
 // vadWindowSamples is the configured SileroVad.WindowSize. sherpa-onnx can
@@ -79,6 +80,7 @@ const vadWindowSamples = 512
 const (
 	vadSpeechThreshold       = 0.18
 	vadMinSpeechDuration     = 0.10
+	vadMinSilenceDurationMS  = 500
 	minimumWordPeakAmplitude = 0.001  // -60 dBFS
 	minimumWordRMSAmplitude  = 0.0001 // -80 dBFS
 	minimumActiveAmplitude   = 0.0005 // -66 dBFS
@@ -144,7 +146,8 @@ const maxSafeSegmentSamples = 16000 * 55
 // bad span can no longer zero the whole transcript. The 0.5s overlap ensures a
 // word straddling a window boundary is captured by at least one window; the
 // overlap is de-duplicated by order-preserving text/time alignment (see
-// transcribeNonVADChunked).
+// transcribeNonVADChunked). The vadDecode* constants retain the legacy policy
+// for other models and controlled comparisons; v3 preserves whole VAD spans.
 const (
 	nonVADWindowSamples        = 16000 * 15 // 15s window at 16 kHz
 	nonVADWindowOverlapSamples = 16000 / 2  // 0.5s overlap at 16 kHz
@@ -157,11 +160,56 @@ const (
 	overlapShiftConsistency    = int64(100) // support wider matches with a phrase
 )
 
+// vadDecodePolicy keeps boundary choices together so recorded-audio benchmarks
+// exercise the same segmentation, padding, and overlap merge as production.
+// Sample counts use the canonical 16 kHz rate and are scaled at decode time.
+type vadDecodePolicy struct {
+	windowSamples, overlapSamples, graceSamples, minTerminalSamples int
+	headPaddingMS, tailPaddingMS                                    int
+	contextMS                                                       int
+	preserveVADSpan                                                 bool
+	disableSyntheticPadding                                         bool
+}
+
+func defaultVADDecodePolicy() vadDecodePolicy {
+	return vadDecodePolicy{
+		windowSamples: vadDecodeWindowSamples, overlapSamples: vadDecodeWindowOverlap,
+		graceSamples: vadDecodeWindowGrace, minTerminalSamples: vadDecodeMinTerminal,
+		tailPaddingMS: 500,
+	}
+}
+
+// Parakeet v3's reference frontend normalizes over the entire input. Synthetic
+// silence changes every frame; retaining the detected utterance and the source
+// context avoids both that perturbation and arbitrary mid-utterance resets.
+// 30ms is Silero's reference speech-boundary margin, not an ASR score optimum.
+func usesParakeetV3ReferencePolicy(id ModelID) bool {
+	return id == ModelParakeet06BV3 || id == ModelParakeet06BV3Int8
+}
+
+func vadDecodePolicyForModel(id ModelID) vadDecodePolicy {
+	policy := defaultVADDecodePolicy()
+	if usesParakeetV3ReferencePolicy(id) {
+		policy.preserveVADSpan = true
+		policy.contextMS = 30
+		policy.tailPaddingMS = 0
+		policy.disableSyntheticPadding = true
+	}
+	return policy
+}
+
+func (r *Recognizer) decodePolicy() vadDecodePolicy {
+	if r.boundaryPolicy != nil {
+		return *r.boundaryPolicy
+	}
+	return defaultVADDecodePolicy()
+}
+
 func newVADModelConfig(modelPath string, sampleRate int) sherpa.VadModelConfig {
 	cfg := sherpa.VadModelConfig{}
 	cfg.SileroVad.Model = modelPath
 	cfg.SileroVad.Threshold = vadSpeechThreshold
-	cfg.SileroVad.MinSilenceDuration = 0.5
+	cfg.SileroVad.MinSilenceDuration = float32(vadMinSilenceDurationMS) / 1000
 	cfg.SileroVad.MinSpeechDuration = vadMinSpeechDuration
 	cfg.SileroVad.WindowSize = vadWindowSamples
 	cfg.SileroVad.MaxSpeechDuration = 25.0
@@ -188,6 +236,25 @@ const (
 // Silero VAD model. provider is "cpu" or "cuda"; vadModelPath is the path to
 // silero_vad.onnx.
 func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig) (*Recognizer, error) {
+	return newRecognizerWithProfile(paths, vadModelPath, provider, numThreads, decoder, true)
+}
+
+const parakeetReferenceRuntimeMarker = "+cassini-parakeet-v3-reference-v1"
+
+func validateReferenceRuntime(id ModelID, version string) error {
+	if usesParakeetV3ReferencePolicy(id) && !strings.Contains(version, parakeetReferenceRuntimeMarker) {
+		return fmt.Errorf("Parakeet v3 requires the Cassini reference frontend runtime (found %q); build with cassini-go-recorder/scripts/build-cassini-bin.sh", version)
+	}
+	return nil
+}
+
+// The legacy profile is private and exists only for recorded-audio comparisons.
+func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, referenceProfile bool) (*Recognizer, error) {
+	if referenceProfile {
+		if err := validateReferenceRuntime(paths.ModelID, sherpa.GetVersion()); err != nil {
+			return nil, err
+		}
+	}
 	if numThreads < 1 {
 		numThreads = 4
 	}
@@ -210,8 +277,8 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	cfg.ModelConfig.Provider = provider
 	cfg.ModelConfig.Debug = 0
 
-	// The decoder is chosen by the caller, which is the only place that knows
-	// whether this model can beam-search at all. Hotwords ride along with it:
+	// Frontend/boundary policy and decoder selection are independent. Preserve
+	// the caller-selected decoder and supported hints. Hotwords ride along:
 	// sherpa reads the file only under modified beam search, and encodes the
 	// terms with the model's own BPE vocabulary, so all four settings move
 	// together or none of them do. Setting the file without modeling_unit is
@@ -231,7 +298,11 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 		return nil, fmt.Errorf("failed to create Silero VAD (check model path: %s)", vadModelPath)
 	}
 
-	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate}, nil
+	policy := defaultVADDecodePolicy()
+	if referenceProfile {
+		policy = vadDecodePolicyForModel(paths.ModelID)
+	}
+	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate, boundaryPolicy: &policy}, nil
 }
 
 func applyDecoderConfig(cfg *sherpa.OfflineRecognizerConfig, decoder *DecoderConfig) {
@@ -280,6 +351,10 @@ func applyDecoderConfig(cfg *sherpa.OfflineRecognizerConfig, decoder *DecoderCon
 //
 // Word timestamps refer to the full recording timeline either way.
 func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) ([]Word, error) {
+	return r.transcribeWithVADPolicy(samples, sampleRate, useVAD, r.decodePolicy())
+}
+
+func (r *Recognizer) transcribeWithVADPolicy(samples []float32, sampleRate int, useVAD bool, policy vadDecodePolicy) ([]Word, error) {
 	if len(samples) == 0 {
 		return nil, nil
 	}
@@ -305,6 +380,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	var segCount int
 	var totalSpeechSamples int
 	var vadTailPaddingSamples int
+	var previousDecodeEnd int
 
 	// drainSegments transcribes every speech segment the VAD has queued so far.
 	drainSegments := func() error {
@@ -318,13 +394,45 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 			totalSpeechSamples += len(seg.Samples)
 
 			// seg.Start is the sample index of the segment start within the full recording.
-			segOffsetMS := int64(seg.Start) * 1000 / int64(sampleRate)
-
-			words, err := r.transcribeSegment(seg.Samples, sampleRate, segOffsetMS, true)
+			decodeStart, decodeEnd := seg.Start, seg.Start+len(seg.Samples)
+			decodeSamples := seg.Samples
+			if policy.contextMS > 0 {
+				bounds := vadContextBounds(decodeStart, decodeEnd, len(samples), sampleRate, policy.contextMS)
+				decodeStart, decodeEnd = bounds.start, bounds.end
+				decodeSamples = samples[decodeStart:decodeEnd]
+			}
+			segOffsetMS := int64(decodeStart) * 1000 / int64(sampleRate)
+			words, err := r.transcribeSegmentWithPolicy(decodeSamples, sampleRate, segOffsetMS, true, policy)
 			if err != nil {
 				return err
 			}
-			allWords = append(allWords, words...)
+			// A tight VAD crop can make the utterance-normalized v3 decoder
+			// emit only blanks. Retry an empty hypothesis once with recorded
+			// context spanning the detector's silence decision interval. Keep
+			// the same decoder/hints and add no synthetic silence. Successful
+			// hypotheses are untouched; the normal energy gate still applies.
+			if len(words) == 0 && policy.preserveVADSpan && policy.disableSyntheticPadding {
+				retry := vadContextBounds(seg.Start, seg.Start+len(seg.Samples), len(samples), sampleRate, vadMinSilenceDurationMS)
+				if retry.start < decodeStart || retry.end > decodeEnd {
+					retryOffsetMS := int64(retry.start) * 1000 / int64(sampleRate)
+					recovered, retryErr := r.transcribeSegmentWithPolicy(samples[retry.start:retry.end], sampleRate, retryOffsetMS, true, policy)
+					if retryErr != nil {
+						return retryErr
+					}
+					// Context can contain a neighbouring turn. Only retain words
+					// overlapping the original speech span, not context-only words.
+					words = wordsOverlappingSpeech(recovered, int64(seg.Start)*1000/int64(sampleRate), int64(min(len(samples), seg.Start+len(seg.Samples)))*1000/int64(sampleRate))
+					decodeStart, decodeEnd = retry.start, retry.end
+					segOffsetMS = retryOffsetMS
+				}
+			}
+			if policy.contextMS > 0 && previousDecodeEnd > decodeStart {
+				overlapMS := int64(previousDecodeEnd-decodeStart) * 1000 / int64(sampleRate)
+				allWords = dedupOverlappingWords(allWords, words, false, segOffsetMS, overlapMS)
+			} else {
+				allWords = append(allWords, words...)
+			}
+			previousDecodeEnd = decodeEnd
 		}
 		return nil
 	}
@@ -567,21 +675,26 @@ func wordEndOverContinuingAudio(samples []float32, sampleRate int, word Word, au
 // within the full recording. vadSegment means the source span came from VAD and
 // therefore ends at a detected speech boundary with its closing silence removed.
 func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOffsetMS int64, vadSegment bool) ([]Word, error) {
+	return r.transcribeSegmentWithPolicy(samples, sampleRate, segOffsetMS, vadSegment, r.decodePolicy())
+}
+
+func (r *Recognizer) transcribeSegmentWithPolicy(samples []float32, sampleRate int, segOffsetMS int64, vadSegment bool, policy vadDecodePolicy) ([]Word, error) {
 	// Silero can merge quiet pauses until MaxSpeechDuration forces a roughly
 	// 25s segment. Parakeet TDT v3 sometimes emits only a prefix (or nothing)
 	// for those long, abrupt spans even with trailing silence. Decode long VAD
 	// spans through 10s windows with 0.5s overlap, padding each child window
-	// below and de-duplicating the seam. The shorter VAD window is deliberate:
-	// one clear production turn remained partial with the 15s fallback window.
+	// below and de-duplicating the seam. This is a historical workaround, not
+	// a model limit: recorded-audio tests also expose frontend and decoder
+	// sensitivity. Keep the default stable while evaluating those separately.
 	if vadSegment && sampleRate > 0 {
-		bounds := vadSegmentWindowBounds(len(samples), sampleRate)
+		bounds := vadSegmentWindowBoundsWithPolicy(len(samples), sampleRate, policy)
 		if len(bounds) > 1 {
-			overlapSamples := scaleSamples(vadDecodeWindowOverlap, sampleRate)
+			overlapSamples := scaleSamples(policy.overlapSamples, sampleRate)
 			overlapMS := int64(overlapSamples) * 1000 / int64(sampleRate)
 			var windowedWords []Word
 			for i, win := range bounds {
 				windowOffsetMS := segOffsetMS + int64(win.start)*1000/int64(sampleRate)
-				words, err := r.transcribeSegment(samples[win.start:win.end], sampleRate, windowOffsetMS, true)
+				words, err := r.transcribeSegmentWithPolicy(samples[win.start:win.end], sampleRate, windowOffsetMS, true, policy)
 				if err != nil {
 					return nil, err
 				}
@@ -599,16 +712,26 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 		}
 		chunk := samples[start:end]
 
-		// Parakeet TDT v3 can return zero or partial tokens when a chunk ends
-		// abruptly. VAD deliberately strips the closing silence from every
-		// speech segment, including long segments forced closed at Silero's
-		// MaxSpeechDuration, so every VAD decode needs a short synthetic tail.
-		// Non-VAD windows retain the established short-chunk workaround while
-		// avoiding a decode change for the normal 15s sliding windows.
+		// The v3 reference frontend needs two 10ms frames to compute sample
+		// variance. Shorter input yields no features; passing that empty tensor
+		// to ONNX aborts in native code instead of returning a Go error.
+		if policy.disableSyntheticPadding && sampleRate > 0 &&
+			int64(len(chunk))*1000 < int64(sampleRate)*20 {
+			continue
+		}
+
+		// Preserve legacy padding for other models. The v3 reference policy
+		// overrides both VAD and non-VAD padding: appended zeros change its
+		// utterance-wide feature normalization and can suppress real speech.
 		decoderTailPaddingSamples := decoderTailPadSamples(len(chunk), sampleRate, vadSegment)
-		if decoderTailPaddingSamples > 0 {
-			padded := make([]float32, len(chunk)+decoderTailPaddingSamples) // +0.5s
-			copy(padded, chunk)
+		decoderHeadPaddingSamples := 0
+		if vadSegment || policy.disableSyntheticPadding {
+			decoderHeadPaddingSamples = policy.headPaddingMS * sampleRate / 1000
+			decoderTailPaddingSamples = policy.tailPaddingMS * sampleRate / 1000
+		}
+		if decoderHeadPaddingSamples > 0 || decoderTailPaddingSamples > 0 {
+			padded := make([]float32, decoderHeadPaddingSamples+len(chunk)+decoderTailPaddingSamples)
+			copy(padded[decoderHeadPaddingSamples:], chunk)
 			chunk = padded
 		}
 
@@ -629,15 +752,8 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 
 		// Offset timestamps: chunk start within segment + segment start within recording.
 		chunkOffsetMS := segOffsetMS + int64(start)*1000/int64(sampleRate)
-		for i := range words {
-			words[i].StartMS += chunkOffsetMS
-			words[i].EndMS += chunkOffsetMS
-			// The cap lives on the same timeline as the end it bounds. An unset
-			// cap stays unset in effect: it can only ever be shifted to a value
-			// at or below the shifted end, which extentCapMS reads as "no
-			// extension".
-			words[i].extentCap += chunkOffsetMS
-		}
+		offsetDecoderWords(words, chunkOffsetMS, int64(decoderHeadPaddingSamples)*1000/int64(sampleRate))
+
 		// The recognizer may timestamp a genuine final token inside the synthetic
 		// 0.5s decoder tail. Clamp tokens stamped within the actual padding to a
 		// zero-length word at the real boundary; the later energy gate decides
@@ -650,10 +766,55 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 	return allWords, nil
 }
 
+// offsetDecoderWords removes synthetic leading time before putting decoded
+// words (including their acoustic-end ceilings) on the source timeline.
+func offsetDecoderWords(words []Word, offsetMS, headPaddingMS int64) {
+	for i := range words {
+		if headPaddingMS > 0 {
+			words[i].StartMS = maxInt64(0, words[i].StartMS-headPaddingMS)
+			words[i].EndMS = maxInt64(0, words[i].EndMS-headPaddingMS)
+			words[i].extentCap = maxInt64(0, words[i].extentCap-headPaddingMS)
+		}
+		words[i].StartMS += offsetMS
+		words[i].EndMS += offsetMS
+		words[i].extentCap += offsetMS
+	}
+}
+
+// wordsOverlappingSpeech excludes hypotheses belonging entirely to context.
+// Use strict overlap so a word ending at the boundary cannot be attributed to
+// the following speech segment. Preserve timestamps on the recording clock.
+func wordsOverlappingSpeech(words []Word, startMS, endMS int64) []Word {
+	kept := words[:0]
+	for _, word := range words {
+		if word.StartMS < endMS && word.EndMS > startMS {
+			kept = append(kept, word)
+		}
+	}
+	return kept
+}
+
+func vadContextBounds(start, end, total, sampleRate, contextMS int) windowBound {
+	contextSamples := contextMS * sampleRate / 1000
+	return windowBound{start: max(0, start-contextSamples), end: min(total, end+contextSamples)}
+}
+
 func vadSegmentWindowBounds(total, sampleRate int) []windowBound {
-	windowSamples := scaleSamples(vadDecodeWindowSamples, sampleRate)
-	overlapSamples := scaleSamples(vadDecodeWindowOverlap, sampleRate)
-	if total <= windowSamples+scaleSamples(vadDecodeWindowGrace, sampleRate) {
+	return vadSegmentWindowBoundsWithPolicy(total, sampleRate, defaultVADDecodePolicy())
+}
+
+func vadSegmentWindowBoundsWithPolicy(total, sampleRate int, policy vadDecodePolicy) []windowBound {
+	if policy.preserveVADSpan {
+		if total <= 0 {
+			return nil
+		}
+		// Preserve the detected utterance for the production v3 boundary policy.
+		// The decoder's independent maxSafeSegmentSamples guard still applies.
+		return []windowBound{{start: 0, end: total}}
+	}
+	windowSamples := scaleSamples(policy.windowSamples, sampleRate)
+	overlapSamples := scaleSamples(policy.overlapSamples, sampleRate)
+	if total <= windowSamples+scaleSamples(policy.graceSamples, sampleRate) {
 		if total <= 0 {
 			return nil
 		}
@@ -667,7 +828,7 @@ func vadSegmentWindowBounds(total, sampleRate int) []windowBound {
 	// overlaps and gap-free coverage.
 	if len(bounds) > 1 {
 		last := len(bounds) - 1
-		minTerminalSamples := scaleSamples(vadDecodeMinTerminal, sampleRate)
+		minTerminalSamples := scaleSamples(policy.minTerminalSamples, sampleRate)
 		if bounds[last].end-bounds[last].start < minTerminalSamples {
 			bounds[last].start = total - minTerminalSamples
 			bounds[last-1].end = bounds[last].start + overlapSamples
@@ -1083,6 +1244,10 @@ func normalizeOverlapWord(text string) string {
 	normalized = strings.TrimFunc(normalized, func(r rune) bool {
 		return unicode.IsSpace(r) || strings.ContainsRune(",!?;:\"“”()[]{}<>", r)
 	})
+	// Independent decodes can end and continue the same sentence differently:
+	// "morning." and "morning," still name the same overlap word. Preserve
+	// internal/leading dots in technical words and numbers (.NET, 3.14).
+	normalized = strings.TrimRight(normalized, ".")
 	for _, r := range normalized {
 		if unicode.IsLetter(r) || unicode.IsNumber(r) {
 			return normalized

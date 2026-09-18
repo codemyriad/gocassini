@@ -377,10 +377,32 @@ func TestDedupOverlappingWordsPreservesSemanticPunctuation(t *testing.T) {
 		{word: "a-b", want: "a-b"},
 		{word: "ab", want: "ab"},
 		{word: "“DON’T!”", want: "don't"},
+		{word: "morning.", want: "morning"},
+		{word: "morning,", want: "morning"},
+		{word: ".NET", want: ".net"},
+		{word: "3.14", want: "3.14"},
 	} {
 		if got := normalizeOverlapWord(tc.word); got != tc.want {
 			t.Errorf("normalizeOverlapWord(%q) = %q; want %q", tc.word, got, tc.want)
 		}
+	}
+}
+
+func TestDedupOverlapIgnoresSentenceEndPunctuation(t *testing.T) {
+	// Two decodes of the same real seam can disagree on whether "morning"
+	// ends the sentence. Retaining both repeats a word nobody repeated.
+	acc := []Word{
+		{Text: "Sunday", StartMS: 85430, EndMS: 85830},
+		{Text: "morning.", StartMS: 85830, EndMS: 86040},
+	}
+	next := []Word{
+		{Text: "Sunday", StartMS: 85520, EndMS: 85840},
+		{Text: "morning,", StartMS: 85840, EndMS: 86160},
+		{Text: "first", StartMS: 86160, EndMS: 86320},
+	}
+	got := dedupOverlappingWords(acc, next, false, 85540, 500)
+	if len(got) != 3 || normalizeOverlapWord(got[0].Text) != "sunday" || normalizeOverlapWord(got[1].Text) != "morning" || got[2].Text != "first" {
+		t.Fatalf("sentence seam = %#v; want Sunday morning first", got)
 	}
 }
 

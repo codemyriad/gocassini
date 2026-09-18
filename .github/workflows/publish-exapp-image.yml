@@ -799,7 +799,6 @@ jobs:
           # hash still covers every asset the base downloads.
           MODEL_IDS="$(df_get "$DF" CASSINI_BUNDLED_MODELS | tr -d '"')"
           FETCH=deployment/models/fetch-models.sh
-          SHERPA_URL="$(df_get "$DF" SHERPA_CUDA_URL)"
           VAD_URL="$(df_get "$DF" SILERO_VAD_URL)"
 
           # The app Dockerfile independently sets CASSINI_STT_MODEL from its own
@@ -847,7 +846,7 @@ jobs:
 
           BASE_HASH="$(printf '%s\n' \
             "$MODEL_ID" "$MODEL_INPUTS" \
-            "$SHERPA_URL" "$(fp "$SHERPA_URL")" \
+            "$(deployment/sherpa/build.sh --fingerprint)" \
             "$VAD_URL" "$(fp "$VAD_URL")" \
             "$NV_DIGEST" \
             "$(sha256sum "$DF" | cut -d' ' -f1)" \

@@ -106,7 +106,7 @@ log "  output: $OUTPUT"
 log "  recorder duration: ${RECORDER_DURATION}s"
 (
   cd "$GO_RECORDER_DIR"
-  go run ./cmd/gocassini \
+  ./scripts/build-cassini-bin.sh --run ./cmd/gocassini \
     --mode talk \
     --call-url "$CALL_URL" \
     --name "$RECORDER_NAME" \

@@ -125,6 +125,9 @@ func DefaultModelID() ModelID { return defaultModelID }
 
 // ModelPaths holds resolved filesystem paths for a downloaded model.
 type ModelPaths struct {
+	// ModelID selects model-specific decoding and audio-boundary policy.
+	ModelID ModelID
+
 	// CTC models set ModelFile; transducer models set Encoder/Decoder/Joiner.
 	ModelFile   string
 	EncoderFile string
@@ -180,7 +183,7 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 
 	if root := strings.TrimSpace(os.Getenv(envBundledModelRoot)); root != "" {
 		bundledDir := filepath.Join(root, "models", string(id))
-		bundled := resolveModelPaths(bundledDir, spec)
+		bundled := resolveModelPaths(bundledDir, spec, id)
 		if allExist(requiredModelFiles(bundled, spec)) {
 			return bundled, nil
 		}
@@ -200,7 +203,7 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 
 	modelDir := filepath.Join(cacheDir, "models", string(id))
 
-	paths := resolveModelPaths(modelDir, spec)
+	paths := resolveModelPaths(modelDir, spec, id)
 	// A downloaded model counts only when it also carries the completion
 	// marker. Files that merely exist can be the truncated remains of an
 	// interrupted download, and this cache is persistent, so such a directory
@@ -262,7 +265,7 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 	// on disk, so returning the pre-download value would leave the first build
 	// after a fetch believing the bundle has no BPE vocabulary and decoding
 	// unbiased, while every later build sees the same file and uses it.
-	return resolveModelPaths(modelDir, spec), nil
+	return resolveModelPaths(modelDir, spec, id), nil
 }
 
 // modelLockWait bounds how long one build waits for another process to finish
@@ -374,8 +377,9 @@ func EnsureVAD(cacheDir string, progress io.Writer) (string, error) {
 	return vadPath, nil
 }
 
-func resolveModelPaths(modelDir string, spec modelSpec) ModelPaths {
+func resolveModelPaths(modelDir string, spec modelSpec, id ModelID) ModelPaths {
 	p := ModelPaths{
+		ModelID:    id,
 		TokensFile: filepath.Join(modelDir, spec.TokensFile),
 		ModelType:  spec.ModelType,
 		SampleRate: spec.SampleRate,
@@ -427,7 +431,7 @@ func RequiredModelFileNames(id ModelID) []string {
 	if !ok {
 		return nil
 	}
-	names := requiredModelFiles(resolveModelPaths("", spec), spec)
+	names := requiredModelFiles(resolveModelPaths("", spec, id), spec)
 	for i, name := range names {
 		names[i] = filepath.Base(name)
 	}
