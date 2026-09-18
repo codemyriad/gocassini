@@ -7,6 +7,8 @@ import {
 import {
   AnnotationError,
   type AnnotationRequest,
+  type AnnotationBatchRequest,
+  type AnnotationBatchResult,
   type AnnotationResult,
   type MeetingAnnotations,
   type TagJob,
@@ -108,6 +110,10 @@ export class AppDataProvider extends StaticCatalogProvider {
 
   applyAnnotationOps(entry: MeetingCatalogEntry, request: AnnotationRequest): Promise<AnnotationResult> {
     return requestAnnotations(meetingPath(entry), request);
+  }
+
+  applyAnnotationBatch(request: AnnotationBatchRequest): Promise<AnnotationBatchResult> {
+    return requestAnnotations("batch", request);
   }
 
   updateTag(tagId: string, update: TagUpdate): Promise<{ tag: VocabularyTag; job: TagJob | null }> {

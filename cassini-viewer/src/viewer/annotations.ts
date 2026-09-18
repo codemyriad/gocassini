@@ -124,6 +124,16 @@ export interface AnnotationRequest {
   tagStyles?: TagStyle[];
 }
 
+export interface AnnotationBatchRequest extends AnnotationRequest {
+  requestId: string;
+  meetingIds: string[];
+}
+
+export interface AnnotationBatchResult {
+  results: AnnotationResult[];
+  tags: VocabularyTag[];
+}
+
 // `code` is the operator's `error` value verbatim. A 409 carries exactly
 // "revision-conflict", "unresolved" or "conflict" from a meeting, and "busy" or
 // "label-exists" from the tag routes; with "label-exists", `tagId` is the tag

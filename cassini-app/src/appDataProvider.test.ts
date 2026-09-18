@@ -227,6 +227,14 @@ describe("AppDataProvider annotations", () => {
     ]);
   });
 
+  it("sends one atomic batch for the selected meetings", async () => {
+    const answer = { results: [], tags: [] };
+    const fetchMock = respondWith(JSON.stringify(answer));
+    const request = { meetingIds: ["a", "b"], requestId: "bulk-1", ops: [{ op: "mark" as const, tag: { label: "new" }, target: { kind: "meeting" as const } }] };
+    await expect(new AppDataProvider().applyAnnotationBatch(request)).resolves.toEqual(answer);
+    expect(calls(fetchMock)).toEqual([{ path: "annotations/batch", method: "POST", body: JSON.stringify(request), cache: "no-store" }]);
+  });
+
   it("changes a tag across the archive and hands back the job doing it", async () => {
     const fetchMock = respondWith(JSON.stringify({ tag: {}, job }));
     const provider = new AppDataProvider();
