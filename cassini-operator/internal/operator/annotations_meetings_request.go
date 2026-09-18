@@ -74,6 +74,10 @@ func readAnnotateWriteRequest(w http.ResponseWriter, r *http.Request) (annotateW
 	if err := json.Unmarshal(body, &request); err != nil {
 		return request, badAnnotateRequest(`the request body must be a JSON object: {"ops":[…]}`)
 	}
+	return validateAnnotateWriteRequest(request)
+}
+
+func validateAnnotateWriteRequest(request annotateWriteRequest) (annotateWriteRequest, *annotateFailure) {
 	switch {
 	case request.RetrySync && len(request.Ops) != 0:
 		return request, badAnnotateRequest("retrySync cannot include edits")

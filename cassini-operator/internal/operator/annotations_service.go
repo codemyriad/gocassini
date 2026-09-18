@@ -69,6 +69,16 @@ func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, annotationsURLPath), "/")
 	resource, id, _ := strings.Cut(rest, "/")
 	switch {
+	case resource == "batch" && id == "":
+		caller, ok := s.caller(w, r)
+		if !ok {
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.writeAnnotationBatch(w, r, caller)
 	case resource == "tags":
 		caller, ok := s.caller(w, r)
 		if !ok {

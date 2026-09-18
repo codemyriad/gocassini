@@ -34,7 +34,7 @@ func openDurableAnnotationDB(path string) (sidecarDB, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if version > annotationsSchemaVersion || (version != 0 && version != 2 && version != 3 && version != 4) {
+	if version > annotationsSchemaVersion || (version != 0 && version != 2 && version != 3 && version != 4 && version != 5) {
 		return fail(fmt.Errorf("unsupported annotations schema %d; preserving database", version))
 	}
 	if version == annotationsSchemaVersion {
@@ -78,12 +78,27 @@ DELETE FROM annotations_meta WHERE key='built';
 				return err
 			}
 		}
-		if _, err := tx.Exec(`CREATE TABLE annotation_receipt (
+		if version < 4 {
+			if _, err := tx.Exec(`CREATE TABLE annotation_receipt (
    caller TEXT NOT NULL, request_id TEXT NOT NULL, opus_name TEXT NOT NULL,
    request_hash TEXT NOT NULL, response BLOB NOT NULL, snapshot INTEGER NOT NULL,
    created_at INTEGER NOT NULL DEFAULT (unixepoch()), PRIMARY KEY(caller,request_id)
   ); ALTER TABLE annotation_head ADD COLUMN rel_path TEXT NOT NULL DEFAULT '';
  CREATE TABLE annotation_tag_job(caller TEXT PRIMARY KEY,job_json BLOB NOT NULL,targets BLOB NOT NULL,op BLOB NOT NULL,titles BLOB NOT NULL);`); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`CREATE TABLE annotation_batch_receipt (
+ caller TEXT NOT NULL, request_id TEXT NOT NULL, request_hash TEXT NOT NULL,
+ response BLOB NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+ PRIMARY KEY(caller,request_id)
+);
+CREATE TABLE annotation_batch_target (
+ caller TEXT NOT NULL, request_id TEXT NOT NULL, opus_name TEXT NOT NULL,
+ snapshot INTEGER NOT NULL REFERENCES annotation_snapshot(id),
+ PRIMARY KEY(caller,request_id,opus_name),
+ FOREIGN KEY(caller,request_id) REFERENCES annotation_batch_receipt(caller,request_id) ON DELETE CASCADE
+);`); err != nil {
 			return err
 		}
 		_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", annotationsSchemaVersion))
@@ -194,8 +209,13 @@ func (s *annotationStore) collectSnapshots(ctx context.Context) error {
  AND NOT EXISTS(SELECT 1 FROM annotation_tag_job j WHERE j.caller=annotation_receipt.caller AND json_extract(j.job_json,'$.state')!='finished')`); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM annotation_batch_receipt AS b WHERE created_at<unixepoch()-604800
+ AND NOT EXISTS(SELECT 1 FROM annotation_batch_target t JOIN annotation_head h ON h.opus_name=t.opus_name
+ WHERE t.caller=b.caller AND t.request_id=b.request_id AND h.desired!=h.confirmed)`); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM annotation_snapshot WHERE id NOT IN (
- SELECT desired FROM annotation_head UNION SELECT confirmed FROM annotation_head UNION SELECT in_flight FROM annotation_head WHERE in_flight IS NOT NULL UNION SELECT snapshot FROM annotation_receipt)`)
+ SELECT desired FROM annotation_head UNION SELECT confirmed FROM annotation_head UNION SELECT in_flight FROM annotation_head WHERE in_flight IS NOT NULL UNION SELECT snapshot FROM annotation_receipt UNION SELECT snapshot FROM annotation_batch_target)`)
 		return err
 	})
 }

@@ -736,3 +736,15 @@ The shared recording lock and downloaded-content verification are therefore
 required. Run standalone annotation backfill only while the operator is stopped: file
 locks coordinate one process. Multiple active operators or outside annotation writers need additional
 coordination and are not supported by this queue.
+
+List selection tagging uses `POST /annotations/batch` with `meetingIds` (1–100
+unique catalog IDs), a required `requestId`, `ops`, and optional `tagStyles`.
+Only whole-meeting `mark` and `unmark-tag` operations are supported. The caller's
+visible catalog is resolved once and up to four current file permission checks
+run concurrently before one transaction commits all documents, projections,
+and the batch receipt. A rejected target rolls back the entire batch. Responses
+contain `results` for every target and `tags` metadata for immediate rendering;
+tag counts in this metadata are not a replacement for the vocabulary counts.
+A repeated batch key replays the original response, while changed input returns
+409. Batch receipts have the same seven-day minimum retention, extended while
+any target remains unsynchronized. Both archive workers are woken after commit.

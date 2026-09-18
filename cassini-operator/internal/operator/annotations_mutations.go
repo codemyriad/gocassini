@@ -105,113 +105,15 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 				return e
 			}
 		}
-		var data []byte
-		var desired, confirmed int64
-		var attempts, blocked int
-		var lastError string
-		var generation string
-		if err := tx.QueryRowContext(ctx, `SELECT s.result_json,h.desired,h.confirmed,h.attempts,h.blocked,h.last_error FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE h.opus_name=?`, name).Scan(&data, &desired, &confirmed, &attempts, &blocked, &lastError); err != nil {
+		if err := mutateAnnotationDocument(ctx, tx, name, relPath, caller, namespace, request, ops, &result); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT value FROM annotations_meta WHERE key='generation'`).Scan(&generation); err != nil {
-			return err
-		}
-		if err := json.Unmarshal(data, &result); err != nil {
-			return err
-		}
-		token := fmt.Sprintf("%s:%d", generation, desired)
-		if (request.StateToken != "" && request.StateToken != token) || (request.ExpectRevision != nil && *request.ExpectRevision != result.Revision) {
-			return &annotateFailure{status: 409, public: "annotations changed; reload and try again", cause: errors.New("stale annotation version")}
-		}
-		current, err := ann.ParseAnnotations(result.Annotations)
-		if err != nil {
-			return err
-		}
-		operation := request.OperationID
-		if operation == "" {
-			operation, err = ann.NewAnnotationOperationID()
-			if err != nil {
-				return err
-			}
-		}
-		kind := request.ActorKind
-		if kind == "" {
-			kind = ann.AnnotationActorPerson
-		}
-		outcome, err := ann.Mutate(current, ops, result.DurationMS, result.AudioOpusSHA256, namespace, ann.Stamp{ActorKind: kind, ActorID: caller, OperationID: operation, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
-		if err != nil {
-			var failure *ann.Failure
-			if errors.As(err, &failure) {
-				status := 400
-				if failure.Code == 5 {
-					status = 409
-				}
-				return &annotateFailure{status: status, public: err.Error(), cause: err}
-			}
-			return err
-		}
-		result.OperationID = operation
-		result.Added = outcome.Added
-		result.Removed = outcome.Removed
-		result.NotFound = outcome.NotFound
-		result.CreatedTags = nil
-		result.Sync = nil
-		result.StateToken = ""
-		if outcome.Changed {
-			for _, tag := range outcome.Doc.Tags {
-				var count int
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_tag WHERE tag_id=?`, tag.ID).Scan(&count); err != nil {
-					return err
-				}
-				if count == 0 {
-					result.CreatedTags = append(result.CreatedTags, tag.ID)
-				}
-			}
-			result.Annotations, err = json.Marshal(outcome.Doc)
-			if err != nil {
-				return err
-			}
-			result.Revision = outcome.Doc.Revision
-			resolved := outcome.Doc.Resolved(result.AudioOpusSHA256)
-			result.Resolved = &resolved
-			encoded, err := json.Marshal(result)
-			if err != nil {
-				return err
-			}
-			row, err := tx.ExecContext(ctx, `INSERT INTO annotation_snapshot(opus_name,result_json) VALUES(?,?)`, name, encoded)
-			if err != nil {
-				return err
-			}
-			desired, err = row.LastInsertId()
-			if err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE annotation_head SET desired=?,rel_path=? WHERE opus_name=?`, desired, relPath, name); err != nil {
-				return err
-			}
-			projected := projectAnnotations(result.Annotations, result.Resolved, result.AudioOpusSHA256)
-			if err := replaceAnnotationProjection(ctx, tx, name, projected, result.ContainerSHA256, annotationsStateIndexed); err != nil {
-				return err
-			}
-		}
-		result.StateToken = fmt.Sprintf("%s:%d", generation, desired)
-		state := "pending"
-		if attempts > 0 {
-			state = "delayed"
-		}
-		if blocked != 0 {
-			state = "blocked"
-		}
-		if desired == confirmed {
-			state = "saved"
-		}
-		result.Sync = &annotationSyncStatus{State: state, Desired: desired, Confirmed: confirmed, Error: lastError}
 		if request.RequestID != "" {
 			receipt, err := json.Marshal(result)
 			if err != nil {
 				return err
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO annotation_receipt(caller,request_id,opus_name,request_hash,response,snapshot) VALUES(?,?,?,?,?,?)`, caller, request.RequestID, name, requestHash, receipt, desired)
+			_, err = tx.ExecContext(ctx, `INSERT INTO annotation_receipt(caller,request_id,opus_name,request_hash,response,snapshot) VALUES(?,?,?,?,?,?)`, caller, request.RequestID, name, requestHash, receipt, result.Sync.Desired)
 			return err
 		}
 		return nil
@@ -220,4 +122,111 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 		s.wakeAnnotations()
 	}
 	return result, err
+}
+
+// mutateAnnotationDocument only uses the caller's transaction. Both single
+// writes and multi-meeting batches publish documents and projections atomically.
+func mutateAnnotationDocument(ctx context.Context, tx *sql.Tx, name, relPath, caller, namespace string, request annotateWriteRequest, ops []ann.Op, result *annotateResult) error {
+	var data []byte
+	var desired, confirmed int64
+	var attempts, blocked int
+	var lastError string
+	var generation string
+	if err := tx.QueryRowContext(ctx, `SELECT s.result_json,h.desired,h.confirmed,h.attempts,h.blocked,h.last_error FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE h.opus_name=?`, name).Scan(&data, &desired, &confirmed, &attempts, &blocked, &lastError); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM annotations_meta WHERE key='generation'`).Scan(&generation); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, result); err != nil {
+		return err
+	}
+	token := fmt.Sprintf("%s:%d", generation, desired)
+	if (request.StateToken != "" && request.StateToken != token) || (request.ExpectRevision != nil && *request.ExpectRevision != result.Revision) {
+		return &annotateFailure{status: 409, public: "annotations changed; reload and try again", cause: errors.New("stale annotation version")}
+	}
+	current, err := ann.ParseAnnotations(result.Annotations)
+	if err != nil {
+		return err
+	}
+	operation := request.OperationID
+	if operation == "" {
+		operation, err = ann.NewAnnotationOperationID()
+		if err != nil {
+			return err
+		}
+	}
+	kind := request.ActorKind
+	if kind == "" {
+		kind = ann.AnnotationActorPerson
+	}
+	outcome, err := ann.Mutate(current, ops, result.DurationMS, result.AudioOpusSHA256, namespace, ann.Stamp{ActorKind: kind, ActorID: caller, OperationID: operation, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		var failure *ann.Failure
+		if errors.As(err, &failure) {
+			status := 400
+			if failure.Code == 5 {
+				status = 409
+			}
+			return &annotateFailure{status: status, public: err.Error(), cause: err}
+		}
+		return err
+	}
+	result.OperationID = operation
+	result.Added = outcome.Added
+	result.Removed = outcome.Removed
+	result.NotFound = outcome.NotFound
+	result.CreatedTags = nil
+	result.Sync = nil
+	result.StateToken = ""
+	if outcome.Changed {
+		for _, tag := range outcome.Doc.Tags {
+			var count int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_tag WHERE tag_id=?`, tag.ID).Scan(&count); err != nil {
+				return err
+			}
+			if count == 0 {
+				result.CreatedTags = append(result.CreatedTags, tag.ID)
+			}
+		}
+		result.Annotations, err = json.Marshal(outcome.Doc)
+		if err != nil {
+			return err
+		}
+		result.Revision = outcome.Doc.Revision
+		resolved := outcome.Doc.Resolved(result.AudioOpusSHA256)
+		result.Resolved = &resolved
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		row, err := tx.ExecContext(ctx, `INSERT INTO annotation_snapshot(opus_name,result_json) VALUES(?,?)`, name, encoded)
+		if err != nil {
+			return err
+		}
+		desired, err = row.LastInsertId()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE annotation_head SET desired=?,rel_path=? WHERE opus_name=?`, desired, relPath, name); err != nil {
+			return err
+		}
+		projected := projectAnnotations(result.Annotations, result.Resolved, result.AudioOpusSHA256)
+		if err := replaceAnnotationProjection(ctx, tx, name, projected, result.ContainerSHA256, annotationsStateIndexed); err != nil {
+			return err
+		}
+	}
+	result.StateToken = fmt.Sprintf("%s:%d", generation, desired)
+	state := "pending"
+	if attempts > 0 {
+		state = "delayed"
+	}
+	if blocked != 0 {
+		state = "blocked"
+	}
+	if desired == confirmed {
+		state = "saved"
+	}
+	result.Sync = &annotationSyncStatus{State: state, Desired: desired, Confirmed: confirmed, Error: lastError}
+	return nil
 }
