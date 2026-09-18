@@ -22,6 +22,7 @@ const (
 	annotateOpUndoOperation = "undo-operation"
 	annotateOpRelabel       = "relabel"
 	annotateOpMergeTag      = "merge-tag"
+	annotateOpRestyle       = "restyle"
 )
 
 // annotateOpFields is the members each op may carry besides "op". Another op's
@@ -33,6 +34,7 @@ var annotateOpFields = map[string][]string{
 	annotateOpUndoOperation: {"operationId"},
 	annotateOpRelabel:       {"tagId", "label"},
 	annotateOpMergeTag:      {"tagId", "into"},
+	annotateOpRestyle:       {"tagId", "color", "icon"},
 }
 
 // Op is the union of every op's members.
@@ -45,7 +47,22 @@ type Op struct {
 	OperationID string            `json:"operationId"`
 	Label       *string           `json:"label"`
 	Into        *OpTag            `json:"into"`
+	Color       *string           `json:"color"`
+	Icon        *string           `json:"icon"`
 	Raw         json.RawMessage   // the op as sent, for the meetings client to forward
+}
+
+// TagStyle supplies appearance when a mark creates a new label. It is never a
+// label-based restyle of an existing identity.
+type TagStyle struct {
+	Label string  `json:"label"`
+	Color string  `json:"color"`
+	Icon  *string `json:"icon,omitempty"`
+}
+
+type Batch struct {
+	Ops       []Op
+	TagStyles []TagStyle
 }
 
 // OpTag names the tag a mark applies, or a merge moves marks to. An
@@ -76,37 +93,49 @@ type Outcome struct {
 // refused at every level: a misspelt "tagid" read as absent would turn a
 // targeted removal into a removal of everything.
 func ParseOps(raw []byte) ([]Op, error) {
+	batch, err := ParseBatch(raw)
+	return batch.Ops, err
+}
+
+// ParseBatch strictly reads the offline/app operation envelope.
+func ParseBatch(raw []byte) (Batch, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	var envelope struct {
-		Ops []json.RawMessage `json:"ops"`
+		Ops       []json.RawMessage `json:"ops"`
+		TagStyles []TagStyle        `json:"tagStyles"`
 	}
 	if err := decoder.Decode(&envelope); err != nil {
-		return nil, fail(ExitInvalid, `the ops document is not {"ops":[...]}: %v`, err)
+		return Batch{}, fail(ExitInvalid, `the ops document is not {"ops":[...]}: %v`, err)
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, fail(ExitInvalid, "the ops document has content after its closing brace")
+		return Batch{}, fail(ExitInvalid, "the ops document has content after its closing brace")
 	}
 	if envelope.Ops == nil {
-		return nil, fail(ExitInvalid, `the ops document has no "ops" array`)
+		return Batch{}, fail(ExitInvalid, `the ops document has no "ops" array`)
+	}
+	for i, style := range envelope.TagStyles {
+		if err := validateTagStyle(style); err != nil {
+			return Batch{}, fail(ExitInvalid, "tagStyles[%d]: %v", i, err)
+		}
 	}
 
 	ops := make([]Op, 0, len(envelope.Ops))
 	for i, rawOp := range envelope.Ops {
 		var members map[string]json.RawMessage
 		if err := json.Unmarshal(rawOp, &members); err != nil || members == nil {
-			return nil, fail(ExitInvalid, "ops[%d]: not a JSON object", i)
+			return Batch{}, fail(ExitInvalid, "ops[%d]: not a JSON object", i)
 		}
 		opDecoder := json.NewDecoder(bytes.NewReader(rawOp))
 		opDecoder.DisallowUnknownFields()
 		var op Op
 		if err := opDecoder.Decode(&op); err != nil {
-			return nil, fail(ExitInvalid, "ops[%d]: %v", i, err)
+			return Batch{}, fail(ExitInvalid, "ops[%d]: %v", i, err)
 		}
 		allowed, known := annotateOpFields[op.Op]
 		if !known {
-			return nil, fail(ExitInvalid,
-				"ops[%d]: unknown op %q (want mark, unmark, unmark-tag, undo-operation, relabel or merge-tag)", i, op.Op)
+			return Batch{}, fail(ExitInvalid,
+				"ops[%d]: unknown op %q (want mark, unmark, unmark-tag, undo-operation, relabel, merge-tag or restyle)", i, op.Op)
 		}
 		// encoding/json matches names case-insensitively; this checks the spelling.
 		names := make([]string, 0, len(members))
@@ -116,25 +145,34 @@ func ParseOps(raw []byte) ([]Op, error) {
 		sort.Strings(names)
 		for _, name := range names {
 			if name != "op" && !slices.Contains(allowed, name) {
-				return nil, fail(ExitInvalid, "ops[%d] (%s): %q is not a member of this op", i, op.Op, name)
+				return Batch{}, fail(ExitInvalid, "ops[%d] (%s): %q is not a member of this op", i, op.Op, name)
 			}
 		}
 		op.Raw = rawOp
 		ops = append(ops, op)
 	}
-	return ops, nil
+	return Batch{Ops: ops, TagStyles: envelope.TagStyles}, nil
 }
 
 // ApplyOps works out a batch against current (nil when the file
 // carries none) without touching it. durationMS bounds every time range an op
 // names. An op the caller got wrong fails the whole batch with exit 4.
 func ApplyOps(current *Annotations, ops []Op, durationMS int64, stamp Stamp) (Outcome, error) {
+	return ApplyBatch(current, Batch{Ops: ops}, durationMS, stamp)
+}
+
+// ApplyBatch applies operations and creation-only style hints as one mutation.
+func ApplyBatch(current *Annotations, batch Batch, durationMS int64, stamp Stamp) (Outcome, error) {
 	before := Clone(current)
 	before.Canonicalize()
 	work := Clone(current)
 	notFound := []string{}
 
-	for i, op := range ops {
+	existingTagIDs := map[string]bool{}
+	for _, tag := range before.Tags {
+		existingTagIDs[tag.ID] = true
+	}
+	for i, op := range batch.Ops {
 		var err error
 		switch op.Op {
 		case annotateOpMark:
@@ -149,6 +187,8 @@ func ApplyOps(current *Annotations, ops []Op, durationMS int64, stamp Stamp) (Ou
 			err = applyRelabelOp(work, op, &notFound)
 		case annotateOpMergeTag:
 			err = applyMergeTagOp(work, op, &notFound)
+		case annotateOpRestyle:
+			err = applyRestyleOp(work, op, &notFound)
 		default:
 			err = fail(ExitInvalid, "unknown op")
 		}
@@ -158,6 +198,18 @@ func ApplyOps(current *Annotations, ops []Op, durationMS int64, stamp Stamp) (Ou
 				return Outcome{}, &Failure{Code: failure.Code, Err: fmt.Errorf("ops[%d] (%s): %w", i, op.Op, failure.Err)}
 			}
 			return Outcome{}, err
+		}
+	}
+	for _, style := range batch.TagStyles {
+		for i := range work.Tags {
+			if existingTagIDs[work.Tags[i].ID] || !strings.EqualFold(work.Tags[i].Label, style.Label) {
+				continue
+			}
+			color, icon := style.Color, ""
+			if style.Icon != nil {
+				icon = *style.Icon
+			}
+			work.Tags[i].Color, work.Tags[i].Icon = &color, &icon
 		}
 	}
 
@@ -192,6 +244,19 @@ func ApplyOps(current *Annotations, ops []Op, durationMS int64, stamp Stamp) (Ou
 		}
 	}
 	return outcome, nil
+}
+
+func validateTagStyle(style TagStyle) error {
+	if err := ValidateAnnotationLabel(strings.TrimSpace(style.Label)); err != nil {
+		return fmt.Errorf("label: %w", err)
+	}
+	if !IsAnnotationTagColor(style.Color) {
+		return fmt.Errorf("color is not a palette colour")
+	}
+	if style.Icon != nil && !IsAnnotationTagIcon(*style.Icon) {
+		return fmt.Errorf("icon is not an icon id")
+	}
+	return nil
 }
 
 // applyMarkOp honors an explicit ID; only an absent ID resolves by label, else
@@ -322,6 +387,37 @@ func applyRelabelOp(doc *Annotations, op Op, notFound *[]string) error {
 		}
 	}
 	doc.Tags[index].Label = label
+	return nil
+}
+
+func applyRestyleOp(doc *Annotations, op Op, notFound *[]string) error {
+	if op.TagID == "" {
+		return fail(ExitInvalid, "needs a tagId")
+	}
+	if op.Color == nil && op.Icon == nil {
+		return fail(ExitInvalid, "needs a color or icon")
+	}
+	if op.Color != nil && !IsAnnotationTagColor(*op.Color) {
+		return fail(ExitInvalid, "color is not a palette colour")
+	}
+	if op.Icon != nil && !IsAnnotationTagIcon(*op.Icon) {
+		return fail(ExitInvalid, "icon is not an icon id")
+	}
+	for i := range doc.Tags {
+		if doc.Tags[i].ID != op.TagID {
+			continue
+		}
+		if op.Color != nil {
+			value := *op.Color
+			doc.Tags[i].Color = &value
+		}
+		if op.Icon != nil {
+			value := *op.Icon
+			doc.Tags[i].Icon = &value
+		}
+		return nil
+	}
+	*notFound = append(*notFound, op.TagID)
 	return nil
 }
 
@@ -478,6 +574,16 @@ func Clone(doc *Annotations) *Annotations {
 	}
 	clone := *doc
 	clone.Tags = append(make([]AnnotationTag, 0, len(doc.Tags)), doc.Tags...)
+	for i := range clone.Tags {
+		if doc.Tags[i].Color != nil {
+			value := *doc.Tags[i].Color
+			clone.Tags[i].Color = &value
+		}
+		if doc.Tags[i].Icon != nil {
+			value := *doc.Tags[i].Icon
+			clone.Tags[i].Icon = &value
+		}
+	}
 	clone.Items = make([]AnnotationItem, 0, len(doc.Items))
 	for _, item := range doc.Items {
 		item.Target = copyAnnotationTarget(item.Target)
