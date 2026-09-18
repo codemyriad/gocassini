@@ -743,6 +743,11 @@ unarchived edits and request receipts cannot be recovered. The database is no
 longer a disposable cache. Back up SQLite consistently, including its WAL, rather
 than copying only an open database file.
 
+If only derived tag/search rows are lost, annotation backfill restores them from
+the durable desired documents before checking the archive. Pending edits remain
+searchable even when the archived document is older or temporarily unavailable;
+rebuilding these rows does not confirm those edits as archived.
+
 This design requires one active operator and operator-owned annotation writes.
 Nextcloud ETags are conditional-write guards, not content hashes: the local
 harness can reuse an ETag for equal-size writes in the same timestamp second.

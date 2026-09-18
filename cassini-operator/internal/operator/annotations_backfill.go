@@ -15,8 +15,10 @@ import (
 
 // Rebuilding the tag index from the archive (D-737).
 //
-// Only the DELIVERED copy in Nextcloud is read: marks are written there, and
-// current/<job>.opus is the sealed artifact, which never carries one.
+// Existing durable documents restore their query rows first. Archive imports
+// read only the DELIVERED copy in Nextcloud; current/<job>.opus is the sealed
+// artifact, which never carries marks. Pending desired documents remain owned
+// by the DB even when their archive copy is older or unreadable.
 //
 // Every delivery and conditional PUT stamps OC-Checksum with the sha256 of the
 // bytes written, so a meeting whose recorded container digest equals it is
@@ -154,6 +156,14 @@ func backfillOneAnnotation(
 		return annotationBackfillFailed, err.Error()
 	}
 	defer release()
+	// Restore local query rows before checksum shortcuts or archive I/O. A
+	// pending document must stay searchable even if its remote copy is stale
+	// or temporarily unavailable.
+	if err := store.inTx(ctx, func(tx *sql.Tx) error {
+		return rebuildDesiredAnnotationProjection(ctx, tx, opusName)
+	}); err != nil {
+		return annotationBackfillFailed, fmt.Sprintf("rebuild desired query rows: %v", err)
+	}
 	checksum, exists, err := delivered(ctx, opusName)
 	if err != nil {
 		return annotationBackfillFailed, fmt.Sprintf("read delivered state: %v", err)
