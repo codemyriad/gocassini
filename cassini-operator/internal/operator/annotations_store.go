@@ -535,9 +535,9 @@ SELECT t.color, t.icon
 
 // meetingTagMarks is how one meeting carries one tag.
 type meetingTagMarks struct {
-	TagID     string `json:"tagId"`
-	Whole     bool   `json:"whole"`
-	Stretches int    `json:"stretches"`
+	TagID     string  `json:"tagId"`
+	Whole     bool    `json:"whole"`
+	Stretches int     `json:"stretches"`
 	Color     *string `json:"color,omitempty"`
 	Icon      *string `json:"icon,omitempty"`
 }
