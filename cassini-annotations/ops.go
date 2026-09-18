@@ -63,6 +63,10 @@ type TagStyle struct {
 type Batch struct {
 	Ops       []Op
 	TagStyles []TagStyle
+	// InitialTags is trusted server input keyed by resolved identity. It only
+	// initializes definitions absent from the destination recording and cannot
+	// be supplied through the JSON authoring envelope.
+	InitialTags map[string]AnnotationTag
 }
 
 // OpTag names the tag a mark applies, or a merge moves marks to. An
@@ -169,6 +173,7 @@ func ApplyBatch(current *Annotations, batch Batch, durationMS int64, stamp Stamp
 	notFound := []string{}
 
 	existingTagIDs := map[string]bool{}
+	initialized := map[string]bool{}
 	for _, tag := range before.Tags {
 		existingTagIDs[tag.ID] = true
 	}
@@ -199,10 +204,18 @@ func ApplyBatch(current *Annotations, batch Batch, durationMS int64, stamp Stamp
 			}
 			return Outcome{}, err
 		}
+		for j := range work.Tags {
+			tag := &work.Tags[j]
+			if initial, ok := batch.InitialTags[tag.ID]; ok && !existingTagIDs[tag.ID] && !initialized[tag.ID] {
+				tag.Color, tag.Icon = initial.Color, initial.Icon
+				initialized[tag.ID] = true
+			}
+		}
 	}
 	for _, style := range batch.TagStyles {
 		for i := range work.Tags {
-			if existingTagIDs[work.Tags[i].ID] || !strings.EqualFold(work.Tags[i].Label, style.Label) {
+			_, inherited := batch.InitialTags[work.Tags[i].ID]
+			if existingTagIDs[work.Tags[i].ID] || inherited || !strings.EqualFold(work.Tags[i].Label, style.Label) {
 				continue
 			}
 			color, icon := style.Color, ""

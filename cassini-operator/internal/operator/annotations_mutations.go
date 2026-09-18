@@ -104,6 +104,11 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 	if err != nil {
 		return annotateResult{}, badAnnotateRequest("%v", err)
 	}
+	if !request.Accepted {
+		if err := store.prepareInitialTagAppearance(ctx, &batch, visible); err != nil {
+			return annotateResult{}, err
+		}
+	}
 	var result annotateResult
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
 		name := path.Base(relPath)
@@ -138,6 +143,27 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 		s.wakeAnnotations()
 	}
 	return result, err
+}
+
+// Resolve appearance once, under the mutation lock and after receipt replay.
+// These are creation defaults, never restyles of an already-local definition.
+func (s *annotationStore) prepareInitialTagAppearance(ctx context.Context, batch *ann.Batch, visible []string) error {
+	tags, err := s.Vocabulary(ctx, visible)
+	if err != nil {
+		return err
+	}
+	batch.InitialTags = make(map[string]ann.AnnotationTag, len(tags))
+	for _, tag := range tags {
+		initial := ann.AnnotationTag{ID: tag.TagID, Label: tag.Label}
+		if tag.Color != "" {
+			color := tag.Color
+			initial.Color = &color
+		}
+		icon := tag.Icon
+		initial.Icon = &icon
+		batch.InitialTags[tag.TagID] = initial
+	}
+	return nil
 }
 
 // mutateAnnotationDocument only uses the caller's transaction. Both single
