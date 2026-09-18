@@ -241,11 +241,10 @@ type AttributionProvenance struct {
 }
 
 type provStep struct {
-	Backend           string           `json:"backend"`
-	Model             string           `json:"model,omitempty"`
-	Device            string           `json:"device,omitempty"`
-	Version           string           `json:"version,omitempty"`
-	ReferenceFrontend *bool            `json:"referenceFrontend,omitempty"`
+	Backend           string `json:"backend"`
+	Model             string `json:"model,omitempty"`
+	Device            string `json:"device,omitempty"`
+	ReferenceFrontend *bool  `json:"referenceFrontend,omitempty"`
 	// Hints is set on a speech-to-text step whose decoder was biased towards a
 	// configured vocabulary. Absent means the pass ran unbiased, which is what
 	// every build before this feature did.

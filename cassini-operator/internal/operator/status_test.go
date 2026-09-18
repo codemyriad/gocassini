@@ -1289,18 +1289,8 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser})
 	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
 
-	tmp := t.TempDir()
-	infoPatched := filepath.Join(tmp, "buildinfo-patched.txt")
-	if err := os.WriteFile(infoPatched, []byte("sherpa=1.13.7\nfrontend=+cassini-parakeet-v3-reference-v1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	infoUnpatched := filepath.Join(tmp, "buildinfo-unpatched.txt")
-	if err := os.WriteFile(infoUnpatched, []byte("sherpa=1.13.7\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Test with patched library
-	t.Setenv(envNativeBuildInfo, infoPatched)
+	// 1. Test with referenceFrontendProbe stubbed to true (patched runtime)
+	rt.referenceFrontendProbe = func() (bool, bool) { return true, true }
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
 	if rec.Code != http.StatusOK {
@@ -1320,8 +1310,8 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 		t.Fatalf("expected ok=true, got %#v", resp)
 	}
 
-	// Test with unpatched library
-	t.Setenv(envNativeBuildInfo, infoUnpatched)
+	// 2. Test with referenceFrontendProbe stubbed to false (unpatched runtime)
+	rt.referenceFrontendProbe = func() (bool, bool) { return true, false }
 	rec = httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
 	if rec.Code != http.StatusOK {
@@ -1338,5 +1328,23 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	}
 	if !resp.OK {
 		t.Fatalf("unpatched runtime warning must NOT set ok=false: %#v", resp)
+	}
+
+	// 3. Test with fallback buildinfo file when CassiniBin is unset
+	rt.referenceFrontendProbe = nil
+	rt.cfg.CassiniBin = ""
+	tmp := t.TempDir()
+	infoUnpatched := filepath.Join(tmp, "buildinfo-unpatched.txt")
+	if err := os.WriteFile(infoUnpatched, []byte("sherpa=1.13.7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envNativeBuildInfo, infoUnpatched)
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.STT.ReferenceFrontend == nil || *resp.STT.ReferenceFrontend {
+		t.Fatalf("expected reference_frontend=false via buildinfo fallback, got %#v", resp.STT.ReferenceFrontend)
 	}
 }

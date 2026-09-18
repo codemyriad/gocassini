@@ -92,14 +92,21 @@ func TestModelFilesCheckWarnsForAnUnknownModel(t *testing.T) {
 }
 
 func TestNativeRuntimeCheckNeverFails(t *testing.T) {
-	check := nativeRuntimeCheck()
-	if check.status == doctorFail {
-		t.Fatalf("nativeRuntimeCheck returned fail: %+v", check)
+	// For a non-v3 model, it must always be doctorOK
+	checkNonV3 := nativeRuntimeCheck("parakeet-tdt-ctc-110m-en-int8")
+	if checkNonV3.status != doctorOK {
+		t.Fatalf("nativeRuntimeCheck(110M) = %s, want ok", checkNonV3.status)
 	}
-	if check.status != doctorOK && check.status != doctorWarn {
-		t.Fatalf("unexpected doctor status: %s", check.status)
+
+	// For Parakeet v3, it must be either doctorOK or doctorWarn, never doctorFail
+	checkV3 := nativeRuntimeCheck(transcribe.ModelParakeet06BV3Int8)
+	if checkV3.status == doctorFail {
+		t.Fatalf("nativeRuntimeCheck(v3) returned fail: %+v", checkV3)
 	}
-	if !strings.Contains(check.summary, "speech engine runtime") {
-		t.Fatalf("unexpected check summary: %s", check.summary)
+	if checkV3.status != doctorOK && checkV3.status != doctorWarn {
+		t.Fatalf("unexpected doctor status: %s", checkV3.status)
+	}
+	if !strings.Contains(checkV3.summary, "speech engine runtime") {
+		t.Fatalf("unexpected check summary: %s", checkV3.summary)
 	}
 }

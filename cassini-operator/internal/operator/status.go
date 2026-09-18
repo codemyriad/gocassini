@@ -176,9 +176,30 @@ func signalingInternalSecretConfigured() bool {
 	return strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != ""
 }
 
-// probeReferenceFrontend reports whether the active sherpa native library
-// buildinfo indicates the Cassini Parakeet v3 reference frontend patch is present.
-func probeReferenceFrontend() (known bool, isReference bool) {
+// probeReferenceFrontend reports whether the active sherpa runtime includes
+// the Cassini Parakeet v3 reference frontend optimization. It prefers
+// probing the recorder binary directly (which evaluates sherpa.GetVersion()),
+// falling back to buildinfo metadata if the binary is absent or unexecutable.
+func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
+	if rt.referenceFrontendProbe != nil {
+		return rt.referenceFrontendProbe()
+	}
+	bin := strings.TrimSpace(rt.cfg.CassiniBin)
+	if bin != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "build")
+		cmd.Env = rt.childEnv()
+		if out, err := cmd.Output(); err == nil || len(out) > 0 {
+			text := string(out)
+			if strings.Contains(text, "reference frontend active") {
+				return true, true
+			}
+			if strings.Contains(text, "reference frontend optimization inactive") {
+				return true, false
+			}
+		}
+	}
 	path := os.Getenv(envNativeBuildInfo)
 	if path == "" {
 		path = "/opt/cassini/lib/cassini-native-buildinfo.txt"
@@ -247,7 +268,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
 	}
 	if effective.Model == modelParakeetV3Fp32 || effective.Model == modelParakeetV3Int8 {
-		if known, isRef := probeReferenceFrontend(); known {
+		if known, isRef := rt.probeReferenceFrontend(); known {
 			resp.STT.ReferenceFrontend = &isRef
 			if !isRef {
 				resp.STT.Warning = "Parakeet v3 running on upstream sherpa runtime; reference frontend optimization is inactive; falling back to standard decode profile"

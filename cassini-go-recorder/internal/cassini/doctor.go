@@ -113,15 +113,23 @@ func collectDoctorChecks(target string) []doctorCheck {
 	if target == "all" || target == "build" {
 		checks = append(checks, commandCheck("ffmpeg"))
 		checks = append(checks, commandCheck("ffprobe"))
-		checks = append(checks, nativeRuntimeCheck())
+		device := transcribe.ResolveDevice(os.Getenv("CASSINI_STT_DEVICE"))
+		modelID := transcribe.ResolveModelID(os.Getenv("CASSINI_STT_MODEL"), os.Getenv("CASSINI_STT_QUALITY"), device)
+		checks = append(checks, nativeRuntimeCheck(modelID))
 		checks = append(checks, sttModelCacheChecks()...)
 	}
 
 	return checks
 }
 
-func nativeRuntimeCheck() doctorCheck {
+func nativeRuntimeCheck(modelID transcribe.ModelID) doctorCheck {
 	ver := transcribe.RuntimeVersion()
+	if !transcribe.UsesParakeetV3ReferencePolicy(modelID) {
+		return doctorCheck{
+			status:  doctorOK,
+			summary: fmt.Sprintf("speech engine runtime %s", ver),
+		}
+	}
 	if transcribe.HasReferenceRuntime() {
 		return doctorCheck{
 			status:  doctorOK,

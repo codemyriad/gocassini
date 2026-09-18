@@ -170,9 +170,7 @@ func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider st
 	if err != nil {
 		return nil, err
 	}
-	if guarantee != nil {
-		guarantee.observe(rec)
-	}
+	guarantee.observe(rec)
 	if refGuarantee != nil {
 		refGuarantee.observe(rec)
 	}
