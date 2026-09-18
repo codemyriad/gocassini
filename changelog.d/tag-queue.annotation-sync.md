@@ -5,3 +5,4 @@
 - Repairing a recording with the same audio restores saved tags. Replacing its audio clears the old annotations.
 - Recordings skipped during initial annotation import retry automatically and when listed or opened.
 - Large valid annotation documents can update their recordings; permanent recorder rejections show a blocked status instead of retrying indefinitely.
+- An older background status error no longer clears tags saved by a newer edit.

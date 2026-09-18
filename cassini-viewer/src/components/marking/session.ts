@@ -76,7 +76,7 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
       if (current !== generation || version !== writes) return;
       state.update((s) => ({ ...s, annotations: answer }));
     } catch (error) {
-      if (current === generation && error instanceof AnnotationError && [401, 403, 404].includes(error.status)) {
+      if (current === generation && version === writes && error instanceof AnnotationError && [401, 403, 404].includes(error.status)) {
         state.update((s) => ({ ...s, annotations: null, status: "failed", error: describeAnnotationError(error) }));
       }
       // Keep acknowledged marks visible during a temporary archive outage.

@@ -196,6 +196,40 @@ describe("a meeting's marks session", () => {
     await session.close();
   });
 
+  it.each([401, 403, 404])("ignores a stale %s poll error after a successful write", async (status) => {
+    vi.useFakeTimers();
+    let reject: (error: unknown) => void = () => {};
+    const pending = { ...meeting(), sync: { state: "pending" as const, desired: 3, confirmed: 2 } };
+    const newer = { ...result(), stateToken: "epoch:4", sync: { state: "pending" as const, desired: 4, confirmed: 2 } };
+    const saved = { ...newer, sync: { state: "saved" as const, desired: 4, confirmed: 4 } };
+    const load = vi.fn().mockResolvedValueOnce(pending)
+      .mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }))
+      .mockResolvedValue(saved);
+    const session = createMarksSession(() => {});
+    await session.open(load, async () => newer);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await session.write(removeRequest(["i1"]))).toBe(true);
+    reject(new AnnotationError(status, ""));
+    await Promise.resolve();
+    expect(get(session)).toMatchObject({ status: "ready", error: "", annotations: newer });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(get(session).annotations).toBe(saved);
+    await session.close();
+  });
+
+  it.each([401, 403, 404])("clears marks when the current poll returns %s", async (status) => {
+    vi.useFakeTimers();
+    const load = vi.fn().mockResolvedValueOnce({ ...meeting(), sync: { state: "pending", desired: 3, confirmed: 2 } })
+      .mockRejectedValue(new AnnotationError(status, ""));
+    const session = createMarksSession(() => {});
+    await session.open(load, null);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(get(session)).toMatchObject({ status: "failed", annotations: null });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(load).toHaveBeenCalledTimes(2);
+    await session.close();
+  });
+
   it("refreshes the precondition after a conflict", async () => {
     const sent: AnnotationRequest[] = [];
     const load = vi.fn().mockResolvedValueOnce({ ...meeting(), stateToken: "epoch:3" })
