@@ -5,6 +5,7 @@ import { AnnotationError, type AnnotationItem, type MeetingAnnotations } from ".
 import MeetingTags from "./MeetingTags.svelte";
 import StretchToolbar from "./StretchToolbar.svelte";
 import TranscriptFrame from "./TranscriptFrame.svelte";
+import { get } from "svelte/store";
 import transcriptFrameSource from "./TranscriptFrame.svelte?raw";
 import { createMarksSession, viewMarks } from "./session";
 
@@ -46,6 +47,13 @@ async function opened(load: () => Promise<MeetingAnnotations>) {
   await session.open(load, async () => {
     throw new Error("not written in these tests");
   });
+  return session;
+}
+
+// What a published export gets: a loader and nowhere to write (D-775).
+async function readOnly(load: () => Promise<MeetingAnnotations>) {
+  const session = createMarksSession(() => {});
+  await session.open(load, null);
   return session;
 }
 
@@ -104,6 +112,54 @@ describe("a meeting view with its marks loaded", () => {
     expect(html).toContain("Tags are being prepared");
     expect(html).not.toContain("Add tag");
     expect(frame(session)).not.toContain("The whole meeting");
+  });
+});
+
+describe("a meeting view that can read marks but not write them", () => {
+  it("draws every mark the recording carries", async () => {
+    const session = await readOnly(async () => meeting(true));
+    const html = frame(session);
+    expect(html).toMatch(/2\s+tagged sections/);
+    expect(render(MeetingTags, { props: { session } }).body).toContain("budget");
+  });
+
+  it("offers nothing that would change one", async () => {
+    const session = await readOnly(async () => meeting(true));
+    const html = frame(session);
+    // The rail is an overview, not a way to start a stretch.
+    expect(html).not.toContain("Drag down it to grab a section");
+    expect(html).not.toContain("Mark with a tag…");
+    const header = render(MeetingTags, { props: { session } }).body;
+    expect(header).not.toContain("Add tag");
+    expect(header).not.toContain('aria-label="Remove budget"');
+  });
+
+  it("still says which marks cannot be placed, without offering to remove them", async () => {
+    // The reader is owed the fact; only the operator can act on it.
+    const html = render(MeetingTags, { props: { session: await readOnly(async () => meeting(false)) } }).body;
+    expect(html).toContain("2 marks can't be placed on this recording");
+    expect(html).not.toContain("Remove them");
+  });
+
+  it("gives each unknown tag its own colour instead of hashing them into collisions", async () => {
+    // The three ids in this fixture all hash to the same colour, which is what
+    // a read-only view would have shown before: three tags, one colour.
+    const session = await readOnly(async () => meeting(true));
+    const view = viewMarks(get(session), []);
+    const colors = [...view.whole, ...view.placed].map((look) => look.color);
+    expect(new Set(colors).size).toBe(new Set([...view.whole, ...view.placed].map((l) => l.tag.id)).size);
+  });
+
+  it("leaves a tag the vocabulary knows exactly as the vocabulary styles it", async () => {
+    const session = await readOnly(async () => meeting(true));
+    const view = viewMarks(get(session), [
+      { tagId: "t-budget", namespace: "", label: "budget", meetings: 1, marks: 1, color: "teal", icon: "", changedBy: "", changedAtUtc: "" },
+    ]);
+    expect(view.whole.find((look) => look.tag.id === "t-budget")?.color).toBe("teal");
+  });
+
+  it("keeps find, which reads and changes nothing", async () => {
+    expect(frame(await readOnly(async () => meeting(true)))).toContain('aria-label="Find in this meeting"');
   });
 });
 

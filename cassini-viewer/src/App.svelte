@@ -456,8 +456,14 @@
   }
 
   // Bound to an id rather than the entry, so a catalog refresh does not hand the meeting view new functions.
+  //
+  // Reading marks and writing them are bound separately (D-775). A provider that
+  // can only read — a published export, whose tags come out of the recording
+  // itself — still opens the session and still draws its marks; it just hands
+  // over no `apply`, and the session reports itself as not editable so every
+  // control that would change a mark is absent.
   function bindAnnotations(provider: DataProvider, meetingId: string) {
-    if (!meetingId || !provider.loadMeetingAnnotations || !provider.applyAnnotationOps) {
+    if (!meetingId || !provider.loadMeetingAnnotations) {
       return { load: null, apply: null };
     }
     const entry = async () => {
@@ -467,9 +473,10 @@
       }
       return found;
     };
+    const apply = provider.applyAnnotationOps;
     return {
       load: async () => provider.loadMeetingAnnotations!(await entry()),
-      apply: async (request: AnnotationRequest) => provider.applyAnnotationOps!(await entry(), request),
+      apply: apply ? async (request: AnnotationRequest) => apply.call(provider, await entry(), request) : null,
     };
   }
 
@@ -1033,7 +1040,11 @@
   $: canTag =
     typeof dataProvider.loadTagVocabulary === "function" &&
     typeof dataProvider.applyAnnotationOps === "function";
-  $: vocabularyTags = canTag ? (tagVocabulary ? mergeVocabularyTags(tagVocabulary.tags) : null) : null;
+  // A vocabulary is for looks, canTag is for writes (D-775). Keeping these one
+  // value meant a provider that could read tags but not write them rendered
+  // them unstyled. Nothing leaks by separating them: the tag filter and the
+  // picker are gated on canTag where they are used.
+  $: vocabularyTags = tagVocabulary ? mergeVocabularyTags(tagVocabulary.tags) : null;
   $: meetingTags = (tagVocabulary ? tagsByMeeting(tagVocabulary) : new Map()) as MeetingTags;
   // A tag deleted or merged away must not leave the list narrowed by a box that is gone.
   $: activeTagIds = selectedTagIds.filter((id) => vocabularyTags?.some((tag) => tag.tagId === id));

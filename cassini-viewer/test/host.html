@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embedding a Cassini recording</title>
+    <style>
+      /* Deliberately opinionated, and deliberately not the viewer's: if the
+         embed ever leaks its stylesheet, this page stops looking like this. */
+      body {
+        font-family: Georgia, "Times New Roman", serif;
+        max-width: 60rem;
+        margin: 0 auto;
+        padding: 3rem 1.25rem;
+        background: #fbf9f4;
+        color: #1b1b1b;
+        line-height: 1.65;
+      }
+      h1 { font-size: 2.1rem; margin-bottom: 0.25rem; }
+      p.lede { color: #5a544a; margin-top: 0; }
+      cassini-meeting {
+        display: block;
+        height: 42rem;
+        margin: 2.5rem 0;
+        border: 1px solid #ddd8cd;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      code { background: #efece3; padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.9em; }
+    </style>
+  </head>
+  <body>
+    <h1>A page that is not gocassini.com</h1>
+    <p class="lede">
+      Served from a different origin to the embed and the recording, so this page exercises the same
+      cross-origin path a real embedding site does — including the
+      <code>Access-Control-Allow-Origin</code> the recording needs.
+    </p>
+
+    <!-- {{ASSET_ORIGIN}} is substituted by scripts/serve-embed-demo.mjs. In a
+         real page these are the gocassini.com URLs from ATTRIBUTES.md. -->
+    <script src="{{ASSET_ORIGIN}}/embed/viewer.js"></script>
+    <cassini-meeting src="{{ASSET_ORIGIN}}/recording.opus"></cassini-meeting>
+
+    <p>
+      The paragraphs above and below are the host page's own. They are in Georgia. The viewer mounts
+      in a shadow root, so its stylesheet cannot reach them and theirs cannot reach it.
+    </p>
+  </body>
+</html>

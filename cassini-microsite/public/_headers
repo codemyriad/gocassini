@@ -1,0 +1,25 @@
+# Response headers for the static assets this site serves.
+#
+# Cloudflare Workers Static Assets reads this file from the assets directory
+# (Astro copies public/ into dist/ verbatim). It does NOT apply to responses a
+# Worker generates — this site generates none, so every rule below takes effect.
+
+# The public embed (D-775). A page on another origin loads viewer.js with a
+# plain <script src>, which needs no CORS at all; what needs it is the fetch the
+# script then makes for the recording, which is cross-origin whenever the
+# embedding page is not this site. Allowing it on the assets too costs nothing
+# and lets a page preload them.
+/embed/*
+  Access-Control-Allow-Origin: *
+
+# The recording behind the conference page, for the same reason: it is fetched
+# by script, so an embed on another origin cannot read it without this.
+/nextcloud-conf-2026/*
+  Access-Control-Allow-Origin: *
+  Access-Control-Expose-Headers: Content-Range, Content-Length
+
+# /embed/v1/ is the floating contract channel: browsers hold it briefly and then
+# revalidate, so a snippet pasted once picks up every compatible release without
+# anyone re-pasting it.
+/embed/v1/*
+  Cache-Control: public, max-age=300, stale-while-revalidate=86400
