@@ -89,7 +89,7 @@ def audit(root, published=None):
                     windows = [{'startMs': start, 'endMs': start + 30000, 'publishedWords': counts[0],
                                 'replayWords': counts[1], 'delta': counts[1] - counts[0]} for start, counts in bins.items()]
                     comparisons.append({'label': label, 'labelMatched': label in published_labels and label in replay_labels, 'published': word_stats(old_words, status['expectedDurationMs']),
-                                        'replay': word_stats(sorted(new_words, key=lambda w: w['StartMS']), status['expectedDurationMs']),
+                                        'replay': word_stats(sorted(new_words, key=lambda w: w.get('StartMS', w.get('startMs', 0))), status['expectedDurationMs']),
                                         'largestCountChanges': sorted(windows, key=lambda w: abs(w['delta']), reverse=True)[:8]})
                 meeting['publishedComparison'] = comparisons
         meetings.append(meeting)
