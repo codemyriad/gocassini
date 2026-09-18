@@ -299,7 +299,23 @@ func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, parti
 
 	idx, ok := a.participants[pid]
 	if !ok {
-		return nil
+		if remoteSessionID != "" {
+			altPID := sanitizeSessionPathPart(remoteSessionID)
+			if altIdx, altOK := a.participants[altPID]; altOK {
+				idx = altIdx
+				ok = true
+			}
+		}
+		if !ok && participantID != "" {
+			altPID := sanitizeSessionPathPart(participantID)
+			if altIdx, altOK := a.participants[altPID]; altOK {
+				idx = altIdx
+				ok = true
+			}
+		}
+		if !ok {
+			return nil
+		}
 	}
 	current := strings.TrimSpace(a.sessionMeta.Participants[idx].Display)
 	if current == display {
@@ -734,7 +750,16 @@ func normalizedParticipantID(participantID, remoteSessionID string) string {
 
 func isPlaceholderParticipantName(display, participantID string) bool {
 	display = strings.TrimSpace(display)
-	return display == "" || display == "participant-"+sanitizeSessionPathPart(participantID)
+	if display == "" {
+		return true
+	}
+	if strings.HasPrefix(display, "participant-") {
+		return true
+	}
+	if participantID != "" && display == sanitizeSessionPathPart(participantID) {
+		return true
+	}
+	return false
 }
 
 func makeSessionID() string {
