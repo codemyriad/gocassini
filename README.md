@@ -65,9 +65,9 @@ What Cassini writes is described in [docs/portable-meeting-format.md](docs/porta
    transcription. CPU is the default and runs on amd64 and arm64.
 
 ## Install
-1. **Install Cassini from the [App
-  Store](https://apps.nextcloud.com/apps/gocassini).**
-   In the deploy options, paste your signalling server's `internalsecret`.  On Nextcloud _All-in-One_, print it with `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. On a standalone signalling server, it is internalsecret under `[clients]` in `server.conf`.
+
+1. **Install Cassini from the [App Store](https://apps.nextcloud.com/apps/gocassini).**
+   In the deploy options, paste your signalling server's `internalsecret`.  On Nextcloud _All-in-One_, print it with `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. On a standalone signalling server, it is `internalsecret` under `[clients]` in `server.conf`.
    Every other option can stay empty.
 2. **Open Cassini as an administrator.** It creates the `cassini` service
    account that owns the meeting archive. Nextcloud 34.0.2 and later ask you to
@@ -76,7 +76,6 @@ What Cassini writes is described in [docs/portable-meeting-format.md](docs/porta
 4. **Point Talk at Cassini.** Back up Talk's current `recording_servers`
    value, then apply the one Cassini generates for you.
 5. **Record a test call** in a private room and watch it arrive in Cassini.
-
 
 Each step, with the commands, the verification checklist and GPU setup, is in
 [docs/exapp-install.md](docs/exapp-install.md).
@@ -92,7 +91,7 @@ cassini meetings context <meeting-id>          # transcript and summary, ready f
 cassini meetings fetch <meeting-id> --out standup.opus
 ```
 
-An agent skill ships at `.claude/skills/cassini-meetings/SKILL.md`. It teaches a coding agent when and how to use these commands. Claude Code loads it from a checkout; for other agents, point them at the file.
+An agent skill ships at [`.claude/skills/cassini-meetings/SKILL.md`](.claude/skills/cassini-meetings/SKILL.md). It teaches a coding agent when and how to use these commands. Claude Code loads it from a checkout; for other agents, point them at the file.
 
 Setup and worked examples are in [docs/agent-meeting-access.md](docs/agent-meeting-access.md).
 
@@ -104,10 +103,11 @@ You need Go 1.24. From a checkout, `./bin/cassini` builds the CLI and runs it in
 ./bin/cassini --help
 ./bin/cassini doctor     # checks your environment before a long build
 ```
-- docs/README.md: the documentation index for contributors
-- docs/cli.md: record, build, publish, serve and inspect from a checkout
-- harness/README.md: a local Nextcloud Talk lab, driven by `cassini dev`
-- deployment/README.md: a Docker Compose bundle for development and staging. To run Cassini on a Nextcloud, use the app install above.
+
+- [docs/README.md](docs/README.md): the documentation index for contributors
+- [docs/cli.md](docs/cli.md): record, build, publish, serve and inspect from a checkout
+- [harness/README.md](harness/README.md): a local Nextcloud Talk lab, driven by `cassini dev`
+- [deployment/README.md](deployment/README.md): a Docker Compose bundle for development and staging. To run Cassini on a Nextcloud, use the app install above.
 
 ## Contributing
 
@@ -115,9 +115,6 @@ Issues and pull requests are welcome. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) first; it covers the branch and changelog
 conventions this repo uses.
 
-## Governance
-
 - License: [GNU AGPLv3](LICENSE)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Security reporting: [SECURITY.md](SECURITY.md)
-- Contribution notes: [CONTRIBUTING.md](CONTRIBUTING.md)
