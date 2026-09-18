@@ -1387,8 +1387,8 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 			if (sessionID == "" && roomSessionID == "") || callState != callStateInCall {
 				continue
 			}
-			remoteSessionID := r.resolveRemoteSessionID(sessionID, roomSessionID, identity.ParticipantID)
 			r.sessionMu.Lock()
+			remoteSessionID := r.resolveRemoteSessionLocked(sessionID, roomSessionID, identity.ParticipantID)
 			r.mapRemoteSessionLocked(remoteSessionID, roomSessionID, identity.ParticipantID)
 			r.sessionMu.Unlock()
 			active[remoteSessionID] = identity
@@ -1401,8 +1401,8 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 		if sessionID == "" && roomSessionID == "" {
 			continue
 		}
-		remoteSessionID := r.resolveRemoteSessionID(sessionID, roomSessionID, identity.ParticipantID)
 		r.sessionMu.Lock()
+		remoteSessionID := r.resolveRemoteSessionLocked(sessionID, roomSessionID, identity.ParticipantID)
 		r.mapRemoteSessionLocked(remoteSessionID, roomSessionID, identity.ParticipantID)
 		r.sessionMu.Unlock()
 
@@ -1663,9 +1663,11 @@ func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, par
 		if participantID == "" && session.ParticipantID != "" {
 			participantID = session.ParticipantID
 		}
-		if displayName != "" && session.ParticipantName != displayName {
-			session.ParticipantName = displayName
-			shouldUpdateArtifact = true
+		if displayName != "" && !isPlaceholderParticipantName(displayName, remoteSessionID, participantID) {
+			if session.ParticipantName != displayName {
+				session.ParticipantName = displayName
+				shouldUpdateArtifact = true
+			}
 		}
 		if participantID != "" {
 			session.ParticipantID = participantID
@@ -1711,24 +1713,32 @@ func (r *Recorder) mapRemoteSessionLocked(remoteSessionID, roomSessionID, partic
 	}
 	if roomSessionID != "" && roomSessionID != remoteSessionID {
 		r.remoteByRoomSession[roomSessionID] = remoteSessionID
+		if prev, ok := r.identityByRemote[roomSessionID]; ok {
+			curr := r.identityByRemote[remoteSessionID]
+			if curr.DisplayName == "" {
+				curr.DisplayName = prev.DisplayName
+			}
+			if curr.ParticipantID == "" {
+				curr.ParticipantID = prev.ParticipantID
+			}
+			r.identityByRemote[remoteSessionID] = curr
+			delete(r.identityByRemote, roomSessionID)
+			if session := r.sessionsByRemote[remoteSessionID]; session != nil && curr.DisplayName != "" {
+				if session.ParticipantName != curr.DisplayName && (session.ParticipantName == "" || isPlaceholderParticipantName(session.ParticipantName, remoteSessionID, session.ParticipantID)) {
+					session.ParticipantName = curr.DisplayName
+					if r.sessionArtifact != nil {
+						_ = r.sessionArtifact.updateParticipantDisplay(remoteSessionID, session.ParticipantID, curr.DisplayName)
+					}
+				}
+			}
+		}
 	}
 	if participantID != "" && participantID != remoteSessionID {
 		r.remoteByParticipant[participantID] = remoteSessionID
 	}
 }
 
-func (r *Recorder) resolveRemoteSessionID(sessionID, roomSessionID, participantID string) string {
-	r.sessionMu.Lock()
-	defer r.sessionMu.Unlock()
-
-	if sessionID != "" {
-		if _, ok := r.identityByRemote[sessionID]; ok {
-			return sessionID
-		}
-		if _, ok := r.sessionsByRemote[sessionID]; ok {
-			return sessionID
-		}
-	}
+func (r *Recorder) resolveRemoteSessionLocked(sessionID, roomSessionID, participantID string) string {
 	if roomSessionID != "" {
 		if remote, ok := r.remoteByRoomSession[roomSessionID]; ok && remote != "" {
 			return remote
@@ -1737,6 +1747,12 @@ func (r *Recorder) resolveRemoteSessionID(sessionID, roomSessionID, participantI
 	if sessionID != "" {
 		if remote, ok := r.remoteByRoomSession[sessionID]; ok && remote != "" {
 			return remote
+		}
+		if _, ok := r.sessionsByRemote[sessionID]; ok {
+			return sessionID
+		}
+		if _, ok := r.identityByRemote[sessionID]; ok {
+			return sessionID
 		}
 	}
 	if sessionID == "" && roomSessionID == "" && participantID != "" {
@@ -1751,6 +1767,12 @@ func (r *Recorder) resolveRemoteSessionID(sessionID, roomSessionID, participantI
 		return roomSessionID
 	}
 	return participantID
+}
+
+func (r *Recorder) resolveRemoteSessionID(sessionID, roomSessionID, participantID string) string {
+	r.sessionMu.Lock()
+	defer r.sessionMu.Unlock()
+	return r.resolveRemoteSessionLocked(sessionID, roomSessionID, participantID)
 }
 
 func parseRoomJoinIdentity(joinItem map[string]any) (remoteSessionID, roomSessionID, displayName, participantID string) {
@@ -1831,9 +1853,9 @@ func parseParticipantUpdate(user map[string]any) (string, string, participantIde
 	)
 	roomSessionID := firstNonEmpty(
 		scopes,
-		"nextcloudSessionId",
 		"roomSessionId",
 		"roomsessionid",
+		"nextcloudSessionId",
 	)
 	if sessionID == "" {
 		sessionID = roomSessionID

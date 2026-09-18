@@ -264,3 +264,74 @@ func TestResolveRemoteSessionIDAndForgetParticipantIdentity(t *testing.T) {
 		t.Fatalf("expected participantID to return itself after forget, got %q", got)
 	}
 }
+
+func TestPresenceUpdateBeforeSignalingJoinResolvesCorrectly(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "presence-first.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	defer func() {
+		_ = artifact.close()
+	}()
+
+	r := &Recorder{
+		sessionArtifact:     artifact,
+		sessionPath:         artifact.sessionPath,
+		subscribers:         make(map[string]*subscriberPeer),
+		inCallEver:          make(map[string]struct{}),
+		sessionsByRemote:    make(map[string]*sessionCapture),
+		identityByRemote:    make(map[string]participantIdentity),
+		remoteByRoomSession: make(map[string]string),
+		remoteByParticipant: make(map[string]string),
+	}
+
+	signalingSessionID := "signaling-sess-123"
+	ncRoomSessionID := "nc-room-sess-456"
+	guestActorID := "actor-guest-789"
+
+	// 1. Presence update arrives FIRST (no inCall flag)
+	err = r.handleParticipantsEvent(map[string]any{
+		"users": []any{
+			map[string]any{
+				"sessionId":   ncRoomSessionID,
+				"actorId":     guestActorID,
+				"displayName": "Phone",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handleParticipantsEvent: %v", err)
+	}
+
+	// 2. Signaling room join arrives SECOND
+	err = r.handleRoomEvent(map[string]any{
+		"target": "room",
+		"type":   "join",
+		"join": []any{
+			map[string]any{
+				"sessionid":     signalingSessionID,
+				"roomsessionid": ncRoomSessionID,
+				"userid":        guestActorID,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handleRoomEvent(join): %v", err)
+	}
+
+	// 3. Track arrives for signalingSessionID
+	sessionCap, err := r.ensureSessionCapture(signalingSessionID)
+	if err != nil {
+		t.Fatalf("ensureSessionCapture: %v", err)
+	}
+	if sessionCap.ParticipantName != "Phone" {
+		t.Fatalf("expected ensureSessionCapture to have Phone, got %q", sessionCap.ParticipantName)
+	}
+
+	// 4. resolveRemoteSessionID for ncRoomSessionID must resolve to signalingSessionID
+	if resolved := r.resolveRemoteSessionID(ncRoomSessionID, "", guestActorID); resolved != signalingSessionID {
+		t.Fatalf("expected ncRoomSessionID to resolve to %q, got %q", signalingSessionID, resolved)
+	}
+}

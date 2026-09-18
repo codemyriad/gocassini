@@ -612,65 +612,72 @@ func TestSessionArtifactUpdateParticipantDisplayReplacesPlaceholder(t *testing.T
 
 func TestIsPlaceholderParticipantName(t *testing.T) {
 	tests := []struct {
-		name          string
-		display       string
-		participantID string
-		want          bool
+		name    string
+		display string
+		ids     []string
+		want    bool
 	}{
 		{
-			name:          "empty display is placeholder",
-			display:       "",
-			participantID: "user-1",
-			want:          true,
+			name:    "empty display is placeholder",
+			display: "",
+			ids:     []string{"user-1"},
+			want:    true,
 		},
 		{
-			name:          "whitespace display is placeholder",
-			display:       "   ",
-			participantID: "user-1",
-			want:          true,
+			name:    "whitespace display is placeholder",
+			display: "   ",
+			ids:     []string{"user-1"},
+			want:    true,
 		},
 		{
-			name:          "full participant-pid is placeholder",
-			display:       "participant-user-1",
-			participantID: "user-1",
-			want:          true,
+			name:    "full participant-pid is placeholder",
+			display: "participant-user-1",
+			ids:     []string{"user-1"},
+			want:    true,
 		},
 		{
-			name:          "synthetic short ID participant-sXHFMabV is placeholder",
-			display:       "participant-sXHFMabV",
-			participantID: "9de480c78effa50443d6aca4944d6997d7722d79",
-			want:          true,
+			name:    "synthetic short ID participant-sXHFMabV is placeholder when remoteSessionID matches",
+			display: "participant-sXHFMabV",
+			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79", "sXHFMabV7NOPjrF_VqGx8qzQ_jEnMozJrLpHrYliUxY1h1-HAaptquQgfCW78K3IXg"},
+			want:    true,
 		},
 		{
-			name:          "raw actor ID as display is placeholder",
-			display:       "9de480c78effa50443d6aca4944d6997d7722d79",
-			participantID: "9de480c78effa50443d6aca4944d6997d7722d79",
-			want:          true,
+			name:    "raw actor ID as display is placeholder",
+			display: "9de480c78effa50443d6aca4944d6997d7722d79",
+			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79"},
+			want:    true,
 		},
 		{
-			name:          "real guest name Phone is not placeholder",
-			display:       "Phone",
-			participantID: "9de480c78effa50443d6aca4944d6997d7722d79",
-			want:          false,
+			name:    "real guest name Phone is not placeholder",
+			display: "Phone",
+			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79", "sXHFMabV7NOPjrF_VqGx8qzQ_jEnMozJrLpHrYliUxY1h1-HAaptquQgfCW78K3IXg"},
+			want:    false,
 		},
 		{
-			name:          "real user name Alice is not placeholder",
-			display:       "Alice",
-			participantID: "alice",
-			want:          false,
+			name:    "real user name Alice is not placeholder",
+			display: "Alice",
+			ids:     []string{"alice"},
+			want:    false,
 		},
 		{
-			name:          "real guest name Desktop computer is not placeholder",
-			display:       "Desktop computer",
-			participantID: "1fd2cfb4ad0f235b10a39780db1f83c2956a8c4f",
-			want:          false,
+			name:    "real guest name Desktop computer is not placeholder",
+			display: "Desktop computer",
+			ids:     []string{"1fd2cfb4ad0f235b10a39780db1f83c2956a8c4f"},
+			want:    false,
+		},
+		{
+			name:    "user named participant-bob is not placeholder when IDs do not match bob",
+			display: "participant-bob",
+			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79", "sXHFMabV7NOPjrF_VqGx8qzQ_jEnMozJrLpHrYliUxY1h1-HAaptquQgfCW78K3IXg"},
+			want:    false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isPlaceholderParticipantName(tc.display, tc.participantID); got != tc.want {
-				t.Fatalf("isPlaceholderParticipantName(%q, %q) = %v, want %v", tc.display, tc.participantID, got, tc.want)
+			got := isPlaceholderParticipantName(tc.display, tc.ids...)
+			if got != tc.want {
+				t.Fatalf("expected %v, got %v", tc.want, got)
 			}
 		})
 	}

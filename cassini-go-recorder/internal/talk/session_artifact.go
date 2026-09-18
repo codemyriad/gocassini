@@ -288,7 +288,7 @@ func (a *sessionCaptureArtifact) captureFailure() error {
 
 func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, participantID, participantName string) error {
 	display := strings.TrimSpace(participantName)
-	if display == "" {
+	if display == "" || isPlaceholderParticipantName(display, remoteSessionID, participantID) {
 		return nil
 	}
 
@@ -323,7 +323,7 @@ func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, parti
 	if current == display {
 		return nil
 	}
-	if current != "" && !isPlaceholderParticipantName(current, pid) {
+	if current != "" && !isPlaceholderParticipantName(current, pid, remoteSessionID, participantID) {
 		return nil
 	}
 	a.sessionMeta.Participants[idx].Display = display
@@ -750,16 +750,23 @@ func normalizedParticipantID(participantID, remoteSessionID string) string {
 	return sanitizeSessionPathPart(trimmed)
 }
 
-func isPlaceholderParticipantName(display, participantID string) bool {
+func isPlaceholderParticipantName(display string, ids ...string) bool {
 	display = strings.TrimSpace(display)
-	if display == "" {
+	if display == "" || display == "participant-unknown" {
 		return true
 	}
-	if strings.HasPrefix(display, "participant-") {
-		return true
-	}
-	if participantID != "" && display == sanitizeSessionPathPart(participantID) {
-		return true
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		cleanID := sanitizeSessionPathPart(id)
+		if display == "participant-"+cleanID || display == cleanID {
+			return true
+		}
+		if len(cleanID) >= 8 && display == "participant-"+cleanID[:8] {
+			return true
+		}
 	}
 	return false
 }
