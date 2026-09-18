@@ -189,6 +189,7 @@ func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "build")
+		cmd.WaitDelay = 500 * time.Millisecond
 		cmd.Env = rt.childEnv()
 		if out, err := cmd.Output(); err == nil || len(out) > 0 {
 			text := string(out)

@@ -1347,4 +1347,17 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	if resp.STT.ReferenceFrontend == nil || *resp.STT.ReferenceFrontend {
 		t.Fatalf("expected reference_frontend=false via buildinfo fallback, got %#v", resp.STT.ReferenceFrontend)
 	}
+
+	// 4. Test with CassiniBin executing a mock cassini binary
+	fakeBin := writeFakeCassini(t, "echo 'speech engine runtime 1.13.7 (reference frontend active)'\n")
+	rt.referenceFrontendProbe = nil
+	rt.cfg.CassiniBin = fakeBin
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.STT.ReferenceFrontend == nil || !*resp.STT.ReferenceFrontend {
+		t.Fatalf("expected reference_frontend=true via CassiniBin doctor probe, got %#v", resp.STT.ReferenceFrontend)
+	}
 }
