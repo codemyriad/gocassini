@@ -1,6 +1,7 @@
 # Get from installation to a verified recording
 
-Cassini → Setup checks recording storage, speech processing, Talk connectivity,
+Cassini → Operator → Publish pipeline checks recording storage, speech
+processing, Talk connectivity,
 HPB authentication, and the recording handoff. Existing recordings remain
 available when the recording connection needs attention.
 
@@ -57,7 +58,7 @@ upstream availability. A missing icon alone does not identify the cause: app
 state, failed initialization and registration/permission problems also need
 checking. Do not change proxy routing solely because an icon is absent.
 
-## Complete Setup
+## Complete the recording checks
 
 1. Choose a storage mode and let the existing storage workflow create the
    service account and, if selected, the access-controlled Team folder.
@@ -97,16 +98,19 @@ replaced. Include this file in your normal volume backup.
 ## Test the full path
 
 Press **Prepare test**, open the test room, start a call and use **Talk's**
-Start recording action. Speak for about 20 seconds and stop recording. Setup
+Start recording action. Speak for about 20 seconds and stop recording. The
+recording checks
 follows the first matching recording started through Talk after the test was
 prepared. A job started directly through the operator does not count.
 
 After publishing finishes, open the recording and verify the audio and
-transcript. Confirm playback in Setup. This confirmation is a human observation;
+transcript. Confirm playback in the recording checks. This confirmation is a
+human observation;
 Cassini does not pretend that producing a file proves audible playback.
 
 A failed/blocked job is shown with its stage. Inspect it in Operator and repair
-that stage, then rerun it or prepare a new test. If Setup keeps waiting for Talk,
+that stage, then rerun it or prepare a new test. If the checks keep waiting for
+Talk,
 check the selected room, moderator permission, and recording-backend handoff.
 Do not prepare another test while your intended test is already recording.
 
@@ -161,9 +165,15 @@ an empty `REMOVE_DISABLED_APPS`; manual installations typically use `no`. Both
 are accepted by the check above.
 
 After the first successful test, restart using AIO's normal controls, re-open
-Setup, run **Check again**, and prepare a new test through Talk. This checks both
-saved Cassini configuration and AIO's ownership of the Talk setting. Cassini
-never automatically replaces a recorder that an administrator may have selected.
+the recording checks, run **Check again**, and prepare a new test through Talk.
+This checks both saved Cassini configuration and AIO's ownership of the Talk
+setting. Cassini never automatically replaces a recorder that an administrator
+may have selected.
+
+The steps above are the configuration. Proving it on a real installation is
+[Runbook: prove Cassini survives an AIO restart](runbooks/validate-aio-restart-persistence.md),
+which also covers the case this section does not: AppAPI itself ending up
+disabled, which makes Cassini unreachable rather than merely misconfigured.
 
 For rollback on AIO, restore the backup made by Connect Talk:
 
@@ -259,5 +269,6 @@ administrator may have repaired Nextcloud or HPB since the check. The recorder
 validates the actual connection. Missing local credentials and storage admission
 requirements still refuse recording early. The ordinary-user attention banner
 reflects current actionable evidence only; its disappearance after evidence
-expires does not establish that a problem was repaired. Setup reports that state
+expires does not establish that a problem was repaired. The checks report that
+state
 as not verified.

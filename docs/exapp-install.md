@@ -24,7 +24,8 @@ occ (e.g. `sudo -u www-data php occ …` or
 The standalone Docker Compose bundle under `deployment/` is **not** the app
 install — see [Standalone operator (dev/staging only)](#standalone-operator-devstaging-only).
 
-After installation, **Cassini → Setup** diagnoses missing configuration and
+After installation, **Cassini → Operator → Publish pipeline** diagnoses missing
+configuration and
 helps you verify a short recording. See [Recording readiness](recording-readiness.md)
 for the guided flow, AIO-specific setup, and restart persistence.
 

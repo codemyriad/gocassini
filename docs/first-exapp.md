@@ -41,7 +41,8 @@ stages through **Enabled** to succeed. A successful **Check connection** alone
 is not this test.
 
 If it succeeds, continue with [Cassini installation, Step 2](exapp-install.md#step-2--pick-an-image-tag).
-This verifies the ExApp foundation; Cassini Setup will separately verify Talk,
+This verifies the ExApp foundation; Cassini's recording checks will separately
+verify Talk,
 storage and a real recording. Keep using the tested daemon when registering
 Cassini.
 
