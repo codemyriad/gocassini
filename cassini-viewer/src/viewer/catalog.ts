@@ -406,6 +406,15 @@ export function filterMeetingCatalogEntries(
 // assert an instant we can't actually justify (a UTC-stamped "21:11" would
 // display as "9:11 PM GMT+1" to a CET viewer, an hour off and falsely precise).
 // We show the wall-clock digits as-is and make no timezone claim (D-484).
+// Whether a catalog entry's dateLabel is a date at all. formatMeetingDate
+// returns the label unchanged when it cannot parse it, which is right for a
+// formatter and wrong for a caller deciding whether to show a date at all — a
+// meeting whose id stood in for its date rendered that id under a calendar
+// icon (D-775).
+export function hasMeetingDate(dateLabel: string): boolean {
+  return /^(\d{4})-(\d{2})-(\d{2})/.test(dateLabel);
+}
+
 export function formatMeetingDate(dateLabel: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(
     dateLabel,

@@ -1,0 +1,43 @@
+{
+  "description": "Original invented speech; stock synthetic voices; no private recording or transcript content.",
+  "tracks": [
+    {
+      "script": "Well, I was going to water the garden on Tuesday, but the forecast changed and now it looks like rain. So I moved the tools back into the shed and left the small pots under the porch. If the weather clears tomorrow, we can plant the carrots first and then carry the empty baskets down to the gate.",
+      "voice": "am_michael",
+      "language": "en-us",
+      "sourceWavSha256": "fd7c37d597ce8c82d0b7098bf65cc8c089914a60953a8129a1633fa5a60cc4e8"
+    },
+    {
+      "script": "Before we open the library, could you check that the chairs are back in their rows and the lights are switched on in the reading room? I left a note for the afternoon team near the entrance. The children will arrive just after two, so we need the picture books on the low table and the coloured pencils in the middle.",
+      "voice": "bf_emma",
+      "language": "en-gb",
+      "sourceWavSha256": "818cd874b0d1f8e58f5032e4cbcd8e003cafff94abee2ffc288b638b2c652821"
+    }
+  ],
+  "leadingSilenceMs": 700,
+  "trailingSilenceMs": 700,
+  "secondTrackOffsetMs": 3000,
+  "codec": "Opus, 48 kbit/s, mono tracks",
+  "fixtureSha256": "12e309abe0d1d29f0248ebba88b8f2639ff1b870f907e1b9b856e7df6127e6b6",
+  "ffmpeg": "7.1.4-0+deb13u1",
+  "synthesis": {
+    "packages": {
+      "kokoro-onnx": "0.4.9",
+      "numpy": "2.2.6",
+      "onnxruntime": "1.30.0",
+      "phonemizer-fork": "3.3.2",
+      "espeakng-loader": "0.2.4"
+    },
+    "assets": {
+      "kokoro-v1.0.int8.onnx": "6e742170d309016e5891a994e1ce1559c702a2ccd0075e67ef7157974f6406cb",
+      "voices-v1.0.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+    },
+    "voices": [
+      "am_michael",
+      "bf_emma"
+    ],
+    "speed": 1.0,
+    "threads": 2,
+    "sampleRate": 16000
+  }
+}

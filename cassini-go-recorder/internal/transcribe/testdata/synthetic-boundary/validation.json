@@ -1,0 +1,53 @@
+{
+  "oldRevision": "010768e6bad8e1401e9b5981502e0ee2e187ad62",
+  "prRevision": "c580c39402842a4a6462f8feb8f418dcb82e24a2",
+  "model": "parakeet-tdt-0.6b-v3",
+  "fixtureSha256": "12e309abe0d1d29f0248ebba88b8f2639ff1b870f907e1b9b856e7df6127e6b6",
+  "results": [
+    {
+      "name": "old-gpu",
+      "expectedExit": 1,
+      "actualExit": 1,
+      "valid": true,
+      "repeats": 3,
+      "librarySha256": "f0f9793dac7c0703a09be6a73ea224117957853e8cc4d2139b45c9405b2f841a"
+    },
+    {
+      "name": "current-gpu",
+      "expectedExit": 0,
+      "actualExit": 0,
+      "valid": true,
+      "repeats": 3,
+      "librarySha256": "c9b42519b8b4b86715dd950c9c6467b58d8e5af8fcff88508c2d8a462bad7bfd"
+    },
+    {
+      "name": "current-cpu",
+      "expectedExit": 0,
+      "actualExit": 0,
+      "valid": true,
+      "repeats": 1,
+      "librarySha256": "8b0ef5b54472142e1cae73f2abd428e85503d95beee5e0dccbfdb24e725ba19f"
+    },
+    {
+      "name": "old-cpu",
+      "expectedExit": 1,
+      "actualExit": 1,
+      "valid": true,
+      "repeats": 1,
+      "librarySha256": "f0f9793dac7c0703a09be6a73ea224117957853e8cc4d2139b45c9405b2f841a"
+    }
+  ],
+  "regeneration": {
+    "sourceWavHashesMatch": true,
+    "decodedOpusTracksMatch": true
+  },
+  "modelHashes": {
+    "models/parakeet-tdt-0.6b-v3/bpe.vocab": "41d5e71b3591642eff088151efd7acd4e750124cc0054c8ba9fa3245187a4804",
+    "models/parakeet-tdt-0.6b-v3/decoder.onnx": "cf13741631f0d3ae2f1bae07d9368af48aa314916eada9f96be68f09589f5eab",
+    "models/parakeet-tdt-0.6b-v3/encoder.onnx": "7f30e635992b69c55df74fcd69d6af8dde0b0c07756a77c1b1f19c9354fb8283",
+    "models/parakeet-tdt-0.6b-v3/joiner.onnx": "24c96f15bc55f8a72039e0d4683983ae66d17d47432c26e147f4f8d945d63192",
+    "models/parakeet-tdt-0.6b-v3/tokens.txt": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+    "vad/silero_vad.onnx": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+    "models/parakeet-tdt-0.6b-v3/encoder.weights": "3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8"
+  }
+}

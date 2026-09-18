@@ -6,6 +6,7 @@ import {
   UNDATED_MONTH_LABEL,
   buildRoomBuckets,
   filterMeetingsByRoom,
+  hasRoom,
   groupMeetingsByMonth,
   roomKeyOf,
   roomLabelOf,
@@ -178,5 +179,18 @@ describe("groupMeetingsByMonth", () => {
 
   it("returns nothing for an empty list", () => {
     expect(groupMeetingsByMonth([])).toEqual([]);
+  });
+});
+
+
+describe("hasRoom", () => {
+  it("is true only when the meeting says which room it was recorded in", () => {
+    expect(hasRoom({ id: "m", title: "", dateLabel: "", roomName: "Standup" })).toBe(true);
+    expect(hasRoom({ id: "m", title: "", dateLabel: "", roomId: "r_1" })).toBe(true);
+    expect(hasRoom({ id: "m", title: "", dateLabel: "" })).toBe(false);
+  });
+
+  it("is false for an empty name, which is an absence written down rather than a room", () => {
+    expect(hasRoom({ id: "m", title: "", dateLabel: "", roomName: "" })).toBe(false);
   });
 });

@@ -335,20 +335,56 @@ func cgroupCPUQuota() (int, bool) {
 	return 0, false
 }
 
-// detectAvailableMemMB returns the smaller of the cgroup memory headroom (limit
-// minus current usage) and the host's MemAvailable, in MiB.
+// detectAvailableMemMB credits only clean inactive file cache, bounded by the
+// cgroup charge and the host's MemAvailable. Dirty/writeback and shared pages
+// are excluded conservatively: they are not immediately reclaimable headroom.
 func detectAvailableMemMB() int {
 	host := procMemAvailableMB()
-	limit, okL := readIntFile("/sys/fs/cgroup/memory.max") // "max" -> unparseable -> not ok
+	limit, okL := readIntFile("/sys/fs/cgroup/memory.max")
 	used, okU := readIntFile("/sys/fs/cgroup/memory.current")
-	if okL && okU && limit > 0 {
-		cgFree := int((int64(limit) - int64(used)) / (1024 * 1024))
-		if cgFree < 0 {
-			cgFree = 0
+	if !okL || !okU || limit <= 0 {
+		return host
+	}
+	stat, _ := os.ReadFile("/sys/fs/cgroup/memory.stat")
+	return availableMemoryMB(host, int64(limit), int64(used), string(stat))
+}
+
+func availableMemoryMB(host int, limit, used int64, stat string) int {
+	fields := map[string]int64{}
+	for _, line := range strings.Split(stat, "\n") {
+		pair := strings.Fields(line)
+		if len(pair) != 2 {
+			continue
 		}
-		if host <= 0 || cgFree < host {
-			return cgFree
+		value, err := strconv.ParseInt(pair[1], 10, 64)
+		if err == nil && value >= 0 {
+			fields[pair[0]] = value
 		}
+	}
+	clean := fields["inactive_file"]
+	// Require all fields before crediting cache; unknown telemetry falls back
+	// to the former, conservative limit-minus-current calculation.
+	for _, key := range []string{"file_dirty", "file_writeback", "shmem"} {
+		value, ok := fields[key]
+		if !ok || value >= clean {
+			clean = 0
+			break
+		}
+		clean -= value
+	}
+	if clean > used {
+		clean = used
+	}
+	free := limit - (used - clean)
+	if free < 0 {
+		free = 0
+	}
+	if free > limit {
+		free = limit
+	}
+	cgFree := int(free / (1024 * 1024))
+	if host <= 0 || cgFree < host {
+		return cgFree
 	}
 	return host
 }

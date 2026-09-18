@@ -66,6 +66,9 @@ func (rt *Runtime) publishWorker() {
 }
 
 func (rt *Runtime) runPublishJob(task publishTask) {
+	if err := rt.waitForRecordingIdle(); err != nil {
+		return
+	}
 	startedAt := nowUTCString()
 	if err := rt.store.MarkPublishRunning(context.Background(), task.JobID, startedAt); err != nil {
 		rt.logger.Printf("publish start update failed id=%s: %v", task.JobID, err)
