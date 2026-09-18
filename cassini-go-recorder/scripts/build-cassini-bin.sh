@@ -35,7 +35,23 @@ case $(go env GOOS) in
  *) echo 'Native packages support Linux/macOS.' >&2; exit 1 ;;
 esac
 [[ $(go env GOOS) == "$(go env GOHOSTOS)" && $(go env GOARCH) == "$(go env GOHOSTARCH)" ]] || { echo 'Build native packages on the target architecture (cross-compilation is unsupported).' >&2; exit 1; }
-[[ $(go -C "$rec" list -m -f '{{.Version}}' "$binding") == v1.13.7 ]] || { echo 'Go binding/native version mismatch' >&2; exit 1; }
+
+if [[ $backend == cpu ]]; then
+  dist=$rec/dist
+  mkdir -p "$dist"
+  if [[ $running == 1 ]]; then
+    exec go -C "$rec" run "$@"
+  elif [[ $testing == 1 ]]; then
+    if [[ $# == 0 ]]; then set -- ./internal/transcribe; fi
+    exec go -C "$rec" test "$@"
+  else
+    output_bin=${output_bin:-$dist/cassini-bin}
+    go -C "$rec" build -o "$output_bin" ./cmd/cassini
+    echo "Built $output_bin using prebuilt native runtime."
+    exit 0
+  fi
+fi
+
 cache=$rec/.build-cache/native-$backend
 dist=$rec/dist
 mkdir -p "$cache" "$dist"

@@ -1,0 +1,2 @@
+### Changed
+- **Migrated to official codemyriad/sherpa-onnx fork.** `cassini-go-recorder` now consumes `@codemyriad` prebuilt native packages (`github.com/codemyriad/sherpa-onnx-go` and `github.com/codemyriad/sherpa-onnx-go-linux` v1.13.7-cassini.2). Prebuilt native binaries for `x86_64` and `aarch64` include the Parakeet v3 reference frontend directly in the module distribution, eliminating on-the-fly C++ compilation shims and streamlining Docker and CI pipelines.

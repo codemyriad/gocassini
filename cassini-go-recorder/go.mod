@@ -12,9 +12,9 @@ require (
 
 require (
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.7 // indirect
-	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.7 // indirect
-	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.7 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-linux v1.13.8 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-macos v1.13.8 // indirect
+	github.com/k2-fsa/sherpa-onnx-go-windows v1.13.8 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v3 v3.0.4 // indirect
 	github.com/pion/ice/v4 v4.0.7 // indirect
@@ -32,4 +32,9 @@ require (
 	golang.org/x/crypto v0.32.0 // indirect
 	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
+)
+
+replace (
+	github.com/k2-fsa/sherpa-onnx-go => github.com/codemyriad/sherpa-onnx-go v1.13.7-cassini.3
+	github.com/k2-fsa/sherpa-onnx-go-linux => github.com/codemyriad/sherpa-onnx-go-linux v1.13.7-cassini.3
 )
