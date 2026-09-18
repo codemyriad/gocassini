@@ -135,10 +135,10 @@ func backfillAnnotationIndex(
 		logger.Printf("annotations backfill: could not prune vanished meetings (%v)", err)
 	}
 	report.Forgotten = forgotten
-	if err := store.markBuilt(ctx); err != nil {
-		// Only the marker is missing: the next start rebuilds again, which is
-		// wasted work, never a wrong answer.
-		logger.Printf("annotations backfill: %v", err)
+	if report.Failed == 0 {
+		if err := store.markBuilt(ctx); err != nil {
+			return report, err
+		}
 	}
 	return report, nil
 }
@@ -162,7 +162,7 @@ func backfillOneAnnotation(
 		// Drift this run cannot judge; pruned once the catalog stops naming it.
 		return annotationBackfillFailed, "the catalog names it but the archive does not hold it"
 	}
-	existing, known := recorded[opusName]
+	existing := recorded[opusName]
 	if sameContainer(existing, checksum) {
 		return annotationBackfillUnchanged, ""
 	}
@@ -176,12 +176,9 @@ func backfillOneAnnotation(
 			}
 			return annotationBackfillUnavailable, err.Error()
 		}
-		if !known {
-			// Nothing to protect; at least make the meeting known, outside
-			// coverage. Still a failure: re-running is the fix.
-			_ = store.MarkUnavailable(ctx, opusName, "")
-		}
-		return annotationBackfillFailed, fmt.Sprintf("archive recording unreadable: %v", err)
+		// A transient failure is not a verdict about the bytes. Leave unknown
+		// documents eligible for import when the meeting is next listed/opened.
+		return annotationBackfillFailed, fmt.Sprintf("archive recording unavailable: %v", err)
 	}
 	// The digest of the bytes actually read is what OC-Checksum is compared
 	// against next time.

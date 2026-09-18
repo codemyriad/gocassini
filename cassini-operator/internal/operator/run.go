@@ -962,8 +962,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	annotations := newAnnotationService(rt, exappCfg, logger)
+	search := rt.searchDeps()
+	if annotations != nil {
+		search.importAnnotations = annotations.importListedDocuments
+	}
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, rt.searchDeps())
+	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, search)
 	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
 	// beside /published/ rather than under BasePath, because that is where
 	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
@@ -976,7 +981,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// Tags and marks (D-737): a sibling of insights on the ROOT mux, for the same
 	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and
 	// unmounted, wherever a mark could not be served (see newAnnotationService).
-	if annotations := newAnnotationService(rt, exappCfg, logger); annotations != nil {
+	if annotations != nil {
 		rt.startInitialAnnotationBuild(exappCfg, logger)
 		annotations.register(root)
 	}

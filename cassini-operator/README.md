@@ -729,6 +729,13 @@ baseline; it never forces an overwrite of unexpected annotations. Bulk rename,
 merge and delete keep durable target lists and progress across restarts. Tag
 colors/icons remain in their separate style store.
 
+Existing recordings are imported immediately on startup. Transient failures
+retry automatically, and listing or opening a meeting also starts an import
+when its document is missing. Opening it returns a retryable 503 while preparing.
+The initial vocabulary gate stays closed until transient catalog imports finish,
+preventing new edits from creating duplicate tag identities. Downloaded recordings
+whose annotation content cannot be read stay outside coverage.
+
 Keep the database volume durable. Managed schema migrations preserve it and
 refuse unknown versions. If the entire volume is lost, rebuild desired and
 confirmed state from the current `.opus` files with a new token generation;
