@@ -12,12 +12,32 @@ import { ViewTransitions } from "astro:transitions";
 import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
 import SocialMeta from "../components/SocialMeta.astro";
+import { statSync } from "node:fs";
+import { join } from "node:path";
 const rawBase = import.meta.env.BASE_URL;
 const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 
+// The "Transcriptions and insights" section is held back until its content is ready. Flip this
+// to true to put it back; nothing else on the page refers to it.
+const showInsights = false;
+
+// The talk recording, served from public/. Replacing the file is enough: the size is read at build.
+const recordingPath = "nextcloud-conf-2026/voice-is-context.opus";
+const recordingUrl = `${base}${recordingPath}`;
+const recordingDownloadName = "Voice-is-Context--NCC-2026.opus";
+const recordingSize = (() => {
+  try {
+    const bytes = statSync(join(process.cwd(), "public", recordingPath)).size;
+    return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  } catch {
+    return "";
+  }
+})();
+
 const title = "Cassini at Nextcloud Conference 2026";
-const description =
-  "The talk as a Cassini file — audio, transcript, summary and tags — plus what each way of running it costs.";
+const description = showInsights
+  ? "The talk as a Cassini file — audio, transcript, summary and tags — plus what each way of running it costs."
+  : "The talk as a Cassini file — audio, transcript, summary and tags.";
 ---
 
 <!DOCTYPE html>
@@ -53,79 +73,20 @@ const description =
     </header>
 
     {/* ===================== The talk, as a Cassini file =====================
-      TODO(D-775): #cassini-talk is the mount point for the public viewer embed. Once
-      /embed/v1/ is published, replace this card's children with:
-        <link rel="stylesheet" href="https://gocassini.com/embed/v1/viewer.css" />
-        <script src="https://gocassini.com/embed/v1/viewer.js"></script>
-      Fallback if the embed is not solid by Friday: the static export
-      (`npm run export:meetings -- --rebuild-viewer`) published under this page, which shows
-      the summary and transcript but no tags.
-
-      The markup below is a placeholder that mirrors what the embed renders, so the page has
-      its real shape before the recording exists.
+      The public embed (D-775) reading the recording this site serves. The summary and tags are the
+      ones inside the file. Their colours are dealt by the embed until the file carries them (D-793).
+      Marks bind to the audio digest, so a re-transcribed file over the same audio keeps them.
     */}
     <div class="talk" id="talk">
-      <div class="viewer" id="cassini-talk" data-src={`${base}nextcloud-conf-2026/voice-is-context.opus`}>
-        <div class="viewer-head">
-          <h2 class="viewer-title">Voice is Context.opus</h2>
-          <p class="viewer-meta">
-            1 speaker · 5:00 · Read the summary, click a tag to jump to a decision, click a word to hear it
-          </p>
-        </div>
+      <div class="viewer">
+        <cassini-meeting src={recordingUrl} title="Voice is context" theme="dark"></cassini-meeting>
 
-        {/* The tags are the table of contents: one per beat, plus a `decision` mark on each of
-             the three decision sentences. Written with `cassini annotate apply` AFTER the final
-             file exists — marks bind to the audio digest, so the file must not be re-packed. */}
-        <div class="tagbar" aria-label="Tags in the file">
-          <span class="tag">capture</span>
-          <span class="tag">transcription</span>
-          <span class="tag">format</span>
-          <span class="tag">intelligence</span>
-          <span class="tag decision">decision ×3</span>
-        </div>
-
-        <div class="player">
-          <div class="track"><span class="handle"></span></div>
-          <div class="times">
-            <span>0:00 elapsed</span>
-            <span>5:00 total</span>
-            <span>-5:00 remaining</span>
-          </div>
-          <div class="controls">
-            <span class="play" aria-hidden="true">
-              <svg width="11" height="11" viewBox="0 0 10 10" fill="currentColor"><path d="M2 1.5l6 3.5-6 3.5V1.5z"/></svg>
-            </span>
-            <span class="pill-ghost">Auto-scroll paused</span>
-          </div>
-        </div>
-
-        <div class="summary">
-          <p class="fd-head">Summary · written by the model this deployment runs, from this transcript</p>
-          <p class="skel" aria-hidden="true"><i style="width:96%"></i><i style="width:90%"></i><i style="width:58%"></i></p>
-        </div>
-
-        <div class="transcript">
-          <div class="seg" aria-hidden="true">
-            <div class="seg-head"><span class="badge-speaker">Chris De Sousa</span><span class="badge-time">0:00</span></div>
-            <p class="skel"><i style="width:94%"></i><i style="width:71%"></i></p>
-          </div>
-          <div class="seg" aria-hidden="true">
-            <div class="seg-head"><span class="badge-speaker">Chris De Sousa</span><span class="badge-time">0:42</span></div>
-            <p class="skel"><i style="width:88%"></i><i style="width:96%"></i><i style="width:54%"></i></p>
-          </div>
-          <p class="transcript-note">
-            <span class="chip">not yet published</span>
-            The summary, transcript and tags appear here once the talk is recorded.
-          </p>
-        </div>
-
-        {/* TODO: the recording goes at public/nextcloud-conf-2026/voice-is-context.opus.
-             Until it exists the row keeps the chip and no link. When it lands, swap the chip for
-             an anchor with class "dl" pointing at that file, carrying its real size in a .size span. */}
         <div class="file-details">
           <div class="fd-row">
             <span>Audio, transcript, summary &amp; tags in one file</span>
-            <span class="chip">not yet published</span>
+            <a class="dl" href={recordingUrl} download={recordingDownloadName}>
+              Download{recordingSize && <span class="size">{recordingSize}</span>}
+            </a>
           </div>
           <p class="fd-note">
             Curious about the file format? Read the spec at
@@ -133,9 +94,13 @@ const description =
           </p>
         </div>
       </div>
+      {/* Unbundled on purpose: the script finds viewer.css beside its own URL. */}
+      <script is:inline src={`${base}embed/v1/viewer.js`}></script>
     </div>
 
-    {/* ===================== Transcription and insights ===================== */}
+    {/* ===================== Transcription and insights =====================
+      Hidden while showInsights is false (see the frontmatter). */}
+    {showInsights && (
     <section id="control">
       <div class="head">
         <h2>Transcriptions and insights on infrastructure you own</h2>
@@ -184,10 +149,9 @@ const description =
         </p>
       </div>
 
-      {/* TODO(D-779, D-780, D-782): none of these three pages exists yet. Each row is inert
-           until its page ships, then it becomes an <a class="row" href="…"> with a "Read →".
-           Targets: /research/transcription-cpu-gpu-hosted, /research/summaries-local-vs-hosted,
-           /docs/guides/hermes-setup. The two research posts need Silvio's exports. */}
+      {/* TODO(D-779): the page does not exist yet. The row is inert until it ships, then it
+           becomes an <a class="row" href="/research/transcription-cpu-gpu-hosted"> with a
+           "Read →". Needs Silvio's export. */}
       <div class="deeper">
         <h3 class="rows-head">Go deeper</h3>
         <ul class="rows">
@@ -204,46 +168,20 @@ const description =
               </p>
             </div>
           </li>
-          <li>
-            <div class="row pending">
-              <span class="row-head">
-                <span class="row-kind kind-research">Research</span>
-                <span class="chip">not yet published</span>
-              </span>
-              <h3>Summaries from a model you run, or one you pay for</h3>
-              <p>
-                Which local models are good enough for a meeting summary, what a hosted one buys you,
-                and what each costs in wall-clock and context. Words where we did not measure.
-              </p>
-            </div>
-          </li>
-          <li>
-            <div class="row pending">
-              <span class="row-head">
-                <span class="row-kind kind-case">Case study</span>
-                <span class="chip">not yet published</span>
-              </span>
-              <h3>Hermes across a month of meetings</h3>
-              <p>
-                Silvio pointed an agent at the CLI with an app password. What he asked, what came back,
-                and what it cost to run.
-              </p>
-            </div>
-          </li>
         </ul>
       </div>
     </section>
+    )}
 
     {/* ===================== Get Cassini =====================
-      TODO: the primary button is Book a demo while the App Store listing is a pre-release in the
-      Unstable channel. If 0.2.0 stable ships (D-657), swap btn-primary onto Install. The demo
-      link is a mailto until a calendar link exists.
+      TODO: the primary button is Try a demo while the App Store listing is a pre-release in the
+      Unstable channel. If 0.2.0 stable ships (D-657), swap btn-primary onto Install.
     */}
     <section class="close" id="get">
       <h2>Harness voice, with full privacy</h2>
       <div class="actions">
         <a class="btn-cta ghost" href="https://apps.nextcloud.com/apps/gocassini" target="_blank" rel="noopener noreferrer">Install from the App Store</a>
-        <a class="btn-cta primary" href="mailto:hello@codemyriad.io?subject=Book%20a%20Cassini%20demo">Book a demo</a>
+        <a class="btn-cta primary" href="https://demo.gocassini.com/" target="_blank" rel="noopener noreferrer">Try a demo</a>
       </div>
     </section>
 
@@ -320,116 +258,9 @@ const description =
       background: var(--color-base-200);
       overflow: hidden;
     }
-    .viewer-head { padding: 1.35rem 1.25rem 0; display: flex; flex-direction: column; gap: 0.35rem; }
-    .viewer-title { font-size: clamp(1.15rem, 2.8vw, 1.4rem); font-weight: 700; letter-spacing: -0.015em; }
-    .viewer-meta { font-size: 0.82rem; color: var(--ink-45); }
-
-    .tagbar { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.9rem 1.25rem 0; }
-    .tag {
-      font-size: 0.75rem;
-      font-weight: 600;
-      border-radius: 999px;
-      padding: 0.15rem 0.65rem;
-      border: 1px solid color-mix(in oklab, var(--color-primary) 40%, transparent);
-      color: color-mix(in oklab, var(--color-primary) 85%, var(--color-base-content));
-    }
-    .tag.decision {
-      border-color: color-mix(in oklab, var(--color-secondary) 45%, transparent);
-      color: var(--color-secondary);
-    }
-
-    .player { padding: 1.1rem 1.25rem 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }
-    .track {
-      height: 0.4rem;
-      border-radius: 999px;
-      background: color-mix(in oklab, var(--color-base-300) 70%, transparent);
-      position: relative;
-    }
-    .track .handle {
-      position: absolute;
-      left: 0;
-      top: 50%;
-      width: 0.9rem;
-      height: 0.9rem;
-      border-radius: 50%;
-      background: var(--color-primary);
-      transform: translate(-10%, -50%);
-    }
-    .times {
-      display: flex;
-      justify-content: space-between;
-      gap: 0.5rem;
-      font-size: 0.72rem;
-      color: var(--ink-35);
-      font-variant-numeric: tabular-nums;
-    }
-    .controls { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding-top: 0.35rem; }
-    .play {
-      width: 2.1rem;
-      height: 2.1rem;
-      border-radius: 0.45rem;
-      background: var(--color-primary);
-      color: var(--color-primary-content);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      flex: none;
-    }
-    .pill-ghost {
-      font-size: 0.75rem;
-      color: var(--ink-45);
-      border: 1px solid var(--line);
-      border-radius: var(--radius-field, 0.5rem);
-      padding: 0.25rem 0.6rem;
-    }
-
-    .summary {
-      border-top: 1px solid var(--line-soft);
-      padding: 1.15rem 1.25rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.6rem;
-    }
-    .transcript {
-      border-top: 1px solid var(--line-soft);
-      padding: 1.15rem 1.25rem 1.25rem;
-      display: flex;
-      flex-direction: column;
-      gap: 1.1rem;
-    }
-    .seg { display: flex; flex-direction: column; gap: 0.5rem; }
-    .seg-head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-    .badge-speaker {
-      font-size: 0.75rem;
-      font-weight: 600;
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      padding: 0.1rem 0.45rem;
-    }
-    .badge-time {
-      font-size: 0.72rem;
-      color: var(--ink-45);
-      background: color-mix(in oklab, var(--color-base-300) 45%, transparent);
-      border-radius: 4px;
-      padding: 0.1rem 0.4rem;
-      font-variant-numeric: tabular-nums;
-    }
-    .skel { display: flex; flex-direction: column; gap: 0.5rem; }
-    .skel i {
-      display: block;
-      height: 0.75rem;
-      border-radius: 3px;
-      background: color-mix(in oklab, var(--color-base-300) 50%, transparent);
-    }
-    .transcript-note {
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-      flex-wrap: wrap;
-      font-size: 0.85rem;
-      color: var(--ink-45);
-    }
-
+    /* The embed sizes to its container and scrolls inside it (cassini-viewer/ATTRIBUTES.md).
+       Unbounded, the whole transcript and summary would push the rest of the page away. */
+    cassini-meeting { display: block; height: min(44rem, 85svh); }
     /* File details: what the file is on the left, how to take it on the right. */
     .file-details {
       border-top: 1px solid var(--line-soft);
@@ -438,7 +269,6 @@ const description =
       flex-direction: column;
       gap: 0.5rem;
     }
-    .fd-head { font-size: 0.78rem; color: var(--ink-35); }
     .fd-row {
       display: flex;
       align-items: baseline;
@@ -630,7 +460,7 @@ const description =
       .close { padding: 2rem; }
     }
     .close h2 { font-size: clamp(1.25rem, 2.6vw, 1.5rem); }
-    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.75rem; }
     .btn-cta {
       display: inline-flex;
       align-items: center;
