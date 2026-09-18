@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 )
@@ -164,44 +162,9 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 }
 
 // commitAndRecord is the one write path, for a batch of marks and a tag job
-// alike: commit the batch, keep the colours of tags it created, index it.
+// alike: commit the batch and index the resulting archive document.
 func (s *annotationService) commitAndRecord(ctx context.Context, meetingID, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
 	return s.commitDocument(ctx, meetingID, relPath, visible, caller, request)
-}
-
-// styleNewTags keeps the colour a batch chose for each tag it created: one no
-// indexed recording carried before. An existing tag keeps the one it has.
-func (s *annotationService) styleNewTags(ctx context.Context, request annotateWriteRequest, result annotateResult) {
-	store := s.rt.annotationReads()
-	if len(request.TagStyles) == 0 || store == nil {
-		return
-	}
-	marked := map[string]bool{}
-	for _, op := range request.Ops {
-		if _, label, ok := markOpTag(op); ok {
-			marked[foldTagLabel(label)] = true
-		}
-	}
-	ids := map[string]string{}
-	for _, tag := range projectAnnotations(result.Annotations, result.Resolved, "").tags {
-		ids[foldTagLabel(tag.label)] = tag.id
-	}
-	chosen := map[string]tagStyle{}
-	for _, style := range request.TagStyles {
-		label := foldTagLabel(style.Label)
-		if id := ids[label]; marked[label] && id != "" {
-			if slices.Contains(result.CreatedTags, id) {
-				chosen[id] = tagStyle{Color: style.Color, Icon: style.Icon}
-			}
-
-		}
-	}
-	if len(chosen) == 0 {
-		return
-	}
-	if err := s.styles.update(func(styles map[string]tagStyle) { maps.Copy(styles, chosen) }); err != nil {
-		s.logf("annotations: keep the colours of new tags: %v", err)
-	}
 }
 
 func (s *annotationService) visibleRecording(ctx context.Context, w http.ResponseWriter, r *http.Request, caller, meetingID string) (string, []string, bool) {

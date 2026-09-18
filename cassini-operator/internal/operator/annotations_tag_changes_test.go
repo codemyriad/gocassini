@@ -8,10 +8,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -34,8 +32,7 @@ func seedTagChanges(t *testing.T) *annotationStore {
 	return store
 }
 
-// tagChangeService mounts the annotation routes with a data dir for
-// tag-styles.json; store may be nil for "no index".
+// tagChangeService mounts the annotation routes; store may be nil for "no index".
 func tagChangeService(t *testing.T, ncURL, bin string, store *annotationStore) (*annotationService, http.Handler) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -78,6 +75,27 @@ func tagChangeResult(t *testing.T, tags ...testTag) string {
 		marks = append(marks, meetingMark(fmt.Sprintf("mk_%d", i), tag.id))
 	}
 	raw, err := json.Marshal(annotatedFile(t, "c-after", testTagNamespaceA, tags, marks...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func tagChangeResultWithStyle(t *testing.T, color, icon string, tags ...testTag) string {
+	t.Helper()
+	result := annotatedFile(t, "c-after", testTagNamespaceA, tags, meetingMark("mk_0", tags[0].id))
+	var document map[string]any
+	if err := json.Unmarshal(result.Annotations, &document); err != nil {
+		t.Fatal(err)
+	}
+	entries := document["tags"].([]any)
+	entries[0].(map[string]any)["color"] = color
+	entries[0].(map[string]any)["icon"] = icon
+	raw, err := json.Marshal(map[string]any{
+		"format": result.Format, "annotations": document, "revision": result.Revision,
+		"audioOpusSha256": result.AudioOpusSHA256, "containerSha256": result.ContainerSHA256,
+		"durationMs": result.DurationMS, "resolved": true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +156,8 @@ func TestTagRenameRewritesOnlyTheCallersRecordings(t *testing.T) {
 		t.Error("a tag change must be uncacheable")
 	}
 	tag, started := decodeTagEdit(t, rec)
-	if tag.Label != "Recruiting" || tag.Color != "teal" || tag.ChangedBy != "alice" || tag.ChangedAtUTC == "" {
-		t.Errorf("tag = %+v, want the new label and colour, changed by alice", tag)
+	if tag.Label != "Recruiting" || tag.Color != "teal" {
+		t.Errorf("tag = %+v, want the new label and colour", tag)
 	}
 	if started == nil || started.Kind != tagJobRename || started.Actor != "alice" || started.Total != 1 {
 		t.Fatalf("job = %+v, want a rename of alice's one recording", started)
@@ -160,6 +178,31 @@ func TestTagRenameRewritesOnlyTheCallersRecordings(t *testing.T) {
 	}
 	if poll := tagCall(h, http.MethodGet, "/job", "alice", ""); !strings.Contains(poll.Body.String(), `"state":"finished"`) {
 		t.Errorf("GET job = %s, want alice's finished job", poll.Body.String())
+	}
+}
+
+func TestTagRestyleRewritesOnlyTheCallersRecordings(t *testing.T) {
+	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
+	bin := fakeCassini(t, annTestCLIPrints(tagChangeResultWithStyle(t, "red", "flag", testTag{"tag_hiring", "hiring"})))
+	s, h := tagChangeService(t, nc.url, bin, seedTagChanges(t))
+
+	tag, started := decodeTagEdit(t, tagCall(h, http.MethodPost, "/tag_hiring", "alice", `{"color":"red","icon":"flag"}`))
+	if tag.Color != "red" || tag.Icon != "flag" {
+		t.Fatalf("tag = %+v, want the requested archive appearance", tag)
+	}
+	if started == nil || started.Kind != tagJobRestyle || started.Total != 1 {
+		t.Fatalf("job = %+v, want one scoped restyle job", started)
+	}
+	if job := waitTagJob(t, s, "alice"); job.State != tagJobFinished || len(job.Failed) != 0 {
+		t.Fatalf("job = %+v", job)
+	}
+	if nc.recording(annTestSecret) != "OPUS-secret" {
+		t.Error("a recording alice cannot read was rewritten")
+	}
+	vocabulary, err := s.rt.annotationReads().Vocabulary(context.Background(), []string{"MEETING1.opus"})
+	updated, found := findTag(vocabulary, "tag_hiring")
+	if err != nil || !found || updated.Color != "red" || updated.Icon != "flag" {
+		t.Fatalf("vocabulary = %+v, %v; want persisted red/flag appearance", vocabulary, err)
 	}
 }
 
@@ -192,12 +235,10 @@ func TestTagRenameAgainFindsTheRecordingItMissed(t *testing.T) {
 	}
 }
 
-func TestTagMergeAttributesTheTargetAndDropsAStyleNobodyCarries(t *testing.T) {
+func TestTagMergeRewritesOnlyTheCallersRecordings(t *testing.T) {
 	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
 	bin := fakeCassini(t, annTestCLIPrints(tagChangeResult(t, testTag{"tag_hiring", "hiring"})))
 	s, h := tagChangeService(t, nc.url, bin, seedTagChanges(t))
-	decodeTagEdit(t, tagCall(h, http.MethodPost, "/tag_budget", "bob", `{"color":"amber"}`))
-
 	started := decodeStartedJob(t, tagCall(h, http.MethodPost, "/tag_budget/merge", "alice", `{"into":"tag_hiring"}`))
 	if started.Kind != tagJobMerge || started.Into != "tag_hiring" || started.Total != 1 {
 		t.Fatalf("job = %+v, want a merge into hiring over one recording", started)
@@ -206,25 +247,15 @@ func TestTagMergeAttributesTheTargetAndDropsAStyleNobodyCarries(t *testing.T) {
 		t.Fatalf("job = %+v", job)
 	}
 
-	styles, err := s.styles.load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, kept := styles["tag_budget"]; kept {
-		t.Error("budget's style outlived the last recording carrying it")
-	}
-	if styles["tag_hiring"].UpdatedBy != "alice" {
-		t.Errorf("hiring = %+v, want the merge attributed to alice", styles["tag_hiring"])
+	if nc.recording(annTestSecret) != "OPUS-secret" {
+		t.Error("a recording alice cannot read was rewritten")
 	}
 }
 
-func TestTagDeleteKeepsTheStyleWhileAnotherRoomCarriesTheTag(t *testing.T) {
+func TestTagDeleteDoesNotRewriteAnotherCallersRecording(t *testing.T) {
 	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
 	bin := fakeCassini(t, annTestCLIPrints(tagChangeResult(t, testTag{"tag_budget", "budget"})))
 	s, h := tagChangeService(t, nc.url, bin, seedTagChanges(t))
-	decodeTagEdit(t, tagCall(h, http.MethodPost, "/tag_hiring", "alice", `{"color":"red","icon":"flag"}`))
-	decodeTagEdit(t, tagCall(h, http.MethodPost, "/tag_hiring", "alice", `{"icon":""}`))
-
 	// Delete takes no fields, so no body at all is fine.
 	if started := decodeStartedJob(t, tagCall(h, http.MethodPost, "/tag_hiring/delete", "alice", "")); started.Total != 1 {
 		t.Fatalf("job = %+v, want one recording", started)
@@ -235,13 +266,6 @@ func TestTagDeleteKeepsTheStyleWhileAnotherRoomCarriesTheTag(t *testing.T) {
 
 	if nc.recording(annTestSecret) != "OPUS-secret" {
 		t.Error("a recording alice cannot read was rewritten")
-	}
-	styles, err := s.styles.load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := styles["tag_hiring"]; got.Color != "red" || got.Icon != "" {
-		t.Errorf("hiring = %+v, want red with its icon cleared, kept while SECRET carries it", got)
 	}
 	if body := tagCall(h, http.MethodGet, "", "alice", "").Body.String(); strings.Contains(body, "tag_hiring") {
 		t.Errorf("hiring is still in alice's vocabulary: %s", body)
@@ -353,12 +377,12 @@ func TestTagChangeRefusals(t *testing.T) {
 	}
 }
 
-func TestAnnotationsMeetingPOSTColoursOnlyTheTagsItCreates(t *testing.T) {
+func TestAnnotationsMeetingPOSTAcceptsStylesOnlyForTagsItCreates(t *testing.T) {
 	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
 	bin := fakeCassini(t, annTestCLIPrints(annTestApplied))
 	store := newTestAnnotationStore(t)
 	recordMarks(t, store, "MEETING1.opus", annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000})
-	s, h := tagChangeService(t, nc.url, bin, store)
+	_, h := tagChangeService(t, nc.url, bin, store)
 	mark := func(styles string) *httptest.ResponseRecorder {
 		return annTestCall(h, http.MethodPost, "MEETING1", "alice",
 			`{"ops":[{"op":"mark","tag":{"label":"Hiring"},"target":{"kind":"meeting"}}],"tagStyles":`+styles+`}`)
@@ -367,24 +391,9 @@ func TestAnnotationsMeetingPOSTColoursOnlyTheTagsItCreates(t *testing.T) {
 	if rec := mark(`[{"label":" HIRING ","color":"blue","icon":"star"},{"label":"unused","color":"red","icon":""}]`); rec.Code != http.StatusOK {
 		t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
 	}
-	styles, err := s.styles.load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var createdID string
-	for id := range styles {
-		createdID = id
-	}
-	if len(styles) != 1 || styles[createdID].Color != "blue" || styles[createdID].Icon != "star" {
-		t.Fatalf("styles = %+v, want only the tag the batch created, blue with a star", styles)
-	}
-
-	// The tag exists now, so a second batch's colour is ignored.
+	// The tag exists now, so a second batch's creation style is ignored.
 	if rec := mark(`[{"label":"hiring","color":"red","icon":""}]`); rec.Code != http.StatusOK {
 		t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
-	}
-	if styles, _ := s.styles.load(); styles[createdID].Color != "blue" {
-		t.Errorf("an existing tag was recoloured by a member's batch: %+v", styles[createdID])
 	}
 
 	runs := 0
@@ -426,73 +435,25 @@ func TestAnnotationsMeetingPOSTResolvesAHiddenTagIDByLabel(t *testing.T) {
 
 }
 
-func TestTagStyleStoreWritesAtomically(t *testing.T) {
-	cfg := Config{DBPath: filepath.Join(t.TempDir(), "jobs.sqlite3")}
-	styles := newTagStyleStore(cfg)
-	var wg sync.WaitGroup
-	for i := range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := styles.update(func(all map[string]tagStyle) { all[fmt.Sprintf("tag_%02d", i)] = tagStyle{Color: "blue"} }); err != nil {
-				t.Error(err)
-			}
-		}()
-	}
-	wg.Wait()
-	got, err := newTagStyleStore(cfg).load()
-	if err != nil || len(got) != 20 {
-		t.Fatalf("styles = %d (%v), want every concurrent update kept", len(got), err)
-	}
-	dir := filepath.Dir(cfg.DBPath)
-	if names, _ := os.ReadDir(dir); len(names) != 1 || names[0].Name() != tagStylesFilename {
-		t.Errorf("dir holds %v, want only %s — no temp file left behind", names, tagStylesFilename)
-	}
-	if raw := annTestRead(t, filepath.Join(dir, tagStylesFilename)); !strings.Contains(raw, `"version": 1`) {
-		t.Errorf("file = %s, want version 1", raw)
-	}
-	if err := styles.update(func(all map[string]tagStyle) { all["tag_00"] = tagStyle{} }); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := styles.load(); len(got) != 19 {
-		t.Errorf("an emptied entry was kept: %d entries", len(got))
-	}
-}
-
 // GET annotations/tags lists each visible meeting with a resolved mark, by
-// catalog id. The index is freshly built, as after a delete-and-rebuild; the
-// colours come from tag-styles.json, which the rebuild never touched.
+// catalog id. Appearance comes from each indexed archive document.
 func TestTagVocabularyListsEachVisibleMeetingsTags(t *testing.T) {
 	store := newTestAnnotationStore(t)
 	recordMarks(t, store, "JOB1.opus", annotatedFile(t, "c1", testTagNamespaceA, []testTag{{"tag_h", "hiring"}, {"tag_b", "budget"}},
 		meetingMark("m1", "tag_h"), rangeMark("m2", "tag_h", 0, 1000), rangeMark("m3", "tag_h", 2000, 3000), rangeMark("m4", "tag_b", 0, 500)))
 	other := annotatedFile(t, "c2", testTagNamespaceA, []testTag{{"tag_s", "layoffs"}}, meetingMark("m1", "tag_s"))
 	recordMarks(t, store, "JOB2.opus", other)
-	styles := &tagStyleStore{path: filepath.Join(t.TempDir(), tagStylesFilename)}
-	if err := styles.update(func(all map[string]tagStyle) { all["tag_h"] = tagStyle{Color: "blue", Icon: "flag"}.changedBy("bob") }); err != nil {
-		t.Fatal(err)
-	}
 	const want = "[{MeetingID:MEET-1 Tags:[{TagID:tag_b Whole:false Stretches:1} {TagID:tag_h Whole:true Stretches:2}]}]"
 	tags := func(visible ...string) tagVocabularyResponse {
 		srv := searchUpstream{catalog: searchTestCatalog, visible: visible}.server(t)
 		t.Cleanup(srv.Close)
 		s := tagService(srv.URL, store)
-		s.styles = styles
 		return decodeTags(t, getTags(t, s, "alice"))
 	}
 
 	got := tags("JOB1.opus")
 	if fmt.Sprintf("%+v", got.Meetings) != want {
 		t.Errorf("meetings = %+v, want %s (JOB2 is hidden)", got.Meetings, want)
-	}
-	for _, tag := range got.Tags {
-		wantStyle := tagStyle{}
-		if tag.TagID == "tag_h" {
-			wantStyle = tagStyle{Color: "blue", Icon: "flag", UpdatedBy: "bob"}
-		}
-		if tag.Color != wantStyle.Color || tag.Icon != wantStyle.Icon || tag.ChangedBy != wantStyle.UpdatedBy || (tag.ChangedAtUTC == "") != (wantStyle.UpdatedBy == "") {
-			t.Errorf("%s = %+v, want %+v", tag.TagID, tag, wantStyle)
-		}
 	}
 
 	// Marks made against other audio say nothing about this meeting's time.
