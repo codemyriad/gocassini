@@ -272,6 +272,11 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	}
 	rendered, err := runAnnotate(ctx, s.bin, target.Annotations, "snapshot", "--out", out, "--json", in)
 	if err != nil {
+		switch annotateExitCode(err) {
+		case annotateExitUsage, annotateExitInvalid, annotateExitUnresolved:
+			s.logf("annotations: render %s: %v", name, err)
+			return &annotationBlocked{"saved annotations cannot be embedded by the recorder; check compatibility and retry"}
+		}
 		return err
 	}
 	if !sameAnnotationDocument(rendered.Annotations, target.Annotations) {

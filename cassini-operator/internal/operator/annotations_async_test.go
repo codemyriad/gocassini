@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -250,6 +251,38 @@ func TestAnnotationWorkerBlocksUnexpectedArchiveWithoutLosingDesired(t *testing.
 	}
 	if len(nc.ifMatches()) != 0 {
 		t.Fatal("overwrote unknown remote state")
+	}
+}
+
+func TestAnnotationWorkerClassifiesRenderFailures(t *testing.T) {
+	for _, tc := range []struct {
+		code  int
+		state string
+	}{{annotateExitInvalid, "blocked"}, {annotateExitUsage, "blocked"}, {annotateExitUnresolved, "blocked"}, {annotateExitRuntime, "delayed"}} {
+		t.Run(fmt.Sprint(tc.code), func(t *testing.T) {
+			nc, s, h, store := asyncFixture(t)
+			last := postAsync(t, h, markRequest("one", "req1"))
+			script, err := os.ReadFile(s.bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			script = []byte(strings.Replace(string(script), "elif args[1]=='snapshot':", fmt.Sprintf("elif args[1]=='snapshot':\n sys.exit(%d)", tc.code), 1))
+			if err := os.WriteFile(s.bin, script, 0755); err != nil {
+				t.Fatal(err)
+			}
+			err = s.syncAnnotation(context.Background(), "MEETING1.opus")
+			if err == nil {
+				t.Fatal("render failure was ignored")
+			}
+			s.retryAnnotation("MEETING1.opus", err)
+			got, err := store.document(context.Background(), "MEETING1.opus")
+			if err != nil || got.Sync.State != tc.state || got.StateToken != last.StateToken {
+				t.Fatalf("render failure lost desired state or retry classification: %+v %v", got, err)
+			}
+			if len(nc.ifMatches()) != 0 {
+				t.Fatal("uploaded after failed render")
+			}
+		})
 	}
 }
 func TestAnnotationDurableScanAndReceiptSurviveRestart(t *testing.T) {
