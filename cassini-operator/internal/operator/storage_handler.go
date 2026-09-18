@@ -422,7 +422,7 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 		resp.Installs = installs
 		writeJSON(w, http.StatusOK, resp)
 	default:
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected one of %q, %q, %q, %q, %q, %q, %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration, storageActionAcknowledgeFirstRun, storageActionListOpenRecordings, storageActionRestrictRecordings))
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q; expected one of %q, %q, %q, %q, %q, %q, %q, %q", in.Action, storageActionRecheck, storageActionInstallApps, storageActionPreview, storageActionFinishMigration, storageActionAcknowledgeFirstRun, storageActionListOpenRecordings, storageActionRestrictRecordings, storageActionIgnoreRecordings))
 	}
 }
 

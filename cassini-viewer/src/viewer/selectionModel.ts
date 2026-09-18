@@ -282,3 +282,4 @@ export function describeSelectionGaps(totals: SelectionTotals): string[] {
   }
   return gaps;
 }
+
