@@ -1139,6 +1139,11 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	// record stage: the recording is already safe in the canonical run
 	// bundle, so a Nextcloud hiccup must not strand it (D-352).
 	if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
+		// The second half of the audience capture, before the room state is
+		// unbound and the token with it. Its own goroutine: the roster is not
+		// read until somebody opens the settings panel, so nothing here should
+		// wait on a Talk round trip to enqueue the build (D-769).
+		go rt.captureRoomAudience(job.ID, talkState.Owner, talkState.RoomToken, roomAudiencePhaseStop)
 		rt.reportTalkRecordingStopped(job.ID, talkState)
 	}
 	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, canonicalRunPath, result.ArtifactRunPath, finishedAt); err != nil {
@@ -1349,6 +1354,19 @@ type Job struct {
 	// Null for a non-Talk job, and for a Talk job whose name lookup never
 	// completed.
 	RoomName *string `json:"room_name"`
+	// RoomAudience is who had access to the Talk room while this recording was
+	// being made: a JSON array of advanced-ACL principals (users, groups,
+	// circles), captured at record time and never re-derived (D-769).
+	//
+	// Withheld from the API for the same reason the binding and the token are.
+	// It is a roster, it is internal plumbing for deciding a recording's
+	// audience, and nothing outside the operator has a use for it.
+	RoomAudience *string `json:"-"`
+	// RoomAudienceAt is when that capture happened. Null means it never did —
+	// a non-Talk job, a job that predates D-769, or a lookup that failed every
+	// tier. An empty RoomAudience WITH a timestamp is a different state: the
+	// room really had no grantable members.
+	RoomAudienceAt *string `json:"-"`
 }
 
 func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
@@ -1626,7 +1644,7 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
-       room_token, room_name
+       room_token, room_name, room_audience, room_audience_at
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -1664,7 +1682,7 @@ SELECT id, provider, request_json, stage, state,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at,
-       room_token, room_name
+       room_token, room_name, room_audience, room_audience_at
 FROM jobs
 WHERE id = ?`, id)
 	job, err := scanJob(row)
@@ -1710,6 +1728,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var talkStoppedAt sql.NullString
 	var roomToken sql.NullString
 	var roomName sql.NullString
+	var roomAudience sql.NullString
+	var roomAudienceAt sql.NullString
 
 	err := scanner.Scan(
 		&job.ID,
@@ -1752,6 +1772,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&talkStoppedAt,
 		&roomToken,
 		&roomName,
+		&roomAudience,
+		&roomAudienceAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1790,6 +1812,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.TalkStoppedAt = nullableStringPtr(talkStoppedAt)
 	job.RoomToken = nullableStringPtr(roomToken)
 	job.RoomName = nullableStringPtr(roomName)
+	job.RoomAudience = nullableStringPtr(roomAudience)
+	job.RoomAudienceAt = nullableStringPtr(roomAudienceAt)
 	return job, nil
 }
 

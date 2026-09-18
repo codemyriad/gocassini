@@ -30,6 +30,12 @@ describe("the section", () => {
     expect(panelSource).toContain("Applies to every recording Cassini publishes to this Nextcloud.");
   });
 
+  it("points detailed permission changes to the individual recording in Nextcloud Files", () => {
+    expect(panelSource).toContain("To manage access in more detail");
+    expect(panelSource).toContain("Cassini/Meetings/&lt;meeting-id&gt;.opus");
+    expect(panelSource).toContain("Details → Advanced permissions.");
+  });
+
   it("offers the two audiences as one radiogroup, with the current one marked", () => {
     expect(panelSource).toContain('role="radiogroup"');
     expect(panelSource).toContain('role="radio"');
@@ -62,6 +68,15 @@ describe("the section", () => {
     expect(panelSource.indexOf("{existingLine}")).toBeGreaterThan(panelSource.indexOf("{#if done}"));
     expect(panelSource).toContain('role="radiogroup"');
   });
+
+  it("refreshes the archive facts when the panel opens", () => {
+    const load = panelSource.slice(
+      panelSource.indexOf("async function load()"),
+      panelSource.indexOf("async function recheck()"),
+    );
+    expect(load).toContain("operatorClient.recheckStorage()");
+    expect(load).not.toContain("operatorClient.getStorage()");
+  });
 });
 
 describe("choosing the other option", () => {
@@ -71,7 +86,7 @@ describe("choosing the other option", () => {
     // instance on one click.
     expect(panelSource).toContain("function choose(mode: AccessMode)");
     expect(panelSource).toContain("async function confirmSwitch()");
-    expect(panelSource).toContain("on:click={() => choose(option.mode)}");
+    expect(panelSource).toContain("on:click={() => void choose(option.mode)}");
     expect(panelSource).toContain("on:click={confirmSwitch}");
     const putCalls = panelSource.match(/operatorClient\.putStorage\(/g) ?? [];
     expect(putCalls).toHaveLength(1);
@@ -80,7 +95,8 @@ describe("choosing the other option", () => {
       panelSource.indexOf("function cancel()"),
     );
     expect(choose).not.toContain("putStorage");
-    expect(choose).toContain("needsPrerequisites(status, mode)");
+    expect(choose).toContain("operatorClient.recheckStorage()");
+    expect(choose).toContain("needsPrerequisites(fresh, mode)");
   });
 
   // The whole app runs inside a shadow root on Nextcloud's embedded page, where
@@ -511,7 +527,7 @@ describe("the alertdialog panels", () => {
     expect(panelSource).toContain(
       '(next === "prereqs" ? prereqsFocus : confirmFocus)?.focus();',
     );
-    expect(panelSource).toContain('void openPanel(needsPrerequisites(status, mode) ? "prereqs" : "confirm");');
+    expect(panelSource).toContain('void openPanel(needsPrerequisites(fresh, mode) ? "prereqs" : "confirm");');
     expect(panelSource).toContain('void openPanel("confirm");');
     // After the DOM the panel is in exists.
     const open = panelSource.slice(
@@ -602,5 +618,73 @@ describe("the account row", () => {
     expect(panelSource).toContain("choose(next);");
     const switchDone = panelSource.slice(panelSource.indexOf("done = doneMessage(mode);"));
     expect(switchDone.indexOf("await operatorClient.acknowledgeFirstRun();")).toBeGreaterThan(-1);
+  });
+});
+
+// D-769: the list of recordings a migration left readable by everyone.
+//
+// Source assertions, like the rest of this file: a .svelte file is not mounted
+// here, so what a unit test can hold onto is the shape of the markup and where
+// its sentences come from.
+describe("the open-recordings list", () => {
+  it("is asked for on first expand, not with the section", () => {
+    // Answering costs the operator a PROPFIND of the Team folder, and most
+    // visits to this page are not about this list.
+    expect(panelSource).toContain("void loadOpenRecordings()");
+    expect(panelSource).toContain("!openAsked");
+  });
+
+  it("only appears where the question has a meaning", () => {
+    // Under "Everyone with a Nextcloud account" every recording is readable by
+    // everyone by design, and during an unfinished migration which root is
+    // authoritative is exactly what is unresolved.
+    expect(panelSource).toContain("status.mode === PARTICIPANTS && status.migration_clean");
+    expect(panelSource).toContain("{#if openRecordingsApplicable}");
+  });
+
+  it("never renders a failed look as an empty archive", () => {
+    // "Cassini could not look" and "nothing is open" are opposite answers.
+    expect(panelSource).toContain("openError = asFailure(error)");
+    expect(panelSource).toContain("openRecordings = null");
+  });
+
+  it("gives a row it cannot narrow no controls at all", () => {
+    expect(panelSource).toContain("{#if row.narrowable}");
+    expect(panelSource).toContain("openRecordingReasonLine(row)");
+  });
+
+  it("sends the digest rather than the audience", () => {
+    // The audience is not editable here, so the browser has no business
+    // authoring an ACL — it echoes back a fingerprint of what it displayed.
+    expect(panelSource).toContain("audience_digest: row.audience_digest");
+    expect(panelSource).not.toContain("audience: row.audience");
+  });
+
+  it("keeps ignoring reversible", () => {
+    expect(panelSource).toContain("setIgnored(row.id, true)");
+    expect(panelSource).toContain("setIgnored(row.id, false)");
+    expect(panelSource).toContain("Stop ignoring");
+  });
+
+  it("re-derives the list after a write instead of removing rows itself", () => {
+    // A recording leaves this list by no longer qualifying. That property is
+    // what makes the list survive a reload, and it should survive the write too.
+    expect(panelSource).toContain("openRecordings = next.open_recordings");
+  });
+
+  it("forgets a prior list after a storage-mode switch", () => {
+    // A participants -> everyone -> participants round trip deliberately
+    // reopens the leaves. Keeping the list that was fetched before the first
+    // switch would omit rows narrowed earlier in the session.
+    const confirm = panelSource.slice(
+      panelSource.indexOf("async function confirmSwitch()"),
+      panelSource.indexOf("async function resume()"),
+    );
+    expect(confirm.indexOf("operatorClient.putStorage(mode === PARTICIPANTS)")).toBeLessThan(
+      confirm.indexOf("resetOpenRecordings();"),
+    );
+    expect(panelSource).toContain("function resetOpenRecordings(): void");
+    expect(panelSource).toContain("openAsked = false;");
+    expect(panelSource).toContain("openRecordings = null;");
   });
 });

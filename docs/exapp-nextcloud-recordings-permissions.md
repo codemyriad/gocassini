@@ -681,6 +681,41 @@ switch runs — and the direction that widens the audience carries the number of
 recordings in its own button. A source it could not read is reported as exactly
 that, never as "there is nothing to move".
 
+### Limiting the recordings a switch left open
+
+Switching into the access-controlled mode copies the archive into the Team
+folder and leaves every recording **readable by every account**. That is
+deliberate — a recording made before Cassini kept a record of who was in a room
+has no audience to restore, and guessing one from today's room membership would
+be a claim about a past meeting that nothing supports.
+
+For recordings made since, Cassini does keep that record: the room's accounts,
+groups and teams are captured when the recording starts and again when it stops,
+and stored frozen on the job. Operator › Settings › **Who can see recordings**
+then lists every recording that is still readable by everyone, with the audience
+each one would be limited to, and limits the ones you tick.
+
+| the row says | what it means |
+|---|---|
+| a list of names | the roster captured while that meeting ran. Tick it and Cassini writes exactly those grants |
+| *Recorded before Cassini kept a record of who was in the room* | it predates the capture. Nothing can reconstruct it; the recording stays readable by everyone |
+| *Everyone in this call was a guest…* | the room held no local account to grant. Limiting it would make it readable by the service account alone |
+| *Cassini has no record of this recording* | no job row owns that file — a carried-in archive, or a recording from another instance |
+
+Three things worth knowing:
+
+- **it is frozen, not current.** A room that has gained or lost members since the
+  recording does not change what gets written. That is the point;
+- **groups and teams are granted as themselves**, not expanded to their members,
+  so reorganising a team afterwards is how access moves with it;
+- **recordings of public conversations never appear.** They are readable by
+  everyone because the conversation was public, which is not something to fix.
+
+Anything the list will not do — a bespoke audience, adding somebody who was not
+in the room, re-widening one afterwards — is Files → *Advanced permissions*,
+which is the tool for it. Recordings you want left open can be dismissed from the
+list with **Ignore**, and brought back from the `N ignored` disclosure beneath it.
+
 ### The invariant, and the state machine that keeps it
 
 > Whichever mode `access_control_enabled` names, **that** root holds a complete
