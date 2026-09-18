@@ -10,6 +10,10 @@ See [the primary-source review](parakeet-boundary-literature-2026-09-17.md) for
 why streaming context, independent offline chunks, and synthetic padding are
 different interventions. No universal optimum follows from those sources.
 
+## Public synthetic regression
+
+The `asrregression` build tag runs a [two-track synthetic meeting regression](../cassini-go-recorder/internal/transcribe/testdata/synthetic-boundary/README.md) with no private audio or meeting text. The identical test fails on the actual pre-PR source and passes on this PR on CPU and CUDA, checking the missing spoken phrase rather than configuration or word counts. The fixture, generator, provenance and reproduction commands are included. It requires cached FP32 Parakeet v3 and Silero models and is explicitly opt-in; selecting the tag without the models fails rather than skipping.
+
 ## Inputs
 
 Keep recordings, reference transcripts, and raw results outside the repository.
