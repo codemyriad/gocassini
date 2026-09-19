@@ -34,7 +34,9 @@ func runAnnotateSnapshot(ctx context.Context, args []string, stdin io.Reader, st
 		return annotateExitInvalid
 	}
 	var doc portable.Annotations
-	decoder := json.NewDecoder(io.LimitReader(stdin, 1<<20))
+	// Full snapshots can exceed the mutation request limit. Apply the shared
+	// document validator below so any accepted document can also be embedded.
+	decoder := json.NewDecoder(stdin)
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(&doc); err == nil {
 		var extra any

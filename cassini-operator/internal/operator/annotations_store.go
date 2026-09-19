@@ -22,7 +22,7 @@ const (
 	annotationsStoreFilename = "annotations.sqlite3"
 
 	// annotationsSchemaVersion is upgraded through managed migrations.
-	annotationsSchemaVersion = 6
+	annotationsSchemaVersion = 7
 
 	annotationsStateIndexed = "indexed"
 	// annotationsStateUnavailable: the meeting is known but its marks could not
@@ -273,15 +273,21 @@ func (s *annotationStore) replace(ctx context.Context, opusName string, m projec
 	skipped := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var pending int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND desired != confirmed`, name).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND (desired != confirmed OR republish_json IS NOT NULL)`, name).Scan(&pending); err != nil {
 			return err
 		}
 		if pending != 0 {
 			skipped = true
-			if len(documents) > 0 && documents[0] != nil && !m.unreadable {
-				return refreshAnnotationAudio(ctx, tx, name, *documents[0])
+			var republishing bool
+			if err := tx.QueryRowContext(ctx, `SELECT republish_json IS NOT NULL FROM annotation_head WHERE opus_name=?`, name).Scan(&republishing); err != nil {
+				return err
 			}
-			return nil
+			if !republishing && len(documents) > 0 && documents[0] != nil && !m.unreadable {
+				if err := refreshAnnotationAudio(ctx, tx, name, *documents[0]); err != nil {
+					return err
+				}
+			}
+			return rebuildDesiredAnnotationProjection(ctx, tx, name)
 		}
 		if onlyIfNewer {
 			var current int
@@ -847,6 +853,37 @@ func uniqueNames(values []string) []string {
 func namesJSON(names []string) string {
 	encoded, _ := json.Marshal(uniqueNames(names))
 	return string(encoded)
+}
+
+// Rebuild only disposable query rows. Durable desired/confirmed pointers and
+// receipts stay intact, even when the archive still has an older document.
+func rebuildDesiredAnnotationProjection(ctx context.Context, tx *sql.Tx, name string) error {
+	var data []byte
+	var container sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT s.result_json,m.container_sha256
+ FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired
+ LEFT JOIN meeting_annotations m ON m.opus_name=h.opus_name WHERE h.opus_name=?`, name).Scan(&data, &container)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var desired annotateResult
+	if err := json.Unmarshal(data, &desired); err != nil {
+		return err
+	}
+	m := projectAnnotations(desired.Annotations, desired.Resolved, desired.AudioOpusSHA256)
+	if m.unreadable || desired.Unsupported {
+		return errors.New("durable annotation document cannot be projected")
+	}
+	if m.revision == 0 {
+		m.revision = desired.Revision
+	}
+	if !container.Valid {
+		container.String = desired.ContainerSHA256
+	}
+	return replaceAnnotationProjection(ctx, tx, name, m, container.String, annotationsStateIndexed)
 }
 
 func replaceAnnotationProjection(ctx context.Context, tx *sql.Tx, name string, m projectedMeeting, container, state string) error {

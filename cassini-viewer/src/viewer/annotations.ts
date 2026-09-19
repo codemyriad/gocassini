@@ -1,4 +1,4 @@
-import type { TagColorId, TagIconId } from "./tagPalette";
+import { colorFor, TAG_ICONS, type TagColorId, type TagIconId } from "./tagPalette";
 
 // The wire of the annotation routes (D-737, D-746). Time ranges are half-open
 // [startMs, endMs) integers.
@@ -207,7 +207,13 @@ export function tagsByMeeting(vocabulary: TagVocabulary): Map<string, MeetingTag
   for (const meeting of vocabulary.meetings) {
     const tags = meeting.tags.flatMap(({ tagId, whole, stretches, color, icon }) => {
       const tag = byId.get(tagId);
-		return tag ? [{ tag: { ...tag, color: color ?? tag.color, icon: icon ?? tag.icon }, whole, stretches }] : [];
+      if (!tag) return [];
+      const local: VocabularyTag = {
+        ...tag,
+        color: color == null ? tag.color : colorFor({ tagId, color }),
+        icon: icon == null ? tag.icon : TAG_ICONS.includes(icon as TagIconId) ? icon as TagIconId : "",
+      };
+      return [{ tag: local, whole, stretches }];
     });
     tags.sort((a, b) => Number(b.whole) - Number(a.whole) || a.tag.label.localeCompare(b.tag.label));
     result.set(meeting.meetingId, tags);

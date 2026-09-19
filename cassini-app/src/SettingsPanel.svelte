@@ -23,6 +23,20 @@
   // of state — a switch, its prerequisites, its progress — and none of it is
   // shared with the settings below.
   import RecordingAccessPanel from "./RecordingAccessPanel.svelte";
+  // D-763: whether recording WORKS, above who may see what it produces.
+  //
+  // That order is the point rather than a layout preference. Installing the
+  // ExApp does not establish that Talk recording will work — HPB, the signaling
+  // secret, storage, processing or the incoming handoff can each be silently
+  // incomplete — and an administrator who sets the audience for recordings that
+  // never happen has answered the second question while the first is still
+  // broken.
+  //
+  // This lived under a Setup tab that D-751 removed. It belongs here for the
+  // same reason "Who can see recordings" does: it is a page's worth of state
+  // that applies to the pipeline below it, and it is admin-only, which this
+  // panel already is.
+  import RecordingSetup from "./RecordingSetup.svelte";
   import NeedsProviderCard from "./NeedsProviderCard.svelte";
   import { workflowTakesQuestion } from "./insights/client";
   import { formatSearchAliases, parseSearchAliases } from "./operator/searchAliases";
@@ -467,7 +481,18 @@
     </div>
   </header>
 
-<RecordingAccessPanel {operatorClient} />
+{#if operatorClient}
+  <RecordingSetup {operatorClient} />
+{/if}
+
+<!-- The readiness checks offer a "Set up storage" action that scrolls here,
+     which is what the removed Setup page's own anchor used to do. Keeping the
+     id on a wrapper rather than inside RecordingAccessPanel leaves that
+     component untouched and keeps the cross-link a property of the layout that
+     places the two sections, which is where it belongs. -->
+<div id="recording-storage">
+  <RecordingAccessPanel {operatorClient} />
+</div>
 
   {#if loadError}
     <div class="err-box" role="alert">{loadError}</div>
@@ -724,7 +749,7 @@
         <div class="set-row-main pipe-text-step">
           <div>
             <h3 class="set-row-name op-card-title">Vocabulary</h3>
-            <p class="set-row-sub">Names and terms the transcriber should spell correctly.</p>
+            <p class="set-row-sub">Saved names and preferred spellings for transcription hints.</p>
           </div>
           <label class="op-field">
             <span class="pipe-field-head">
@@ -739,9 +764,8 @@
             ></textarea>
           </label>
           <ul class="pipe-notes">
-            <li>Participant names are added automatically.</li>
-            <li>Only used where the audio matches, so it never adds words.</li>
-            <li>Not available on the <em>Fast</em> quality setting. If a term can't be used, the recording notes why.</li>
+            <li>Participant names are added automatically on models that support hints.</li>
+            <li>Hints guide recognition toward preferred spellings; they do not guarantee the correct word. When hints cannot be used, the recording notes why.</li>
           </ul>
         </div>
       </section>
@@ -767,7 +791,7 @@
           <ul class="pipe-notes">
             <li>Doesn't change any transcript, only what search finds.</li>
             <li>Results say when they matched one of these spellings.</li>
-            <li>To get the name right in new recordings, add it to Vocabulary above.</li>
+            <li>Use these spellings when the transcriber mishears a name.</li>
           </ul>
         </div>
       </section>

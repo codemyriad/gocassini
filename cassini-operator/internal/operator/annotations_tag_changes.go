@@ -46,8 +46,7 @@ type tagJobFailure struct {
 	Error   string `json:"error"`
 }
 
-// tagJob lives in memory only: after a restart there is none, and since every
-// op is idempotent the caller runs it again.
+// tagJob is persisted with its targets so interrupted work resumes on restart.
 type tagJob struct {
 	ID            string          `json:"id"`
 	Kind          string          `json:"kind"`
@@ -362,6 +361,12 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 		request.RequestID = hex.EncodeToString(sum[:])
 		_, err := s.commitAndRecord(ctx, name, root+"/meetings/"+name, nil, job.Actor, request)
 		cancel()
+		if err != nil && base.Err() != nil {
+			// Shutdown is not a completed target failure. Keep its cursor so
+			// restart retries it; the receipt covers an ambiguous commit.
+			state = tagJobInterrupted
+			break
+		}
 		var failure *tagJobFailure
 		if err != nil {
 			s.logf("annotations: %s job %s: %s: %v", job.Kind, job.ID, name, err)

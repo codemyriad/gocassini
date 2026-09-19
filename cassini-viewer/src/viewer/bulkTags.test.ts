@@ -14,6 +14,48 @@ const batch: AnnotationBatchResult = {
 const request = { ops: [{ op: "mark" as const, tag: { label: "New" }, target: { kind: "meeting" as const } }] };
 
 describe("bulk list tagging", () => {
+  it("automatically waits for imports and replays the same batch", async () => {
+    vi.useFakeTimers();
+    try {
+      const apply = vi.fn()
+        .mockRejectedValueOnce(new AnnotationError(503, "annotations are preparing; retry shortly"))
+        .mockRejectedValueOnce(new AnnotationError(503, "annotations are preparing; retry shortly"))
+        .mockResolvedValue(batch);
+      const committed = vi.fn();
+      const session = createBulkTagSession(apply, committed);
+      const done = session.write(["a", "b"], request, false);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get(session).busy).toBe(true);
+      expect(committed).not.toHaveBeenCalled();
+      expect(await session.write(["c"], request, false)).toBe(false);
+      await vi.runAllTimersAsync();
+      expect(await done).toBe(true);
+      expect(apply).toHaveBeenCalledTimes(3);
+      expect(apply.mock.calls.every(([sent]) => sent === apply.mock.calls[0][0])).toBe(true);
+      expect(committed).toHaveBeenCalledExactlyOnceWith(batch);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds automatic retries and keeps the original batch for manual retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const apply = vi.fn().mockRejectedValue(new AnnotationError(503, "unavailable"));
+      const session = createBulkTagSession(apply, vi.fn());
+      const done = session.write(["a", "b"], request, false);
+      await vi.runAllTimersAsync();
+      expect(await done).toBe(false);
+      expect(apply).toHaveBeenCalledTimes(6);
+      expect(get(session)).toMatchObject({ busy: false, retryable: true });
+      apply.mockResolvedValue(batch);
+      expect(await session.retry()).toBe(true);
+      expect(apply.mock.calls[6][0]).toEqual(apply.mock.calls[0][0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends one request and publishes all results once, after acknowledgment", async () => {
     let finish!: (result: AnnotationBatchResult) => void;
     const apply = vi.fn(() => new Promise<AnnotationBatchResult>((resolve) => { finish = resolve; }));

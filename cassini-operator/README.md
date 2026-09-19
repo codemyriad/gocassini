@@ -715,6 +715,13 @@ once; each recording is limited to 1 GiB, with an input and output copy per work
 plus the CLI's temporary rewrite files. Budget disk space for those temporary
 copies. Shutdown waits for workers, importers, and accepted bulk jobs.
 
+Republishing a damaged recording with the same audio restores its durable desired
+annotations, even if they were previously marked synced. Replacement intent is
+persisted before upload and reconciled after content verification or restart.
+If a republish changes the audio digest, the replacement starts without the old
+annotations, including pending edits; changing audio under one meeting ID is an
+exceptional replacement, not an annotation migration.
+
 The UI retains saved tags while showing delayed/blocked archive status. After
 repairing a missing/unreadable recording, use **Retry recording update**, or POST
 `{"ops":[],"retrySync":true}` to the same meeting route. Retry rechecks the remote
@@ -722,12 +729,24 @@ baseline; it never forces an overwrite of unexpected annotations. Bulk rename,
 merge and delete keep durable target lists and progress across restarts. Tag
 colors/icons remain in their separate style store.
 
+Existing recordings are imported immediately on startup. Transient failures
+retry automatically, and listing or opening a meeting also starts an import
+when its document is missing. Opening it returns a retryable 503 while preparing.
+The initial vocabulary gate stays closed until transient catalog imports finish,
+preventing new edits from creating duplicate tag identities. Downloaded recordings
+whose annotation content cannot be read stay outside coverage.
+
 Keep the database volume durable. Managed schema migrations preserve it and
 refuse unknown versions. If the entire volume is lost, rebuild desired and
 confirmed state from the current `.opus` files with a new token generation;
 unarchived edits and request receipts cannot be recovered. The database is no
 longer a disposable cache. Back up SQLite consistently, including its WAL, rather
 than copying only an open database file.
+
+If only derived tag/search rows are lost, annotation backfill restores them from
+the durable desired documents before checking the archive. Pending edits remain
+searchable even when the archived document is older or temporarily unavailable;
+rebuilding these rows does not confirm those edits as archived.
 
 This design requires one active operator and operator-owned annotation writes.
 Nextcloud ETags are conditional-write guards, not content hashes: the local

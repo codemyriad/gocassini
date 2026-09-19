@@ -131,6 +131,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// records what its decoder declared, and the claim survives only if all of
 	// them made it. See wordEndGuarantee in backend.go.
 	wordEnds := &wordEndGuarantee{}
+	refGuarantee := &referenceFrontendGuarantee{}
 
 	// Resolve the vocabulary pool once before any pass runs. Each participant
 	// track derives a decoder that omits its own name; the manifest
@@ -162,14 +163,15 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		}
 	}
 	pass := passConfig{
-		ModelPaths:      modelPaths,
-		VADPath:         vadPath,
-		Backend:         backend,
-		Device:          cfg.Device,
-		NumThreads:      cfg.NumThreads,
-		Decoder:         decoder,
-		SpeakerDecoders: speakerDecoderMap,
-		Guarantee:       wordEnds,
+		ModelPaths:         modelPaths,
+		VADPath:            vadPath,
+		Backend:            backend,
+		Device:             cfg.Device,
+		NumThreads:         cfg.NumThreads,
+		Decoder:            decoder,
+		SpeakerDecoders:    speakerDecoderMap,
+		Guarantee:          wordEnds,
+		ReferenceGuarantee: refGuarantee,
 	}
 
 	segments, err := transcribePass(ctx, mkvPath, streams, pass, stdout)
@@ -181,7 +183,9 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// that defeats the VAD even when the mixed timeline clearly contains
 	// speech. Fall back to transcribing the already-mixed meeting.webm under
 	// a synthetic "merged" speaker so the bundle still ships usable content.
-	streams, segments, err = ensureMergedFallback(ctx, webmPath, streams, segments, pass, stdout)
+	var usedMerged bool
+	streams, segments, usedMerged, err = ensureMergedFallback(ctx, webmPath, streams, segments, pass, stdout)
+	hintsProv = mergedFallbackHints(modelPaths, hintsProv, usedMerged)
 	if err != nil {
 		return err
 	}
@@ -242,20 +246,21 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
 	if err := WriteManifest(manifestPath, ManifestInput{
-		SrcBasename:      srcBasename,
-		SrcDurationMS:    srcDurationMS,
-		DigestDurationMS: audioDurationMS,
-		Streams:          streams,
-		Segments:         segments,
-		STTBackend:       backend,
-		STTModelID:       cfg.ModelID,
-		STTDevice:        cfg.Device,
-		Hints:            hintsProv,
-		SummaryModel:     cfg.SummaryLLM.Model,
-		HasSummary:       hasSummary,
-		Additional:       additionalTranscripts,
-		Attribution:      attrProv,
-		WordTimings:      wordEnds.provenance(),
+		SrcBasename:       srcBasename,
+		SrcDurationMS:     srcDurationMS,
+		DigestDurationMS:  audioDurationMS,
+		Streams:           streams,
+		Segments:          segments,
+		STTBackend:        backend,
+		STTModelID:        cfg.ModelID,
+		STTDevice:         cfg.Device,
+		Hints:             hintsProv,
+		SummaryModel:      cfg.SummaryLLM.Model,
+		HasSummary:        hasSummary,
+		Additional:        additionalTranscripts,
+		Attribution:       attrProv,
+		WordTimings:       wordEnds.provenance(),
+		ReferenceFrontend: refGuarantee.provenance(cfg.ModelID),
 	}); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
@@ -321,10 +326,11 @@ type passConfig struct {
 	// Decoder selects the search and any hotword biasing for this pass.
 	Decoder *DecoderConfig
 	// SpeakerDecoders overrides Decoder for participant streams whose own
-	// label was removed. Decoder remains the configuration for a mixed fallback,
-	// which has no single speaker to exclude.
-	SpeakerDecoders map[int]*DecoderConfig
-	Guarantee       *wordEndGuarantee
+	// label was removed. Mixed fallback has no speaker to exclude and selects
+	// its decoder separately through mergedFallbackDecoder.
+	SpeakerDecoders    map[int]*DecoderConfig
+	Guarantee          *wordEndGuarantee
+	ReferenceGuarantee *referenceFrontendGuarantee
 }
 
 // withThreads returns a copy running on a different thread budget, for the
@@ -335,7 +341,7 @@ func (p passConfig) withThreads(n int) passConfig {
 }
 
 func (p passConfig) newRecognizer() (SpeechRecognizer, error) {
-	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee)
+	return newRecognizerForPass(p.Backend, p.ModelPaths, p.VADPath, p.Device, p.NumThreads, p.Decoder, p.Guarantee, p.ReferenceGuarantee)
 }
 
 func (p passConfig) decoderForStream(stream AudioStream) *DecoderConfig {
@@ -377,9 +383,9 @@ func recognizerForDecoder(rec SpeechRecognizer, current, desired *DecoderConfig,
 	return next, desired, nil
 }
 
-func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, pass passConfig, stdout io.Writer) ([]AudioStream, []Segment, error) {
+func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, pass passConfig, stdout io.Writer) ([]AudioStream, []Segment, bool, error) {
 	if !shouldFireMergedFallback(segments) {
-		return streams, segments, nil
+		return streams, segments, false, nil
 	}
 	fmt.Fprintf(stdout, "  per-participant transcription thin (%d words); transcribing mixed track as fallback...\n", CountWords(segments))
 
@@ -391,21 +397,21 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 		StartTimeMS:  0,
 	}
 
-	rec, err := pass.newRecognizer()
+	rec, err := pass.withDecoder(mergedFallbackDecoder(pass.ModelPaths, pass.Decoder)).newRecognizer()
 	if err != nil {
-		return streams, segments, fmt.Errorf("create recognizer for merged fallback: %w", err)
+		return streams, segments, false, fmt.Errorf("create recognizer for merged fallback: %w", err)
 	}
 	defer rec.Close()
 
 	select {
 	case <-ctx.Done():
-		return streams, segments, ctx.Err()
+		return streams, segments, false, ctx.Err()
 	default:
 	}
 
 	samples, err := ExtractMixedFloats(webmPath)
 	if err != nil {
-		return streams, segments, fmt.Errorf("extract mixed audio: %w", err)
+		return streams, segments, false, fmt.Errorf("extract mixed audio: %w", err)
 	}
 	// useVAD=false: the merged mix is dense by construction (the rotator
 	// keeps the mix continuously audible). Silero with default threshold
@@ -416,11 +422,11 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	// no single low-confidence int8 span can zero the whole transcript.
 	words, err := rec.Transcribe(samples, pass.ModelPaths.SampleRate, false /*useVAD*/)
 	if err != nil {
-		return streams, segments, fmt.Errorf("transcribe merged fallback: %w", err)
+		return streams, segments, false, fmt.Errorf("transcribe merged fallback: %w", err)
 	}
 	fmt.Fprintf(stdout, "    merged: %d words\n", len(words))
 	if len(words) == 0 {
-		return streams, segments, nil
+		return streams, segments, false, nil
 	}
 
 	mergedSegs := AssembleSegments(mergedStream.SpeakerID, words, 0, 0)
@@ -428,7 +434,7 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	if !useMerged {
 		fmt.Fprintf(stdout, "    merged fallback did not clear attribution-preserving margin (need at least %d words vs %d attributed); keeping participant pass\n",
 			minimumMergedFallbackWords(CountWords(segments)), CountWords(segments))
-		return streams, chosenSegments, nil
+		return streams, chosenSegments, false, nil
 	}
 
 	// The mixed pass covers the same meeting timeline as the participant pass.
@@ -437,7 +443,7 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	// a mixed hypothesis that clears the attribution-preserving margin reaches
 	// the transcript.
 	extendedStreams := append(append([]AudioStream(nil), streams...), mergedStream)
-	return extendedStreams, chosenSegments, nil
+	return extendedStreams, chosenSegments, true, nil
 }
 
 // chooseMergedFallback keeps the two transcription hypotheses mutually
@@ -1028,4 +1034,27 @@ func applyAttributionReported(mkvPath string, streams []AudioStream, segments []
 			res.WordsMeasured, res.ThresholdDB, res.Flagged)
 	}
 	return annotated
+}
+
+// Mixed recovery has different acoustics from isolated participant tracks.
+// Keep its validated unbiased decoder without mutating participant settings.
+func mergedFallbackDecoder(paths ModelPaths, base *DecoderConfig) *DecoderConfig {
+	if usesParakeetV3ReferencePolicy(paths.ModelID) {
+		return &DecoderConfig{Method: decodingGreedySearch}
+	}
+	return base
+}
+
+func mergedFallbackHints(paths ModelPaths, original *HintsProvenance, accepted bool) *HintsProvenance {
+	if original == nil || !accepted || !usesParakeetV3ReferencePolicy(paths.ModelID) {
+		return original
+	}
+	result := *original
+	result.Applied = false
+	result.DecodingMethod = decodingGreedySearch
+	result.Score = 0
+	result.ParticipantScore = 0
+	result.OwnNameExcluded = false
+	result.Reason = "merged-audio fallback uses unbiased greedy decoding; vocabulary and participant hints are not applied"
+	return &result
 }

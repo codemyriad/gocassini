@@ -5,6 +5,11 @@ const docs = defineCollection({
   schema: z.object({
     title: z.string(),
     description: z.string().optional(),
+    // Where this page was copied from in the gocassini repo, and when. The site
+    // docs mirror vetted repo docs by hand, so these two make the drift
+    // visible: diff the page against `source` as of `copied`.
+    source: z.string().optional(),
+    copied: z.string().optional(),
   }),
 });
 

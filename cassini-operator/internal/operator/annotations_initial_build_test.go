@@ -50,6 +50,27 @@ func TestBuildMarkerRoundTrips(t *testing.T) {
 	}
 }
 
+func TestInitialAnnotationBuildReturnsFailureForRetryableImports(t *testing.T) {
+	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
+	store := openTestAnnotationStore(t)
+	rt := &Runtime{ctx: context.Background()}
+	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "not-installed-yet")
+	logger := log.New(io.Discard, "", 0)
+	if err := rt.buildAnnotationIndexOnce(meetingsListConfig(nc.url), store, logger); err == nil {
+		t.Fatal("partial initial build must fail so startup keeps the gate closed and retries")
+	}
+	if built, err := store.builtOnce(context.Background()); err != nil || built {
+		t.Fatalf("partial build marker: %v %v", built, err)
+	}
+	rt.cfg.CassiniBin = fakeCassini(t, annTestCLIPrints(annTestApplied))
+	if err := rt.buildAnnotationIndexOnce(meetingsListConfig(nc.url), store, logger); err != nil {
+		t.Fatalf("retry after recovery: %v", err)
+	}
+	if built, err := store.builtOnce(context.Background()); err != nil || !built {
+		t.Fatalf("complete build marker: %v %v", built, err)
+	}
+}
+
 // buildingIndex is a projection whose first rebuild has not finished.
 type buildingIndex struct{}
 

@@ -1,5 +1,6 @@
 import {
   StaticCatalogProvider,
+  OperatorListProvider,
   resolvePublishedUrl,
   type InsightRecord,
   type MeetingCatalogEntry,
@@ -35,6 +36,14 @@ import {
 // absent (see StaticCatalogProvider) rather than a second, browser-side
 // assembly of a published format that would look right and drift.
 export class AppDataProvider extends StaticCatalogProvider {
+  // The operator list discovers recordings that still need annotation import.
+  // Keep static asset loading/search, and the list's older-operator fallback.
+  private readonly listing = new OperatorListProvider();
+
+  override loadCatalog() {
+    return this.listing.loadCatalog();
+  }
+
   // GET published/meetings-context?ids=…,… — the same document
   // `cassini meetings context <the same ids in the same order>` prints, byte
   // for byte, because the operator answers it from the one implementation the

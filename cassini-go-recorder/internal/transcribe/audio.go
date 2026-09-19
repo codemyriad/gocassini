@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
@@ -26,6 +27,10 @@ type AudioStream struct {
 	// timeline. Matroska stream start_time is commonly zero for rotated or
 	// late-joining participant tracks, so it cannot represent this offset.
 	FirstPacketTimeMS int64
+	// FirstDecodedFrameTimeMS is the first available PCM frame's PTS, after
+	// codec pre-skip. Sparse Opus packets consumed by pre-skip can precede this
+	// by minutes. PCM rebasing uses this anchor; RTP/wall-clock metadata does not.
+	FirstDecodedFrameTimeMS int64
 	// TimelineDurationMS is only a capacity hint for decoded PCM. It is
 	// initialised from the source probe, then replaced with the measured final
 	// mix duration when available. Packet timestamps, FirstPacketTimeMS, and
@@ -131,6 +136,11 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 			return nil, 0, err
 		}
 		streams[i].FirstPacketTimeMS = firstPacketTimeMS
+		firstFrameTimeMS, err := probeFirstDecodedFrameTimeMS(mkv, streams[i].Index)
+		if err != nil {
+			return nil, 0, err
+		}
+		streams[i].FirstDecodedFrameTimeMS = firstFrameTimeMS
 	}
 	return streams, durationMs, nil
 }
@@ -164,6 +174,55 @@ func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
 		return 0, fmt.Errorf("parse first packet timestamp %q for stream %d", value, streamIndex)
 	}
 	return maxInt64(0, int64(math.Round(seconds*1000))), nil
+}
+
+// probeFirstDecodedFrameTimeMS stops after the first decoded frame, rather than
+// scanning every packet/frame in a long recording. Decoding is necessary: codec
+// pre-skip counts samples across packets even when their timestamps have holes.
+func probeFirstDecodedFrameTimeMS(mkv string, streamIndex int) (int64, error) {
+	// FFprobe 4.4 names AVFrame.pts "pkt_pts_time"; newer releases use
+	// "pts_time". Unknown entry names are ignored, so request both aliases.
+	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", strconv.Itoa(streamIndex),
+		"-show_entries", "frame=pts_time,pkt_pts_time", "-of", "default=noprint_wrappers=1:nokey=1", mkv)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return 0, fmt.Errorf("open first-frame probe: %w", err)
+	}
+	stderr := boundedBuffer{limit: 8192}
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("start first-frame probe: %w", err)
+	}
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		value := strings.TrimSpace(scanner.Text())
+		if value == "" || value == "N/A" {
+			continue
+		}
+		seconds, parseErr := strconv.ParseFloat(value, 64)
+		// Once one timestamp is available, terminate and reap the child. Closing
+		// stdout also prevents a producer from blocking if it already exited or
+		// raced the kill; its expected cancellation status is not a probe failure.
+		_ = cmd.Process.Kill()
+		_ = stdout.Close()
+		_ = cmd.Wait()
+		if parseErr != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+			return 0, fmt.Errorf("parse first decoded frame timestamp %q for stream %d", value, streamIndex)
+		}
+		return maxInt64(0, int64(math.Round(seconds*1000))), nil
+	}
+	readErr := scanner.Err()
+	if readErr != nil {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if readErr != nil {
+		return 0, fmt.Errorf("read first decoded frame for stream %d: %w", streamIndex, readErr)
+	}
+	if waitErr != nil {
+		return 0, fmt.Errorf("ffprobe first decoded frame for stream %d: %w\n%s", streamIndex, waitErr, truncate(stderr.String(), 800))
+	}
+	return 0, nil // An empty/entirely pre-skipped participant track is legal.
 }
 
 // ExtractSpeakerFloats extracts one audio stream as []float32 (16 kHz mono,
@@ -544,8 +603,17 @@ func sparseTimelineDecodeArgs(stream AudioStream, sampleRate int) []string {
 	// their relative/internal gaps through aresample, then prepend the initial
 	// silence as a separate streaming source. This avoids one huge hard
 	// compensation without changing the shared meeting timeline.
-	if stream.FirstPacketTimeMS >= sparseInitialOffsetRebaseMS {
-		seconds := strconv.FormatFloat(float64(stream.FirstPacketTimeMS)/1000, 'f', 3, 64)
+	// STARTPTS is the first decoded frame, not the first encoded packet. Opus
+	// pre-skip may discard several sparse packets across a long mute gap. The
+	// prefix must restore exactly the frame anchor that STARTPTS removes.
+	initialOffsetMS := stream.FirstDecodedFrameTimeMS
+	if initialOffsetMS == 0 {
+		// Preserve compatibility for manually constructed streams and tracks
+		// with no decoded frames; normal probed, nonempty tracks use frame PTS.
+		initialOffsetMS = stream.FirstPacketTimeMS
+	}
+	if initialOffsetMS >= sparseInitialOffsetRebaseMS {
+		seconds := strconv.FormatFloat(float64(initialOffsetMS)/1000, 'f', 3, 64)
 		filter := fmt.Sprintf(
 			"anullsrc=r=%d:cl=mono:d=%s,aformat=sample_fmts=s16[silence];"+
 				"[0:%d]asetpts=PTS-STARTPTS,aresample=%d:async=1:first_pts=0,"+
@@ -556,12 +624,16 @@ func sparseTimelineDecodeArgs(stream AudioStream, sampleRate int) []string {
 			stream.Index,
 			sampleRate,
 		)
-		return []string{"-filter_complex", filter, "-map", "[cassini_audio]"}
+		return []string{"-copyts", "-filter_complex", filter, "-map", "[cassini_audio]"}
 	}
 
-	// Packet PTS already includes the small initial offset. Do not add
-	// stream.start_time as a separate delay or late streams shift twice.
+	// Preserve the recorder's absolute meeting PTS in both branches. Without
+	// copyts FFmpeg subtracts format.start_time before filtering, which moves
+	// early tracks while the late-track prefix above restores absolute PTS.
+	// RTP/wall-clock anchors use the same absolute meeting timeline. Do not
+	// add stream.start_time as a separate delay or late streams shift twice.
 	return []string{
+		"-copyts",
 		"-map", fmt.Sprintf("0:%d", stream.Index),
 		"-af", "aresample=async=1:first_pts=0",
 	}

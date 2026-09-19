@@ -74,7 +74,7 @@ func (s *annotationService) annotationWorker() {
 	}
 }
 func (s *annotationService) nextAnnotation() (string, error) {
-	rows, err := s.rt.annotationReads().db.QueryContext(s.rt.ctx, `SELECT h.opus_name FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE h.desired!=h.confirmed AND h.blocked=0 AND h.retry_at<=unixepoch() ORDER BY CASE WHEN h.retry_at=0 THEN s.created_at ELSE h.retry_at END,h.desired LIMIT 100`)
+	rows, err := s.rt.annotationReads().db.QueryContext(s.rt.ctx, `SELECT h.opus_name FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired WHERE (h.desired!=h.confirmed OR h.republish_json IS NOT NULL) AND h.blocked=0 AND h.retry_at<=unixepoch() ORDER BY CASE WHEN h.retry_at=0 THEN s.created_at ELSE h.retry_at END,h.desired LIMIT 100`)
 	if err != nil {
 		return "", err
 	}
@@ -115,7 +115,7 @@ func (s *annotationService) retryAnnotation(name string, err error) {
 	if blocked == 0 {
 		time.AfterFunc(wait, s.wakeAnnotations)
 	}
-	if _, e := store.db.ExecContext(ctx, `UPDATE annotation_head SET attempts=attempts+1,retry_at=?,last_error=?,blocked=? WHERE opus_name=? AND desired!=confirmed`, retry, message, blocked, name); e != nil {
+	if _, e := store.db.ExecContext(ctx, `UPDATE annotation_head SET attempts=attempts+1,retry_at=?,last_error=?,blocked=? WHERE opus_name=? AND (desired!=confirmed OR republish_json IS NOT NULL)`, retry, message, blocked, name); e != nil {
 		s.logf("annotations: persist retry: %v", e)
 	}
 }
@@ -163,10 +163,11 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	var desired, confirmed int64
 	var flight sql.NullInt64
 	var rel string
-	if err = store.db.QueryRowContext(ctx, `SELECT desired,confirmed,in_flight,rel_path FROM annotation_head WHERE opus_name=?`, name).Scan(&desired, &confirmed, &flight, &rel); err != nil {
+	var republish []byte
+	if err = store.db.QueryRowContext(ctx, `SELECT desired,confirmed,in_flight,rel_path,republish_json FROM annotation_head WHERE opus_name=?`, name).Scan(&desired, &confirmed, &flight, &rel, &republish); err != nil {
 		return err
 	}
-	if desired == confirmed {
+	if desired == confirmed && republish == nil {
 		return nil
 	}
 	// The storage root can move after acceptance; ownership is the catalog ID.
@@ -206,6 +207,36 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	if err != nil || remote.Unsupported {
 		return &annotationBlocked{"recording annotations cannot be read; repair and retry"}
 	}
+	if republish != nil {
+		var replacement annotateResult
+		if err := json.Unmarshal(republish, &replacement); err != nil {
+			return err
+		}
+		// Verify the actual replacement bytes, not merely its revision or tags.
+		if remote.ContainerSHA256 == replacement.ContainerSHA256 {
+			if err := store.recordAnnotationDelivery(ctx, name, remote); err != nil {
+				return err
+			}
+			if err := store.db.QueryRowContext(ctx, `SELECT desired,confirmed FROM annotation_head WHERE opus_name=?`, name).Scan(&desired, &confirmed); err != nil {
+				return err
+			}
+			if desired == confirmed {
+				return nil
+			}
+			previous = remote
+			flight.Valid = false
+		} else if remote.AudioOpusSHA256 == previous.AudioOpusSHA256 && sameAnnotationDocument(remote.Annotations, previous.Annotations) {
+			// The attempted replacement did not land; the old baseline remains.
+			if _, err := store.db.ExecContext(ctx, `UPDATE annotation_head SET republish_json=NULL WHERE opus_name=?`, name); err != nil {
+				return err
+			}
+			if desired == confirmed {
+				return nil
+			}
+		} else {
+			return &annotationBlocked{"replacement recording could not be verified; republish and retry"}
+		}
+	}
 	// A lost PUT response is settled by the exact persisted target, never by
 	// assuming the current desired head was the version that made it to Files.
 	if flight.Valid {
@@ -241,6 +272,11 @@ func (s *annotationService) syncAnnotation(ctx context.Context, name string) err
 	}
 	rendered, err := runAnnotate(ctx, s.bin, target.Annotations, "snapshot", "--out", out, "--json", in)
 	if err != nil {
+		switch annotateExitCode(err) {
+		case annotateExitUsage, annotateExitInvalid, annotateExitUnresolved:
+			s.logf("annotations: render %s: %v", name, err)
+			return &annotationBlocked{"saved annotations cannot be embedded by the recorder; check compatibility and retry"}
+		}
 		return err
 	}
 	if !sameAnnotationDocument(rendered.Annotations, target.Annotations) {

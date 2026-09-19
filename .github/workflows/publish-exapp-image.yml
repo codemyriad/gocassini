@@ -477,7 +477,7 @@ jobs:
         if: needs.classify-changes.outputs.relevant == 'true'
         run: docker compose -f harness/compose.yml --profile full pull
 
-      - name: Run one faithful AppAPI/HaRP-installed Talk recording
+      - name: Verify recording readiness and Talk publication before and after restart
         if: needs.classify-changes.outputs.relevant == 'true'
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
@@ -488,7 +488,7 @@ jobs:
           # also asserts the operator reported device=cpu, so a runner that
           # quietly had a GPU could not pass this off as the CPU path.
           CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
-        run: ./harness/bin/ci-e2e-installed-exapp-talk.sh
+        run: ./harness/bin/ci-e2e-recording-readiness.sh
 
       - name: Upload faithful check evidence
         if: always() && needs.classify-changes.outputs.relevant == 'true'
@@ -799,7 +799,6 @@ jobs:
           # hash still covers every asset the base downloads.
           MODEL_IDS="$(df_get "$DF" CASSINI_BUNDLED_MODELS | tr -d '"')"
           FETCH=deployment/models/fetch-models.sh
-          SHERPA_URL="$(df_get "$DF" SHERPA_CUDA_URL)"
           VAD_URL="$(df_get "$DF" SILERO_VAD_URL)"
 
           # The app Dockerfile independently sets CASSINI_STT_MODEL from its own
@@ -847,7 +846,7 @@ jobs:
 
           BASE_HASH="$(printf '%s\n' \
             "$MODEL_ID" "$MODEL_INPUTS" \
-            "$SHERPA_URL" "$(fp "$SHERPA_URL")" \
+            "$(deployment/sherpa/build.sh --fingerprint)" \
             "$VAD_URL" "$(fp "$VAD_URL")" \
             "$NV_DIGEST" \
             "$(sha256sum "$DF" | cut -d' ' -f1)" \
