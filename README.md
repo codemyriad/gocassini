@@ -1,7 +1,7 @@
 # Cassini
 
 > [!WARNING]
-> **Cassini is in beta.** It records real meetings today and we run it on our own Nextcloud, but expect rough edges. Read the [changelog](CHANGELOG.md) before you update, and please [open an issue](https://github.com/codemyriad/gocassini/issues) if something breaks.
+> **Cassini is in beta.** We run it daily on our own Nextcloud, but expect rough edges. Read the [changelog](CHANGELOG.md) before you update, and please [open an issue](https://github.com/codemyriad/gocassini/issues) if something breaks.
 
 **Cassini is a recording backend for Nextcloud Talk that puts you in control of your meeting data.**
 

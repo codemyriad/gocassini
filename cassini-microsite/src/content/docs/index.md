@@ -7,7 +7,7 @@ copied: "2026-09-17"
 
 <div role="alert" class="alert alert-warning not-prose mb-8 items-start">
   <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 mt-0.5" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-  <p class="m-0"><strong>Cassini is in beta.</strong> It records real meetings today and we run it on our own Nextcloud, but expect rough edges. Read the <a href="https://github.com/codemyriad/gocassini/blob/main/CHANGELOG.md" class="link">changelog</a> before you update, and please <a href="https://github.com/codemyriad/gocassini/issues" class="link">open an issue</a> if something breaks.</p>
+  <p class="m-0"><strong>Cassini is in beta.</strong> We run it daily on our own Nextcloud, but expect rough edges. Read the <a href="https://github.com/codemyriad/gocassini/blob/main/CHANGELOG.md" class="link">changelog</a> before you update, and please <a href="https://github.com/codemyriad/gocassini/issues" class="link">open an issue</a> if something breaks.</p>
 </div>
 
 Cassini is a recording backend for Nextcloud Talk that puts you in control of
