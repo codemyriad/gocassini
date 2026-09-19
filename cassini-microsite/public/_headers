@@ -18,6 +18,13 @@
   Access-Control-Allow-Origin: *
   Access-Control-Expose-Headers: Content-Range, Content-Length
 
+# Firefox sniffs the Ogg bytes behind any audio/* type and saves a download as
+# .ogx, whatever the link's download attribute says. Only a type it cannot map
+# to an extension keeps the name. The <audio> element sniffs the bytes itself,
+# so playback is unaffected.
+/nextcloud-conf-2026/voice-is-context--20260918T152131.opus
+  Content-Type: application/octet-stream
+
 # /embed/v1/ is the floating contract channel: browsers hold it briefly and then
 # revalidate, so a snippet pasted once picks up every compatible release without
 # anyone re-pasting it.
