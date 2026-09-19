@@ -143,7 +143,7 @@ func TestParseParticipantUpdateRequiresInCallBit(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			sessionID, _, state := parseParticipantUpdate(tc.user)
+			sessionID, _, _, state := parseParticipantUpdate(tc.user)
 			if sessionID != "s1" {
 				t.Fatalf("unexpected session id: %q", sessionID)
 			}

@@ -134,10 +134,11 @@ type Recorder struct {
 	segmentsDir     string
 	startedAt       time.Time
 
-	sessionMu        sync.Mutex
-	sessionsByRemote map[string]*sessionCapture
-	sessionOrder     []*sessionCapture
-	identityByRemote map[string]participantIdentity
+	sessionMu           sync.Mutex
+	sessionsByRemote    map[string]*sessionCapture
+	sessionOrder        []*sessionCapture
+	identityByRemote    map[string]participantIdentity
+	remoteByRoomSession map[string]string
 
 	mu          sync.Mutex
 	subscribers map[string]*subscriberPeer
@@ -245,13 +246,14 @@ type subscriberPeer struct {
 
 func Run(ctx context.Context, cfg config.Config) error {
 	r := &Recorder{
-		cfg:               cfg,
-		subscribers:       make(map[string]*subscriberPeer),
-		inCallEver:        make(map[string]struct{}),
-		sessionsByRemote:  make(map[string]*sessionCapture),
-		identityByRemote:  make(map[string]participantIdentity),
-		startedAt:         time.Now().UTC(),
-		subscriberUpdates: make(chan struct{}, 1),
+		cfg:                 cfg,
+		subscribers:         make(map[string]*subscriberPeer),
+		inCallEver:          make(map[string]struct{}),
+		sessionsByRemote:    make(map[string]*sessionCapture),
+		identityByRemote:    make(map[string]participantIdentity),
+		remoteByRoomSession: make(map[string]string),
+		startedAt:           time.Now().UTC(),
+		subscriberUpdates:   make(chan struct{}, 1),
 	}
 	return r.run(ctx)
 }
@@ -1337,10 +1339,13 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 				if len(joinItem) == 0 {
 					continue
 				}
-				remoteSessionID, displayName, participantID := parseRoomJoinIdentity(joinItem)
+				remoteSessionID, roomSessionID, displayName, participantID := parseRoomJoinIdentity(joinItem)
 				if remoteSessionID == "" {
 					continue
 				}
+				r.sessionMu.Lock()
+				r.mapRemoteSessionLocked(remoteSessionID, roomSessionID, participantID)
+				r.sessionMu.Unlock()
 				r.rememberParticipantIdentity(remoteSessionID, displayName, participantID)
 			}
 		case "leave":
@@ -1376,34 +1381,44 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 	if asBool(update["all"]) {
 		active := make(map[string]participantIdentity, len(users))
 		for _, raw := range users {
-			sessionID, identity, callState := parseParticipantUpdate(asMap(raw))
-			if sessionID == "" || callState != callStateInCall {
+			sessionID, roomSessionID, identity, callState := parseParticipantUpdate(asMap(raw))
+			if (sessionID == "" && roomSessionID == "") || callState != callStateInCall {
 				continue
 			}
-			active[sessionID] = identity
+			r.sessionMu.Lock()
+			remoteSessionID := r.resolveRemoteSessionLocked(sessionID, roomSessionID, identity.ParticipantID)
+			r.mapRemoteSessionLocked(remoteSessionID, roomSessionID, identity.ParticipantID)
+			r.sessionMu.Unlock()
+			active[remoteSessionID] = identity
 		}
 		return r.syncRemoteParticipants(active)
 	}
 
 	for _, raw := range users {
-		sessionID, identity, callState := parseParticipantUpdate(asMap(raw))
-		if sessionID == "" {
+		sessionID, roomSessionID, identity, callState := parseParticipantUpdate(asMap(raw))
+		if sessionID == "" && roomSessionID == "" {
 			continue
 		}
+		r.sessionMu.Lock()
+		remoteSessionID := r.resolveRemoteSessionLocked(sessionID, roomSessionID, identity.ParticipantID)
+		r.mapRemoteSessionLocked(remoteSessionID, roomSessionID, identity.ParticipantID)
+		r.sessionMu.Unlock()
+
 		switch callState {
 		case callStateNotInCall:
-			r.removeParticipantSessions([]any{sessionID})
+			r.removeParticipantSessions([]any{remoteSessionID})
 			continue
 		case callStateUnknown:
 			// The entry omits inCall: it describes room presence, not
-			// call membership. Neither create nor remove — a partial
-			// update without the field must not tear down the live
-			// subscriber of a participant still in the call.
+			// call membership. Neither create nor remove a subscriber,
+			// but remember the participant's identity (e.g. guest display name).
+			r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
 			continue
-		}
-		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
-		if err := r.ensureInCallSubscriber(sessionID); err != nil {
-			return err
+		case callStateInCall:
+			r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
+			if err := r.ensureInCallSubscriber(remoteSessionID); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1529,10 +1544,11 @@ func (r *Recorder) removeSubscriber(remoteSessionID string) error {
 
 func (r *Recorder) removeParticipantSessions(sessions []any) {
 	for _, item := range sessions {
-		remoteSessionID := asString(item)
-		if remoteSessionID == "" {
+		rawSessionID := asString(item)
+		if rawSessionID == "" {
 			continue
 		}
+		remoteSessionID := r.resolveRemoteSessionID(rawSessionID, "", "")
 		r.forgetParticipantIdentity(remoteSessionID)
 		if err := r.removeSubscriber(remoteSessionID); err != nil {
 			log.Printf("remove subscriber %s failed: %v", remoteSessionID, err)
@@ -1642,9 +1658,14 @@ func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, par
 	}
 
 	if session := r.sessionsByRemote[remoteSessionID]; session != nil {
-		if displayName != "" {
-			session.ParticipantName = displayName
-			shouldUpdateArtifact = true
+		if participantID == "" && session.ParticipantID != "" {
+			participantID = session.ParticipantID
+		}
+		if displayName != "" && !isPlaceholderParticipantName(displayName, remoteSessionID, participantID) {
+			if session.ParticipantName != displayName {
+				session.ParticipantName = displayName
+				shouldUpdateArtifact = true
+			}
 		}
 		if participantID != "" {
 			session.ParticipantID = participantID
@@ -1665,10 +1686,75 @@ func (r *Recorder) forgetParticipantIdentity(remoteSessionID string) {
 	}
 	r.sessionMu.Lock()
 	delete(r.identityByRemote, remoteSessionID)
+	for roomSession, remote := range r.remoteByRoomSession {
+		if remote == remoteSessionID {
+			delete(r.remoteByRoomSession, roomSession)
+		}
+	}
 	r.sessionMu.Unlock()
 }
 
-func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
+func (r *Recorder) mapRemoteSessionLocked(remoteSessionID, roomSessionID, participantID string) {
+	if remoteSessionID == "" {
+		return
+	}
+	if r.remoteByRoomSession == nil {
+		r.remoteByRoomSession = make(map[string]string)
+	}
+	if roomSessionID != "" && roomSessionID != remoteSessionID {
+		r.remoteByRoomSession[roomSessionID] = remoteSessionID
+		if prev, ok := r.identityByRemote[roomSessionID]; ok {
+			curr := r.identityByRemote[remoteSessionID]
+			if curr.DisplayName == "" {
+				curr.DisplayName = prev.DisplayName
+			}
+			if curr.ParticipantID == "" {
+				curr.ParticipantID = prev.ParticipantID
+			}
+			r.identityByRemote[remoteSessionID] = curr
+			delete(r.identityByRemote, roomSessionID)
+			if session := r.sessionsByRemote[remoteSessionID]; session != nil && curr.DisplayName != "" {
+				if session.ParticipantName != curr.DisplayName && (session.ParticipantName == "" || isPlaceholderParticipantName(session.ParticipantName, remoteSessionID, session.ParticipantID)) {
+					session.ParticipantName = curr.DisplayName
+				}
+			}
+		}
+	}
+}
+
+func (r *Recorder) resolveRemoteSessionLocked(sessionID, roomSessionID, participantID string) string {
+	if roomSessionID != "" {
+		if remote, ok := r.remoteByRoomSession[roomSessionID]; ok && remote != "" {
+			return remote
+		}
+	}
+	if sessionID != "" {
+		if remote, ok := r.remoteByRoomSession[sessionID]; ok && remote != "" {
+			return remote
+		}
+		if _, ok := r.sessionsByRemote[sessionID]; ok {
+			return sessionID
+		}
+		if _, ok := r.identityByRemote[sessionID]; ok {
+			return sessionID
+		}
+	}
+	if sessionID != "" {
+		return sessionID
+	}
+	if roomSessionID != "" {
+		return roomSessionID
+	}
+	return participantID
+}
+
+func (r *Recorder) resolveRemoteSessionID(sessionID, roomSessionID, participantID string) string {
+	r.sessionMu.Lock()
+	defer r.sessionMu.Unlock()
+	return r.resolveRemoteSessionLocked(sessionID, roomSessionID, participantID)
+}
+
+func parseRoomJoinIdentity(joinItem map[string]any) (remoteSessionID, roomSessionID, displayName, participantID string) {
 	scopes := []map[string]any{
 		joinItem,
 		asMap(joinItem["session"]),
@@ -1677,14 +1763,21 @@ func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
 		asMap(joinItem["actor"]),
 	}
 
-	remoteSessionID := firstNonEmpty(
+	remoteSessionID = firstNonEmpty(
 		scopes,
 		"sessionid",
 		"sessionId",
+	)
+	roomSessionID = firstNonEmpty(
+		scopes,
 		"roomSessionId",
 		"roomsessionid",
+		"nextcloudSessionId",
 	)
-	displayName := firstNonEmpty(
+	if remoteSessionID == "" {
+		remoteSessionID = roomSessionID
+	}
+	displayName = firstNonEmpty(
 		scopes,
 		"displayName",
 		"displayname",
@@ -1693,7 +1786,7 @@ func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
 		"actorDisplayName",
 		"userDisplayName",
 	)
-	participantID := firstNonEmpty(
+	participantID = firstNonEmpty(
 		scopes,
 		"userid",
 		"userId",
@@ -1704,7 +1797,7 @@ func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
 		"uid",
 	)
 
-	return remoteSessionID, displayName, participantID
+	return remoteSessionID, roomSessionID, displayName, participantID
 }
 
 // participantCallState classifies a participants-update entry for the
@@ -1724,7 +1817,7 @@ const (
 	callStateInCall
 )
 
-func parseParticipantUpdate(user map[string]any) (string, participantIdentity, participantCallState) {
+func parseParticipantUpdate(user map[string]any) (string, string, participantIdentity, participantCallState) {
 	scopes := []map[string]any{
 		user,
 		asMap(user["session"]),
@@ -1736,30 +1829,21 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, p
 		scopes,
 		"sessionid",
 		"sessionId",
+	)
+	roomSessionID := firstNonEmpty(
+		scopes,
 		"roomSessionId",
 		"roomsessionid",
+		"nextcloudSessionId",
 	)
 	if sessionID == "" {
-		return "", participantIdentity{}, callStateUnknown
+		sessionID = roomSessionID
 	}
-	if asBool(user["internal"]) {
-		return sessionID, participantIdentity{}, callStateNotInCall
-	}
-	// Per the standalone signaling API, a participant is in the call iff
-	// the in-call bit of the inCall flags is set (bit 1; higher bits only
-	// describe published media / SIP). Updates without that bit must not
-	// produce subscribers (D-365); entries that omit inCall entirely
-	// describe room presence only and are neutral — they must not tear
-	// down a live subscriber either.
-	flags, ok := asInt(user["inCall"])
-	if !ok {
-		return sessionID, participantIdentity{}, callStateUnknown
-	}
-	if flags&inCallFlagInCall == 0 {
-		return sessionID, participantIdentity{}, callStateNotInCall
+	if sessionID == "" && roomSessionID == "" {
+		return "", "", participantIdentity{}, callStateUnknown
 	}
 
-	return sessionID, participantIdentity{
+	identity := participantIdentity{
 		DisplayName: firstNonEmpty(
 			scopes,
 			"displayName",
@@ -1779,7 +1863,26 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, p
 			"participantID",
 			"uid",
 		),
-	}, callStateInCall
+	}
+
+	if asBool(user["internal"]) {
+		return sessionID, roomSessionID, identity, callStateNotInCall
+	}
+	// Per the standalone signaling API, a participant is in the call iff
+	// the in-call bit of the inCall flags is set (bit 1; higher bits only
+	// describe published media / SIP). Updates without that bit must not
+	// produce subscribers (D-365); entries that omit inCall entirely
+	// describe room presence only and are neutral — they must not tear
+	// down a live subscriber either.
+	flags, ok := asInt(user["inCall"])
+	if !ok {
+		return sessionID, roomSessionID, identity, callStateUnknown
+	}
+	if flags&inCallFlagInCall == 0 {
+		return sessionID, roomSessionID, identity, callStateNotInCall
+	}
+
+	return sessionID, roomSessionID, identity, callStateInCall
 }
 
 func firstNonEmpty(scopes []map[string]any, keys ...string) string {
@@ -2131,6 +2234,10 @@ func (r *Recorder) sendRequestOffer(remoteSessionID string) error {
 }
 
 func (r *Recorder) sendPeerMessage(toSession, msgType string, payload map[string]any, sid string) error {
+	if r.signaling == nil {
+		return errors.New("signaling not connected")
+	}
+
 	data := map[string]any{
 		"to":       toSession,
 		"roomType": "video",
