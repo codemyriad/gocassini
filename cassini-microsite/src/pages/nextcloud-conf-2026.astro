@@ -21,18 +21,26 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 // to true to put it back; nothing else on the page refers to it.
 const showInsights = false;
 
-// The talk recording, served from public/. Replacing the file is enough: the size is read at build.
-const recordingPath = "nextcloud-conf-2026/voice-is-context.opus";
+// The talk's files, served from public/. Replacing a file is enough: sizes are read at build.
+// The recording's name carries its start time (UTC) because that is where the embed reads a date
+// from (describeMeeting); the file itself only knows when it was last processed. public/_headers
+// serves it as application/octet-stream, or Firefox saves the download as .ogx.
+const recordingPath = "nextcloud-conf-2026/voice-is-context--20260918T152131.opus";
 const recordingUrl = `${base}${recordingPath}`;
 const recordingDownloadName = "Voice-is-Context--NCC-2026.opus";
-const recordingSize = (() => {
+const slidesPath = "nextcloud-conf-2026/voice-is-context-slides.pdf";
+const slidesUrl = `${base}${slidesPath}`;
+const slidesDownloadName = "Voice-is-Context--NCC-2026--Slides.pdf";
+const sizeOf = (path: string) => {
   try {
-    const bytes = statSync(join(process.cwd(), "public", recordingPath)).size;
+    const bytes = statSync(join(process.cwd(), "public", path)).size;
     return `${(bytes / 1_000_000).toFixed(1)} MB`;
   } catch {
     return "";
   }
-})();
+};
+const recordingSize = sizeOf(recordingPath);
+const slidesSize = sizeOf(slidesPath);
 
 const title = "Cassini at Nextcloud Conference 2026";
 const description = showInsights
@@ -78,6 +86,15 @@ const description = showInsights
       Marks bind to the audio digest, so a re-transcribed file over the same audio keeps them.
     */}
     <div class="talk" id="talk">
+      <div class="talk-intro">
+        <p>
+          Below is the talk in the same viewer you'd find in the app: the summary, the transcript and
+          the tags, all read from the one file.
+        </p>
+        <a class="dl" href={slidesUrl} download={slidesDownloadName}>
+          Download the slides{slidesSize && <span class="size">PDF · {slidesSize}</span>}
+        </a>
+      </div>
       <div class="viewer">
         <cassini-meeting src={recordingUrl} title="Voice is context" theme="dark"></cassini-meeting>
 
@@ -252,6 +269,16 @@ const description = showInsights
 
     /* ---------------- The recording ---------------- */
     .talk { display: flex; flex-direction: column; gap: 1rem; }
+    /* What the viewer is on the left, the slides on the right — the same shape as .fd-row. */
+    .talk-intro {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.5rem 1.5rem;
+      flex-wrap: wrap;
+      color: var(--ink-70);
+    }
+    .talk-intro p { flex: 1 1 22rem; }
     .viewer {
       border: 1px solid var(--line);
       border-radius: 1rem;
@@ -460,7 +487,7 @@ const description = showInsights
       .close { padding: 2rem; }
     }
     .close h2 { font-size: clamp(1.25rem, 2.6vw, 1.5rem); }
-    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 0.75rem; }
+    .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.75rem; margin-top: 0.75rem; }
     .btn-cta {
       display: inline-flex;
       align-items: center;
@@ -473,9 +500,11 @@ const description = showInsights
       border: 1px solid transparent;
       transition: border-color 150ms ease, color 150ms ease, opacity 150ms ease;
     }
-    .btn-cta.primary { background: var(--color-primary); color: var(--color-primary-content); }
+    /* `.page .btn-cta`, not `.btn-cta`: `.page a { color: inherit }` outranks a bare class once
+       Astro scopes both, and the button text went grey on the primary blue. */
+    .page .btn-cta.primary { background: var(--color-primary); color: var(--color-primary-content); }
     .btn-cta.primary:hover { opacity: 0.85; }
-    .btn-cta.ghost { border-color: var(--line); color: var(--color-base-content); }
+    .page .btn-cta.ghost { border-color: var(--line); color: var(--color-base-content); }
     .btn-cta.ghost:hover { border-color: var(--ink-45); }
 
     @media (prefers-reduced-motion: no-preference) {
