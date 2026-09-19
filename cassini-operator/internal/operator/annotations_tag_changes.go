@@ -17,6 +17,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	ann "cassini-annotations"
 )
 
 // Changing a tag across the meetings the caller can read (D-746): its colour
@@ -29,9 +31,10 @@ import (
 const (
 	maxTagChangeBodyBytes = 4 << 10
 
-	tagJobRename = "rename"
-	tagJobMerge  = "merge"
-	tagJobDelete = "delete"
+	tagJobRename  = "rename"
+	tagJobRestyle = "restyle"
+	tagJobMerge   = "merge"
+	tagJobDelete  = "delete"
 
 	tagJobRunning     = "running"
 	tagJobFinished    = "finished"
@@ -226,8 +229,9 @@ func (s *annotationService) changeTag(w http.ResponseWriter, r *http.Request, ca
 	}
 }
 
-// editTag saves a colour or icon at once, for everyone, and starts a rename
-// job for a new label.
+// editTag rewrites a changed label, colour or icon across the caller's visible
+// recordings. Appearance is deliberately per recording rather than a central
+// value that can override an archived document.
 func (s *annotationService) editTag(w http.ResponseWriter, r *http.Request, scope tagScope, tag tagVocabularyEntry, edit tagEdit) {
 	rename := ""
 	if edit.Label != nil {
@@ -242,6 +246,15 @@ func (s *annotationService) editTag(w http.ResponseWriter, r *http.Request, scop
 			rename = strings.TrimSpace(*edit.Label)
 		}
 	}
+	restyle := false
+	if edit.Color != nil || edit.Icon != nil {
+		var err error
+		restyle, err = scope.store.tagStyledOtherwise(r.Context(), tag.TagID, edit.Color, edit.Icon, scope.visible)
+		if err != nil {
+			s.tagIndexFailed(w, scope.caller, err)
+			return
+		}
+	}
 	if rename != "" {
 		// Among the caller's meetings only: a wider check would say the label
 		// is in use somewhere they cannot read (design doc §3).
@@ -254,39 +267,37 @@ func (s *annotationService) editTag(w http.ResponseWriter, r *http.Request, scop
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "label-exists", "tagId": owner})
 			return
 		}
-		if s.jobs.running(scope.caller) {
-			writeJSONError(w, http.StatusConflict, "busy")
-			return
-		}
 	}
-	if edit.Color != nil || edit.Icon != nil {
-		err := s.styles.update(func(styles map[string]tagStyle) {
-			style := styles[tag.TagID]
-			if edit.Color != nil {
-				style.Color = *edit.Color
-			}
-			if edit.Icon != nil {
-				style.Icon = *edit.Icon
-			}
-			styles[tag.TagID] = style.changedBy(scope.caller)
-		})
-		if err != nil {
-			s.logf("annotations: save the style of %s: %v", tag.TagID, err)
-			writeJSONError(w, http.StatusInternalServerError, "the tag's colour could not be saved")
-			return
-		}
+	if (rename != "" || restyle) && s.jobs.running(scope.caller) {
+		writeJSONError(w, http.StatusConflict, "busy")
+		return
 	}
 	var job *tagJob
-	if rename != "" {
-		if job = s.startTagJob(w, r, scope, tagJob{Kind: tagJobRename, TagID: tag.TagID},
-			map[string]any{"op": "relabel", "tagId": tag.TagID, "label": rename}); job == nil {
+	if rename != "" || restyle {
+		ops := make([]any, 0, 2)
+		kind := tagJobRestyle
+		if rename != "" {
+			kind = tagJobRename
+			ops = append(ops, map[string]any{"op": "relabel", "tagId": tag.TagID, "label": rename})
+			tag.Label = rename
+		}
+		if restyle {
+			op := map[string]any{"op": "restyle", "tagId": tag.TagID}
+			if edit.Color != nil {
+				op["color"] = *edit.Color
+				tag.Color = *edit.Color
+			}
+			if edit.Icon != nil {
+				op["icon"] = *edit.Icon
+				tag.Icon = *edit.Icon
+			}
+			ops = append(ops, op)
+		}
+		if job = s.startTagJob(w, r, scope, tagJob{Kind: kind, TagID: tag.TagID}, map[string]any{"ops": ops}); job == nil {
 			return
 		}
-		tag.Label = rename
 	}
-	tags := []tagVocabularyEntry{tag}
-	s.withStyles(tags)
-	writeJSON(w, http.StatusOK, map[string]any{"tag": tags[0], "job": job})
+	writeJSON(w, http.StatusOK, map[string]any{"tag": tag, "job": job})
 }
 
 // startTagJob starts op over each of the caller's recordings carrying the tag,
@@ -330,7 +341,14 @@ func (s *annotationService) startTagJob(w http.ResponseWriter, r *http.Request, 
 func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.RawMessage, titles map[string]string) {
 	// The process's context, not the request's: the job outlives the POST.
 	base := s.rt.ctx
-	request := annotateWriteRequest{Ops: []json.RawMessage{op}, ActorKind: "person", OperationID: job.ID, Accepted: true}
+	ops := []json.RawMessage{op} // Jobs written before D-793 held one op directly.
+	var batch struct {
+		Ops []json.RawMessage `json:"ops"`
+	}
+	if json.Unmarshal(op, &batch) == nil && batch.Ops != nil {
+		ops = batch.Ops
+	}
+	request := annotateWriteRequest{Ops: ops, ActorKind: "person", OperationID: job.ID, Accepted: true}
 	_, root := ncArchiveReadIdentity(job.Actor)
 	state := tagJobFinished
 	for _, name := range targets[job.Done:] {
@@ -360,43 +378,8 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 			return
 		}
 	}
-	if state == tagJobFinished {
-		s.settleTagStyles(base, job)
-	}
 	s.jobs.finish(job, state)
 	_ = s.updateTagJob(job)
-}
-
-// settleTagStyles follows a finished job into tag-styles.json: a rename or
-// merge is attributed on the tag that carries on, and a tag no indexed
-// recording carries any more — anyone's, not only the caller's — loses its
-// entry.
-func (s *annotationService) settleTagStyles(ctx context.Context, job *tagJob) {
-	gone := false
-	if job.Kind != tagJobRename {
-		inUse, err := s.rt.annotationReads().tagInUse(ctx, job.TagID)
-		if err != nil {
-			s.logf("annotations: after %s job %s: %v", job.Kind, job.ID, err)
-		}
-		gone = err == nil && !inUse
-	}
-	if job.Kind == tagJobDelete && !gone {
-		return
-	}
-	err := s.styles.update(func(styles map[string]tagStyle) {
-		switch job.Kind {
-		case tagJobRename:
-			styles[job.TagID] = styles[job.TagID].changedBy(job.Actor)
-		case tagJobMerge:
-			styles[job.Into] = styles[job.Into].changedBy(job.Actor)
-		}
-		if gone {
-			delete(styles, job.TagID)
-		}
-	})
-	if err != nil {
-		s.logf("annotations: after %s job %s: %v", job.Kind, job.ID, err)
-	}
 }
 
 // tagJobError is the public text the meetings POST would answer, never the
@@ -454,9 +437,9 @@ func readTagChangeBody(w http.ResponseWriter, r *http.Request, into any) bool {
 // is the format's, checked once here rather than by the CLI once per file.
 func checkTagEdit(edit tagEdit) string {
 	switch {
-	case edit.Color != nil && !tagColors[*edit.Color]:
+	case edit.Color != nil && !ann.IsAnnotationTagColor(*edit.Color):
 		return "color is not a palette colour"
-	case edit.Icon != nil && !tagIcons[*edit.Icon]:
+	case edit.Icon != nil && !ann.IsAnnotationTagIcon(*edit.Icon):
 		return "icon is not an icon id"
 	case edit.Label == nil:
 		return ""

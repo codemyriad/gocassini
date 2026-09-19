@@ -8,6 +8,7 @@ import TranscriptFrame from "./TranscriptFrame.svelte";
 import { get } from "svelte/store";
 import transcriptFrameSource from "./TranscriptFrame.svelte?raw";
 import { createMarksSession, viewMarks } from "./session";
+import { readPortableAnnotations } from "../../viewer/portable";
 
 // Rendered through Svelte's server renderer, as TranscriptWords.test.ts does:
 // the suite has no DOM, so these assert what each state puts on the page.
@@ -116,6 +117,27 @@ describe("a meeting view with its marks loaded", () => {
 });
 
 describe("a meeting view that can read marks but not write them", () => {
+  it("renders saved appearance after parsing a portable recording", async () => {
+    const saved = meeting(true);
+    const parsed = readPortableAnnotations({
+      annotations: {
+        ...saved.annotations!,
+        tags: saved.annotations!.tags.map((tag) => ({ ...tag, color: "purple", icon: "star" })),
+      },
+    })!;
+    const session = await readOnly(async () => ({
+      ...saved,
+      annotations: { ...parsed, tags: [...parsed.tags], items: [...parsed.items] },
+    }));
+    const header = render(MeetingTags, { props: { session } }).body;
+    expect(header).toContain('data-tag-color="purple"');
+    expect(header).not.toContain('data-tag-color="slate"');
+    expect([...viewMarks(get(session), []).whole, ...viewMarks(get(session), []).placed]
+      .map(({ color, icon }) => [color, icon])).toEqual([
+        ["purple", "star"], ["purple", "star"], ["purple", "star"],
+      ]);
+  });
+
   it("draws every mark the recording carries", async () => {
     const session = await readOnly(async () => meeting(true));
     const html = frame(session);

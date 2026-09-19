@@ -270,6 +270,15 @@ describe("what the view draws", () => {
     expect(view.lost).toEqual([]);
   });
 
+  it("keeps archived appearance with no vocabulary or conflicting shared defaults", () => {
+    const archived = { ...doc, tags: doc.tags.map((tag) => ({ ...tag, color: "purple", icon: "" })) };
+    for (const vocabulary of [[], [{ ...vocab("t-hiring", "hiring", "teal"), icon: "star" as const }]]) {
+      const view = viewMarks(state(meeting(true, archived)), vocabulary);
+      expect([...view.whole, ...view.placed].map(({ color, icon }) => [color, icon]))
+        .toEqual([["purple", ""], ["purple", ""], ["purple", ""]]);
+    }
+  });
+
   it("uses a new tag's chosen colour until the vocabulary has it", () => {
     const view = viewMarks(state(meeting(), { hiring: "pink" }), []);
     expect(view.placed.find((mark) => mark.tag.label === "hiring")!.color).toBe("pink");

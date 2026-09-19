@@ -441,6 +441,8 @@ export const PORTABLE_ANNOTATIONS_FORMAT_V1 = "cassini.annotations.v1";
 export interface PortableAnnotationTag {
   readonly id: string;
   readonly label: string;
+  readonly color?: string;
+  readonly icon?: string;
 }
 
 /**
@@ -517,7 +519,15 @@ export function readPortableAnnotations(
       continue;
     }
     tagIds.add(tag.id);
-    tags.push({ id: tag.id, label: tag.label });
+    // Preserve archived appearance, including an explicitly cleared icon.
+    // Unknown strings survive for forwards compatibility; malformed optional
+    // values are ignored without losing the tag or its marks.
+    tags.push({
+      id: tag.id,
+      label: tag.label,
+      ...(typeof tag.color === "string" ? { color: tag.color } : {}),
+      ...(typeof tag.icon === "string" ? { icon: tag.icon } : {}),
+    });
   }
 
   const items: PortableAnnotationItem[] = [];

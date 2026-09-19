@@ -103,7 +103,24 @@ CREATE TABLE annotation_batch_target (
 				return err
 			}
 		}
-		if _, err := tx.Exec(`ALTER TABLE annotation_head ADD COLUMN republish_json BLOB`); err != nil {
+		// Both main and the portable-style branch used schema 6. Inspect the
+		// columns so either layout upgrades without losing acknowledged edits.
+		for _, column := range []struct{ table, name, kind string }{
+			{"annotation_head", "republish_json", "BLOB"},
+			{"annotation_tag", "color", "TEXT"},
+			{"annotation_tag", "icon", "TEXT"},
+		} {
+			var present int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, column.table, column.name).Scan(&present); err != nil {
+				return err
+			}
+			if present == 0 {
+				if _, err := tx.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", column.table, column.name, column.kind)); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS annotation_tag_by_id ON annotation_tag(tag_id, opus_name)`); err != nil {
 			return err
 		}
 		_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", annotationsSchemaVersion))

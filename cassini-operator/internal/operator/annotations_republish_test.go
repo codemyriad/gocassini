@@ -148,3 +148,41 @@ func TestAnnotationRepublishMigrationPreservesPendingHead(t *testing.T) {
 		t.Fatalf("migration changed pending head: %+v", got)
 	}
 }
+
+func TestPortableStyleMigrationPreservesPendingHead(t *testing.T) {
+	for _, layout := range []struct{ name, downgrade string }{
+		{"main-v6", `ALTER TABLE annotation_tag DROP COLUMN color; ALTER TABLE annotation_tag DROP COLUMN icon; PRAGMA user_version=6`},
+		{"styles-v6", `ALTER TABLE annotation_head DROP COLUMN republish_json; PRAGMA user_version=6`},
+		{"v5", `ALTER TABLE annotation_tag DROP COLUMN color; ALTER TABLE annotation_tag DROP COLUMN icon; ALTER TABLE annotation_head DROP COLUMN republish_json; PRAGMA user_version=5`},
+	} {
+		t.Run(layout.name, func(t *testing.T) {
+			_, _, h, store := asyncFixture(t)
+			latest := postAsync(t, h, markRequest("pending", "first"))
+			if _, err := store.db.Exec(layout.downgrade); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := openAnnotationStore(store.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.Close()
+			got, err := reopened.document(context.Background(), "MEETING1.opus")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.StateToken != latest.StateToken || got.Sync.State != "pending" || !sameAnnotationDocument(got.Annotations, latest.Annotations) {
+				t.Fatalf("migration changed pending head: %+v", got)
+			}
+			if _, err := reopened.Vocabulary(context.Background(), []string{"MEETING1.opus"}); err != nil {
+				t.Fatal(err)
+			}
+			version, err := reopened.userVersion()
+			if err != nil || version != annotationsSchemaVersion {
+				t.Fatalf("schema=%d err=%v", version, err)
+			}
+		})
+	}
+}
