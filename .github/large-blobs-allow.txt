@@ -5,8 +5,14 @@
 # than in git-lfs or a release artifact. Prefer git-lfs for media; prefer not
 # committing build output at all.
 #
-# Empty on purpose. `harness/go-talk-rotator/three-song-rotator` is a 15 MB
+# `harness/go-talk-rotator/three-song-rotator` is a 15 MB
 # compiled binary already on main and is deliberately NOT listed: the gate only
 # judges what a diff adds, so it stays green today, and the day somebody
 # rebuilds that file the gate will ask the question that was never asked when it
 # first landed.
+
+# The NCC 2026 talk page (D-777) serves these from public/. They cannot be LFS:
+# the Cloudflare build does not pull LFS, so it would publish the pointer file
+# (see the microsite exception in .gitattributes).
+cassini-microsite/public/nextcloud-conf-2026/voice-is-context--20260918T152131.opus
+cassini-microsite/public/nextcloud-conf-2026/voice-is-context-slides.pdf
