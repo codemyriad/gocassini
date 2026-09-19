@@ -1,4 +1,12 @@
-import type { StorageMigration, StorageMode, StorageStatus } from "./types";
+import type {
+  OpenRecording,
+  OpenRecordingPrincipal,
+  OpenRecordings,
+  RestrictResult,
+  StorageMigration,
+  StorageMode,
+  StorageStatus,
+} from "./types";
 
 // Who can see recordings, as sentences (D-757 / D-758).
 //
@@ -237,7 +245,7 @@ export function switchConfirmation(
       known
         ? `All ${plural(count, "recording")}, including the ones currently limited to room members, will become visible to anyone with an account on this Nextcloud.`
         : "All recordings, including the ones currently limited to room members, will become visible to anyone with an account on this Nextcloud.",
-      "Switching back later won't restrict them again.",
+      "Switching back later won't restrict them automatically, though you'll be able to restrict them again from this page.",
     ],
     pause: PAUSE_LONG,
     confirmLabel: known
@@ -409,4 +417,170 @@ export function occRecipe(status: StorageStatus | null): string[] {
     }
   }
   return lines;
+}
+
+// --- D-769: the recordings a migration left open ------------------------------
+//
+// Switching to Room members copies the existing archive into the Team
+// folder and leaves every recording readable by everyone, because a first pass
+// had no way to know a past meeting's audience. The app said so once, in the
+// page that performed the switch, and the sentence above explains why it could
+// not say it again.
+//
+// Now it can. The roster is captured while each meeting runs, so this section
+// can list what is still open and offer to narrow it — and, for the recordings
+// nothing can narrow, say so plainly instead of leaving a silence.
+
+export const OPEN_RECORDINGS_NONE = "";
+
+// openRecordingsSummary is the collapsed row. Its count is the review queue,
+// not the total number of recordings that happen to be open: recordings from
+// public conversations and ones an administrator deliberately ignored are
+// intentionally absent. A second clause names the automatic action only when
+// every listed recording has a captured audience.
+export function openRecordingsSummary(open: OpenRecordings | null): string {
+  const total = open?.recordings.length ?? 0;
+  if (total === 0) {
+    return OPEN_RECORDINGS_NONE;
+  }
+  const review = `${plural(total, "recording")} ${total === 1 ? "is" : "are"} open to everyone on this Nextcloud`;
+  const narrowable = open?.narrowable ?? 0;
+  if (narrowable === total) {
+    return `${review} and can be restricted to the members of each room`;
+  }
+  if (narrowable === 0) {
+    return `${review} and ${total === 1 ? "needs" : "need"} review`;
+  }
+  return `${review}; ${plural(narrowable, "recording")} can be restricted to the members of each room`;
+}
+
+// openRecordingLabel names the row. A meeting with no room name falls back to
+// its id, which is at least something an administrator can match against Files.
+export function openRecordingLabel(entry: OpenRecording): string {
+  const name = entry.room_name.trim();
+  return name === "" ? entry.id : name;
+}
+
+// openRecordingDate is the ISO day, deliberately: it is unambiguous in every
+// locale, and this row is a list to scan rather than prose to read.
+export function openRecordingDate(entry: OpenRecording): string {
+  const at = entry.created_at.trim();
+  if (at === "") {
+    return "";
+  }
+  const parsed = Date.parse(at);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+// principalLabel says what kind of thing a grant is when that is not obvious.
+// A user is just a name; a group or a team is a container, and an administrator
+// reading the row should be able to tell that its membership can change later.
+export function principalLabel(principal: OpenRecordingPrincipal): string {
+  if (principal.type === "group") {
+    return `${principal.id} (group)`;
+  }
+  if (principal.type === "circle") {
+    return `${principal.id} (team)`;
+  }
+  return principal.id;
+}
+
+// openRecordingAudienceLine is who the recording would become readable by.
+export function openRecordingAudienceLine(entry: OpenRecording): string {
+  if (!entry.narrowable || entry.audience.length === 0) {
+    return "";
+  }
+  return entry.audience.map(principalLabel).join(", ");
+}
+
+// openRecordingReasonLine explains an inert row. Each sentence has to answer
+// "so why is this here at all?", because a row with no control and no
+// explanation reads as a bug.
+export function openRecordingReasonLine(entry: OpenRecording): string {
+  if (entry.narrowable) {
+    return "";
+  }
+  switch (entry.reason) {
+    case "no_roster":
+      return "Recorded before Cassini kept a record of who was in the room.";
+    case "nobody_grantable":
+      return "Everyone in this call was a guest, so there is no account to restrict it to.";
+    case "no_job":
+      return "Cassini has no record of this recording, so it cannot tell who was in it.";
+    default:
+      return "Cassini cannot work out who was in this one.";
+  }
+}
+
+// restrictButtonLabel counts only the rows that can actually be acted on, which
+// is also all the checkboxes there are.
+export function restrictButtonLabel(selected: number): string {
+  if (selected === 0) {
+    return "Restrict to room members";
+  }
+  return `Restrict ${plural(selected, "recording")} to room members`;
+}
+
+// selectAllLabel carries the count, for the same reason every other number in
+// this section does: a number formatted in the markup is a claim no unit test
+// can reach.
+export function selectAllLabel(count: number): string {
+  return `Select all ${count}`;
+}
+
+export interface RestrictConfirmation {
+  title: string;
+  lines: string[];
+  confirmLabel: string;
+}
+
+// restrictConfirmation is the dialog. Deliberately NOT the danger variant that
+// switchConfirmation uses for widening: this narrows access, which is the
+// direction that cannot leak anything. It still confirms, because it changes
+// who can open something and the people losing access are not here to notice.
+export function restrictConfirmation(selected: number): RestrictConfirmation {
+  return {
+    title: selected === 1 ? "Restrict this recording?" : `Restrict ${selected} recordings?`,
+    lines: [
+      "Only the members of each room when it was recorded will be able to open it.",
+      "Everyone else on this Nextcloud loses access.",
+      "You can widen any of them again from Files → Advanced permissions.",
+    ],
+    confirmLabel: restrictButtonLabel(selected),
+  };
+}
+
+// restrictResultLine is what happened to one recording, in the words of the
+// thing that happened rather than the enum that carries it.
+export function restrictResultLine(result: RestrictResult, label: string): string {
+  switch (result.outcome) {
+    case "restricted": {
+      // Not plural(): "persons" is what that helper would produce, and this
+      // sentence is read by a person.
+      const who = result.grants === 1 ? "1 person" : `${result.grants} people`;
+      return `${label} — now restricted to ${who}.`;
+    }
+    case "refused_stale":
+      return `${label} — who was in it changed while this page was open; check the list and try again.`;
+    case "refused_empty":
+      return `${label} — nobody to restrict it to, so it was left as it is.`;
+    case "refused_not_open":
+      return `${label} — already limited, or no longer visible to everyone.`;
+    default:
+      return `${label} — could not be limited. ${result.detail}`.trim();
+  }
+}
+
+// ignoredSummary is the disclosure that keeps ignoring reversible. Without a
+// way back, dismissing a row would be the one irreversible thing in a section
+// whose whole job is making an irreversible-looking state fixable.
+export function ignoredSummary(open: OpenRecordings | null): string {
+  const count = open?.ignored.length ?? 0;
+  if (count === 0) {
+    return OPEN_RECORDINGS_NONE;
+  }
+  return `${count} ignored`;
 }

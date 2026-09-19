@@ -1,33 +1,13 @@
 ### Added
-- Cassini Setup now checks recording readiness, supports persistent Talk internal
-  secret configuration, provides handoff commands and follows a test recording
-  started through Talk through publication and administrator playback confirmation.
-- A non-recording `cassini talk-check` probes recording authentication and HPB
-  without joining a room or subscribing to media. Live results expire and are
-  rechecked after restart; test history remains available.
+- Recording checks in Operator → Publish pipeline guide administrators through
+  storage, processing, Talk authentication and handoff, followed by a real Talk
+  recording and playback confirmation. Existing recordings remain accessible.
+- Persist the Talk internal secret securely on Cassini's volume, with deployment
+  configuration taking precedence. Diagnostics expire and remain advisory;
+  missing local credentials are reported before recording starts.
+- Provide installation-specific host commands and copyable provider requests,
+  plus first-ExApp, ARM64/amd64 and AIO persistence guidance.
 
 ### Fixed
-- Known missing recording credentials are refused before recording starts with
-  an actionable setup message. Ordinary users see coarse setup guidance while
-  retaining access to existing recordings.
-- Installation guidance now describes CPU transcription, explicit storage
-  selection, AIO's integrated HaRP setup and recording handoff persistence.
-
-Review follow-up: mount readiness routes for root-path deployments; accept public
-and index.php Talk links while pinning probes to the configured backend; keep
-playback links on the current browser page; clarify expired incoming handoff
-checks; prioritize actionable findings and refresh shell health only on changes.
-
-Community-evidence iteration: repair forms ask separately about installation
-method and server access, with no assumed AIO deployment. Add sanitized provider
-requests, confirmed AIO/Docker/Compose/host/Snap command paths, explicit execution
-details, preflight tool checks, and a pre-install eligibility guide. Refresh the
-offline walkthrough with 19 screens. Automatic environment classification and
-in-app Talk configuration remain future work.
-
-Truthfulness review (Claude Opus and local review): distinguish saved credentials
-and historical playback from current verification; expire storage checks and
-refresh idle screens; use the same admin/public aggregate. Network diagnostics
-are advisory so repaired deployments are not refused using cached errors.
-Report unreadable setup and rejected backend identities explicitly, narrow
-processing and storage claims, and clarify deployment and CPU-test instructions.
+- Keep recording-setup edits responsive during background status refreshes and
+  prevent older responses from replacing newly saved configuration.

@@ -29,7 +29,7 @@ As a Nextcloud administrator, open **Administration settings → AppAPI**.
   send the request below to that administrator or provider.
 
 Another working ExApp is useful evidence, but it may use a different daemon or
-execution host. Cassini's published image currently needs a Linux amd64
+execution host. Cassini's published image currently needs a Linux amd64 or arm64
 execution host; CPU transcription works without a GPU. Check the host selected
 for Cassini, which may differ from the Nextcloud host.
 
@@ -84,7 +84,7 @@ credentials before sharing them; no secrets are needed in the request.
 > at stage / successful]. Nextcloud version: [version]. AppAPI version: [version].
 > Installation method, if known: [method]. The ExApp execution host is
 > [same as Nextcloud / separate / unknown], with architecture [value / unknown].
-> Please help complete Test deploy through Enabled on a Linux amd64 execution
+> Please help complete Test deploy through Enabled on a Linux amd64 or arm64 execution
 > host. Cassini can transcribe on CPU; a GPU is optional.
 > I can provide the failure time and a reviewed log excerpt separately.
 > Once the test passes, I will resume the Cassini installation and recording checks.

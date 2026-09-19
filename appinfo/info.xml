@@ -366,6 +366,12 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <access_level>USER</access_level>
       </route>
 
+      <route>
+        <url>^annotations\/batch\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+
       <!--
         PUBLIC: Talk recording-backend protocol. Lets the "Start recording"
         button in Talk reach Cassini through the AppAPI proxy when Cassini

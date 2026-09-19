@@ -107,7 +107,7 @@ jobs:
           if echo "$CHANGED" | grep -qE '^(cassini-viewer/|\.github/workflows/deploy-preview\.yml$)'; then
             ui_changed=true
           fi
-          if echo "$CHANGED" | grep -qE '^(cassini-go-recorder/|scripts/process-recordings\.sh$|bin/cassini$|\.github/workflows/deploy-preview\.yml$)'; then
+          if echo "$CHANGED" | grep -qE '^(cassini-annotations/|cassini-go-recorder/|deployment/sherpa/|scripts/process-recordings\.sh$|bin/cassini$|\.github/workflows/deploy-preview\.yml$)'; then
             processing_changed=true
           fi
 
@@ -339,7 +339,7 @@ jobs:
       - name: Runner preflight
         run: |
           set -euo pipefail
-          for cmd in git rclone ffmpeg ffprobe node npm nvidia-smi; do
+          for cmd in git rclone ffmpeg ffprobe node npm nvidia-smi cmake c++ curl tar patch unzip; do
             command -v "$cmd" >/dev/null || {
               echo "missing required command: $cmd" >&2
               exit 1
@@ -442,7 +442,7 @@ jobs:
           set -euo pipefail
           rclone copy "${EXPORT_DIR}/" \
             "codemyriad:cassini-processed/${ENCODED_BRANCH}/"
-          HASH="$(git rev-parse HEAD:cassini-go-recorder HEAD:scripts/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)"
+          HASH="$(git rev-parse HEAD:cassini-annotations HEAD:cassini-go-recorder HEAD:deployment/sherpa HEAD:scripts/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)"
           echo "$HASH" | rclone rcat "codemyriad:cassini-processed/${ENCODED_BRANCH}/.processing-hash"
 
       - name: Cleanup temp files

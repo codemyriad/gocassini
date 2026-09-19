@@ -21,8 +21,24 @@ import {
   switchingLead,
   switchingTitle,
   totalRecordingCount,
+  ignoredSummary,
+  openRecordingAudienceLine,
+  openRecordingDate,
+  openRecordingLabel,
+  openRecordingReasonLine,
+  openRecordingsSummary,
+  restrictButtonLabel,
+  restrictConfirmation,
+  restrictResultLine,
+  selectAllLabel,
 } from "./recordingAccess";
-import type { StorageModeOption, StorageSetupStep, StorageStatus } from "./types";
+import type {
+  OpenRecording,
+  OpenRecordings,
+  StorageModeOption,
+  StorageSetupStep,
+  StorageStatus,
+} from "./types";
 
 // Who can see recordings, as sentences (D-757 / D-758).
 //
@@ -89,6 +105,8 @@ function statusOf(over: Partial<StorageStatus> = {}): StorageStatus {
     preview: null,
     first_run: false,
     migration: null,
+    open_recordings: null,
+    restricted: [],
     ...over,
   };
 }
@@ -323,7 +341,7 @@ describe("confirming a switch", () => {
       title: "Switch to Everyone with a Nextcloud account?",
       lines: [
         "All 134 recordings, including the ones currently limited to room members, will become visible to anyone with an account on this Nextcloud.",
-        "Switching back later won't restrict them again.",
+        "Switching back later won't restrict them automatically, though you'll be able to restrict them again from this page.",
       ],
       pause: "Recording is paused while the switch runs, usually for a few minutes with this many.",
       confirmLabel: "Make 134 recordings visible to everyone",
@@ -522,5 +540,150 @@ describe("details for administrators", () => {
       "occ groupfolders:create Cassini",
     ]);
     expect(occRecipe(statusOf())).toEqual([]);
+  });
+});
+
+// --- D-769 -------------------------------------------------------------------
+
+function openRecordingOf(over: Partial<OpenRecording> = {}): OpenRecording {
+  return {
+    id: "job-1",
+    room_name: "Weekly sync",
+    created_at: "2026-03-14T09:00:00.000000000Z",
+    narrowable: true,
+    reason: "",
+    audience: [
+      { type: "user", id: "alice" },
+      { type: "group", id: "dev-team" },
+    ],
+    audience_digest: "digest-1",
+    ...over,
+  };
+}
+
+function openRecordingsOf(over: Partial<OpenRecordings> = {}): OpenRecordings {
+  return { recordings: [], ignored: [], narrowable: 0, ...over };
+}
+
+describe("open recordings summary", () => {
+  it("describes every recording that needs review and how many can be limited", () => {
+    const open = openRecordingsOf({
+      recordings: [
+        openRecordingOf({ id: "a" }),
+        openRecordingOf({ id: "b", narrowable: false, reason: "no_roster", audience: [] }),
+      ],
+      narrowable: 1,
+    });
+    expect(openRecordingsSummary(open)).toBe(
+      "2 recordings are open to everyone on this Nextcloud; 1 recording can be restricted to the members of each room",
+    );
+  });
+
+  it("says when every listed recording can be limited", () => {
+    const open = openRecordingsOf({ recordings: [openRecordingOf()], narrowable: 1 });
+    expect(openRecordingsSummary(open)).toBe(
+      "1 recording is open to everyone on this Nextcloud and can be restricted to the members of each room",
+    );
+  });
+
+  it("keeps unfixable recordings in the review queue without promising an action", () => {
+    const open = openRecordingsOf({
+      recordings: [openRecordingOf({ narrowable: false, reason: "no_roster", audience: [] })],
+      narrowable: 0,
+    });
+    expect(openRecordingsSummary(open)).toBe(
+      "1 recording is open to everyone on this Nextcloud and needs review",
+    );
+  });
+
+  it("says nothing when nothing is open, and when nobody has asked", () => {
+    expect(openRecordingsSummary(openRecordingsOf())).toBe("");
+    expect(openRecordingsSummary(null)).toBe("");
+  });
+});
+
+describe("open recording rows", () => {
+  it("falls back to the id when the room has no name", () => {
+    expect(openRecordingLabel(openRecordingOf())).toBe("Weekly sync");
+    expect(openRecordingLabel(openRecordingOf({ room_name: "  " }))).toBe("job-1");
+  });
+
+  it("dates rows in a form that does not depend on the reader's locale", () => {
+    expect(openRecordingDate(openRecordingOf())).toBe("2026-03-14");
+    expect(openRecordingDate(openRecordingOf({ created_at: "" }))).toBe("");
+    expect(openRecordingDate(openRecordingOf({ created_at: "not a date" }))).toBe("");
+  });
+
+  it("marks a container grant as one, because its membership can change later", () => {
+    expect(openRecordingAudienceLine(openRecordingOf())).toBe("alice, dev-team (group)");
+    expect(
+      openRecordingAudienceLine(openRecordingOf({ audience: [{ type: "circle", id: "board" }] })),
+    ).toBe("board (team)");
+  });
+
+  it("has no audience line for a row it cannot narrow", () => {
+    const inert = openRecordingOf({ narrowable: false, reason: "no_roster", audience: [] });
+    expect(openRecordingAudienceLine(inert)).toBe("");
+  });
+
+  it("explains every inert row, so none of them reads as a bug", () => {
+    for (const reason of ["no_roster", "nobody_grantable", "no_job"] as const) {
+      const line = openRecordingReasonLine(
+        openRecordingOf({ narrowable: false, reason, audience: [] }),
+      );
+      expect(line.length).toBeGreaterThan(0);
+      expect(line.endsWith(".")).toBe(true);
+    }
+    expect(openRecordingReasonLine(openRecordingOf())).toBe("");
+  });
+});
+
+describe("limiting recordings", () => {
+  it("counts the selection in the button", () => {
+    expect(restrictButtonLabel(0)).toBe("Restrict to room members");
+    expect(restrictButtonLabel(1)).toBe("Restrict 1 recording to room members");
+    expect(restrictButtonLabel(4)).toBe("Restrict 4 recordings to room members");
+  });
+
+  it("confirms without dressing a narrowing up as a danger", () => {
+    const confirmation = restrictConfirmation(3);
+    expect(confirmation.title).toBe("Restrict 3 recordings?");
+    expect(confirmation.confirmLabel).toBe("Restrict 3 recordings to room members");
+    // The way back has to be on the dialog: this is the one thing the section
+    // cannot undo for them.
+    expect(confirmation.lines.some((line) => line.includes("Advanced permissions"))).toBe(true);
+  });
+
+  it("reports each outcome in the words of what happened", () => {
+    const label = "Weekly sync";
+    expect(
+      restrictResultLine({ id: "a", outcome: "restricted", grants: 2, detail: "" }, label),
+    ).toBe("Weekly sync — now restricted to 2 people.");
+    expect(
+      restrictResultLine({ id: "a", outcome: "restricted", grants: 1, detail: "" }, label),
+    ).toBe("Weekly sync — now restricted to 1 person.");
+    expect(
+      restrictResultLine({ id: "a", outcome: "refused_stale", grants: 0, detail: "" }, label),
+    ).toContain("changed while this page was open");
+    expect(
+      restrictResultLine({ id: "a", outcome: "refused_empty", grants: 0, detail: "" }, label),
+    ).toContain("nobody to restrict it to");
+    expect(
+      restrictResultLine({ id: "a", outcome: "failed", grants: 0, detail: "HTTP 500" }, label),
+    ).toContain("HTTP 500");
+  });
+});
+
+describe("the ignored disclosure", () => {
+  it("appears only when something is ignored", () => {
+    expect(ignoredSummary(openRecordingsOf())).toBe("");
+    expect(ignoredSummary(null)).toBe("");
+    expect(ignoredSummary(openRecordingsOf({ ignored: [openRecordingOf()] }))).toBe("1 ignored");
+  });
+});
+
+describe("select-all label", () => {
+  it("carries its own count, like every other number in this section", () => {
+    expect(selectAllLabel(4)).toBe("Select all 4");
   });
 });

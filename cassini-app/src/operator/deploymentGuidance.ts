@@ -59,7 +59,7 @@ export type RepairPurpose = 'handoff' | 'secret' | 'hpb';
 export function providerRequest(purpose:RepairPurpose, report:RecordingReadiness):string {
   const request = {
     handoff:'Please connect Nextcloud Talk to the installed Cassini recording backend. Review the existing recorder configuration, keep a backup, and make the change persistent across restarts. Confirm where Nextcloud, HPB and the ExApp deployment engine run.',
-    secret:"Please help configure Cassini with the Talk signaling server's internal-client secret ([clients] internalsecret). This differs from Talk's recording-backend and signaling-backend secrets. Enter it directly in Cassini Setup or deployment configuration through an approved secure channel; do not reply with the secret in this ticket.",
+    secret:"Please help configure Cassini with the Talk signaling server's internal-client secret ([clients] internalsecret). This differs from Talk's recording-backend and signaling-backend secrets. Enter it directly in Cassini → Operator → Publish pipeline or deployment configuration through an approved secure channel; do not reply with the secret in this ticket.",
     hpb:'Please verify whether Nextcloud Talk has a standalone signaling server with HPB media support and internal-client authentication available for Cassini recording. If not, please advise whether you can enable or provide this capability and configure Talk to use it.',
   }[purpose];
   const states:Record<string,string>={passed:'Passed',needs_action:'Needs action',not_verified:'Not verified'};

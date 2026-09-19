@@ -241,9 +241,10 @@ type AttributionProvenance struct {
 }
 
 type provStep struct {
-	Backend string `json:"backend"`
-	Model   string `json:"model,omitempty"`
-	Device  string `json:"device,omitempty"`
+	Backend           string `json:"backend"`
+	Model             string `json:"model,omitempty"`
+	Device            string `json:"device,omitempty"`
+	ReferenceFrontend *bool  `json:"referenceFrontend,omitempty"`
 	// Hints is set on a speech-to-text step whose decoder was biased towards a
 	// configured vocabulary. Absent means the pass ran unbiased, which is what
 	// every build before this feature did.
@@ -315,9 +316,10 @@ type ManifestInput struct {
 	SummaryModel string
 	HasSummary   bool
 
-	Additional  []AdditionalTranscript
-	Attribution *AttributionProvenance
-	WordTimings *WordTimingProvenance
+	Additional        []AdditionalTranscript
+	Attribution       *AttributionProvenance
+	WordTimings       *WordTimingProvenance
+	ReferenceFrontend *bool
 }
 
 func WriteManifest(path string, in ManifestInput) error {
@@ -335,7 +337,7 @@ func WriteManifest(path string, in ManifestInput) error {
 		primaryID := sanitizeTranscriptID(string(in.STTModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 			ID: primaryID, Path: "transcript.words.v1.json", Default: true,
-			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, Hints: in.Hints},
+			Provenance: &provStep{Backend: in.STTBackend, Model: string(in.STTModelID), Device: in.STTDevice, ReferenceFrontend: in.ReferenceFrontend, Hints: in.Hints},
 		})
 		for _, extra := range in.Additional {
 			extraBackend := extra.Backend
@@ -356,10 +358,11 @@ func WriteManifest(path string, in ManifestInput) error {
 
 	prov := &provenanceInfo{
 		SpeechToText: &provStep{
-			Backend: in.STTBackend,
-			Model:   string(in.STTModelID),
-			Device:  in.STTDevice,
-			Hints:   in.Hints,
+			Backend:           in.STTBackend,
+			Model:             string(in.STTModelID),
+			Device:            in.STTDevice,
+			ReferenceFrontend: in.ReferenceFrontend,
+			Hints:             in.Hints,
 		},
 		Attribution: in.Attribution,
 		// nil here writes no wordTimings key at all, which is what a consumer

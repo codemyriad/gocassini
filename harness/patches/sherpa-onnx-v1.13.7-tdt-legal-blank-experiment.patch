@@ -1,0 +1,98 @@
+--- a/sherpa-onnx/csrc/offline-transducer-modified-beam-search-nemo-decoder.cc
++++ b/sherpa-onnx/csrc/offline-transducer-modified-beam-search-nemo-decoder.cc
+@@ -6,6 +6,9 @@
+ 
+ #include <algorithm>
+ #include <deque>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
+ #include <utility>
+ #include <vector>
+ 
+@@ -99,6 +102,11 @@
+   // For TDT models, we need to know the number of duration bins
+   // We'll detect this from the joiner output size on first run
+   int32_t num_durations = 0;
++  // Diagnostic experiment only; preserve upstream behavior unless opted in.
++  const char *legal_blank_env = std::getenv("CASSINI_TDT_LEGAL_BLANK");
++  const bool legal_blank = legal_blank_env && std::strcmp(legal_blank_env, "1") == 0;
++  const char *trace_env = std::getenv("CASSINI_TDT_TRACE");
++  const bool trace = trace_env && std::strcmp(trace_env, "1") == 0;
+ 
+   std::vector<ContextGraphPtr> context_graphs(batch_size, nullptr);
+ 
+@@ -135,6 +143,9 @@
+     }
+ 
+     int32_t this_num_frames = utterance_lengths[b];
++    int64_t expansions = 0, zero_duration_expansions = 0;
++    int64_t blank_zero_candidates = 0, corrected_blank_candidates = 0;
++    double blank_score_correction = 0.0;
+     const float *this_encoder = encoder_data + b * num_frames * encoder_dim;
+ 
+     // Initialize with single hypothesis
+@@ -291,6 +302,19 @@
+           duration_log_prob = duration_logits[predicted_skip];
+         }
+ 
++        ++expansions;
++        if (is_tdt_ && predicted_skip == 0) ++zero_duration_expansions;
++        int32_t blank_skip = std::max(1, predicted_skip);
++        float blank_duration_log_prob = duration_log_prob;
++        if (legal_blank && is_tdt_ && num_durations > 1) {
++          // Parakeet's duration bins are contiguous [0, 1, 2, ...].
++          // A blank must consume time: choose and score an actual positive bin.
++          blank_skip = static_cast<int32_t>(std::distance(
++              duration_logits, std::max_element(duration_logits + 1,
++                                                duration_logits + num_durations)));
++          blank_duration_log_prob = duration_logits[blank_skip];
++        }
++
+         // Create candidate hypotheses
+         for (int32_t idx : top_k_tokens) {
+           int32_t token = idx;
+@@ -312,14 +336,23 @@
+           float context_score = 0.0f;
+ 
+           if (token == blank_id || token == unk_id_) {
++            if (token == blank_id && is_tdt_ && predicted_skip == 0) {
++              ++blank_zero_candidates;
++            }
++            if (token == blank_id && legal_blank && is_tdt_ && num_durations > 1) {
++              new_hyp.log_prob = token_logits[token] + blank_duration_log_prob + hyp.log_prob;
++              if (predicted_skip == 0) ++corrected_blank_candidates;
++              blank_score_correction += blank_duration_log_prob - duration_log_prob;
++            }
+             // Blank or unk: keep decoder state, advance frame
+             new_hyp.decoder_states.reserve(hyp.decoder_states.size());
+             for (const auto &state : hyp.decoder_states) {
+               new_hyp.decoder_states.push_back(Clone(allocator, &state));
+             }
+             // For blank/unk in TDT, always advance by at least 1
+-            new_hyp.frame_offset =
+-                hyp.frame_offset + std::max(1, predicted_skip);
++            new_hyp.frame_offset = hyp.frame_offset +
++                ((token == blank_id && legal_blank && is_tdt_) ? blank_skip
++                                                             : std::max(1, predicted_skip));
+             new_hyp.num_symbols = 0;
+           } else {
+             // Non-blank: add token, use new decoder state
+@@ -399,6 +432,17 @@
+                            return a.log_prob < b.log_prob;
+                          });
+ 
++    if (trace) {
++      std::fprintf(stderr,
++          "CASSINI_TDT_TRACE legal_blank=%d tdt=%d frames=%d expansions=%lld zero_duration=%lld blank_zero=%lld corrected=%lld score_delta_sum=%.6f best_tokens=%zu best_score=%.6f\n",
++          legal_blank, is_tdt_, this_num_frames,
++          static_cast<long long>(expansions),
++          static_cast<long long>(zero_duration_expansions),
++          static_cast<long long>(blank_zero_candidates),
++          static_cast<long long>(corrected_blank_candidates), blank_score_correction,
++          best_it == cur_hyps.end() ? size_t{0} : best_it->ys.size(),
++          best_it == cur_hyps.end() ? 0.0 : static_cast<double>(best_it->log_prob));
++    }
+     if (best_it != cur_hyps.end()) {
+       // Convert int32_t to int64_t for tokens
+       results[b].tokens.assign(best_it->ys.begin(), best_it->ys.end());

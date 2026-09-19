@@ -61,6 +61,14 @@ export function roomLabelOf(meeting: MeetingCatalogEntry): string {
   return meeting.roomName ?? meeting.roomId ?? NO_ROOM_LABEL;
 }
 
+// Whether this meeting says which room it was recorded in. The rail needs the
+// "No room" bucket, because an absence is something to filter by; a meeting's
+// own header does not, because naming the absence of a thing tells the reader
+// nothing (D-775).
+export function hasRoom(meeting: MeetingCatalogEntry): boolean {
+  return (meeting.roomName ?? meeting.roomId ?? "") !== "";
+}
+
 // buildRoomBuckets derives the rail's room list from the catalog itself. There
 // is no separate room registry in the catalog format — a room exists, as far as
 // the viewer is concerned, because a meeting says it does.

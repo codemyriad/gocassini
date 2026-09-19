@@ -19,6 +19,7 @@
   let provisioningURL = "";
   let alive = true;
   let polling = false;
+  let reportVersion = 0;
 
   async function load(check = false) {
     if (busy || polling) return;
@@ -34,7 +35,9 @@
     finally { busy = false; }
   }
   async function save(payload: RecordingSetupUpdate) {
-    if (busy || polling) return;
+    if (busy) return;
+    // A background GET must neither swallow an edit nor overwrite its response.
+    ++reportVersion;
     busy = true; error = "";
     try {
       const next = await operatorClient.updateRecordingSetup(payload);
@@ -61,15 +64,16 @@
     const timer = window.setInterval(async () => {
       if (busy || polling || !report || document.hidden) return;
       polling = true;
+      const version = reportVersion;
       try {
         const next = await operatorClient.getReadiness();
-        if (alive) {
+        if (alive && version === reportVersion) {
           const changed = readinessHealthKey(report) !== readinessHealthKey(next);
           report = next; stale = false; error = "";
           if (changed) notifySetupChanged();
         }
       }
-      catch { if (alive) { stale = true; error = "Could not refresh recording checks. Check the connection and try again."; } }
+      catch { if (alive && version === reportVersion) { stale = true; error = "Could not refresh recording checks. Check the connection and try again."; } }
       finally { polling = false; }
     }, 5000);
     return () => { alive = false; secret = ""; unsubscribe(); window.clearInterval(timer); };
@@ -81,7 +85,7 @@
     <h2 id="recording-readiness-title" class="text-lg font-semibold">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
     <button class="btn btn-sm" disabled={busy || polling} on:click={() => load(true)}>{busy ? "Checking…" : "Check again"}</button>
   </div>
-  <p class="mt-2 text-sm text-base-content/70">Check the connection, choose recording storage, then verify a short recording through Talk.</p>
+  <p class="mt-2 text-sm text-base-content/70">Check the connection and recording storage, then verify a short recording through Talk.</p>
   {#if error}<p role="alert" class="mt-3 text-error">{error}</p>{/if}
   {#if report}
     <ul class="mt-4 divide-y divide-base-300">
@@ -148,7 +152,7 @@
             {/if}
           {/if}
         {:else if panel === "settings"}
-          <p class="text-sm">Open Operator → Settings → Transcription to review the selected quality and device. CPU processing is supported; a GPU is optional.</p>
+          <p class="text-sm">Review the transcription quality and device below in Publish pipeline. CPU processing is supported; a GPU is optional.</p>
         {:else}
           <p class="text-sm">Ask your server administrator to check Cassini’s persistent volume and restore recording-setup.json from backup, then restart Cassini and check again.</p>
         {/if}

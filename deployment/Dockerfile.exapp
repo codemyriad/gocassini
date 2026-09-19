@@ -67,8 +67,10 @@ RUN set -eux; \
  ls -la /out/models /out/vad/
 
 FROM golang:1.24-bookworm AS go-builder
+ARG TARGETARCH
 WORKDIR /src
 
+COPY cassini-annotations ./cassini-annotations
 COPY cassini-go-recorder/go.mod cassini-go-recorder/go.sum ./cassini-go-recorder/
 COPY cassini-operator/go.mod cassini-operator/go.sum ./cassini-operator/
 RUN go -C cassini-go-recorder mod download \
@@ -76,19 +78,17 @@ RUN go -C cassini-go-recorder mod download \
 
 COPY cassini-go-recorder ./cassini-go-recorder
 COPY cassini-operator ./cassini-operator
-RUN set -eux; \
- mkdir -p /out/lib; \
- go -C cassini-go-recorder build -o /out/cassini ./cmd/cassini; \
- go -C cassini-operator build -o /out/cassini-operator ./cmd/cassini-operator; \
- sherpa_root="$(go list -C cassini-go-recorder -m -f '{{.Dir}}' github.com/k2-fsa/sherpa-onnx-go-linux)"; \
- case "$(go env GOARCH)" in \
-   amd64) sherpa_triplet='x86_64-unknown-linux-gnu' ;; \
-   arm64) sherpa_triplet='aarch64-unknown-linux-gnu' ;; \
-   arm) sherpa_triplet='arm-unknown-linux-gnueabihf' ;; \
-   *) echo "unsupported GOARCH: $(go env GOARCH)" >&2; exit 1 ;; \
- esac; \
- cp "$sherpa_root/lib/$sherpa_triplet/libsherpa-onnx-c-api.so" /out/lib/; \
- cp "$sherpa_root/lib/$sherpa_triplet/libonnxruntime.so" /out/lib/
+RUN go -C cassini-go-recorder build -o /out/cassini ./cmd/cassini \
+ && go -C cassini-operator build -o /out/cassini-operator ./cmd/cassini-operator \
+ && case "${TARGETARCH:-amd64}" in \
+      amd64) triplet=x86_64-unknown-linux-gnu ;; \
+      arm64) triplet=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH:-amd64}" >&2; exit 1 ;; \
+    esac \
+ && sherpa_dir=$(go -C cassini-go-recorder list -m -f '{{.Dir}}' github.com/k2-fsa/sherpa-onnx-go-linux) \
+ && mkdir -p /out/lib \
+ && cp "$sherpa_dir/lib/$triplet"/* /out/lib/ \
+ && echo "sherpa=1.13.7+cassini-parakeet-v3-reference-v1" > /out/lib/cassini-native-buildinfo.txt
 
 # Web workspace builder (D-420): cassini-app (the in-NC shell) consumes
 # cassini-viewer (the viewing layer) via the npm workspace, so both install

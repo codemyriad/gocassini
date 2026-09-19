@@ -60,9 +60,11 @@ checking. Do not change proxy routing solely because an icon is absent.
 
 ## Complete the recording checks
 
-1. Choose a storage mode and let the existing storage workflow create the
-   service account and, if selected, the access-controlled Team folder.
-   Cassini does not choose who may read recordings for you.
+1. Review **Who can see recordings** below the checks. Cassini resolves storage
+   automatically; no mode choice is required to start recording. A fresh install
+   makes recordings visible to every account on the instance. To restrict them to
+   meeting participants, use that section to enable the required apps and change
+   the audience. Complete any service-account repair it requests.
 2. Open **Talk authentication**. Supply the signaling server's `[clients] internalsecret`. An AIO host administrator retrieves it with
    `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. This is different
    from the recording-backend secret, which Cassini generates itself.
@@ -98,9 +100,7 @@ replaced. Include this file in your normal volume backup.
 ## Test the full path
 
 Press **Prepare test**, open the test room, start a call and use **Talk's**
-Start recording action. Speak for about 20 seconds and stop recording. The
-recording checks
-follows the first matching recording started through Talk after the test was
+Start recording action. Speak for about 20 seconds and stop recording. The recording checks follow the first matching recording started through Talk after the test was
 prepared. A job started directly through the operator does not count.
 
 After publishing finishes, open the recording and verify the audio and

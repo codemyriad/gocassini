@@ -290,7 +290,8 @@ func parseMeetingsListDateLabel(label string) (time.Time, bool) {
 // thing only, that the caller may genuinely read no matching meeting.
 // tags is the tag index, nil when it could not be opened: a `tag` request is
 // then 503, never an unnarrowed list.
-func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWriter, r *http.Request, client *http.Client, caller string, tags *annotationStore, logger *log.Logger) {
+func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWriter, r *http.Request, client *http.Client, caller string, deps searchDeps, logger *log.Logger) {
+	tags := deps.annotations
 	filter, err := parseMeetingsListFilter(r.URL.Query())
 	if err != nil {
 		// Validated BEFORE the network calls: a malformed date is the caller's
@@ -341,6 +342,11 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 	}
 
 	response := meetingsListResponse{Version: envelope.Version, Meetings: envelope.Meetings}
+	if deps.importAnnotations != nil {
+		if entries, err := decodeCatalogEntries(resolved.body); err == nil {
+			deps.importAnnotations(ctx, caller, entries)
+		}
+	}
 	if response.Version == "" {
 		response.Version = catalogSchemaVersion
 	}

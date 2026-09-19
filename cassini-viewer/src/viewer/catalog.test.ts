@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   filterMeetingCatalogEntries,
   formatMeetingDate,
+  hasMeetingDate,
   formatMeetingDateShort,
   loadMeetingCatalog,
   parseDateLabelMs,
@@ -628,5 +629,21 @@ describe("formatMeetingDate", () => {
     expect(formatMeetingDate("01KWEKPZVEJWP9BYBPBX9ZRNDQ")).toBe(
       "01KWEKPZVEJWP9BYBPBX9ZRNDQ",
     );
+  });
+});
+
+
+describe("hasMeetingDate", () => {
+  it("is true for a catalog date, with or without a time", () => {
+    expect(hasMeetingDate("2026-03-13 12:00")).toBe(true);
+    expect(hasMeetingDate("2026-03-13")).toBe(true);
+  });
+
+  it("is false for a label that is not a date", () => {
+    // formatMeetingDate returns these unchanged, which put a meeting's id under
+    // a calendar icon in the header (D-775).
+    expect(hasMeetingDate("talk")).toBe(false);
+    expect(hasMeetingDate("recording")).toBe(false);
+    expect(hasMeetingDate("")).toBe(false);
   });
 });

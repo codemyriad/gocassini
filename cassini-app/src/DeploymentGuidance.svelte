@@ -48,7 +48,7 @@
       <p class="text-sm">On the Docker host running AIO’s Talk container, run the command below. Paste the value into the Internal secret field above. The value is sensitive; do not include it in a support ticket.</p>
       <pre class="overflow-auto rounded bg-base-100 p-3 text-xs">docker exec nextcloud-aio-talk printenv INTERNAL_SECRET</pre>
     {:else}
-      <p class="text-sm">Ask whoever manages Talk’s signaling server for its <code>[clients] internalsecret</code> in its signaling configuration (often <code>server.conf</code>). It may be on a different host from Nextcloud or Cassini. Ask them to enter it directly in Setup if you cannot access that server.</p>
+      <p class="text-sm">Ask whoever manages Talk’s signaling server for its <code>[clients] internalsecret</code> in its signaling configuration (often <code>server.conf</code>). It may be on a different host from Nextcloud or Cassini. Ask them to enter it directly in Operator → Publish pipeline if you cannot access that server.</p>
     {/if}
     <p class="text-sm">If no signaling server exists yet, arrange one first. If one exists but Talk is not connected to it, ask its administrator to configure that connection. Choose a test room and use Test connection after saving the secret.</p>
   {:else}

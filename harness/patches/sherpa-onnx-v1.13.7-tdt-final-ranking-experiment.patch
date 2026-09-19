@@ -1,0 +1,47 @@
+--- a/sherpa-onnx/csrc/offline-transducer-modified-beam-search-nemo-decoder.cc
++++ b/sherpa-onnx/csrc/offline-transducer-modified-beam-search-nemo-decoder.cc
+@@ -107,6 +107,9 @@
+   const bool legal_blank = legal_blank_env && std::strcmp(legal_blank_env, "1") == 0;
+   const char *trace_env = std::getenv("CASSINI_TDT_TRACE");
+   const bool trace = trace_env && std::strcmp(trace_env, "1") == 0;
++  const char *score_norm_env = std::getenv("CASSINI_TDT_SCORE_NORM");
++  const bool score_norm = score_norm_env && std::strcmp(score_norm_env, "1") == 0;
++
+ 
+   std::vector<ContextGraphPtr> context_graphs(batch_size, nullptr);
+ 
+@@ -425,11 +428,31 @@
+       }
+     }
+ 
+-    // Find best hypothesis
++    // Optional final ranking only, matching NeMo's score_norm denominator:
++    // NeMo y_sequence includes the initial blank; sherpa ys does not.
++    auto final_score = [&](const NeMoHypothesis &hyp) {
++      return score_norm && is_tdt_
++                 ? hyp.log_prob / static_cast<float>(hyp.ys.size() + 1)
++                 : hyp.log_prob;
++    };
++    if (trace) {
++      for (size_t i = 0; i < cur_hyps.size(); ++i) {
++        const auto &hyp = cur_hyps[i];
++        std::fprintf(stderr,
++            "CASSINI_TDT_FINAL index=%zu tokens=%zu frame=%d raw=%.6f normalized=%.6f score_norm=%d token_ids=",
++            i, hyp.ys.size(), hyp.frame_offset, static_cast<double>(hyp.log_prob),
++            static_cast<double>(hyp.log_prob) / (hyp.ys.size() + 1), score_norm);
++        const size_t limit = std::min(size_t{8}, hyp.ys.size());
++        for (size_t k = 0; k < limit; ++k) {
++          std::fprintf(stderr, "%s%d", k == 0 ? "" : ",", hyp.ys[k]);
++        }
++        std::fprintf(stderr, "%s\n", hyp.ys.size() > limit ? ",..." : "");
++      }
++    }
+     auto best_it =
+         std::max_element(cur_hyps.begin(), cur_hyps.end(),
+-                         [](const NeMoHypothesis &a, const NeMoHypothesis &b) {
+-                           return a.log_prob < b.log_prob;
++                         [&](const NeMoHypothesis &a, const NeMoHypothesis &b) {
++                           return final_score(a) < final_score(b);
+                          });
+ 
+     if (trace) {

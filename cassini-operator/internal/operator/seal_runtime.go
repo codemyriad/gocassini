@@ -56,6 +56,9 @@ func (rt *Runtime) sealWorker() {
 // would advertise a canonical artifact that was never promoted, which is why
 // the promotion comes first.
 func (rt *Runtime) runSealJob(task sealTask) {
+	if err := rt.waitForRecordingIdle(); err != nil {
+		return
+	}
 	startedAt := nowUTCString()
 	claimed, err := rt.store.ClaimSealRunning(context.Background(), task.JobID, startedAt)
 	if err != nil {

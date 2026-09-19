@@ -15,6 +15,12 @@ import type {
   SettingsQuality,
   SettingsUpdate,
   AppInstallOutcome,
+  OpenRecording,
+  OpenRecordingPrincipal,
+  OpenRecordingReason,
+  OpenRecordings,
+  RestrictOutcome,
+  RestrictResult,
   StorageArchiveFacts,
   StorageMigration,
   StorageMode,
@@ -290,6 +296,50 @@ export class OperatorClient {
     );
   }
 
+  // listOpenRecordings asks which recordings are readable by every account and
+  // which of those could be limited to the people who were in the call (D-769).
+  //
+  // A POST because it PROBES — the operator reads the Team folder's permissions
+  // to answer it — and GET /storage is a page an administrator may refresh, so
+  // it never probes anything.
+  async listOpenRecordings(): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "list_unrestricted" }),
+      }),
+    );
+  }
+
+  // restrictRecordings limits each named recording to the audience captured
+  // when it was recorded.
+  //
+  // The digest, not the audience: what goes back is a fingerprint of what this
+  // page displayed, so the operator can refuse a row whose audience has changed
+  // since — and so the browser never gets to say who may read a recording.
+  async restrictRecordings(meetings: { id: string; audience_digest: string }[]): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "restrict_meetings", meetings }),
+      }),
+    );
+  }
+
+  // ignoreRecordings dismisses recordings from that list, or restores them.
+  // Nothing in Nextcloud changes: it is a note that somebody has looked.
+  async ignoreRecordings(ids: string[], ignored: boolean): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "ignore_recordings", ids, ignored }),
+      }),
+    );
+  }
+
   // The insight templates this deployment ships (D-718). Read-only: the
   // prompts are compiled into the recorder image, so there is no PUT.
   async listInsightWorkflows(): Promise<InsightWorkflow[]> {
@@ -501,7 +551,97 @@ function normalizeStorage(raw: unknown): StorageStatus {
     preview: normalizeStoragePreview(value.preview),
     // D-757: see normalizeRecordingAccess at the end of this file.
     ...normalizeRecordingAccess(value),
+    // D-769. Null rather than an empty list when the key is absent: "nobody
+    // asked" and "there are none" are different answers, and only one of them
+    // means the section has nothing to show.
+    open_recordings: normalizeOpenRecordings(value.open_recordings),
+    restricted: normalizeRestrictResults(value.restricted),
   };
+}
+
+// --- D-769 ---------------------------------------------------------------
+
+function normalizeOpenRecordings(value: unknown): OpenRecordings | null {
+  if (value === null || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  return {
+    recordings: normalizeOpenRecordingList(row.recordings),
+    ignored: normalizeOpenRecordingList(row.ignored),
+    narrowable: asCount(row.narrowable),
+  };
+}
+
+function normalizeOpenRecordingList(value: unknown): OpenRecording[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((entry) => {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    return {
+      id: asString(row.id),
+      room_name: asString(row.room_name),
+      created_at: asString(row.created_at),
+      // Not narrowable unless the operator said so. This boolean decides
+      // whether a row offers to change who can read a recording, so an
+      // operator that did not say must not be read as saying yes.
+      narrowable: row.narrowable === true,
+      reason: asOpenRecordingReason(row.reason),
+      audience: normalizeAudience(row.audience),
+      audience_digest: asString(row.audience_digest),
+    };
+  });
+}
+
+function asOpenRecordingReason(value: unknown): OpenRecordingReason {
+  const reason = asString(value);
+  if (reason === "no_job" || reason === "no_roster" || reason === "nobody_grantable") {
+    return reason;
+  }
+  return "";
+}
+
+function normalizeAudience(value: unknown): OpenRecordingPrincipal[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => {
+      const row = (entry ?? {}) as Record<string, unknown>;
+      return { type: asString(row.type), id: asString(row.id) };
+    })
+    .filter((principal) => principal.id !== "");
+}
+
+function normalizeRestrictResults(value: unknown): RestrictResult[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((entry) => {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    return {
+      id: asString(row.id),
+      outcome: asRestrictOutcome(row.outcome),
+      grants: asCount(row.grants),
+      detail: asString(row.detail),
+    };
+  });
+}
+
+function asRestrictOutcome(value: unknown): RestrictOutcome {
+  const outcome = asString(value);
+  switch (outcome) {
+    case "restricted":
+    case "refused_stale":
+    case "refused_empty":
+    case "refused_not_open":
+      return outcome;
+    default:
+      // An outcome this build does not recognise is not a success. Treating an
+      // unknown answer as "failed" is the direction that cannot mislead.
+      return "failed";
+  }
 }
 
 function normalizeServiceAccount(value: unknown): StorageServiceAccount {

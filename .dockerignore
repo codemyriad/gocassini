@@ -8,3 +8,7 @@
 # Dockerfile never COPYs them in.
 .git
 harness/media/processed
+
+# Native developer builds are rebuilt in dedicated image stages.
+**/.build-cache
+cassini-go-recorder/dist

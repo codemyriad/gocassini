@@ -211,7 +211,7 @@ publish when the git tag and the manifest version disagree, or when
 When the deploy daemon's compute device is CUDA, AppAPI tries
 `<image-tag>-cuda` first and can fall back to the plain image. Cassini's Auto
 policy uses CUDA when its runtime and device are usable, and CPU otherwise.
-Setup reports the selected processing device. An explicit CUDA override on a
+The recording checks report the selected processing device. An explicit CUDA override on a
 host without usable CUDA blocks processing until corrected.
 
 The checked-in manifest already pins the current release; to install a
@@ -234,7 +234,7 @@ CASSINI_SECRET="$(openssl rand -hex 32)"
 
 #### Finding the signaling internal secret
 
-You may save the internal secret in **Setup → Talk authentication** after
+You may save the internal secret in **Operator → Publish pipeline → Talk authentication** after
 installation instead of supplying a deployment environment variable. The
 environment variable, when supplied, takes precedence.
 
@@ -860,7 +860,7 @@ operator's ADMIN-only provisioning endpoint returns the ready-to-apply
 `recording_servers` value (including the self-generated secret), so you never
 copy a secret by hand.
 
-**Back up the current backend first**, then switch. Setup → Connect Talk generates
+**Back up the current backend first**, then switch. Operator → Publish pipeline → Connect Talk generates
 these commands for your instance. AIO users must also follow the
 [restart persistence instructions](recording-readiness.md#aio-restart-persistence).
 

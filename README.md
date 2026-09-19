@@ -1,241 +1,125 @@
 # Cassini
 
-`cassini` is the product CLI for recording Nextcloud Talk meetings into one
-portable meeting file that can later be loaded in the web app.
+> [!WARNING]
+> **Cassini is in beta.** We run it daily on our own Nextcloud, but expect rough edges. Read the [changelog](CHANGELOG.md) before you update, and please [open an issue](https://github.com/codemyriad/gocassini/issues) if something breaks.
 
-The normal user flow is:
+**Cassini is a recording backend for Nextcloud Talk that puts you in control of your meeting data.**
 
-1. point Cassini at a meeting
-2. let Cassini record and process it
-3. end up with one portable `.opus` file
+- **Record and transcribe on your own infrastructure.** Cassini runs on the hardware you give
+  it. Speech-to-text runs in-process with _sherpa-onnx_ and _NVIDIA Parakeet_
+  models, from a CPU or a CUDA image.
+- **AI is opt-in.** Summaries and LLM-powered insights run only once you configure a model -
+  local or third-party - in the app.
+- **A self-contained, portable meeting file**: audio, transcript, summary and
+  tags are packed into one file, so you can take your meetings with you.
 
-Cassini still uses `.run`, `.meeting`, and `.site` artifacts internally, but
-those are now implementation detail and debugging surfaces rather than the main
-product story.
+Meetings are where decisions get made, and these are easily lost unless someone writes it down afterwards. We believe voice is the most valuable context a team produces, and the least captured. In an LLM age you should be able to build on it without handing your meetings to a third party.
 
-## Repo Entry Point
+## What you get
 
-From this source checkout, use:
+Cassini is an ExApp which can be installed from the Nextcloud App Store. Once it's running, it shows up as a new app icon inside your Nextcloud suite:
+
+![Browsing recorded meetings inside Nextcloud](img/screenshots/gocassini-browse.png)
+
+- Works with any Nextcloud Talk room, group calls and 1:1 calls. Just press _Record_ and Cassini is listening.
+- Transcripts and synced audio playback with speaker IDs.
+- Access control scoped to the room: a published meeting is readable by that room's participants and no one else, using Nextcloud Files permissions.
+- One portable meeting file per meeting that can be opened without Cassini.
+- Search and tags across meetings.
+- Configure in-app AI providers for per-meeting summaries and cross-meeting insights.
+- A CLI and an agent skill, to build workflows with an external harness.
+
+## Limitations
+
+- **No live transcription or captions.** Transcription starts when the call ends, so it never competes with the call for resources.
+- **Audio only.** Cassini records the video streams, but the meeting file, transcript and viewer are audio only for now.
+
+## What leaves your server
+
+Recording and transcription run on your own hardware. No audio and no transcript leaves the host for those steps.
+
+If you configure a language model, transcript text goes to it in two cases: automatically, to summarise each meeting, and on request, when someone asks a question about meetings they have access to.
+
+There is no telemetry.
+
+Full details are in [docs/privacy.md](docs/privacy.md).
+
+## The meeting file
+
+Each published meeting is one ordinary `.opus` file. Any audio player plays it.
+
+The transcript, speaker names, summary and tags travel inside the same file, so a meeting you copy off your server is still a complete meeting, and it stays readable without Cassini.
+
+The format is an open specification at [format.gocassini.com](https://format.gocassini.com).
+
+What Cassini writes is described in [docs/portable-meeting-format.md](docs/portable-meeting-format.md).
+
+## Requirements
+
+- Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
+- Talk with the High-performance backend (standalone signalling). Cassini joins
+   calls as an internal signalling client, so it needs the signalling server's
+   `internalsecret`. This is the one value you have to supply by hand.
+- _Optional_: the [Team folders](https://apps.nextcloud.com/apps/groupfolders)
+   and [Everyone Group](https://apps.nextcloud.com/apps/group_everyone) apps, which
+   let Cassini restrict each recording to the people who were in the meeting.
+   Without them, every account on the instance can see every recording.
+- _Optional_: an NVIDIA GPU with the Container Toolkit (x86_64) for faster
+   transcription. CPU is the default and runs on amd64 and arm64.
+
+## Install
+
+1. **Install Cassini from the [App Store](https://apps.nextcloud.com/apps/gocassini).**
+   In the deploy options, paste your signalling server's `internalsecret`.  On Nextcloud _All-in-One_, print it with `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. On a standalone signalling server, it is `internalsecret` under `[clients]` in `server.conf`.
+   You can also save the secret later under **Operator › Publish pipeline › Talk authentication**. Every other option can stay empty.
+2. **Open Cassini as an administrator.** It creates the `cassini` service
+   account that owns the meeting archive. Nextcloud 34.0.2 and later ask you to
+   confirm with your password first.
+3. **Choose who can see recordings**, under Operator › Settings. A fresh install makes every recording visible to everyone with an account on your Nextcloud. To limit each recording to the people who were in that meeting, enable the "Team folders" and "Everyone Group" apps first, then change the setting to "meeting participants". Cassini sets up the folder and permissions itself.
+4. **Point Talk at Cassini.** Back up Talk's current `recording_servers`
+   value, then apply the one Cassini generates for you.
+5. **Record a test call** in a private room and watch it arrive in Cassini.
+
+New to external apps? Start with [Before installing](docs/before-installing.md) and the [first ExApp walkthrough](docs/first-exapp.md). After installation, use **Operator › Publish pipeline** to check the connection and follow the repair instructions.
+
+Each step, with the commands, the verification checklist and GPU setup, is in
+[docs/exapp-install.md](docs/exapp-install.md).
+
+## CLI and skills
+
+`cassini meetings` reads published recordings from outside Nextcloud, as a Nextcloud user with an app password. It sees exactly what that account can see in the app, and nothing more.
 
 ```bash
-./bin/cassini
+cassini meetings list --from 2026-08-01
+cassini meetings search "offer" --tag hiring   # finds where it was said
+cassini meetings context <meeting-id>          # transcript and summary, ready for an agent
+cassini meetings fetch <meeting-id> --out standup.opus
 ```
 
-That wrapper builds the current `cassini` CLI from the Go module and runs it
-from your current working directory.
+An agent skill ships at [`.claude/skills/cassini-meetings/SKILL.md`](.claude/skills/cassini-meetings/SKILL.md). It teaches a coding agent when and how to use these commands. Claude Code loads it from a checkout; for other agents, point them at the file.
 
-## First Commands
+Setup and worked examples are in [docs/agent-meeting-access.md](docs/agent-meeting-access.md).
 
-See what the product exposes:
+## Development
+
+You need Go 1.24. From a checkout, `./bin/cassini` builds the CLI and runs it in your current directory:
 
 ```bash
 ./bin/cassini --help
+./bin/cassini doctor     # checks your environment before a long build
 ```
 
-Validate the environment before expensive work starts:
+- [docs/README.md](docs/README.md): the documentation index for contributors
+- [docs/cli.md](docs/cli.md): record, build, publish, serve and inspect from a checkout
+- [harness/README.md](harness/README.md): a local Nextcloud Talk lab, driven by `cassini dev`
+- [deployment/README.md](deployment/README.md): a Docker Compose bundle for development and staging. To run Cassini on a Nextcloud, use the app install above.
 
-```bash
-./bin/cassini doctor
-```
+## Contributing
 
-If `doctor` reports an unwritable Cassini cache or model directory,
-fix that path or point Cassini at a writable cache root before building:
-
-```bash
-export CASSINI_CACHE_ROOT="$PWD/.cache/cassini"
-./bin/cassini doctor
-```
-
-## Main Flow
-
-Set your Talk room URL:
-
-```bash
-export CALL_URL="https://cloud.example.com/call/<ROOM_TOKEN>"
-```
-
-Record a meeting and let Cassini finish with one portable file:
-
-```bash
-./bin/cassini record --call "$CALL_URL" --out "./My Meetings/2026-03-11 Weekly Sync.opus"
-```
-
-If Cassini fails after capture or during processing, fix the issue and rerun the
-same command with the same `--out` path. Cassini now keeps resumable state in a
-hidden `.cassini-work/` directory next to the target file and will reuse the
-finished recording or finished meeting artifact when possible.
-
-Inspect the resulting file:
-
-```bash
-./bin/cassini inspect "./My Meetings/2026-03-11 Weekly Sync.opus"
-```
-
-If you already have an existing recording, build the portable file from that:
-
-```bash
-./bin/cassini build /path/to/meeting.mkv --out "./My Meetings/Imported Meeting.opus"
-```
-
-## Try It Without A Real Call
-
-The user-facing portable-file path currently needs a real meeting.
-
-For local smoke and diagnostics, simulate mode still writes a debug `.run`
-bundle:
-
-```bash
-./bin/cassini record --simulate --out ./runs/demo.run
-./bin/cassini inspect ./runs/demo.run
-```
-
-Browse an already-generated sample site from this checkout:
-
-```bash
-./bin/cassini serve ./cassini-viewer/exports/static-meetings
-```
-
-If you have processed `.opus` recordings, build a browser view of them in one step:
-
-```bash
-cd cassini-viewer
-npm install
-npm run build
-node ./scripts/export-static-meetings.mjs \
-  --source-dir /path/to/your/processed-opus \
-  --output-dir /tmp/cassini-opus-view
-cd ..
-./bin/cassini serve /tmp/cassini-opus-view
-```
-
-## Advanced Flow
-
-If you want to keep the internal working artifacts visible, you can still use
-the explicit pipeline:
-
-```bash
-./bin/cassini record --call "$CALL_URL" --out ./runs/weekly-sync.run
-./bin/cassini build ./runs/weekly-sync.run --out ./meetings/weekly-sync.meeting
-./bin/cassini publish ./meetings --out ./site
-./bin/cassini serve ./site
-```
-
-Inspect any primary Cassini artifact:
-
-```bash
-./bin/cassini inspect "./My Meetings/2026-03-11 Weekly Sync.opus"
-./bin/cassini inspect ./runs/weekly-sync.run
-./bin/cassini inspect ./meetings/weekly-sync.meeting
-./bin/cassini inspect ./site
-```
-
-## Installing On Nextcloud
-
-Start with [Before installing Cassini](docs/before-installing.md). If Cassini
-is your first external app, the [first ExApp walkthrough](docs/first-exapp.md)
-helps you prepare Nextcloud's deployment service and return to Cassini setup.
-
-Registration, Talk recording handoff and verification are covered in:
-
-- [docs/exapp-install.md](docs/exapp-install.md)
-
-## Project Governance
+Issues and pull requests are welcome. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) first; it covers the branch and changelog
+conventions this repo uses.
 
 - License: [GNU AGPLv3](LICENSE)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Security reporting: [SECURITY.md](SECURITY.md)
-- Contribution notes: [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## Deployment Bundle
-
-For the repo-root Docker Compose deployment bundle (development and staging —
-not the Nextcloud app install), see:
-
-- [deployment/README.md](deployment/README.md)
-
-From there you can bring up the packaged operator, control panel, and viewer with `docker compose up --build`.
-
-## Harness Commands
-
-The local stack and showcase/demo flows now live under `cassini dev`:
-
-```bash
-./bin/cassini dev stack up
-./bin/cassini dev room create --name "Local room"
-cp .envrc.example .envrc
-direnv allow
-./bin/cassini dev smoke
-./bin/cassini dev fixture prepare-showcase
-./bin/cassini dev player showcase --call-url "$CALL_URL"
-```
-
-For local viewer development, pull demo data directly into the viewer dev
-server root. Set `DEMO_DATA_URL` in a gitignored `.envrc` or export it in your
-shell, then run:
-
-```bash
-cd cassini-viewer
-npm install
-npm run build
-npm run demo-data:pull
-npm run dev
-```
-
-Use `npm run demo-data:clean` to remove the pulled bundle.
-
-The demo-data pull downloads `index.html`, referenced `assets/*`, `catalog.json`, and each meeting directory into
-`cassini-viewer/exports/viewer-demo`, which is where the Vite dev server already
-serves `/catalog.json` and `/meetings/*` from. Meeting file names are read from
-each meeting's `manifest.json`, so `DEMO_DATA_URL` remains the only required
-setting.
-
-## Current Constraints
-
-- `cassini build` now uses the native Go transcription pipeline in
-  `cassini-go-recorder/internal/transcribe`.
-- `cassini publish` currently uses the static exporter under
-  `cassini-publisher/bin/export-static-meetings.sh`.
-- `cassini doctor` should be run before `record --out ...opus` or `build --out ...opus`;
-  it catches cache, media-tool, and runtime issues early.
-- In this checkout, the current doctor output is expected to fail if the
-  Cassini cache or model directories are not writable, or if required media
-  tools like `ffmpeg`/`ffprobe` are unavailable.
-
-## Product Commands
-
-```text
-./bin/cassini doctor
-./bin/cassini record
-./bin/cassini build
-./bin/cassini publish
-./bin/cassini serve
-./bin/cassini inspect
-./bin/cassini meetings
-```
-
-`cassini meetings` reads published recordings back out of Nextcloud as a given
-Nextcloud user — see [Agent access to meeting recordings](docs/agent-meeting-access.md).
-
-## Legacy Surface
-
-Older wrappers under directories such as:
-
-- `cassini-recorder/`
-- `cassini-diagnostics/`
-- `cassini-publisher/`
-- `cassini-lab/`
-- `cassini-player/`
-
-are now legacy shims or implementation surfaces. They are being deprecated in
-favor of `./bin/cassini`.
-
-The local harness implementation now lives under `harness/`, and it is now
-being surfaced through `./bin/cassini dev ...` rather than taught as a peer
-product.
-
-## Docs
-
-- Start here: [docs/README.md](docs/README.md) — curated index (concepts, install & configure, reference)
-- System overview: [docs/architecture.md](docs/architecture.md)
-- Cross-cutting reference: [docs/portable-meeting-format.md](docs/portable-meeting-format.md), [docs/audio-glossary.md](docs/audio-glossary.md)
-- Component deep-dives: [cassini-go-recorder/docs/](cassini-go-recorder/docs/) (active transcription lives here), [cassini-viewer/docs/](cassini-viewer/docs/)

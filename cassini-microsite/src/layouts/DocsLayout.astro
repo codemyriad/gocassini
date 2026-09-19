@@ -2,7 +2,7 @@
 import "../tailwind.css";
 import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
-import { docsNav } from "../docs-nav";
+import { docsNav, docsNavFooter } from "../docs-nav";
 import SocialMeta from "../components/SocialMeta.astro";
 import { AlignLeft, ChevronLeft, ChevronRight } from "@lucide/astro";
 import { ViewTransitions } from "astro:transitions";
@@ -17,6 +17,9 @@ interface Props {
 const { title, description, headings, currentSlug } = Astro.props;
 const rawBase = import.meta.env.BASE_URL;
 const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
+
+// The docs index lives at /docs, every other page at /docs/<slug>.
+const docsHref = (slug: string) => (slug ? `${base}docs/${slug}` : `${base}docs`);
 
 // Flat ordered list for prev/next navigation
 const allItems = docsNav.flatMap(s => s.items);
@@ -37,10 +40,10 @@ const toc = headings.filter(h => h.depth === 2 || h.depth === 3);
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GoCassini Docs – {title}</title>
+    <title>Cassini Docs – {title}</title>
     <SocialMeta
-      title={`${title} – GoCassini Docs`}
-      description={description ?? "Documentation for GoCassini, the Nextcloud Talk meeting recorder."}
+      title={`${title} – Cassini Docs`}
+      description={description ?? "Documentation for Cassini, the recording backend for Nextcloud Talk."}
     />
     <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
     <ViewTransitions />
@@ -89,7 +92,7 @@ const toc = headings.filter(h => h.depth === 2 || h.depth === 3);
                   return (
                     <li>
                       <a
-                        href={`${base}docs/${item.slug}`}
+                        href={docsHref(item.slug)}
                         data-sidebar-link
                         class={`block px-2 py-1.5 text-sm rounded transition-colors
                           ${isActive
@@ -105,6 +108,19 @@ const toc = headings.filter(h => h.depth === 2 || h.depth === 3);
               </ul>
             </div>
           ))}
+
+          <div class="border-t border-base-300 pt-4 flex flex-col gap-0.5">
+            {docsNavFooter.map(item => (
+              <a
+                href={item.slug}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="block px-2 py-1.5 text-sm rounded text-base-content/60 hover:text-base-content hover:bg-base-100/60 transition-colors"
+              >
+                {item.label} ↗
+              </a>
+            ))}
+          </div>
         </nav>
       </aside>
 
@@ -149,7 +165,7 @@ const toc = headings.filter(h => h.depth === 2 || h.depth === 3);
             {(prevItem || nextItem) && (
               <nav class="flex items-center justify-between gap-4 mt-16 pt-6 border-t border-base-300">
                 {prevItem ? (
-                  <a href={`${base}docs/${prevItem.slug}`} class="group flex items-center gap-2 p-3 rounded-lg hover:bg-base-300/30 transition-colors">
+                  <a href={docsHref(prevItem.slug)} class="group flex items-center gap-2 p-3 rounded-lg hover:bg-base-300/30 transition-colors">
                     <ChevronLeft size={24} class="shrink-0 text-base-content/30" />
                     <span class="flex flex-col gap-0.5 text-sm">
                       <span class="text-base-content/30 text-xs uppercase tracking-wider">Previous</span>
@@ -158,7 +174,7 @@ const toc = headings.filter(h => h.depth === 2 || h.depth === 3);
                   </a>
                 ) : <span />}
                 {nextItem && (
-                  <a href={`${base}docs/${nextItem.slug}`} class="group flex items-center gap-2 p-3 rounded-lg hover:bg-base-300/30 transition-colors">
+                  <a href={docsHref(nextItem.slug)} class="group flex items-center gap-2 p-3 rounded-lg hover:bg-base-300/30 transition-colors">
                     <span class="flex flex-col gap-0.5 text-sm text-right">
                       <span class="text-base-content/30 text-xs uppercase tracking-wider">Next</span>
                       <span class="text-base-content group-hover:text-primary transition-colors">{nextItem.label}</span>

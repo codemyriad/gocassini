@@ -336,6 +336,9 @@ try {
       if (url.pathname === "/operator/settings/llm") return json({});
       if (url.pathname === "/operator/settings/workflows") return json([]);
 
+      if (options.readiness && ["/operator/readiness", "/operator/readiness/check", "/operator/talk/setup"].includes(url.pathname)) {
+        return options.readiness(route, request);
+      }
       // D-763's readiness checks now render inside the Publish pipeline panel,
       // above recording access, so every scenario that opens that panel reaches
       // these. Answered as a healthy, fully verified install: this check is
@@ -543,6 +546,51 @@ try {
     await visible(page.getByText("occ app_api:app:enable", { exact: false }));
     await noOverflow(page);
     await screenshot(page, "broken-install-390.png");
+  });
+
+  // A slow background GET must not discard a save or restore the old report.
+  let releasePoll;
+  let sawPoll;
+  const pollStarted = new Promise(resolve => { sawPoll = resolve; });
+  let savedSecret = false;
+  const readinessReport = configured => ({
+    state: configured ? "not_verified" : "needs_action",
+    checks: [{ id: "talk.discovery", state: "not_verified", code: "test_room_required", message: "Choose a test room.", action: "test_room" }],
+    secret_configured: configured, secret_source: configured ? "setup" : "unset",
+    test_room_url: "", test: { state: "not_started", published: false },
+  });
+  await scenario("recording setup: save survives an in-flight status poll", {
+    firstRun: false, accountExists: true,
+    readiness: async (route, request) => {
+      if (request.method() === "GET") {
+        await new Promise(resolve => { releasePoll = resolve; sawPoll(); });
+        return route.fulfill({ json: readinessReport(false) });
+      }
+      if (request.method() === "PUT") {
+        assert.equal(request.postDataJSON().internal_secret, "new-internal-secret");
+        savedSecret = true;
+        return route.fulfill({ json: readinessReport(true) });
+      }
+      return route.fulfill({ json: readinessReport(savedSecret) });
+    },
+  }, async page => {
+    await page.evaluate(() => {
+      window.location.hash = "surface=operator&panel=pipeline";
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await page.getByRole("button", { name: "Talk authentication", exact: true }).click();
+    await page.getByLabel("Internal secret", { exact: true }).fill("new-internal-secret");
+    await pollStarted;
+    const saved = page.waitForResponse(response => response.url().endsWith("/talk/setup") && response.request().method() === "PUT");
+    await page.getByRole("button", { name: "Save secret", exact: true }).click();
+    await saved;
+    await visible(page.getByText("An internal secret is saved. Enter a new value to replace it.", { exact: true }));
+    const polled = page.waitForResponse(response => response.url().endsWith("/readiness") && response.request().method() === "GET");
+    releasePoll();
+    await polled;
+    await page.waitForTimeout(100);
+    await visible(page.getByText("An internal secret is saved. Enter a new value to replace it.", { exact: true }));
+    assert.equal(savedSecret, true);
   });
 
   assert.deepEqual(unexpectedRequests, [], "All API responses must be explicitly synthetic");

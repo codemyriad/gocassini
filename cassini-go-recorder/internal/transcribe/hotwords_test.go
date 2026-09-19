@@ -237,7 +237,7 @@ func TestResolveHintsReportsCTCModelAsUnapplied(t *testing.T) {
 	if prov == nil || prov.Applied {
 		t.Fatalf("expected an unapplied provenance record, got %+v", prov)
 	}
-	if prov.TermCount != 1 || !strings.Contains(prov.Reason, "CTC") || !strings.Contains(prov.Reason, "balanced") {
+	if prov.TermCount != 1 || !strings.Contains(prov.Reason, "CTC") || !strings.Contains(prov.Reason, "cannot take decoder hints") {
 		t.Errorf("provenance must name the reason, got %+v", prov)
 	}
 }
@@ -355,5 +355,13 @@ func TestHintsDisabledSwitchAlsoRestoresGreedySearch(t *testing.T) {
 	}
 	if dec.Biased() || prov == nil || prov.Applied {
 		t.Errorf("hints must be off and recorded as such, got dec=%+v prov=%+v", dec, prov)
+	}
+}
+
+func TestHintsDisabledSwitchRestoresGreedyWithoutVocabulary(t *testing.T) {
+	t.Setenv(envHintsDisabled, "1")
+	dec, prov, err := resolveDecoder(t.TempDir(), nil, transducerPaths(t))
+	if err != nil || dec.Method != decodingGreedySearch || dec.Biased() || dec.MaxActivePaths != 0 || prov != nil {
+		t.Fatalf("empty vocabulary ignored decoder kill switch: decoder=%+v provenance=%+v err=%v", dec, prov, err)
 	}
 }
