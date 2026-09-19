@@ -28,7 +28,6 @@ RUN go -C cassini-go-recorder build -o /out/cassini ./cmd/cassini \
  && case "${TARGETARCH:-amd64}" in \
       amd64) triplet=x86_64-unknown-linux-gnu ;; \
       arm64) triplet=aarch64-unknown-linux-gnu ;; \
-      arm)   triplet=arm-unknown-linux-gnueabihf ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH:-amd64}" >&2; exit 1 ;; \
     esac \
  && sherpa_dir=$(go -C cassini-go-recorder list -m -f '{{.Dir}}' github.com/k2-fsa/sherpa-onnx-go-linux) \

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build a Linux/macOS recorder with Cassini's model-reference native frontend.
+# Build a recorder with prebuilt CPU libraries or a source-built CUDA runtime.
 # Usage: build-cassini-bin.sh [--backend cpu|cuda] [--test GO_TEST_ARGS... | --run GO_RUN_ARGS...]
-# Requires Go, C++17 compiler, CMake >=3.15, curl, tar, patch, unzip, git.
-# The native dependencies are isolated in .build-cache; go.mod/cache stay intact.
+# CPU requires Go and a C compiler. CUDA also needs CMake, curl, tar and unzip.
+# CUDA native dependencies are isolated in .build-cache; go.mod/cache stay intact.
 set -euo pipefail
 rec=$(cd "$(dirname "$0")/.." && pwd)
 repo=$(cd "$rec/.." && pwd)

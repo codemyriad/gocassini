@@ -193,20 +193,17 @@ func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
 	}
 	bin := strings.TrimSpace(rt.cfg.CassiniBin)
 	rt.refFrontendMu.Lock()
-	if rt.refFrontendKnown && rt.refFrontendBin == bin {
-		k, isRef := rt.refFrontendKnown, rt.refFrontendIsRef
-		rt.refFrontendMu.Unlock()
-		return k, isRef
+	defer rt.refFrontendMu.Unlock()
+	// Coalesce concurrent callers and cache unknown results too. Retry after
+	// a short TTL so a repaired binary/runtime is detected without a restart.
+	if rt.refFrontendBin == bin && time.Since(rt.refFrontendChecked) < 30*time.Second {
+		return rt.refFrontendKnown, rt.refFrontendIsRef
 	}
-	rt.refFrontendMu.Unlock()
-
 	known, isReference = rt.doProbeReferenceFrontend(bin)
-
-	rt.refFrontendMu.Lock()
 	rt.refFrontendBin = bin
 	rt.refFrontendKnown = known
 	rt.refFrontendIsRef = isReference
-	rt.refFrontendMu.Unlock()
+	rt.refFrontendChecked = time.Now()
 	return known, isReference
 }
 

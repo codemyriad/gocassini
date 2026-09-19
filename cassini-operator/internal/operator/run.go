@@ -201,6 +201,7 @@ type Runtime struct {
 	refFrontendBin         string
 	refFrontendKnown       bool
 	refFrontendIsRef       bool
+	refFrontendChecked     time.Time
 	// computeReadiness coalesces and briefly caches the nvidia-smi-backed
 	// readiness probe so status polling cannot create a subprocess storm.
 	computeReadiness *computeStatusProbe

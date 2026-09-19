@@ -1370,3 +1370,39 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 		t.Fatalf("expected cached reference_frontend=true after binary removed, got %#v", resp.STT.ReferenceFrontend)
 	}
 }
+
+func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.referenceFrontendProbe = nil
+	t.Setenv(envNativeBuildInfo, filepath.Join(t.TempDir(), "missing"))
+	calls := filepath.Join(t.TempDir(), "calls")
+	rt.cfg.CassiniBin = writeFakeCassini(t, "echo call >> '"+calls+"'\n")
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if known, _ := rt.probeReferenceFrontend(); known {
+				t.Error("unknown runtime reported as known")
+			}
+		}()
+	}
+	wg.Wait()
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "call\n"); got != 1 {
+		t.Fatalf("concurrent unknown probes: got %d subprocesses, want 1", got)
+	}
+	rt.refFrontendChecked = time.Now().Add(-time.Minute)
+	rt.probeReferenceFrontend()
+	data, err = os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "call\n"); got != 2 {
+		t.Fatalf("expired probe: got %d subprocesses, want 2", got)
+	}
+}
