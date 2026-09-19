@@ -618,6 +618,9 @@
         },
         "version": {
           "type": "string"
+        },
+        "referenceFrontend": {
+          "type": "boolean"
         }
       }
     },

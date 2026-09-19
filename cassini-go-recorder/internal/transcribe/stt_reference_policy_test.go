@@ -24,17 +24,54 @@ func TestReferencePolicyPreservesUtterancesOnlyForV3(t *testing.T) {
 	}
 }
 
-func TestReferenceRuntimeRequirement(t *testing.T) {
+func TestReferenceRuntimeValidation(t *testing.T) {
 	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
-		if err := validateReferenceRuntime(id, "1.13.7"); err == nil || !strings.Contains(err.Error(), "build-cassini-bin.sh") {
-			t.Fatalf("missing actionable rejection: %v", err)
+		isRef, warn := checkReferenceRuntime(id, "1.13.7")
+		if isRef || warn == "" || !strings.Contains(warn, parakeetReferenceRuntimeMarker) {
+			t.Fatalf("expected warning for unpatched runtime on %s, got isRef=%v, warn=%q", id, isRef, warn)
 		}
-		if err := validateReferenceRuntime(id, "1.13.7"+parakeetReferenceRuntimeMarker); err != nil {
-			t.Fatal(err)
+		isRef, warn = checkReferenceRuntime(id, "1.13.7"+parakeetReferenceRuntimeMarker)
+		if !isRef || warn != "" {
+			t.Fatalf("expected reference runtime satisfied for %s, got isRef=%v, warn=%q", id, isRef, warn)
 		}
 	}
-	if err := validateReferenceRuntime("other", "1.13.7"); err != nil {
-		t.Fatal(err)
+	isRef, warn := checkReferenceRuntime("other", "1.13.7")
+	if isRef || warn != "" {
+		t.Fatalf("expected non-v3 model to return isRef=false and no warning, got isRef=%v, warn=%q", isRef, warn)
+	}
+}
+
+func TestUnpatchedRuntimeDegradesGracefullyToStandardPolicy(t *testing.T) {
+	for _, id := range []ModelID{ModelParakeet06BV3, ModelParakeet06BV3Int8} {
+		// Unpatched runtime falls back to standard decode policy with a warning
+		policy, isRef, warn := effectiveVADPolicy(id, "1.13.7", true)
+		if isRef || warn == "" {
+			t.Fatalf("expected unpatched runtime to return isRef=false with warning: isRef=%v, warn=%q", isRef, warn)
+		}
+		if policy != defaultVADDecodePolicy() {
+			t.Fatalf("expected defaultVADDecodePolicy for fallback, got %+v", policy)
+		}
+		if policy.preserveVADSpan {
+			t.Fatalf("fallback policy should have preserveVADSpan=false, got %+v", policy)
+		}
+
+		// Patched runtime activates model's reference policy without warning
+		policy, isRef, warn = effectiveVADPolicy(id, "1.13.7"+parakeetReferenceRuntimeMarker, true)
+		if !isRef || warn != "" {
+			t.Fatalf("expected patched runtime to return isRef=true and no warning: isRef=%v, warn=%q", isRef, warn)
+		}
+		if policy != vadDecodePolicyForModel(id) {
+			t.Fatalf("expected vadDecodePolicyForModel for patched runtime, got %+v", policy)
+		}
+		if !policy.preserveVADSpan {
+			t.Fatalf("patched policy should have preserveVADSpan=true, got %+v", policy)
+		}
+	}
+
+	// Non-v3 models get default policy with no warning and isRef=false
+	policy, isRef, warn := effectiveVADPolicy("parakeet-tdt-ctc-110m-en-int8", "1.13.7", true)
+	if isRef || warn != "" || policy != defaultVADDecodePolicy() {
+		t.Fatalf("unexpected non-v3 result: isRef=%v, warn=%q, policy=%+v", isRef, warn, policy)
 	}
 }
 

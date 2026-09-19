@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1274,5 +1276,133 @@ func TestStatusHandlerReportsATierTheImageMustDownloadAsReady(t *testing.T) {
 	}
 	if !rt.modelNeedsDownload(resp.STT.ModelID) {
 		t.Fatal("this fixture must describe a model that is in neither root")
+	}
+}
+
+func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.BundledModelRoot = t.TempDir()
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
+	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser})
+	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
+
+	// 1. Test with referenceFrontendProbe stubbed to true (patched runtime)
+	rt.referenceFrontendProbe = func() (bool, bool) { return true, true }
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.STT.ReferenceFrontend == nil || !*resp.STT.ReferenceFrontend {
+		t.Fatalf("expected reference_frontend=true, got %#v", resp.STT.ReferenceFrontend)
+	}
+	if resp.STT.Warning != "" {
+		t.Fatalf("expected empty warning, got %q", resp.STT.Warning)
+	}
+	if !resp.OK {
+		t.Fatalf("expected ok=true, got %#v", resp)
+	}
+
+	// 2. Test with referenceFrontendProbe stubbed to false (unpatched runtime)
+	rt.referenceFrontendProbe = func() (bool, bool) { return true, false }
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.STT.ReferenceFrontend == nil || *resp.STT.ReferenceFrontend {
+		t.Fatalf("expected reference_frontend=false, got %#v", resp.STT.ReferenceFrontend)
+	}
+	if !strings.Contains(resp.STT.Warning, "upstream sherpa runtime") {
+		t.Fatalf("expected warning about upstream runtime, got %q", resp.STT.Warning)
+	}
+	if !resp.OK {
+		t.Fatalf("unpatched runtime warning must NOT set ok=false: %#v", resp)
+	}
+
+	// 3. Test with fallback buildinfo file when CassiniBin is unset
+	rt.referenceFrontendProbe = nil
+	rt.cfg.CassiniBin = ""
+	tmp := t.TempDir()
+	infoUnpatched := filepath.Join(tmp, "buildinfo-unpatched.txt")
+	if err := os.WriteFile(infoUnpatched, []byte("sherpa=1.13.7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envNativeBuildInfo, infoUnpatched)
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.STT.ReferenceFrontend == nil || *resp.STT.ReferenceFrontend {
+		t.Fatalf("expected reference_frontend=false via buildinfo fallback, got %#v", resp.STT.ReferenceFrontend)
+	}
+
+	// 4. Test with CassiniBin executing a mock cassini binary
+	fakeBin := writeFakeCassini(t, "echo 'speech engine runtime 1.13.7 (reference frontend active)'\n")
+	rt.referenceFrontendProbe = nil
+	rt.cfg.CassiniBin = fakeBin
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// 5. Test caching: removing the mock binary does not break subsequent status calls
+	if err := os.Remove(fakeBin); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.STT.ReferenceFrontend == nil || !*resp.STT.ReferenceFrontend {
+		t.Fatalf("expected cached reference_frontend=true after binary removed, got %#v", resp.STT.ReferenceFrontend)
+	}
+}
+
+func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.referenceFrontendProbe = nil
+	t.Setenv(envNativeBuildInfo, filepath.Join(t.TempDir(), "missing"))
+	calls := filepath.Join(t.TempDir(), "calls")
+	rt.cfg.CassiniBin = writeFakeCassini(t, "echo call >> '"+calls+"'\n")
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if known, _ := rt.probeReferenceFrontend(); known {
+				t.Error("unknown runtime reported as known")
+			}
+		}()
+	}
+	wg.Wait()
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "call\n"); got != 1 {
+		t.Fatalf("concurrent unknown probes: got %d subprocesses, want 1", got)
+	}
+	rt.refFrontendChecked = time.Now().Add(-time.Minute)
+	rt.probeReferenceFrontend()
+	data, err = os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "call\n"); got != 2 {
+		t.Fatalf("expired probe: got %d subprocesses, want 2", got)
 	}
 }

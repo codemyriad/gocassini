@@ -231,7 +231,7 @@ log "  whisper model: $WHISPER_MODEL"
 
 (
   cd "$GO_RECORDER_DIR"
-  ./scripts/build-cassini-bin.sh --run ./cmd/gocassini \
+  go run ./cmd/gocassini \
     --mode talk \
     --call-url "$CALL_URL" \
     --name "$RECORDER_NAME" \

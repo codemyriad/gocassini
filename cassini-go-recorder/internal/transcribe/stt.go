@@ -5,6 +5,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
@@ -60,10 +61,17 @@ func (w Word) extentCapMS() int64 {
 
 // Recognizer wraps a sherpa-onnx offline recognizer with Silero VAD segmentation.
 type Recognizer struct {
-	r              *sherpa.OfflineRecognizer
-	vad            *sherpa.VoiceActivityDetector
-	sampleRate     int
-	boundaryPolicy *vadDecodePolicy
+	r                 *sherpa.OfflineRecognizer
+	vad               *sherpa.VoiceActivityDetector
+	sampleRate        int
+	boundaryPolicy    *vadDecodePolicy
+	referenceFrontend bool
+}
+
+// HasReferenceFrontend reports whether the recognizer was configured with the
+// native Cassini Parakeet v3 reference frontend optimization.
+func (r *Recognizer) HasReferenceFrontend() bool {
+	return r.referenceFrontend
 }
 
 // vadWindowSamples is the configured SileroVad.WindowSize. sherpa-onnx can
@@ -187,6 +195,12 @@ func usesParakeetV3ReferencePolicy(id ModelID) bool {
 	return id == ModelParakeet06BV3 || id == ModelParakeet06BV3Int8
 }
 
+// UsesParakeetV3ReferencePolicy reports whether the given model uses the Parakeet v3
+// reference frontend policy.
+func UsesParakeetV3ReferencePolicy(id ModelID) bool {
+	return usesParakeetV3ReferencePolicy(id)
+}
+
 func vadDecodePolicyForModel(id ModelID) vadDecodePolicy {
 	policy := defaultVADDecodePolicy()
 	if usesParakeetV3ReferencePolicy(id) {
@@ -241,19 +255,51 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 
 const parakeetReferenceRuntimeMarker = "+cassini-parakeet-v3-reference-v1"
 
-func validateReferenceRuntime(id ModelID, version string) error {
-	if usesParakeetV3ReferencePolicy(id) && !strings.Contains(version, parakeetReferenceRuntimeMarker) {
-		return fmt.Errorf("Parakeet v3 requires the Cassini reference frontend runtime (found %q); build with cassini-go-recorder/scripts/build-cassini-bin.sh", version)
+var unpatchedWarnOnce sync.Once
+
+// RuntimeVersion returns the dynamic library version string reported by sherpa-onnx.
+func RuntimeVersion() string {
+	return sherpa.GetVersion()
+}
+
+// HasReferenceRuntime reports whether the active sherpa runtime includes the
+// Cassini Parakeet v3 reference frontend patch.
+func HasReferenceRuntime() bool {
+	return strings.Contains(sherpa.GetVersion(), parakeetReferenceRuntimeMarker)
+}
+
+// checkReferenceRuntime returns whether the given runtime version satisfies the
+// Cassini reference frontend requirement for Parakeet v3 models, along with an
+// explanatory warning message if it falls back to the standard decode policy.
+func checkReferenceRuntime(id ModelID, version string) (isReference bool, warnMsg string) {
+	if !usesParakeetV3ReferencePolicy(id) {
+		return false, ""
 	}
-	return nil
+	if strings.Contains(version, parakeetReferenceRuntimeMarker) {
+		return true, ""
+	}
+	return false, fmt.Sprintf("Parakeet v3 running on upstream sherpa runtime (version %q); reference frontend optimization (%s) is inactive; falling back to standard decode profile", version, parakeetReferenceRuntimeMarker)
+}
+
+func effectiveVADPolicy(id ModelID, version string, referenceProfile bool) (vadDecodePolicy, bool, string) {
+	policy := defaultVADDecodePolicy()
+	if !referenceProfile || !usesParakeetV3ReferencePolicy(id) {
+		return policy, false, ""
+	}
+	isRef, warn := checkReferenceRuntime(id, version)
+	if isRef {
+		return vadDecodePolicyForModel(id), true, ""
+	}
+	return policy, false, warn
 }
 
 // The legacy profile is private and exists only for recorded-audio comparisons.
 func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, referenceProfile bool) (*Recognizer, error) {
-	if referenceProfile {
-		if err := validateReferenceRuntime(paths.ModelID, sherpa.GetVersion()); err != nil {
-			return nil, err
-		}
+	policy, isRef, warn := effectiveVADPolicy(paths.ModelID, sherpa.GetVersion(), referenceProfile)
+	if warn != "" {
+		unpatchedWarnOnce.Do(func() {
+			log.Printf("[transcribe] warning: %s", warn)
+		})
 	}
 	if numThreads < 1 {
 		numThreads = 4
@@ -298,11 +344,13 @@ func newRecognizerWithProfile(paths ModelPaths, vadModelPath, provider string, n
 		return nil, fmt.Errorf("failed to create Silero VAD (check model path: %s)", vadModelPath)
 	}
 
-	policy := defaultVADDecodePolicy()
-	if referenceProfile {
-		policy = vadDecodePolicyForModel(paths.ModelID)
-	}
-	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate, boundaryPolicy: &policy}, nil
+	return &Recognizer{
+		r:                 r,
+		vad:               vad,
+		sampleRate:        paths.SampleRate,
+		boundaryPolicy:    &policy,
+		referenceFrontend: isRef,
+	}, nil
 }
 
 func applyDecoderConfig(cfg *sherpa.OfflineRecognizerConfig, decoder *DecoderConfig) {
