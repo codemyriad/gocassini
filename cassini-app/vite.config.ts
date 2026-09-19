@@ -42,7 +42,7 @@ export default defineConfig(({ mode }) => {
   };
 });
 
-function createOperatorProxy(operatorBasePath: string, operatorProxyTarget: string): Record<string, string | ProxyOptions> {
+export function createOperatorProxy(operatorBasePath: string, operatorProxyTarget: string): Record<string, string | ProxyOptions> {
   if (operatorProxyTarget === "") {
     return {};
   }
@@ -61,8 +61,11 @@ function createOperatorProxy(operatorBasePath: string, operatorProxyTarget: stri
   if (operatorBasePath === "/") {
     return {
       ...insights,
-      "/jobs": directOperatorProxy(operatorProxyTarget),
-      "/events": directOperatorProxy(operatorProxyTarget),
+      // Keep the root-mounted API in sync with operatorAPIRoutes in run.go.
+      // In particular /status decides whether the shell shows Operator at all.
+      // Match path boundaries so API names cannot swallow Vite source assets.
+      "^/(jobs|events|status|setup|ai|settings|storage|talk)(?:/|\\?|$)":
+        directOperatorProxy(operatorProxyTarget),
     };
   }
 
@@ -90,4 +93,3 @@ function normalizeOperatorBasePath(value: string): string {
   }
   return normalized;
 }
-

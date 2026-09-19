@@ -1,9 +1,11 @@
 # Running the local developer stack
 
-This page explains the two local stacks you usually run together during development:
+For production-shaped end-to-end testing, use the installed ExApp path in the
+[Quick start](./quick-start.md). This page describes the alternative standalone
+developer topology, with two stacks:
 
 1. the **harness** for local Nextcloud Talk
-2. the **deployment bundle** for operator, control panel, and viewer
+2. the **deployment bundle** for operator and viewer
 
 If you only want the shortest possible path, use:
 
@@ -28,7 +30,6 @@ The deployment bundle is the packaged Cassini runtime.
 It gives you:
 
 - operator
-- control panel
 - viewer
 - shared published-site storage
 
@@ -40,7 +41,6 @@ For local end-to-end testing, you normally run both.
 |---|---|---|
 | Harness / Nextcloud Talk | meeting source | `http://127.0.0.1:28080/` |
 | Operator API | runtime backend | `http://127.0.0.1:4000/` |
-| Control panel | operator UI | `http://127.0.0.1:4173/` |
 | Viewer | published meeting UI | `http://127.0.0.1:8765/` |
 
 ## Start and stop commands
@@ -92,10 +92,9 @@ Use the `-v` form only when you intentionally want a clean slate.
 
 ## What the deployment bundle contains
 
-The bundle under `deployment/` starts three runtime services:
+The bundle under `deployment/` starts two runtime services:
 
 - `cassini-operator`
-- `cassini-control-panel`
 - `cassini-viewer`
 
 The important storage boundary is the shared published-site volume:
@@ -127,10 +126,9 @@ That extra parent directory exists so the operator can:
 
 ## Local configuration surface
 
-The checked-in `deployment/.env` exposes the main local knobs:
+The checked-in `deployment/.env.example` exposes the main local knobs:
 
 - `CASSINI_OPERATOR_PORT`
-- `CASSINI_CONTROL_PANEL_PORT`
 - `CASSINI_VIEWER_PORT`
 - `CASSINI_OPERATOR_BASE_PATH`
 - `CASSINI_MAX_RECORD_WORKERS`
@@ -145,22 +143,20 @@ See exact details here:
 
 - [Configuration reference](./reference/configuration.md)
 
-## Control panel proxying in local deployment
+## Developing the Operator UI
 
-The browser talks to the control panel origin, not directly to the operator origin.
+The Compose bundle has no separate control-panel container. Run `cassini-app`
+with Vite to work on its Operator section against the standalone backend:
 
-In the packaged deployment:
+```bash
+npm ci
+cd cassini-app
+CASSINI_OPERATOR_URL=http://127.0.0.1:4000 npm run dev
+```
 
-- the control panel serves the UI
-- the control panel proxies operator requests upstream
-- the browser uses the configured same-origin base path, such as `/`
-
-Current deployment detail:
-
-- the control panel container proxies to `http://host.docker.internal:<operator-port>`
-- it does not currently proxy to the Compose service name directly
-
-That matters mostly when you are changing packaging or proxy behavior.
+Open the address Vite prints. The default operator base path is `/`; the Vite
+server proxies the API requests to port 4000. Browse and Nextcloud provisioning
+features need the installed ExApp topology for end-to-end validation.
 
 ## Storage model
 
@@ -240,12 +236,10 @@ A normal local startup looks like this:
 1. start the harness
 2. create or open a Talk room
 3. start the deployment bundle
-4. open the control panel and viewer
+4. start the app’s Vite server above and open its Operator section
 5. submit the room URL to the operator
 
-That is the path described in:
-
-- [Quick start](./quick-start.md)
+For the recommended installed ExApp path, see [Quick start](./quick-start.md).
 
 ## Where to go next
 

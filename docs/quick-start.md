@@ -91,11 +91,12 @@ When it finishes, open Nextcloud and sign in as `admin` / `admin`:
 Verify the install:
 
 - **Cassini** appears for logged-in users and opens the viewer;
-- **Cassini Admin** appears for admins and opens the control panel;
+- administrators can open the **Operator** section inside Cassini;
 - `/operator/status` reports both `secret_configured` and
   `signaling_internal_secret_configured` as `true`. With the plain local image,
-  HTTP 503 and `stt.device_usable=false` are expected while every non-STT
-  readiness check remains healthy.
+  `stt.device=cpu` and `stt.device_usable=true` are expected on a ready CPU
+  installation. HTTP 503 indicates a readiness problem; read the response
+  details rather than treating it as normal for a CPU host.
 
 ## 2. Record a meeting
 
@@ -150,7 +151,7 @@ materialized Mira pair above.
 
 The plain image deliberately leaves the captured job in `build/blocked` while
 preserving its run bundle and audio. Install/redeploy the matching `-cuda` image
-on a CUDA deploy daemon, open **Cassini Admin**, and choose **Rerun** for the
+on a CUDA deploy daemon, open **Cassini’s Operator section**, and choose **Rerun** for the
 blocked job. The new attempt reuses the recording, then builds, seals, and
 publishes it. Open **Cassini** inside Nextcloud. The published meeting shows its
 **Talk conversation name** and **real recording date** — the operator resolves
@@ -210,12 +211,18 @@ Condensed:
 ./bin/cassini dev stack up
 CALL_URL="$(./bin/cassini dev room create --name "Local demo" | tail -n1)"
 
-# 2. Operator + control panel + viewer bundle
-cd deployment && docker compose up --build
-#   operator :4000  control panel :4173  viewer :8765
+# 2. Operator + viewer bundle
+cd deployment && docker compose up -d --build
+#   operator :4000  viewer :8765
+
+# 3. Run the app’s Operator UI separately
+cd ..
+npm ci
+cd cassini-app
+CASSINI_OPERATOR_URL=http://127.0.0.1:4000 npm run dev
 ```
 
-Then paste `CALL_URL` into the control panel to submit a recording. The bundled
+Open the Vite address, choose **Operator**, and paste `CALL_URL` to submit a recording. The bundled
 standalone operator image transcribes on the CPU like the plain ExApp image; a
 GPU only changes how fast the build stage runs. For
 viewer-only work, `cassini-viewer`'s own dev server (`npm run dev`) is lighter

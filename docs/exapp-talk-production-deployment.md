@@ -14,8 +14,8 @@ Talk record button
 → HaRP / ExApp container
 → cassini-operator
 → cassini record --talk-auth-mode hpb-internal
-→ build + publish into APP_PERSISTENT_STORAGE
-→ viewer serves transcript through ExApp route
+→ build on APP_PERSISTENT_STORAGE + publish into Nextcloud Files
+→ viewer reads recordings through the ExApp with the configured access rules
 ```
 
 ## Before touching Talk
@@ -25,9 +25,9 @@ Verify the ExApp itself first:
 1. AppAPI deploy daemon exists and Test Deploy passes.
 2. Cassini ExApp is registered and enabled.
 3. Container image/tag is the intended release.
-4. Cassini and Cassini Admin menu entries appear in Nextcloud.
+4. One Cassini menu entry appears in Nextcloud, with an Operator section for administrators.
 5. `GET /api/v1/welcome` through AppAPI proxy returns `{"version":1}`.
-6. Admin can open Cassini Admin/control panel.
+6. Admin can open the Operator section inside Cassini.
 7. User/admin can open Cassini viewer.
 8. Admin status endpoint reports storage and Talk config presence.
 
@@ -127,7 +127,7 @@ Preferred D-395 post-fix test (mirrors the validated local helper):
 1. Create a private/group or 1:1 test conversation where HPB-internal capture is required.
 2. Start a call with at least one speaking participant.
 3. Click Talk's Record button.
-4. Confirm the operator creates a job in Cassini Admin.
+4. Confirm the operator creates a job in Cassini’s Operator section.
 5. Stop recording or leave call and let empty-room stop happen.
 6. Confirm job reaches record → build → seal → publish succeeded.
 7. Open viewer and verify transcript appears.

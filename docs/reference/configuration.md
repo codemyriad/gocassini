@@ -9,7 +9,6 @@ The checked-in deployment bundle exposes these main public knobs:
 | Variable | Purpose | Default |
 |---|---|---|
 | `CASSINI_OPERATOR_PORT` | host port for operator API | `4000` |
-| `CASSINI_CONTROL_PANEL_PORT` | host port for control panel UI | `4173` |
 | `CASSINI_VIEWER_PORT` | host port for viewer UI | `8765` |
 | `CASSINI_OPERATOR_BASE_PATH` | same-origin browser path used for operator requests | `/` |
 | `CASSINI_MAX_RECORD_WORKERS` | concurrent live recording slots | `1` |
@@ -177,16 +176,13 @@ The control panel mainly cares about two settings:
 Development example:
 
 ```bash
-cd cassini-control-panel
+cd cassini-app
 CASSINI_OPERATOR_URL=http://127.0.0.1:4000 npm run dev
 ```
 
-One nuance:
-
-- the standalone control-panel README often uses `/operator` as the base-path example
-- the checked-in deployment bundle currently defaults to `/`
-
-Both are valid as long as the proxying and browser path agree.
+The default is `/`, matching the standalone operator in Compose. If you set
+a different base path, configure the operator to serve that same prefix. The
+Compose bundle does not start the app’s Vite server; run it separately.
 
 ## Viewer development config
 
@@ -207,7 +203,7 @@ Before pulling demo data, set `DEMO_DATA_URL` in a local shell or gitignored `.e
 
 - Change ports in `deployment/.env` when you have local conflicts.
 - Use bind mounts when you want to inspect state from the host filesystem.
-- For installed deployments, manage LLM endpoints and workflows in Cassini Admin
+- For installed deployments, manage LLM endpoints and workflows in Cassini’s Operator section
   after first start; use environment variables for initial seeding, standalone
   CLI runs, or explicit decoder tuning.
 
