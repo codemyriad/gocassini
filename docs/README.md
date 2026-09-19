@@ -4,22 +4,17 @@ Cassini records a Nextcloud Talk meeting, turns it into a self-contained,
 browser-readable meeting (audio + transcript + optional summary), and publishes
 it for viewing — with no central app required to read the result.
 
-This page is the curated front door. It is ordered by what a new reader most
-likely needs, in three tiers:
+Start with concepts, installation, or the reference pages:
 
 1. **[Concepts](#1-concepts)** — what Cassini is and how the pieces fit
 2. **[Install & configure](#2-install--configure)** — run it on Nextcloud (and locally)
-3. **[Reference & grab-bag](#3-reference--grab-bag)** — exact contracts and everything else
+3. **[Reference](#3-reference)** — exact contracts and everything else
 
-> Some install/configuration areas are still thin; those are flagged **`WIP`**
-> below rather than filled with invented detail.
+The WIP notes identify gaps in installation and configuration coverage.
 
 ---
 
-## Capability facts (read first)
-
-These are the load-bearing facts about what Cassini does today. Everything else
-in these docs should be read in light of them.
+## Current behavior
 
 - **Transcription is 100% local.** Speech-to-text runs in-process via
   sherpa-onnx / ONNX Runtime with NVIDIA **Parakeet** models and **Silero VAD**.
@@ -51,7 +46,7 @@ in these docs should be read in light of them.
   **static-site export** (`catalog.json` + `meetings/`; the viewer SPA shell —
   `index.html` + `assets/` — is served from the image by default and embedded
   into the export only on `--rebuild-viewer`)
-  is fully viewable with no server or central app. The viewer can also **embed**
+  can be served independently of Nextcloud. The viewer can also **embed**
   inside the Nextcloud page. When present, the summary is embedded in the
   portable `.opus` alongside the transcript.
 
@@ -73,8 +68,9 @@ Start here if you are about to work with Cassini.
 - **Nextcloud Talk integration for private and public calls.** Recording is
   driven from the internal **HPB signaling server (required)**, which is also
   what gives speaker identities **without diarization**.
-- **Modular, built for performance.** Live capture, remux, and transcription are
-  separated so recording does not compete with the Talk service itself.
+- **Separate capture and processing stages.** Their resource use can overlap.
+  The [processing policy](./recording-priority.md) controls when background
+  builds may run alongside recordings.
 - **A complete, shareable bundle.** The portable `.opus` plus the static-site
   export and the viewer embed mean a meeting (transcript, and — where present —
   summary) can be read **without a central app**.
@@ -159,7 +155,7 @@ the first start — after that, summaries are configured in the app's Settings.
 - **[Quick start](./quick-start.md)** — fastest end-to-end run on your machine (harness + deployment bundle).
 - **[Running the local developer stack](./local-developer-stack.md)** — the two-stack topology and storage model.
 - **[Operator stack](./operator-stack.md)** — jobs, attempts, workers, promotion.
-- **[Configuration reference](./reference/configuration.md)** — deployment, operator, control-panel, and viewer knobs.
+- **[Configuration reference](./reference/configuration.md)** — deployment, operator, app, and viewer settings.
 
 > `WIP` — install-time coverage of the standalone Talk **signaling/HPB** setup
 > that Cassini records against is thin here; the ExApp guide states the
@@ -168,9 +164,9 @@ the first start — after that, summaries are configured in the app's Settings.
 
 ---
 
-## 3. Reference & grab-bag
+## 3. Reference
 
-Kept because it helps a contributor, installer, or user. Read on demand.
+API, artifact, component and operational details.
 
 ### Reference (exact contracts)
 
@@ -192,9 +188,9 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 
 - [`cassini-go-recorder/docs/`](../cassini-go-recorder/docs/) — live capture, MKV/remux, and the **active** local transcription pipeline (`internal/transcribe/`).
 - [`cassini-viewer/docs/`](../cassini-viewer/docs/) — the viewer package.
-- `cassini-transcriber/docs/` — **legacy**. The `cassini-transcriber` Python
-  package has been **removed**; only these docs remain, for historical
-  reference. Active transcription lives in `cassini-go-recorder`.
+- [Historical Python transcriber](./history/python-transcriber.md) — retained
+  architecture notes for the removed implementation. Active transcription lives
+  in `cassini-go-recorder`; historical notes are not installation instructions.
 
 ### Proposals & operations notes
 

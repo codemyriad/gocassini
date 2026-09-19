@@ -28,28 +28,12 @@ func promoteMeetingBundle(workRoot, sourceMeetingPath, jobID string) (string, er
 	return destination, nil
 }
 
-// promoteOpusFile publishes an attempt's sealed `.opus` as the job's canonical
-// portable meeting, current/<jobID>.opus (D-428, D-583).
+// promoteOpusFile atomically replaces current/<jobID>.opus with an attempt's
+// sealed meeting. It stages a hard link, falling back to a copy when needed,
+// then renames within the destination filesystem.
 //
-// Unlike the bundle promotions above there is no backup dance, because there is
-// nothing to protect against: rename(2) replaces an existing regular file
-// atomically, so a reader sees either the whole previous `.opus` or the whole
-// new one. The staged copy exists only to keep that rename inside current/ —
-// work root and site root can be separate mounts in the standalone image, and a
-// cross-tree rename is EXDEV.
-//
-// The staging copy is a hard link when the filesystem allows it. runs/ and
-// current/ are always the same filesystem (both live under the work root), so
-// the link normally succeeds and the canonical `.opus` costs no extra bytes and
-// is byte-identical to the sealed artifact by construction. A link failure
-// (an exotic mount, a filesystem without hard links) falls back to a copy.
-//
-// That link is why the canonical path must only ever be REPLACED, never written
-// through: it and the sealed artifact are usually the same inode, so opening
-// current/<jobID>.opus for writing would mutate the artifact whose digest the
-// publish worker and the sinks verify, and the seal would stop meaning what it
-// says. Replacing by rename, as below, is safe — it swaps the name, leaving the
-// sealed inode untouched.
+// The canonical file must only be replaced, never edited in place: a hard link
+// shares the sealed artifact's inode, whose digest publishing later verifies.
 func promoteOpusFile(workRoot, sourceOpusPath, jobID string) (string, error) {
 	sourceOpusPath = filepath.Clean(sourceOpusPath)
 	info, err := os.Stat(sourceOpusPath)

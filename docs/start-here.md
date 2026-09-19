@@ -87,7 +87,7 @@ Typical flow:
 ```bash
 ./bin/cassini record --call "$CALL_URL" --out ./runs/demo.run
 ./bin/cassini build ./runs/demo.run --out ./meetings/demo.meeting
-./bin/cassini publish ./meetings --out ./site
+./bin/cassini publish ./meetings --out ./site --rebuild-viewer
 ./bin/cassini serve ./site
 ```
 

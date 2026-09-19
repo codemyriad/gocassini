@@ -84,3 +84,36 @@ Regression tests failed before the fixes and passed afterward. The full app
 suite passed **538 tests across 33 files**; standalone and embedded app builds
 passed, including the single-bundle assertion. Existing non-failing Svelte
 warnings remain. These checks did not include a live Nextcloud round trip.
+
+## Go and documentation follow-up — 2026-09-20
+
+Merged current `main` (`df09afa9`) before final verification.
+
+- Replaced four hand-written integer min/max helpers with Go built-ins, and
+  made workflow-registry reads accept a context without an HTTP request or
+  unused Runtime receiver.
+- Shortened repetitive comments around workflow validation, search aliases,
+  artifact promotion and digests, retaining the relevant contracts and
+  credential/isolation constraints.
+- Changed atomic writes to use unique temporary files with cleanup on failure.
+  Regression tests reproduced collisions between concurrent writers and the
+  removal of an unrelated existing `.tmp` file before the fix.
+- Removed two scratch reproduction tests: one only printed diagnostics; the
+  other reimplemented the old, broken setup order. The actual Go setup-plan
+  and frontend setup orchestration tests remain.
+- Corrected architecture, mental-model, operator, API and component docs that
+  still described three services, separate apps, a viewer with no backend
+  calls, or all setup writes passing through the operator. Added missing active
+  modules to the architecture table, corrected build/publish example paths and
+  included the viewer shell in examples intended for standalone serving.
+- Removed the resource-isolation claim from the docs index and moved the sole
+  remaining Python-transcriber document into `docs/history/`, updating links.
+
+Checks on the combined branch: operator `go test -race ./...` and `go vet ./...`,
+transcription package tests, **537 app tests**, **904 viewer tests**, both app
+builds, the embedded bundle assertion, and the **12-page** microsite build all
+passed. The app count is one lower because the scratch reproduction was removed.
+All **329** checked relative Markdown file links resolve. Changelog validation
+and diff whitespace checks passed. Existing Svelte warnings remain; no live
+Nextcloud recording round trip was performed. The previously published HTML
+report describes the original September 19 pass, not these follow-up changes.

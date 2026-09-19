@@ -16,7 +16,9 @@ It is **not** the meeting playback UI. That role belongs to the viewer.
 
 ## Backend boundary
 
-The control panel talks only to the operator HTTP API.
+Job controls and settings use the operator HTTP API. Nextcloud provisioning
+also calls Nextcloud APIs through the administrator's browser session when
+those actions require password confirmation.
 
 It does not read:
 

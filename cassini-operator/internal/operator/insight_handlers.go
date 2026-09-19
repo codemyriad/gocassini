@@ -371,7 +371,7 @@ func (e *insightRegistryUnavailableError) Unwrap() error { return e.err }
 // registry's own listing order is the one statement of "the first one we offer"
 // that the settings panel and this share.
 func (s *insightService) resolveWorkflow(r *http.Request, request insightCreateRequest) (workflowView, error) {
-	entries, err := s.rt.readWorkflowRegistry(r, strings.TrimSpace(s.rt.cfg.CassiniBin))
+	entries, err := readWorkflowRegistry(r.Context(), strings.TrimSpace(s.rt.cfg.CassiniBin))
 	if err != nil {
 		return workflowView{}, &insightRegistryUnavailableError{err: err}
 	}

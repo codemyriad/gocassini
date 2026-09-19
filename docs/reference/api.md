@@ -4,10 +4,13 @@ This page covers the operator’s HTTP API and SSE event stream.
 
 The operator API is primarily an operational backend surface.
 
-In normal browser use:
+The app's Operator section calls the administrative job and settings API.
+The installed meeting browser also uses USER APIs for annotations, search, and
+insights. AppAPI enforces each route's permissions.
 
-- the control panel calls this API
-- the viewer does not
+The job paths below assume a root-mounted operator. In the installed ExApp,
+prefix them with `/operator` under the AppAPI proxy. Annotations and insights
+are sibling routes, outside that prefix.
 
 See also:
 
