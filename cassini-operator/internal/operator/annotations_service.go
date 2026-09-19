@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"cassini-operator/internal/operator/appapi"
 )
@@ -13,15 +14,22 @@ import (
 const annotationsURLPath = "/annotations"
 
 // annotationService serves a meeting's annotations and the tag vocabulary.
-// rt.annotations is the rebuildable projection, and may be nil.
+// rt.annotations is the durable document store, and may be unavailable.
 type annotationService struct {
-	rt     *Runtime
-	exapp  ExAppConfig
-	bin    string
-	client *http.Client
-	logger *log.Logger
-	styles *tagStyleStore
-	jobs   tagJobs
+	rt           *Runtime
+	exapp        ExAppConfig
+	bin          string
+	client       *http.Client
+	logger       *log.Logger
+	styles       *tagStyleStore
+	jobs         tagJobs
+	imports      sync.Map
+	wake         chan struct{}
+	claimed      sync.Map
+	start        sync.Once
+	backgroundMu sync.Mutex
+	backgroundWG sync.WaitGroup
+	stopping     bool
 }
 
 // newAnnotationService returns nil where no mark can be served, as
@@ -50,6 +58,9 @@ func newAnnotationService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *a
 
 // register mounts the routes; every answer is per-caller, so uncacheable.
 func (s *annotationService) register(root *http.ServeMux) {
+	s.trackAnnotationBackground()
+	s.startAnnotationWorkers()
+	s.restoreTagJobs()
 	root.HandleFunc(annotationsURLPath+"/", insightNoStore(s.route))
 }
 
@@ -58,6 +69,16 @@ func (s *annotationService) route(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, annotationsURLPath), "/")
 	resource, id, _ := strings.Cut(rest, "/")
 	switch {
+	case resource == "batch" && id == "":
+		caller, ok := s.caller(w, r)
+		if !ok {
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.writeAnnotationBatch(w, r, caller)
 	case resource == "tags":
 		caller, ok := s.caller(w, r)
 		if !ok {
@@ -104,4 +125,31 @@ func (s *annotationService) logf(format string, args ...any) {
 	if s.logger != nil {
 		s.logger.Printf(format, args...)
 	}
+}
+
+// Keep imports and accepted bulk jobs alive through HTTP disconnects, and join
+// them before Runtime closes its durable database on shutdown.
+func (s *annotationService) trackAnnotationBackground() {
+	if s.rt == nil || s.rt.ctx == nil {
+		return
+	}
+	s.rt.workerWG.Add(1)
+	go func() {
+		defer s.rt.workerWG.Done()
+		<-s.rt.ctx.Done()
+		s.backgroundMu.Lock()
+		s.stopping = true
+		s.backgroundMu.Unlock()
+		s.backgroundWG.Wait()
+	}()
+}
+func (s *annotationService) background(fn func()) bool {
+	s.backgroundMu.Lock()
+	defer s.backgroundMu.Unlock()
+	if s.stopping || (s.rt.ctx != nil && s.rt.ctx.Err() != nil) {
+		return false
+	}
+	s.backgroundWG.Add(1)
+	go func() { defer s.backgroundWG.Done(); fn() }()
+	return true
 }

@@ -1,5 +1,9 @@
 # Gocassini
 
+> This page describes the Go recorder module in this directory. For what Cassini
+> is as a product — the Nextcloud Talk app, what it does and how to install it —
+> read the [root README](../README.md).
+
 `gocassini` is a CLI-first meeting recorder for Nextcloud Talk.
 It is intentionally narrow: one job, one output contract, and strong behavior for automation.
 

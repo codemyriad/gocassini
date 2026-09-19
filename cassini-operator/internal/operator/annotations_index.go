@@ -2,10 +2,9 @@ package operator
 
 import "context"
 
-// annotationIndex is the part of the marks projection, annotations.sqlite3, that
-// the write endpoint and the publish path call (D-737). The file is the record;
-// this is a rebuildable copy, written second, so a failure costs coverage and
-// never a mark. Nil where the store could not be opened.
+// annotationIndex exposes archive imports and vocabulary queries. The concrete
+// durable store also owns desired documents and pending archive synchronization.
+// Imports must preserve unconfirmed edits. Nil means writes are unavailable.
 type annotationIndex interface {
 	// Record replaces what is known about opusName with what `cassini annotate`
 	// reported for its file.

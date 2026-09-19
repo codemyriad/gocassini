@@ -437,12 +437,12 @@ func (c ExAppConfig) stageMeetingForContext(ctx context.Context, client *http.Cl
 // refuses more than limit bytes, and an empty body, because no recording the
 // CLI can read is empty. status is upstream's, so a caller can keep denied and
 // absent indistinguishable.
-func (c ExAppConfig) stageRecording(ctx context.Context, client *http.Client, readAs, relPath, destPath string, limit int64) (written int64, status int, err error) {
+func (c ExAppConfig) stageRecording(ctx context.Context, client *http.Client, readAs, relPath, destPath string, limit int64, expectedETag ...string) (written int64, status int, err error) {
 	if limit <= 0 {
 		// davDownloadFile reads zero as "no limit".
 		return 0, 0, fmt.Errorf("GET %s: no staging budget left", relPath)
 	}
-	_, written, status, err = c.davDownloadFile(ctx, client, readAs, relPath, destPath, limit)
+	_, written, status, err = c.davDownloadFile(ctx, client, readAs, relPath, destPath, limit, expectedETag...)
 	if err != nil {
 		return written, status, err
 	}

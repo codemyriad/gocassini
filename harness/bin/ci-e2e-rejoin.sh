@@ -73,7 +73,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 
 (
   cd "$RECORDER_DIR"
-  ./scripts/build-cassini-bin.sh --run ./cmd/gocassini \
+  go run ./cmd/gocassini \
     --mode talk \
     --call-url "$CALL_URL" \
     --name "$NAME_PREFIX" \

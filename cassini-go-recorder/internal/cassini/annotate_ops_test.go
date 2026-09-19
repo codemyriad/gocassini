@@ -97,7 +97,7 @@ func TestAnnotationOpsMarkFindsTheTagByIDThenByLabel(t *testing.T) {
 	}
 	// Canonical order puts the three meeting targets first (by id, which is
 	// random), so compare the set of tags the new marks landed on.
-	for _, want := range []string{"tag_hiring", "tag_budget", "tag_roadmap"} {
+	for _, want := range []string{"tag_hiring", "tag_from_elsewhere", "tag_roadmap"} {
 		if !slices.Contains(tagsAdded, want) {
 			t.Errorf("no new mark landed on %s; new marks are on %v", want, tagsAdded)
 		}
@@ -105,8 +105,8 @@ func TestAnnotationOpsMarkFindsTheTagByIDThenByLabel(t *testing.T) {
 	if n := strings.Count(strings.Join(tagsAdded, ","), "tag_hiring"); n != 2 {
 		t.Errorf("%d new marks on tag_hiring, want 2 (one by id, one by label)", n)
 	}
-	if slices.Contains(annotateTagIDs(doc), "tag_from_elsewhere") {
-		t.Error("a mark whose label matches a tag in this file defined a second tag instead of using it")
+	if !slices.Contains(annotateTagIDs(doc), "tag_from_elsewhere") {
+		t.Error("an explicit tag ID was replaced by a local label match")
 	}
 	for _, tag := range doc.Tags {
 		switch tag.ID {
@@ -118,15 +118,15 @@ func TestAnnotationOpsMarkFindsTheTagByIDThenByLabel(t *testing.T) {
 			if tag.Label != "Roadmap" {
 				t.Errorf("tag_roadmap label = %q", tag.Label)
 			}
-		case "tag_budget":
+		case "tag_budget", "tag_from_elsewhere":
 		default:
 			if tag.Label != "Fresh" || !regexp.MustCompile(`^tag_[a-z2-7]{26}$`).MatchString(tag.ID) {
 				t.Errorf("unexpected tag %+v; a new label with no id must get a minted random id", tag)
 			}
 		}
 	}
-	if len(doc.Tags) != 4 {
-		t.Errorf("tags = %+v, want the two existing plus Roadmap and Fresh", doc.Tags)
+	if len(doc.Tags) != 5 {
+		t.Errorf("tags = %+v, want the two existing plus the selected ID, Roadmap and Fresh", doc.Tags)
 	}
 	for _, item := range doc.Items {
 		if !slices.Contains(outcome.Added, item.ID) {

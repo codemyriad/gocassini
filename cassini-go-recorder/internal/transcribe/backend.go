@@ -63,10 +63,20 @@ type AudioBoundedWordEnds interface {
 	WordEndsAreBoundedByAudio() bool
 }
 
+// ReferenceFrontendRecognizer is the optional interface a recognizer implements
+// to declare whether the native reference frontend optimization is active.
+type ReferenceFrontendRecognizer interface {
+	SpeechRecognizer
+	HasReferenceFrontend() bool
+}
+
 // The bundled decoder is the one backend that makes the promise today. The
 // assertion fails the build if the declaration is dropped, so losing the
 // marker cannot be silent.
-var _ AudioBoundedWordEnds = (*Recognizer)(nil)
+var (
+	_ AudioBoundedWordEnds        = (*Recognizer)(nil)
+	_ ReferenceFrontendRecognizer = (*Recognizer)(nil)
+)
 
 // declaresAudioBoundedWordEnds reports whether rec makes the guarantee. Not
 // implementing the interface is answered exactly like declaring false: no
@@ -74,6 +84,11 @@ var _ AudioBoundedWordEnds = (*Recognizer)(nil)
 func declaresAudioBoundedWordEnds(rec SpeechRecognizer) bool {
 	decl, ok := rec.(AudioBoundedWordEnds)
 	return ok && decl.WordEndsAreBoundedByAudio()
+}
+
+func declaresReferenceFrontend(rec SpeechRecognizer) bool {
+	decl, ok := rec.(ReferenceFrontendRecognizer)
+	return ok && decl.HasReferenceFrontend()
 }
 
 // wordEndGuarantee accumulates that answer across every transcription pass of
@@ -118,15 +133,47 @@ func (g *wordEndGuarantee) provenance() *WordTimingProvenance {
 	return &WordTimingProvenance{EndsBoundedByAudio: true}
 }
 
+// referenceFrontendGuarantee accumulates whether the reference frontend optimization
+// was active across all recognizers used for Parakeet v3 models.
+type referenceFrontendGuarantee struct {
+	mu           sync.Mutex
+	observed     bool
+	allReference bool
+}
+
+func (g *referenceFrontendGuarantee) observe(rec SpeechRecognizer) {
+	ref := declaresReferenceFrontend(rec)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.observed {
+		g.observed, g.allReference = true, ref
+		return
+	}
+	g.allReference = g.allReference && ref
+}
+
+func (g *referenceFrontendGuarantee) provenance(modelID ModelID) *bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.observed || !usesParakeetV3ReferencePolicy(modelID) {
+		return nil
+	}
+	val := g.allReference
+	return &val
+}
+
 // newRecognizerForPass builds a recognizer for one transcription pass and
 // records its word-end guarantee in the same step, so a new construction site
 // cannot pick up the recognizer while forgetting what it promises.
-func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, guarantee *wordEndGuarantee) (SpeechRecognizer, error) {
+func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider string, numThreads int, decoder *DecoderConfig, guarantee *wordEndGuarantee, refGuarantee *referenceFrontendGuarantee) (SpeechRecognizer, error) {
 	rec, err := NewRecognizerForBackend(id, paths, vadModelPath, provider, numThreads, decoder)
 	if err != nil {
 		return nil, err
 	}
 	guarantee.observe(rec)
+	if refGuarantee != nil {
+		refGuarantee.observe(rec)
+	}
 	return rec, nil
 }
 

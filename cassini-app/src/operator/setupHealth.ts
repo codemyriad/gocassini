@@ -27,6 +27,7 @@ import type { OperatorPanel } from "../surfaceRouting";
 
 // SetupHealth is GET <base>/setup — readable by any logged-in Nextcloud user.
 export interface SetupHealth {
+  recordingState?: "passed" | "needs_action" | "not_verified";
   ok: boolean;
   state: string;
   // mode is the storage model in force: "default", "access_controlled", or ""
@@ -298,6 +299,7 @@ export function readSetupHealth(body: unknown): SetupHealth | null {
   // Guessing one would put a sentence about who can see recordings on screen on
   // the strength of a question that was never answered.
   return {
+    ...(body.recording_state === "passed" || body.recording_state === "needs_action" || body.recording_state === "not_verified" ? { recordingState: body.recording_state } : {}),
     ok: body.ok,
     state: body.state,
     mode: typeof body.mode === "string" ? body.mode : "",

@@ -33,3 +33,9 @@ require (
 	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 )
+
+require cassini-annotations v0.0.0
+
+replace cassini-annotations => ../cassini-annotations
+
+replace github.com/k2-fsa/sherpa-onnx-go-linux => github.com/codemyriad/sherpa-onnx-go-linux v1.13.7-cassini.4

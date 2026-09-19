@@ -16,7 +16,7 @@ CASSINI_BIN="$CACHE_DIR/cassini"
 TMP_BIN="$CACHE_DIR/.cassini.$$"
 trap 'rm -f "$TMP_BIN"' EXIT # only fires if the build fails before the exec
 
-"$MODULE_DIR/scripts/build-cassini-bin.sh" --output-bin "$TMP_BIN" >&2
+go -C "$MODULE_DIR" build -o "$TMP_BIN" ./cmd/cassini
 mv -f "$TMP_BIN" "$CASSINI_BIN"
 
 # The CLI links sherpa-onnx for transcription commands. On Nix, sherpa's
@@ -43,9 +43,4 @@ if [[ -n "$CXX_BIN" ]] && command -v "$CXX_BIN" >/dev/null 2>&1; then
   fi
 fi
 
-if [[ $(go env GOOS) == linux ]]; then
-  append_ld_library_path "$MODULE_DIR/dist"
-elif [[ $(go env GOOS) == darwin ]]; then
-  export DYLD_LIBRARY_PATH="$MODULE_DIR/dist${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-fi
 exec "$CASSINI_BIN" "$@"

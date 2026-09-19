@@ -1,0 +1,6 @@
+# Retired docs slugs. Cloudflare Workers static assets read this file from the
+# asset root, so it must stay in public/ and end up in dist/.
+/docs/getting-started/introduction  /docs                            301
+/docs/getting-started/quick-start   /docs/getting-started/install    301
+/docs/guides/overview               /docs                            301
+/docs/guides/configuration          /docs/guides/ai-providers        301

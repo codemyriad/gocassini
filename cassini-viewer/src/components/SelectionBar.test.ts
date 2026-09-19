@@ -78,6 +78,11 @@ describe("SelectionBar tagging", () => {
     expect(selectionBarSource).toMatch(/multiple\s+selected=\{tagSelected\}\s+mixed=\{tagMixed\}\s+anchor=\{tagButton\}/);
   });
 
+  it("disables another bulk edit and exposes a safe retry", () => {
+    expect(html({ tags: [], tagBusy: true })).toMatch(/class="selbar-tag[^"]*"[^>]*disabled/);
+    expect(html({ tags: [], tagReport: "Could not confirm", tagRetry: true })).toContain("Retry tag update");
+  });
+
   it("says plainly how a bulk tag went", () => {
     expect(html({ tags: [], tagReport: "Tagged 4 of 5 — 1 failed" })).toContain("Tagged 4 of 5 — 1 failed");
   });

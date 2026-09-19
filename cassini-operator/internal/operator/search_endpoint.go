@@ -456,7 +456,8 @@ type searchDeps struct {
 	limiter *searchRateLimiter
 	// annotations is the tag index (D-737), for search and the meeting list.
 	// Nil when it could not be opened: hits carry no `marks`, and `tag=` is 503.
-	annotations *annotationStore
+	annotations       *annotationStore
+	importAnnotations func(context.Context, string, []catalogHydration)
 }
 
 // aliasIndex merges the shipped groups with whatever the operator has

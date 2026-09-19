@@ -609,3 +609,128 @@ func TestSessionArtifactUpdateParticipantDisplayReplacesPlaceholder(t *testing.T
 		t.Fatalf("expected persisted participant display in session json")
 	}
 }
+
+func TestIsPlaceholderParticipantName(t *testing.T) {
+	tests := []struct {
+		name    string
+		display string
+		ids     []string
+		want    bool
+	}{
+		{
+			name:    "empty display is placeholder",
+			display: "",
+			ids:     []string{"user-1"},
+			want:    true,
+		},
+		{
+			name:    "whitespace display is placeholder",
+			display: "   ",
+			ids:     []string{"user-1"},
+			want:    true,
+		},
+		{
+			name:    "full participant-pid is placeholder",
+			display: "participant-user-1",
+			ids:     []string{"user-1"},
+			want:    true,
+		},
+		{
+			name:    "synthetic short ID participant-sXHFMabV is placeholder when remoteSessionID matches",
+			display: "participant-sXHFMabV",
+			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79", "sXHFMabV7NOPjrF_VqGx8qzQ_jEnMozJrLpHrYliUxY1h1-HAaptquQgfCW78K3IXg"},
+			want:    true,
+		},
+		{
+			name:    "raw actor ID as display is placeholder",
+			display: "9de480c78effa50443d6aca4944d6997d7722d79",
+			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79"},
+			want:    true,
+		},
+		{
+			name:    "real guest name Lisa is not placeholder",
+			display: "Lisa",
+			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79", "sXHFMabV7NOPjrF_VqGx8qzQ_jEnMozJrLpHrYliUxY1h1-HAaptquQgfCW78K3IXg"},
+			want:    false,
+		},
+		{
+			name:    "real user name Alice is not placeholder",
+			display: "Alice",
+			ids:     []string{"alice"},
+			want:    false,
+		},
+		{
+			name:    "real guest name Mark is not placeholder",
+			display: "Mark",
+			ids:     []string{"1fd2cfb4ad0f235b10a39780db1f83c2956a8c4f"},
+			want:    false,
+		},
+		{
+			name:    "user named participant-bob is not placeholder when IDs do not match bob",
+			display: "participant-bob",
+			ids:     []string{"9de480c78effa50443d6aca4944d6997d7722d79", "sXHFMabV7NOPjrF_VqGx8qzQ_jEnMozJrLpHrYliUxY1h1-HAaptquQgfCW78K3IXg"},
+			want:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isPlaceholderParticipantName(tc.display, tc.ids...)
+			if got != tc.want {
+				t.Fatalf("expected %v, got %v", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestSessionArtifactUpdateParticipantDisplayReplacesSyntheticShortIDPlaceholder(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "synthetic-placeholder-upgrade.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	defer func() {
+		_ = artifact.close()
+	}()
+
+	desc := trackDescriptor{
+		kind:      "audio",
+		codec:     "audio/opus",
+		mid:       "mid-audio",
+		clockRate: 48000,
+	}
+
+	// Stream opens before display name is known, using synthetic shortID name
+	remoteSessionID := "sXHFMabV7NOPjrF_VqGx8qzQ"
+	participantID := "9de480c78effa50443d6aca4944d6997d7722d79"
+	syntheticName := "participant-sXHFMabV"
+
+	if _, err := artifact.openStream(remoteSessionID, participantID, syntheticName, desc, 1111, 111, time.Unix(0, 1000)); err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+
+	// Participant display name arrives late (e.g. guest entered "Lisa" in Talk UI)
+	if err := artifact.updateParticipantDisplay(remoteSessionID, participantID, "Lisa"); err != nil {
+		t.Fatalf("update participant display: %v", err)
+	}
+
+	artifact.mu.Lock()
+	participants := append([]session.Participant(nil), artifact.sessionMeta.Participants...)
+	artifact.mu.Unlock()
+
+	if len(participants) != 1 {
+		t.Fatalf("expected one participant, got=%d", len(participants))
+	}
+	if participants[0].Display != "Lisa" {
+		t.Fatalf("unexpected participant display: got=%q, want %q", participants[0].Display, "Lisa")
+	}
+
+	raw, err := os.ReadFile(artifact.sessionPath)
+	if err != nil {
+		t.Fatalf("read session json: %v", err)
+	}
+	if !strings.Contains(string(raw), `"display": "Lisa"`) {
+		t.Fatalf("expected persisted participant display in session json: %s", string(raw))
+	}
+}

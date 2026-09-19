@@ -77,8 +77,14 @@ func occupyBuildWorkerAndFillQueue(t *testing.T, rt *Runtime, started <-chan str
 		t.Fatal("build worker did not pick up the blocker job")
 	}
 	// Fillers have no DB row, so workers fail the claim and skip them.
-	for i := 0; i < cap(rt.buildQueue); i++ {
-		rt.buildQueue <- buildTask{JobID: fmt.Sprintf("filler-%d", i), AttemptNumber: 1}
+	// The dispatcher can enqueue a duplicate blocker before its DB claim is
+	// visible. Fill the remaining capacity, not an assumed empty channel.
+	for i := 0; ; i++ {
+		select {
+		case rt.buildQueue <- buildTask{JobID: fmt.Sprintf("filler-%d", i), AttemptNumber: 1}:
+		default:
+			return
+		}
 	}
 }
 

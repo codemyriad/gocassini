@@ -37,6 +37,8 @@
   export let tagSelected: readonly string[] = [];
   export let tagMixed: readonly string[] = [];
   export let tagReport = "";
+  export let tagBusy = false;
+  export let tagRetry = false;
   // The picked meetings themselves, in pick order. The count alone leaves a
   // reader who has since changed room or search with no way to see WHICH
   // meetings a bundle would carry.
@@ -64,6 +66,7 @@
     tag: TagPick;
     unpick: MeetingCatalogEntry;
     open: MeetingCatalogEntry;
+    retryTag: void;
   }>();
 
   // Whether the list of picks is open. Closed by default: the bar floats over
@@ -137,6 +140,7 @@
       {/if}
       {#if tagReport}
         <p class="selbar-desc" role="status">{tagReport}</p>
+        {#if tagRetry}<button type="button" class="link text-xs" on:click={() => dispatch("retryTag")}>Retry tag update</button>{/if}
       {/if}
     </div>
 
@@ -147,6 +151,7 @@
           type="button"
           class="selbar-tag"
           aria-haspopup="dialog"
+          disabled={tagBusy}
           aria-expanded={tagging}
           on:click={() => (tagging = !tagging)}
         >
@@ -208,7 +213,7 @@
         selected={tagSelected}
         mixed={tagMixed}
         anchor={tagButton}
-        on:pick={(event) => dispatch("tag", event.detail)}
+        on:pick={(event) => { tagging = false; dispatch("tag", event.detail); }}
         on:close={() => (tagging = false)}
       />
     {/if}
@@ -434,6 +439,10 @@
   .selbar-tag:hover,
   .selbar-tag[aria-expanded="true"] {
     background-color: color-mix(in oklch, var(--color-base-content) 8%, var(--color-base-100));
+  }
+  .selbar-tag:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 
   .selbar-prepare {

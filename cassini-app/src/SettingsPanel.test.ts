@@ -181,3 +181,24 @@ describe("SettingsPanel template picker", () => {
     expect(settingsPanelSource).toContain("no default model set on this provider");
   });
 });
+
+// D-763's readiness checks, rehomed. They lived under a Setup tab that D-751
+// removed; this panel is where they now belong, and the order is load-bearing.
+describe("SettingsPanel recording readiness", () => {
+  it("asks whether recording works above who may see what it produces", () => {
+    // Setting the audience for recordings that never happen answers the second
+    // question while the first is still broken, so readiness comes first.
+    const readiness = settingsPanelSource.indexOf("<RecordingSetup");
+    const access = settingsPanelSource.indexOf("<RecordingAccessPanel");
+    expect(readiness).toBeGreaterThan(-1);
+    expect(access).toBeGreaterThan(-1);
+    expect(readiness).toBeLessThan(access);
+  });
+
+  it("keeps the anchor the checks' Set up storage action scrolls to", () => {
+    // RecordingSetup scrolls to #recording-storage for its setup_storage
+    // action. The removed Setup page used to provide that id; without it the
+    // action silently does nothing.
+    expect(settingsPanelSource).toContain('<div id="recording-storage">');
+  });
+});

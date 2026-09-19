@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Cassini's native frontend against pinned upstream source and ORT assets.
+# Build Cassini's native frontend against pinned fork source and ORT assets.
 # Usage: build.sh cpu|cuda OUTPUT_LIB_DIR WORK_DIR [additional CMake options...]
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -7,7 +7,7 @@ if ! command -v sha256sum >/dev/null; then
   sha256sum() { shasum -a 256 "$@"; }
 fi
 if [[ ${1:-} == --fingerprint ]]; then
-  (cd "$here" && sha256sum build.sh parakeet-v3-reference.patch) | sha256sum | cut -d' ' -f1
+  (cd "$here" && sha256sum build.sh) | sha256sum | cut -d' ' -f1
   exit 0
 fi
 [[ $# -ge 3 ]] || { echo 'usage: build.sh cpu|cuda OUTPUT_LIB_DIR WORK_DIR [CMake options...]' >&2; exit 2; }
@@ -23,11 +23,12 @@ esac
 if [[ $backend == cuda && ( $(uname -s) != Linux || $(uname -m) != x86_64 ) ]]; then
   echo 'Cassini CUDA packages support x86_64 only.' >&2; exit 1
 fi
-for tool in cmake curl tar patch sha256sum; do
+for tool in cmake curl tar sha256sum; do
   command -v "$tool" >/dev/null || { echo "Missing build prerequisite: $tool" >&2; exit 1; }
 done
 version=1.13.7
-source_sha=ee0c20cafb34cc1f86afb2845babd941c26e46de4a9925cbe86fd55ff3557818
+source_commit=832bfe50d1e45929e47c9d6e7a65e8a00a855820
+source_sha=38da1ff4ed104b10b758a183227e549187037a495bdf3fcf354e9bf79510f391
 fingerprint=$("$here/build.sh" --fingerprint)
 preinstalled=OFF
 ort_identity=pinned-upstream-archive
@@ -42,22 +43,21 @@ if [[ -n ${SHERPA_ONNXRUNTIME_LIB_DIR:-} || -n ${SHERPA_ONNXRUNTIME_INCLUDE_DIR:
 fi
 mkdir -p "$output" "$work"
 output=$(cd "$output" && pwd); work=$(cd "$work" && pwd)
-archive=$work/sherpa-v${version}.tar.gz
+archive=$work/sherpa-${source_commit}.tar.gz
 if [[ ! -f $archive ]]; then
-  curl --fail --location --retry 3 "https://codeload.github.com/k2-fsa/sherpa-onnx/tar.gz/refs/tags/v${version}" -o "$archive.tmp"
+  curl --fail --location --retry 3 "https://codeload.github.com/codemyriad/sherpa-onnx/tar.gz/${source_commit}" -o "$archive.tmp"
   mv "$archive.tmp" "$archive"
 fi
 [[ $(sha256sum "$archive" | cut -d' ' -f1) == "$source_sha" ]] || { echo 'Source archive checksum mismatch' >&2; exit 1; }
-# Inputs key isolates patched source/build trees; an obsolete native library
-# cannot survive a source or patch change merely because it was cached.
+# Inputs key isolates source/build trees; an obsolete native library
+# cannot survive a source change merely because it was cached.
 key=$(printf '%s\n' "$fingerprint" "$backend" "$(uname -s)" "$(uname -m)" "$ort_identity" "$@" | sha256sum | cut -c1-20)
 source_dir=$work/source-$key
 build_dir=$work/build-$key
-if [[ ! -f $source_dir/.cassini-patched ]]; then
+if [[ ! -f $source_dir/.cassini-extracted ]]; then
   mkdir -p "$source_dir"
   tar -xzf "$archive" -C "$source_dir" --strip-components=1
-  patch --batch --directory "$source_dir" -p1 < "$here/parakeet-v3-reference.patch"
-  touch "$source_dir/.cassini-patched"
+  touch "$source_dir/.cassini-extracted"
 fi
 # Keep the dynamic-loader token literal for relocatable sibling libraries.
 # shellcheck disable=SC2016
@@ -79,7 +79,7 @@ if [[ -z $ort ]]; then echo 'Pinned ONNX Runtime library missing from build depe
 cp -L "$(dirname "$ort")"/libonnxruntime*."$extension"* "$output/"
 if [[ $backend == cuda ]]; then test -f "$output/libonnxruntime_providers_cuda.so"; fi
 printf '%s\n' "$fingerprint" > "$output/cassini-native-inputs.sha256"
-printf 'sherpa=%s\nfrontend=+cassini-parakeet-v3-reference-v1\nbackend=%s\nsource_sha256=%s\n' \
-  "$version" "$backend" "$source_sha" > "$output/cassini-native-buildinfo.txt"
+printf 'sherpa=%s\nfrontend=+cassini-parakeet-v3-reference-v1\nbackend=%s\nsource_commit=%s\nsource_sha256=%s\n' \
+  "$version" "$backend" "$source_commit" "$source_sha" > "$output/cassini-native-buildinfo.txt"
 
 printf 'onnxruntime_identity=%s\n' "$ort_identity" >> "$output/cassini-native-buildinfo.txt"

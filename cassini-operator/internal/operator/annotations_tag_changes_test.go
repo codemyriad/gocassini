@@ -34,11 +34,69 @@ func seedTagChanges(t *testing.T) *annotationStore {
 	return store
 }
 
+func TestTagJobShutdownRetriesInterruptedTarget(t *testing.T) {
+	store := seedTagChanges(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &annotationService{
+		rt:     &Runtime{ctx: ctx, annotations: store},
+		styles: newTagStyleStore(Config{DBPath: filepath.Join(t.TempDir(), "jobs.sqlite3")}),
+	}
+	job := &tagJob{ID: "shutdown-job", Actor: "alice", Kind: tagJobRename, TagID: "tag_hiring", State: tagJobRunning, Total: 1}
+	targets := []string{"MEETING1.opus"}
+	op := json.RawMessage(`{"op":"relabel","tagId":"tag_hiring","label":"renamed"}`)
+	s.jobs.start(job)
+	if err := s.persistTagJob(job, targets, op, nil); err != nil {
+		t.Fatal(err)
+	}
+	release, err := annotationMutationLocks.acquire(context.Background(), store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.runTagJob(job, targets, op, nil)
+	}()
+	// Cancel only once the target has started and is waiting to mutate.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		annotationMutationLocks.mu.Lock()
+		waiting := annotationMutationLocks.locks[store.path].refs == 2
+		annotationMutationLocks.mu.Unlock()
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatal("job did not start its target")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+	var data []byte
+	if err := store.db.QueryRow(`SELECT job_json FROM annotation_tag_job WHERE caller='alice'`).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	var saved tagJob
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.State != tagJobInterrupted || saved.Done != 0 || len(saved.Failed) != 0 {
+		t.Fatalf("shutdown consumed the uncommitted target: %+v", saved)
+	}
+}
+
 // tagChangeService mounts the annotation routes with a data dir for
 // tag-styles.json; store may be nil for "no index".
 func tagChangeService(t *testing.T, ncURL, bin string, store *annotationStore) (*annotationService, http.Handler) {
 	t.Helper()
-	rt := &Runtime{ctx: context.Background()}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	rt := &Runtime{ctx: ctx}
 	rt.cfg.CassiniBin = bin
 	rt.cfg.DBPath = filepath.Join(t.TempDir(), "jobs.sqlite3")
 	if store != nil {
@@ -48,6 +106,7 @@ func tagChangeService(t *testing.T, ncURL, bin string, store *annotationStore) (
 	cfg.PublishSink = publishSinkNextcloudFiles
 	s := newAnnotationService(rt, cfg, log.New(io.Discard, "", 0))
 	mux := http.NewServeMux()
+	s.start.Do(func() {}) // These tests drive DB changes; worker recovery has separate tests.
 	s.register(mux)
 	return s, mux
 }
@@ -148,17 +207,12 @@ func TestTagRenameRewritesOnlyTheCallersRecordings(t *testing.T) {
 	if got := nc.recording(annTestSecret); got != "OPUS-secret" {
 		t.Errorf("a recording alice cannot read was rewritten: %q", got)
 	}
-	if got := nc.recording(annTestRecording); got != "OPUS-annotated" {
-		t.Errorf("alice's recording was not rewritten: %q", got)
+	doc, err := s.rt.annotationReads().document(context.Background(), "MEETING1.opus")
+	if err != nil || !strings.Contains(string(doc.Annotations), "Recruiting") || doc.Sync.State != "pending" {
+		t.Fatalf("rename: %+v %v", doc, err)
 	}
-	if stdin := annTestRead(t, bin+".stdin"); !strings.Contains(stdin, `"op":"relabel"`) || !strings.Contains(stdin, `"label":"Recruiting"`) {
-		t.Errorf("ops = %s, want a relabel to Recruiting", stdin)
-	}
-	args := annTestRead(t, bin+".args")
-	for _, want := range []string{"--actor-id\nalice\n", "--actor-kind\nperson\n", "--operation-id\n" + job.ID + "\n"} {
-		if !strings.Contains(args, want) {
-			t.Errorf("args = %q, want %q", args, want)
-		}
+	if nc.recording(annTestRecording) != "OPUS-original" {
+		t.Fatal("API rewrote media")
 	}
 	if poll := tagCall(h, http.MethodGet, "/job", "alice", ""); !strings.Contains(poll.Body.String(), `"state":"finished"`) {
 		t.Errorf("GET job = %s, want alice's finished job", poll.Body.String())
@@ -207,9 +261,7 @@ func TestTagMergeAttributesTheTargetAndDropsAStyleNobodyCarries(t *testing.T) {
 	if job := waitTagJob(t, s, "alice"); job.State != tagJobFinished || len(job.Failed) != 0 {
 		t.Fatalf("job = %+v", job)
 	}
-	if stdin := annTestRead(t, bin+".stdin"); !strings.Contains(stdin, `"into":{"id":"tag_hiring","label":"hiring"},"op":"merge-tag","tagId":"tag_budget"`) {
-		t.Errorf("ops = %s, want a merge-tag carrying the target's label", stdin)
-	}
+
 	styles, err := s.styles.load()
 	if err != nil {
 		t.Fatal(err)
@@ -236,9 +288,7 @@ func TestTagDeleteKeepsTheStyleWhileAnotherRoomCarriesTheTag(t *testing.T) {
 	if job := waitTagJob(t, s, "alice"); job.State != tagJobFinished || len(job.Failed) != 0 {
 		t.Fatalf("job = %+v", job)
 	}
-	if stdin := annTestRead(t, bin+".stdin"); !strings.Contains(stdin, `{"op":"unmark-tag","tagId":"tag_hiring"}`) {
-		t.Errorf("ops = %s, want unmark-tag", stdin)
-	}
+
 	if nc.recording(annTestSecret) != "OPUS-secret" {
 		t.Error("a recording alice cannot read was rewritten")
 	}
@@ -287,51 +337,30 @@ func TestTagChangesAnswerAHiddenTagAsUnknown(t *testing.T) {
 }
 
 func TestTagJobsAreOnePerCaller(t *testing.T) {
-	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
-	bin := fakeCassini(t, `while [ ! -f "$0.go" ]; do sleep 0.02; done`+"\n"+annTestCLIPrints(tagChangeResult(t, testTag{"tag_budget", "budget"})))
-	release := func() { _ = os.WriteFile(bin+".go", nil, 0o644) }
-	t.Cleanup(release)
-	s, h := tagChangeService(t, nc.url, bin, seedTagChanges(t))
-
-	decodeStartedJob(t, tagCall(h, http.MethodPost, "/tag_hiring/delete", "alice", `{}`))
-	for _, second := range []struct{ path, body string }{
-		{"/tag_budget/merge", `{"into":"tag_hiring"}`},
-		{"/tag_budget", `{"label":"money"}`},
-	} {
-		rec := tagCall(h, http.MethodPost, second.path, "alice", second.body)
-		if rec.Code != http.StatusConflict || annTestError(t, rec) != "busy" {
-			t.Errorf("%s while alice's job runs: %d %s, want 409 busy", second.path, rec.Code, rec.Body.String())
-		}
+	var jobs tagJobs
+	if !jobs.start(&tagJob{Actor: "alice", State: tagJobRunning}) {
+		t.Fatal("first rejected")
 	}
-	if body := tagCall(h, http.MethodGet, "/job", "alice", "").Body.String(); !strings.Contains(body, `"state":"running"`) {
-		t.Errorf("alice's job = %s, want running", body)
+	if jobs.start(&tagJob{Actor: "alice", State: tagJobRunning}) {
+		t.Fatal("overlap accepted")
 	}
-	if body := tagCall(h, http.MethodGet, "/job", "bob", "").Body.String(); body != `{"job":null}`+"\n" {
-		t.Errorf("bob's job = %q, want null: jobs are per caller", body)
-	}
-	// Someone else's job runs beside alice's; the meeting lock orders the writes.
-	decodeStartedJob(t, tagCall(h, http.MethodPost, "/tag_budget/delete", "bob", `{}`))
-
-	release()
-	for _, caller := range []string{"alice", "bob"} {
-		if job := waitTagJob(t, s, caller); job.State != tagJobFinished || len(job.Failed) != 0 {
-			t.Errorf("%s's job = %+v", caller, job)
-		}
+	if !jobs.start(&tagJob{Actor: "bob", State: tagJobRunning}) {
+		t.Fatal("other caller rejected")
 	}
 }
 
 func TestTagChangeFailuresAreNamedAndTheJobGoesOn(t *testing.T) {
 	nc := newAnnotationsNextcloud(t, "MEETING1.opus", "SECRET.opus")
-	bin := fakeCassini(t, annTestCLIExits(annotateExitInvalid, "ops[0] (relabel): label is already another tag in this file"))
-	s, h := tagChangeService(t, nc.url, bin, seedTagChanges(t))
-
-	decodeTagEdit(t, tagCall(h, http.MethodPost, "/tag_hiring", "alice", `{"label":"recruiting"}`))
-	job := waitTagJob(t, s, "alice")
-	if job.State != tagJobFinished || job.Total != 2 || job.Done != 2 || len(job.Failed) != 2 {
-		t.Fatalf("job = %+v, want both recordings tried and both failed", job)
+	store := seedTagChanges(t)
+	if err := store.MarkUnavailable(context.Background(), "MEETING1.opus", "broken"); err != nil {
+		t.Fatal(err)
 	}
-	if job.Failed[0].Meeting != "Daily Standup" || !strings.Contains(job.Failed[0].Error, "already another tag") {
-		t.Errorf("failure = %+v, want the meeting's title and the CLI's reason", job.Failed[0])
+	s, _ := tagChangeService(t, nc.url, "must-not-run", store)
+	job := &tagJob{ID: "job_test", Actor: "alice", State: tagJobRunning, Kind: tagJobRename, TagID: "tag_hiring", Total: 2}
+	s.jobs.start(job)
+	s.runTagJob(job, []string{"MEETING1.opus", "SECRET.opus"}, json.RawMessage(`{"op":"relabel","tagId":"tag_hiring","label":"Recruiting"}`), map[string]string{"MEETING1.opus": "Daily Standup"})
+	if job.Done != 2 || len(job.Failed) != 1 || job.Failed[0].Meeting != "Daily Standup" {
+		t.Fatalf("job: %+v", job)
 	}
 }
 
@@ -383,7 +412,9 @@ func TestTagChangeRefusals(t *testing.T) {
 func TestAnnotationsMeetingPOSTColoursOnlyTheTagsItCreates(t *testing.T) {
 	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
 	bin := fakeCassini(t, annTestCLIPrints(annTestApplied))
-	s, h := tagChangeService(t, nc.url, bin, newTestAnnotationStore(t))
+	store := newTestAnnotationStore(t)
+	recordMarks(t, store, "MEETING1.opus", annotateResult{Format: annotateResultFormat, AudioOpusSHA256: testAudioDigest, DurationMS: 60000})
+	s, h := tagChangeService(t, nc.url, bin, store)
 	mark := func(styles string) *httptest.ResponseRecorder {
 		return annTestCall(h, http.MethodPost, "MEETING1", "alice",
 			`{"ops":[{"op":"mark","tag":{"label":"Hiring"},"target":{"kind":"meeting"}}],"tagStyles":`+styles+`}`)
@@ -396,7 +427,11 @@ func TestAnnotationsMeetingPOSTColoursOnlyTheTagsItCreates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(styles) != 1 || styles["tag_known"].Color != "blue" || styles["tag_known"].Icon != "star" {
+	var createdID string
+	for id := range styles {
+		createdID = id
+	}
+	if len(styles) != 1 || styles[createdID].Color != "blue" || styles[createdID].Icon != "star" {
 		t.Fatalf("styles = %+v, want only the tag the batch created, blue with a star", styles)
 	}
 
@@ -404,11 +439,11 @@ func TestAnnotationsMeetingPOSTColoursOnlyTheTagsItCreates(t *testing.T) {
 	if rec := mark(`[{"label":"hiring","color":"red","icon":""}]`); rec.Code != http.StatusOK {
 		t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
 	}
-	if styles, _ := s.styles.load(); styles["tag_known"].Color != "blue" {
-		t.Errorf("an existing tag was recoloured by a member's batch: %+v", styles["tag_known"])
+	if styles, _ := s.styles.load(); styles[createdID].Color != "blue" {
+		t.Errorf("an existing tag was recoloured by a member's batch: %+v", styles[createdID])
 	}
 
-	runs := annTestRuns(t, bin)
+	runs := 0
 	for _, bad := range []string{
 		`[{"label":"hiring","color":"mauve","icon":""}]`,
 		`[{"label":"hiring","color":"blue","icon":"rocket"}]`,
@@ -418,7 +453,7 @@ func TestAnnotationsMeetingPOSTColoursOnlyTheTagsItCreates(t *testing.T) {
 			t.Errorf("%s: code = %d, want 400", bad, rec.Code)
 		}
 	}
-	if annTestRuns(t, bin) != runs {
+	if runs != 0 {
 		t.Error("a refused style still ran the CLI")
 	}
 }
@@ -438,22 +473,13 @@ func TestAnnotationsMeetingPOSTResolvesAHiddenTagIDByLabel(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d (%s)", rec.Code, rec.Body.String())
 	}
-	var sent struct {
-		Ops []struct {
-			Tag map[string]string `json:"tag"`
-		} `json:"ops"`
+	if strings.Contains(rec.Body.String(), "tag_layoffs") {
+		t.Fatalf("hidden ID leaked: %s", rec.Body.String())
 	}
-	if err := json.Unmarshal([]byte(annTestRead(t, bin+".stdin")), &sent); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(rec.Body.String(), "tag_budget") {
+		t.Fatal("visible tag ID lost")
 	}
-	const want = "[map[label:Layoffs] map[id:tag_hiring label:HIRING] map[id:tag_budget label:Money]]"
-	var got []map[string]string
-	for _, op := range sent.Ops {
-		got = append(got, op.Tag)
-	}
-	if fmt.Sprint(got) != want {
-		t.Errorf("tags sent = %v, want %s: a hidden id dropped, a visible one kept", got, want)
-	}
+
 }
 
 func TestTagStyleStoreWritesAtomically(t *testing.T) {

@@ -687,3 +687,83 @@ CI also runs operator unit tests through `.github/workflows/ci.yml`.
 For the operator runtime model — jobs, attempts, live recording, failure
 inspection, and the rerun flow — see [../docs/operator-stack.md](../docs/operator-stack.md)
 and the [operator API reference](../docs/reference/api.md).
+
+## Annotation persistence and archive sync
+
+Annotation POSTs commit a complete desired document and its search/tag rows to
+`annotations.sqlite3` before returning `200`. GET reads that desired document;
+it checks caller access with Nextcloud metadata but does not download audio.
+Older recordings are imported in the background; an unprepared meeting returns
+retryable `503`, while unreadable annotations remain unavailable.
+
+Responses include an opaque `stateToken` and `sync` (`saved`, `pending`,
+`delayed`, or `blocked`, plus desired/confirmed snapshot IDs). POST accepts an
+optional `stateToken` precondition and `requestId` idempotency key. A repeated key
+for the same caller and request returns the original response; changing its
+payload returns `409`. Receipts remain for seven days, longer while archive sync
+or a bulk job remains unresolved. `operationId` still groups marks for undo and
+is not an idempotency key. Legacy `expectRevision` remains supported, but cannot
+detect reconstruction of a lost database; use `stateToken` for that.
+
+Two workers scan durable pending state at startup and every 30 seconds, alongside
+immediate wake-ups. Each selects the latest desired snapshot under the same
+recording lock used by republish. Transient errors retry from roughly five seconds
+up to five minutes with jitter. A persisted in-flight snapshot and actual remote
+content inspection recover an interrupted or ambiguous upload without confirming
+a newer edit accidentally. Up to two imports and two sync workers may stage at
+once; each recording is limited to 1 GiB, with an input and output copy per worker
+plus the CLI's temporary rewrite files. Budget disk space for those temporary
+copies. Shutdown waits for workers, importers, and accepted bulk jobs.
+
+Republishing a damaged recording with the same audio restores its durable desired
+annotations, even if they were previously marked synced. Replacement intent is
+persisted before upload and reconciled after content verification or restart.
+If a republish changes the audio digest, the replacement starts without the old
+annotations, including pending edits; changing audio under one meeting ID is an
+exceptional replacement, not an annotation migration.
+
+The UI retains saved tags while showing delayed/blocked archive status. After
+repairing a missing/unreadable recording, use **Retry recording update**, or POST
+`{"ops":[],"retrySync":true}` to the same meeting route. Retry rechecks the remote
+baseline; it never forces an overwrite of unexpected annotations. Bulk rename,
+merge and delete keep durable target lists and progress across restarts. Tag
+colors/icons remain in their separate style store.
+
+Existing recordings are imported immediately on startup. Transient failures
+retry automatically, and listing or opening a meeting also starts an import
+when its document is missing. Opening it returns a retryable 503 while preparing.
+The initial vocabulary gate stays closed until transient catalog imports finish,
+preventing new edits from creating duplicate tag identities. Downloaded recordings
+whose annotation content cannot be read stay outside coverage.
+
+Keep the database volume durable. Managed schema migrations preserve it and
+refuse unknown versions. If the entire volume is lost, rebuild desired and
+confirmed state from the current `.opus` files with a new token generation;
+unarchived edits and request receipts cannot be recovered. The database is no
+longer a disposable cache. Back up SQLite consistently, including its WAL, rather
+than copying only an open database file.
+
+If only derived tag/search rows are lost, annotation backfill restores them from
+the durable desired documents before checking the archive. Pending edits remain
+searchable even when the archived document is older or temporarily unavailable;
+rebuilding these rows does not confirm those edits as archived.
+
+This design requires one active operator and operator-owned annotation writes.
+Nextcloud ETags are conditional-write guards, not content hashes: the local
+harness can reuse an ETag for equal-size writes in the same timestamp second.
+The shared recording lock and downloaded-content verification are therefore
+required. Run standalone annotation backfill only while the operator is stopped: file
+locks coordinate one process. Multiple active operators or outside annotation writers need additional
+coordination and are not supported by this queue.
+
+List selection tagging uses `POST /annotations/batch` with `meetingIds` (1–100
+unique catalog IDs), a required `requestId`, `ops`, and optional `tagStyles`.
+Only whole-meeting `mark` and `unmark-tag` operations are supported. The caller's
+visible catalog is resolved once and up to four current file permission checks
+run concurrently before one transaction commits all documents, projections,
+and the batch receipt. A rejected target rolls back the entire batch. Responses
+contain `results` for every target and `tags` metadata for immediate rendering;
+tag counts in this metadata are not a replacement for the vocabulary counts.
+A repeated batch key replays the original response, while changed input returns
+409. Batch receipts have the same seven-day minimum retention, extended while
+any target remains unsynchronized. Both archive workers are woken after commit.

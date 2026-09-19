@@ -156,10 +156,14 @@ func TestAnnotationBackfillRecordsFailuresAndCarriesOn(t *testing.T) {
 	if row := readAnnotationRow(t, store, "JOB1.opus"); row.state != annotationsStateIndexed || row.marks != 1 {
 		t.Errorf("JOB1 = %+v, want its earlier rows kept", row)
 	}
-	for _, name := range []string{"JOB2.opus", "JOB5.opus"} {
+	for _, name := range []string{"JOB2.opus"} {
 		if row := readAnnotationRow(t, store, name); row.state != annotationsStateUnavailable || row.container != "" {
 			t.Errorf("%s = %+v, want unavailable with no digest, so the next run reads it again", name, row)
 		}
+	}
+	var unknown int
+	if err := store.db.QueryRow(`SELECT count(*) FROM meeting_annotations WHERE opus_name='JOB5.opus'`).Scan(&unknown); err != nil || unknown != 0 {
+		t.Fatalf("transient failure must remain eligible for on-demand import: rows=%d err=%v", unknown, err)
 	}
 	coverage, _ := store.Coverage(ctx, []string{"JOB1.opus", "JOB2.opus", "JOB3.opus", "JOB4.opus", "JOB5.opus", "JOB6.opus"})
 	if coverage != (annotationCoverage{Visible: 6, Indexed: 2}) {
