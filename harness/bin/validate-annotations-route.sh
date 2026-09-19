@@ -259,6 +259,13 @@ read -r code etag_one <<<"$(put_probe v1)" || fail "cannot PUT the probe"
 
 read -r code etag_two <<<"$(put_probe v2)" || fail "cannot PUT the probe"
 [[ "$code" == 201 || "$code" == 204 ]] || fail "rewriting the probe returned HTTP $code"
+# Local storage can derive ETags from second-resolution mtime and length.
+# Keep this limitation visible: If-Match is not a content hash.
+if [[ "$etag_two" == "$etag_one" ]]; then
+  log "Nextcloud reused the ETag for equal-size writes in one second; testing a distinct timestamp (operator writes also use a shared lock and content verification)"
+  sleep 1.1
+  read -r code etag_two <<<"$(put_probe v2)" || fail "cannot rewrite the probe"
+fi
 [[ -n "$etag_two" && "$etag_two" != "$etag_one" ]] || fail "a rewrite did not change the ETag ($etag_one -> $etag_two)"
 
 read -r code _ <<<"$(put_probe v3 "$etag_one")" || fail "cannot PUT the probe"

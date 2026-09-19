@@ -132,7 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           rc=0
-          for module in cassini-go-recorder cassini-operator harness/go-talk-rotator; do
+          for module in cassini-annotations cassini-go-recorder cassini-operator harness/go-talk-rotator; do
             # Capture the status too, not just the listing: gofmt reports a file
             # it cannot parse on stderr and lists nothing, so testing the output
             # alone would pass a syntactically broken tree.

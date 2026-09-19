@@ -56,8 +56,6 @@
     type TagVocabulary,
   } from "./viewer/annotations";
   import {
-    applyEach,
-    bulkReport,
     createTagLoader,
     createWriteQueue,
     filterByTags,
@@ -67,6 +65,7 @@
     type MeetingTags,
     type TagMatch,
   } from "./viewer/listTags";
+  import { createBulkTagSession, withAnnotationBatch } from "./viewer/bulkTags";
   import InsightDocument from "./components/InsightDocument.svelte";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
@@ -237,7 +236,6 @@
   let selectedTagIds: string[] = [];
   let tagMatch: TagMatch = "any";
   let tagNotice = "";
-  let tagReport = "";
   let tagManagerOpen = false;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
@@ -390,7 +388,7 @@
   // open, while the room chip changes, and while the search narrows past it.
   function handlePick(event: CustomEvent<MeetingCatalogEntry>) {
     selection = toggleSelected(selection, event.detail.id);
-    tagReport = "";
+    bulkTags.clearReport();
     if (selection.ids.length === 0) {
       // Nothing left to prepare; the panel would be describing an empty set.
       prepareOpen = false;
@@ -400,7 +398,7 @@
   function handleClearSelection() {
     selection = clearSelection();
     prepareOpen = false;
-    tagReport = "";
+    bulkTags.clearReport();
   }
 
   const tagLoader = createTagLoader(
@@ -439,14 +437,23 @@
     });
   }
 
+  const bulkTags = createBulkTagSession(
+    (request) => new Promise((resolve, reject) => {
+      void queueTagWrite(async () => {
+        try { resolve(await dataProvider.applyAnnotationBatch!(request)); }
+        catch (error) { reject(error); }
+      });
+    }),
+    (result) => {
+      if (tagVocabulary) tagVocabulary = withAnnotationBatch(tagVocabulary, result);
+      refreshTags(true);
+    },
+  );
+
   function tagSelection(pick: TagPick) {
+    if (!dataProvider.applyAnnotationBatch) return;
     const plan = planBulkTag(pickedMeetings, meetingTags, pick);
-    void queueTagWrite(async () => {
-      const { done } = await applyEach(plan.targets, async (entry) =>
-        applied(await dataProvider.applyAnnotationOps!(entry, plan.request)),
-      );
-      tagReport = bulkReport(plan.remove, done, plan.targets.length);
-    });
+    void bulkTags.write(plan.targets.map((entry) => entry.id), plan.request, plan.remove);
   }
 
   function toggleTagFilter(tagId: string) {
@@ -1384,10 +1391,13 @@
           on:clear={handleClearSelection}
           on:prepare={() => (prepareOpen = true)}
           on:dismissDropped={() => (selection = acknowledgeDropped(selection))}
-          tags={vocabularyTags}
+          tags={dataProvider.applyAnnotationBatch ? vocabularyTags : null}
           tagSelected={bulkTagState.selected}
           tagMixed={bulkTagState.mixed}
-          {tagReport}
+          tagReport={$bulkTags.report}
+          tagBusy={$bulkTags.busy || $bulkTags.retryable}
+          tagRetry={$bulkTags.retryable}
+          on:retryTag={() => bulkTags.retry()}
           on:tag={(event) => tagSelection(event.detail)}
         />
       </div>

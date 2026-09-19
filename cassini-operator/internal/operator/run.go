@@ -811,7 +811,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
 	// nil *annotationStore inside the interface would be a non-nil index.
 	if annotationIndex, err := openAnnotationStore(sidecarPath(cfg.DBPath, annotationsStoreFilename), logger); err != nil {
-		logger.Printf("annotations index unavailable (%v); marks will still be written to recordings, but the tag vocabulary and tag narrowing are not served", err)
+		logger.Printf("durable annotations store unavailable (%v); annotation reads and writes are unavailable", err)
 	} else {
 		rt.annotations = annotationIndex
 	}
@@ -970,8 +970,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	annotations := newAnnotationService(rt, exappCfg, logger)
+	search := rt.searchDeps()
+	if annotations != nil {
+		search.importAnnotations = annotations.importListedDocuments
+	}
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, rt.searchDeps())
+	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, search)
 	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
 	// beside /published/ rather than under BasePath, because that is where
 	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
@@ -984,9 +989,9 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// Tags and marks (D-737): a sibling of insights on the ROOT mux, for the same
 	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and
 	// unmounted, wherever a mark could not be served (see newAnnotationService).
-	if annotations := newAnnotationService(rt, exappCfg, logger); annotations != nil {
-		annotations.register(root)
+	if annotations != nil {
 		rt.startInitialAnnotationBuild(exappCfg, logger)
+		annotations.register(root)
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)

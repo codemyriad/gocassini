@@ -32,7 +32,13 @@ const maxAnnotateStderr = 4 << 10
 
 // annotateResult is what every `cassini annotate … --json` prints.
 type annotateResult struct {
-	Format string `json:"format"`
+	Replayed    bool                  `json:"-"`
+	Unsupported bool                  `json:"unsupported,omitempty"`
+	CreatedTags []string              `json:"createdTags,omitempty"`
+	StateToken  string                `json:"stateToken,omitempty"`
+	Sync        *annotationSyncStatus `json:"sync,omitempty"`
+	DurationMS  int64                 `json:"durationMs"`
+	Format      string                `json:"format"`
 	// Annotations is the document the file now carries; null when none.
 	Annotations     json.RawMessage `json:"annotations"`
 	Revision        int             `json:"revision"`

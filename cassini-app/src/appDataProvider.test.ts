@@ -36,6 +36,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("AppDataProvider.loadCatalog", () => {
+  it("uses the operator list so browsing starts missing annotation imports", async () => {
+    const fetchMock = respondWith(JSON.stringify({ version: "cassini.viewer.catalog.v1", meetings: [] }));
+    await new AppDataProvider().loadCatalog();
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(`${PROXY_BASE}published/meetings-list`, { cache: "no-store" });
+  });
+});
+
 describe("AppDataProvider.loadContextBundle", () => {
   it("asks the published endpoint for the picked ids, in pick order", async () => {
     const fetchMock = respondWith("# Meeting b\n");
@@ -225,6 +233,14 @@ describe("AppDataProvider annotations", () => {
       { path: "annotations/meetings/m%201", method: "GET", body: undefined, cache: "no-store" },
       { path: "annotations/meetings/m%201", method: "POST", body: JSON.stringify(request), cache: "no-store" },
     ]);
+  });
+
+  it("sends one atomic batch for the selected meetings", async () => {
+    const answer = { results: [], tags: [] };
+    const fetchMock = respondWith(JSON.stringify(answer));
+    const request = { meetingIds: ["a", "b"], requestId: "bulk-1", ops: [{ op: "mark" as const, tag: { label: "new" }, target: { kind: "meeting" as const } }] };
+    await expect(new AppDataProvider().applyAnnotationBatch(request)).resolves.toEqual(answer);
+    expect(calls(fetchMock)).toEqual([{ path: "annotations/batch", method: "POST", body: JSON.stringify(request), cache: "no-store" }]);
   });
 
   it("changes a tag across the archive and hands back the job doing it", async () => {

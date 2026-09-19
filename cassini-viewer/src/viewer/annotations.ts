@@ -31,7 +31,16 @@ export interface AnnotationsDocument {
 
 // `resolved: false` means the marks were made against other audio, and their
 // time ranges must not be drawn against this recording.
+export interface AnnotationSync {
+ state: "saved" | "pending" | "delayed" | "blocked";
+ desired: number;
+ confirmed: number;
+ error?: string;
+}
+
 export interface MeetingAnnotations {
+ stateToken?: string;
+ sync?: AnnotationSync;
   meetingId: string;
   revision: number;
   annotations: AnnotationsDocument | null;
@@ -107,9 +116,22 @@ interface TagStyle {
 }
 
 export interface AnnotationRequest {
+ requestId?: string;
+ stateToken?: string;
+ retrySync?: boolean;
   ops: AnnotationOp[];
   expectRevision?: number;
   tagStyles?: TagStyle[];
+}
+
+export interface AnnotationBatchRequest extends AnnotationRequest {
+  requestId: string;
+  meetingIds: string[];
+}
+
+export interface AnnotationBatchResult {
+  results: AnnotationResult[];
+  tags: VocabularyTag[];
 }
 
 // `code` is the operator's `error` value verbatim. A 409 carries exactly

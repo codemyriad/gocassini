@@ -88,7 +88,7 @@ const (
 // goroutine and can fire more than once (admin double-action, AppAPI retry), and
 // the find-then-create folder step is not atomic — without this two concurrent
 // runs could create duplicate "Cassini" folders.
-var provisionMu sync.Mutex
+var provisionMu sync.RWMutex
 
 // resolvedProvisioningUser caches the administrator selected for privileged
 // setup. An instance's administrator does not change during one container run.

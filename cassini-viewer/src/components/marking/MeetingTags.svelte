@@ -60,6 +60,21 @@
           {/if}
         </span>
       {/if}
+      {#if $session.annotations?.sync && $session.annotations.sync.state !== "saved"}
+        <span class="text-base-content/60" role="status">
+          {#if $session.annotations.sync.state === "pending"}
+            Tags saved · updating recording…
+          {:else if $session.annotations.sync.state === "delayed"}
+            Tags saved · recording update delayed
+          {:else}
+            Tags saved · recording needs attention
+          {/if}
+        </span>
+        {#if $session.annotations.sync.state === "delayed" || $session.annotations.sync.state === "blocked"}
+          <span class="text-base-content/60">{$session.annotations.sync.error}</span>
+          <button type="button" class="link" disabled={$session.busy} on:click={() => session.retrySync()}>Retry recording update</button>
+        {/if}
+      {/if}
       {#if $session.error && $session.errorFrom === "meeting"}
         <span class="text-error" role="alert">{$session.error}</span>
       {/if}

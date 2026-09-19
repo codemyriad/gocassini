@@ -282,6 +282,10 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 				w.WriteHeader(http.StatusCreated)
 			}
 		case http.MethodGet:
+			if im := r.Header.Get("If-Match"); im != "" && im != f.etagFor(rel) {
+				w.WriteHeader(http.StatusPreconditionFailed)
+				return
+			}
 			// A gateway answering non-2xx with a JSON body — the one shape that
 			// gets past davGetBytes, which reports a nil error for any status.
 			if status, ok := f.failGET[rel]; ok {
