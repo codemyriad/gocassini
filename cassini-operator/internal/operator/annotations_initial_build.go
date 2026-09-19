@@ -11,8 +11,8 @@ import (
 // has never been built — a new install, a wiped volume, a schema change — so
 // nobody has to remember backfill-annotations after a deploy. Writes answer 503
 // until it finishes (errAnnotationIndexBuilding). A run that cannot read the
-// archive at all retries with backoff; a run that reads it marks the index
-// built, with any unreadable recordings left outside coverage.
+// archive or skips transient failures retries with backoff. Only a complete
+// pass marks the index built; unreadable content stays outside coverage.
 func (rt *Runtime) startInitialAnnotationBuild(exapp ExAppConfig, logger *log.Logger) {
 	store := rt.annotationReads()
 	if store == nil {
@@ -27,7 +27,9 @@ func (rt *Runtime) startInitialAnnotationBuild(exapp ExAppConfig, logger *log.Lo
 		return
 	}
 	store.rebuildPending.Store(true)
+	rt.workerWG.Add(1)
 	go func() {
+		defer rt.workerWG.Done()
 		delay := time.Minute
 		for {
 			err := rt.buildAnnotationIndexOnce(exapp, store, logger)
@@ -62,5 +64,8 @@ func (rt *Runtime) buildAnnotationIndexOnce(exapp ExAppConfig, store *annotation
 	}
 	logger.Printf("annotations: first rebuild of the tag index done — indexed=%d unchanged=%d unreadable=%d failed=%d of %d",
 		report.Indexed, report.Unchanged, report.Unavailable, report.Failed, len(targets))
+	if report.Failed > 0 {
+		return fmt.Errorf("%d recordings still need annotation import", report.Failed)
+	}
 	return nil
 }

@@ -379,9 +379,8 @@ func TestNCSinkRerunGivesUpAfterThreeConflicts(t *testing.T) {
 	}
 }
 
-// Marks made against different audio are kept, flagged, and delivered — never
-// dropped (Silvio's rule).
-func TestNCSinkRerunDeliversUnresolvedMarks(t *testing.T) {
+// A replacement audio identity must not inherit the previous recording's marks.
+func TestNCSinkRerunDropsMarksFromDifferentAudio(t *testing.T) {
 	w := newWiredNC(t)
 	cli := newFakeAnnotateCLI(t, fakeAnnotateOptions{unresolved: true})
 	sink, _ := newCarryingSink(t, w, cli)
@@ -395,8 +394,8 @@ func TestNCSinkRerunDeliversUnresolvedMarks(t *testing.T) {
 	if _, err := publishMeetingA(t, sink, "two"); err != nil {
 		t.Fatalf("unresolved marks must not fail a rerun: %v", err)
 	}
-	if got, want := w.content(carryOpus), "opus-meeting-a carrying[opus-meeting-a +mark]"; got != want {
-		t.Fatalf("the archive holds %q, want the carried copy %q", got, want)
+	if got, want := w.content(carryOpus), "opus-meeting-a"; got != want {
+		t.Fatalf("the archive holds %q, want the clean replacement %q", got, want)
 	}
 	if !strings.Contains(logs.String(), "different audio") {
 		t.Errorf("an unresolved carry must be logged; log was:\n%s", logs.String())

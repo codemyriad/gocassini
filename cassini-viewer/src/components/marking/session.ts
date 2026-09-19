@@ -3,6 +3,7 @@ import { get, writable } from "svelte/store";
 import { stackColumns } from "../../core/marking";
 import { formatClockTime } from "../../core/transcript";
 import {
+  AnnotationError,
   describeAnnotationError,
   groupByTag,
   labelKey,
@@ -49,11 +50,49 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
   const state = writable<MarksState>(OFF);
   let apply: ApplyAnnotations | null = null;
   let generation = 0;
+  let loader: LoadAnnotations | null = null;
+  let writes = 0;
+  let pending: { signature: string; request: AnnotationRequest } | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function schedulePoll() {
+    clearTimeout(pollTimer);
+    const sync = get(state).annotations?.sync;
+    if (sync?.state === "pending" || sync?.state === "delayed") {
+      pollTimer = setTimeout(() => void refresh(), sync.state === "delayed" ? 5000 : 1000);
+    }
+  }
+
+  async function refresh() {
+    if (!loader) return;
+    if (get(state).busy) {
+      schedulePoll();
+      return;
+    }
+    const current = generation;
+    const version = writes;
+    try {
+      const answer = await loader();
+      if (current !== generation || version !== writes) return;
+      state.update((s) => ({ ...s, annotations: answer }));
+    } catch (error) {
+      if (current === generation && version === writes && error instanceof AnnotationError && [401, 403, 404].includes(error.status)) {
+        state.update((s) => ({ ...s, annotations: null, status: "failed", error: describeAnnotationError(error) }));
+      }
+      // Keep acknowledged marks visible during a temporary archive outage.
+    } finally {
+      if (current === generation) schedulePoll();
+    }
+  }
+
   let retry: ReturnType<typeof setTimeout> | undefined;
 
   async function open(load: LoadAnnotations | null, applyWith: ApplyAnnotations | null, attempt = 0) {
     const current = ++generation;
     clearTimeout(retry);
+    clearTimeout(pollTimer);
+    pending = null;
+    loader = load;
     apply = applyWith;
     if (!load) {
       state.set(OFF);
@@ -65,6 +104,7 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
       const annotations = await load();
       if (current === generation) {
         state.set({ ...OFF, status: "ready", annotations, editable });
+        schedulePoll();
       }
     } catch (error) {
       if (current !== generation) {
@@ -85,11 +125,29 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
     if (!apply || get(state).busy) {
       return false;
     }
+    writes++;
+    const signature = JSON.stringify(request);
+    if (pending?.signature !== signature) {
+      const requestId = crypto.randomUUID?.() ?? Array.from(
+        crypto.getRandomValues(new Uint8Array(16)),
+        (n) => n.toString(16).padStart(2, "0"),
+      ).join("");
+      pending = { signature, request: { ...request, requestId, stateToken: get(state).annotations?.stateToken } };
+    }
+    const sent = pending.request;
     state.update((s) => ({ ...s, busy: true, error: "" }));
     try {
-      const result = await apply(request);
-      onChanged(result);
+      const result = await apply(sent);
       if (current === generation) {
+        pending = null;
+        writes++;
+        const visible = get(state).annotations;
+        if (result.sync && visible?.sync && result.sync.desired < visible.sync.desired) {
+          state.update((s) => ({ ...s, busy: false }));
+          schedulePoll();
+          return true;
+        }
+        onChanged(result);
         state.update((s) => ({
           ...s,
           status: "ready",
@@ -100,17 +158,20 @@ export function createMarksSession(onChanged: (result: AnnotationResult) => void
             ...Object.fromEntries((request.tagStyles ?? []).map((style) => [labelKey(style.label), style.color])),
           },
         }));
+        schedulePoll();
       }
       return true;
     } catch (error) {
       if (current === generation) {
+        if (error instanceof AnnotationError && error.status < 500) pending = null;
         state.update((s) => ({ ...s, busy: false, error: describeAnnotationError(error), errorFrom: from }));
+        if (error instanceof AnnotationError && error.status === 409) void refresh();
       }
       return false;
     }
   }
 
-  return { subscribe: state.subscribe, open, write, close: () => open(null, null) };
+  return { subscribe: state.subscribe, open, write, retrySync: () => write({ ops: [], retrySync: true }), close: () => open(null, null) };
 }
 
 export type MarksSession = ReturnType<typeof createMarksSession>;

@@ -158,6 +158,11 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	// ncFilesAccessApplier targets. attemptOpusPath hardcodes <jobID>.opus; if
 	// that drifts this fails closed, because createProtectedLeaf still denies.
 	opusRemote := root + "/meetings/" + d.JobID + ".opus"
+	releaseAnnotation, err := annotationWriteLocks.acquire(ctx, path.Base(opusRemote))
+	if err != nil {
+		return "", err
+	}
+	defer releaseAnnotation()
 	audienceNeeded := false
 
 	// A leaf at exactly the owner-only baseline is ambiguous: an unfinished
@@ -401,9 +406,10 @@ func (s *nextcloudFilesPublishSink) stageDeliveredMarks(ctx context.Context, ite
 		return upload{}, annotateResult{}, fmt.Errorf("carry the marks on %s: it reported success and wrote nothing: %w", item.remote, err)
 	}
 	if result.Resolved != nil && !*result.Resolved {
-		// Silvio's rule: marks made against different audio are kept and flagged,
-		// never dropped. A delivery, not a failure; logged for whoever asks why.
-		s.logf("nc files: %s: %d mark(s) on the delivered copy were made against different audio — carried unresolved and delivered", item.remote, result.Carried)
+		// A different audio identity does not inherit the old recording's marks.
+		s.logf("nc files: %s: different audio — discarding %d carried mark(s)", item.remote, result.Carried)
+		sealed, err := runAnnotateShow(ctx, s.cassiniBin, item.local)
+		return item, sealed, err
 	}
 	return upload{local: staged, remote: item.remote, size: info.Size()}, result, nil
 }
@@ -412,7 +418,7 @@ func (s *nextcloudFilesPublishSink) stageDeliveredMarks(ctx context.Context, ite
 //
 // Exactly one failure is safe to deliver past: the delivered copy is not a
 // recording at all — the zero-byte reservation of a first publish that died, or
-// a truncated upload. No mark can have been committed into either, and refusing
+// a truncated upload. Durable marks are reconciled after replacement; refusing
 // would wedge the meeting forever. The CLI reads each file on its own to tell:
 // the delivered copy must be unreadable AND the sealed one readable. Anything
 // else fails the publish, because delivering past it loses every mark.
@@ -424,7 +430,7 @@ func (s *nextcloudFilesPublishSink) sealedIfDeliveredIsUnreadable(ctx context.Co
 	if err != nil {
 		return upload{}, annotateResult{}, fmt.Errorf("carry the marks on %s into this rerun: %w (and the CLI cannot read the sealed file either: %v)", item.remote, carryErr, err)
 	}
-	s.logf("nc files: the delivered %s is not a readable recording, so it carries no marks — delivering the sealed file (%v)", item.remote, carryErr)
+	s.logf("nc files: the delivered %s is unreadable — repairing from the sealed file and reconciling durable marks (%v)", item.remote, carryErr)
 	return item, sealed, nil
 }
 
@@ -452,6 +458,11 @@ const publishAnnotationsUnreadable = "marks-unreadable"
 // recording that could not be recorded is marked unavailable instead.
 func (s *nextcloudFilesPublishSink) indexDeliveredMarks(ctx context.Context, uploads []upload, carried map[string]annotateResult) {
 	if s.rt == nil || s.rt.annotations == nil {
+		return
+	}
+	if s.rt.annotationReads() != nil {
+		// Durable heads were reconciled with the verified upload, before any
+		// later catalog/ACL failure could skip this callback.
 		return
 	}
 	index := s.rt.annotations
@@ -519,6 +530,18 @@ func (s *nextcloudFilesPublishSink) repairUnprotectedLeaf(ctx context.Context, r
 // verifies what Nextcloud stored. A 412 wraps errDAVPreconditionFailed and has
 // written nothing.
 func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item upload, accessControlled bool, ifMatch string) error {
+	store := s.rt.annotationReads()
+	var delivered annotateResult
+	if store != nil && s.carriesMarks(item) {
+		var err error
+		delivered, err = runAnnotateShow(ctx, s.cassiniBin, item.local)
+		if err != nil || delivered.Unsupported {
+			return fmt.Errorf("cannot inspect replacement annotations: %v", err)
+		}
+		if err = store.prepareAnnotationRepublish(ctx, path.Base(item.remote), delivered); err != nil {
+			return err
+		}
+	}
 	if _, _, err := s.cfg.davPutFileIfMatch(ctx, s.client, ncRecordingsOwner, item.remote, item.local, ncRecordingsContentType, ifMatch); err != nil {
 		return fmt.Errorf("put %s: %w", item.remote, err)
 	}
@@ -527,6 +550,25 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 	}
 	if err := s.cfg.verifyUploadedLeaf(ctx, s.client, item.remote, item.size, accessControlled); err != nil {
 		return fmt.Errorf("refusing to publish: %w; re-run the publish", err)
+	}
+	if store != nil && s.carriesMarks(item) {
+		dir, cleanup, err := newCarryDir(item)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		verified := filepath.Join(dir, "verified.opus")
+		if _, _, err = s.cfg.stageRecording(ctx, s.client, ncRecordingsOwner, item.remote, verified, maxAnnotateRecordingBytes); err != nil {
+			return err
+		}
+		digest, err := fileSHA256(verified)
+		if err != nil {
+			return err
+		}
+		if digest != delivered.ContainerSHA256 {
+			return fmt.Errorf("replacement recording content verification failed")
+		}
+		return store.recordAnnotationDelivery(ctx, path.Base(item.remote), delivered)
 	}
 	return nil
 }

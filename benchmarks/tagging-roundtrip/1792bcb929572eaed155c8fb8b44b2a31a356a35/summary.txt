@@ -1,0 +1,19 @@
+Annotation visibility benchmark
+meeting: cassini-annotations-benchmark-1789724004-96096
+fixture_bytes: 6809056
+burn_in: 5 (excluded)
+samples: 30
+POST roundtrip (curl time_total):
+  p55: 1032.562 ms
+  p90: 1045.784 ms
+  p99: 1095.525 ms
+time from POST start until GET contains the new mark:
+  p55: 1602.361 ms
+  p90: 1622.574 ms
+  p99: 1677.905 ms
+GET polls until the new mark is visible:
+  min: 1
+  avg: 1.000
+  max: 1
+final archive settle after last POST: 1100 ms
+percentiles use nearest-rank selection.

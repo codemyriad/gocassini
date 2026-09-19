@@ -226,10 +226,10 @@ describe("loading the vocabulary", () => {
     void loader.reload();
     expect(load).toHaveBeenCalledTimes(1);
     void loader.reload(true);
-    first.resolve(vocabulary);
+    first.resolve({ ...vocabulary, tags: [] });
     await settle();
     expect(load).toHaveBeenCalledTimes(2);
-    expect(loaded).toHaveBeenCalledTimes(2);
+    expect(loaded).toHaveBeenCalledExactlyOnceWith(vocabulary);
   });
 
   it("retries while the index builds or the budget is spent, backing off, and gives up on anything else", async () => {

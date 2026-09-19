@@ -15,8 +15,10 @@ import (
 
 // Rebuilding the tag index from the archive (D-737).
 //
-// Only the DELIVERED copy in Nextcloud is read: marks are written there, and
-// current/<job>.opus is the sealed artifact, which never carries one.
+// Existing durable documents restore their query rows first. Archive imports
+// read only the DELIVERED copy in Nextcloud; current/<job>.opus is the sealed
+// artifact, which never carries marks. Pending desired documents remain owned
+// by the DB even when their archive copy is older or unreadable.
 //
 // Every delivery and conditional PUT stamps OC-Checksum with the sha256 of the
 // bytes written, so a meeting whose recorded container digest equals it is
@@ -135,10 +137,10 @@ func backfillAnnotationIndex(
 		logger.Printf("annotations backfill: could not prune vanished meetings (%v)", err)
 	}
 	report.Forgotten = forgotten
-	if err := store.markBuilt(ctx); err != nil {
-		// Only the marker is missing: the next start rebuilds again, which is
-		// wasted work, never a wrong answer.
-		logger.Printf("annotations backfill: %v", err)
+	if report.Failed == 0 {
+		if err := store.markBuilt(ctx); err != nil {
+			return report, err
+		}
 	}
 	return report, nil
 }
@@ -147,6 +149,21 @@ func backfillOneAnnotation(
 	ctx context.Context, store *annotationStore, opusName string, recorded map[string]string,
 	delivered searchDeliveredStateReader, archive annotationArchiveReader,
 ) (annotationBackfillOutcome, string) {
+	provisionMu.RLock()
+	defer provisionMu.RUnlock()
+	release, err := annotationWriteLocks.acquire(ctx, opusName)
+	if err != nil {
+		return annotationBackfillFailed, err.Error()
+	}
+	defer release()
+	// Restore local query rows before checksum shortcuts or archive I/O. A
+	// pending document must stay searchable even if its remote copy is stale
+	// or temporarily unavailable.
+	if err := store.inTx(ctx, func(tx *sql.Tx) error {
+		return rebuildDesiredAnnotationProjection(ctx, tx, opusName)
+	}); err != nil {
+		return annotationBackfillFailed, fmt.Sprintf("rebuild desired query rows: %v", err)
+	}
 	checksum, exists, err := delivered(ctx, opusName)
 	if err != nil {
 		return annotationBackfillFailed, fmt.Sprintf("read delivered state: %v", err)
@@ -155,7 +172,7 @@ func backfillOneAnnotation(
 		// Drift this run cannot judge; pruned once the catalog stops naming it.
 		return annotationBackfillFailed, "the catalog names it but the archive does not hold it"
 	}
-	existing, known := recorded[opusName]
+	existing := recorded[opusName]
 	if sameContainer(existing, checksum) {
 		return annotationBackfillUnchanged, ""
 	}
@@ -169,12 +186,9 @@ func backfillOneAnnotation(
 			}
 			return annotationBackfillUnavailable, err.Error()
 		}
-		if !known {
-			// Nothing to protect; at least make the meeting known, outside
-			// coverage. Still a failure: re-running is the fix.
-			_ = store.MarkUnavailable(ctx, opusName, "")
-		}
-		return annotationBackfillFailed, fmt.Sprintf("archive recording unreadable: %v", err)
+		// A transient failure is not a verdict about the bytes. Leave unknown
+		// documents eligible for import when the meeting is next listed/opened.
+		return annotationBackfillFailed, fmt.Sprintf("archive recording unavailable: %v", err)
 	}
 	// The digest of the bytes actually read is what OC-Checksum is compared
 	// against next time.
@@ -222,7 +236,19 @@ func forgetVanishedAnnotations(
 		if present[name] {
 			continue
 		}
-		if err := store.inTx(ctx, func(tx *sql.Tx) error { return deleteAnnotationRows(ctx, tx, name) }); err != nil {
+		if err := store.inTx(ctx, func(tx *sql.Tx) error {
+			var pending int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND (desired!=confirmed OR republish_json IS NOT NULL)`, name).Scan(&pending); err != nil {
+				return err
+			}
+			if pending > 0 {
+				return nil
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM annotation_head WHERE opus_name=?`, name); err != nil {
+				return err
+			}
+			return deleteAnnotationRows(ctx, tx, name)
+		}); err != nil {
 			return forgotten, err
 		}
 		logger.Printf("annotations backfill: %s is no longer in the archive; dropped from the index", name)
