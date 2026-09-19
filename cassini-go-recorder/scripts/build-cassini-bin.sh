@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build a Linux/macOS recorder with Cassini's model-reference native frontend.
+# Build a recorder with prebuilt CPU libraries or a source-built CUDA runtime.
 # Usage: build-cassini-bin.sh [--backend cpu|cuda] [--test GO_TEST_ARGS... | --run GO_RUN_ARGS...]
-# Requires Go, C++17 compiler, CMake >=3.15, curl, tar, patch, unzip, git.
-# The native dependencies are isolated in .build-cache; go.mod/cache stay intact.
+# CPU requires Go and a C compiler. CUDA also needs CMake, curl, tar and unzip.
+# CUDA native dependencies are isolated in .build-cache; go.mod/cache stay intact.
 set -euo pipefail
 rec=$(cd "$(dirname "$0")/.." && pwd)
 repo=$(cd "$rec/.." && pwd)
@@ -35,7 +35,25 @@ case $(go env GOOS) in
  *) echo 'Native packages support Linux/macOS.' >&2; exit 1 ;;
 esac
 [[ $(go env GOOS) == "$(go env GOHOSTOS)" && $(go env GOARCH) == "$(go env GOHOSTARCH)" ]] || { echo 'Build native packages on the target architecture (cross-compilation is unsupported).' >&2; exit 1; }
-[[ $(go -C "$rec" list -m -f '{{.Version}}' "$binding") == v1.13.7 ]] || { echo 'Go binding/native version mismatch' >&2; exit 1; }
+
+if [[ $backend == cpu ]]; then
+  if [[ $running == 1 ]]; then
+    exec go -C "$rec" run "$@"
+  elif [[ $testing == 1 ]]; then
+    if [[ $# == 0 ]]; then set -- ./internal/transcribe; fi
+    exec go -C "$rec" test "$@"
+  else
+    output_bin=${output_bin:-$rec/dist/cassini-bin}
+    mkdir -p "$(dirname "$output_bin")"
+    go -C "$rec" build -o "$output_bin" ./cmd/cassini
+    echo "Built $output_bin using prebuilt native runtime."
+    exit 0
+  fi
+fi
+
+binding_version=$(go -C "$rec" list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' "$binding")
+[[ "$binding_version" =~ ^v1\.13\.7 ]] || { echo "Go binding/native version mismatch: $binding_version" >&2; exit 1; }
+
 cache=$rec/.build-cache/native-$backend
 dist=$rec/dist
 mkdir -p "$cache" "$dist"

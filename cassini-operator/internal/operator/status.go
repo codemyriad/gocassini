@@ -26,9 +26,10 @@ import (
 // short TTL; the record doctor subprocess remains opt-in via /healthz.
 
 const (
-	envSTTDevice      = "CASSINI_STT_DEVICE"
-	envSTTModel       = "CASSINI_STT_MODEL"
-	envSTTCUDACapable = "CASSINI_STT_CUDA_CAPABLE"
+	envSTTDevice       = "CASSINI_STT_DEVICE"
+	envSTTModel        = "CASSINI_STT_MODEL"
+	envSTTCUDACapable  = "CASSINI_STT_CUDA_CAPABLE"
+	envNativeBuildInfo = "CASSINI_NATIVE_BUILDINFO"
 
 	envTalkSignalingInternalSecret = "CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
 
@@ -142,11 +143,13 @@ type statusPrerequisite struct {
 }
 
 type statusSTT struct {
-	Device       string `json:"device"`
-	Quality      string `json:"quality"`
-	ModelID      string `json:"model_id,omitempty"`
-	DeviceUsable bool   `json:"device_usable"`
-	Detail       string `json:"detail,omitempty"`
+	Device            string `json:"device"`
+	Quality           string `json:"quality"`
+	ModelID           string `json:"model_id,omitempty"`
+	DeviceUsable      bool   `json:"device_usable"`
+	Detail            string `json:"detail,omitempty"`
+	ReferenceFrontend *bool  `json:"reference_frontend,omitempty"`
+	Warning           string `json:"warning,omitempty"`
 }
 
 type statusTalk struct {
@@ -171,6 +174,65 @@ type statusTalk struct {
 // secret (required for invisible HPB-internal recording) is set.
 func signalingInternalSecretConfigured() bool {
 	return strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != ""
+}
+
+const (
+	speechEngineRefActiveMarker   = "reference frontend active"
+	speechEngineRefInactiveMarker = "reference frontend optimization inactive"
+)
+
+// probeReferenceFrontend reports whether the active sherpa runtime includes
+// the Cassini Parakeet v3 reference frontend optimization. It prefers
+// probing the recorder binary directly (which evaluates sherpa.GetVersion()),
+// falling back to buildinfo metadata if the binary is absent or unexecutable.
+// Probing is cached across requests so repeated /status polling does not fork
+// doctor subprocesses.
+func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
+	if rt.referenceFrontendProbe != nil {
+		return rt.referenceFrontendProbe()
+	}
+	bin := strings.TrimSpace(rt.cfg.CassiniBin)
+	rt.refFrontendMu.Lock()
+	defer rt.refFrontendMu.Unlock()
+	// Coalesce concurrent callers and cache unknown results too. Retry after
+	// a short TTL so a repaired binary/runtime is detected without a restart.
+	if rt.refFrontendBin == bin && time.Since(rt.refFrontendChecked) < 30*time.Second {
+		return rt.refFrontendKnown, rt.refFrontendIsRef
+	}
+	known, isReference = rt.doProbeReferenceFrontend(bin)
+	rt.refFrontendBin = bin
+	rt.refFrontendKnown = known
+	rt.refFrontendIsRef = isReference
+	rt.refFrontendChecked = time.Now()
+	return known, isReference
+}
+
+func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference bool) {
+	if bin != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "build")
+		cmd.WaitDelay = 500 * time.Millisecond
+		cmd.Env = rt.childEnv()
+		if out, err := cmd.Output(); err == nil || len(out) > 0 {
+			text := string(out)
+			if strings.Contains(text, speechEngineRefActiveMarker) {
+				return true, true
+			}
+			if strings.Contains(text, speechEngineRefInactiveMarker) {
+				return true, false
+			}
+		}
+	}
+	path := os.Getenv(envNativeBuildInfo)
+	if path == "" {
+		path = "/opt/cassini/lib/cassini-native-buildinfo.txt"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, false
+	}
+	return true, strings.Contains(string(data), "+cassini-parakeet-v3-reference-v1")
 }
 
 type statusCheck struct {
@@ -228,6 +290,14 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
+	}
+	if effective.Model == modelParakeetV3Fp32 || effective.Model == modelParakeetV3Int8 {
+		if known, isRef := rt.probeReferenceFrontend(); known {
+			resp.STT.ReferenceFrontend = &isRef
+			if !isRef {
+				resp.STT.Warning = "Parakeet v3 running on upstream sherpa runtime; reference frontend optimization is inactive; falling back to standard decode profile"
+			}
+		}
 	}
 	resp.ImageTag = resp.Version
 	resp.DB = statusCheck{OK: true, Path: rt.cfg.DBPath}

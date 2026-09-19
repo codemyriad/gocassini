@@ -66,15 +66,8 @@ RUN set -eux; \
  curl -fSL "${SILERO_VAD_URL}" -o /out/vad/silero_vad.onnx; \
  ls -la /out/models /out/vad/
 
-# Compile the model-matching native frontend for this image's target architecture.
-FROM debian:bookworm-slim AS sherpa-builder
-RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential cmake curl ca-certificates git patch unzip \
- && rm -rf /var/lib/apt/lists/*
-COPY deployment/sherpa /tmp/cassini-sherpa
-RUN /tmp/cassini-sherpa/build.sh cpu /out/lib /tmp/native-build
-
 FROM golang:1.24-bookworm AS go-builder
+ARG TARGETARCH
 WORKDIR /src
 
 COPY cassini-go-recorder/go.mod cassini-go-recorder/go.sum ./cassini-go-recorder/
@@ -85,8 +78,16 @@ RUN go -C cassini-go-recorder mod download \
 COPY cassini-go-recorder ./cassini-go-recorder
 COPY cassini-operator ./cassini-operator
 RUN go -C cassini-go-recorder build -o /out/cassini ./cmd/cassini \
- && go -C cassini-operator build -o /out/cassini-operator ./cmd/cassini-operator
-COPY --from=sherpa-builder /out/lib /out/lib
+ && go -C cassini-operator build -o /out/cassini-operator ./cmd/cassini-operator \
+ && case "${TARGETARCH:-amd64}" in \
+      amd64) triplet=x86_64-unknown-linux-gnu ;; \
+      arm64) triplet=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH:-amd64}" >&2; exit 1 ;; \
+    esac \
+ && sherpa_dir=$(go -C cassini-go-recorder list -m -f '{{.Dir}}' github.com/k2-fsa/sherpa-onnx-go-linux) \
+ && mkdir -p /out/lib \
+ && cp "$sherpa_dir/lib/$triplet"/* /out/lib/ \
+ && echo "sherpa=1.13.7+cassini-parakeet-v3-reference-v1" > /out/lib/cassini-native-buildinfo.txt
 
 # Web workspace builder (D-420): cassini-app (the in-NC shell) consumes
 # cassini-viewer (the viewing layer) via the npm workspace, so both install
