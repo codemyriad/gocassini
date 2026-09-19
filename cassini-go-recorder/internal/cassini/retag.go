@@ -55,12 +55,16 @@ func runRetag(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		attemptNumber   int
 		clearAttempt    bool
 		clearJobID      bool
+		title           string
+		speakers        speakerFlag
 		emitJSONSummary bool
 	)
 
 	fs := flag.NewFlagSet("cassini retag", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&outPath, "out", "", "output portable .opus file (required, must differ from the input)")
+	fs.StringVar(&title, "title", "", "set the meeting title")
+	fs.Var(&speakers, "speaker", "relabel a speaker as <id>=<label>, or as a bare <label> when the file has exactly one speaker (repeatable)")
 	fs.StringVar(&roomID, "room-id", "", "set the derived room id (rm_<16 hex>)")
 	fs.BoolVar(&clearRoomID, "clear-room-id", false, "remove the room id")
 	fs.StringVar(&jobID, "job-id", "", "set the id of the operator job that produced this file")
@@ -74,10 +78,19 @@ func runRetag(ctx context.Context, args []string, stdout, stderr io.Writer) int 
   cassini retag ./meeting.opus --out ./retagged.opus \
     --job-id 01K3Q7W8ZC9F0MJXQ2NB8V4RTD --attempt-number 1
   cassini retag ./meeting.opus --out ./retagged.opus --clear-room-id --json
+  cassini retag ./meeting.opus --out ./retagged.opus \
+    --title "It Takes a Village" --speaker "Paula Grzegorzewska"
 
 Rewrite the identity fields of an already-packed portable .opus file. The audio
 is copied, not re-encoded, and the result is integrity-checked against the
 manifest it carries before it is written.
+
+--speaker relabels the roster a recording carries. A capture whose speaker is
+the Talk account that dialled in ("Demo visitor") rather than the person who
+actually spoke is relabelled without re-transcribing: the ids the transcript
+words reference do not move, only the labels shown against them. Give it
+<id>=<label> to name a speaker, or a bare <label> when the file has exactly one
+speaker and there is nothing to disambiguate.
 
 Both the embedded manifest and the plain OpusTags are updated together. Editing
 only the tags would produce a file that looks right to ffprobe and still loses
@@ -118,7 +131,12 @@ clearing the same field is refused rather than resolved.
 		clearJobID:    clearJobID,
 		attemptNumber: attemptNumber,
 		clearAttempt:  clearAttempt,
+		title:         title,
 	}, fs, stderr)
+	if code != 0 {
+		return code
+	}
+	speakerEdits, code := speakerEditsFromFlag(speakers, stderr)
 	if code != 0 {
 		return code
 	}
@@ -143,7 +161,7 @@ clearing the same field is refused rather than resolved.
 		return 2
 	}
 
-	summary, err := retagPortableMeeting(ctx, inputPath, outPath, edits)
+	summary, err := retagPortableMeeting(ctx, inputPath, outPath, edits, speakerEdits)
 	if err != nil {
 		fmt.Fprintf(stderr, "retag: %v\n", err)
 		return 1
@@ -175,6 +193,129 @@ type retagFlagValues struct {
 	clearJobID    bool
 	attemptNumber int
 	clearAttempt  bool
+	title         string
+}
+
+// speakerFlag collects the repeated --speaker values in the order they were
+// given. Ordinary flag.StringVar would keep only the last, which on a
+// multi-speaker file silently relabels one person and drops the rest.
+type speakerFlag []string
+
+func (s *speakerFlag) String() string { return strings.Join(*s, ",") }
+
+func (s *speakerFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+// speakerEdit is one requested relabelling. An empty ID means "the only speaker
+// in the file", resolved once the roster is known — the bare --speaker spelling
+// cannot be checked before the file is open.
+type speakerEdit struct {
+	ID    string
+	Label string
+}
+
+// speakerEditsFromFlag parses --speaker values into edits, rejecting the
+// spellings that have more than one reading.
+//
+// A bare label is accepted because the common case by far is a single-speaker
+// capture where the roster holds an account name and the operator knows the
+// person. It stays unambiguous: whether the file actually has exactly one
+// speaker is checked against the roster before anything is written, so the
+// convenience spelling cannot quietly relabel the wrong person.
+func speakerEditsFromFlag(values speakerFlag, stderr io.Writer) ([]speakerEdit, int) {
+	var edits []speakerEdit
+	seen := map[string]bool{}
+	bare := 0
+	for _, raw := range values {
+		id, label := "", strings.TrimSpace(raw)
+		// SplitN, so a label may itself contain "=".
+		if key, rest, found := strings.Cut(raw, "="); found {
+			id, label = strings.TrimSpace(key), strings.TrimSpace(rest)
+			if id == "" {
+				fmt.Fprintf(stderr, "retag configuration error: --speaker %q has an empty speaker id\n", raw)
+				return nil, 2
+			}
+		} else {
+			bare++
+		}
+		if label == "" {
+			fmt.Fprintf(stderr, "retag configuration error: --speaker %q has an empty label; retag does not remove speakers\n", raw)
+			return nil, 2
+		}
+		if seen[id] {
+			fmt.Fprintf(stderr, "retag configuration error: --speaker names %q twice\n", id)
+			return nil, 2
+		}
+		seen[id] = true
+		edits = append(edits, speakerEdit{ID: id, Label: label})
+	}
+	// Two bare labels cannot both mean "the only speaker", and a bare label
+	// beside an addressed one is a caller that thinks the file has one speaker
+	// while telling us it has more.
+	if bare > 0 && len(edits) > 1 {
+		fmt.Fprintln(stderr, "retag configuration error: a bare --speaker label means the file's only speaker; name each one as <id>=<label> instead")
+		return nil, 2
+	}
+	return edits, 0
+}
+
+// applySpeakerEdits relabels the roster inside the decoded manifest document,
+// reporting the labels that actually moved.
+//
+// The roster is edited in the generic JSON document for the same reason the
+// meeting fields are (see runRetag): a speaker object may carry producer
+// extension keys, and round-tripping it through portable.Speaker would drop
+// them. Only the label is touched; ids never move, because the transcript words
+// reference them and a renamed id would orphan every word.
+func applySpeakerEdits(document map[string]any, edits []speakerEdit) ([]RetagChange, error) {
+	if len(edits) == 0 {
+		return nil, nil
+	}
+	roster, ok := document["speakers"].([]any)
+	if !ok || len(roster) == 0 {
+		return nil, fmt.Errorf("relabel speaker: the manifest carries no speakers")
+	}
+
+	byID := make(map[string]map[string]any, len(roster))
+	for _, entry := range roster {
+		speaker, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("relabel speaker: the manifest has a malformed speaker entry")
+		}
+		id, _ := speaker["id"].(string)
+		if id == "" {
+			return nil, fmt.Errorf("relabel speaker: the manifest has a speaker with no id")
+		}
+		byID[id] = speaker
+	}
+
+	var changes []RetagChange
+	for _, edit := range edits {
+		target := edit.ID
+		if target == "" {
+			if len(roster) != 1 {
+				return nil, fmt.Errorf("relabel speaker: a bare --speaker label needs exactly one speaker, but this file has %d; name one as <id>=<label>", len(roster))
+			}
+			target, _ = roster[0].(map[string]any)["id"].(string)
+		}
+		speaker, ok := byID[target]
+		if !ok {
+			return nil, fmt.Errorf("relabel speaker: this file has no speaker %q", target)
+		}
+		before, _ := speaker["label"].(string)
+		if before == edit.Label {
+			continue
+		}
+		speaker["label"] = edit.Label
+		changes = append(changes, RetagChange{
+			Field: "speakers." + target + ".label",
+			From:  retagJSONValue(before),
+			To:    edit.Label,
+		})
+	}
+	return changes, nil
 }
 
 // retagEdit is one requested field change. A nil Value means "remove the field".
@@ -251,6 +392,19 @@ func retagEditsFromFlags(values retagFlagValues, fs *flag.FlagSet, stderr io.Wri
 			edits = append(edits, retagEdit{Field: "attemptNumber", Value: values.attemptNumber})
 		}
 	}
+
+	// Title has no --clear-title: it is a required manifest field, so removing
+	// it produces a file that no longer validates. An empty --title is refused
+	// for the reason an empty --room-id is (see above): it is what an
+	// unexpanded shell variable looks like.
+	if provided["title"] {
+		trimmed := strings.TrimSpace(values.title)
+		if trimmed == "" {
+			fmt.Fprintln(stderr, "retag configuration error: --title is empty; a portable meeting must carry a title")
+			return nil, 2
+		}
+		edits = append(edits, retagEdit{Field: "title", Value: trimmed})
+	}
 	return edits, 0
 }
 
@@ -271,7 +425,7 @@ type RetagSummary struct {
 	Changes   []RetagChange `json:"changes"`
 }
 
-func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits []retagEdit) (RetagSummary, error) {
+func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits []retagEdit, speakerEdits []speakerEdit) (RetagSummary, error) {
 	resolvedOut, err := preparePortableMeetingOutput(outPath)
 	if err != nil {
 		return RetagSummary{}, err
@@ -319,6 +473,22 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 		summary.Changes = append(summary.Changes, RetagChange{Field: edit.Field, From: retagJSONValue(before), To: edit.Value})
 	}
 
+	speakerChanges, err := applySpeakerEdits(document, speakerEdits)
+	if err != nil {
+		return RetagSummary{}, err
+	}
+	summary.Changes = append(summary.Changes, speakerChanges...)
+
+	// The labels the caller asked for, keyed by the id they landed on, so the
+	// staged-file check below compares against what was requested rather than
+	// against the document we just edited — which would only prove the edit
+	// agreed with itself.
+	intendedLabels := map[string]string{}
+	for _, change := range speakerChanges {
+		id := strings.TrimSuffix(strings.TrimPrefix(change.Field, "speakers."), ".label")
+		intendedLabels[id] = fmt.Sprintf("%v", change.To)
+	}
+
 	// The retag-specific half of the verification the shared rewrite runs
 	// against the STAGED file: the fields this command exists to move must be
 	// in the written manifest, and the plain-tag mirrors must agree with it,
@@ -336,6 +506,28 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 		}
 		if got := portableTagValue(writtenTags, "CASSINI_ROOM_ID"); got != written.Meeting.RoomID {
 			return fmt.Errorf("verify retagged file: CASSINI_ROOM_ID is %q, manifest says %q", got, written.Meeting.RoomID)
+		}
+		if written.Meeting.Title != intended.Meeting.Title {
+			return fmt.Errorf("verify retagged file: the written manifest does not carry the requested title")
+		}
+		if got := portableTagValue(writtenTags, "TITLE"); got != written.Meeting.Title {
+			return fmt.Errorf("verify retagged file: TITLE is %q, manifest says %q", got, written.Meeting.Title)
+		}
+		// The roster is checked against the REQUESTED labels, and its shape
+		// against the input's: a relabelling that dropped or reordered a
+		// speaker would leave transcript words pointing at an id the manifest
+		// no longer names, which reads as an empty transcript rather than as an
+		// error.
+		if len(written.Speakers) != len(intended.Speakers) {
+			return fmt.Errorf("verify retagged file: the written manifest has %d speakers, expected %d", len(written.Speakers), len(intended.Speakers))
+		}
+		for index, speaker := range written.Speakers {
+			if speaker.ID != intended.Speakers[index].ID {
+				return fmt.Errorf("verify retagged file: speaker %d is %q, expected %q", index, speaker.ID, intended.Speakers[index].ID)
+			}
+			if want, ok := intendedLabels[speaker.ID]; ok && speaker.Label != want {
+				return fmt.Errorf("verify retagged file: speaker %q is labelled %q, expected %q", speaker.ID, speaker.Label, want)
+			}
 		}
 		return nil
 	}
@@ -470,6 +662,15 @@ func retagOpusTags(existing map[string]string, payloadJSON []byte, manifest port
 			continue
 		}
 		setTagPreservingCase(tags, tag, value)
+	}
+
+	// TITLE is the player-facing mirror of meeting.title, and it is what every
+	// audio app shows. It is set, never deleted: unlike the optional identity
+	// mirrors above, an empty title here means a file that arrived without one,
+	// and dropping the tag a producer wrote would lose information this command
+	// was not asked to touch.
+	if manifest.Meeting.Title != "" {
+		setTagPreservingCase(tags, "TITLE", manifest.Meeting.Title)
 	}
 	return tags, nil
 }

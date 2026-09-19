@@ -431,3 +431,173 @@ func TestMeetingsSummarizeUsage(t *testing.T) {
 		}
 	})
 }
+
+// The built-in template is written for a working meeting between colleagues.
+// A conference talk is not one, and the summary it produces reads as though it
+// were ("the main outcome was...", "action items"). --from-file seals a
+// summary somebody wrote for the recording it actually is.
+func TestMeetingsSummarizeFromFileSealsAnAuthoredSummary(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	path := packFixtureOpus(t, tmp, "talk")
+	before := decodePortableManifestFromOpus(t, path)
+
+	const authored = "# It Takes a Village\n\nPaula opens with a photograph of a bridge."
+	summaryPath := filepath.Join(tmp, "talk.md")
+	if err := os.WriteFile(summaryPath, []byte(authored+"\n\n\n"), 0o644); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+
+	// Deliberately no LLM endpoint configured: an authored summary must not
+	// need one, and no request may be made.
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"meetings", "summarize", "--from-file", summaryPath, path,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("summarize failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	meeting, err := inspectpkg.ExtractMeeting(path)
+	if err != nil {
+		t.Fatalf("re-read summarized meeting: %v", err)
+	}
+	// Trailing blank lines are normalised to exactly one newline, so a heredoc
+	// and an editor's saved file seal to identical bytes.
+	if got := string(meeting.SummaryMarkdown); got != authored+"\n" {
+		t.Errorf("sealed summary = %q, want %q", got, authored+"\n")
+	}
+
+	after := decodePortableManifestFromOpus(t, path)
+	// No model is claimed, because none wrote it. A model name here would make
+	// an authored summary indistinguishable from a generated one.
+	if got := meeting.SummaryModel(); got != "" {
+		t.Errorf("summary model = %q, want it absent", got)
+	}
+	if after.Provenance == nil || after.Provenance.MeetingSummary == nil {
+		t.Fatal("the file carries no meetingSummary provenance")
+	}
+	if got := after.Provenance.MeetingSummary.Source; got != "authored" {
+		t.Errorf("meetingSummary provenance source = %q, want authored", got)
+	}
+	if got := after.Provenance.MeetingSummary.Backend; got != "authored" {
+		t.Errorf("meetingSummary provenance backend = %q, want authored", got)
+	}
+	if got := after.Provenance.MeetingSummary.Model; got != "" {
+		t.Errorf("meetingSummary provenance model = %q, want it absent", got)
+	}
+	if after.Integrity != before.Integrity {
+		t.Errorf("integrity block changed:\n before %+v\n after  %+v", before.Integrity, after.Integrity)
+	}
+}
+
+// Replacing a bad generated summary is the whole reason this flag exists, so
+// --from-file has to compose with --force.
+func TestMeetingsSummarizeFromFileForceReplacesAGeneratedSummary(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	path := packFixtureOpus(t, tmp, "talk")
+
+	stub := &stubSummaryLLM{}
+	server := httptest.NewServer(stub.handler("# Meeting Summary\n\n## Action items\n\nNone."))
+	defer server.Close()
+	summaryLLMEnv(t, server.URL)
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"meetings", "summarize", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("seed summarize failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	const authored = "# Building a safer digital world\n\nFrank walks through the app store numbers."
+	summaryPath := filepath.Join(tmp, "talk.md")
+	if err := os.WriteFile(summaryPath, []byte(authored), 0o644); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+
+	// Without --force the file is skipped, not silently overwritten.
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), []string{
+		"meetings", "summarize", "--from-file", summaryPath, path,
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("summarize failed code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "skip (has summary)") {
+		t.Errorf("stdout = %q, want a skip line", stdout.String())
+	}
+	meeting, err := inspectpkg.ExtractMeeting(path)
+	if err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	if strings.Contains(string(meeting.SummaryMarkdown), "Frank walks through") {
+		t.Error("the authored summary replaced the existing one without --force")
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), []string{
+		"meetings", "summarize", "--force", "--from-file", summaryPath, path,
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("forced summarize failed code=%d stderr=%q", code, stderr.String())
+	}
+	meeting, err = inspectpkg.ExtractMeeting(path)
+	if err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	if got := string(meeting.SummaryMarkdown); got != authored+"\n" {
+		t.Errorf("sealed summary = %q, want the authored one", got)
+	}
+	// Exactly one summary.md survives: a reader takes the first it finds, so a
+	// leftover duplicate would resurrect the replaced text.
+	after := decodePortableManifestFromOpus(t, path)
+	summaries := 0
+	for _, attachment := range after.Attachments {
+		if name, _ := attachment["name"].(string); strings.EqualFold(strings.TrimSpace(name), summaryAttachmentName) {
+			summaries++
+		}
+	}
+	if summaries != 1 {
+		t.Errorf("summary.md attachments = %d, want exactly 1", summaries)
+	}
+	// The replaced summary must not still be claimed as the model's work.
+	if after.Provenance.MeetingSummary.Model != "" {
+		t.Errorf("provenance still names model %q after an authored replacement", after.Provenance.MeetingSummary.Model)
+	}
+}
+
+func TestMeetingsSummarizeFromFileConfigurationErrors(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	pathA := packFixtureOpus(t, tmp, "a")
+	pathB := packFixtureOpus(t, tmp, "b")
+
+	empty := filepath.Join(tmp, "empty.md")
+	if err := os.WriteFile(empty, []byte("   \n\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	good := filepath.Join(tmp, "good.md")
+	if err := os.WriteFile(good, []byte("# Talk\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	for name, args := range map[string][]string{
+		// A whitespace-only summary seals as "this meeting has a summary" and
+		// shows nothing, which is worse than carrying none.
+		"empty summary file": {"--from-file", empty, pathA},
+		"missing file":       {"--from-file", filepath.Join(tmp, "nope.md"), pathA},
+		// One authored summary cannot describe several different recordings.
+		"several inputs": {"--from-file", good, pathA, pathB},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Run(context.Background(), append([]string{"meetings", "summarize"}, args...), &stdout, &stderr)
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2; stderr=%q", code, stderr.String())
+			}
+			// Refused before any file is touched.
+			if meeting, err := inspectpkg.ExtractMeeting(pathA); err == nil && len(meeting.SummaryMarkdown) > 0 {
+				t.Error("a refused run sealed a summary anyway")
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	inspectpkg "gocassini/internal/inspect"
@@ -41,19 +42,80 @@ const summaryAttachmentName = "summary.md"
 // as a skip line rather than a failure.
 var errSummaryAlreadyPresent = errors.New("the file already carries a summary")
 
+// summaryOrigin records where a summary's text came from. It becomes the
+// manifest's summary metadata and its provenance step, so that a reader can
+// tell a generated summary from one a person wrote.
+//
+// This matters beyond bookkeeping: the built-in template is written for a
+// working meeting, and a summary of something else (a conference talk, a
+// lecture) is a different kind of document. Stamping an authored summary with
+// the model name and template version of a generator that did not produce it
+// would make the two indistinguishable in the archive.
+type summaryOrigin struct {
+	Backend         string
+	Source          string
+	Model           string
+	TemplateVersion string
+}
+
+// authoredSummaryOrigin describes a summary supplied with --from-file. It
+// carries no model, because none wrote it.
+var authoredSummaryOrigin = summaryOrigin{
+	Backend:         "authored",
+	Source:          "authored",
+	TemplateVersion: "authored",
+}
+
+func generatedSummaryOrigin(model string) summaryOrigin {
+	return summaryOrigin{
+		Backend:         "openai-compatible",
+		Source:          "backfill",
+		Model:           model,
+		TemplateVersion: "v0",
+	}
+}
+
+// readSummaryBody reads the markdown --from-file names, or stdin for "-".
+//
+// An empty summary is refused rather than sealed: a file that carries a
+// zero-length summary.md reads downstream as "this meeting has a summary" and
+// shows nothing, which is worse than carrying no summary at all. Trailing
+// whitespace is trimmed and one newline restored, so a heredoc and an editor's
+// saved file seal to identical bytes.
+func readSummaryBody(stdin io.Reader, path string) (string, error) {
+	var raw []byte
+	var err error
+	if path == "-" {
+		raw, err = io.ReadAll(stdin)
+	} else {
+		raw, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("read --from-file: %w", err)
+	}
+	body := strings.TrimRight(string(raw), " \t\r\n")
+	if strings.TrimSpace(body) == "" {
+		return "", fmt.Errorf("read --from-file: %s is empty", path)
+	}
+	return body + "\n", nil
+}
+
 func runMeetingsSummarize(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var force bool
 	var outPath string
+	var fromFile string
 	fs := flag.NewFlagSet("cassini meetings summarize", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&force, "force", false, "regenerate and replace a summary the file already carries")
 	fs.StringVar(&outPath, "out", "", "write the result to this .opus instead of in place (single input only)")
+	fs.StringVar(&fromFile, "from-file", "", "seal this markdown file as the summary instead of generating one (\"-\" reads stdin)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini meetings summarize ./Meeting.opus
   cassini meetings summarize --force ./Meeting.opus
   cassini meetings summarize --out ./Summarized.opus ./Meeting.opus
   cassini meetings summarize ./archive/*.opus
+  cassini meetings summarize --from-file ./talk.md --force ./Talk.opus
 
 Add a meeting summary to already-sealed portable .opus files without
 re-running transcription. The transcript is read back out of each file, one
@@ -61,6 +123,15 @@ LLM call generates the summary, and the file is rewritten in place through the
 same stage-verify-rename path the packer uses: the audio bytes are copied
 untouched and the integrity numbers must still verify before the original is
 replaced.
+
+--from-file seals a summary somebody wrote instead of generating one. The
+built-in prompt assumes a working meeting between colleagues, which is the
+wrong shape for a recording that is not one (a conference talk, an interview, a
+lecture), and rewriting the prompt per recording is not a thing a summary
+backfill should need. No LLM endpoint is required with it, and the sealed
+manifest records the summary as authored rather than attributing it to a model
+that did not write it. It takes one file per run, so it does not combine with
+several inputs.
 
 The LLM endpoint comes from the environment exactly as for `+"`cassini build`"+`:
 LLM_BASE_URL (or OPENROUTER_API_KEY for OpenRouter), with SUMMARY_BASE_URL /
@@ -111,13 +182,35 @@ failed.
 		}
 	}
 
+	// Read before any file is touched, for the reason the endpoint check below
+	// is: an unreadable summary file is an operator mistake, not a per-file
+	// failure, and it must not leave half an archive rewritten.
+	var authored string
+	fromFile = strings.TrimSpace(fromFile)
+	if fromFile != "" {
+		if len(inputs) != 1 {
+			fmt.Fprintf(stderr, "summarize configuration error: --from-file only works with a single input, got %d files\n", len(inputs))
+			return 2
+		}
+		// os.Stdin at the call site rather than threaded through the `meetings`
+		// dispatcher, which does not carry a stdin; readSummaryBody takes the
+		// reader so the "-" path is still testable without one.
+		body, err := readSummaryBody(os.Stdin, fromFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "summarize configuration error: %v\n", err)
+			return 2
+		}
+		authored = body
+	}
+
 	// The same environment `cassini build` reads, resolved the same way —
 	// including the SUMMARY_* per-step overrides and the kill-switch — so a
 	// host that builds with summaries backfills with the identical
 	// configuration. Checked before any file is touched: a missing endpoint is
-	// an operator mistake, not a per-file failure.
+	// an operator mistake, not a per-file failure. An authored summary needs no
+	// endpoint at all, so the check is skipped rather than failed.
 	cfg := transcribe.DefaultBuildConfig().SummaryLLM
-	if !cfg.IsConfigured() {
+	if authored == "" && !cfg.IsConfigured() {
 		fmt.Fprintln(stderr, "summarize configuration error: no summary LLM endpoint is configured")
 		fmt.Fprintln(stderr, "hint=set LLM_BASE_URL to an OpenAI-compatible endpoint (or OPENROUTER_API_KEY for OpenRouter), optionally SUMMARY_BASE_URL / SUMMARY_MODEL for the summary step alone — the same variables `cassini build` reads — and make sure CASSINI_SUMMARY_DISABLED is not set")
 		return 2
@@ -129,7 +222,7 @@ failed.
 		if outPath != "" {
 			target = outPath
 		}
-		switch err := summarizePortableMeeting(ctx, input, target, cfg, force); {
+		switch err := summarizePortableMeeting(ctx, input, target, cfg, force, authored); {
 		case err == nil:
 			fmt.Fprintf(stdout, "%s: summarized\n", input)
 		case errors.Is(err, errSummaryAlreadyPresent):
@@ -154,7 +247,7 @@ failed.
 // (retag's plumbing), which stages next to the output, verifies the audio
 // against the manifest's declared integrity policy, re-reads the staged
 // manifest, and only then renames over the target.
-func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cfg transcribe.LLMConfig, force bool) error {
+func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cfg transcribe.LLMConfig, force bool, authored string) error {
 	meeting, err := inspectpkg.ExtractMeeting(inputPath)
 	if err != nil {
 		return err
@@ -163,10 +256,15 @@ func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cf
 		return errSummaryAlreadyPresent
 	}
 
-	streams, segments := summaryInputFromMeeting(meeting)
-	body, err := transcribe.BuildMeetingSummary(cfg, streams, segments)
-	if err != nil {
-		return fmt.Errorf("generate summary: %w", err)
+	body := authored
+	origin := authoredSummaryOrigin
+	if authored == "" {
+		streams, segments := summaryInputFromMeeting(meeting)
+		body, err = transcribe.BuildMeetingSummary(cfg, streams, segments)
+		if err != nil {
+			return fmt.Errorf("generate summary: %w", err)
+		}
+		origin = generatedSummaryOrigin(cfg.Model)
 	}
 
 	resolvedOut, err := preparePortableMeetingOutput(outPath)
@@ -185,7 +283,7 @@ func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cf
 	if err != nil {
 		return err
 	}
-	applySummaryToPortableDocument(document, body, cfg.Model)
+	applySummaryToPortableDocument(document, body, origin)
 
 	return commitPortableManifestRewrite(ctx, inputPath, resolvedOut, document, tags,
 		func(_, written portable.Manifest, _ map[string]string) error {
@@ -251,12 +349,12 @@ func summaryInputFromMeeting(meeting inspectpkg.ExtractedMeeting) ([]transcribe.
 // The document is edited as generic JSON, not through portable.Manifest, for
 // the same reason retag edits it that way: re-marshalling the struct would
 // silently drop every key this build has never heard of.
-func applySummaryToPortableDocument(document map[string]any, body string, model string) {
-	trimmedModel := strings.TrimSpace(model)
+func applySummaryToPortableDocument(document map[string]any, body string, origin summaryOrigin) {
+	trimmedModel := strings.TrimSpace(origin.Model)
 
 	meta := map[string]any{
 		"format":          "markdown",
-		"templateVersion": "v0",
+		"templateVersion": origin.TemplateVersion,
 	}
 	if trimmedModel != "" {
 		meta["model"] = trimmedModel
@@ -264,8 +362,8 @@ func applySummaryToPortableDocument(document map[string]any, body string, model 
 	document["summary"] = meta
 
 	step := map[string]any{
-		"backend": "openai-compatible",
-		"source":  "backfill",
+		"backend": origin.Backend,
+		"source":  origin.Source,
 	}
 	if trimmedModel != "" {
 		step["model"] = trimmedModel

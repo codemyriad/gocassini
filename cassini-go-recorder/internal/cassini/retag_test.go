@@ -473,3 +473,208 @@ func TestRetagHelpExitsZero(t *testing.T) {
 		t.Fatalf("expected retag usage in stderr, got %q", stderr.String())
 	}
 }
+
+// A capture made through Talk carries the account that dialled in, not the
+// person who spoke: a conference talk streamed into a room is labelled with the
+// name of whoever held the laptop. Relabelling it is a metadata edit, not a
+// reason to re-transcribe 30 minutes of audio.
+func TestRetagRelabelsTheSpeakerAndTheTitle(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before", "--title", "From the conference")
+	outPath := filepath.Join(tmp, "after.opus")
+
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"retag", inPath, "--out", outPath,
+		"--title", "It Takes a Village",
+		"--speaker", "Paula Grzegorzewska",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("retag failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	after := decodePortableManifestFromOpus(t, outPath)
+	if after.Meeting.Title != "It Takes a Village" {
+		t.Errorf("meeting.title = %q, want the new title", after.Meeting.Title)
+	}
+	if len(after.Speakers) != 1 {
+		t.Fatalf("speakers = %d, want 1", len(after.Speakers))
+	}
+	if after.Speakers[0].Label != "Paula Grzegorzewska" {
+		t.Errorf("speaker label = %q, want the new label", after.Speakers[0].Label)
+	}
+	// The id is the join between the roster and every transcript word. A
+	// relabelling that moved it would leave the words attributed to a speaker
+	// the manifest no longer names, which renders as an empty transcript rather
+	// than as an error.
+	if after.Speakers[0].ID != "spk_host" {
+		t.Errorf("speaker id = %q, want it untouched at spk_host", after.Speakers[0].ID)
+	}
+	// TITLE is what ordinary audio players show, and it is the mirror a
+	// tags-only reader believes.
+	if got := readOpusTag(t, outPath, "TITLE"); got != "It Takes a Village" {
+		t.Errorf("TITLE tag = %q, want the new title", got)
+	}
+}
+
+// The words must still resolve against the roster after a relabelling: this is
+// the failure that a manifest-only check cannot see, because a manifest with a
+// renamed id validates perfectly on its own.
+func TestRetagKeepsTranscriptWordsAttributedAfterRelabelling(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before")
+	outPath := filepath.Join(tmp, "after.opus")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{
+		"retag", inPath, "--out", outPath, "--speaker", "Frank Karlitschek",
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("retag failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), []string{"inspect", "--transcript", outPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("inspect --transcript exit=%d stderr=%q", code, stderr.String())
+	}
+	var transcript struct {
+		Segments []struct {
+			Speaker string `json:"speaker"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &transcript); err != nil {
+		t.Fatalf("decode transcript: %v", err)
+	}
+	if len(transcript.Segments) == 0 {
+		t.Fatal("the retagged file carries no transcript segments")
+	}
+	roster := map[string]bool{}
+	for _, speaker := range decodePortableManifestFromOpus(t, outPath).Speakers {
+		roster[speaker.ID] = true
+	}
+	for index, segment := range transcript.Segments {
+		if !roster[segment.Speaker] {
+			t.Errorf("segment %d is attributed to %q, which the roster no longer names", index, segment.Speaker)
+		}
+	}
+}
+
+func TestRetagRelabelsTheSpeakerNamedByID(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before")
+	outPath := filepath.Join(tmp, "after.opus")
+
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"retag", inPath, "--out", outPath, "--speaker", "spk_host=Frank Karlitschek",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("retag failed code=%d stderr=%q", code, stderr.String())
+	}
+	if got := decodePortableManifestFromOpus(t, outPath).Speakers[0].Label; got != "Frank Karlitschek" {
+		t.Errorf("speaker label = %q, want the new label", got)
+	}
+}
+
+// Naming a speaker that is not in the file is a caller working from a stale
+// roster. Relabelling the only speaker anyway — or writing the file unchanged
+// and reporting success — would attribute a talk to the wrong person.
+func TestRetagRefusesAnUnknownSpeakerID(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before")
+	outPath := filepath.Join(tmp, "after.opus")
+
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"retag", inPath, "--out", outPath, "--speaker", "spk_nobody=Someone Else",
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "spk_nobody") {
+		t.Errorf("stderr does not name the missing speaker: %q", stderr.String())
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Error("a refused retag left an output file behind")
+	}
+}
+
+func TestRetagRefusesAmbiguousSpeakerFlags(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before")
+
+	for name, args := range map[string][]string{
+		// Two bare labels cannot both mean "the file's only speaker".
+		"two bare labels":       {"--speaker", "Alice", "--speaker", "Bob"},
+		"bare beside addressed": {"--speaker", "Alice", "--speaker", "spk_host=Bob"},
+		"same id twice":         {"--speaker", "spk_host=Alice", "--speaker", "spk_host=Bob"},
+		"empty label":           {"--speaker", "spk_host="},
+		"empty id":              {"--speaker", "=Alice"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			outPath := filepath.Join(t.TempDir(), "after.opus")
+			var stdout, stderr bytes.Buffer
+			code := Run(context.Background(), append([]string{"retag", inPath, "--out", outPath}, args...), &stdout, &stderr)
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2 (configuration error); stderr=%q", code, stderr.String())
+			}
+			if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+				t.Error("a refused retag left an output file behind")
+			}
+		})
+	}
+}
+
+// An empty --title is what an unexpanded shell variable looks like, and a
+// portable meeting must carry a title, so there is no reading of it that is
+// safe to guess at.
+func TestRetagRefusesAnEmptyTitle(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before")
+	outPath := filepath.Join(tmp, "after.opus")
+
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{"retag", inPath, "--out", outPath, "--title", "  "}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr=%q", code, stderr.String())
+	}
+}
+
+// A retag that names neither must not disturb them: the title mirror was added
+// for --title, and it runs on every rewrite.
+func TestRetagLeavesTheTitleAndRosterAloneWhenNotAsked(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before", "--title", "Weekly Sync")
+	outPath := filepath.Join(tmp, "after.opus")
+
+	before := decodePortableManifestFromOpus(t, inPath)
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{
+		"retag", inPath, "--out", outPath, "--room-id", "rm_1111111111111111",
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("retag failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	after := decodePortableManifestFromOpus(t, outPath)
+	if after.Meeting.Title != before.Meeting.Title {
+		t.Errorf("meeting.title changed: %q -> %q", before.Meeting.Title, after.Meeting.Title)
+	}
+	if got := readOpusTag(t, outPath, "TITLE"); got != before.Meeting.Title {
+		t.Errorf("TITLE tag = %q, want the untouched %q", got, before.Meeting.Title)
+	}
+	if len(after.Speakers) != len(before.Speakers) {
+		t.Fatalf("speakers = %d, want %d", len(after.Speakers), len(before.Speakers))
+	}
+	for index, speaker := range after.Speakers {
+		if speaker != before.Speakers[index] {
+			t.Errorf("speaker %d changed: %+v -> %+v", index, before.Speakers[index], speaker)
+		}
+	}
+}
