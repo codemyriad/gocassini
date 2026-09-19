@@ -86,11 +86,11 @@ const description = showInsights
       Marks bind to the audio digest, so a re-transcribed file over the same audio keeps them.
     */}
     <div class="talk" id="talk">
-      <div class="talk-intro">
-        <p>
-          Below is the talk in the same viewer you'd find in the app: the summary, the transcript and
-          the tags, all read from the one file.
-        </p>
+      <p class="talk-intro">
+        Below is the talk in the same viewer you'd find in the app: the summary, the transcript and
+        the tags, all read from the one file.
+      </p>
+      <div class="slides-row">
         <a class="dl" href={slidesUrl} download={slidesDownloadName}>
           Download the slides{slidesSize && <span class="size">PDF · {slidesSize}</span>}
         </a>
@@ -269,16 +269,10 @@ const description = showInsights
 
     /* ---------------- The recording ---------------- */
     .talk { display: flex; flex-direction: column; gap: 1rem; }
-    /* What the viewer is on the left, the slides on the right — the same shape as .fd-row. */
-    .talk-intro {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 0.5rem 1.5rem;
-      flex-wrap: wrap;
-      color: var(--ink-70);
-    }
-    .talk-intro p { flex: 1 1 22rem; }
+    .talk-intro { color: var(--ink-70); }
+    /* Sits on the embed's top-right corner: the row's own gap is taken back so the link reads as
+       belonging to the viewer below it, not to the sentence above. */
+    .slides-row { display: flex; justify-content: flex-end; margin-bottom: -0.5rem; font-size: 0.9rem; }
     .viewer {
       border: 1px solid var(--line);
       border-radius: 1rem;
