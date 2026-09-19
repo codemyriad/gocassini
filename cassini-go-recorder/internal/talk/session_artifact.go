@@ -288,7 +288,7 @@ func (a *sessionCaptureArtifact) captureFailure() error {
 
 func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, participantID, participantName string) error {
 	display := strings.TrimSpace(participantName)
-	if display == "" {
+	if display == "" || isPlaceholderParticipantName(display, remoteSessionID, participantID) {
 		return nil
 	}
 
@@ -299,13 +299,31 @@ func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, parti
 
 	idx, ok := a.participants[pid]
 	if !ok {
-		return nil
+		if remoteSessionID != "" {
+			altPID := sanitizeSessionPathPart(remoteSessionID)
+			if altIdx, altOK := a.participants[altPID]; altOK {
+				idx = altIdx
+				pid = altPID
+				ok = true
+			}
+		}
+		if !ok && participantID != "" {
+			altPID := sanitizeSessionPathPart(participantID)
+			if altIdx, altOK := a.participants[altPID]; altOK {
+				idx = altIdx
+				pid = altPID
+				ok = true
+			}
+		}
+		if !ok {
+			return nil
+		}
 	}
 	current := strings.TrimSpace(a.sessionMeta.Participants[idx].Display)
 	if current == display {
 		return nil
 	}
-	if current != "" && !isPlaceholderParticipantName(current, pid) {
+	if current != "" && !isPlaceholderParticipantName(current, pid, remoteSessionID, participantID) {
 		return nil
 	}
 	a.sessionMeta.Participants[idx].Display = display
@@ -732,9 +750,25 @@ func normalizedParticipantID(participantID, remoteSessionID string) string {
 	return sanitizeSessionPathPart(trimmed)
 }
 
-func isPlaceholderParticipantName(display, participantID string) bool {
+func isPlaceholderParticipantName(display string, ids ...string) bool {
 	display = strings.TrimSpace(display)
-	return display == "" || display == "participant-"+sanitizeSessionPathPart(participantID)
+	if display == "" || display == "participant-unknown" {
+		return true
+	}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		cleanID := sanitizeSessionPathPart(id)
+		if display == "participant-"+cleanID || display == cleanID {
+			return true
+		}
+		if len(cleanID) >= 8 && display == "participant-"+cleanID[:8] {
+			return true
+		}
+	}
+	return false
 }
 
 func makeSessionID() string {
