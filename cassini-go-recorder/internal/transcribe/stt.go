@@ -819,9 +819,9 @@ func (r *Recognizer) transcribeSegmentWithPolicy(samples []float32, sampleRate i
 func offsetDecoderWords(words []Word, offsetMS, headPaddingMS int64) {
 	for i := range words {
 		if headPaddingMS > 0 {
-			words[i].StartMS = maxInt64(0, words[i].StartMS-headPaddingMS)
-			words[i].EndMS = maxInt64(0, words[i].EndMS-headPaddingMS)
-			words[i].extentCap = maxInt64(0, words[i].extentCap-headPaddingMS)
+			words[i].StartMS = max(0, words[i].StartMS-headPaddingMS)
+			words[i].EndMS = max(0, words[i].EndMS-headPaddingMS)
+			words[i].extentCap = max(0, words[i].extentCap-headPaddingMS)
 		}
 		words[i].StartMS += offsetMS
 		words[i].EndMS += offsetMS

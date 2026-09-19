@@ -122,7 +122,7 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 			SpeakerID:          speakerIDFromLabel(speakerIdentity),
 			SpeakerLabel:       label,
 			Channels:           s.Channels,
-			StartTimeMS:        maxInt64(0, durationStringToMS(s.StartTime)),
+			StartTimeMS:        max(0, durationStringToMS(s.StartTime)),
 			TimelineDurationMS: durationMs,
 		})
 		audioIdx++
@@ -173,7 +173,7 @@ func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
 	if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 		return 0, fmt.Errorf("parse first packet timestamp %q for stream %d", value, streamIndex)
 	}
-	return maxInt64(0, int64(math.Round(seconds*1000))), nil
+	return max(0, int64(math.Round(seconds*1000))), nil
 }
 
 // probeFirstDecodedFrameTimeMS stops after the first decoded frame, rather than
@@ -209,7 +209,7 @@ func probeFirstDecodedFrameTimeMS(mkv string, streamIndex int) (int64, error) {
 		if parseErr != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 			return 0, fmt.Errorf("parse first decoded frame timestamp %q for stream %d", value, streamIndex)
 		}
-		return maxInt64(0, int64(math.Round(seconds*1000))), nil
+		return max(0, int64(math.Round(seconds*1000))), nil
 	}
 	readErr := scanner.Err()
 	if readErr != nil {
@@ -683,11 +683,4 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return "..." + s[len(s)-max:]
-}
-
-func maxInt64(a int64, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }

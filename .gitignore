@@ -99,3 +99,6 @@ bin/cassini-bin
 search.sqlite3
 search.sqlite3-wal
 search.sqlite3-shm
+
+# Local Go rotator build output (the harness runs its source with go run).
+/harness/go-talk-rotator/three-song-rotator

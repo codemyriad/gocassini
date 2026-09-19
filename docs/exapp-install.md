@@ -764,11 +764,10 @@ All of these must pass before the Talk handoff:
 
 1. `occ app_api:daemon:list` shows the daemon and its **Test deploy** passes.
 2. `occ app_api:app:list` shows `gocassini` enabled.
-3. The Nextcloud app menu shows a **Cassini** entry for every logged-in user
-   (opens the viewer) and a **Cassini Admin** entry for admins only (opens
-   the control panel). The app registers both with AppAPI when it is
-   enabled; if they are missing, check the container log for `exapp ui:`
-   errors, then disable and re-enable the app to retry the registration.
+3. The Nextcloud app menu shows one **Cassini** entry for every logged-in user.
+   It opens the meeting browser; administrators also see an **Operator** section
+   inside the app. If the entry is missing, check the container log for
+   `exapp ui:` errors, then disable and re-enable the app to retry registration.
 4. The container runs the intended image:
    `docker inspect nc_app_gocassini --format '{{.Config.Image}}'`.
 5. The Talk welcome endpoint answers through the AppAPI proxy (it is a PUBLIC
@@ -887,7 +886,7 @@ conversation so the HPB-internal path is exercised:
 1. Create or pick a private test conversation with at least one speaking
    participant.
 2. Start recording from Talk's **Record** button.
-3. Confirm a Cassini job appears in the **Cassini Admin** control panel.
+3. Confirm a Cassini job appears in Cassini’s **Operator** section.
 4. Speak for a minute, stop the recording, leave the call, or let the
    empty-room timeout stop it.
 5. Watch the job progress through record → build → seal → publish. Talk receives
@@ -945,11 +944,12 @@ needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/dat
 verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
 on that engine before registering the app.
 
-CPU transcription is supported. The portable image bundles the Balanced CPU
-model. Auto selects usable CUDA or falls back to CPU; administrators can also
-pin CPU. Explicitly pinning unavailable CUDA blocks processing with an
-actionable error. Change the device in Transcription settings, then rerun any
-blocked recording. Other quality tiers may need a one-time model download.
+CPU transcription is supported on amd64 and arm64. The portable image bundles
+the Balanced CPU model. Auto selects usable CUDA or falls back to CPU;
+administrators can also pin CPU. Explicitly pinning unavailable CUDA blocks
+processing with an actionable error in `/operator/status`. Change the device
+in Transcription settings, then use **Rerun** in Cassini’s Operator section for
+any blocked recording. Other quality tiers may need a one-time model download.
 
 On a CUDA-capable image, temporary RAM or VRAM pressure is different. The
 operator keeps the build queued, records `build_retry_not_before`, and retries
@@ -1158,7 +1158,7 @@ occ app_api:app:unregister gocassini --rm-data  # also deletes recordings + job 
 
 ## Standalone operator (dev/staging only)
 
-`deployment/compose.yml` brings up the operator, control panel, and viewer as
+`deployment/compose.yml` brings up the operator and viewer as
 plain Compose services. That bundle is for **development, staging, and
 diagnostics** — it can satisfy Talk's recording-backend API, but it does not
 register an ExApp, does not expose anything through the AppAPI proxy, adds

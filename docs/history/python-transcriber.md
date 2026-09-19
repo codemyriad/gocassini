@@ -1,5 +1,10 @@
 # Cassini Transcriber Architecture Overview
 
+> **Historical documentation.** The Python transcriber described below has been
+> removed. Current transcription runs in Go via sherpa-onnx; see the
+> [active pipeline](../../cassini-go-recorder/docs/transcription-pipeline.md).
+> The modules, formats and LLM cleanup described here are not current setup instructions.
+
 ## Purpose
 
 `cassini-transcriber` is the post-processing stage that turns a recorded Cassini meeting into a publishable meeting artifact.

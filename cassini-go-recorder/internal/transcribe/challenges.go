@@ -745,7 +745,7 @@ func mineChallengeEventsContext(ctx context.Context, envelopes []*speakerEnvelop
 				return nil, err
 			}
 			left, right := envelopes[i], envelopes[j]
-			limit := minInt(len(left.active), len(right.active))
+			limit := min(len(left.active), len(right.active))
 			for frame := 0; frame < limit; {
 				if err := checkChallengeContext(ctx, frame); err != nil {
 					return nil, err
@@ -895,8 +895,8 @@ func envelopeIntervalStats(envelope *speakerEnvelope, startMS, endMS int64) (flo
 }
 
 func intervalFrameBounds(startMS, endMS int64, frameCount int) (int, int) {
-	start := int(maxInt64(0, startMS) / challengeFrameMS)
-	end := int((maxInt64(0, endMS) + challengeFrameMS - 1) / challengeFrameMS)
+	start := int(max(0, startMS) / challengeFrameMS)
+	end := int((max(0, endMS) + challengeFrameMS - 1) / challengeFrameMS)
 	if start > frameCount {
 		start = frameCount
 	}
@@ -975,8 +975,8 @@ func buildChallengeCandidatesContext(ctx context.Context, events []challengeEvid
 			if err := checkChallengeContext(ctx, i); err != nil {
 				return nil, err
 			}
-			unionStart := minInt64(startMS, candidates[i].StartMS)
-			unionEnd := maxInt64(endMS, candidates[i].EndMS)
+			unionStart := min(startMS, candidates[i].StartMS)
+			unionEnd := max(endMS, candidates[i].EndMS)
 			if unionEnd-unionStart > challengeMaxWindowMS || overlapRatio(startMS, endMS, candidates[i].StartMS, candidates[i].EndMS) < 0.50 {
 				continue
 			}
@@ -1015,38 +1015,38 @@ func buildChallengeCandidatesContext(ctx context.Context, events []challengeEvid
 }
 
 func challengeWindow(eventStartMS, eventEndMS, durationMS int64) (int64, int64) {
-	startMS := maxInt64(0, eventStartMS-challengeContextMS)
+	startMS := max(0, eventStartMS-challengeContextMS)
 	endMS := eventEndMS + challengeContextMS
 	if durationMS > 0 && endMS > durationMS {
 		endMS = durationMS
 	}
 	if endMS-startMS < challengeMinWindowMS {
 		missing := challengeMinWindowMS - (endMS - startMS)
-		startMS = maxInt64(0, startMS-missing/2)
+		startMS = max(0, startMS-missing/2)
 		endMS += missing - missing/2
 		if durationMS > 0 && endMS > durationMS {
-			startMS = maxInt64(0, startMS-(endMS-durationMS))
+			startMS = max(0, startMS-(endMS-durationMS))
 			endMS = durationMS
 		}
 	}
 	if endMS-startMS > challengeMaxWindowMS {
 		center := eventStartMS + (eventEndMS-eventStartMS)/2
-		startMS = maxInt64(0, center-challengeMaxWindowMS/2)
+		startMS = max(0, center-challengeMaxWindowMS/2)
 		endMS = startMS + challengeMaxWindowMS
 		if durationMS > 0 && endMS > durationMS {
 			endMS = durationMS
-			startMS = maxInt64(0, endMS-challengeMaxWindowMS)
+			startMS = max(0, endMS-challengeMaxWindowMS)
 		}
 	}
 	return startMS, endMS
 }
 
 func overlapRatio(aStart, aEnd, bStart, bEnd int64) float64 {
-	overlap := challengeMinInt64(aEnd, bEnd) - maxInt64(aStart, bStart)
+	overlap := min(aEnd, bEnd) - max(aStart, bStart)
 	if overlap <= 0 {
 		return 0
 	}
-	shorter := challengeMinInt64(aEnd-aStart, bEnd-bStart)
+	shorter := min(aEnd-aStart, bEnd-bStart)
 	if shorter <= 0 {
 		return 0
 	}
@@ -1091,18 +1091,4 @@ func maxFloat(values ...float64) float64 {
 		}
 	}
 	return result
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func challengeMinInt64(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
 }

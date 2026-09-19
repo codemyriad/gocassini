@@ -53,9 +53,10 @@ artifacts:
 - **Room audience** — for each Talk recording, the accounts, groups and teams
   that had access to the conversation while it was being recorded, captured when
   the recording starts and again when it stops. It is what lets Cassini later
-  limit a recording to the people who were in the call rather than to whoever is
-  in that room today, so it is deliberately frozen and never re-derived. Guests,
-  email invitees and federated participants are not recorded: they have no local
+  explicitly narrow an already-published recording from Operator settings to its
+  captured audience rather than whoever is in the room today. This stored roster
+  is frozen; initial participant-mode publication separately resolves the room’s
+  audience at publish time. Guests, email invitees and federated participants are not recorded: they have no local
   account to grant, so there is nothing to keep. It lives on the job row, which
   outlives the recording itself — job history is kept after artifacts are pruned.
 - **Operator database** — job and attempt history, the room audience above, plus
@@ -116,14 +117,15 @@ call. This is enforced by Nextcloud's own advanced file access controls, not by
 Cassini keeping a separate copy or its own permission list. Recordings of
 **public** Talk rooms are readable by every signed-in account (never
 anonymously). It requires the Team folders and Everyone Group apps and a Team
-folder an administrator sets up (see
+folder Cassini can set up from Operator › Settings (see
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md)).
 
 **Switching to meeting participants does not retroactively restrict anything.**
 Recordings that already existed are copied into the Team folder readable by
 every signed-in account: Cassini does not guess who was in a past meeting.
-Narrowing them is a deliberate act, per recording, from the Files app. Switching
-the other way carries every recording into the private tree with no access rules
+Narrowing them is a deliberate act: use the restriction action in Operator
+Settings for recordings with a captured room audience, or edit individual
+recordings’ permissions in Files. Switching the other way carries every recording into the private tree with no access rules
 at all — a copy there is outside any Team folder, where per-file rules do not
 exist — so afterwards everyone who can open Cassini can read every recording,
 including the ones that had been restricted to a call's participants.

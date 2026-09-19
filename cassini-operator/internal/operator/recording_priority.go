@@ -99,5 +99,16 @@ type statusScheduling struct {
 func (rt *Runtime) schedulingStatus() statusScheduling {
 	rt.priorityMu.Lock()
 	defer rt.priorityMu.Unlock()
-	return statusScheduling{Policy: rt.processingPolicy(), RecordingPriority: rt.processingPolicy() == policyRecordingFirst, RecordingIdleGraceSeconds: rt.cfg.RecordingIdleGrace.Seconds(), RecordWorkers: rt.cfg.MaxRecordWorkers, BuildWorkers: rt.cfg.MaxBuildWorkers, ActiveRecordings: len(rt.recordSlots), AutoTelemetryFresh: rt.autoFreshLocked(), AutoCanStart: rt.autoCanStart, AutoFreeCPU: rt.autoFreeCPU, AutoFreeMemMB: rt.autoFreeMemMB}
+	return statusScheduling{
+		Policy:                    rt.processingPolicy(),
+		RecordingPriority:         rt.processingPolicy() == policyRecordingFirst,
+		RecordingIdleGraceSeconds: rt.cfg.RecordingIdleGrace.Seconds(),
+		RecordWorkers:             rt.cfg.MaxRecordWorkers,
+		BuildWorkers:              rt.cfg.MaxBuildWorkers,
+		ActiveRecordings:          len(rt.recordSlots),
+		AutoTelemetryFresh:        rt.autoFreshLocked(),
+		AutoCanStart:              rt.autoCanStart,
+		AutoFreeCPU:               rt.autoFreeCPU,
+		AutoFreeMemMB:             rt.autoFreeMemMB,
+	}
 }

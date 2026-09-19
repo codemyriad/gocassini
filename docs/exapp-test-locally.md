@@ -104,7 +104,7 @@ multipass exec dev-vm -- bash -lc '
 Open Nextcloud at `http://<vm-ip>:28080/` (`admin` / `admin`) and verify:
 
 - **Cassini** appears for logged-in users and opens the viewer;
-- **Cassini Admin** appears for admins and opens the control panel;
+- administrators can open the **Operator** section inside Cassini;
 - `GET /api/v1/welcome` through the AppAPI proxy returns `{"version":1}`;
 - `/operator/status` reports both `secret_configured` and
   `signaling_internal_secret_configured` as true.
