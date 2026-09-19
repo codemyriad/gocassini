@@ -154,6 +154,7 @@ the first start — after that, summaries are configured in the app's Settings.
 
 ### Local development stack
 
+- **[The cassini CLI from a checkout](./cli.md)** — `./bin/cassini`: doctor, record, build, publish, serve, inspect, and the `cassini dev` harness namespace.
 - **[Quick start](./quick-start.md)** — fastest end-to-end run on your machine (harness + deployment bundle).
 - **[Running the local developer stack](./local-developer-stack.md)** — the two-stack topology and storage model.
 - **[Operator stack](./operator-stack.md)** — jobs, attempts, workers, promotion.
