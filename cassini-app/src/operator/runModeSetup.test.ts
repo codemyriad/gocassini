@@ -120,6 +120,17 @@ describe("runModeSetup", () => {
     expect(runSetupPlan).not.toHaveBeenCalled();
   });
 
+  it("stops if the refreshed response no longer includes the requested mode", async () => {
+    const { calls, stub } = client({
+      installStorageApps: async () => ({ modes: [] }) as unknown as StorageStatus,
+    });
+
+    await expect(runModeSetup(stub, option([APP_STEP, FOLDER_STEP]), () => {}))
+      .rejects.toThrow("selected storage mode is no longer available");
+    expect(calls).toEqual(["install"]);
+    expect(runSetupPlan).not.toHaveBeenCalled();
+  });
+
   it("skips the install entirely when no app is missing", async () => {
     const { calls, stub } = client({});
 

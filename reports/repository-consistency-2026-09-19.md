@@ -62,3 +62,25 @@ rehearsal or an exhaustive code/security audit. No Nextcloud installation,
 recording round trip, GPU transcription, deployment or publishing was performed.
 Builds still report existing Svelte accessibility/unused-code warnings and a
 microsite syntax-highlighting fallback for `caddyfile`; these do not fail builds.
+
+## Follow-up review
+
+A second code review found and reproduced four additional failures:
+
+- Root-mounted development proxies still omitted `/readiness` and
+  `/readiness/check`, breaking recording readiness checks. Both now reach the
+  backend; request-level coverage also exercises `PUT /talk/setup`.
+- Insights, annotations and prefixed operator proxies matched unrelated paths
+  beginning with the API name. They now require a path boundary and escape
+  regex characters in custom prefixes, leaving similarly named assets to Vite.
+- Operator detection accepted any HTTP 200, including a login page or SPA
+  fallback. Successful responses must now contain the operator status payload,
+  just like unhealthy responses; genuine operator 503 diagnoses remain visible.
+- After installing prerequisite apps, storage setup could reuse the old plan
+  when the refreshed response omitted the selected mode. It now stops with an
+  actionable error before issuing browser writes from that stale plan.
+
+Regression tests failed before the fixes and passed afterward. The full app
+suite passed **538 tests across 33 files**; standalone and embedded app builds
+passed, including the single-bundle assertion. Existing non-failing Svelte
+warnings remain. These checks did not include a live Nextcloud round trip.

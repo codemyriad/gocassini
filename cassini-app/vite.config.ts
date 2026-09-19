@@ -54,8 +54,8 @@ export function createOperatorProxy(operatorBasePath: string, operatorProxyTarge
   // Generate against CASSINI_OPERATOR_URL, in both shapes.
   // /annotations sits beside it for the same reason (D-737).
   const insights = {
-    "/insights": directOperatorProxy(operatorProxyTarget),
-    "/annotations": directOperatorProxy(operatorProxyTarget),
+    "^/insights(?:/|\\?|$)": directOperatorProxy(operatorProxyTarget),
+    "^/annotations(?:/|\\?|$)": directOperatorProxy(operatorProxyTarget),
   };
 
   if (operatorBasePath === "/") {
@@ -64,14 +64,14 @@ export function createOperatorProxy(operatorBasePath: string, operatorProxyTarge
       // Keep the root-mounted API in sync with operatorAPIRoutes in run.go.
       // In particular /status decides whether the shell shows Operator at all.
       // Match path boundaries so API names cannot swallow Vite source assets.
-      "^/(jobs|events|status|setup|ai|settings|storage|talk)(?:/|\\?|$)":
+      "^/(jobs|events|status|setup|readiness|ai|settings|storage|talk)(?:/|\\?|$)":
         directOperatorProxy(operatorProxyTarget),
     };
   }
 
   return {
     ...insights,
-    [operatorBasePath]: directOperatorProxy(operatorProxyTarget),
+    ["^" + operatorBasePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:/|\\?|$)"]: directOperatorProxy(operatorProxyTarget),
   };
 }
 

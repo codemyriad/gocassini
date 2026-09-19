@@ -31,13 +31,22 @@ function statusBody(recordingsAccess: Record<string, unknown>): Record<string, u
 }
 
 describe("probeOperatorAvailable", () => {
-  it("reports available on 200", async () => {
+  it("stays hidden on a 200 without a status payload", async () => {
     expect(await probeOperatorAvailable("/operator", fetchWithStatus(200))).toEqual({
-      available: true,
+      available: false,
       status: 200,
       body: null,
     });
   });
+
+  it.each(["<!doctype html><title>Sign in</title>", {}, { ocs: { meta: { statuscode: 100 } } }])(
+    "stays hidden when a fallback or login page answers 200: %j",
+    async (body) => {
+      expect(await probeOperatorAvailable("/operator", fetchWithStatus(200, undefined, body))).toEqual({
+        available: false, status: 200, body: null,
+      });
+    },
+  );
 
   it("returns the decoded status payload so the shell can read the diagnosis", async () => {
     const body = statusBody({ ok: true, state: "provisioned" });
