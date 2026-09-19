@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	ann "cassini-annotations"
 )
 
 // The POST body of annotations/meetings/<id> (D-737, design doc §3). It is
@@ -109,9 +111,9 @@ func validateAnnotateWriteRequest(request annotateWriteRequest) (annotateWriteRe
 		switch {
 		case strings.TrimSpace(style.Label) == "":
 			return request, badAnnotateRequest("tagStyles[%d].label is required", i)
-		case !tagColors[style.Color]:
+		case !ann.IsAnnotationTagColor(style.Color):
 			return request, badAnnotateRequest("tagStyles[%d].color is not a palette colour", i)
-		case !tagIcons[style.Icon]:
+		case !ann.IsAnnotationTagIcon(style.Icon):
 			return request, badAnnotateRequest("tagStyles[%d].icon is not an icon id", i)
 		}
 	}

@@ -37,7 +37,29 @@ type Annotations struct {
 type AnnotationTag struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+	// Color and Icon are optional presentation values. Pointers preserve the
+	// distinction between a legacy tag with no appearance and an explicit empty
+	// icon, which clears a previous icon.
+	Color *string `json:"color,omitempty"`
+	Icon  *string `json:"icon,omitempty"`
 }
+
+var annotationTagColors = map[string]bool{
+	"slate": true, "red": true, "orange": true, "amber": true, "green": true, "teal": true,
+	"cyan": true, "blue": true, "indigo": true, "violet": true, "purple": true, "pink": true,
+}
+
+var annotationTagIcons = map[string]bool{
+	"": true, "star": true, "flag": true, "bolt": true, "bookmark": true, "check": true, "alert": true,
+	"bug": true, "heart": true, "question": true, "lightbulb": true, "target": true, "users": true,
+	"calendar": true, "money": true, "lock": true, "chat": true,
+}
+
+// IsAnnotationTagColor and IsAnnotationTagIcon validate newly authored values.
+// Readers and rewriters deliberately retain other string values for forwards
+// compatibility.
+func IsAnnotationTagColor(value string) bool { return annotationTagColors[value] }
+func IsAnnotationTagIcon(value string) bool  { return annotationTagIcons[value] }
 
 // AnnotationItem is one mark: one application of a tag to a target.
 type AnnotationItem struct {
@@ -201,6 +223,12 @@ func ValidateAnnotations(a *Annotations, durationMS int64) error {
 		tagIDs[tag.ID] = true
 		if err := ValidateAnnotationLabel(tag.Label); err != nil {
 			return fmt.Errorf("annotations.tags[%d].label: %w", i, err)
+		}
+		if tag.Color != nil && !utf8.ValidString(*tag.Color) {
+			return fmt.Errorf("annotations.tags[%d].color: must be valid UTF-8", i)
+		}
+		if tag.Icon != nil && !utf8.ValidString(*tag.Icon) {
+			return fmt.Errorf("annotations.tags[%d].icon: must be valid UTF-8", i)
 		}
 	}
 

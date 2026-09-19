@@ -9,14 +9,18 @@ import (
 
 // Mutate finalizes a validated batch into the next complete snapshot.
 func Mutate(current *Annotations, ops []Op, duration int64, audio, namespace string, stamp Stamp) (Outcome, error) {
+	return MutateBatch(current, Batch{Ops: ops}, duration, audio, namespace, stamp)
+}
+
+func MutateBatch(current *Annotations, batch Batch, duration int64, audio, namespace string, stamp Stamp) (Outcome, error) {
 	unresolved := current != nil && len(current.Items) > 0 && !current.Resolved(audio)
 	if unresolved {
-		if slices.ContainsFunc(ops, func(op Op) bool { return op.Op == "mark" }) {
+		if slices.ContainsFunc(batch.Ops, func(op Op) bool { return op.Op == "mark" }) {
 			return Outcome{}, fail(5, "marks are bound to different audio; remove or relabel them before adding marks")
 		}
 		duration = math.MaxInt64
 	}
-	outcome, err := ApplyOps(current, ops, duration, stamp)
+	outcome, err := ApplyBatch(current, batch, duration, stamp)
 	if err != nil || !outcome.Changed {
 		return outcome, err
 	}

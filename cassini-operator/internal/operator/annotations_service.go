@@ -21,7 +21,6 @@ type annotationService struct {
 	bin          string
 	client       *http.Client
 	logger       *log.Logger
-	styles       *tagStyleStore
 	jobs         tagJobs
 	imports      sync.Map
 	wake         chan struct{}
@@ -52,7 +51,6 @@ func newAnnotationService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *a
 		// As the read proxy: recordings stream, so the request context governs.
 		client: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}},
 		logger: logger,
-		styles: newTagStyleStore(rt.cfg),
 	}
 }
 

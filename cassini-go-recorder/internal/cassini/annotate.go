@@ -353,7 +353,7 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 		fmt.Fprintf(stderr, "%s: read --ops: %v\n", fs.Name(), err)
 		return annotateExitRuntime
 	}
-	ops, err := parseAnnotateOps(raw)
+	batch, err := parseAnnotateBatch(raw)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", fs.Name(), err)
 		return annotateExitCodeFor(err)
@@ -368,7 +368,7 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 	request := annotateApplyRequest{
 		inputPath: files[0],
 		outPath:   outPath,
-		ops:       ops,
+		batch:     batch,
 		stamp: annotateStamp{
 			ActorKind:   actorKind,
 			ActorID:     actorID,
@@ -396,7 +396,7 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 type annotateApplyRequest struct {
 	inputPath      string
 	outPath        string
-	ops            []annotateOp
+	batch          annotateBatch
 	stamp          annotateStamp
 	tagNamespace   string
 	expectRevision *int
@@ -430,14 +430,14 @@ func annotateApply(ctx context.Context, req annotateApplyRequest) (annotateResul
 	durationMS := source.manifest.Audio.DurationMS
 	unresolved := source.doc != nil && len(source.doc.Items) > 0 && !source.doc.Resolved(digest)
 	if unresolved {
-		if slices.ContainsFunc(req.ops, func(op annotateOp) bool { return op.Op == annotateOpMark }) {
+		if slices.ContainsFunc(req.batch.Ops, func(op annotateOp) bool { return op.Op == annotateOpMark }) {
 			return annotateResult{}, false, annotateFail(annotateExitUnresolved,
 				"the file's marks were made against different audio (bound to %s, this audio is %s); they can be removed or relabelled, but no mark can be added until they are migrated, and nothing was written",
 				source.doc.AudioOpusSHA256, digest)
 		}
 		durationMS = math.MaxInt64
 	}
-	outcome, err := applyAnnotationOps(source.doc, req.ops, durationMS, req.stamp)
+	outcome, err := applyAnnotationBatch(source.doc, req.batch, durationMS, req.stamp)
 	if err != nil {
 		return annotateResult{}, false, err
 	}

@@ -76,17 +76,38 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 	var namespace string
 	if request.Accepted {
 		raw, err = json.Marshal(struct {
-			Ops []json.RawMessage `json:"ops"`
-		}{request.Ops})
+			Ops       []json.RawMessage  `json:"ops"`
+			TagStyles []annotateTagStyle `json:"tagStyles,omitempty"`
+		}{request.Ops, request.TagStyles})
 	} else {
 		raw, namespace, err = s.resolveVocabulary(ctx, request.Ops, visible)
 	}
 	if err != nil {
 		return annotateResult{}, &annotateFailure{status: 503, public: "tag vocabulary is preparing", cause: err}
 	}
-	ops, err := ann.ParseOps(raw)
+	if !request.Accepted && len(request.TagStyles) > 0 {
+		var envelope struct {
+			Ops []json.RawMessage `json:"ops"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return annotateResult{}, err
+		}
+		raw, err = json.Marshal(struct {
+			Ops       []json.RawMessage  `json:"ops"`
+			TagStyles []annotateTagStyle `json:"tagStyles,omitempty"`
+		}{envelope.Ops, request.TagStyles})
+		if err != nil {
+			return annotateResult{}, err
+		}
+	}
+	batch, err := ann.ParseBatch(raw)
 	if err != nil {
 		return annotateResult{}, badAnnotateRequest("%v", err)
+	}
+	if !request.Accepted {
+		if err := store.prepareInitialTagAppearance(ctx, &batch, visible); err != nil {
+			return annotateResult{}, err
+		}
 	}
 	var result annotateResult
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
@@ -105,7 +126,7 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 				return e
 			}
 		}
-		if err := mutateAnnotationDocument(ctx, tx, name, relPath, caller, namespace, request, ops, &result); err != nil {
+		if err := mutateAnnotationDocument(ctx, tx, name, relPath, caller, namespace, request, batch, &result); err != nil {
 			return err
 		}
 		if request.RequestID != "" {
@@ -124,9 +145,30 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 	return result, err
 }
 
+// Resolve appearance once, under the mutation lock and after receipt replay.
+// These are creation defaults, never restyles of an already-local definition.
+func (s *annotationStore) prepareInitialTagAppearance(ctx context.Context, batch *ann.Batch, visible []string) error {
+	tags, err := s.Vocabulary(ctx, visible)
+	if err != nil {
+		return err
+	}
+	batch.InitialTags = make(map[string]ann.AnnotationTag, len(tags))
+	for _, tag := range tags {
+		initial := ann.AnnotationTag{ID: tag.TagID, Label: tag.Label}
+		if tag.Color != "" {
+			color := tag.Color
+			initial.Color = &color
+		}
+		icon := tag.Icon
+		initial.Icon = &icon
+		batch.InitialTags[tag.TagID] = initial
+	}
+	return nil
+}
+
 // mutateAnnotationDocument only uses the caller's transaction. Both single
 // writes and multi-meeting batches publish documents and projections atomically.
-func mutateAnnotationDocument(ctx context.Context, tx *sql.Tx, name, relPath, caller, namespace string, request annotateWriteRequest, ops []ann.Op, result *annotateResult) error {
+func mutateAnnotationDocument(ctx context.Context, tx *sql.Tx, name, relPath, caller, namespace string, request annotateWriteRequest, batch ann.Batch, result *annotateResult) error {
 	var data []byte
 	var desired, confirmed int64
 	var attempts, blocked int
@@ -161,7 +203,7 @@ func mutateAnnotationDocument(ctx context.Context, tx *sql.Tx, name, relPath, ca
 	if kind == "" {
 		kind = ann.AnnotationActorPerson
 	}
-	outcome, err := ann.Mutate(current, ops, result.DurationMS, result.AudioOpusSHA256, namespace, ann.Stamp{ActorKind: kind, ActorID: caller, OperationID: operation, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
+	outcome, err := ann.MutateBatch(current, batch, result.DurationMS, result.AudioOpusSHA256, namespace, ann.Stamp{ActorKind: kind, ActorID: caller, OperationID: operation, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)})
 	if err != nil {
 		var failure *ann.Failure
 		if errors.As(err, &failure) {

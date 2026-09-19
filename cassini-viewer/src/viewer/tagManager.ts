@@ -44,9 +44,11 @@ export function relativeTime(iso: string, now = Date.now()): string {
   return unit ? RELATIVE.format(-Math.floor(ago / unit[1]), unit[0]) : "just now";
 }
 
+// Compatibility formatter for older operator responses. The manager no longer
+// renders this global audit because a recording's saved appearance is local.
 export function changedLine(tag: VocabularyTag, now = Date.now()): string {
-  if (!tag.changedBy) return "";
-  return `Changed by ${tag.changedBy}${tag.changedAtUtc ? ` · ${relativeTime(tag.changedAtUtc, now)}` : ""}`;
+	if (!tag.changedBy) return "";
+	return `Changed by ${tag.changedBy}${tag.changedAtUtc ? ` · ${relativeTime(tag.changedAtUtc, now)}` : ""}`;
 }
 
 export function tagUpdate(tag: VocabularyTag, draft: { label: string; color: TagColorId; icon: TagIconId | "" }): TagUpdate | null {
@@ -113,7 +115,8 @@ export function createJobTracker(provider: TagProvider, changed: () => void, int
     set({ notice: "" });
     try {
       const job = await send(provider, action);
-      // A colour or icon starts no job, and must not stop following one that runs.
+		// A no-op must not stop following an earlier job; style updates otherwise
+		// use the same scoped asynchronous job as renames.
       if (job || state.job?.state !== "running" || state.lost) {
         set({ job, action, lost: false });
         follow(job);
