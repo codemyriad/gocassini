@@ -8,8 +8,8 @@
   const scenes: Scene[] = [
     { id:'new', title:'First visit', detail:'Storage and Talk authentication need attention. CPU processing is already available.' },
     { id:'hpb', title:'Missing HPB', detail:'Talk accepted the recording credential, but no standalone signaling server is configured.', panel:'Configure' },
-    { id:'secret', title:'Enter the internal secret', detail:'An administrator can save the signaling secret from Setup. It is never returned by the API.', panel:'Talk authentication' },
-    { id:'managed', title:'Deployment-managed secret', detail:'A secret supplied through deployment configuration takes precedence over one saved in Setup.', panel:'Talk authentication' },
+    { id:'secret', title:'Enter the internal secret', detail:'An administrator can save the signaling secret from Publish pipeline. It is never returned by the API.', panel:'Talk authentication' },
+    { id:'managed', title:'Deployment-managed secret', detail:'A secret supplied through deployment configuration takes precedence over one saved in Publish pipeline.', panel:'Talk authentication' },
     { id:'room', title:'Choose a test room', detail:'Public URLs and index.php links are accepted. Diagnostic requests use the configured backend.', panel:'Test room' },
     { id:'handoff', title:'Identify the environment', detail:'No deployment type or shell access is assumed. Confirm what the diagnostics cannot establish.', panel:'Connect Talk' },
     { id:'handoff_provider', title:'Ask the provider', detail:'A person without host access gets a safe, copyable administrator request instead of Docker commands.', panel:'Connect Talk', access:'provider' },
@@ -119,7 +119,7 @@
     <div class="brand"><span class="orbit">◉</span> cassini</div>
     <p class="eyebrow">PRODUCT WALKTHROUGH</p>
     <h1>From installation<br>to a verified recording.</h1>
-    <p class="intro">Explore the implemented Setup screens, with example states and simulated actions.</p>
+    <p class="intro">Explore the recording setup screens, with example states and simulated actions.</p>
     <nav aria-label="Example screens">
       {#each scenes as scene,i}<button class:chosen={selected===i} aria-current={selected===i?'step':undefined} on:click={()=>select(i)}><span class="number">{String(i+1).padStart(2,'0')}</span>{scene.title}</button>{/each}
     </nav>
@@ -131,10 +131,10 @@
       <div class="pager"><button disabled={selected===0} on:click={()=>select(selected-1)} aria-label="Previous screen">←</button><button disabled={selected===scenes.length-1} on:click={()=>select(selected+1)} aria-label="Next screen">→</button></div>
     </header>
     <div class="app-frame" bind:this={frame} on:click={handleClick} role="presentation">
-      <div class="app-bar"><span>Cassini</span><div><span>Browse</span><span>Operator</span><strong>Setup</strong></div><span class="admin">Administrator</span></div>
+      <div class="app-bar"><span>Cassini</span><div><span>Browse</span><strong>Operator · Publish pipeline</strong></div><span class="admin">Administrator</span></div>
       <div class="screen-body">
         {#key revision}<div use:autoOpen={scenes[selected]}><RecordingSetup operatorClient={client}/></div>{/key}
-        <div id="recording-storage" class="storage-context"><strong>Recording storage</strong><p>The existing storage wizard appears here in the live app. This walkthrough focuses on the new recording checks and configuration panels.</p></div>
+        <div id="recording-storage" class="storage-context"><strong>Who can see recordings</strong><p>The recording audience controls appear here in the live app. This walkthrough focuses on the new recording checks and configuration panels.</p></div>
       </div>
     </div>
     <div class="simulation"><div><strong>Preview controls</strong><p>Simulate events that normally happen outside Cassini.</p></div><div class="simulation-buttons"><button on:click={()=>simulate('waiting')}>Talk test armed</button><button on:click={()=>simulate('processing')}>Recording stopped</button><button on:click={()=>simulate('published')}>Publishing finished</button><button on:click={()=>simulate('expired')}>Restart / expire</button></div></div>

@@ -6,7 +6,7 @@ operator client. The sidebar selects 19 fixture states; preview controls simulat
 Talk and processing events. No operator API requests are sent.
 
 The surrounding app navigation and storage placeholder are presentation context.
-The existing storage wizard is not rendered. Check again preserves the selected
+The recording audience controls are not rendered. Check again preserves the selected
 fixture. Example links do not open real rooms or recordings. External documentation
 links remain usable.
 
