@@ -22,7 +22,15 @@ func ParseCallURL(raw string) (baseURL string, roomToken string, err error) {
 			if token == "" {
 				break
 			}
-			return u.Scheme + "://" + u.Host, token, nil
+			baseParts := parts[:i]
+			if len(baseParts) > 0 && baseParts[len(baseParts)-1] == "index.php" {
+				baseParts = baseParts[:len(baseParts)-1]
+			}
+			base := u.Scheme + "://" + u.Host
+			if len(baseParts) > 0 {
+				base += "/" + strings.Join(baseParts, "/")
+			}
+			return base, token, nil
 		}
 	}
 

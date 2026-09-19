@@ -28,12 +28,15 @@ Talk call media ──3478/tcp+udp──▶ AIO Talk (signaling + Janus + TURN)
 ### Why a manual HaRP daemon
 
 Cassini deploys as a Nextcloud **AppAPI ExApp**, which needs a **deploy daemon**.
-The recommended daemon is **HaRP**. AIO does not *yet* expose a HaRP container in
-its UI (the AppAPI/HaRP integration is gated behind a newer AIO/Talk bundle), so
-`wire-cassini.sh` runs HaRP itself next to AIO and points the host reverse proxy's
-`/exapps/*` at it. **When AIO ships the HaRP container**, this collapses to
-"tick the HaRP box in AIO" and Cassini installs one-click from the store — the
-true [D-449] goal. Until then this script is the reproducible path.
+The recommended daemon is **HaRP**. This sandbox's `wire-cassini.sh` provisions
+HaRP separately and routes the host proxy's `/exapps/*` to it. That is the
+sandbox's chosen topology, not a statement that every AIO version lacks HaRP.
+Current integrated AIO includes an ExApp route in its
+[frontend configuration](https://github.com/nextcloud/all-in-one/blob/main/Containers/apache/Caddyfile).
+For other installations, inspect the installed AIO version and registered daemon;
+reuse an integrated service where available and verify a complete Test deploy.
+Do not run this sandbox wiring on an existing managed AIO stack simply to add a
+second HaRP. See [recording setup routing](../docs/recording-readiness.md#harp-routing-and-missing-navigation).
 
 ## One-time host setup
 

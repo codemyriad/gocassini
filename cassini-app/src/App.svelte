@@ -105,6 +105,7 @@
   // than about anything the browse surface is showing, and because the only
   // route that carries it is the one the shell already calls at mount.
   let setupFeatures: SetupFeatures | null = null;
+  let recordingNeedsAction = false;
 
   // The same answer, whole, for the one field that is not a capability: the
   // storage mode behind the audience chip. Kept rather than re-derived so the
@@ -222,6 +223,27 @@
     return url.toString();
   }
 
+  // Where the readiness checks now live: the Operator surface, "Publish
+  // pipeline" panel, which is the one SettingsPanel renders. Both hops are
+  // needed — landing on the Operator surface alone opens its default panel
+  // (Recordings) and leaves the reader to find the checks themselves.
+  //
+  // Built from the CURRENT fragment and announced once, the same way
+  // handleOpenPanel does it: the surface, the operator's panel nav and the
+  // viewer each read the fragment through popstate, so a silent pushState
+  // would leave three readers disagreeing about where we are.
+  function openRecordingSetup(): void {
+    // Second guard. The button is only offered to an administrator, but the
+    // cost of being wrong is a surface whose every request 403s at the proxy.
+    if (!operatorAvailable) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.hash = applyPanel(applySurface(window.location.hash, "operator"), "pipeline").replace(/^#/, "");
+    window.history.pushState({}, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
   function selectSurface(next: Surface): void {
     if (next === surface) {
       return;
@@ -283,6 +305,7 @@
       if (health) {
         setupHealth = health;
         setupFeatures = health.features;
+        recordingNeedsAction = health.recordingState === "needs_action";
       }
     } catch (error) {
       // Degrade, but not silently — the same rule the mount path follows.
@@ -399,6 +422,7 @@
       // non-admin's request for it would 403. Sequenced after the probe rather
       // than sent with it for the same reason.
       storageStatus = operatorClient ? await readStorageStatus(operatorClient) : null;
+      recordingNeedsAction = health?.recordingState === "needs_action";
       // Which setup message you get is decided by the SAME probe that decides
       // whether the operator surface exists — being able to read the ADMIN-gated
       // /status IS being an administrator, so there is no second notion of admin
@@ -489,6 +513,20 @@
   });
 </script>
 
+<!-- D-763's warning, rehomed. It used to send people to a Setup tab; that tab is
+     gone (D-751) and `setup` is no longer a surface (D-756), so the checks now
+     live in Operator › Publish pipeline, above the recording-access section.
+     Only an administrator can act on this, so the route is only offered to one —
+     everyone else gets the fact, which is still worth telling them, because it
+     explains why their recordings are not appearing. -->
+{#if recordingNeedsAction}
+  <div class="m-3 rounded-box border border-base-300 bg-base-100 p-3 text-sm" role="status">
+    Recording setup needs an administrator’s attention.
+    {#if operatorAvailable}
+      <button class="btn btn-sm ml-2" on:click={openRecordingSetup}>Open recording setup</button>
+    {/if}
+  </div>
+{/if}
 {#if operatorAvailable}
   <div class="cassini-shell">
     <nav

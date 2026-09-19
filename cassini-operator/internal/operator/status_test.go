@@ -22,6 +22,7 @@ var errStatusSubstrateProbe = errors.New("groupfolders app not enabled")
 
 func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
+	t.Setenv(envTalkSignalingInternalSecret, "")
 	defer cleanup()
 	t.Setenv("APP_VERSION", "9.9.9")
 	// These image/process values are deliberately stale. Build execution is
@@ -992,20 +993,25 @@ func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
 		t.Fatalf("decode setup response: %v", err)
 	}
-	// ok + state + mode + cause + features, and nothing else.
+	// ok + state + mode + cause + features + recording_state, and nothing else.
 	//
-	// `awaiting_choice` used to be the sixth, and is gone (D-753 review): the
-	// enabled edge resolves the storage mode itself, so the field had been a
-	// literal `false` on every response and nothing in the app read it from this
-	// route.
+	// `awaiting_choice` used to be here, and is gone (D-753 review): the enabled
+	// edge resolves the storage mode itself, so the field had been a literal
+	// `false` on every response and nothing in the app read it from this route.
+	//
+	// `recording_state` is D-763's addition and is a different question from the
+	// rest: whether RECORDING is verified to work, rather than who may read what
+	// is recorded. It is a coarse state word by design — the detailed checks are
+	// admin-only — so it belongs in this user-level answer while the checks
+	// behind it do not.
 	//
 	// `cause` is the same discipline as the rest of the struct applied to a
 	// sentence (D-759): what kind of thing broke, in words, with the account,
 	// the app and the path left out — the leak checks above and below are what
 	// hold it to that, and storage_causes_test.go holds every sentence in the
 	// table to it.
-	if len(fields) != 5 {
-		t.Fatalf("setup must answer with ok+state+mode+cause+features only, got %#v", fields)
+	if len(fields) != 6 {
+		t.Fatalf("setup must answer with ok+state+mode+cause+features+recording_state only, got %#v", fields)
 	}
 	cause, isString := fields["cause"].(string)
 	if !isString {
