@@ -2,19 +2,16 @@
 // Build the public embed and put it where the microsite publishes it (D-775).
 //
 // The built pair lands in cassini-microsite/public/embed/v1/ and is COMMITTED.
-// That is deliberate, and it is the cheap answer to a question nobody in this
-// repo can settle: the microsite is deployed by a Cloudflare-side build command
-// configured in the dashboard, not by .github/workflows/microsite.yml, so
-// making that build also compile the viewer is a change we cannot test from
-// here — and if it broke, it would take the whole site down rather than just
-// the embed. Committed assets are served by whatever that build already does,
-// because Astro copies public/ verbatim.
+// That keeps the viewer build out of the microsite's deploy path: if compiling
+// the viewer broke, it would take the whole site down rather than just the
+// embed. Committed assets are served as-is, because Astro copies public/
+// verbatim.
 //
 // The cost of committing build output is drift, so CI runs this script with
 // --check and fails if the tree disagrees with a fresh build.
 //
-// Follow-up: move this to a build-time step once someone confirms the
-// dashboard's root directory and install command.
+// Follow-up: now that .github/workflows/microsite.yml deploys the site, this
+// could become a build-time step there.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, rmSync, copyFileSync, existsSync } from "node:fs";
