@@ -1,11 +1,14 @@
 {
   // Static-assets-only Worker (no server code): `wrangler deploy` uploads the
-  // built site in ./dist and serves it. This is what the Cloudflare "Deploy
-  // command: npx wrangler deploy" build step runs.
+  // built site in ./dist and serves it. .github/workflows/microsite.yml runs
+  // it on microsite or deployment-workflow changes pushed to main. Locally,
+  // `npm run build && npx wrangler deploy` in this directory does the same.
   //
-  // IMPORTANT: `name` must match the Worker you connected to this repo in the
-  // Cloudflare dashboard, otherwise wrangler deploys to a *different* Worker.
+  // IMPORTANT: `name` and `account_id` pin the Worker this deploys to. The
+  // account id is the Code Myriad account; it is not a secret, and setting it
+  // here is what stops wrangler asking which account to use.
   "name": "gocassini",
+  "account_id": "4ca1b102baca2e7067daf57e186e20c4",
   "compatibility_date": "2025-07-01",
   "routes": [
     { "pattern": "gocassini.codemyriad.io", "custom_domain": true },
