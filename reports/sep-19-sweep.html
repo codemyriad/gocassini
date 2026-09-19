@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Cassini repository consistency review: corrections, verification, and remaining limits ahead of the Nextcloud conference.">
+<title>Cassini · September 19 repository sweep</title>
+<style>
+:root{color-scheme:light;--ink:#172b32;--muted:#566a71;--line:#d8e1e1;--accent:#087c72;--paper:#f8faf8}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.7 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:920px;margin:auto;padding:64px 28px 48px}header{padding-bottom:32px;border-bottom:1px solid var(--line)}.eyebrow{font-size:12px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:var(--accent)}h1{font-size:clamp(36px,6vw,60px);line-height:1.08;letter-spacing:-.045em;margin:18px 0}header p{color:var(--muted);max-width:670px;margin:0}.status{margin-top:22px;font-size:13px}.status span{display:inline-block;border:1px solid #bcd7ce;background:#edf6ef;padding:5px 12px;border-radius:30px;color:#22624c}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:30px 0 34px}.metric{padding:20px;border:1px solid var(--line);border-radius:12px;background:white}.metric strong{font-size:29px;line-height:1.2;display:block;letter-spacing:-.035em}.metric span{color:var(--muted);font-size:13px}article>p{color:var(--muted)}h2{font-size:25px;letter-spacing:-.025em;margin:42px 0 18px}ul{padding-left:23px}li{padding-left:6px;margin:0 0 18px}li::marker{color:var(--accent)}strong{font-weight:700}code{font-size:.86em;background:#eaf0ee;border-radius:4px;padding:2px 5px;overflow-wrap:anywhere}footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}a{color:var(--accent)}@media(max-width:550px){main{padding:36px 20px}.metrics{gap:8px}.metric{padding:14px 10px}.metric strong{font-size:24px}body{font-size:16px}}@media print{main{padding:0;max-width:none}.metric{break-inside:avoid}h2{break-after:avoid}li{break-inside:avoid}}
+</style>
+</head>
+<body><main>
+<header><div class="eyebrow">Cassini / Repository review / 19 September 2026</div>
+<h1>A consistency sweep<br>before the conference.</h1>
+<p>What contradicted the implementation, what was corrected, and what the checks establish.</p>
+<div class="status"><span>Corrections applied in the local working tree</span></div></header>
+<section class="metrics" aria-label="Verification highlights"><div class="metric"><strong>520</strong><span>app tests passed</span></div><div class="metric"><strong>11</strong><span>website pages built</span></div><div class="metric"><strong>Passed</strong><span>app builds &amp; release-note validation</span></div></section>
+<article><p>Reviewed the public README and microsite, installation and development guides,
+privacy/access claims, CLI examples, current app and operator routing, Compose
+services, tracked large files, relative Markdown links and changelog formatting.
+Implementation and checked-in deployment configuration were the reference for
+current behavior. Historical proposals and investigation notes remain historical.</p>
+<h2>Corrected</h2>
+<ul>
+<li><strong>Recording access:</strong> the README and public introduction promised participant-only
+access unconditionally. Fresh installs use the everyone audience; private-room
+restrictions require enabling participant access, and public-room recordings
+remain visible to signed-in accounts. Permission tables now include invitees
+and the public-room exception.</li>
+<li><strong>Privacy:</strong> the documentation index omitted insights from operations that send
+text to an LLM. The privacy guide now distinguishes the roster captured during
+recording for later restriction from the audience resolved at initial publication.
+It also describes the existing Operator action for narrowing eligible recordings.</li>
+<li><strong>CPU transcription:</strong> the install guide still called the portable image an
+unsupported inference configuration; quick start expected a readiness failure
+on CPU. Both now describe supported CPU builds and explicit CUDA overrides.</li>
+<li><strong>Navigation and deployment:</strong> current guides referenced a removed Cassini Admin
+menu, <code>cassini-control-panel</code> directory, Compose service and port 4173. They now
+describe one Cassini app with an Operator section, the two-service Compose bundle,
+and the separate Vite development server.</li>
+<li><strong>Development proxy:</strong> the default root-mounted proxy omitted status, setup,
+settings, storage, AI-provider and Talk-provisioning routes. This prevented the
+admin probe from reaching the operator and could hide the Operator section.
+Added routing and request-level tests for root and prefixed APIs.</li>
+<li><strong>Homepage example:</strong> replaced nonexistent <code>record --room</code> with <code>--call</code> and
+<code>--out</code>; made the example output filename agree with the command.</li>
+<li><strong>Processing and storage descriptions:</strong> removed the promise that post-recording
+transcription can never compete with a live call, corrected the production
+publish destination to Nextcloud Files, and updated obsolete claims that the
+app viewer cannot edit annotations or display artifact/log paths.</li>
+<li><strong>Legacy documentation:</strong> marked the removed Python transcriber architecture as
+historical and linked the active Go pipeline. Corrected a changelog sentence
+that presented sherpa-onnx and Parakeet as alternative CPU/GPU engines.</li>
+<li><strong>Generated binary:</strong> removed the tracked 15 MB <code>three-song-rotator</code> executable
+and ignored future local builds. Both harness launch scripts use <code>go run .</code>;
+source and media fixtures remain present.</li>
+<li><strong>Release notes:</strong> three existing changelog fragments lacked required headings
+and prevented the release-note validator from completing. Fixed their formatting
+while preserving their content; added a fragment for this pass.</li>
+</ul>
+<h2>Verification</h2>
+<ul>
+<li>App test suite: <strong>520 tests passed</strong>, including the new proxy requests.</li>
+<li>Standalone and embedded app builds passed, including the single-bundle check.</li>
+<li>Microsite build passed: <strong>11 pages</strong>; generated local page/asset targets resolved.</li>
+<li>Tracked Markdown relative-link file targets resolved (external URLs and anchors
+were not checked).</li>
+<li>All changelog fragments passed <code>fold-changelog.sh --version 0.2.0-beta.7 --check</code>.
+This was validation only, not a version bump or release.</li>
+<li><code>git diff --check</code> passed.</li>
+</ul>
+<h2>Limits</h2>
+<p>This was a source and documentation consistency pass, not a live conference-demo
+rehearsal or an exhaustive code/security audit. No Nextcloud installation,
+recording round trip, GPU transcription, deployment or publishing was performed.
+Builds still report existing Svelte accessibility/unused-code warnings and a
+microsite syntax-highlighting fallback for <code>caddyfile</code>; these do not fail builds.</p>
+</article>
+<footer>Findings from the September 19 source review. Repository changes were uncommitted at the end of the pass. This page publishes the report; it does not deploy the application changes.</footer>
+</main></body></html>

@@ -23,7 +23,7 @@ Cassini is an ExApp which can be installed from the Nextcloud App Store. Once it
 
 - Works with any Nextcloud Talk room, group calls and 1:1 calls. Just press _Record_ and Cassini is listening.
 - Transcripts and synced audio playback with speaker IDs.
-- Access control scoped to the room: a published meeting is readable by that room's participants and no one else, using Nextcloud Files permissions.
+- Configurable recording access: everyone with a Nextcloud account by default, or room-based permissions for private recordings when participant access is enabled. Public-room recordings remain visible to all signed-in accounts.
 - One portable meeting file per meeting that can be opened without Cassini.
 - Search and tags across meetings.
 - Configure in-app AI providers for per-meeting summaries and cross-meeting insights.
@@ -31,7 +31,7 @@ Cassini is an ExApp which can be installed from the Nextcloud App Store. Once it
 
 ## Limitations
 
-- **No live transcription or captions.** Transcription starts when the call ends, so it never competes with the call for resources.
+- **No live transcription or captions.** Transcription starts after recording stops. The operator schedules processing around live recordings to protect capture.
 - **Audio only.** Cassini records the video streams, but the meeting file, transcript and viewer are audio only for now.
 
 ## What leaves your server

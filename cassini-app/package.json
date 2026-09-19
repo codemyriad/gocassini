@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "//": "The in-Nextcloud shell (D-420). Hosts cassini-viewer's browse surface today; V3 adds the operator surface + nav. Consumes cassini-viewer as a workspace layer.",
+  "//": "The in-Nextcloud shell (D-420). Hosts cassini-viewer's browse surface, insights, and administrator operator/settings surfaces. Consumes cassini-viewer as a workspace layer.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

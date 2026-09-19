@@ -116,7 +116,8 @@ not by Cassini keeping a separate copy or its own permission list. Recordings of
 **Switching to meeting participants does not retroactively restrict anything.**
 Recordings that already existed are copied into the Team folder readable by every
 signed-in account: Cassini does not guess who was in a past meeting. Narrowing
-them is a deliberate act, per recording, from the Files app. Switching the other
+them is a deliberate act: use the restriction action in Operator Settings for
+recordings with a captured room audience, or edit individual permissions in Files. Switching the other
 way carries every recording into the private tree with no access rules at all, so
 afterwards everyone who can open Cassini can read every recording, including the
 ones that had been restricted to a call's participants.

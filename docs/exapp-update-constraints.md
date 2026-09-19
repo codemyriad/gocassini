@@ -55,7 +55,7 @@ bug: it will drift, and the two halves will not be tested equally.
 - The image fallback is **silent**. If `X.Y.Z-cuda` is unpullable, AppAPI
   installs the portable image on a GPU daemon and reports success — you get a
   working install that transcribes on the CPU while the GPU sits idle. Cassini
-  makes that visible rather than fatal: `/operator/status` and Cassini Admin
+  makes that visible rather than fatal: `/operator/status` and Cassini’s Operator section
   report `device: cpu`, and the operator logs a warning when a CUDA-capable
   image cannot see an NVIDIA device. Every publish must still verify the
   `-cuda` tag is pullable *including its child manifests*; CI does this, and so
@@ -68,7 +68,7 @@ bug: it will drift, and the two halves will not be tested equally.
 > and D-702 blocked every build on a CPU daemon. Updating to this release
 > restores CPU transcription: new recordings build on whichever device the host
 > has, and recordings left in `build/blocked` are recovered with **Rerun** in
-> Cassini Admin — no image or daemon change required. An installation that
+> Cassini’s Operator section — no image or daemon change required. An installation that
 > *wants* GPU-only behaviour pins `device_override=cuda` in Settings, which
 > keeps blocking a GPU-less host instead of falling back.
 

@@ -24,25 +24,23 @@ Cassini has three core stages:
 2. **Build** — turn that source media into a structured meeting artifact
 3. **Publish** — turn one or more built meetings into a static viewer site
 
-In the browser, Cassini has two separate surfaces:
+Inside the unified Cassini app, there are two main surfaces:
 
 - the **control panel** for starting and watching jobs
 - the **viewer** for reading the published results
 
 ## What you should do first
 
-Start with the happy path:
+Start with the installed ExApp happy path:
 
-- bring up the local Talk harness
-- bring up the deployment bundle
-- start a room
-- paste the room URL into the control panel
-- wait for the job to finish
-- open the viewer
+- bring up the local Talk harness with Cassini installed through AppAPI
+- open a Talk room and press Record
+- watch the job in Cassini’s Operator section
+- open the published meeting in Cassini
 
-That walkthrough lives here:
-
-- [Quick start](./quick-start.md)
+Follow [Quick start](./quick-start.md) for the commands. The standalone Compose
+bundle is an alternative for component development; it contains the operator
+and viewer, with the app’s Vite server run separately when needed.
 
 ## The main system picture
 
@@ -75,9 +73,8 @@ This is the easiest way to see the full product shape.
 It includes:
 
 - operator
-- control panel
-- viewer
-- shared published-site storage
+- viewer and shared published-site storage for the standalone Compose bundle
+- the unified app, including its Operator section, for the installed ExApp
 
 Use this when you want to understand the deployed runtime and the browser experience.
 

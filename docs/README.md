@@ -29,7 +29,7 @@ in these docs should be read in light of them.
   is not.** The operator resolves the device before each build: CUDA when the
   image carries the CUDA runtime and an NVIDIA device is visible, CPU
   otherwise. A CPU build is correct but much slower, so the resolved device is
-  reported in Cassini Admin, in `/operator/status` and in the build log before
+  reported in Cassini’s Operator section, in `/operator/status` and in the build log before
   any audio is decoded — it is never a silent substitution. An administrator can
   pin the device (`cpu` or `cuda`); pinning `cuda` on a host that cannot provide
   it blocks the build with an actionable message rather than quietly running on
@@ -41,12 +41,11 @@ in these docs should be read in light of them.
   server**. Display names arrive on signaling join/participants events, ride
   through the MKV/remux stream titles, and are read back at transcription time.
   No audio-inferred diarization is used.
-- **Summarisation is the only step that can leave the host.** Meeting summaries
-  are optional and run **only** when an LLM endpoint is configured. When
-  enabled, the **full transcript text is sent to that endpoint** (a hosted
-  provider or your own model server) — see the
-  [privacy caveat](#summarisation--the-privacy-caveat). With no endpoint the
-  summary is skipped and the local transcript is still published.
+- **Optional summaries and insights send text to a configured LLM endpoint.**
+  Automatic summaries send the meeting transcript; user-requested insights send
+  selected meetings' transcripts and summaries plus the question. The endpoint
+  can be hosted or self-hosted. With no endpoint, neither operation calls a
+  model and the local transcript is still published. See [privacy](./privacy.md).
 - **Self-contained outputs.** A portable single-file `.opus` carries audio +
   transcript (integrity-hashed), and a separate
   **static-site export** (`catalog.json` + `meetings/`; the viewer SPA shell —
@@ -109,8 +108,8 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   env is creation-time only, so a release adding a _required_ env var is a
   breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
-- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — who can see a recording: anyone with an account on this Nextcloud (`CassiniNoACL/Recordings`, nothing extra installed), or only the people who were in the call (`Cassini/Recordings` in the Team folder, which needs Team folders + Everyone Group, a `cassini` service account and a mapped Team folder). Also how Cassini resolves that when the app is enabled, how switching copies an archive between the two roots, and how to manage who can see each recording.
-- **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the one optional step that sends data off your infrastructure.
+- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — who can see a recording: anyone with an account on this Nextcloud (`CassiniNoACL/Recordings`, nothing extra installed), or the room’s audience for private recordings (`Cassini/Recordings` in the Team folder, which needs Team folders + Everyone Group, a `cassini` service account and a mapped Team folder). Also how Cassini resolves that when the app is enabled, how switching copies an archive between the two roots, and how to manage who can see each recording.
+- **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the optional LLM operations that can send text off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
 - **[Releasing Cassini](./release.md)** — maintainer guide: the version ladder, the local `prepare-release.sh` flow, and the GitHub + App Store publish workflow.
@@ -124,7 +123,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   administrator selects them, so the image stays small and every tier still
   runs. Best on a CPU is slower than the meeting it transcribes, which is why
   Balanced is the default. Moving to the `-cuda` image later is a device change,
-  not a data migration: use **Rerun** in Cassini Admin to re-transcribe an
+  not a data migration: use **Rerun** in Cassini’s Operator section to re-transcribe an
   existing recording on the GPU.
 - **GPU/CUDA**: tag `X.Y.Z-cuda`. x86_64 only. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
   `CASSINI_STT_DEVICE=cuda` baked in. Set the deploy daemon's **Compute device**
@@ -149,8 +148,10 @@ the first start — after that, summaries are configured in the app's Settings.
 > **Privacy warning.** When summaries are enabled, the **full local transcript
 > text is sent to the configured endpoint**. Only enable this if sending meeting
 > transcripts off-host is acceptable for your deployment. Transcription itself
-> never leaves the host; only this optional step does. With no endpoint, the
-> local transcript is still published.
+> never leaves the host. User-requested insights also send selected meetings'
+> transcripts and summaries, plus the question, to a configured endpoint. Turning
+> summaries off does not disable insights. With no endpoint, the local transcript
+> is still published and neither operation calls a model.
 
 ### Local development stack
 
@@ -206,9 +207,9 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 
 Flagged so readers do not mistake intent for current behavior:
 
-- **Group folders ACL inheritance is version-sensitive.** Limiting a recording
-  to the people who were in the call is the audience that requires the Team
-  folders and Everyone Group apps plus a Team folder an administrator sets up.
+- **Group folders ACL inheritance is version-sensitive.** Limiting a private recording
+  to the room’s audience is the audience that requires the Team
+  folders and Everyone Group apps plus a Team folder Cassini can set up from Operator › Settings.
   It is worth validating traversal on your own instance — the runbook has a
   checklist.
 
