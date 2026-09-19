@@ -29,7 +29,7 @@ steps. Optional LLM meeting summaries are the only step that sends data to a
 third party, and they run only when an LLM endpoint is configured. Without one,
 nothing leaves your infrastructure. See the
 full data-processing note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md]]></description>
-  <version>0.2.0-beta.6</version>
+  <version>0.2.0-beta.7</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
@@ -64,7 +64,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.6</image-tag>
+      <image-tag>0.2.0-beta.7</image-tag>
     </docker-install>
 
     <!--
