@@ -1,5 +1,8 @@
 # Cassini
 
+> [!IMPORTANT]
+> **Cassini is in beta.** It records real meetings today and we run it on our own Nextcloud, but expect rough edges and read the [changelog](CHANGELOG.md) before you update. Please report what breaks in [issues](https://github.com/codemyriad/gocassini/issues).
+
 **Cassini is a recording backend for Nextcloud Talk that puts you in control of your meeting data.**
 
 - **Record and transcribe on your own infrastructure.** Cassini runs on the hardware you give

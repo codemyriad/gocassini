@@ -5,6 +5,8 @@ source: docs/README.md
 copied: "2026-09-17"
 ---
 
+> **Cassini is in beta.** It records real meetings today and we run it on our own Nextcloud, but expect rough edges and read the [changelog](https://github.com/codemyriad/gocassini/blob/main/CHANGELOG.md) before you update. Please report what breaks in [issues](https://github.com/codemyriad/gocassini/issues).
+
 Cassini is a recording backend for Nextcloud Talk that puts you in control of
 your meeting data. It installs as a Nextcloud app, shows up as a new app icon
 inside your Nextcloud suite, and takes over the Record button your people
