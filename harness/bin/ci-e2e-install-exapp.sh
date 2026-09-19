@@ -581,13 +581,14 @@ jq -e '.ok == true and .state == "provisioned"' "$setup_json" >/dev/null 2>&1 \
 #	          no `occ` line and no account, folder or app id — and is empty for
 #	          any step whose honest sentence would need one.
 #	features  two booleans, summaries and insights. No endpoint, no model, no key.
+#	recording_state  a coarse readiness verdict, without the admin-only checks.
 #
 # `awaiting_choice` used to be here and is gone: the operator resolves the
 # storage mode when the app is enabled, so it had been a literal false, and
 # nothing in the app read it from this route.
 setup_keys=$(jq -r 'keys | join(",")' "$setup_json" 2>/dev/null || echo "")
-[[ "$setup_keys" == "cause,features,mode,ok,state" ]] \
-  || fail "operator/setup must expose exactly cause+features+mode+ok+state — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
+[[ "$setup_keys" == "cause,features,mode,ok,recording_state,state" ]] \
+  || fail "operator/setup must expose exactly cause+features+mode+ok+recording_state+state — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
 # The sentence itself, not just its presence: an accidental leak of the admin
 # half of the table would pass the key check and fail the product's contract.
 jq -e '(.cause | type) == "string" and ((.cause | test("occ |/|_")) | not)' "$setup_json" >/dev/null 2>&1 \
