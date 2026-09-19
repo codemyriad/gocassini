@@ -59,8 +59,8 @@ func newAnnotationService(rt *Runtime, exapp ExAppConfig, logger *log.Logger) *a
 // register mounts the routes; every answer is per-caller, so uncacheable.
 func (s *annotationService) register(root *http.ServeMux) {
 	s.trackAnnotationBackground()
-	s.restoreTagJobs()
 	s.startAnnotationWorkers()
+	s.restoreTagJobs()
 	root.HandleFunc(annotationsURLPath+"/", insightNoStore(s.route))
 }
 

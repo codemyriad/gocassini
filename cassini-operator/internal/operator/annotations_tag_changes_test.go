@@ -34,6 +34,62 @@ func seedTagChanges(t *testing.T) *annotationStore {
 	return store
 }
 
+func TestTagJobShutdownRetriesInterruptedTarget(t *testing.T) {
+	store := seedTagChanges(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &annotationService{
+		rt:     &Runtime{ctx: ctx, annotations: store},
+		styles: newTagStyleStore(Config{DBPath: filepath.Join(t.TempDir(), "jobs.sqlite3")}),
+	}
+	job := &tagJob{ID: "shutdown-job", Actor: "alice", Kind: tagJobRename, TagID: "tag_hiring", State: tagJobRunning, Total: 1}
+	targets := []string{"MEETING1.opus"}
+	op := json.RawMessage(`{"op":"relabel","tagId":"tag_hiring","label":"renamed"}`)
+	s.jobs.start(job)
+	if err := s.persistTagJob(job, targets, op, nil); err != nil {
+		t.Fatal(err)
+	}
+	release, err := annotationMutationLocks.acquire(context.Background(), store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.runTagJob(job, targets, op, nil)
+	}()
+	// Cancel only once the target has started and is waiting to mutate.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		annotationMutationLocks.mu.Lock()
+		waiting := annotationMutationLocks.locks[store.path].refs == 2
+		annotationMutationLocks.mu.Unlock()
+		if waiting {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatal("job did not start its target")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+	var data []byte
+	if err := store.db.QueryRow(`SELECT job_json FROM annotation_tag_job WHERE caller='alice'`).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	var saved tagJob
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.State != tagJobInterrupted || saved.Done != 0 || len(saved.Failed) != 0 {
+		t.Fatalf("shutdown consumed the uncommitted target: %+v", saved)
+	}
+}
+
 // tagChangeService mounts the annotation routes with a data dir for
 // tag-styles.json; store may be nil for "no index".
 func tagChangeService(t *testing.T, ncURL, bin string, store *annotationStore) (*annotationService, http.Handler) {
