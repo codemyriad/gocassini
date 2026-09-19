@@ -221,7 +221,7 @@ describe("StaticCatalogProvider", () => {
       revision: 4,
       audioOpusSha256: "abc",
       tagNamespace: "ns",
-      tags: [{ id: "tag_1", label: "Decision" }],
+      tags: [{ id: "tag_1", label: "Decision", color: "purple", icon: "" }],
       items: [
         {
           id: "mk_1",
@@ -251,7 +251,7 @@ describe("StaticCatalogProvider", () => {
         revision: 4,
         audioOpusSha256: "abc",
         tagNamespace: "ns",
-        tags: [{ id: "tag_1", label: "Decision" }],
+        tags: [{ id: "tag_1", label: "Decision", color: "purple", icon: "" }],
         items: [
           {
             id: "mk_1",
