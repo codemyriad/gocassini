@@ -100,6 +100,5 @@ func (s *annotationService) serveTags(w http.ResponseWriter, r *http.Request, ca
 			meetings = append(meetings, meetingTagsEntry{MeetingID: entry.id, Tags: marks})
 		}
 	}
-	s.withStyles(tags)
 	writeJSON(w, http.StatusOK, tagVocabularyResponse{Tags: tags, Meetings: meetings, Coverage: coverage})
 }

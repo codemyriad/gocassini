@@ -165,9 +165,25 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 	if err != nil {
 		return response, &annotateFailure{status: 503, public: "tag vocabulary is preparing", cause: err}
 	}
-	ops, err := ann.ParseOps(raw)
+	var envelope struct {
+		Ops []json.RawMessage `json:"ops"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return response, err
+	}
+	raw, err = json.Marshal(struct {
+		Ops       []json.RawMessage  `json:"ops"`
+		TagStyles []annotateTagStyle `json:"tagStyles,omitempty"`
+	}{envelope.Ops, request.TagStyles})
+	if err != nil {
+		return response, err
+	}
+	batch, err := ann.ParseBatch(raw)
 	if err != nil {
 		return response, badAnnotateRequest("%v", err)
+	}
+	if err := store.prepareInitialTagAppearance(ctx, &batch, visible); err != nil {
+		return response, err
 	}
 	if namespace == "" {
 		namespace, err = ann.NewNamespace()
@@ -178,9 +194,9 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 	// New labels share one identity across the entire batch, even in an empty
 	// installation. Explicit IDs have already been checked against visibility.
 	newIDs := map[string]string{}
-	for i := range ops {
-		if ops[i].Op == "mark" && ops[i].Tag.ID == "" {
-			label := foldTagLabel(*ops[i].Tag.Label)
+	for i := range batch.Ops {
+		if batch.Ops[i].Op == "mark" && batch.Ops[i].Tag.ID == "" {
+			label := foldTagLabel(*batch.Ops[i].Tag.Label)
 			id := newIDs[label]
 			if id == "" {
 				id, err = ann.NewAnnotationTagID()
@@ -189,7 +205,7 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 				}
 				newIDs[label] = id
 			}
-			ops[i].Tag.ID = id
+			batch.Ops[i].Tag.ID = id
 		}
 	}
 	results := make([]annotateResult, len(request.MeetingIDs))
@@ -198,7 +214,7 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
 		tags := map[string]bool{}
 		for i, id := range request.MeetingIDs {
-			if err := mutateAnnotationDocument(ctx, tx, path.Base(paths[id]), paths[id], caller, namespace, request.annotateWriteRequest, ops, &results[i]); err != nil {
+			if err := mutateAnnotationDocument(ctx, tx, path.Base(paths[id]), paths[id], caller, namespace, request.annotateWriteRequest, batch, &results[i]); err != nil {
 				return err
 			}
 			result := results[i]
@@ -210,11 +226,17 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 			for _, tag := range doc.Tags {
 				if !tags[tag.ID] {
 					tags[tag.ID] = true
-					response.Tags = append(response.Tags, tagVocabularyEntry{TagID: tag.ID, Label: tag.Label, Namespace: doc.TagNamespace})
+					entry := tagVocabularyEntry{TagID: tag.ID, Label: tag.Label, Namespace: doc.TagNamespace}
+					if tag.Color != nil {
+						entry.Color = *tag.Color
+					}
+					if tag.Icon != nil {
+						entry.Icon = *tag.Icon
+					}
+					response.Tags = append(response.Tags, entry)
 				}
 			}
 		}
-		s.withStyles(response.Tags)
 		// Return newly selected styles with the response so new tags render without
 		// another vocabulary request. Styles retain their existing separate store.
 		created := map[string]bool{}
@@ -223,16 +245,7 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 				created[id] = true
 			}
 		}
-		for i, tag := range response.Tags {
-			if created[tag.TagID] {
-				for _, style := range request.TagStyles {
-					if foldTagLabel(style.Label) == foldTagLabel(tag.Label) {
-						response.Tags[i].Color = style.Color
-						response.Tags[i].Icon = style.Icon
-					}
-				}
-			}
-		}
+		_ = created
 		encoded, err := json.Marshal(response)
 		if err != nil {
 			return err
@@ -249,9 +262,6 @@ func (s *annotationService) commitAnnotationBatch(ctx context.Context, caller st
 	})
 	if err != nil {
 		return annotationBatchResponse{}, err
-	}
-	for _, result := range results {
-		s.styleNewTags(ctx, request.annotateWriteRequest, result)
 	}
 	s.wakeAnnotations()
 	s.wakeAnnotations()
