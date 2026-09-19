@@ -12,7 +12,7 @@
 # first landed.
 
 # The NCC 2026 talk page (D-777) serves these from public/. They cannot be LFS:
-# the Cloudflare build does not pull LFS, so it would publish the pointer file
+# the deployment checkout does not pull LFS, so it would publish the pointer file
 # (see the microsite exception in .gitattributes).
 cassini-microsite/public/nextcloud-conf-2026/voice-is-context--20260918T152131.opus
 cassini-microsite/public/nextcloud-conf-2026/voice-is-context-slides.pdf
