@@ -1,0 +1,513 @@
+---
+// The page behind the QR code on the last slide of the NCC 2026 lightning talk [D-777].
+//
+// It is an index, not a home: only the talk itself lives here. Everything it points at gets a
+// permanent URL elsewhere on the site (see D-776), so after Berlin this page becomes an archive
+// of the talk while those pages keep earning traffic.
+//
+// Rule for the day: nothing may 404. Anything unpublished carries a "not yet published" chip and
+// no link, rather than a link that dies in front of someone who just scanned a QR code.
+import "../tailwind.css";
+import { ViewTransitions } from "astro:transitions";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import SocialMeta from "../components/SocialMeta.astro";
+import { statSync } from "node:fs";
+import { join } from "node:path";
+const rawBase = import.meta.env.BASE_URL;
+const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
+
+// The "Transcriptions and insights" section is held back until its content is ready. Flip this
+// to true to put it back; nothing else on the page refers to it.
+const showInsights = false;
+
+// The talk's files, served from public/. Replacing a file is enough: sizes are read at build.
+// The recording's name carries its start time (UTC) because that is where the embed reads a date
+// from (describeMeeting); the file itself only knows when it was last processed. public/_headers
+// serves it as application/octet-stream, or Firefox saves the download as .ogx.
+const recordingPath = "nextcloud-conf-2026/voice-is-context--20260918T152131.opus";
+const recordingUrl = `${base}${recordingPath}`;
+const recordingDownloadName = "Voice-is-Context--NCC-2026.opus";
+const slidesPath = "nextcloud-conf-2026/voice-is-context-slides.pdf";
+const slidesUrl = `${base}${slidesPath}`;
+const slidesDownloadName = "Voice-is-Context--NCC-2026--Slides.pdf";
+const sizeOf = (path: string) => {
+  try {
+    const bytes = statSync(join(process.cwd(), "public", path)).size;
+    return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  } catch {
+    return "";
+  }
+};
+const recordingSize = sizeOf(recordingPath);
+const slidesSize = sizeOf(slidesPath);
+
+const title = "Cassini at Nextcloud Conference 2026";
+const description = showInsights
+  ? "The talk as a Cassini file — audio, transcript, summary and tags — plus what each way of running it costs."
+  : "The talk as a Cassini file — audio, transcript, summary and tags.";
+---
+
+<!DOCTYPE html>
+<html lang="en" data-theme="saturn-dark" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title}</title>
+  <SocialMeta title={title} description={description} />
+  <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+  <ViewTransitions />
+</head>
+<body class="bg-base-100 text-base-content min-h-screen flex flex-col">
+
+  <Nav transition:persist="site-nav" />
+
+  <main class="page flex-1">
+
+    {/* ===================== Hero ===================== */}
+    <header class="talk-hero">
+      <h1>
+        <span class="dim">Voice is context.</span>
+        How Cassini records your meetings into searchable memory.
+      </h1>
+      <p class="kicker">
+        <span class="k-strong">20 Sept 2026</span>
+        <span class="k-sep">·</span> Chris De Sousa, Codemyriad
+      </p>
+      <p class="lede">
+        A five-minute lightning talk at the Nextcloud Community Conference in Berlin, on four design
+        decisions that have shaped Cassini, a recording backend for Nextcloud Talk.
+      </p>
+      <p class="lede lede-follow">
+        Below is the talk transcript in the same viewer you'd find in the app: the summary, the transcript and
+        the tags, all read from the one file.
+      </p>
+    </header>
+
+    {/* ===================== The talk, as a Cassini file =====================
+      The public embed (D-775) reading the recording this site serves. The summary and tags are the
+      ones inside the file. Their colours are dealt by the embed until the file carries them (D-793).
+      Marks bind to the audio digest, so a re-transcribed file over the same audio keeps them.
+    */}
+    <div class="talk" id="talk">
+      <div class="slides-row">
+        <a class="dl" href={slidesUrl} download={slidesDownloadName}>
+          Download the slides{slidesSize && <span class="size">PDF · {slidesSize}</span>}
+        </a>
+      </div>
+      <div class="viewer">
+        <cassini-meeting src={recordingUrl} title="Voice is context" theme="dark"></cassini-meeting>
+
+        <div class="file-details">
+          <div class="fd-row">
+            <span>Audio, transcript, summary &amp; tags in one file</span>
+            <a class="dl" href={recordingUrl} download={recordingDownloadName}>
+              Download{recordingSize && <span class="size">{recordingSize}</span>}
+            </a>
+          </div>
+          <p class="fd-note">
+            Curious about the file format? Read the spec at
+            <a href="https://format.gocassini.com" target="_blank" rel="noopener noreferrer">format.gocassini.com</a>
+          </p>
+        </div>
+      </div>
+      {/* Unbundled on purpose: the script finds viewer.css beside its own URL. */}
+      <script is:inline src={`${base}embed/v1/viewer.js`}></script>
+    </div>
+
+    {/* ===================== Transcription and insights =====================
+      Hidden while showInsights is false (see the frontmatter). */}
+    {showInsights && (
+    <section id="control">
+      <div class="head">
+        <h2>Transcriptions and insights on infrastructure you own</h2>
+        <p>Speech-to-text always runs on your host. LLM-powered insights are opt-in.</p>
+      </div>
+
+      {/* Slide 29, as a page. One axis down the left: arrow and label above, rail beside,
+           arrow and label below. Wide, the axis runs past both panels; narrow, the transcription
+           panel sits on its own and the axis runs beside the provider choice only. */}
+      <div class="ladder">
+        <p class="axis axis-top">
+          <span class="arrow" aria-hidden="true">
+            <svg width="10" height="15" viewBox="0 0 10 15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 14V1M1 5l4-4 4 4"/></svg>
+          </span>
+          <span>Full control <span class="soft">· nothing leaves the building</span></span>
+        </p>
+
+        <span class="rail" aria-hidden="true"></span>
+
+        <div class="own">
+          <h3>The transcription model runs on CPU or GPU.</h3>
+          <p>Cassini picks the build that fits the hardware you give it.<br />Still yours, even if someone else runs the box.</p>
+        </div>
+
+        <div class="llm">
+          <p class="llm-head">Configure an AI provider, or leave it empty</p>
+          <div class="cell cell-none">
+            <strong>None</strong>
+            <p>The transcript, search and tags are the whole product</p>
+          </div>
+          <div class="cell cell-run">
+            <strong>A LLM model you run</strong>
+            <p>An open-weight model on your own Ollama server · nothing leaves</p>
+          </div>
+          <div class="cell cell-paid">
+            <strong>A LLM model you pay for</strong>
+            <p>Any OpenAI-compatible endpoint · your meetings leave the building</p>
+          </div>
+        </div>
+
+        <p class="axis axis-bottom">
+          <span class="arrow" aria-hidden="true">
+            <svg width="10" height="15" viewBox="0 0 10 15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1v13M1 10l4 4 4-4"/></svg>
+          </span>
+          <span>Full service <span class="soft">· if you’re fine trusting a third party</span></span>
+        </p>
+      </div>
+
+      {/* TODO(D-779): the page does not exist yet. The row is inert until it ships, then it
+           becomes an <a class="row" href="/research/transcription-cpu-gpu-hosted"> with a
+           "Read →". Needs Silvio's export. */}
+      <div class="deeper">
+        <h3 class="rows-head">Go deeper</h3>
+        <ul class="rows">
+          <li>
+            <div class="row pending">
+              <span class="row-head">
+                <span class="row-kind kind-research">Research</span>
+                <span class="chip">not yet published</span>
+              </span>
+              <h3>Transcription on a CPU, a GPU, or a hosted API</h3>
+              <p>
+                The same thirty minutes of our own meetings through Parakeet on a CPU, on a GPU, and
+                through a hosted API. Memory, speed and price, measured. By Silvio Tomatis.
+              </p>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </section>
+    )}
+
+    {/* ===================== Get Cassini =====================
+      TODO: the primary button is Try a demo while the App Store listing is a pre-release in the
+      Unstable channel. If 0.2.0 stable ships (D-657), swap btn-primary onto Install.
+    */}
+    <section class="close" id="get">
+      <h2>Harness voice, with full privacy</h2>
+      <div class="actions">
+        <a class="btn-cta ghost" href="https://apps.nextcloud.com/apps/gocassini" target="_blank" rel="noopener noreferrer">Install from the App Store</a>
+        <a class="btn-cta primary" href="https://demo.gocassini.com/" target="_blank" rel="noopener noreferrer">Try a demo</a>
+      </div>
+    </section>
+
+  </main>
+
+  <Footer />
+
+  <style>
+    /* Every custom property this page uses is declared on .page rather than :root, so the
+       page carries its own ink ramp without touching the theme. The --color-* tokens come
+       from daisyUI's saturn-dark, set by data-theme on <html>. */
+    .page {
+      --ink-70: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+      --ink-60: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+      --ink-45: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+      --ink-35: color-mix(in oklab, var(--color-base-content) 35%, transparent);
+      --line: var(--color-base-300);
+      --line-soft: color-mix(in oklab, var(--color-base-300) 60%, transparent);
+      --mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+
+      max-width: 56rem;
+      margin-inline: auto;
+      width: 100%;
+      padding-inline: max(16px, 1.25rem);
+      padding-block: 5rem 4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 4.5rem;
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+    @media (min-width: 48rem) {
+      .page { padding-inline: 2.5rem; }
+    }
+
+    .page :is(h1, h2, h3) { margin: 0; text-wrap: balance; }
+    .page p { margin: 0; }
+    .page :is(ul, ol) { margin: 0; padding: 0; list-style: none; }
+    .page a { color: inherit; }
+    .page :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; border-radius: 4px; }
+
+    /* ---------------- Hero ---------------- */
+    /* Not .hero — daisyUI ships a .hero component (grid + place-items:center) in the
+       shared bundle, and its place-items would centre everything in this column. */
+    .talk-hero { display: flex; flex-direction: column; gap: 1.25rem; align-items: flex-start; }
+    h1 {
+      font-size: clamp(2.25rem, 7vw, 3.25rem);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      font-weight: 700;
+    }
+    h1 .dim { display: block; color: var(--ink-45); }
+    .kicker {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--ink-45);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.35rem 0.6rem;
+    }
+    /* The date is the fact a scanner needs, so it carries the weight. */
+    .kicker .k-strong { color: var(--color-base-content); font-weight: 600; }
+    .kicker .k-sep { color: var(--ink-35); }
+    .lede { font-size: 1.05rem; color: var(--ink-60); }
+    /* A second paragraph of the same description: closer than the hero's gap between its parts. */
+    .lede-follow { margin-top: -0.5rem; }
+
+    /* ---------------- The recording ---------------- */
+    .talk { display: flex; flex-direction: column; gap: 1rem; }
+    /* Sits on the embed's top-right corner: the row's own gap is taken back so the link reads as
+       belonging to the viewer below it, not to the sentence above. */
+    .slides-row { display: flex; justify-content: flex-end; margin-bottom: -0.5rem; font-size: 0.9rem; }
+    .viewer {
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: var(--color-base-200);
+      overflow: hidden;
+    }
+    /* The embed sizes to its container and scrolls inside it (cassini-viewer/ATTRIBUTES.md).
+       Unbounded, the whole transcript and summary would push the rest of the page away. */
+    cassini-meeting { display: block; height: min(44rem, 85svh); }
+    /* File details: what the file is on the left, how to take it on the right. */
+    .file-details {
+      border-top: 1px solid var(--line-soft);
+      padding: 1rem 1.25rem 1.15rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .fd-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.4rem 1rem;
+      flex-wrap: wrap;
+      font-size: 0.9rem;
+      color: var(--ink-70);
+    }
+    .dl { font-weight: 700; color: var(--color-primary); text-decoration: none; white-space: nowrap; }
+    .dl .size {
+      margin-left: 0.45rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: color-mix(in oklab, var(--color-primary) 60%, var(--color-base-content));
+    }
+    .dl:hover { text-decoration: underline; text-underline-offset: 3px; }
+    /* Same size and ink as the line above it, so the two read as one block. */
+    .fd-note { font-size: 0.9rem; color: var(--ink-70); }
+    .fd-note a {
+      color: var(--color-primary);
+      font-weight: 600;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      text-decoration-color: color-mix(in oklab, var(--color-primary) 45%, transparent);
+    }
+    .fd-note a:hover { text-decoration-color: var(--color-primary); }
+
+    .chip {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.02em;
+      color: var(--ink-45);
+      background: color-mix(in oklab, var(--color-base-300) 45%, transparent);
+      padding: 0.1rem 0.45rem;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+
+    /* ---------------- Sections ---------------- */
+    section { display: flex; flex-direction: column; gap: 1.5rem; scroll-margin-top: 6rem; }
+    .head { display: flex; flex-direction: column; gap: 0.6rem; }
+    h2 { font-size: clamp(1.5rem, 3.4vw, 1.95rem); line-height: 1.15; letter-spacing: -0.02em; font-weight: 700; }
+    .head p { font-size: 1rem; color: var(--ink-60); }
+
+    /* ---------------- Full control / full service ---------------- */
+    .ladder {
+      display: grid;
+      grid-template-columns: 1.5rem 1fr;
+      grid-template-areas:
+        "own  own"
+        "atop atop"
+        "rail llm"
+        "abot abot";
+      column-gap: 1rem;
+      row-gap: 0.9rem;
+      align-items: stretch;
+    }
+    @media (min-width: 46rem) {
+      .ladder {
+        grid-template-columns: 1.5rem 1fr 1fr;
+        grid-template-areas:
+          "atop atop atop"
+          "rail own  llm"
+          "abot abot abot";
+      }
+    }
+    .axis {
+      display: flex;
+      align-items: center;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--ink-45);
+      line-height: 1.3;
+    }
+    .axis .arrow {
+      width: 1.5rem;
+      margin-right: 1rem;
+      flex: none;
+      display: inline-flex;
+      justify-content: center;
+      color: var(--ink-60);
+    }
+    .axis .soft { color: var(--ink-35); text-transform: none; letter-spacing: 0.02em; }
+    .axis-top { grid-area: atop; }
+    .axis-bottom { grid-area: abot; }
+    .rail {
+      grid-area: rail;
+      justify-self: center;
+      width: 1px;
+      background: linear-gradient(to bottom, var(--ink-35), var(--line));
+    }
+
+    .own {
+      grid-area: own;
+      background: var(--color-primary);
+      color: var(--color-primary-content);
+      border-radius: 0.9rem;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 0.6rem;
+    }
+    .own h3 { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; line-height: 1.3; }
+    .own p {
+      font-size: 0.9rem;
+      line-height: 1.5;
+      color: color-mix(in oklab, var(--color-primary-content) 78%, transparent);
+    }
+
+    .llm { grid-area: llm; display: flex; flex-direction: column; gap: 0.6rem; }
+    .llm-head { font-size: 0.95rem; font-weight: 650; color: var(--ink-70); }
+    .cell {
+      border-radius: 0.75rem;
+      padding: 0.9rem 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      flex: 1;
+      justify-content: center;
+    }
+    .cell strong { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+    .cell p { font-family: var(--mono); font-size: 0.72rem; line-height: 1.5; color: var(--ink-45); }
+    .cell-none { border: 1px solid var(--line); }
+    .cell-none strong { color: var(--ink-70); }
+    .cell-run { border: 1px solid color-mix(in oklab, var(--color-primary) 75%, transparent); }
+    .cell-paid { border: 1px dashed var(--line); }
+
+    /* ---------------- Go deeper ---------------- */
+    .deeper { display: flex; flex-direction: column; gap: 0.9rem; }
+    .rows-head { font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; color: var(--ink-70); }
+    .rows { display: flex; flex-direction: column; gap: 0.6rem; }
+    .row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: var(--color-base-200);
+      padding: 1rem 1.25rem;
+      text-decoration: none;
+    }
+    a.row:hover { border-color: color-mix(in oklab, var(--color-primary) 55%, transparent); }
+    /* The honest state for a page that does not exist yet: no fill, no link. */
+    .row.pending { background: none; border-style: dashed; }
+    .row.pending h3 { color: var(--ink-70); }
+    /* Kind and destination share the top line, so the link sits on a baseline
+       rather than floating against a three-line block. */
+    .row-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    .row h3 { font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; }
+    .row > p { font-size: 0.875rem; line-height: 1.5; color: var(--ink-45); }
+    .row .go {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--color-primary);
+      white-space: nowrap;
+      flex: none;
+    }
+    a.row:hover .go { text-decoration: underline; text-underline-offset: 3px; }
+    /* Same tag language as the file's own tags above: primary for one kind,
+       secondary for the other, so the two kinds read apart at a glance. */
+    .row-kind {
+      font-family: var(--mono);
+      font-size: 0.64rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      padding: 0.15rem 0.55rem;
+      border: 1px solid color-mix(in oklab, currentColor 40%, transparent);
+    }
+    .kind-research { color: color-mix(in oklab, var(--color-primary) 85%, var(--color-base-content)); }
+    .kind-case { color: var(--color-secondary); }
+
+    /* ---------------- Close ---------------- */
+    .close {
+      border: 1px solid var(--line);
+      border-radius: 1rem;
+      background: var(--color-base-200);
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    @media (min-width: 46rem) {
+      .close { padding: 2rem; }
+    }
+    .close h2 { font-size: clamp(1.25rem, 2.6vw, 1.5rem); }
+    .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.75rem; margin-top: 0.75rem; }
+    .btn-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-decoration: none;
+      padding: 0.7rem 1.1rem;
+      border-radius: var(--radius-field, 0.5rem);
+      border: 1px solid transparent;
+      transition: border-color 150ms ease, color 150ms ease, opacity 150ms ease;
+    }
+    /* `.page .btn-cta`, not `.btn-cta`: `.page a { color: inherit }` outranks a bare class once
+       Astro scopes both, and the button text went grey on the primary blue. */
+    .page .btn-cta.primary { background: var(--color-primary); color: var(--color-primary-content); }
+    .btn-cta.primary:hover { opacity: 0.85; }
+    .page .btn-cta.ghost { border-color: var(--line); color: var(--color-base-content); }
+    .btn-cta.ghost:hover { border-color: var(--ink-45); }
+
+    @media (prefers-reduced-motion: no-preference) {
+      a.row, .dl, .fd-note a {
+        transition: border-color 150ms ease, color 150ms ease, text-decoration-color 150ms ease;
+      }
+    }
+  </style>
+
+</body>
+</html>

@@ -6,8 +6,8 @@ harness/media/processed/showcase-lantern-festival-v1/*.ogg filter=lfs diff=lfs m
 *.webm filter=lfs diff=lfs merge=lfs -text
 
 # EXCEPT anything the microsite publishes. cassini-microsite/public/ is served
-# verbatim by a Cloudflare-side build this repo does not control, and a build
-# that does not run `git lfs pull` checks out a ~130-byte pointer file. It would
+# verbatim by the microsite workflow, whose checkout does not pull LFS.
+# Without this exception it would check out a ~130-byte pointer file and
 # publish that pointer AS the recording, with no error anywhere — the page would
 # load and the meeting would simply fail to open. A plain blob costs repository
 # size; a pointer costs a broken page nobody is watching.
