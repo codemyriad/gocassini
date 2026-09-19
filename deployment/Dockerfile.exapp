@@ -87,7 +87,8 @@ RUN go -C cassini-go-recorder build -o /out/cassini ./cmd/cassini \
     esac \
  && sherpa_dir=$(go -C cassini-go-recorder list -m -f '{{.Dir}}' github.com/k2-fsa/sherpa-onnx-go-linux) \
  && mkdir -p /out/lib \
- && cp "$sherpa_dir/lib/$triplet"/* /out/lib/
+ && cp "$sherpa_dir/lib/$triplet"/* /out/lib/ \
+ && echo "sherpa=1.13.7+cassini-parakeet-v3-reference-v1" > /out/lib/cassini-native-buildinfo.txt
 
 # Web workspace builder (D-420): cassini-app (the in-NC shell) consumes
 # cassini-viewer (the viewing layer) via the npm workspace, so both install

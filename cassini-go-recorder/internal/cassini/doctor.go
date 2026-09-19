@@ -122,24 +122,35 @@ func collectDoctorChecks(target string) []doctorCheck {
 	return checks
 }
 
+// Diagnostic markers reported in doctor summary for speech engine runtime.
+// These strings form the contract with external callers (e.g. cassini-operator's
+// /status probe).
+const (
+	SpeechEngineRefActiveMarker   = "reference frontend active"
+	SpeechEngineRefInactiveMarker = "reference frontend optimization inactive"
+)
+
 func nativeRuntimeCheck(modelID transcribe.ModelID) doctorCheck {
-	ver := transcribe.RuntimeVersion()
+	return nativeRuntimeCheckWithState(modelID, transcribe.RuntimeVersion(), transcribe.HasReferenceRuntime())
+}
+
+func nativeRuntimeCheckWithState(modelID transcribe.ModelID, ver string, hasRef bool) doctorCheck {
 	if !transcribe.UsesParakeetV3ReferencePolicy(modelID) {
 		return doctorCheck{
 			status:  doctorOK,
 			summary: fmt.Sprintf("speech engine runtime %s", ver),
 		}
 	}
-	if transcribe.HasReferenceRuntime() {
+	if hasRef {
 		return doctorCheck{
 			status:  doctorOK,
-			summary: fmt.Sprintf("speech engine runtime %s (reference frontend active)", ver),
+			summary: fmt.Sprintf("speech engine runtime %s (%s)", ver, SpeechEngineRefActiveMarker),
 		}
 	}
 	return doctorCheck{
 		status:  doctorWarn,
-		summary: fmt.Sprintf("speech engine runtime %s (reference frontend optimization inactive; falling back to standard decode profile)", ver),
-		advice:  "rebuild with cassini-go-recorder/scripts/build-cassini-bin.sh to enable Parakeet v3 reference frontend optimizations",
+		summary: fmt.Sprintf("speech engine runtime %s (%s; falling back to standard decode profile)", ver, SpeechEngineRefInactiveMarker),
+		advice:  "verify that Go module replace directives for github.com/codemyriad/sherpa-onnx-go are intact and no unpatched libsherpa-onnx-c-api.so is shadowing on LD_LIBRARY_PATH",
 	}
 }
 

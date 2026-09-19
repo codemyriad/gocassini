@@ -91,22 +91,70 @@ func TestModelFilesCheckWarnsForAnUnknownModel(t *testing.T) {
 	}
 }
 
-func TestNativeRuntimeCheckNeverFails(t *testing.T) {
-	// For a non-v3 model, it must always be doctorOK
-	checkNonV3 := nativeRuntimeCheck("parakeet-tdt-ctc-110m-en-int8")
-	if checkNonV3.status != doctorOK {
-		t.Fatalf("nativeRuntimeCheck(110M) = %s, want ok", checkNonV3.status)
+func TestNativeRuntimeCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		modelID    transcribe.ModelID
+		version    string
+		hasRef     bool
+		wantStatus doctorStatus
+		wantSubstr string
+		wantAdvice string
+	}{
+		{
+			name:       "non-v3 model ignores reference flag and passes",
+			modelID:    transcribe.ModelParakeet110M,
+			version:    "1.13.7",
+			hasRef:     false,
+			wantStatus: doctorOK,
+			wantSubstr: "speech engine runtime 1.13.7",
+		},
+		{
+			name:       "v3 model with reference frontend passes with active marker",
+			modelID:    transcribe.ModelParakeet06BV3Int8,
+			version:    "1.13.7+cassini-parakeet-v3-reference-v1",
+			hasRef:     true,
+			wantStatus: doctorOK,
+			wantSubstr: SpeechEngineRefActiveMarker,
+		},
+		{
+			name:       "v3 model without reference frontend warns (never fails) with inactive marker",
+			modelID:    transcribe.ModelParakeet06BV3Int8,
+			version:    "1.13.7",
+			hasRef:     false,
+			wantStatus: doctorWarn,
+			wantSubstr: SpeechEngineRefInactiveMarker,
+			wantAdvice: "LD_LIBRARY_PATH",
+		},
 	}
 
-	// For Parakeet v3, it must be either doctorOK or doctorWarn, never doctorFail
-	checkV3 := nativeRuntimeCheck(transcribe.ModelParakeet06BV3Int8)
-	if checkV3.status == doctorFail {
-		t.Fatalf("nativeRuntimeCheck(v3) returned fail: %+v", checkV3)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check := nativeRuntimeCheckWithState(tt.modelID, tt.version, tt.hasRef)
+			if check.status == doctorFail {
+				t.Fatalf("nativeRuntimeCheck must never return doctorFail, got %+v", check)
+			}
+			if check.status != tt.wantStatus {
+				t.Errorf("status = %s, want %s", check.status, tt.wantStatus)
+			}
+			if !strings.Contains(check.summary, tt.wantSubstr) {
+				t.Errorf("summary %q does not contain %q", check.summary, tt.wantSubstr)
+			}
+			if tt.wantAdvice != "" && !strings.Contains(check.advice, tt.wantAdvice) {
+				t.Errorf("advice %q does not contain %q", check.advice, tt.wantAdvice)
+			}
+		})
 	}
-	if checkV3.status != doctorOK && checkV3.status != doctorWarn {
-		t.Fatalf("unexpected doctor status: %s", checkV3.status)
+
+	// Live environment check: verify against linked runtime without stubs.
+	liveCheck := nativeRuntimeCheck(transcribe.ModelParakeet06BV3Int8)
+	if liveCheck.status == doctorFail {
+		t.Fatalf("live nativeRuntimeCheck returned doctorFail: %+v", liveCheck)
 	}
-	if !strings.Contains(checkV3.summary, "speech engine runtime") {
-		t.Fatalf("unexpected check summary: %s", checkV3.summary)
+	if liveCheck.status != doctorOK && liveCheck.status != doctorWarn {
+		t.Fatalf("live nativeRuntimeCheck returned unexpected status: %s", liveCheck.status)
+	}
+	if !strings.Contains(liveCheck.summary, "speech engine runtime") {
+		t.Fatalf("live summary missing speech engine runtime prefix: %s", liveCheck.summary)
 	}
 }

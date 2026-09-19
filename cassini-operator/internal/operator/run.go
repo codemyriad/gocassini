@@ -197,6 +197,10 @@ type Runtime struct {
 	// referenceFrontendProbe reports whether the active sherpa runtime includes
 	// the Parakeet v3 reference frontend optimization. Tests stub it.
 	referenceFrontendProbe func() (known bool, isReference bool)
+	refFrontendMu          sync.Mutex
+	refFrontendBin         string
+	refFrontendKnown       bool
+	refFrontendIsRef       bool
 	// computeReadiness coalesces and briefly caches the nvidia-smi-backed
 	// readiness probe so status polling cannot create a subprocess storm.
 	computeReadiness *computeStatusProbe

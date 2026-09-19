@@ -1357,7 +1357,16 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+	// 5. Test caching: removing the mock binary does not break subsequent status calls
+	if err := os.Remove(fakeBin); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
 	if resp.STT.ReferenceFrontend == nil || !*resp.STT.ReferenceFrontend {
-		t.Fatalf("expected reference_frontend=true via CassiniBin doctor probe, got %#v", resp.STT.ReferenceFrontend)
+		t.Fatalf("expected cached reference_frontend=true after binary removed, got %#v", resp.STT.ReferenceFrontend)
 	}
 }

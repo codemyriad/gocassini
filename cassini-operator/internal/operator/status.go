@@ -176,15 +176,41 @@ func signalingInternalSecretConfigured() bool {
 	return strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != ""
 }
 
+const (
+	speechEngineRefActiveMarker   = "reference frontend active"
+	speechEngineRefInactiveMarker = "reference frontend optimization inactive"
+)
+
 // probeReferenceFrontend reports whether the active sherpa runtime includes
 // the Cassini Parakeet v3 reference frontend optimization. It prefers
 // probing the recorder binary directly (which evaluates sherpa.GetVersion()),
 // falling back to buildinfo metadata if the binary is absent or unexecutable.
+// Probing is cached across requests so repeated /status polling does not fork
+// doctor subprocesses.
 func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
 	if rt.referenceFrontendProbe != nil {
 		return rt.referenceFrontendProbe()
 	}
 	bin := strings.TrimSpace(rt.cfg.CassiniBin)
+	rt.refFrontendMu.Lock()
+	if rt.refFrontendKnown && rt.refFrontendBin == bin {
+		k, isRef := rt.refFrontendKnown, rt.refFrontendIsRef
+		rt.refFrontendMu.Unlock()
+		return k, isRef
+	}
+	rt.refFrontendMu.Unlock()
+
+	known, isReference = rt.doProbeReferenceFrontend(bin)
+
+	rt.refFrontendMu.Lock()
+	rt.refFrontendBin = bin
+	rt.refFrontendKnown = known
+	rt.refFrontendIsRef = isReference
+	rt.refFrontendMu.Unlock()
+	return known, isReference
+}
+
+func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference bool) {
 	if bin != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -193,10 +219,10 @@ func (rt *Runtime) probeReferenceFrontend() (known bool, isReference bool) {
 		cmd.Env = rt.childEnv()
 		if out, err := cmd.Output(); err == nil || len(out) > 0 {
 			text := string(out)
-			if strings.Contains(text, "reference frontend active") {
+			if strings.Contains(text, speechEngineRefActiveMarker) {
 				return true, true
 			}
-			if strings.Contains(text, "reference frontend optimization inactive") {
+			if strings.Contains(text, speechEngineRefInactiveMarker) {
 				return true, false
 			}
 		}

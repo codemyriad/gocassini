@@ -266,7 +266,6 @@ jobs:
           CASSINI_BUNDLED_MODELS: parakeet-tdt-0.6b-v3
           CASSINI_DISALLOW_MODEL_DOWNLOAD: "1"
           CASSINI_ASR_REGRESSION_DEVICE: cpu
-          LD_LIBRARY_PATH: ${{ github.workspace }}/cassini-go-recorder/dist
           ASR_TEST_BINARY: ${{ runner.temp }}/synthetic-asr.test
           ASR_TEST_LOG: ${{ runner.temp }}/synthetic-asr.log
         run: |

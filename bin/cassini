@@ -43,9 +43,4 @@ if [[ -n "$CXX_BIN" ]] && command -v "$CXX_BIN" >/dev/null 2>&1; then
   fi
 fi
 
-if [[ $(go env GOOS) == linux ]]; then
-  append_ld_library_path "$MODULE_DIR/dist"
-elif [[ $(go env GOOS) == darwin ]]; then
-  export DYLD_LIBRARY_PATH="$MODULE_DIR/dist${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-fi
 exec "$CASSINI_BIN" "$@"
