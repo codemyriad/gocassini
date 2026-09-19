@@ -1,8 +1,8 @@
 {
   // Static-assets-only Worker (no server code): `wrangler deploy` uploads the
   // built site in ./dist and serves it. .github/workflows/microsite.yml runs
-  // it on every push to main; from a laptop, `npm run build && npx wrangler
-  // deploy` in this directory does the same.
+  // it on microsite or deployment-workflow changes pushed to main. Locally,
+  // `npm run build && npx wrangler deploy` in this directory does the same.
   //
   // IMPORTANT: `name` and `account_id` pin the Worker this deploys to. The
   // account id is the Code Myriad account; it is not a secret, and setting it

@@ -2,10 +2,9 @@
 // Build the public embed and put it where the microsite publishes it (D-775).
 //
 // The built pair lands in cassini-microsite/public/embed/v1/ and is COMMITTED.
-// That keeps the viewer build out of the microsite's deploy path: if compiling
-// the viewer broke, it would take the whole site down rather than just the
-// embed. Committed assets are served as-is, because Astro copies public/
-// verbatim.
+// Astro copies public/ verbatim, so local microsite builds can serve the
+// embed without installing and compiling the viewer workspace. CI verifies
+// these committed assets against a fresh viewer build before deployment.
 //
 // The cost of committing build output is drift, so CI runs this script with
 // --check and fails if the tree disagrees with a fresh build.

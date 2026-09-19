@@ -44,8 +44,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          # Single source of truth for the build Node version, shared with
-          # the Cloudflare build.
+          # Single source of truth for the local and CI build Node version.
           node-version-file: cassini-microsite/.nvmrc
           cache: npm
           cache-dependency-path: cassini-microsite/package-lock.json
@@ -60,6 +59,7 @@ jobs:
         run: npm run build
 
       - name: Keep the build for the deploy job
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: microsite-dist
