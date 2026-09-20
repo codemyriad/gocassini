@@ -1,0 +1,23 @@
+{
+  "schema": "gocassini.transcription-ground-truth.v1",
+  "fixtureSet": "cassini-challenges-2026-08-28",
+  "fixtures": {
+    "2026-03-06_0742.wav": {
+      "referenceTranscript": "Replace this example with the privately reviewed verbatim transcript.",
+      "overlapCount": 0,
+      "directSpeech": true,
+      "notes": "Example structure only; do not treat this text as ground truth."
+    },
+    "ivan.wav": {
+      "referenceTranscript": "",
+      "directSpeech": false,
+      "notes": "Bleed-only isolated track example."
+    },
+    "mix.wav": {
+      "referenceTranscript": "Replace this with the reviewed meeting-mix transcript.",
+      "overlapCount": 0,
+      "directSpeech": false,
+      "notes": "For a three-track challenge, directSpeech evaluates the result's named directSpeechTrack (Ivan), not the mix as a whole."
+    }
+  }
+}

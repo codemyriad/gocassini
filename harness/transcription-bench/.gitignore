@@ -1,0 +1,9 @@
+/fixtures/audio/
+/fixtures/ground-truth.json
+/fixtures/ground-truth.local.json
+/fixtures/ground-truth-*.private.json
+/results/
+/.vast-state/
+/.venv-*/
+__pycache__/
+*.pyc

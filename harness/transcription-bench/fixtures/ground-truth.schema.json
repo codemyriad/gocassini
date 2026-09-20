@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gocassini.invalid/schemas/transcription-ground-truth.v1.json",
+  "title": "Private Cassini transcription benchmark ground truth",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "fixtureSet", "fixtures"],
+  "properties": {
+    "schema": {"const": "gocassini.transcription-ground-truth.v1"},
+    "fixtureSet": {"type": "string", "minLength": 1},
+    "fixtures": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["referenceTranscript"],
+        "properties": {
+          "referenceTranscript": {"type": "string"},
+          "overlapCount": {"type": "integer", "minimum": 0},
+          "directSpeech": {"type": "boolean"},
+          "notes": {"type": "string"}
+        }
+      }
+    }
+  }
+}
+

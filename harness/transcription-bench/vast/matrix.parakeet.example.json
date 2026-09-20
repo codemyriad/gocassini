@@ -1,0 +1,29 @@
+{
+  "schema": "gocassini.vast-transcription-matrix.v1",
+  "image": "pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime",
+  "diskGb": 40,
+  "maxRuntimeMinutes": 20,
+  "maxTotalCostUsd": 0.2,
+  "search": {
+    "gpuNames": ["RTX 5060 Ti", "RTX 5070"],
+    "minGpuRamMb": 12000,
+    "minCpuRamMb": 16000,
+    "minReliability": 0.97,
+    "maxDph": 0.3,
+    "verified": true,
+    "type": "ondemand"
+  },
+  "workers": [
+    {
+      "name": "parakeet-hotwords",
+      "runner": "parakeet-hotwords",
+      "arguments": [
+        "--bench-bin", "extras/parakeet-runtime/hotword-bench",
+        "--dist-dir", "extras/parakeet-runtime/dist",
+        "--model-dir", "extras/parakeet-runtime/model",
+        "--vad-model", "extras/parakeet-runtime/silero_vad.onnx"
+      ]
+    }
+  ]
+}
+

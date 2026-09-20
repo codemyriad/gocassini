@@ -1,0 +1,115 @@
+{
+  "schema": "gocassini.transcription-fixtures.v1",
+  "fixtureSet": "cassini-challenges-2026-08-28",
+  "description": "Short, bounded clips selected from Cassini meetings for overlap, attribution, vocabulary, and bleed tests. Audio is private and intentionally not stored in git.",
+  "audioFormat": {
+    "codec": "pcm_s16le",
+    "sampleRateHz": 16000,
+    "channels": 1
+  },
+  "globalForbiddenTerms": [
+    "Gocassini",
+    "HaRP",
+    "Nextcloud"
+  ],
+  "fixtures": [
+    {
+      "name": "2026-03-06_0742.wav",
+      "sha256": "5549e436db9e03365f07863fd6598ef2d78933b2b1a95ce6d4720825a73540e8",
+      "pcmSha256": "23cd1fac0fb6d1cb94c21d506e4f1f54194893fe65bc82e82e6e17e5887bc7f6",
+      "bytes": 448078,
+      "frames": 224000,
+      "durationSeconds": 14.0,
+      "role": "overlap-and-vocabulary",
+      "group": "vocabulary",
+      "track": "meeting-mix",
+      "expectedTerms": ["RAM spikes"]
+    },
+    {
+      "name": "2026-03-06_0961.wav",
+      "sha256": "79a05c03febe46c8d7829fb26a8deac91865531b211a06b48bbf28268cc00599",
+      "pcmSha256": "b09729ead45ce78a8ea7207fef8d343a0109fa350250f6ef20e173aa51da7776",
+      "bytes": 352078,
+      "frames": 176000,
+      "durationSeconds": 11.0,
+      "role": "short-handoff-and-vocabulary",
+      "group": "vocabulary",
+      "track": "meeting-mix",
+      "expectedTerms": ["Silvio", "LinkedIn", "brand agent"]
+    },
+    {
+      "name": "mix.wav",
+      "sha256": "221ecbd5f7082a72ff3121506d88fd052a82a214ca294466fab39b8e52ea43c5",
+      "pcmSha256": "0b0c9d22737f7fbc01a1f24ed438172c7b754ff7042a38014a0d24af85c8c80a",
+      "bytes": 608116,
+      "frames": 304000,
+      "durationSeconds": 19.0,
+      "role": "disputed-interjection-reference-mix",
+      "group": "disputed-interjection",
+      "track": "meeting-mix",
+      "expectedTerms": []
+    },
+    {
+      "name": "chima.wav",
+      "sha256": "5062ab845ba020ac8145c903127e6fc6e739e1a6c704ef5d1b2003f319f12cb9",
+      "pcmSha256": "55fed31ee3eb1f01382b6de41684a265e403bd39ffea8f3b3637b3e37a7116b4",
+      "bytes": 607924,
+      "frames": 303904,
+      "durationSeconds": 18.994,
+      "role": "disputed-interjection-direct-speaker",
+      "group": "disputed-interjection",
+      "track": "Chima",
+      "expectedTerms": []
+    },
+    {
+      "name": "ivan.wav",
+      "sha256": "1fe79880f172b1664be622bf9281d395d7c6db633ae9239919d03d773192bdf2",
+      "pcmSha256": "204d93962f16bfb0e283b43fb098b0ba97dcf137e582cf3da8d2e87d9af9dc1d",
+      "bytes": 608116,
+      "frames": 304000,
+      "durationSeconds": 19.0,
+      "role": "disputed-interjection-bleed-only",
+      "group": "disputed-interjection",
+      "track": "Ivan",
+      "expectedTerms": [],
+      "expectedDirectSpeech": false
+    },
+    {
+      "name": "okay-mix.wav",
+      "sha256": "0a126a5190b6316bd6534985a04721b3f3b14bb11512ab3890e8f3837457ea57",
+      "pcmSha256": "9140f11073c010fd40b26a27f9c85f7bc8a5f6042f191e5b69205bb61b94e38f",
+      "bytes": 144116,
+      "frames": 72000,
+      "durationSeconds": 4.5,
+      "role": "very-short-disputed-reference-mix",
+      "group": "short-okay",
+      "track": "meeting-mix",
+      "expectedTerms": []
+    },
+    {
+      "name": "okay-chima.wav",
+      "sha256": "546bfb43f5f7e1631b052ef711682254ffcda506cd62d92854bdcf6c31c83dbc",
+      "pcmSha256": "41cccb89b492d6b6e979e215622daead236be556be47baa0f7c2b3afcc9f107f",
+      "bytes": 144052,
+      "frames": 71968,
+      "durationSeconds": 4.498,
+      "role": "very-short-disputed-direct-speaker",
+      "group": "short-okay",
+      "track": "Chima",
+      "expectedTerms": []
+    },
+    {
+      "name": "okay-ivan.wav",
+      "sha256": "ed17e622d4897355d91a1dab81b03b7b759b8ed605d439a3cdbea72964ae06f7",
+      "pcmSha256": "4232222fb6f6701fcb03a373e62006c0506e4045ed8eee53d044db7fa05eb0f6",
+      "bytes": 144116,
+      "frames": 72000,
+      "durationSeconds": 4.5,
+      "role": "very-short-disputed-bleed-only",
+      "group": "short-okay",
+      "track": "Ivan",
+      "expectedTerms": [],
+      "expectedDirectSpeech": false
+    }
+  ]
+}

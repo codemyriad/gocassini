@@ -1,0 +1,33 @@
+{
+  "schema": "gocassini.vast-transcription-matrix.v1",
+  "image": "pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime",
+  "diskGb": 40,
+  "maxRuntimeMinutes": 45,
+  "maxTotalCostUsd": 1.0,
+  "search": {
+    "gpuNames": ["RTX 5060 Ti", "RTX 5070 Ti"],
+    "minGpuRamMb": 12000,
+    "minCpuRamMb": 16000,
+    "minReliability": 0.97,
+    "maxDph": 0.3,
+    "verified": true,
+    "type": "ondemand"
+  },
+  "workers": [
+    {
+      "name": "offline-baseline",
+      "runner": "voxtral-offline",
+      "arguments": ["--suite", "baseline", "--fixtures", "all"]
+    },
+    {
+      "name": "offline-prompts",
+      "runner": "voxtral-offline",
+      "arguments": ["--suite", "prompted"]
+    },
+    {
+      "name": "realtime-delays",
+      "runner": "voxtral-realtime",
+      "arguments": ["--delays", "240,480,960,2400"]
+    }
+  ]
+}
