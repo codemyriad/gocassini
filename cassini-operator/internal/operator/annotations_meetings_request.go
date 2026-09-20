@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	ann "cassini-annotations"
 )
 
 // The POST body of annotations/meetings/<id> (D-737, design doc §3). It is
@@ -33,6 +35,10 @@ var annotateOpIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 // purpose: the actor is always the authenticated caller (format §1), and a body
 // claiming otherwise is answered as if it had not.
 type annotateWriteRequest struct {
+	RetrySync      bool              `json:"retrySync"`
+	Accepted       bool              `json:"-"`
+	RequestID      string            `json:"requestId"`
+	StateToken     string            `json:"stateToken"`
 	Ops            []json.RawMessage `json:"ops"`
 	ExpectRevision *int              `json:"expectRevision"`
 	ActorKind      string            `json:"actorKind"`
@@ -70,10 +76,16 @@ func readAnnotateWriteRequest(w http.ResponseWriter, r *http.Request) (annotateW
 	if err := json.Unmarshal(body, &request); err != nil {
 		return request, badAnnotateRequest(`the request body must be a JSON object: {"ops":[…]}`)
 	}
+	return validateAnnotateWriteRequest(request)
+}
+
+func validateAnnotateWriteRequest(request annotateWriteRequest) (annotateWriteRequest, *annotateFailure) {
 	switch {
+	case request.RetrySync && len(request.Ops) != 0:
+		return request, badAnnotateRequest("retrySync cannot include edits")
 	case request.Ops == nil:
 		return request, badAnnotateRequest("ops is required")
-	case len(request.Ops) == 0:
+	case len(request.Ops) == 0 && !request.RetrySync:
 		// An empty batch would still rewrite the recording and bump its revision.
 		return request, badAnnotateRequest("ops must hold at least one op")
 	case len(request.Ops) > maxAnnotateOps:
@@ -99,9 +111,9 @@ func readAnnotateWriteRequest(w http.ResponseWriter, r *http.Request) (annotateW
 		switch {
 		case strings.TrimSpace(style.Label) == "":
 			return request, badAnnotateRequest("tagStyles[%d].label is required", i)
-		case !tagColors[style.Color]:
+		case !ann.IsAnnotationTagColor(style.Color):
 			return request, badAnnotateRequest("tagStyles[%d].color is not a palette colour", i)
-		case !tagIcons[style.Icon]:
+		case !ann.IsAnnotationTagIcon(style.Icon):
 			return request, badAnnotateRequest("tagStyles[%d].icon is not an icon id", i)
 		}
 	}

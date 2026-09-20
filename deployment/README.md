@@ -3,7 +3,6 @@
 This folder is the repo-root Docker Compose bundle for:
 
 - `cassini-operator`
-- `cassini-control-panel`
 - `cassini-viewer`
 
 ## Quickstart
@@ -23,13 +22,13 @@ formats, filters, Opus encode/remux/decode path, and shared-library closure.
 
 Default browser surfaces (published on loopback only):
 
-- control panel: `http://127.0.0.1:4173/`
 - operator API: `http://127.0.0.1:4000/`
 - viewer: `http://127.0.0.1:8765/`
 
-The control panel talks to the operator through the shared same-origin API path set by `CASSINI_OPERATOR_BASE_PATH`.
-With the default `CASSINI_OPERATOR_BASE_PATH=/`, the browser uses `/jobs` and `/events` on the control-panel origin.
-If you change it to `/operator`, the browser uses `/operator/jobs` and `/operator/events` instead.
+This bundle has no control-panel service. For the complete in-Nextcloud app,
+use the [installed ExApp quick start](../docs/quick-start.md). To develop the
+Operator UI against this standalone backend, run [cassini-app](../cassini-app/README.md)
+with its Vite proxy pointing at port 4000.
 
 ## Network exposure
 
@@ -58,7 +57,6 @@ to `.env` and edit):
 
 - `CASSINI_PUBLISH_ADDRESS`
 - `CASSINI_OPERATOR_PORT`
-- `CASSINI_CONTROL_PANEL_PORT`
 - `CASSINI_VIEWER_PORT`
 - `CASSINI_OPERATOR_BASE_PATH`
 - `CASSINI_MAX_RECORD_WORKERS`
@@ -176,6 +174,5 @@ They are intentionally not part of the narrow core deployment contract.
 cd deployment
 FFMPEG_VERSION="$(./ffmpeg/resolve-latest.sh)" docker compose up --build
 curl -s http://127.0.0.1:4000/jobs
-curl -s http://127.0.0.1:4173/jobs
 curl -s http://127.0.0.1:8765/catalog.json
 ```

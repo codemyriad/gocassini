@@ -1,4 +1,4 @@
-import type { TagColorId, TagIconId } from "./tagPalette";
+import { colorFor, TAG_ICONS, type TagColorId, type TagIconId } from "./tagPalette";
 
 // The wire of the annotation routes (D-737, D-746). Time ranges are half-open
 // [startMs, endMs) integers.
@@ -9,6 +9,8 @@ export type AnnotationTarget = { kind: "meeting" } | TimeRangeTarget;
 export interface AnnotationTag {
   id: string;
   label: string;
+	color?: string;
+	icon?: string;
 }
 
 export interface AnnotationItem {
@@ -31,7 +33,16 @@ export interface AnnotationsDocument {
 
 // `resolved: false` means the marks were made against other audio, and their
 // time ranges must not be drawn against this recording.
+export interface AnnotationSync {
+ state: "saved" | "pending" | "delayed" | "blocked";
+ desired: number;
+ confirmed: number;
+ error?: string;
+}
+
 export interface MeetingAnnotations {
+ stateToken?: string;
+ sync?: AnnotationSync;
   meetingId: string;
   revision: number;
   annotations: AnnotationsDocument | null;
@@ -53,9 +64,10 @@ export interface VocabularyTag {
   marks: number;
   color: TagColorId | "";
   icon: TagIconId | "";
-  // Both empty until someone renames, recolours or merges the tag.
-  changedBy: string;
-  changedAtUtc: string;
+	// Historical responses may still include these installation-level audit
+	// fields. They are not used to resolve recording-local appearance.
+	changedBy?: string;
+	changedAtUtc?: string;
 }
 
 export interface TagUpdate {
@@ -68,7 +80,7 @@ export interface TagUpdate {
 // it runs as a job the manager polls.
 export interface TagJob {
   id: string;
-  kind: "rename" | "merge" | "delete";
+  kind: "rename" | "restyle" | "merge" | "delete";
   tagId: string;
   into?: string;
   state: "running" | "finished" | "interrupted";
@@ -84,6 +96,8 @@ export interface MeetingTagRef {
   tagId: string;
   whole: boolean;
   stretches: number;
+	color?: string;
+	icon?: string;
 }
 
 export interface TagVocabulary {
@@ -107,9 +121,22 @@ interface TagStyle {
 }
 
 export interface AnnotationRequest {
+ requestId?: string;
+ stateToken?: string;
+ retrySync?: boolean;
   ops: AnnotationOp[];
   expectRevision?: number;
   tagStyles?: TagStyle[];
+}
+
+export interface AnnotationBatchRequest extends AnnotationRequest {
+  requestId: string;
+  meetingIds: string[];
+}
+
+export interface AnnotationBatchResult {
+  results: AnnotationResult[];
+  tags: VocabularyTag[];
 }
 
 // `code` is the operator's `error` value verbatim. A 409 carries exactly
@@ -178,9 +205,15 @@ export function tagsByMeeting(vocabulary: TagVocabulary): Map<string, MeetingTag
   const byId = new Map(vocabulary.tags.map((tag) => [tag.tagId, tag]));
   const result = new Map<string, MeetingTag[]>();
   for (const meeting of vocabulary.meetings) {
-    const tags = meeting.tags.flatMap(({ tagId, whole, stretches }) => {
+    const tags = meeting.tags.flatMap(({ tagId, whole, stretches, color, icon }) => {
       const tag = byId.get(tagId);
-      return tag ? [{ tag, whole, stretches }] : [];
+      if (!tag) return [];
+      const local: VocabularyTag = {
+        ...tag,
+        color: color == null ? tag.color : colorFor({ tagId, color }),
+        icon: icon == null ? tag.icon : TAG_ICONS.includes(icon as TagIconId) ? icon as TagIconId : "",
+      };
+      return [{ tag: local, whole, stretches }];
     });
     tags.sort((a, b) => Number(b.whole) - Number(a.whole) || a.tag.label.localeCompare(b.tag.label));
     result.set(meeting.meetingId, tags);
@@ -219,12 +252,10 @@ export function mergeVocabularyTags(tags: readonly VocabularyTag[]): VocabularyT
     }
     seen.meetings += tag.meetings;
     seen.marks += tag.marks;
-    // The most recent change is the one worth reporting, and a namespace that
-    // has never been touched must not hide one that has.
-    if (tag.changedAtUtc > seen.changedAtUtc) {
-      seen.changedBy = tag.changedBy;
-      seen.changedAtUtc = tag.changedAtUtc;
-    }
+		if ((tag.changedAtUtc ?? "") > (seen.changedAtUtc ?? "")) {
+			seen.changedBy = tag.changedBy;
+			seen.changedAtUtc = tag.changedAtUtc;
+		}
     seen.color = seen.color || tag.color;
     seen.icon = seen.icon || tag.icon;
   }

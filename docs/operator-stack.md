@@ -1,6 +1,6 @@
 # Operator stack
 
-This page explains the long-running Cassini runtime: the operator, the control panel, and the viewer.
+This page explains the operator backend and its browser clients: the unified Cassini app and the standalone viewer.
 
 If you want to see this running first, start here:
 
@@ -21,63 +21,42 @@ It adds:
 - safe promotion into a shared live site
 - browser visibility through the control panel
 
-## The three services
+## Runtime components
 
 ### Operator
 
-The operator is the only runtime service that mutates state.
+The operator owns job admission, SQLite persistence, work-root artifacts,
+record/build/seal/publish execution, artifact promotion, and retention. It also
+serves the installed app's annotation and insight APIs.
 
-It owns:
+### Cassini app and viewer
 
-- job admission
-- SQLite persistence
-- work-root artifacts
-- record/build/seal/publish execution
-- current artifact promotion
-- live-site promotion
-- artifact retention
+The Nextcloud app (`cassini-app`) combines the meeting browser from
+`cassini-viewer`, insights, and the administrator-only **Operator** section.
+That section handles job creation, stop/rerun actions, attempt inspection,
+live status, and setup/settings.
 
-### Control panel
-
-The control panel is the browser UI for operating the operator.
-
-It owns:
-
-- job creation
-- stop and rerun actions
-- job and attempt inspection
-- live status updates
-
-### Viewer
-
-The viewer is the browser UI for consuming published meetings.
-
-It owns:
-
-- serving the static meeting library
-- playback and transcript review
-
-It does **not** talk to the operator.
+The viewer also runs separately for static libraries and portable files.
+In the installed app it calls backend APIs for features such as annotations;
+a static export reads files without those APIs.
 
 ## Topology
 
+The installed ExApp serves the unified app through Nextcloud's AppAPI proxy,
+and publishes to Nextcloud Files. Some setup actions run directly against
+Nextcloud using the administrator's browser session.
+
+The standalone `deployment/compose.yml` bundle has two services:
+
 ```text
-browser
-  -> control panel
-  -> viewer
-
-control panel
-  -> operator API
-
-operator
-  -> SQLite
-  -> work root
-  -> shared published-site storage
-  -> cassini CLI subprocesses
-
-viewer
-  -> shared published-site storage (read-only)
+browser -> viewer -> shared published-site volume (read-only)
+app Vite server -> operator API -> SQLite and work root
+                               -> cassini CLI subprocesses
+                               -> shared published-site volume
 ```
+
+The app's Vite server is started separately for development; there is no
+control-panel Compose service. See [Local developer stack](./local-developer-stack.md).
 
 ## The operator’s most important boundary
 

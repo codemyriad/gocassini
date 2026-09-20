@@ -15,17 +15,11 @@ It is intentionally static-site-friendly.
 
 ## Boundary
 
-The viewer is the final read-only layer.
-
-It does **not**:
-
-- create jobs
-- stop jobs
-- rerun jobs
-- talk to the operator
-- mutate published content
-
-It only reads static files produced upstream.
+The viewer is the meeting-reading layer. Standalone static exports read files
+produced upstream. Inside `cassini-app`, a data provider also supplies server-side
+meeting search, context and shared tag/mark editing through authenticated APIs.
+Those annotations are persisted into published meeting files. Job creation,
+stopping and reruns belong to the app’s Operator section.
 
 ## Where it fits
 
@@ -33,7 +27,8 @@ In the full system:
 
 - the **operator** produces or promotes published output
 - the **viewer** serves and reads that output
-- the **control panel** is a separate application for job operations
+- the **control panel** is the Operator section of the same `cassini-app` shell;
+  the viewer can also run independently as a static reader
 
 See:
 

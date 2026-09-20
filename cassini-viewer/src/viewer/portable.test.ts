@@ -123,6 +123,25 @@ describe("readPortableAnnotations", () => {
     });
   });
 
+  it.each([
+    { color: "purple", icon: "star" },
+    { color: "teal", icon: "" },
+    { color: "future-color", icon: "future-icon" },
+  ])("preserves archived appearance %j", (appearance) => {
+    const tag = { id: "tag_a", label: "hiring", ...appearance };
+    const got = readPortableAnnotations(manifestWith({ ...v1(), tags: [tag] }));
+    expect(got?.tags).toEqual([tag]);
+    expect(got?.items).toHaveLength(2);
+  });
+
+  it("ignores malformed optional appearance without dropping tags or marks", () => {
+    const got = readPortableAnnotations(manifestWith({
+      ...v1(), tags: [{ id: "tag_a", label: "hiring", color: 42, icon: null }],
+    }));
+    expect(got?.tags).toEqual([{ id: "tag_a", label: "hiring" }]);
+    expect(got?.items).toHaveLength(2);
+  });
+
   it("reports marks made against other audio as unresolved", () => {
     const got = readPortableAnnotations(manifestWith({ ...v1(), audioOpusSha256: "e".repeat(64) }));
     expect(got?.resolved).toBe(false);

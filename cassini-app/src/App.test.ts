@@ -191,4 +191,26 @@ describe("the shell after the Setup tab", () => {
     expect(mounts).toHaveLength(3);
     expect(appSource).toContain("$: audience = recordingAudience(setupHealth);");
   });
+
+  // D-763's warning, rehomed. Its old destination (#surface=setup) is gone
+  // (D-756), and a warning that navigates nowhere teaches people to ignore it.
+  it("sends the recording warning to where the checks now live", () => {
+    expect(appSource).toContain("function openRecordingSetup()");
+    // Both hops: the surface alone opens the default panel (Recordings) and
+    // leaves the reader hunting for the checks.
+    expect(appSource).toContain('applyPanel(applySurface(window.location.hash, "operator"), "pipeline")');
+    // Announced once, so the surface, the panel nav and the viewer agree.
+    expect(appSource).toContain('window.dispatchEvent(new PopStateEvent("popstate"))');
+    // Nothing may point at the surface D-756 removed.
+    expect(appSource).not.toContain('selectSurface("setup")');
+    expect(appSource).not.toContain('href="#surface=setup"');
+  });
+
+  it("offers the route only to someone who can act on it, but tells everyone", () => {
+    // A non-admin's every request to that surface 403s at the proxy, so the
+    // button is admin-only — while the fact stays visible to everyone, because
+    // it explains why their recordings are not appearing.
+    expect(appSource).toMatch(/\{#if recordingNeedsAction\}[\s\S]{0,400}\{#if operatorAvailable\}/);
+    expect(appSource).toMatch(/function openRecordingSetup\(\)[\s\S]{0,400}if \(!operatorAvailable\)/);
+  });
 });

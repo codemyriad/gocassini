@@ -3,34 +3,41 @@
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
   <id>gocassini</id>
   <name>Cassini</name>
-  <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
-  <description><![CDATA[Cassini records a Nextcloud Talk call without joining as a participant, then
-transcribes and publishes a readable archive in Nextcloud Files. Optionally, it
-can also summarize each meeting when you configure an OpenAI-compatible LLM
-endpoint. Recording control and job history live in the admin-only control panel.
+  <summary>Record, transcribe and search Nextcloud Talk meetings on your own hardware.</summary>
+  <description><![CDATA[Cassini is a recording backend for Nextcloud Talk that puts you in control of your meeting data.
 
-Recordings are visible to anyone with an account on this Nextcloud: the archive
-lives in a dedicated "cassini" service account's own folder, and nothing extra
-has to be installed. Or, with the Group folders ("Team folders") and Everyone
-Group apps installed, only the people who were in a call can see its recording:
-the archive lives in a Cassini Team folder, where each private recording is
-readable only by the people who had access to the Talk room (its attendee list)
-when it was published, enforced by Nextcloud's own advanced file ACLs. Which of
-the two is in force is an administrator's setting, in the app under Operator,
-Settings, "Who can see recordings".
+- **Record and transcribe on your own infrastructure.** Speech-to-text runs in-process with sherpa-onnx and NVIDIA Parakeet models, on CPU or on a CUDA GPU.
+- **AI is opt-in.** Summaries and cross-meeting insights run only once you configure a model, local or third-party, in the app.
+- **One portable file per meeting.** Audio, transcript, speaker names, summary and tags in a single `.opus` that any player opens and that stays readable without Cassini.
 
-Data processing: recording and speech-to-text transcription run entirely within
-your own infrastructure. No audio or transcript leaves your servers for those
-steps. Optional LLM meeting summaries are the only step that sends data to a
-third party, and they run only when an LLM endpoint is configured. Without one,
-nothing leaves your infrastructure. See the
-full data-processing note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md]]></description>
-  <version>0.2.0-beta.6</version>
+**What you get**
+
+- Works in any Talk room, group calls and 1:1. Press *Record*; Cassini is the recording server behind the same button.
+- Transcripts with synced audio playback and the right name on every line, taken from Talk's signalling rather than guessed from voices.
+- An administrator chooses who can see recordings: everyone with an account, or only the people who were in the meeting. Nextcloud Files enforces it either way.
+- Search and tags across meetings.
+- A CLI and an agent skill, so scripts and coding agents read the same meetings with the same permissions a person has.
+
+**Requirements**
+
+- Nextcloud 32 to 35 with AppAPI and a HaRP deploy daemon.
+- Talk's High-performance backend. Cassini joins calls as an internal signalling client and needs the signalling server's `internalsecret`, the one value you supply by hand.
+- Optional: the Team folders and Everyone Group apps, for recordings visible only to meeting participants.
+- Optional: an NVIDIA GPU with the Container Toolkit, for faster transcription. CPU works on amd64 and arm64.
+
+**What leaves your server**
+
+Recording and transcription never leave your hardware. If you configure a language model, transcript text goes to it for summaries and for questions people ask in the app. Nothing else is sent, and there is no telemetry. Full note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md
+
+**Cassini is in beta.** We run it daily on our own Nextcloud, but expect rough edges. Read the changelog before you update and open an issue if something breaks.
+
+Documentation: https://gocassini.com/docs]]></description>
+  <version>0.2.0-beta.7</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
   <documentation>
-    <user>https://github.com/codemyriad/gocassini/blob/main/docs/start-here.md</user>
+    <user>https://gocassini.com/docs</user>
     <admin>https://github.com/codemyriad/gocassini/blob/main/docs/exapp-install.md</admin>
   </documentation>
   <category>integration</category>
@@ -60,7 +67,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.6</image-tag>
+      <image-tag>0.2.0-beta.7</image-tag>
     </docker-install>
 
     <!--
@@ -80,7 +87,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name>
         <display-name>Talk signaling internal secret</display-name>
-        <description>Shared internal secret for standalone Nextcloud Talk signaling / HPB. Must match the signaling server's [clients] internalsecret. Required for HPB-internal recording (the invisible recorder used for private, group, and one-to-one calls) — it cannot be auto-generated. How to find it: on Nextcloud All-in-One run `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the [clients] internalsecret in the signaling server config. See docs/exapp-install.md.</description>
+        <description>Shared internal secret for standalone Nextcloud Talk signaling / HPB. Must match the signaling server's [clients] internalsecret. Alternatively, leave this unset and save the secret in Cassini's recording checks (Operator, Publish pipeline) after installation. Required for HPB-internal recording (the invisible recorder used for private, group, and one-to-one calls) — it cannot be auto-generated. How to find it: on Nextcloud All-in-One run `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the [clients] internalsecret in the signaling server config. See docs/exapp-install.md.</description>
       </variable>
       <variable>
         <name>CASSINI_TALK_BACKEND_URL</name>
@@ -155,6 +162,21 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
     </environment-variables>
 
     <routes>
+      <route>
+        <url>^operator\/readiness$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/readiness\/check$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/talk\/setup$</url>
+        <verb>PUT</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!--
         Route URL patterns are interpreted by AppAPI as PCRE expressions
         wrapped with `/.../i` delimiters (see ExAppProxyController.php
@@ -344,6 +366,12 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <route>
         <url>^annotations\/meetings\/[^\/]+\/?$</url>
         <verb>GET,POST</verb>
+        <access_level>USER</access_level>
+      </route>
+
+      <route>
+        <url>^annotations\/batch\/?$</url>
+        <verb>POST</verb>
         <access_level>USER</access_level>
       </route>
 

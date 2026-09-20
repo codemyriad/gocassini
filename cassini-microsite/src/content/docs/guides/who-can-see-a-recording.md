@@ -5,14 +5,16 @@ source: docs/exapp-nextcloud-recordings-permissions.md
 copied: "2026-09-17"
 ---
 
-Access control is scoped to the room: a published meeting is readable by that
-room's participants and no one else, using Nextcloud Files permissions. That is
-one of two audiences, and which one is in force is one setting in the Cassini
-app, under **Operator › Settings › Who can see recordings**. The other is
-everyone with an account on your Nextcloud, which is what a fresh install gets.
+Fresh installs make recordings visible to everyone with an account on your
+Nextcloud. Under **Operator › Settings › Who can see recordings**, an
+administrator can instead enable room-based permissions: private recordings
+are restricted to the room’s audience, while public-room recordings remain
+visible to all signed-in accounts. Nextcloud Files enforces those permissions.
 
 Scoping a recording to its room needs the Team folders and Everyone Group apps.
-Without them, every account on the instance can see every recording.
+A fresh install without them uses the everyone audience. If an existing
+participant-restricted archive loses these prerequisites, Cassini reports a
+readiness error; it does not silently widen access.
 
 This page covers the two audiences, what each needs, how to move between them,
 and what a recording you may not read looks like.
@@ -21,7 +23,7 @@ and what a recording you may not read looks like.
 
 | | Everyone with a Nextcloud account | Meeting participants |
 |---|---|---|
-| Who can see a recording | anyone with an account on this Nextcloud | only the people who were in the call |
+| Who can see a recording | anyone with an account on this Nextcloud | private rooms: the room’s audience at publication (including invitees); public rooms: all signed-in accounts |
 | Where recordings live | the `cassini` account's own `CassiniNoACL/Recordings` | `Cassini/Recordings`, inside the `Cassini` Team folder |
 | Nextcloud apps needed | none | Team folders + Everyone Group |
 | Other prerequisites | a `cassini` service account | a `cassini` service account, an `everyone` group, and a mapped, ACL-enabled `Cassini` Team folder |

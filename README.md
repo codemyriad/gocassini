@@ -23,7 +23,7 @@ Cassini is an ExApp which can be installed from the Nextcloud App Store. Once it
 
 - Works with any Nextcloud Talk room, group calls and 1:1 calls. Just press _Record_ and Cassini is listening.
 - Transcripts and synced audio playback with speaker IDs.
-- Access control scoped to the room: a published meeting is readable by that room's participants and no one else, using Nextcloud Files permissions.
+- Configurable recording access: everyone with a Nextcloud account by default, or room-based permissions for private recordings when participant access is enabled. Public-room recordings remain visible to all signed-in accounts.
 - One portable meeting file per meeting that can be opened without Cassini.
 - Search and tags across meetings.
 - Configure in-app AI providers for per-meeting summaries and cross-meeting insights.
@@ -31,7 +31,7 @@ Cassini is an ExApp which can be installed from the Nextcloud App Store. Once it
 
 ## Limitations
 
-- **No live transcription or captions.** Transcription starts when the call ends, so it never competes with the call for resources.
+- **No live transcription or captions.** Transcription starts after recording stops. The operator schedules processing around live recordings to protect capture.
 - **Audio only.** Cassini records the video streams, but the meeting file, transcript and viewer are audio only for now.
 
 ## What leaves your server
@@ -71,7 +71,7 @@ What Cassini writes is described in [docs/portable-meeting-format.md](docs/porta
 
 1. **Install Cassini from the [App Store](https://apps.nextcloud.com/apps/gocassini).**
    In the deploy options, paste your signalling server's `internalsecret`.  On Nextcloud _All-in-One_, print it with `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`. On a standalone signalling server, it is `internalsecret` under `[clients]` in `server.conf`.
-   Every other option can stay empty.
+   You can also save the secret later under **Operator › Publish pipeline › Talk authentication**. Every other option can stay empty.
 2. **Open Cassini as an administrator.** It creates the `cassini` service
    account that owns the meeting archive. Nextcloud 34.0.2 and later ask you to
    confirm with your password first.
@@ -79,6 +79,8 @@ What Cassini writes is described in [docs/portable-meeting-format.md](docs/porta
 4. **Point Talk at Cassini.** Back up Talk's current `recording_servers`
    value, then apply the one Cassini generates for you.
 5. **Record a test call** in a private room and watch it arrive in Cassini.
+
+New to external apps? Start with [Before installing](docs/before-installing.md) and the [first ExApp walkthrough](docs/first-exapp.md). After installation, use **Operator › Publish pipeline** to check the connection and follow the repair instructions.
 
 Each step, with the commands, the verification checklist and GPU setup, is in
 [docs/exapp-install.md](docs/exapp-install.md).

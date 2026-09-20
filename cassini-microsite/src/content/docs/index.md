@@ -23,7 +23,7 @@ press _Record_ and Cassini is listening.
    a participant, so nobody sees an extra person in the room.
 2. Each participant arrives as their own audio stream, carrying the name Talk
    sent with it.
-3. When the call ends, Cassini transcribes the audio on the hardware you gave
+3. When recording stops, Cassini transcribes the audio on the hardware you gave
    it, in-process, with sherpa-onnx and NVIDIA Parakeet models.
 4. The meeting is published into Nextcloud Files as one `.opus` file, with a
    summary if you have configured a language model.
@@ -31,8 +31,9 @@ press _Record_ and Cassini is listening.
 ## What you get
 
 - Transcripts and synced audio playback with speaker IDs.
-- Access control scoped to the room: a published meeting is readable by that
-  room's participants and no one else, using Nextcloud Files permissions.
+- Configurable recording access: everyone with a Nextcloud account by default,
+  or room-based permissions for private recordings when participant access is
+  enabled. Public-room recordings remain visible to all signed-in accounts.
 - One portable meeting file per meeting that can be opened without Cassini.
 - Search and tags across meetings.
 - In-app AI providers for per-meeting summaries and cross-meeting insights.
@@ -40,8 +41,8 @@ press _Record_ and Cassini is listening.
 
 ## Limitations
 
-- **No live transcription or captions.** Transcription starts when the call
-  ends, so it never competes with the call for resources.
+- **No live transcription or captions.** Transcription starts after recording
+  stops. The operator schedules processing around live recordings to protect capture.
 - **Audio only.** Cassini records the video streams, but the meeting file, the
   transcript and the viewer are audio only for now.
 

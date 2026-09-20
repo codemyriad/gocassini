@@ -30,6 +30,8 @@ import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 import type { InsightRecord } from "./insights";
 import type {
   AnnotationRequest,
+  AnnotationBatchRequest,
+  AnnotationBatchResult,
   AnnotationResult,
   MeetingAnnotations,
   TagJob,
@@ -116,6 +118,8 @@ export interface DataProvider {
     entry: MeetingCatalogEntry,
     request: AnnotationRequest,
   ): Promise<AnnotationResult>;
+
+  applyAnnotationBatch?(request: AnnotationBatchRequest): Promise<AnnotationBatchResult>;
 
   // OPTIONAL (D-746): managing a tag across every recording that carries it.
   // A rename, merge or delete runs as a job; loadTagJob polls it.

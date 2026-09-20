@@ -176,13 +176,13 @@ export function createTagLoader(
     try {
       const vocabulary = await load();
       attempt = 0;
-      if (!stopped) {
+      if (!stopped && !again) {
         loaded(vocabulary);
       }
     } catch (error) {
       const delay = retryDelay(error, attempt);
       attempt += 1;
-      if (!stopped) {
+      if (!stopped && !again) {
         loaded(null);
         if (delay !== null) {
           retry = setTimeout(() => void reload(), delay);

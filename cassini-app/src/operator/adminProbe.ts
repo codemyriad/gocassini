@@ -42,9 +42,8 @@ export async function probeOperatorAvailable(
       method: "GET",
       headers: { Accept: "application/json" },
     });
-    if (response.status === 200) {
-      return { available: true, status: 200, body: await readJSON(response) };
-    }
+    // A 200 can also be a login page or the dev server's SPA fallback.
+    // Require the status payload on successful responses too.
     // 503 is the operator saying it is unhealthy — which only an admin can be
     // told. Anything else with a status payload is equally proof we got through
     // to the operator rather than to the proxy's denial. A 503 from AppAPI or a

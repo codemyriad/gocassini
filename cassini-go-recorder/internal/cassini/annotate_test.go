@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,7 +44,7 @@ type operatorAnnotateResult struct {
 
 // annotateResultMembers is the result document's exact member set.
 var annotateResultMembers = []string{
-	"added", "annotations", "audioOpusSha256", "carried", "containerSha256",
+	"added", "annotations", "audioOpusSha256", "carried", "containerSha256", "durationMs",
 	"format", "notFound", "operationId", "removed", "resolved", "revision",
 }
 
@@ -835,5 +836,63 @@ func TestAnnotateUsageErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := Run(context.Background(), nil, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "annotate") {
 		t.Errorf("root usage does not mention annotate:\n%s", stdout.String())
+	}
+}
+
+func TestAnnotateSnapshotPreservesCommittedDocument(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	input := packAnnotateFixture(t, dir, "meeting")
+	applyInPlace(t, input, annotateTwoMarks)
+	doc := annotationsIn(t, input)
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "snapshot.opus")
+	var stdout, stderr bytes.Buffer
+	if code := runAnnotateSnapshot(context.Background(), []string{"--out", out, "--json", input}, bytes.NewReader(raw), &stdout, &stderr); code != 0 {
+		t.Fatalf("snapshot %d: %s", code, stderr.String())
+	}
+	got := annotationsIn(t, out)
+	if !reflect.DeepEqual(got, doc) {
+		t.Fatalf("document changed: got %+v want %+v", got, doc)
+	}
+}
+
+func TestAnnotateSnapshotAcceptsLargeValidDocument(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	input := packAnnotateFixture(t, dir, "meeting")
+	applyInPlace(t, input, annotateTwoMarks)
+	doc := annotationsIn(t, input)
+	template := doc.Items[0]
+	template.Actor.ID = strings.Repeat("a", 256)
+	template.OperationID = strings.Repeat("o", 64)
+	template.TagID = strings.Repeat("t", 64)
+	doc.Tags = []portable.AnnotationTag{{ID: template.TagID, Label: "tag"}}
+	doc.Items = nil
+	for i := 0; i < 2000; i++ {
+		item := template
+		item.ID = fmt.Sprintf("m%063d", i)
+		doc.Items = append(doc.Items, item)
+	}
+	if err := portable.ValidateAnnotations(doc, math.MaxInt64); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) <= 1<<20 {
+		t.Fatalf("regression fixture must exceed the former limit: %d bytes", len(raw))
+	}
+	out := filepath.Join(dir, "snapshot.opus")
+	var stdout, stderr bytes.Buffer
+	if code := runAnnotateSnapshot(context.Background(), []string{"--out", out, "--json", input}, bytes.NewReader(raw), &stdout, &stderr); code != 0 {
+		t.Fatalf("valid %d-byte snapshot refused: exit %d: %s", len(raw), code, stderr.String())
+	}
+	if got := annotationsIn(t, out); !reflect.DeepEqual(got, doc) {
+		t.Fatal("embedded document differs from committed snapshot")
 	}
 }

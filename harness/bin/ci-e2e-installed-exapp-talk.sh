@@ -285,8 +285,10 @@ RESULT="running"
 # control path (which exited before this line).
 RECORDING_ATTEMPTED=1
 VALIDATOR_LOG_DIR="$LOG_DIR/validator"
+validator_runs=1
+if [[ "${CASSINI_VALIDATE_READINESS:-0}" == 1 ]]; then validator_runs=2; fi
 validator_args=(
-  --run-count 1
+  --run-count "$validator_runs"
   --conversation admin
   --media-prefix "$MEDIA_PREFIX"
   --duration "$DURATION"
@@ -299,7 +301,7 @@ LOG_DIR="$VALIDATOR_LOG_DIR" \
   "$SCRIPT_DIR/validate-installed-exapp-private-talk.sh" "${validator_args[@]}"
 
 validator_summary="$VALIDATOR_LOG_DIR/summary.json"
-jq -e '.result == "passed" and (.runs | length) == 1 and .runs[0].artifact.segment_count > 0 and .runs[0].artifact.word_count > 0' \
+jq -e --argjson runs "$validator_runs" '.result == "passed" and (.runs | length) == $runs and all(.runs[]; .artifact.segment_count > 0 and .artifact.word_count > 0)' \
   "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"
 if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
   log "faithful CPU-host vertical passed: portable image transcribed on the CPU, positive segments and decoded words"

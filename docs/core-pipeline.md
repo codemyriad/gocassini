@@ -227,9 +227,9 @@ publish" is the accurate description, not "O(1) publish".
 This is the clearest developer-facing flow when you want to see each stage boundary.
 
 ```bash
-./bin/cassini record --call "$CALL_URL" --out demo.run
-./bin/cassini build demo.run --out demo.meeting
-./bin/cassini publish ./meetings --out site
+./bin/cassini record --call "$CALL_URL" --out ./runs/demo.run
+./bin/cassini build ./runs/demo.run --out ./meetings/demo.meeting
+./bin/cassini publish ./meetings --out ./site --rebuild-viewer
 ```
 
 Use it when you want:

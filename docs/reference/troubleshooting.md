@@ -53,7 +53,6 @@ Or run:
 ### Default ports
 
 - operator: `4000`
-- control panel: `4173`
 - viewer: `8765`
 
 ### What to do

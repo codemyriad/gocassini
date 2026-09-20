@@ -1,6 +1,7 @@
 package cassini
 
 import (
+	annotations "cassini-annotations"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -43,7 +44,9 @@ const (
 // always present — lists empty, `resolved` null — so "none" never reads as
 // "not reported".
 type annotateResult struct {
-	Format string `json:"format"`
+	Unsupported bool   `json:"unsupported,omitempty"`
+	DurationMS  int64  `json:"durationMs"`
+	Format      string `json:"format"`
 	// Annotations is the document as read back out of the file; null when none.
 	Annotations json.RawMessage `json:"annotations"`
 	Revision    int             `json:"revision"`
@@ -87,6 +90,10 @@ func annotateFail(code int, format string, args ...any) error {
 }
 
 func annotateExitCodeFor(err error) int {
+	var shared *annotations.Failure
+	if errors.As(err, &shared) {
+		return shared.Code
+	}
 	var failure *annotateFailure
 	if errors.As(err, &failure) {
 		return failure.code
@@ -109,6 +116,8 @@ func runAnnotate(ctx context.Context, args []string, stdin io.Reader, stdout, st
 		return runAnnotateShow(args[1:], stdout, stderr)
 	case "apply":
 		return runAnnotateApply(ctx, args[1:], stdin, stdout, stderr)
+	case "snapshot":
+		return runAnnotateSnapshot(ctx, args[1:], stdin, stdout, stderr)
 	case "carry":
 		return runAnnotateCarry(ctx, args[1:], stdout, stderr)
 	default:
@@ -243,6 +252,7 @@ func annotateShow(path string, stderr io.Writer) (annotateResult, error) {
 		fmt.Fprintf(stderr, "cassini annotate show: %v; reporting no marks\n", source.unsupported)
 	}
 	result := newAnnotateResult(source.audioDigest())
+	result.Unsupported = source.unsupported != nil
 	describeAnnotateSource(&result, source)
 	if result.ContainerSHA256, err = annotateFileSHA256(path); err != nil {
 		return annotateResult{}, err
@@ -343,7 +353,7 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 		fmt.Fprintf(stderr, "%s: read --ops: %v\n", fs.Name(), err)
 		return annotateExitRuntime
 	}
-	ops, err := parseAnnotateOps(raw)
+	batch, err := parseAnnotateBatch(raw)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", fs.Name(), err)
 		return annotateExitCodeFor(err)
@@ -358,7 +368,7 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 	request := annotateApplyRequest{
 		inputPath: files[0],
 		outPath:   outPath,
-		ops:       ops,
+		batch:     batch,
 		stamp: annotateStamp{
 			ActorKind:   actorKind,
 			ActorID:     actorID,
@@ -386,7 +396,7 @@ rewrite. See "cassini annotate --help" for the ops and the exit codes.
 type annotateApplyRequest struct {
 	inputPath      string
 	outPath        string
-	ops            []annotateOp
+	batch          annotateBatch
 	stamp          annotateStamp
 	tagNamespace   string
 	expectRevision *int
@@ -420,19 +430,20 @@ func annotateApply(ctx context.Context, req annotateApplyRequest) (annotateResul
 	durationMS := source.manifest.Audio.DurationMS
 	unresolved := source.doc != nil && len(source.doc.Items) > 0 && !source.doc.Resolved(digest)
 	if unresolved {
-		if slices.ContainsFunc(req.ops, func(op annotateOp) bool { return op.Op == annotateOpMark }) {
+		if slices.ContainsFunc(req.batch.Ops, func(op annotateOp) bool { return op.Op == annotateOpMark }) {
 			return annotateResult{}, false, annotateFail(annotateExitUnresolved,
 				"the file's marks were made against different audio (bound to %s, this audio is %s); they can be removed or relabelled, but no mark can be added until they are migrated, and nothing was written",
 				source.doc.AudioOpusSHA256, digest)
 		}
 		durationMS = math.MaxInt64
 	}
-	outcome, err := applyAnnotationOps(source.doc, req.ops, durationMS, req.stamp)
+	outcome, err := applyAnnotationBatch(source.doc, req.batch, durationMS, req.stamp)
 	if err != nil {
 		return annotateResult{}, false, err
 	}
 
 	result := newAnnotateResult(digest)
+	result.DurationMS = source.manifest.Audio.DurationMS
 	result.OperationID = req.stamp.OperationID
 	result.NotFound = outcome.NotFound
 
@@ -573,6 +584,7 @@ func annotateCarry(ctx context.Context, deliveredPath, sealedPath, outPath strin
 	}
 	digest := sealed.audioDigest()
 	result := newAnnotateResult(digest)
+	result.DurationMS = sealed.manifest.Audio.DurationMS
 
 	if delivered.doc == nil {
 		resolvedOut, err := preparePortableMeetingOutput(outPath)
@@ -667,6 +679,7 @@ func readAnnotateSource(path string) (annotateSource, error) {
 
 // describeAnnotateSource fills in what a file that was not rewritten carries.
 func describeAnnotateSource(result *annotateResult, source annotateSource) {
+	result.DurationMS = source.manifest.Audio.DurationMS
 	if source.doc == nil {
 		return
 	}

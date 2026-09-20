@@ -1,5 +1,9 @@
 # Installing Cassini as a Nextcloud ExApp
 
+Start with [Before installing Cassini](before-installing.md) to check eligibility
+and identify who can configure the required services.
+
+
 This is the **production install guide**. Cassini ships as a Nextcloud AppAPI
 external app: one container exposes the admin operator surface, the recording
 viewer, the published meeting archive, and the Talk recording backend over a
@@ -19,6 +23,11 @@ occ (e.g. `sudo -u www-data php occ …` or
 
 The standalone Docker Compose bundle under `deployment/` is **not** the app
 install — see [Standalone operator (dev/staging only)](#standalone-operator-devstaging-only).
+
+After installation, **Cassini → Operator → Publish pipeline** diagnoses missing
+configuration and
+helps you verify a short recording. See [Recording readiness](recording-readiness.md)
+for the guided flow, AIO-specific setup, and restart persistence.
 
 ## Prerequisites
 
@@ -82,10 +91,26 @@ docker-deployed ExApp and the operator stores all durable data under it
 
 ## Step 1 — Register a deploy daemon (HaRP)
 
-Use a **HaRP** daemon. Upstream AppAPI recommends HaRP; the older Docker
-Socket Proxy daemon is deprecated and scheduled for removal in Nextcloud 35.
+**Already have a working HaRP daemon for the intended Cassini host?** Reuse it.
+With a recent successful Test deploy and unchanged configuration, continue to
+[Step 2](#step-2--pick-an-image-tag). Otherwise run Test deploy first.
+**First ExApp, no daemon, or a failed test?** Follow the
+[first ExApp walkthrough](first-exapp.md), then return to Step 2 once the test
+passes. The provisioning example below is for a new standalone HaRP service.
 
-Run HaRP next to a Docker engine (full options in the
+**AIO:** check the installed version's available components and registered
+daemon. Start integrated HaRP where provided and run Test deploy. Older/custom
+versions may need migration or separate provisioning. Reuse a working integrated
+service rather than launching a second HaRP. Enable AIO's Talk component for HPB. See [AIO restart persistence](recording-readiness.md#aio-restart-persistence)
+before handing recording over to Cassini.
+
+
+Use a **HaRP** daemon for this installation guide, following
+[upstream's recommended setup](https://docs.nextcloud.com/server/latest/admin_manual/exapps_management/AppAPIAndExternalApps.html#harp).
+If you already use Docker Socket Proxy, follow the upstream migration guidance
+for your version before choosing this HaRP installation path.
+
+For a new standalone service, run HaRP next to a Docker engine (full options in the
 [HaRP README](https://github.com/nextcloud/HaRP)):
 
 ```bash
@@ -101,23 +126,29 @@ docker run \
 ```
 
 Then register it in Nextcloud → Administration settings → AppAPI →
-**Register Daemon** (template "HaRP Proxy"), and run **Test deploy** from the
-daemon's three-dot menu before going further. `occ app_api:daemon:list` should
-show it afterwards.
+**Register Daemon** using the HaRP template matching your deployment.
+`occ app_api:daemon:list` should show the registered daemon. Complete the routing
+in Step 1b, then run **Test deploy** from the daemon's three-dot menu. Continue
+to Step 2 only after all test stages through Enabled succeed. If a stage fails,
+use the [first ExApp troubleshooting steps](first-exapp.md#if-the-test-fails).
 
 ### Step 1b — Route `/exapps/*` to HaRP at your reverse proxy
 
-**Required for every HaRP daemon**, local or remote. AppAPI does not talk to a
-HaRP-hosted ExApp over an internal address — it builds a **public** URL and
-dials it:
+**Required for every HaRP daemon**, local or remote. Current integrated AIO can
+provide this route in its own frontend: first inspect the deployed topology and
+[the routing guidance](recording-readiness.md#harp-routing-and-missing-navigation).
+The explicit host rules below apply when that route is not already provided.
+The HaRP ExApp URL must resolve through the configured route, for example:
 
 ```
 GET https://cloud.example.com/exapps/<appid>/heartbeat
 ```
 
-Your TLS terminator must send `/exapps/*` to HaRP's `8780`, *not* to Nextcloud.
-Without this route the request reaches Nextcloud, which 502s, and
-install/enable never completes.
+The proxy chain must deliver `/exapps/*` to the correct HaRP frontend, commonly
+port `8780`, rather than to Nextcloud's PHP handler. Integrated AIO can provide
+this hop. Missing or incorrect routing can produce 404/502 errors and prevent
+installation or enablement; inspect the response and proxy logs before changing
+configuration.
 
 Caddy:
 
@@ -177,12 +208,11 @@ The tag push publishes `0.2.0`, `0.2.0-cuda`, and `0.2.0-rocm`. CI refuses to
 publish when the git tag and the manifest version disagree, or when
 `<image-tag>` drifts from `<version>`.
 
-You don't select the `-cuda` tag by hand: when the deploy daemon's compute
-device is CUDA, AppAPI automatically tries `<image-tag>-cuda` first and falls
-back to the plain tag. Cassini detects that fallback: the plain image remains
-available for capture, `/operator/status` reports CUDA unavailable, and build
-jobs immediately enter `build/blocked` with instructions to install the matching
-`-cuda` image instead of decoding on CPU.
+When the deploy daemon's compute device is CUDA, AppAPI tries
+`<image-tag>-cuda` first and can fall back to the plain image. Cassini's Auto
+policy uses CUDA when its runtime and device are usable, and CPU otherwise.
+The recording checks report the selected processing device. An explicit CUDA override on a
+host without usable CUDA blocks processing until corrected.
 
 The checked-in manifest already pins the current release; to install a
 different build, download `appinfo/info.xml`, set `<image-tag>` to the
@@ -203,6 +233,10 @@ CASSINI_SECRET="$(openssl rand -hex 32)"
 ```
 
 #### Finding the signaling internal secret
+
+You may save the internal secret in **Operator → Publish pipeline → Talk authentication** after
+installation instead of supplying a deployment environment variable. The
+environment variable, when supplied, takes precedence.
 
 `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` must equal your Talk signaling / HPB
 server's `[clients] internalsecret`. It is the **one** value Cassini cannot
@@ -730,11 +764,10 @@ All of these must pass before the Talk handoff:
 
 1. `occ app_api:daemon:list` shows the daemon and its **Test deploy** passes.
 2. `occ app_api:app:list` shows `gocassini` enabled.
-3. The Nextcloud app menu shows a **Cassini** entry for every logged-in user
-   (opens the viewer) and a **Cassini Admin** entry for admins only (opens
-   the control panel). The app registers both with AppAPI when it is
-   enabled; if they are missing, check the container log for `exapp ui:`
-   errors, then disable and re-enable the app to retry the registration.
+3. The Nextcloud app menu shows one **Cassini** entry for every logged-in user.
+   It opens the meeting browser; administrators also see an **Operator** section
+   inside the app. If the entry is missing, check the container log for
+   `exapp ui:` errors, then disable and re-enable the app to retry registration.
 4. The container runs the intended image:
    `docker inspect nc_app_gocassini --format '{{.Config.Image}}'`.
 5. The Talk welcome endpoint answers through the AppAPI proxy (it is a PUBLIC
@@ -826,7 +859,9 @@ operator's ADMIN-only provisioning endpoint returns the ready-to-apply
 `recording_servers` value (including the self-generated secret), so you never
 copy a secret by hand.
 
-**Back up the current backend first**, then switch:
+**Back up the current backend first**, then switch. Operator → Publish pipeline → Connect Talk generates
+these commands for your instance. AIO users must also follow the
+[restart persistence instructions](recording-readiness.md#aio-restart-persistence).
 
 ```bash
 # 0. Back up (empty output = no recording backend configured)
@@ -851,7 +886,7 @@ conversation so the HPB-internal path is exercised:
 1. Create or pick a private test conversation with at least one speaking
    participant.
 2. Start recording from Talk's **Record** button.
-3. Confirm a Cassini job appears in the **Cassini Admin** control panel.
+3. Confirm a Cassini job appears in Cassini’s **Operator** section.
 4. Speak for a minute, stop the recording, leave the call, or let the
    empty-room timeout stop it.
 5. Watch the job progress through record → build → seal → publish. Talk receives
@@ -909,11 +944,12 @@ needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/dat
 verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
 on that engine before registering the app.
 
-There is no CPU transcription fallback. A plain portable image is a permanent
-inference mismatch: recording finishes, but the build immediately enters
-`build/blocked` with no `build_retry_not_before`; `/operator/status` answers 503
-with an actionable `stt.detail`. Install/redeploy the matching `-cuda` image,
-then use **Rerun** in Cassini Admin to process the preserved recording.
+CPU transcription is supported on amd64 and arm64. The portable image bundles
+the Balanced CPU model. Auto selects usable CUDA or falls back to CPU;
+administrators can also pin CPU. Explicitly pinning unavailable CUDA blocks
+processing with an actionable error in `/operator/status`. Change the device
+in Transcription settings, then use **Rerun** in Cassini’s Operator section for
+any blocked recording. Other quality tiers may need a one-time model download.
 
 On a CUDA-capable image, temporary RAM or VRAM pressure is different. The
 operator keeps the build queued, records `build_retry_not_before`, and retries
@@ -1122,7 +1158,7 @@ occ app_api:app:unregister gocassini --rm-data  # also deletes recordings + job 
 
 ## Standalone operator (dev/staging only)
 
-`deployment/compose.yml` brings up the operator, control panel, and viewer as
+`deployment/compose.yml` brings up the operator and viewer as
 plain Compose services. That bundle is for **development, staging, and
 diagnostics** — it can satisfy Talk's recording-backend API, but it does not
 register an ExApp, does not expose anything through the AppAPI proxy, adds

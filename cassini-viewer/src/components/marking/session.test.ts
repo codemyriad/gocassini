@@ -84,7 +84,7 @@ describe("a meeting's marks session", () => {
     expect(get(session).status).toBe("ready");
 
     expect(await session.write(removeRequest(["i1"]))).toBe(true);
-    expect(sent).toEqual([removeRequest(["i1"])]);
+    expect(sent).toEqual([expect.objectContaining({ ...removeRequest(["i1"]), requestId: expect.any(String) })]);
     expect(changed).toEqual([answer]);
     expect(get(session).annotations).toBe(answer);
     expect(get(session).busy).toBe(false);
@@ -126,7 +126,7 @@ describe("a meeting's marks session", () => {
     expect(await session.write(removeRequest(["i2"]))).toBe(false);
     finish(result());
     expect(await first).toBe(true);
-    expect(sent).toEqual([removeRequest(["i1"])]);
+    expect(sent).toEqual([expect.objectContaining({ ...removeRequest(["i1"]), requestId: expect.any(String) })]);
     expect(get(session).busy).toBe(false);
   });
 
@@ -152,6 +152,101 @@ describe("a meeting's marks session", () => {
     await first;
     expect(get(session).annotations?.annotations).toBeNull();
   });
+  it("polls pending sync and stops once the archive is saved", async () => {
+    vi.useFakeTimers();
+    const load = vi.fn().mockResolvedValueOnce({ ...meeting(), sync: { state: "pending", desired: 4, confirmed: 3 } })
+      .mockResolvedValue({ ...meeting(), sync: { state: "saved", desired: 4, confirmed: 4 } });
+    const session = createMarksSession(() => {});
+    await session.open(load, null);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(get(session).annotations?.sync?.state).toBe("saved");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(load).toHaveBeenCalledTimes(2);
+    await session.close();
+  });
+
+  it("reuses the request key and token after a lost response", async () => {
+    const sent: AnnotationRequest[] = [];
+    const session = createMarksSession(() => {});
+    await session.open(async () => ({ ...meeting(), stateToken: "epoch:3" }), async (request) => {
+      sent.push(request);
+      if (sent.length === 1) throw new TypeError("network failed");
+      return result();
+    });
+    const request = removeRequest(["i1"]);
+    expect(await session.write(request)).toBe(false);
+    expect(await session.write(request)).toBe(true);
+    expect(sent[1]).toEqual(sent[0]);
+    expect(sent[0].stateToken).toBe("epoch:3");
+  });
+
+  it("ignores a poll that finishes after a newer POST response", async () => {
+    vi.useFakeTimers();
+    let complete: (value: MeetingAnnotations) => void = () => {};
+    const pending = { ...meeting(), sync: { state: "pending" as const, desired: 3, confirmed: 2 } };
+    const load = vi.fn().mockResolvedValueOnce(pending).mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    const newer = { ...result(), stateToken: "epoch:4", sync: { state: "pending" as const, desired: 4, confirmed: 2 } };
+    const session = createMarksSession(() => {});
+    await session.open(load, async () => newer);
+    await vi.advanceTimersByTimeAsync(1000);
+    await session.write(removeRequest(["i1"]));
+    complete(pending);
+    await Promise.resolve();
+    expect(get(session).annotations).toBe(newer);
+    await session.close();
+  });
+
+  it.each([401, 403, 404])("ignores a stale %s poll error after a successful write", async (status) => {
+    vi.useFakeTimers();
+    let reject: (error: unknown) => void = () => {};
+    const pending = { ...meeting(), sync: { state: "pending" as const, desired: 3, confirmed: 2 } };
+    const newer = { ...result(), stateToken: "epoch:4", sync: { state: "pending" as const, desired: 4, confirmed: 2 } };
+    const saved = { ...newer, sync: { state: "saved" as const, desired: 4, confirmed: 4 } };
+    const load = vi.fn().mockResolvedValueOnce(pending)
+      .mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }))
+      .mockResolvedValue(saved);
+    const session = createMarksSession(() => {});
+    await session.open(load, async () => newer);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await session.write(removeRequest(["i1"]))).toBe(true);
+    reject(new AnnotationError(status, ""));
+    await Promise.resolve();
+    expect(get(session)).toMatchObject({ status: "ready", error: "", annotations: newer });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(get(session).annotations).toBe(saved);
+    await session.close();
+  });
+
+  it.each([401, 403, 404])("clears marks when the current poll returns %s", async (status) => {
+    vi.useFakeTimers();
+    const load = vi.fn().mockResolvedValueOnce({ ...meeting(), sync: { state: "pending", desired: 3, confirmed: 2 } })
+      .mockRejectedValue(new AnnotationError(status, ""));
+    const session = createMarksSession(() => {});
+    await session.open(load, null);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(get(session)).toMatchObject({ status: "failed", annotations: null });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(load).toHaveBeenCalledTimes(2);
+    await session.close();
+  });
+
+  it("refreshes the precondition after a conflict", async () => {
+    const sent: AnnotationRequest[] = [];
+    const load = vi.fn().mockResolvedValueOnce({ ...meeting(), stateToken: "epoch:3" })
+      .mockResolvedValue({ ...meeting(), stateToken: "epoch:4" });
+    const session = createMarksSession(() => {});
+    await session.open(load, async (request) => {
+      sent.push(request);
+      if (sent.length === 1) throw new AnnotationError(409, "annotations changed");
+      return result();
+    });
+    await session.write(removeRequest(["i1"]));
+    await Promise.resolve();
+    await session.write(removeRequest(["i1"]));
+    expect(sent[1].stateToken).toBe("epoch:4");
+    expect(sent[1].requestId).not.toBe(sent[0].requestId);
+  });
+
 });
 
 describe("what the view draws", () => {
@@ -173,6 +268,15 @@ describe("what the view draws", () => {
     expect(view.placed[1]!.color).toBe("teal");
     expect(view.whole.map((look) => look.tag.label)).toEqual(["budget"]);
     expect(view.lost).toEqual([]);
+  });
+
+  it("keeps archived appearance with no vocabulary or conflicting shared defaults", () => {
+    const archived = { ...doc, tags: doc.tags.map((tag) => ({ ...tag, color: "purple", icon: "" })) };
+    for (const vocabulary of [[], [{ ...vocab("t-hiring", "hiring", "teal"), icon: "star" as const }]]) {
+      const view = viewMarks(state(meeting(true, archived)), vocabulary);
+      expect([...view.whole, ...view.placed].map(({ color, icon }) => [color, icon]))
+        .toEqual([["purple", ""], ["purple", ""], ["purple", ""]]);
+    }
   });
 
   it("uses a new tag's chosen colour until the vocabulary has it", () => {

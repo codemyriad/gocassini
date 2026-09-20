@@ -1,5 +1,0 @@
-- Reduce missing speech in Parakeet v3 transcriptions by matching the model’s reference audio preprocessing. Preserve detected utterances with surrounding recorded audio instead of splitting them every ten seconds and appending synthetic silence. Retain beam decoding and vocabulary hints.
-- Keep participant audio on the meeting clock after long mute gaps and codec pre-skip, including recordings with a nonzero container start time.
-- Fix duplicated overlap words when adjacent decodes disagree only on sentence-final punctuation.
-- Include the corrected native runtime in CPU/CUDA builds and the developer CLI.
-- Add recorded-audio comparisons and resumable full-meeting GPU validation tools.

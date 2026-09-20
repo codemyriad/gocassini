@@ -238,12 +238,16 @@ func openSidecarDB(path, what, schema string, version int, logger *log.Logger) (
 // openSidecarAt opens the file with the pragmas the job database lacks: WAL so
 // a reader never blocks the writer, a real busy_timeout, and foreign keys on.
 // The pool stays at the driver default; WAL makes concurrent reads safe.
-func openSidecarAt(path, what string) (sidecarDB, error) {
+func openSidecarAt(path, what string, durable ...bool) (sidecarDB, error) {
+	syncMode := "NORMAL"
+	if len(durable) > 0 && durable[0] {
+		syncMode = "FULL"
+	}
 	dsn := "file:" + path +
 		"?_pragma=journal_mode(WAL)" +
 		"&_pragma=busy_timeout(5000)" +
 		"&_pragma=foreign_keys(1)" +
-		"&_pragma=synchronous(NORMAL)"
+		"&_pragma=synchronous(" + syncMode + ")"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return sidecarDB{}, fmt.Errorf("open %s: %w", what, err)

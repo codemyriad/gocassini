@@ -15,20 +15,14 @@ import (
 	"time"
 )
 
-// The tag index (D-737): annotations.sqlite3, a disposable copy of the marks
-// inside each delivered .opus — a sidecar for search.sqlite3's reasons, and a
-// separate file so a schema bump here never forces a transcript re-index there.
-//
-// The recording is the record: every write commits the file first and records
-// here second, so a failure here costs coverage, never a mark. As in search,
-// nothing here knows who may read what; every read takes the caller's visible
-// set as an argument and binds it into the statement.
+// Durable annotation documents and their relational search projection share one
+// transaction and database. Archive files can seed a replacement database, but
+// an existing database must never be discarded during a schema upgrade.
 const (
 	annotationsStoreFilename = "annotations.sqlite3"
 
-	// annotationsSchemaVersion: bump for any change to the schema or to what
-	// ingest keeps from a document. A mismatched file is deleted and rebuilt.
-	annotationsSchemaVersion = 2
+	// annotationsSchemaVersion is upgraded through managed migrations.
+	annotationsSchemaVersion = 7
 
 	annotationsStateIndexed = "indexed"
 	// annotationsStateUnavailable: the meeting is known but its marks could not
@@ -78,8 +72,10 @@ CREATE TABLE IF NOT EXISTS annotation_tag (
   opus_name    TEXT NOT NULL REFERENCES meeting_annotations(opus_name) ON DELETE CASCADE,
   tag_id       TEXT NOT NULL,
   label        TEXT NOT NULL,
-  -- foldTagLabel(label): SQLite's NOCASE folds ASCII only.
-  label_folded TEXT NOT NULL,
+	-- foldTagLabel(label): SQLite's NOCASE folds ASCII only.
+	label_folded TEXT NOT NULL,
+	color        TEXT,
+	icon         TEXT,
   PRIMARY KEY (opus_name, tag_id)
 );
 
@@ -93,6 +89,7 @@ CREATE TABLE IF NOT EXISTS annotation_item (
 
 CREATE INDEX IF NOT EXISTS annotation_item_by_meeting ON annotation_item(opus_name, tag_id);
 CREATE INDEX IF NOT EXISTS annotation_tag_by_label ON annotation_tag(label_folded);
+CREATE INDEX IF NOT EXISTS annotation_tag_by_id ON annotation_tag(tag_id, opus_name);
 `
 
 // annotationStore implements annotationIndex for the write paths, and serves
@@ -116,7 +113,7 @@ func (rt *Runtime) annotationReads() *annotationStore {
 }
 
 func openAnnotationStore(path string, logger *log.Logger) (*annotationStore, error) {
-	db, err := openSidecarDB(path, "annotations index", annotationsSchemaSQL, annotationsSchemaVersion, logger)
+	db, err := openDurableAnnotationDB(path)
 	if err != nil {
 		return nil, err
 	}
@@ -139,8 +136,10 @@ type projectedDocument struct {
 	AudioOpusSHA256 string `json:"audioOpusSha256"`
 	TagNamespace    string `json:"tagNamespace"`
 	Tags            []struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
+		ID    string  `json:"id"`
+		Label string  `json:"label"`
+		Color *string `json:"color"`
+		Icon  *string `json:"icon"`
 	} `json:"tags"`
 	Items []struct {
 		ID     string `json:"id"`
@@ -153,7 +152,10 @@ type projectedDocument struct {
 	} `json:"items"`
 }
 
-type projectedTag struct{ id, label string }
+type projectedTag struct {
+	id, label   string
+	color, icon *string
+}
 
 type projectedItem struct {
 	tagID, kind    string
@@ -200,7 +202,7 @@ func projectAnnotations(raw json.RawMessage, cliResolved *bool, fileAudio string
 			continue
 		}
 		defined[id] = true
-		out.tags = append(out.tags, projectedTag{id: id, label: label})
+		out.tags = append(out.tags, projectedTag{id: id, label: label, color: tag.Color, icon: tag.Icon})
 	}
 	seen := make(map[string]bool, len(doc.Items))
 	for _, item := range doc.Items {
@@ -241,10 +243,13 @@ func (s *annotationStore) Record(ctx context.Context, opusName string, result an
 // is the truth even if older.
 func (s *annotationStore) record(ctx context.Context, opusName string, result annotateResult, onlyIfNewer bool) (string, error) {
 	projected := projectAnnotations(result.Annotations, result.Resolved, result.AudioOpusSHA256)
+	if result.Unsupported {
+		projected.unreadable = true
+	}
 	if projected.revision == 0 {
 		projected.revision = result.Revision
 	}
-	return s.replace(ctx, opusName, projected, result.ContainerSHA256, onlyIfNewer)
+	return s.replace(ctx, opusName, projected, result.ContainerSHA256, onlyIfNewer, &result)
 }
 
 // MarkUnavailable records opusName as unreadable (annotationIndex), with no
@@ -256,7 +261,7 @@ func (s *annotationStore) MarkUnavailable(ctx context.Context, opusName, _ strin
 
 // replace swaps a meeting's rows in one transaction — replace, never merge, so
 // a mark removed from the file leaves the index too. "" state means skipped.
-func (s *annotationStore) replace(ctx context.Context, opusName string, m projectedMeeting, container string, onlyIfNewer bool) (string, error) {
+func (s *annotationStore) replace(ctx context.Context, opusName string, m projectedMeeting, container string, onlyIfNewer bool, documents ...*annotateResult) (string, error) {
 	name := strings.TrimSpace(opusName)
 	if name == "" {
 		return "", errors.New("opus name must not be empty")
@@ -267,6 +272,23 @@ func (s *annotationStore) replace(ctx context.Context, opusName string, m projec
 	}
 	skipped := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		var pending int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotation_head WHERE opus_name=? AND (desired != confirmed OR republish_json IS NOT NULL)`, name).Scan(&pending); err != nil {
+			return err
+		}
+		if pending != 0 {
+			skipped = true
+			var republishing bool
+			if err := tx.QueryRowContext(ctx, `SELECT republish_json IS NOT NULL FROM annotation_head WHERE opus_name=?`, name).Scan(&republishing); err != nil {
+				return err
+			}
+			if !republishing && len(documents) > 0 && documents[0] != nil && !m.unreadable {
+				if err := refreshAnnotationAudio(ctx, tx, name, *documents[0]); err != nil {
+					return err
+				}
+			}
+			return rebuildDesiredAnnotationProjection(ctx, tx, name)
+		}
 		if onlyIfNewer {
 			var current int
 			switch err := tx.QueryRowContext(ctx,
@@ -279,30 +301,14 @@ func (s *annotationStore) replace(ctx context.Context, opusName string, m projec
 				return nil
 			}
 		}
-		if err := deleteAnnotationRows(ctx, tx, name); err != nil {
+		if err := replaceAnnotationProjection(ctx, tx, name, m, container, state); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO meeting_annotations (opus_name, state, revision, resolved, namespace, container_sha256)
-VALUES (?, ?, ?, ?, ?, ?)`, name, state, m.revision, m.resolved, m.namespace,
-			strings.ToLower(strings.TrimSpace(container))); err != nil {
-			return fmt.Errorf("record meeting annotations: %w", err)
+		if len(documents) > 0 && documents[0] != nil && !m.unreadable {
+			return importAnnotationSnapshot(ctx, tx, name, *documents[0])
 		}
-		for _, tag := range m.tags {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO annotation_tag (opus_name, tag_id, label, label_folded) VALUES (?, ?, ?, ?)`,
-				name, tag.id, tag.label, foldTagLabel(tag.label)); err != nil {
-				return fmt.Errorf("insert tag: %w", err)
-			}
-		}
-		for _, item := range m.items {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO annotation_item (opus_name, tag_id, kind, start_ms, end_ms) VALUES (?, ?, ?, ?, ?)`,
-				name, item.tagID, item.kind, item.startMS, item.endMS); err != nil {
-				return fmt.Errorf("insert mark: %w", err)
-			}
-		}
-		return nil
+		_, err := tx.ExecContext(ctx, `DELETE FROM annotation_head WHERE opus_name=? AND desired=confirmed`, name)
+		return err
 	})
 	if err != nil || skipped {
 		return "", err
@@ -328,19 +334,15 @@ func deleteAnnotationRows(ctx context.Context, tx *sql.Tx, opusName string) erro
 // --- the installation's vocabulary -----------------------------------------
 
 // ResolveLabel maps a label to the tag id the caller's visible meetings already
-// use for it, within the archive's namespace (annotationIndex). Hidden meetings
+// use for it across document namespaces (annotationIndex). Hidden meetings
 // are never consulted: getting an id back would reveal that a meeting the
 // caller cannot open carries the word. Several ids with one label — files
 // tagged before the index existed — resolve to the one on the most meetings,
-// then the smallest id.
+// preferring exact spelling, then frequency, then the smallest id.
 func (s *annotationStore) ResolveLabel(ctx context.Context, label string, visible []string) (string, bool, error) {
 	folded := foldTagLabel(label)
 	if folded == "" {
 		return "", false, nil
-	}
-	namespace, err := s.archiveNamespace(ctx)
-	if err != nil {
-		return "", false, err
 	}
 	query := `
 SELECT t.tag_id
@@ -348,14 +350,10 @@ SELECT t.tag_id
   JOIN meeting_annotations m ON m.opus_name = t.opus_name AND m.state = ?2
   JOIN json_each(?3) v ON v.value = t.opus_name
  WHERE t.label_folded = ?1`
-	args := []any{folded, annotationsStateIndexed, namesJSON(visible)}
-	if namespace != "" {
-		query += ` AND m.namespace = ?4`
-		args = append(args, namespace)
-	}
+	args := []any{folded, annotationsStateIndexed, namesJSON(visible), strings.TrimSpace(label)}
 	query += `
  GROUP BY t.tag_id
- ORDER BY COUNT(*) DESC, t.tag_id
+ ORDER BY SUM(t.label = ?4) DESC, COUNT(*) DESC, t.tag_id
  LIMIT 1`
 	var tagID string
 	switch err := s.db.QueryRowContext(ctx, query, args...).Scan(&tagID); {
@@ -419,11 +417,11 @@ type tagVocabularyEntry struct {
 	Label    string `json:"label"`
 	Meetings int    `json:"meetings"`
 	Marks    int    `json:"marks"`
-	// The rest is tag-styles.json's, "" where it has none (withStyles).
-	Color        string `json:"color"`
-	Icon         string `json:"icon"`
-	ChangedBy    string `json:"changedBy"`
-	ChangedAtUTC string `json:"changedAtUtc"`
+	// Appearance is the most common per-recording value, with a stable lexical
+	// tie-break. It is a vocabulary convenience only; each archive remains
+	// authoritative for its own tag appearance.
+	Color string `json:"color"`
+	Icon  string `json:"icon"`
 }
 
 func (s *annotationStore) Coverage(ctx context.Context, visible []string) (annotationCoverage, error) {
@@ -442,7 +440,7 @@ SELECT COUNT(*) FROM meeting_annotations m
 }
 
 // Vocabulary lists the tags marked on the caller's visible meetings, counted
-// over those meetings only, keyed by (namespace, tag id). A tag whose every
+// over those meetings only, keyed by tag ID, like writes and styles. A tag whose every
 // mark is of a kind this reader does not know has nothing to point at and is
 // not listed.
 func (s *annotationStore) Vocabulary(ctx context.Context, visible []string) ([]tagVocabularyEntry, error) {
@@ -451,7 +449,7 @@ func (s *annotationStore) Vocabulary(ctx context.Context, visible []string) ([]t
 		return []tagVocabularyEntry{}, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT m.namespace, t.tag_id, t.label, COUNT(*)
+SELECT m.namespace, t.tag_id, t.label, t.color, t.icon, COUNT(*)
   FROM annotation_item i
   JOIN json_each(?1) v       ON v.value = i.opus_name
   JOIN meeting_annotations m ON m.opus_name = i.opus_name AND m.state = ?2
@@ -462,28 +460,31 @@ SELECT m.namespace, t.tag_id, t.label, COUNT(*)
 	}
 	defer rows.Close()
 
-	type key struct{ namespace, tagID string }
 	type tally struct {
-		entry  tagVocabularyEntry
-		labels map[string]int
+		entry      tagVocabularyEntry
+		labels     map[string]int
+		namespaces map[string]int
+		styles     map[string]int
 	}
-	tallies := map[key]*tally{}
+	tallies := map[string]*tally{}
 	for rows.Next() {
 		var namespace, tagID, label string
+		var color, icon sql.NullString
 		var marks int
-		if err := rows.Scan(&namespace, &tagID, &label, &marks); err != nil {
+		if err := rows.Scan(&namespace, &tagID, &label, &color, &icon, &marks); err != nil {
 			return nil, fmt.Errorf("scan tag vocabulary: %w", err)
 		}
-		k := key{namespace, tagID}
-		t := tallies[k]
+		t := tallies[tagID]
 		if t == nil {
-			t = &tally{entry: tagVocabularyEntry{TagID: tagID, Namespace: namespace}, labels: map[string]int{}}
-			tallies[k] = t
+			t = &tally{entry: tagVocabularyEntry{TagID: tagID}, labels: map[string]int{}, namespaces: map[string]int{}, styles: map[string]int{}}
+			tallies[tagID] = t
 		}
 		// One row per (meeting, tag).
 		t.entry.Meetings++
 		t.entry.Marks += marks
 		t.labels[label]++
+		t.namespaces[namespace]++
+		t.styles[color.String+"\x00"+icon.String]++
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read tag vocabulary: %w", err)
@@ -492,6 +493,9 @@ SELECT m.namespace, t.tag_id, t.label, COUNT(*)
 	out := make([]tagVocabularyEntry, 0, len(tallies))
 	for _, t := range tallies {
 		t.entry.Label = mostCommonLabel(t.labels)
+		t.entry.Namespace = mostCommonLabel(t.namespaces)
+		style := mostCommonLabel(t.styles)
+		t.entry.Color, t.entry.Icon, _ = strings.Cut(style, "\x00")
 		out = append(out, t.entry)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -507,11 +511,41 @@ SELECT m.namespace, t.tag_id, t.label, COUNT(*)
 	return out, nil
 }
 
+// tagStyledOtherwise reports whether a visible carrier does not already have
+// every requested appearance field. A nil requested field is left untouched.
+func (s *annotationStore) tagStyledOtherwise(ctx context.Context, tagID string, color, icon *string, visible []string) (bool, error) {
+	if color == nil && icon == nil {
+		return false, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT t.color, t.icon
+  FROM annotation_tag t
+  JOIN json_each(?2) v ON v.value = t.opus_name
+ WHERE t.tag_id = ?1`, tagID, namesJSON(visible))
+	if err != nil {
+		return false, fmt.Errorf("look up a tag's appearance: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var existingColor, existingIcon sql.NullString
+		if err := rows.Scan(&existingColor, &existingIcon); err != nil {
+			return false, fmt.Errorf("scan a tag's appearance: %w", err)
+		}
+		if (color != nil && (!existingColor.Valid || existingColor.String != *color)) ||
+			(icon != nil && (!existingIcon.Valid || existingIcon.String != *icon)) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 // meetingTagMarks is how one meeting carries one tag.
 type meetingTagMarks struct {
-	TagID     string `json:"tagId"`
-	Whole     bool   `json:"whole"`
-	Stretches int    `json:"stretches"`
+	TagID     string  `json:"tagId"`
+	Whole     bool    `json:"whole"`
+	Stretches int     `json:"stretches"`
+	Color     *string `json:"color,omitempty"`
+	Icon      *string `json:"icon,omitempty"`
 }
 
 // meetingTags is, per visible meeting whose marks are resolved, the tags it
@@ -523,10 +557,11 @@ func (s *annotationStore) meetingTags(ctx context.Context, visible []string) (ma
 		return out, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT i.opus_name, i.tag_id, MAX(i.kind = ?3), SUM(i.kind = ?4)
+SELECT i.opus_name, i.tag_id, MAX(i.kind = ?3), SUM(i.kind = ?4), t.color, t.icon
   FROM annotation_item i
   JOIN json_each(?1) v       ON v.value = i.opus_name
   JOIN meeting_annotations m ON m.opus_name = i.opus_name AND m.state = ?2 AND m.resolved = 1
+  JOIN annotation_tag t      ON t.opus_name = i.opus_name AND t.tag_id = i.tag_id
  GROUP BY i.opus_name, i.tag_id
  ORDER BY i.opus_name, i.tag_id`, namesJSON(names), annotationsStateIndexed, annotationsTargetMeeting, annotationsTargetTimeRange)
 	if err != nil {
@@ -536,8 +571,15 @@ SELECT i.opus_name, i.tag_id, MAX(i.kind = ?3), SUM(i.kind = ?4)
 	for rows.Next() {
 		var name string
 		var entry meetingTagMarks
-		if err := rows.Scan(&name, &entry.TagID, &entry.Whole, &entry.Stretches); err != nil {
+		var color, icon sql.NullString
+		if err := rows.Scan(&name, &entry.TagID, &entry.Whole, &entry.Stretches, &color, &icon); err != nil {
 			return nil, fmt.Errorf("scan meeting tags: %w", err)
+		}
+		if color.Valid {
+			entry.Color = &color.String
+		}
+		if icon.Valid {
+			entry.Icon = &icon.String
 		}
 		out[name] = append(out[name], entry)
 	}
@@ -755,7 +797,7 @@ func (s *annotationStore) tagInUse(ctx context.Context, tagID string) (bool, err
 // recordedContainers is each recorded meeting's container digest ("" when
 // unknown), for a rebuild deciding whether a file needs reading again.
 func (s *annotationStore) recordedContainers(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT opus_name, container_sha256 FROM meeting_annotations`)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.opus_name, CASE WHEN h.desired IS NULL AND m.state='indexed' THEN '' ELSE m.container_sha256 END FROM meeting_annotations m LEFT JOIN annotation_head h ON h.opus_name=m.opus_name`)
 	if err != nil {
 		return nil, fmt.Errorf("read recorded annotations: %w", err)
 	}
@@ -811,4 +853,63 @@ func uniqueNames(values []string) []string {
 func namesJSON(names []string) string {
 	encoded, _ := json.Marshal(uniqueNames(names))
 	return string(encoded)
+}
+
+// Rebuild only disposable query rows. Durable desired/confirmed pointers and
+// receipts stay intact, even when the archive still has an older document.
+func rebuildDesiredAnnotationProjection(ctx context.Context, tx *sql.Tx, name string) error {
+	var data []byte
+	var container sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT s.result_json,m.container_sha256
+ FROM annotation_head h JOIN annotation_snapshot s ON s.id=h.desired
+ LEFT JOIN meeting_annotations m ON m.opus_name=h.opus_name WHERE h.opus_name=?`, name).Scan(&data, &container)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var desired annotateResult
+	if err := json.Unmarshal(data, &desired); err != nil {
+		return err
+	}
+	m := projectAnnotations(desired.Annotations, desired.Resolved, desired.AudioOpusSHA256)
+	if m.unreadable || desired.Unsupported {
+		return errors.New("durable annotation document cannot be projected")
+	}
+	if m.revision == 0 {
+		m.revision = desired.Revision
+	}
+	if !container.Valid {
+		container.String = desired.ContainerSHA256
+	}
+	return replaceAnnotationProjection(ctx, tx, name, m, container.String, annotationsStateIndexed)
+}
+
+func replaceAnnotationProjection(ctx context.Context, tx *sql.Tx, name string, m projectedMeeting, container, state string) error {
+	if err := deleteAnnotationRows(ctx, tx, name); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO meeting_annotations (opus_name, state, revision, resolved, namespace, container_sha256)
+VALUES (?, ?, ?, ?, ?, ?)`, name, state, m.revision, m.resolved, m.namespace,
+		strings.ToLower(strings.TrimSpace(container))); err != nil {
+		return fmt.Errorf("record meeting annotations: %w", err)
+	}
+	for _, tag := range m.tags {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO annotation_tag (opus_name, tag_id, label, label_folded, color, icon) VALUES (?, ?, ?, ?, ?, ?)`,
+			name, tag.id, tag.label, foldTagLabel(tag.label), tag.color, tag.icon); err != nil {
+			return fmt.Errorf("insert tag: %w", err)
+		}
+	}
+	for _, item := range m.items {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO annotation_item (opus_name, tag_id, kind, start_ms, end_ms) VALUES (?, ?, ?, ?, ?)`,
+			name, item.tagID, item.kind, item.startMS, item.endMS); err != nil {
+			return fmt.Errorf("insert mark: %w", err)
+		}
+	}
+
+	return nil
 }

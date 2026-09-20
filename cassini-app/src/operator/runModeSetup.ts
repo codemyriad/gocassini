@@ -46,12 +46,13 @@ export async function runModeSetup(
     // range. Its per-app outcome comes back on the status.
     status = await client.installStorageApps();
     const refreshed = status.modes.find((entry) => entry.mode === plan.mode) ?? null;
-    if (refreshed && refreshed.setup.some((step) => !step.browser)) {
+    if (!refreshed) {
+      throw new Error("The selected storage mode is no longer available. Refresh the settings and try again.");
+    }
+    if (refreshed.setup.some((step) => !step.browser)) {
       return { status, finished: false, createdAccount: "", password: "" };
     }
-    if (refreshed) {
-      plan = refreshed;
-    }
+    plan = refreshed;
   }
 
   let createdAccount = "";

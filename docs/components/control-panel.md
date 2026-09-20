@@ -1,6 +1,8 @@
 # Control panel
 
-The control panel is the browser UI for operating the Cassini operator.
+The control panel is the **Operator** section of `cassini-app`, alongside the
+meeting browser in the unified Cassini app. Only administrators can open it
+in Nextcloud.
 
 It is for:
 
@@ -14,7 +16,9 @@ It is **not** the meeting playback UI. That role belongs to the viewer.
 
 ## Backend boundary
 
-The control panel talks only to the operator HTTP API.
+Job controls and settings use the operator HTTP API. Nextcloud provisioning
+also calls Nextcloud APIs through the administrator's browser session when
+those actions require password confirmation.
 
 It does not read:
 
@@ -101,11 +105,9 @@ Attempts are shown newest first.
 
 The current UI displays useful high-level attempt detail, but it is intentionally narrower than the full API payload.
 
-Current limitations include:
-
-- no direct rendering of `artifact_site_path`
-- no direct rendering of stage log paths
-- not all per-stage timestamps are surfaced
+Attempt details include artifact paths, stage log paths and stage timings.
+These are server-side paths for diagnosis, not links that expose the operator’s
+filesystem to the browser.
 
 ## Actions
 
@@ -152,7 +154,7 @@ Current rerun behavior:
 Run the control panel against a local operator:
 
 ```bash
-cd cassini-control-panel
+cd cassini-app
 CASSINI_OPERATOR_URL=http://127.0.0.1:4000 npm run dev
 ```
 
@@ -165,7 +167,7 @@ export CASSINI_OPERATOR_BASE_PATH=/api/operator
 Build and preview:
 
 ```bash
-cd cassini-control-panel
+cd cassini-app
 npm run build
 CASSINI_OPERATOR_URL=http://127.0.0.1:4000 npm run preview
 ```

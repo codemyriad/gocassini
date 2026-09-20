@@ -93,7 +93,8 @@ type Config struct {
 }
 
 type Runtime struct {
-	ctx context.Context
+	recordingSetup recordingSetup
+	ctx            context.Context
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
@@ -317,6 +318,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	// Join tracked workers (including startup readiness) before returning or
+	// closing the store; callers may release the log writers after Run exits.
+	defer runtime.Shutdown()
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
 	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier(logger)
@@ -434,6 +438,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer listener.Close()
+	if exappCfg.Active {
+		runtime.workerWG.Add(1)
+		go func() { defer runtime.workerWG.Done(); runtime.checkRecordingReadiness(runtime.ctx) }()
+	}
 
 	fmt.Fprintf(stdout, "listening -> http://%s\n", listener.Addr().String())
 	logger.Printf("base_path -> %s", cfg.BasePath)
@@ -454,7 +462,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// (invisible HPB-internal recording authenticates with it). Surface its
 	// absence loudly at startup — not silently at record time — so an admin
 	// learns of it before the first recording fails (see docs/exapp-install.md).
-	if signalingInternalSecretConfigured() {
+	if runtime.signalingInternalSecretConfigured() {
 		logger.Printf("talk_signaling_internal_secret_set -> true")
 	} else {
 		logger.Printf("WARNING: talk_signaling_internal_secret_set -> false: %s", signalingInternalSecretHint)
@@ -811,7 +819,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
 	// nil *annotationStore inside the interface would be a non-nil index.
 	if annotationIndex, err := openAnnotationStore(sidecarPath(cfg.DBPath, annotationsStoreFilename), logger); err != nil {
-		logger.Printf("annotations index unavailable (%v); marks will still be written to recordings, but the tag vocabulary and tag narrowing are not served", err)
+		logger.Printf("durable annotations store unavailable (%v); annotation reads and writes are unavailable", err)
 	} else {
 		rt.annotations = annotationIndex
 	}
@@ -948,6 +956,16 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
+		// Recording readiness (D-763). Registered here rather than beside the
+		// old hand-rolled list because main moved route registration into this
+		// table: one place now decides both the API mux and the root mount, so
+		// a route added anywhere else would be reachable through one and not
+		// the other. These are the three ADMIN routes the AppAPI manifest
+		// declares, and an existing registration needs its metadata refreshed
+		// before they resolve.
+		{"/readiness", http.HandlerFunc(rt.readinessHandler)},
+		{"/readiness/check", http.HandlerFunc(rt.readinessHandler)},
+		{"/talk/setup", http.HandlerFunc(rt.recordingSetupHandler)},
 	}
 }
 
@@ -970,8 +988,13 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	}
 
 	root := http.NewServeMux()
+	annotations := newAnnotationService(rt, exappCfg, logger)
+	search := rt.searchDeps()
+	if annotations != nil {
+		search.importAnnotations = annotations.importListedDocuments
+	}
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, rt.searchDeps())
+	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger, search)
 	// Insights (D-700): their own top-level prefix, mounted on the ROOT mux
 	// beside /published/ rather than under BasePath, because that is where
 	// appinfo/info.xml declares them — `^insights\/…`, USER, and the app's first
@@ -984,9 +1007,9 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// Tags and marks (D-737): a sibling of insights on the ROOT mux, for the same
 	// reason — appinfo/info.xml declares `^annotations\/…` at that level. Nil, and
 	// unmounted, wherever a mark could not be served (see newAnnotationService).
-	if annotations := newAnnotationService(rt, exappCfg, logger); annotations != nil {
-		annotations.register(root)
+	if annotations != nil {
 		rt.startInitialAnnotationBuild(exappCfg, logger)
+		annotations.register(root)
 	}
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler, patterns)
@@ -1222,6 +1245,9 @@ func (rt *Runtime) acceptRecordJob(ctx context.Context, provider, requestBody st
 // Talk room binding, keyed by job ID — do so between prepare and start, so a
 // fast-failing job can never race past a not-yet-bound room entry (D-364).
 func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody string, req TriggerRequest) (createJobResponse, func(), error) {
+	if refusal := rt.recordingConfigurationRefusal(req); refusal != "" {
+		return createJobResponse{}, nil, fmt.Errorf("%w: %s", errRecordingSetup, refusal)
+	}
 	if !rt.reserveRecordSlot() {
 		return createJobResponse{}, nil, errRecordBusy
 	}

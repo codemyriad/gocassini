@@ -79,8 +79,8 @@ admin / admin
 Check:
 
 1. Nextcloud app menu has `Cassini`.
-2. Admin menu or app menu has `Cassini Admin`.
-3. `Cassini Admin` opens the control panel.
+2. Open `Cassini` as an administrator.
+3. The `Operator` section opens the control panel.
 4. `Cassini` opens the viewer.
 
 If Chrome needs the VM HTTP origin treated as secure for Talk media:

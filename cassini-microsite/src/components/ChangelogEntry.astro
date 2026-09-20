@@ -8,13 +8,14 @@ type RenderedContent = Awaited<ReturnType<CollectionEntry<"changelog">["render"]
 interface Props {
   title: string;
   date: Date;
-  author: string;
+  version?: string;
+  author?: string;
   Content: RenderedContent;
   isLast?: boolean;
   index?: number;
 }
 
-const { title, date, Content, isLast = false, index = 0 } = Astro.props;
+const { title, date, version, Content, isLast = false, index = 0 } = Astro.props;
 
 function formatDate(d: Date) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -31,8 +32,15 @@ function formatDate(d: Date) {
   </div>
   <!-- Content -->
   <div class="flex flex-col gap-3 mt-2.5 pb-12 flex-1 min-w-0">
-    <div class="text-xs font-medium text-primary px-2 py-1 rounded-full border border-base-300 bg-base-200 w-fit">
-      {formatDate(date)}
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="text-xs font-medium text-primary px-2 py-1 rounded-full border border-base-300 bg-base-200 w-fit">
+        {formatDate(date)}
+      </div>
+      {version && (
+        <div class="text-xs font-medium text-base-content/60 px-2 py-1 rounded-full border border-base-300 w-fit">
+          {version}
+        </div>
+      )}
     </div>
     <h2 class="text-xl md:text-2xl font-bold text-base-content leading-[1.2] mt-1">{title}</h2>
     <div class="text-sm md:text-base text-base-content/70 leading-[1.7] prose prose-invert max-w-none">

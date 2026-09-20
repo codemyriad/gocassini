@@ -3,31 +3,32 @@ package operator
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
-// writeFileAtomic writes body to path through a temp file in the same
-// directory, synced and then renamed, so a crash or failed write mid-update
-// never leaves a truncated or partially written file at path.
+// writeFileAtomic replaces path with a complete, synced file. Each writer uses
+// its own temporary file in the destination directory; the last rename wins.
 func writeFileAtomic(path string, body []byte, mode os.FileMode) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(body)
-	if err == nil {
-		err = f.Sync()
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	if err := f.Chmod(mode); err != nil {
+		return err
 	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
+	if _, err := f.Write(body); err != nil {
+		return err
 	}
-	if err == nil {
-		err = os.Rename(tmp, path)
+	if err := f.Sync(); err != nil {
+		return err
 	}
-	if err != nil {
-		_ = os.Remove(tmp)
+	if err := f.Close(); err != nil {
+		return err
 	}
-	return err
+	return os.Rename(f.Name(), path)
 }
 
 func validateExecutable(path string) error {

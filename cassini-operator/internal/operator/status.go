@@ -43,7 +43,7 @@ const (
 	signalingInternalSecretHint = "Talk recording needs CASSINI_TALK_SIGNALING_INTERNAL_SECRET " +
 		"(the Talk signaling server's [clients] internalsecret). On Nextcloud AIO, read it with " +
 		"`docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the " +
-		"[clients] internalsecret in the signaling server config. Set it in the External Apps deploy " +
+		"[clients] internalsecret in the signaling server config. Save it in Cassini → Operator → Publish pipeline → Talk authentication, or set it in the External Apps deploy " +
 		"options, or with `occ app_api:app:register <app> <daemon> --env " +
 		"CASSINI_TALK_SIGNALING_INTERNAL_SECRET=<value>`. See docs/exapp-install.md."
 
@@ -172,8 +172,9 @@ type statusTalk struct {
 
 // signalingInternalSecretConfigured reports whether the Talk signaling internal
 // secret (required for invisible HPB-internal recording) is set.
-func signalingInternalSecretConfigured() bool {
-	return strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != ""
+func (rt *Runtime) signalingInternalSecretConfigured() bool {
+	secret, _ := rt.signalingSecret()
+	return secret != ""
 }
 
 const (
@@ -272,7 +273,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 		},
 		Talk: statusTalk{
 			SecretConfigured:                  strings.TrimSpace(rt.cfg.TalkSharedSecret) != "",
-			SignalingInternalSecretConfigured: signalingInternalSecretConfigured(),
+			SignalingInternalSecretConfigured: rt.signalingInternalSecretConfigured(),
 			BackendURLOverrideConfigured:      strings.TrimSpace(rt.cfg.TalkBackendURL) != "",
 			SecretSource:                      rt.cfg.TalkSecretSource,
 			RecordingBackendURL:               rt.cfg.TalkRecordingBackendURL,
@@ -337,6 +338,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 // nothing an unprivileged caller could not have guessed from the app failing in
 // front of them.
 type setupResponse struct {
+	RecordingState string `json:"recording_state,omitempty"`
 	// OK is false whenever recordings cannot be served, for any reason.
 	OK bool `json:"ok"`
 	// State is the recordings_access state verbatim (provisioned / degraded /
@@ -449,9 +451,20 @@ func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
 	// and it has to agree with the admin surface, which is reading this.
 	mode, _ := ncStorage.snapshot()
 	writeJSON(w, http.StatusOK, setupResponse{
-		OK:    access.OK,
-		State: access.State,
-		Mode:  mode,
+		// RecordingState is this branch's own addition and is orthogonal to the
+		// storage model: it says whether RECORDING is verified to work, which is
+		// a different question from who may read what is recorded.
+		RecordingState: rt.publicRecordingState(r.Context()),
+		OK:             access.OK,
+		State:          access.State,
+		// Mode and Cause come from D-751. AwaitingChoice, which this branch had
+		// here, is deliberately dropped rather than merged: the mode resolves
+		// automatically on enable (D-753), so nothing can be waiting for a
+		// choice. The field survives on /storage pinned to false for wire
+		// compatibility (storage_handler.go) — but that is a shape kept for old
+		// clients, not a state, and reintroducing it HERE would put the
+		// model-choice gate back into the public status that D-708 removed.
+		Mode: mode,
 		// The user-safe half of the cause table, which is empty for every step
 		// whose honest sentence would name an account or a path.
 		Cause: storageUserCauseFor(access.Step),

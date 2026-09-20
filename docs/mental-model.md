@@ -1,181 +1,84 @@
 # Cassini mental model
 
-This page gives you the smallest useful model of the system.
+Cassini records Nextcloud Talk calls, builds portable meetings, and publishes
+those meetings for playback, transcript search, annotations, and optional insights.
+For a working installation, start with [Quick start](./quick-start.md).
 
-If you have not already run the happy path, do that first:
-
-- [Quick start](./quick-start.md)
-
-## The easiest way to think about Cassini
-
-Cassini is a **file-driven meeting pipeline**.
-
-It does three things:
-
-1. **record** a meeting
-2. **build** a reusable meeting artifact from that recording
-3. **publish** one or more built meetings into a static site
-
-The important part is that each stage writes durable files to disk. Later stages consume those files rather than depending on hidden in-memory state.
-
-## The core artifact flow
+## Artifacts and stages
 
 ```text
-Nextcloud Talk room
-  -> .run bundle
-  -> .meeting bundle
-  -> .site bundle
-  -> viewer
+Talk room -> .run capture -> .meeting build workspace -> .opus meeting -> publish
 ```
 
-### What those artifacts mean
+- **`.run`** preserves the captured media and session metadata for reruns.
+- **`.meeting`** is an intermediate build directory for inspecting audio,
+  transcripts, captions, and optional summaries.
+- **`.opus`** is the portable meeting: audio and embedded metadata in one file.
+- **`.site`** is an optional static library export containing a catalog and meetings.
 
-- **`.run`** — reusable output of the capture stage
-- **`.meeting`** — transient build scratch: an intermediate bundle the build stage stages before packing into a portable `.opus` (not a user-facing deliverable; scheduled for retirement)
-- **`.site`** — static export for browser delivery
+The operator persists four stages: **record → build → seal → publish**. Seal
+packs and verifies the `.opus` before publication. The CLI's portable output
+mode handles that packing within the record/build command.
 
-Cassini also supports a portable one-file output:
+The installed ExApp publishes recordings to Nextcloud Files. The standalone
+Compose stack publishes to a shared site volume. A static export contains its
+own viewer shell only when published with `--rebuild-viewer`; otherwise the
+host must supply the viewer. See [Core pipeline](./core-pipeline.md) and
+[Artifacts and filesystem](./reference/artifacts-and-filesystem.md).
+
+## Runtime and browser surfaces
+
+The **operator** runs CLI subprocesses, persists jobs and attempts in SQLite,
+and manages publication, access, annotations, and insights.
+
+The **Cassini app** is the unified Nextcloud interface. It uses `cassini-viewer`
+for browsing meetings and provides insight generation and an administrator-only
+**Operator** section for jobs and settings. AppAPI enforces API permissions.
+The viewer can also run separately as a static or embedded meeting reader.
 
 ```text
-... -> one .opus file
+Nextcloud Cassini app -> AppAPI proxy -> operator -> CLI subprocesses
+                                       |        -> SQLite and work files
+                                       +--------> Nextcloud Files
 ```
 
-That portable `.opus` file is the one canonical, user-facing meeting format and the only durable published contract. It is still built from the same underlying capture/build flow — it is not a second recording architecture.
+The standalone development bundle has two services: **operator** and **viewer**.
+Run the app's Vite server separately when developing the Operator UI. The
+[harness](./components/harness.md) supplies a local Nextcloud/Talk environment;
+it is separate from that Compose bundle.
 
-See more:
+An installed viewer can read and edit annotations through the operator's APIs.
+A static viewer reads the published files without those server-backed features.
+Nextcloud setup actions can also use the administrator's browser session to
+make changes directly in Nextcloud.
 
-- [Core pipeline](./core-pipeline.md)
-- [Artifacts and filesystem](./reference/artifacts-and-filesystem.md)
+## Two ways to run the pipeline
 
-## The main runtime pieces
+### Operator-managed
 
-In local end-to-end development, you usually run two stacks at once.
+Talk's recording controls or the operator API create jobs. The operator admits
+recordings, schedules downstream stages, preserves attempts, and publishes the
+result. Administrators watch progress in the app's Operator section.
 
-### 1. Harness
-
-The harness gives you a local Nextcloud Talk environment to record against.
-
-Think of it as the local lab for:
-
-- starting Talk
-- creating rooms
-- running smoke tests and fixtures
-
-### 2. Deployment bundle
-
-The deployment bundle gives you the main Cassini runtime:
-
-- **operator** — runs jobs and owns state
-- **control panel** — browser UI for operating the operator
-- **viewer** — browser UI for reading published results
-
-## Browser and backend boundaries
-
-```text
-browser
-  -> control panel
-  -> viewer
-
-control panel
-  -> operator API
-
-operator
-  -> SQLite
-  -> work root
-  -> shared published-site storage
-  -> cassini CLI subprocesses
-
-viewer
-  -> shared published-site storage (read-only)
-```
-
-This separation is deliberate.
-
-- The **control panel** is for operating jobs.
-- The **viewer** is for consuming published meetings.
-- The **operator** is the only runtime service that mutates state.
-
-## Two main ways to use Cassini
-
-### Operator-managed flow
-
-This is the product-shaped runtime:
-
-- jobs are created through an HTTP API
-- the operator persists jobs and attempts
-- the control panel watches status updates
-- the viewer serves published output
-
-Use this when you care about end-to-end behavior.
-
-### Standalone CLI flow
-
-This is the transparent pipeline view:
+### Standalone CLI
 
 ```bash
-./bin/cassini record --call "$CALL_URL" --out demo.run
-./bin/cassini build demo.run --out demo.meeting
-./bin/cassini publish ./meetings --out site
+./bin/cassini record --call "$CALL_URL" --out ./runs/demo.run
+./bin/cassini build ./runs/demo.run --out ./meetings/demo.meeting
+./bin/cassini publish ./meetings --out ./site --rebuild-viewer
 ./bin/cassini serve ./site
 ```
 
-Use this when you want to inspect stage boundaries directly.
+This exposes the intermediate files for debugging. For a portable file directly,
+use `./bin/cassini record --call "$CALL_URL" --out demo.opus`.
 
-## Three architectural rules that explain most of Cassini
+## Useful terms
 
-### 1. Durable files are the contract between stages
+- **Job** — one recording and its downstream processing.
+- **Attempt** — one execution of that job; a rerun reuses its captured media.
+- **`current/`** — the operator's latest reusable artifacts for each job.
+- **Seal** — pack and verify the immutable `.opus` artifact for an attempt.
+- **Publish** — deliver that artifact to Nextcloud or a static library.
 
-This is why Cassini can:
-
-- inspect failures after the fact
-- rerun downstream work from preserved artifacts
-- keep the viewer static and simple
-
-### 2. The operator orchestrates; it does not reimplement the pipeline
-
-The operator shells out to the Cassini CLI for record, build, and publish.
-
-That keeps:
-
-- one source of truth for artifact production
-- better parity between CLI and operator mode
-- cleaner separation between orchestration and media processing
-
-### 3. The control panel and viewer solve different problems
-
-The control panel is about:
-
-- starting work
-- stopping work
-- rerunning work
-- watching job state
-
-The viewer is about:
-
-- opening the published site
-- playing audio
-- reading transcripts and summaries
-
-They are intentionally separate applications.
-
-## A minimal glossary
-
-- **Talk room** — the Nextcloud Talk meeting being recorded
-- **record** — join the room and capture source media
-- **build** — turn captured media into a structured meeting artifact
-- **publish** — export one or more meetings into a static viewer site
-- **job** — one logical unit of operator-managed work
-- **attempt** — one execution pass for a job
-- **`current/`** — the operator’s canonical library of latest reusable artifacts per job
-- **portable `.opus`** — one-file packaged meeting output
-
-For more terms, including audio/container terminology, see:
-
-- [Glossary](./reference/glossary.md)
-- [Audio & media glossary](./audio-glossary.md)
-
-## Where to go next
-
-- Want the local runtime topology: [Running the local developer stack](./local-developer-stack.md)
-- Want the operator model: [Operator stack](./operator-stack.md)
-- Want stage-by-stage details: [Core pipeline](./core-pipeline.md)
+Next: [Operator stack](./operator-stack.md), [local developer stack](./local-developer-stack.md),
+or the [glossary](./reference/glossary.md).

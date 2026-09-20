@@ -17,7 +17,7 @@ describes the second one.
 
 | | Everyone with a Nextcloud account | Meeting participants |
 |---|---|---|
-| Who can see a recording | anyone with an account on this Nextcloud | only the people who were in the call |
+| Who can see a recording | anyone with an account on this Nextcloud | private rooms: the room’s audience at publication (including invitees); public rooms: all signed-in accounts |
 | Where recordings live | the `cassini` account's own `CassiniNoACL/Recordings` | `Cassini/Recordings`, inside the `Cassini` Team folder |
 | Nextcloud apps needed | none | Team folders + Everyone Group |
 | Other prerequisites | a `cassini` service account | a `cassini` service account, an `everyone` group, and a mapped, ACL-enabled `Cassini` Team folder |

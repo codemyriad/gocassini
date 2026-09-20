@@ -8,17 +8,8 @@ import (
 	"os"
 )
 
-// fileSHA256 is the digest that binds the whole delivery chain together
-// (D-583): the seal stage records it for the artifact it just packed, the
-// publish worker re-checks the sealed file before it spawns anything, and the
-// sink re-checks the copy it staged before committing it. Three independent
-// checks over the same number, so "the meeting the user downloads is the
-// meeting this attempt sealed" is verified rather than assumed.
-//
-// This deliberately hashes the complete container bytes. The portable
-// manifest separately binds the compressed Opus audio essence, which survives
-// metadata-only rewrites. The claim here is narrower: "is this the same sealed
-// file?".
+// fileSHA256 hashes the complete container for seal and publish verification.
+// Unlike the manifest's audio digest, this includes metadata bytes.
 func fileSHA256(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
