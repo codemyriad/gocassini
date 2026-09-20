@@ -122,7 +122,7 @@ describe("the two options", () => {
       "Anyone with an account on this Nextcloud can open every meeting, including its recording and transcript, and see which room it came from. Works with nothing extra installed.",
     );
     expect(options[1].description).toBe(
-      "Only the room's members can open a recording, including people invited who didn't join. Guests and people added later can't. Needs two Nextcloud apps: Team folders and Everyone Group.",
+      "Only the room's members can open new recordings, including people invited who didn't join. Guests and people added later can't. Needs two Nextcloud apps: Team folders and Everyone Group.",
     );
   });
 
@@ -161,7 +161,7 @@ describe("the existing-recordings line", () => {
     );
   });
 
-  it("says who can see them under Room members", () => {
+  it("does not infer existing ACLs from Room members mode", () => {
     const status = statusOf({
       mode: "access_controlled",
       modes: [
@@ -174,13 +174,13 @@ describe("the existing-recordings line", () => {
       ],
     });
     expect(existingRecordingsLine(status)).toBe(
-      "You have 134 recordings. Only room members can see them.",
+      "You have 134 recordings. Existing recordings may still be visible to everyone. Review their access below.",
     );
   });
 
   // The one fact an administrator will forget and be surprised by later: a
   // switch does not narrow the recordings that already exist.
-  it("says the pre-switch recordings are still visible to everyone", () => {
+  it("explains that switching does not restrict existing recordings", () => {
     const status = statusOf({
       mode: "access_controlled",
       modes: [
@@ -193,7 +193,7 @@ describe("the existing-recordings line", () => {
       ],
     });
     expect(existingRecordingsLine(status, true)).toBe(
-      "You have 2 recordings from before the switch. Anyone with a Nextcloud account can still see them. New recordings are visible to room members only.",
+      "You have 2 recordings. Switching does not restrict existing recordings. Review their access below.",
     );
   });
 
@@ -246,6 +246,9 @@ describe("the existing-recordings line", () => {
       ],
     });
     expect(recordingCount(status).known).toBe(false);
+    expect(existingRecordingsLine({ ...status, mode: "access_controlled" })).toBe(
+      "New recordings are visible to room members only. Existing recordings may still be visible to everyone. Review their access below.",
+    );
     expect(existingRecordingsLine(status)).toBe(
       "Anyone with a Nextcloud account can see the recordings you already have.",
     );

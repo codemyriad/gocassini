@@ -22,6 +22,7 @@
     appsInUse,
     doneMessage,
     existingRecordingsLine,
+    recordingCount,
     installButtonLabel,
     missingApps,
     modeSourceLabel,
@@ -105,9 +106,7 @@
   // migration is the switch's progress, read by the poll below rather than from
   // the PUT — which does not answer until the whole move is done.
   let migration: StorageMigration | null = null;
-  // switched records that a switch happened in THIS session, which is the only
-  // moment the app can tell a recording that predates it from one that does
-  // not: the operator keeps no per-recording audience to read back later.
+  // switched selects post-switch guidance; it is not evidence of recording ACLs.
   let switched = false;
   // credential is the service account's password, when the administrator asked
   // for one through "Set a password". It exists nowhere else, at either end,
@@ -118,14 +117,14 @@
 
   // D-769: the recordings a migration left readable by everyone.
   //
-  // Loaded on first expand rather than with the section, because answering it
-  // costs the operator a PROPFIND of the Team folder and most visits to this
-  // page are not about it. Null means nobody has asked yet, which the summary
-  // renders as nothing at all — never as "none".
+  // Loaded when the review opens, including after a successful mode switch.
+  // Answering costs a Team folder PROPFIND, so ordinary page loads remain cheap.
+  // Null means nobody has asked yet, never that no recordings remain open.
   let openRecordings: OpenRecordings | null = null;
   let openLoading = false;
   let openError: LoadError | null = null;
   let openAsked = false;
+  let reviewDetails: HTMLDetailsElement | null = null;
   // The ticked rows, by id. Only narrowable rows can be in here.
   let selected: Record<string, boolean> = {};
   let restrictFlow: "confirm" | null = null;
@@ -388,15 +387,14 @@
       // snapshot here would hide the recordings that became open again until
       // the whole component happened to be reloaded (D-769).
       //
-      // Do not re-fetch eagerly: the list is deliberately paid for only when
-      // an administrator opens its disclosure. Resetting makes the next open
-      // ask the server about the newly authoritative archive.
+      // The completed switch offers a fresh review of the migrated archive.
       resetOpenRecordings();
       switched = true;
       migration = null;
       flow = null;
       target = null;
       done = doneMessage(mode);
+      if (mode === PARTICIPANTS) await reviewExistingRecordings();
       if (status.first_run && status.service_account.exists) {
         try {
           await operatorClient.acknowledgeFirstRun();
@@ -583,8 +581,25 @@
   // readable by everyone by design — and only once the instance is settled,
   // because during an unfinished migration which root is authoritative is
   // exactly what is unresolved.
+  $: archiveCount = recordingCount(status);
   $: openRecordingsApplicable =
-    status !== null && status.mode === PARTICIPANTS && status.migration_clean;
+    status !== null && status.mode === PARTICIPANTS && status.migration_clean &&
+    (!archiveCount.known || archiveCount.count > 0);
+  // An empty review queue is evidence that no action is queued, not that all
+  // recordings are private: public-room and ignored recordings are omitted.
+  $: reviewEmpty = openRecordings !== null && !openLoading && openError === null &&
+    !hasOpenRows;
+
+  async function reviewExistingRecordings(): Promise<void> {
+    await tick();
+    if (!reviewDetails) return;
+    reviewDetails.open = true;
+    reviewDetails.querySelector("summary")?.focus();
+    reviewDetails.scrollIntoView({ block: "nearest" });
+    // Also refresh when the review was already open. Loading/error states stay
+    // in the review; a failed read must not undo a successful mode switch.
+    await loadOpenRecordings();
+  }
 
   async function loadOpenRecordings(): Promise<void> {
     if (!operatorClient || !openRecordingsApplicable || openLoading) {
@@ -718,7 +733,7 @@
     pendingAccessChoice.set(null);
     choose(next);
   }
-  $: existingLine = existingRecordingsLine(status, switched);
+  $: existingLine = reviewEmpty ? "" : existingRecordingsLine(status, switched);
   $: narrowableRows = (openRecordings?.recordings ?? []).filter(
     (row: OpenRecording) => row.narrowable,
   );
@@ -767,7 +782,7 @@
     <div class="set-row-main">
       <h2 class="set-row-name op-card-title">Who can see recordings</h2>
       <p class="set-row-sub">
-        Applies to every recording Cassini publishes to this Nextcloud.
+        Choose who can see new recordings. Review existing recordings separately.
       </p>
     </div>
     <button
@@ -938,7 +953,24 @@
            so a recording leaves it by actually being limited rather than by
            this page removing a row. -->
       {#if openRecordingsApplicable}
+        {#if !reviewEmpty}
+          <div class="rounded-box border border-warning bg-warning/10 p-3">
+            <p class="text-sm">
+              Switching to Room members does not restrict existing recordings. Review who can
+              still see them and choose which recordings to restrict.
+            </p>
+            <button
+              class="btn btn-sm btn-primary mt-2"
+              type="button"
+              disabled={busy || openLoading || restricting}
+              on:click={() => void reviewExistingRecordings()}
+            >
+              Review existing recordings
+            </button>
+          </div>
+        {/if}
         <details
+          bind:this={reviewDetails}
           class="op-tint access-panel"
           on:toggle={(event) => {
             if ((event.currentTarget as HTMLDetailsElement).open && !openAsked) {
@@ -952,7 +984,7 @@
             {:else if openSummary}
               {openSummary}
             {:else if openAsked && openError === null}
-              Every recording is restricted to its room members
+              No recordings to review
             {:else}
               Recordings visible to everyone
             {/if}
@@ -1059,8 +1091,12 @@
               </div>
             {:else if openAsked && !openLoading && openError === null}
               <p class="text-sm text-base-content/70">
-                Nothing is visible to everyone. Every recording is restricted to its room members.
+                No recordings to review. Ignored recordings keep their current permissions.
               </p>
+              <button class="btn btn-sm btn-outline" type="button"
+                disabled={busy || restricting} on:click={() => void loadOpenRecordings()}>
+                Check recording access again
+              </button>
             {/if}
 
             {#if ignoredLine}

@@ -51,7 +51,7 @@ const OPTION_COPY: readonly { mode: AccessMode; title: string; description: stri
     mode: PARTICIPANTS,
     title: PARTICIPANTS_TITLE,
     description:
-      "Only the room's members can open a recording, including people invited who didn't join. Guests and people added later can't. Needs two Nextcloud apps: Team folders and Everyone Group.",
+      "Only the room's members can open new recordings, including people invited who didn't join. Guests and people added later can't. Needs two Nextcloud apps: Team folders and Everyone Group.",
   },
 ];
 
@@ -105,9 +105,8 @@ export function plural(n: number, noun: string): string {
 // it is the one an administrator will otherwise be surprised by later: a switch
 // to Room members does NOT narrow the recordings that already exist.
 //
-// `switched` means this page has just performed a switch, which is the only
-// moment the app can tell "before" from "after" — the operator records no
-// per-recording audience, so there is nothing to read back on a later load.
+// The selected mode is a rule for new recordings, not evidence of existing ACLs.
+// Only the separate review can establish which existing recordings remain open.
 export function existingRecordingsLine(status: StorageStatus | null, switched = false): string {
   const { known, count } = recordingCount(status);
   const mode = status?.mode ?? "";
@@ -119,7 +118,7 @@ export function existingRecordingsLine(status: StorageStatus | null, switched = 
   }
   if (!known) {
     if (mode === PARTICIPANTS) {
-      return "Only room members can see the recordings you already have.";
+      return "New recordings are visible to room members only. Existing recordings may still be visible to everyone. Review their access below.";
     }
     return "Anyone with a Nextcloud account can see the recordings you already have.";
   }
@@ -134,10 +133,10 @@ export function existingRecordingsLine(status: StorageStatus | null, switched = 
   }
   const have = `You have ${plural(count, "recording")}`;
   if (mode === PARTICIPANTS && switched) {
-    return `${have} from before the switch. Anyone with a Nextcloud account can still see them. New recordings are visible to room members only.`;
+    return `${have}. Switching does not restrict existing recordings. Review their access below.`;
   }
   if (mode === PARTICIPANTS) {
-    return `${have}. Only room members can see them.`;
+    return `${have}. Existing recordings may still be visible to everyone. Review their access below.`;
   }
   return `${have}. Anyone with a Nextcloud account can see them.`;
 }
