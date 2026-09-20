@@ -49,6 +49,7 @@ const entries = await Promise.all(
         <ChangelogEntry
           title={entry.data.title}
           date={entry.data.date}
+          version={entry.data.version}
           author={entry.data.author}
           Content={entry.Content}
           isLast={i === entries.length - 1}

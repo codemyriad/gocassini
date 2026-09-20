@@ -18,7 +18,9 @@ const changelog = defineCollection({
   schema: z.object({
     title: z.string(),
     date: z.coerce.date(),
-    author: z.string(),
+    // The release an entry shipped in, so a reader can tell what to install.
+    version: z.string().optional(),
+    author: z.string().optional(),
     draft: z.boolean().optional(),
   }),
 });
