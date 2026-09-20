@@ -53,13 +53,21 @@ def version(value):
     return tuple(map(int, value.split(".")))
 
 
+def server_version(value):
+    # Nextcloud's versionstring preserves its preview label (e.g. "35.0.0 RC1").
+    # Baselines still require version(), which accepts stable releases only.
+    require(isinstance(value, str) and re.fullmatch(r"\d+\.\d+\.\d+(?: (?:dev|(?:alpha|beta|RC)\d+))?", value),
+            f"unrecognized Nextcloud versionstring: {value}")
+    return version(value.split()[0])
+
+
 def command(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
 def validate_stack(stack):
     require(re.fullmatch(r"[a-z0-9][a-z0-9.-]*", stack["id"]), "invalid stack ID")
-    version(stack["nextcloud_version"])
+    server_version(stack["nextcloud_version"])
     require(set(stack["images"]) == set(SERVICES), "stack must lock every service image")
     for ref in stack["images"].values():
         require(isinstance(ref, str) and "@" in ref and
@@ -253,12 +261,15 @@ def resolve_apps(nc_version):
 def resolve_candidate(policy, major, image=None):
     ref = resolve_image(image or f"nextcloud:{major}")
     subprocess.run(["docker", "pull", ref], check=True, stdout=sys.stderr)
-    data = json.loads(command("docker", "image", "inspect", ref))[0]
-    nc_version = next(e.split("=", 1)[1] for e in data["Config"]["Env"] if e.startswith("NEXTCLOUD_VERSION="))
-    require(version(nc_version)[0] == major, "candidate image resolved to the wrong major")
     container = command("docker", "create", ref)
     try:
         with tempfile.TemporaryDirectory() as tmp:
+            server = Path(tmp) / 'version.php'
+            subprocess.run(['docker', 'cp', f'{container}:/usr/src/nextcloud/version.php', str(server)], check=True)
+            match = re.search(r"\$OC_VersionString\s*=\s*'([^'\n]+)'", server.read_text())
+            require(match is not None, 'candidate image has no Nextcloud versionstring')
+            nc_version = match[1]
+            require(server_version(nc_version)[0] == major, "candidate image resolved to the wrong major")
             path = Path(tmp) / "info.xml"
             subprocess.run(["docker", "cp", f"{container}:/usr/src/nextcloud/apps/app_api/appinfo/info.xml", str(path)], check=True)
             app_api = {"source": "bundled", "version": ET.parse(path).getroot().findtext("version"), "sha256": sha(path)}
@@ -268,13 +279,13 @@ def resolve_candidate(policy, major, image=None):
     stack.update(id=f"canary-{major}", nextcloud_version=nc_version)
     stack["images"]["nextcloud"] = ref
     # Hold infrastructure fixed; isolate Nextcloud and its app release train.
-    stack["apps"] = {**resolve_apps(nc_version), "app_api": app_api}
+    stack["apps"] = {**resolve_apps(nc_version.split()[0]), "app_api": app_api}
     validate_stack(stack)
     return stack
 
 
 def candidate_changes(policy, stack):
-    major = version(stack['nextcloud_version'])[0]
+    major = server_version(stack['nextcloud_version'])[0]
     same_major = [s for s in policy['baselines'] if version(s['nextcloud_version'])[0] == major]
     baseline = max(same_major, key=lambda s: version(s['nextcloud_version'])) if same_major else next(
         s for s in policy['baselines'] if s['id'] == policy['reference'])

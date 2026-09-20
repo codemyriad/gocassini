@@ -146,7 +146,7 @@ releases. Logs must redact credentials and authentication material.
 |---|---|---|
 | Every relevant PR | Existing fast and product checks; compatibility on reference and exact oldest baseline. Inventory, harness or integration-boundary changes exercise all supported baselines. | Stable required check names, explicit per-version results and applicability. |
 | Docs-only PR | Explicit not-applicable status through the existing classifier; compatibility configuration must live outside ignored docs paths. | A reason for applicability, never reusable as release evidence. |
-| Main push | Installed compatibility across all supported baselines, sharing the one built Cassini artifact. Existing specialized suites keep their current role. | Complete baseline matrix and evidence index. |
+| Main push | Installed compatibility across all supported baselines, sharing the one built Cassini artifact. Existing specialized suites keep their current role. | 🟡 Complete baseline matrix and per-major evidence records; the release index is reserved for tag pushes. |
 | Release tag | All supported baselines plus existing required image/product suites on the exact tag artifact; no relevance-based bypass. | Evidence eligible for release.yml verification. |
 | Scheduled daily / manual canary | Latest patches for supported majors; a configured upcoming-major candidate when available. Freeze the Cassini digest so upstream drift can be isolated. | Dependency differences and results; advisory to PR merging. |
 
@@ -302,12 +302,14 @@ It is not included in the first bet or represented as already shaped for build.
 
 ## Implementation record
 
-Shape B is implemented on `plan/nextcloud-compatibility`; hosted qualification
-remains in progress. The inventory contains 33.0.9, 34.0.0 and 35.0.0. The first
+Shape B is implemented on `plan/nextcloud-compatibility`; current qualification
+is visible in [PR #321](https://github.com/codemyriad/gocassini/pull/321).
+The inventory contains 33.0.9, 34.0.0 and 35.0.0. The first
 hosted installed runs passed on 34 and 35; 35 is now the reference. AppAPI 33
 exposed an unsupported CLI JSON option, addressed by reading the same daemon
-metadata directly. The next run also requires clicking the real Play button
-after dismissing Nextcloud's welcome dialog. AppAPI is bundled by these server
+metadata directly, after which recording, publication, access and restart passed
+on 33 too. The final browser check uses the welcome dialog's Close button and
+Cassini's real Play button. AppAPI is bundled by these server
 images: its metadata checksum and version replace an external archive lock.
 The implementation is documented in [the compatibility runbook](../../nextcloud-compatibility.md).
 
@@ -315,3 +317,11 @@ The scheduled resolver advances the server and native apps while holding the
 infrastructure images fixed. This deliberately isolates the upstream release
 train; infrastructure lock updates remain reviewed changes. The preview list
 starts empty until an appropriate 36 image/dependency set is available.
+Preview locks preserve the server's exact prerelease label; required baselines
+remain stable releases. The resolver and release-manifest fetch have been
+exercised against live 35 inputs. Scheduled execution starts after merge.
+
+All release-required registry consumers use their source build's digest. The
+verifier has positive ZIP-handoff/package-binding demonstrations and negative
+controls for incomplete, mismatched and stale evidence. The final signed asset
+path is reserved for the next authorized release, as specified in V3.

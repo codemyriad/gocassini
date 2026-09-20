@@ -4,14 +4,23 @@ shaping: true
 
 # Nextcloud compatibility — slices
 
-Status: implementation order for selected shape B; hosted qualification in progress. The user confirmed
+Status: selected shape B implemented; [PR #321](https://github.com/codemyriad/gocassini/pull/321)
+holds current qualification results. The user confirmed
 two weeks for one engineer and support for maintained majors, currently 33–35,
 with explicit retirement of 32. This document follows the authoritative
 [requirements, shape and breadboard](shaping.md).
 
 Initial V2 execution passed on 34.0.0 and 35.0.0; 35 is now the reference.
-Requalification includes the AppAPI 33 daemon-metadata fix and a browser check
-that dismisses the Nextcloud welcome dialog and clicks the actual Play button.
+The AppAPI 33 daemon-metadata fix allowed its complete recording/restart path
+to pass. Requalification includes clicking the Nextcloud welcome dialog's Close
+button and Cassini's actual Play button. The matrix aggregate accepts only a
+complete pass, including that browser interaction.
+
+V1 and V3 have offline refusal tests, an exact-attempt ZIP handoff test and an
+actual unsigned-package manifest-binding check. V4's real 35 resolver and archived
+release-manifest fetch have run locally. The new scheduled workflow becomes
+dispatchable after merge. Final signing and publication remain the next normal,
+authorized release; this implementation does not publish a test release.
 
 Every slice ends in a maintainer-visible result in PR checks, Actions or release
 assets. Those existing interfaces are the UI for this infrastructure project.

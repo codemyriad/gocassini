@@ -5,7 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${IMAGE_REF:?exact Cassini image required}"
 : "${LOG_DIR:?isolated evidence directory required}"
 mode="${COMPAT_MODE:-baseline}"
-mkdir -p "$LOG_DIR"
+# Never let observations or a browser result from an earlier run qualify this
+# attempt if collection fails. Each invocation owns a newly created directory.
+mkdir -p "$(dirname "$LOG_DIR")"
+mkdir "$LOG_DIR" || { echo 'Choose a new LOG_DIR for each compatibility attempt' >&2; exit 1; }
 if [[ -n "${COMPAT_STACK:-}" ]]; then
   python3 "$ROOT/scripts/nextcloud_compatibility.py" prepare --stack "$COMPAT_STACK" --out "$LOG_DIR/lock"
 else

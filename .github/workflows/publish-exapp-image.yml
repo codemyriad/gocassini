@@ -588,7 +588,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pre-pull stack images
@@ -648,7 +648,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run smoke test
@@ -1069,7 +1069,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ needs.build-image-cuda.outputs.image_ref }}
+          image-ref-list: ${{ format('ghcr.io/{0}@{1}', github.repository, needs.build-image-cuda.outputs.digest) }}
           pr-source: registry
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -1135,7 +1135,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run container-level e2e
@@ -1155,7 +1155,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Unlike the smoke/e2e jobs above, this boots the image via its real
@@ -1187,7 +1187,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run manual-install e2e against a fresh Nextcloud + AppAPI
@@ -1280,7 +1280,7 @@ jobs:
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ needs.build-image-cuda.outputs.image_ref }}
+          image-ref-list: ${{ format('ghcr.io/{0}@{1}', github.repository, needs.build-image-cuda.outputs.digest) }}
           pr-source: registry
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Pre-pull compose stack images

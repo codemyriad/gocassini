@@ -17,7 +17,8 @@ Use a dedicated Docker host with no retained Cassini fixture. The runner refuses
 existing fixture containers, volumes and network because the underlying harness
 resets and tears down its own resources. Other Docker workloads are not removed.
 Install the tools listed in `.github/actions/compatibility-tools/action.yml`
-and load the exact Cassini image to test first.
+and load the exact Cassini image to test first. Choose a new `LOG_DIR` for every
+attempt; an existing evidence directory is refused to prevent stale results.
 
 ```bash
 IMAGE_REF=ghcr.io/codemyriad/gocassini@sha256:THE_TESTED_DIGEST \
@@ -52,6 +53,11 @@ after it. Index, platform-manifest and config/image digests are recorded as
 different identities, not compared interchangeably. Compact evidence is attached
 to the release; routine diagnostics expire after 14 days and the handoff artifact
 after 90 days. Expired handoff evidence requires requalification.
+
+Requalification means rerunning **all jobs** of the exact tagged image workflow,
+then restarting release verification. A failed-jobs-only rerun mixes attempts
+and cannot supply a complete matching evidence set. Old tags that predate this
+format are refused before approval; publish a newly qualified release instead.
 
 ## Update the policy
 
@@ -90,8 +96,10 @@ override; its evidence cannot authorize publication.
 
 The preview list is initially empty. Add an explicit `{ "major": 36,
 "image": "nextcloud:36" }` entry when an appropriate candidate is available;
-an available prerelease server without compatible stable app dependencies will
-remain unavailable. Do not widen public support automatically from canary results.
+use the published prerelease tag in `image` when testing an earlier candidate.
+The lock retains Nextcloud's exact preview label. A prerelease server without
+compatible stable app dependencies remains unavailable. Do not widen public
+support automatically from canary results.
 Qualify fresh installation, the separately planned persisted 35→36 upgrade, and
 then the actual production manifest before adding 36 to required support.
 

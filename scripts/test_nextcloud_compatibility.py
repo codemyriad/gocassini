@@ -1,10 +1,14 @@
 """Offline negative controls for the support promise and release authorization."""
 import copy
+import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 import nextcloud_compatibility as policy
 import compatibility_evidence as evidence
@@ -55,6 +59,17 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(policy.satisfies('35.0.0', '*'))
         self.assertFalse(policy.satisfies('35.0.0', '>=35.0.0 || >=30.0.0'))
 
+    def test_prerelease_identity_is_allowed_only_outside_baselines(self):
+        preview = copy.deepcopy(self.policy['baselines'][-1])
+        preview['nextcloud_version'] = '36.0.0 RC1'
+        policy.validate_stack(preview)
+        self.assertEqual(policy.server_version(preview['nextcloud_version']), (36, 0, 0))
+        self.policy['baselines'][-1]['nextcloud_version'] = '35.0.0 RC1'
+        with self.assertRaisesRegex(ValueError, 'stable'):
+            policy.validate(self.policy)
+        with self.assertRaisesRegex(ValueError, 'versionstring'):
+            policy.server_version('36.0.0 unknown')
+
     def test_canary_reports_changed_bytes_even_when_versions_match(self):
         candidate = copy.deepcopy(self.policy['baselines'][-1])
         candidate['id'] = 'canary-35'
@@ -70,6 +85,16 @@ class PolicyTests(unittest.TestCase):
     def test_app_replacement_requires_disposable_fixture(self):
         with patch.dict('os.environ', {}, clear=True), self.assertRaisesRegex(ValueError, 'disposable'):
             policy.install_app(self.policy['baselines'][0], 'spreedtest', 'spreed')
+
+    def test_runner_refuses_reused_evidence_before_starting_docker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / 'observed.json'
+            marker.write_text('earlier evidence')
+            result = subprocess.run([str(policy.ROOT / 'harness/bin/ci-nextcloud-compatibility.sh'), 'nc35'],
+                env={**os.environ, 'LOG_DIR': tmp, 'IMAGE_REF': 'unused'}, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('new LOG_DIR', result.stderr)
+            self.assertEqual(marker.read_text(), 'earlier evidence')
 
 
 class ReleaseTests(unittest.TestCase):
@@ -92,7 +117,7 @@ class ReleaseTests(unittest.TestCase):
             self.jobs[job]['outputs'] = {'digest': self.images[name]['digest']}
         self.records = []
         for stack in self.policy['baselines']:
-            self.records.append({'schema': 'cassini.compatibility.v1', 'source': copy.deepcopy(self.src),
+            self.records.append({'schema': 'cassini.compatibility.v1', 'scenario': evidence.SCENARIO, 'source': copy.deepcopy(self.src),
                 'mode': 'baseline', 'policy_sha256': self.policy_hash, 'manifest_sha256': self.manifest_hash,
                 'stack': copy.deepcopy(stack), 'result': 'passed', 'exit_code': 0, 'cleanup': 'passed',
                 'checks': dict.fromkeys(evidence.REQUIRED_CHECKS, True), 'observed': {
@@ -115,6 +140,22 @@ class ReleaseTests(unittest.TestCase):
     def test_matching_evidence_authorizes_candidate(self):
         self.verify(self.build())
 
+    def test_browser_failure_retains_completed_product_assertions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp)
+            stack = log / 'stack.json'
+            policy.write_json(stack, self.policy['baselines'][0])
+            policy.write_json(log / 'summary.json', {'result': 'running', 'exit_code': 1, 'cleanup': 'passed',
+                'source_image_id': self.config, 'installed_image_id': self.config,
+                'control': {'recording_performed': True}, 'validation': {'result': 'passed', 'runs': [
+                    {'artifact': {'segment_count': 1, 'word_count': 1},
+                     'access': {'participant': True, 'outsider_denied': True}}] * 2}})
+            policy.write_json(log / 'observed.json', self.records[0]['observed'])
+            policy.write_json(log / 'browser/result.json', {'result': 'failed', 'checks': {'login': True}})
+            record = evidence.collect(log, stack, 'baseline', 1, '2026-09-20T00:00:00+00:00')
+            self.assertEqual(record['result'], 'product-failure')
+            self.assertEqual({k for k, v in record['checks'].items() if not v}, {'embedded_browser'})
+
     def test_missing_major_and_duplicate_evidence_block(self):
         self.records.pop()
         with self.assertRaisesRegex(ValueError, 'missing='):
@@ -126,6 +167,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_incomplete_or_wrong_observations_block(self):
         changes = [lambda r: r.update(mode='canary'), lambda r: r.update(result='cancelled'),
+            lambda r: r.update(scenario='http-only'),
             lambda r: r.update(result='skipped'), lambda r: r.update(result='environment-failure'),
             lambda r: r.update(cleanup='failed'), lambda r: r.update(exit_code=1),
             lambda r: r['source'].update(attempt='2'), lambda r: r['source'].update(sha='4' * 40),
@@ -179,6 +221,33 @@ class ReleaseTests(unittest.TestCase):
                      patch.object(evidence, 'command', return_value=json.dumps([{'artifacts': found}])):
                     with self.assertRaisesRegex(ValueError, 'missing or expired'):
                         evidence.await_evidence(self.src['repository'], 'v1.2.3', self.src['sha'], Path(tmp)/'out.json', 1)
+
+    def test_completed_run_hands_off_exact_attempt_artifact(self):
+        index = self.build()
+        body = io.BytesIO()
+        with zipfile.ZipFile(body, 'w') as archive:
+            archive.writestr('release-evidence.json', json.dumps(index))
+        artifacts = [{'artifacts': [{'id': 123, 'name': 'release-evidence-1', 'expired': False}]}]
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(evidence, 'current_commit', return_value=self.src['sha']), \
+             patch.object(evidence, 'gh', return_value={'workflow_runs': [self.run]}), \
+             patch.object(evidence, 'command', return_value=json.dumps(artifacts)), \
+             patch.object(evidence.subprocess, 'check_output', return_value=body.getvalue()):
+            path = Path(tmp) / 'qualified/release-evidence.json'
+            received, run = evidence.await_evidence(self.src['repository'], 'v1.2.3', self.src['sha'], path, 1)
+            self.assertEqual(run, self.run)
+            self.assertEqual(received, index)
+            self.assertEqual(policy.read_json(path), index)
+            self.verify(received)
+
+    def test_moved_tag_and_ambiguous_source_runs_refuse(self):
+        with patch.object(evidence, 'current_commit', return_value='0' * 40):
+            with self.assertRaisesRegex(ValueError, 'tag moved'):
+                evidence.await_evidence(self.src['repository'], 'v1.2.3', self.src['sha'], 'unused', 1)
+        with patch.object(evidence, 'current_commit', return_value=self.src['sha']), \
+             patch.object(evidence, 'gh', return_value={'workflow_runs': [self.run, {**self.run, 'id': 13}]}):
+            with self.assertRaisesRegex(ValueError, 'ambiguous'):
+                evidence.await_evidence(self.src['repository'], 'v1.2.3', self.src['sha'], 'unused', 1)
 
 
 if __name__ == '__main__':

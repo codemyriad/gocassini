@@ -143,6 +143,10 @@ jobs:
           TAG: ${{ needs.validate.outputs.tag }}
           COMMIT: ${{ needs.validate.outputs.commit }}
         run: |
+          if [[ ! -f ci/nextcloud-compatibility.json || ! -f scripts/compatibility_evidence.py ]]; then
+            echo '::error::This tag predates compatibility evidence. Qualify a new release with the evidence-enabled workflow; old image availability cannot authorize publication.'
+            exit 1
+          fi
           python3 scripts/nextcloud_compatibility.py validate
           python3 scripts/compatibility_evidence.py verify-release \
             --repo "$GITHUB_REPOSITORY" --tag "$TAG" --commit "$COMMIT" \

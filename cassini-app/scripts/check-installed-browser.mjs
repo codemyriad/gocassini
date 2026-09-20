@@ -16,6 +16,12 @@ await mkdir(out, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 page.setDefaultTimeout(60_000);
+// Fresh Nextcloud accounts show an animated Hub welcome dialog. Wait for its
+// real Close button when it obstructs an action; Escape also reaches Cassini's
+// recording viewer, so it would close the very recording being tested.
+await page.addLocatorHandler(page.locator(".first-run-wizard"), async (dialog) => {
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+});
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 const checks = {};
@@ -35,9 +41,6 @@ try {
   checks.embedded_app = true;
   await page.locator(".cassini-word").first().waitFor({ state: "visible" });
   checks.transcript = true;
-  // Fresh Nextcloud accounts show the Hub welcome dialog. Close it through
-  // the normal keyboard interaction before exercising Cassini's actual button.
-  await page.keyboard.press("Escape");
   const audio = page.locator("audio").first();
   await audio.waitFor({ state: "attached" });
   await audio.evaluate((element) => { element.muted = true; });

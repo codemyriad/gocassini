@@ -4,7 +4,8 @@ shaping: true
 
 # Make advertised Nextcloud support verifiable
 
-Date: 2026-09-20. Status: shape B selected and implementation authorized; hosted qualification is in progress.
+Date: 2026-09-20. Status: shape B implemented on `plan/nextcloud-compatibility`.
+Current qualification results: [PR #321](https://github.com/codemyriad/gocassini/pull/321).
 
 ## Source
 

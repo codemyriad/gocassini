@@ -16,6 +16,7 @@ from nextcloud_compatibility import (ROOT, INVENTORY, DIGEST, command, read_json
                                     sha, validate, write_json)
 
 WORKFLOW = ".github/workflows/publish-exapp-image.yml"
+SCENARIO = 'installed-talk-readiness-cpu-v1'
 REQUIRED_JOBS = ("validate-manifest", "build-image", "build-image-arm64", "build-image-cuda",
                  "faithful-installed-exapp-talk-cpu", "smoke", "e2e-container", "e2e-entrypoint",
                  "e2e-install", "e2e-talk-record-cuda", "transcribe-smoke-cuda")
@@ -49,25 +50,26 @@ def collect(log, stack_path, mode, rc, started, inventory=INVENTORY, manifest=No
     validator = summary.get("validation", {})
     runs = validator.get("runs", [])
     suite = summary.get("result") == "passed" and summary.get("exit_code") == 0 and validator.get("result") == "passed"
+    validated = validator.get("result") == "passed"
     media = bool(runs) and all(r.get("artifact", {}).get("segment_count", 0) > 0 and
                               r.get("artifact", {}).get("word_count", 0) > 0 for r in runs)
     access = bool(runs) and all(r.get("access", {}).get("participant") is True and
                                r.get("access", {}).get("outsider_denied") is True for r in runs)
     identity = (bool(summary.get("source_image_id")) and summary.get("source_image_id") ==
                 summary.get("installed_image_id") == observed.get("cassini", {}).get("config_id"))
-    checks = {"installation": suite and bool(observed), "image_identity": identity,
-              "recording": suite and summary.get("control", {}).get("recording_performed") is True,
-              "transcription": suite and media, "publication": suite and media,
-              "participant_access": suite and access, "outsider_denied": suite and access,
-              "restart": suite and len(runs) == 2,
+    checks = {"installation": bool(observed) and identity, "image_identity": identity,
+              "recording": validated and summary.get("control", {}).get("recording_performed") is True,
+              "transcription": validated and media, "publication": validated and media,
+              "participant_access": validated and access, "outsider_denied": validated and access,
+              "restart": validated and len(runs) == 2,
               "embedded_browser": browser.get("result") == "passed" and
               all(browser.get("checks", {}).get(k) is True for k in
                   ("login", "embedded_app", "transcript", "recording_playback"))}
-    passed = rc == 0 and all(checks.values()) and summary.get("cleanup") == "passed"
+    passed = rc == 0 and suite and all(checks.values()) and summary.get("cleanup") == "passed"
     result = "passed" if passed else ("environment-failure" if not observed else "product-failure")
     if rc in (130, 143):
         result = "cancelled"
-    return {"schema": "cassini.compatibility.v1", "source": source(), "mode": mode,
+    return {"schema": "cassini.compatibility.v1", "scenario": SCENARIO, "source": source(), "mode": mode,
             "policy_sha256": sha(inventory), "manifest_sha256": sha(manifest or ROOT / 'appinfo/info.xml'),
             "stack": stack, "observed": observed, "checks": checks, "result": result,
             "exit_code": rc, "started_at": started,
@@ -86,6 +88,7 @@ def check_records(policy, records, expected_source, policy_hash, manifest_hash, 
     for record in records:
         name = record['stack']['id']
         require(record.get('schema') == 'cassini.compatibility.v1', f"{name}: unsupported evidence schema")
+        require(record.get('scenario') == SCENARIO, f"{name}: wrong installed-product scenario")
         require(record.get('source') == expected_source, f"{name}: different source run, attempt, ref or commit")
         require(record.get('policy_sha256') == policy_hash and record.get('manifest_sha256') == manifest_hash,
                 f"{name}: different policy or manifest")
