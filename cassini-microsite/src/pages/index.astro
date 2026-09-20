@@ -4,7 +4,7 @@ import { ViewTransitions } from "astro:transitions";
 import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
 import SocialMeta from "../components/SocialMeta.astro";
-import { Headset, Box, Users, Mic, ScrollText, Tag, Package } from "@lucide/astro";
+import { Box, Users, Mic, Search, ScrollText, Tag, Package } from "@lucide/astro";
 const rawBase = import.meta.env.BASE_URL;
 const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 ---
@@ -14,9 +14,9 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GoCassini — Record &amp; Transcribe Nextcloud Talk</title>
+  <title>Cassini — Record &amp; Transcribe Nextcloud Talk</title>
   <SocialMeta
-    title="GoCassini — Record & Transcribe Nextcloud Talk"
+    title="Cassini — Record & Transcribe Nextcloud Talk"
     description="A privacy-first meeting recorder for Nextcloud Talk. Records and transcribes calls on your own server, into one self-contained file per meeting."
   />
   <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
@@ -41,13 +41,13 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 
       <!-- Left: headline + CTA -->
       <div class="flex flex-col gap-6 lg:flex-1">
-        <h1 class="text-5xl md:text-6xl xl:text-7xl font-bold tracking-tight leading-[0.9]">
+        <h1 class="text-5xl md:text-6xl font-bold tracking-tight leading-[0.9]">
           <span class="block text-base-content/40">Record and</span>
-          <span class="block text-base-content/70">transcribe</span>
-          <span class="block text-base-content">on Nextcloud</span>
+          <span class="block text-base-content/70">transcribe on</span>
+          <span class="block text-base-content">your own server</span>
         </h1>
-        <p class="text-base md:text-lg text-base-content/50 max-w-sm leading-relaxed">
-          Your team already owns the infrastructure. Cassini adds meeting transcription to the stack, processed entirely on your sovereign server.
+        <p class="text-base md:text-lg text-base-content/50 max-w-md leading-relaxed">
+          Nextcloud Talk calls, recorded and transcribed on your own hardware. Build on everything your team says without handing it to a third party.
         </p>
         <div class="flex items-center gap-4 pt-1">
           <a href={`${base}docs`} class="btn btn-primary btn-lg">
@@ -102,6 +102,24 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
               <div class="flex flex-col gap-5">
                 <div class="flex items-start gap-4">
                   <div class="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                    <Box size={20} class="text-primary" />
+                  </div>
+                  <div>
+                    <p class="text-lg font-semibold text-base-content">A Nextcloud app</p>
+                    <p class="text-base text-base-content/50">Installs from the App Store, and appears as an app icon beside Files and Talk.</p>
+                  </div>
+                </div>
+                <div class="flex items-start gap-4">
+                  <div class="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                    <Mic size={20} class="text-primary" />
+                  </div>
+                  <div>
+                    <p class="text-lg font-semibold text-base-content">The same Record button</p>
+                    <p class="text-base text-base-content/50">Cassini registers as Talk's recording server. Any room, group calls and 1:1.</p>
+                  </div>
+                </div>
+                <div class="flex items-start gap-4">
+                  <div class="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
                     <Users size={20} class="text-primary" />
                   </div>
                   <div>
@@ -111,20 +129,11 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
                 </div>
                 <div class="flex items-start gap-4">
                   <div class="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                    <Headset size={20} class="text-primary" />
+                    <Search size={20} class="text-primary" />
                   </div>
                   <div>
-                    <p class="text-lg font-semibold text-base-content">Group & 1:1 calls</p>
-                    <p class="text-base text-base-content/50">Works with any Nextcloud Talk room.</p>
-                  </div>
-                </div>
-                <div class="flex items-start gap-4">
-                  <div class="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                    <Box size={20} class="text-primary" />
-                  </div>
-                  <div>
-                    <p class="text-lg font-semibold text-base-content">Built inside Nextcloud</p>
-                    <p class="text-base text-base-content/50">Read transcripts and replay audio without leaving Nextcloud.</p>
+                    <p class="text-lg font-semibold text-base-content">Explore your transcripts</p>
+                    <p class="text-base text-base-content/50">Read, replay, search and tag every meeting without leaving Nextcloud.</p>
                   </div>
                 </div>
               </div>
@@ -242,25 +251,26 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 
         <!-- Heading -->
         <div class="flex flex-col gap-2">
-          <h2 class="text-4xl md:text-5xl font-bold text-base-content">100% local processing</h2>
+          <h2 class="text-4xl md:text-5xl font-bold text-base-content">100% local transcription</h2>
           <p class="text-2xl md:text-3xl font-normal text-base-content/50">Your data, your rules</p>
         </div>
 
         <!-- CPU / GPU options -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-10">
+        <p class="text-base text-base-content/50 leading-relaxed mt-10">sherpa-onnx with NVIDIA Parakeet models.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
           <div class="bg-base-100 rounded-2xl p-8 flex flex-col gap-5">
             <div class="flex items-center justify-between">
               <h3 class="text-3xl font-bold text-base-content">CPU</h3>
-              <span class="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-secondary/20 text-secondary">sherpa-onnx</span>
+              <span class="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-secondary/20 text-secondary">amd64 · arm64</span>
             </div>
-            <p class="text-base text-base-content/50 leading-relaxed">Runs on your server. No GPU required. Works on any standard Nextcloud setup — audio never leaves your infrastructure.</p>
+            <p class="text-base text-base-content/50 leading-relaxed">The default. Runs on any Nextcloud host, no GPU required.</p>
           </div>
           <div class="bg-base-100 rounded-2xl p-8 flex flex-col gap-5">
             <div class="flex items-center justify-between">
               <h3 class="text-3xl font-bold text-base-content">GPU</h3>
-              <span class="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-secondary/20 text-secondary">NVIDIA Parakeet</span>
+              <span class="text-xs font-mono font-semibold px-2.5 py-1 rounded-md bg-secondary/20 text-secondary">CUDA image</span>
             </div>
-            <p class="text-base text-base-content/50 leading-relaxed">CUDA-accelerated. Drop in the CUDA image and Cassini auto-detects your GPU. Same privacy guarantees — significantly quicker for heavier workloads.</p>
+            <p class="text-base text-base-content/50 leading-relaxed">CUDA accelerated. Cassini auto-detects your GPU. Significantly quicker for heavier workloads.</p>
           </div>
         </div>
 
@@ -269,6 +279,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
           <div class="flex flex-col gap-2 justify-center md:pl-8">
             <h2 class="text-2xl font-medium text-base-content">One file.<br/>Everything inside.</h2>
             <p class="text-base text-base-content/50 leading-relaxed text-balance">Audio, transcript, and metadata in one self-contained <code class="text-primary bg-base-300 px-1 rounded text-sm">.opus</code> file.</p>
+            <p class="text-base text-base-content/50 leading-relaxed text-balance">An open specification at <a href="https://format.gocassini.com" class="text-base-content hover:text-primary underline underline-offset-4 decoration-base-content/30 hover:decoration-primary transition-colors">format.gocassini.com</a>.</p>
           </div>
           <div class="w-full">
             <div class="rounded-2xl border border-base-300 bg-base-100/50 overflow-hidden">
@@ -323,8 +334,10 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
         <!-- Text above, centered -->
         <div class="flex flex-col gap-3 max-w-2xl">
           <span class="text-xs font-bold tracking-widest uppercase text-base-content/30">Optional</span>
-          <h2 class="text-4xl md:text-5xl font-bold text-base-content">Meeting summaries</h2>
-          <p class="text-base text-base-content/50 leading-relaxed">Point Cassini at an LLM — an OpenRouter API key, or any OpenAI-compatible endpoint you host yourself — and it will generate a structured summary, automatically, after every meeting. Leave it unconfigured and the local transcript is published as-is.</p>
+          <h2 class="text-4xl md:text-5xl font-bold text-base-content">Bring your own model</h2>
+          <p class="text-base text-base-content/50 leading-relaxed">Register any OpenAI-compatible endpoint in the app - a model you host, or one you pay for.</p>
+          <p class="text-base text-base-content/50 leading-relaxed">With one configured, every meeting gets a summary when it publishes, and anyone can ask a question across the meetings they can already open. The answer is saved into their own Nextcloud Files, naming the meetings it read and the model that answered.</p>
+          <p class="text-base text-base-content/50 leading-relaxed">Leave it unconfigured and nothing calls a model: the transcript is still produced, published and searchable.</p>
         </div>
 
         <!-- Full-width summary mockup -->
@@ -360,7 +373,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
       <div class="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-16">
         <div class="flex flex-col gap-4">
           <h2 class="text-4xl font-bold text-base-content leading-tight">Questions?<br/>We've got answers</h2>
-          <p class="text-sm text-base-content/50 leading-relaxed">Need support? <a href="mailto:hello@codemyriad.io?subject=GoCassini%20Support%20Request" class="text-base-content hover:text-primary underline underline-offset-4 decoration-base-content/30 hover:decoration-primary transition-colors">Send us an email.</a></p>
+          <p class="text-sm text-base-content/50 leading-relaxed">Need support? <a href="mailto:hello@codemyriad.io?subject=Cassini%20Support%20Request" class="text-base-content hover:text-primary underline underline-offset-4 decoration-base-content/30 hover:decoration-primary transition-colors">Send us an email.</a></p>
         </div>
         <div id="faq-list" class="md:col-span-2 flex flex-col gap-3">
 
@@ -369,7 +382,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
             Does audio leave my server?
             <svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
           </summary>
-          <p class="mt-3 text-sm text-base-content/50 leading-relaxed">By default, no. Cassini runs NVIDIA&apos;s Parakeet speech-to-text model locally on your Nextcloud server and audio never leaves your infrastructure. The one exception is meeting summaries: if you enable them, the transcript (not the audio) is sent to whichever LLM endpoint you configured — your own or a third party. Summaries are opt-in and off by default.</p>
+          <p class="mt-3 text-sm text-base-content/50 leading-relaxed">By default, no. Cassini runs NVIDIA&apos;s Parakeet speech-to-text model locally on your Nextcloud server and audio never leaves your infrastructure. The one exception is summaries and insights: if you configure a language model, the transcript (not the audio) is sent to whichever endpoint you chose, your own or a third party. Both stay off until you register an endpoint.</p>
         </details>
 
         <details class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">
@@ -377,7 +390,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
             Which Nextcloud versions are supported?
             <svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
           </summary>
-          <p class="mt-3 text-sm text-base-content/50 leading-relaxed">Cassini supports Nextcloud 27 and above with Nextcloud Talk enabled. Check the marketplace listing for the exact compatibility matrix.</p>
+          <p class="mt-3 text-sm text-base-content/50 leading-relaxed">Cassini supports Nextcloud 32 to 35, with Nextcloud Talk enabled. Check the App Store listing for the exact compatibility matrix.</p>
         </details>
 
         <details class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">
