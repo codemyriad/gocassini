@@ -1290,6 +1290,8 @@ jobs:
       - name: Run manual-install Talk e2e (GPU)
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
+          # Digest references carry no -cuda tag for the harness to inspect.
+          TALK_E2E_USE_GPU: "1"
           RECORD_DURATION_SECONDS: "75"
           MIN_LEVENSHTEIN: "0.40"
           MIN_CAPTURED_RUN_WORDS: "5"
