@@ -35,12 +35,13 @@ try {
   checks.embedded_app = true;
   await page.locator(".cassini-word").first().waitFor({ state: "visible" });
   checks.transcript = true;
+  // Fresh Nextcloud accounts show the Hub welcome dialog. Close it through
+  // the normal keyboard interaction before exercising Cassini's actual button.
+  await page.keyboard.press("Escape");
   const audio = page.locator("audio").first();
   await audio.waitFor({ state: "attached" });
-  await audio.evaluate(async (element) => {
-    element.muted = true;
-    await element.play();
-  });
+  await audio.evaluate((element) => { element.muted = true; });
+  await page.getByRole("button", { name: "Play", exact: true }).click();
   await page.waitForFunction(() => {
     const find = (root) => {
       for (const e of root.querySelectorAll("*")) {

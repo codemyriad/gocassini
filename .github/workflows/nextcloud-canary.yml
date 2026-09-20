@@ -59,6 +59,7 @@ jobs:
           fi
           jq -r '"Resolved Nextcloud \(.nextcloud_version)", (.apps | to_entries[] | "- \(.key): \(.value.version)")' \
             "$RUNNER_TEMP/canary/candidate.json" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/canary/candidate.changes.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Run upstream candidate against frozen Cassini image
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -85,6 +86,8 @@ jobs:
           name: upstream-nextcloud-${{ matrix.major }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/canary/candidate.json
+            ${{ runner.temp }}/canary/candidate.changes.json
+            ${{ runner.temp }}/canary/candidate.changes.md
             ${{ runner.temp }}/canary/info.xml
             ${{ runner.temp }}/canary/info.original.xml
             ${{ runner.temp }}/canary/result/compatibility.json

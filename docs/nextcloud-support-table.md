@@ -4,5 +4,5 @@ Minimum Nextcloud: **33.0.9**. Maximum major: **35**.
 | Baseline | Nextcloud | Role |
 |---|---|---|
 | nc33 | 33.0.9 | exact minimum |
-| nc34 | 34.0.0 | reference |
-| nc35 | 35.0.0 | required |
+| nc34 | 34.0.0 | required |
+| nc35 | 35.0.0 | reference |

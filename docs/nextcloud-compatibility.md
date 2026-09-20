@@ -75,7 +75,9 @@ The daily/manual `Nextcloud upstream canary` workflow resolves newer Nextcloud
 patches and compatible stable Talk/ACL app releases against the frozen Cassini
 `canary_image` digest. Infrastructure images remain pinned to isolate that
 release train. The resolved `candidate.json` is retained even if the product
-test fails. Missing images or compatible stable dependencies are unavailable,
+test fails. A retained change report compares server/app versions, app checksums
+and image digests with that major's baseline (or the reference for previews).
+Missing images or compatible stable dependencies are unavailable,
 never a compatibility pass. GitHub reports failures through normal workflow
 notifications; the maintainer on release duty reviews them.
 

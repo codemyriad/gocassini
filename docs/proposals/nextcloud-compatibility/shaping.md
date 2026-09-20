@@ -115,8 +115,8 @@ The inventory must separate these concepts:
 - **Required baselines:** at least one explicit patch per advertised major,
   including the exact minimum. If the oldest major's current patch moves above
   the retained minimum, test both until the minimum is deliberately raised.
-- **Reference:** the newest qualified stable baseline; the current 34.0.0
-  reference remains in use while 35 is being qualified.
+- **Reference:** the newest qualified stable baseline. The initial installed
+  qualification passed on 35.0.0, which replaces the previous 34.0.0 reference.
 - **Preview:** an upstream candidate outside the advertised range. A green
   preview does not automatically widen the manifest.
 
@@ -303,8 +303,11 @@ It is not included in the first bet or represented as already shaped for build.
 ## Implementation record
 
 Shape B is implemented on `plan/nextcloud-compatibility`; hosted qualification
-remains in progress. The inventory contains 33.0.9, 34.0.0 and 35.0.0, retaining
-34 as the reference until 35 is qualified. AppAPI is bundled by these server
+remains in progress. The inventory contains 33.0.9, 34.0.0 and 35.0.0. The first
+hosted installed runs passed on 34 and 35; 35 is now the reference. AppAPI 33
+exposed an unsupported CLI JSON option, addressed by reading the same daemon
+metadata directly. The next run also requires clicking the real Play button
+after dismissing Nextcloud's welcome dialog. AppAPI is bundled by these server
 images: its metadata checksum and version replace an external archive lock.
 The implementation is documented in [the compatibility runbook](../../nextcloud-compatibility.md).
 

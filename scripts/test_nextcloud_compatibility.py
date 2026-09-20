@@ -55,6 +55,22 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(policy.satisfies('35.0.0', '*'))
         self.assertFalse(policy.satisfies('35.0.0', '>=35.0.0 || >=30.0.0'))
 
+    def test_canary_reports_changed_bytes_even_when_versions_match(self):
+        candidate = copy.deepcopy(self.policy['baselines'][-1])
+        candidate['id'] = 'canary-35'
+        candidate['images']['nextcloud'] = 'nextcloud:35@' + candidate['images']['nextcloud'].split('@')[1]
+        self.assertEqual(policy.candidate_changes(self.policy, candidate)['changes'], [])
+        candidate['apps']['spreed']['sha256'] = 'a' * 64
+        changes = policy.candidate_changes(self.policy, candidate)
+        self.assertEqual(changes['baseline'], 'nc35')
+        self.assertEqual([c['component'] for c in changes['changes']], ['spreed sha256'])
+        candidate['nextcloud_version'] = '36.0.0'
+        self.assertEqual(policy.candidate_changes(self.policy, candidate)['baseline'], self.policy['reference'])
+
+    def test_app_replacement_requires_disposable_fixture(self):
+        with patch.dict('os.environ', {}, clear=True), self.assertRaisesRegex(ValueError, 'disposable'):
+            policy.install_app(self.policy['baselines'][0], 'spreedtest', 'spreed')
+
 
 class ReleaseTests(unittest.TestCase):
     def setUp(self):

@@ -95,6 +95,7 @@ fi
 
 compose() { docker compose -p "$PROJECT_NAME" -f "$REPO_ROOT/harness/compose.yml" "$@"; }
 occ() { compose exec -T -u www-data nextcloud php occ "$@"; }
+daemon_metadata() { compose exec -T -u www-data nextcloud php <"$SCRIPT_DIR/appapi-daemon-metadata.php"; }
 
 collect_diagnostics() {
   set +e
@@ -110,7 +111,7 @@ collect_diagnostics() {
   docker logs nc_app_gocassini >"$LOG_DIR/installed-container.log" 2>&1
   compose ps -a >"$LOG_DIR/compose-ps.txt" 2>&1
   compose logs --no-color >"$LOG_DIR/compose.log" 2>&1
-  occ app_api:daemon:list --output=json >"$LOG_DIR/daemon.json" 2>"$LOG_DIR/daemon.err"
+  daemon_metadata >"$LOG_DIR/daemon.json" 2>"$LOG_DIR/daemon.err"
   curl -sS -u admin:admin \
     "http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/operator/status" \
     >"$LOG_DIR/operator-status.json" 2>"$LOG_DIR/operator-status.err"
@@ -255,9 +256,9 @@ fi
 
 [[ "$FAIL_AT" != after-stack ]] || fail "forced failure after stack setup"
 
-daemon_json="$(occ app_api:daemon:list --output=json)"
+daemon_json="$(daemon_metadata)"
 printf '%s\n' "$daemon_json" >"$LOG_DIR/daemon-asserted.json"
-jq -e 'length == 1 and .[0].name == "harp_local" and .[0].deploy_id == "docker-install" and .[0].deploy_config.harp != null' \
+jq -e 'length == 1 and .[0].name == "harp_local" and .[0].deploy_id == "docker-install" and .[0].harp == true' \
   <<<"$daemon_json" >/dev/null || fail "AppAPI daemon is not the expected HaRP docker-install owner"
 
 docker inspect nc_app_gocassini >/dev/null 2>&1 || fail "AppAPI/HaRP did not create nc_app_gocassini"

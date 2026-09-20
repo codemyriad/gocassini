@@ -153,6 +153,7 @@ def occ(project, *args):
 
 
 def install_app(stack, project, app):
+    require(os.environ.get("CASSINI_COMPAT_FIXTURE") == "1", "app replacement requires a disposable compatibility fixture")
     require(app in APPS, "unknown locked app")
     lock = stack["apps"][app]
     if lock["source"] == "bundled":
@@ -272,6 +273,38 @@ def resolve_candidate(policy, major, image=None):
     return stack
 
 
+def candidate_changes(policy, stack):
+    major = version(stack['nextcloud_version'])[0]
+    same_major = [s for s in policy['baselines'] if version(s['nextcloud_version'])[0] == major]
+    baseline = max(same_major, key=lambda s: version(s['nextcloud_version'])) if same_major else next(
+        s for s in policy['baselines'] if s['id'] == policy['reference'])
+    changes = []
+
+    def compare(component, before, after):
+        if before != after:
+            changes.append({'component': component, 'baseline': before, 'candidate': after})
+
+    compare('Nextcloud version', baseline['nextcloud_version'], stack['nextcloud_version'])
+    for app in sorted(APPS):
+        for field in ('version', 'sha256', 'source'):
+            compare(f'{app} {field}', baseline['apps'][app][field], stack['apps'][app][field])
+    for service in sorted(SERVICES):
+        # Floating and exact tags can point at identical bytes; compare the digest.
+        compare(f'{service} image', baseline['images'][service].rsplit('@', 1)[1],
+                stack['images'][service].rsplit('@', 1)[1])
+    return {'baseline': baseline['id'], 'candidate': stack['id'], 'changes': changes}
+
+
+def render_changes(report):
+    lines = [f"Compared with baseline `{report['baseline']}`:", '']
+    if report['changes']:
+        lines += ['| Component | Baseline | Candidate |', '|---|---|---|']
+        lines += [f"| {c['component']} | `{c['baseline']}` | `{c['candidate']}` |" for c in report['changes']]
+    else:
+        lines.append('No server, app or image changes from the locked baseline.')
+    return '\n'.join(lines) + '\n'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inventory", default=str(INVENTORY))
@@ -337,7 +370,11 @@ def main():
     elif args.action == "observe":
         write_json(args.out, observe(read_json(args.stack), args.project, args.image))
     elif args.action == "resolve":
-        write_json(args.out, resolve_candidate(policy, args.major, args.image))
+        stack = resolve_candidate(policy, args.major, args.image)
+        write_json(args.out, stack)
+        changes = candidate_changes(policy, stack)
+        write_json(Path(args.out).with_suffix('.changes.json'), changes)
+        Path(args.out).with_suffix('.changes.md').write_text(render_changes(changes))
 
 
 if __name__ == "__main__":

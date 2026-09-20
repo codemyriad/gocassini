@@ -156,6 +156,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
           ./scripts/build-appstore-tarball.sh --version "$VERSION"
           ./scripts/validate-appstore-tarball.sh --version "$VERSION" --tarball build/artifacts/appstore/gocassini.tar.gz
+          python3 scripts/verify-compatibility-package.py \
+            build/artifacts/appstore/gocassini.tar.gz qualified/release-evidence.json \
+            > qualified/candidate-package.json
       - uses: actions/upload-artifact@v4
         with:
           name: verified-release-evidence-${{ github.run_attempt }}

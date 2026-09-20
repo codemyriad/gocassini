@@ -29,7 +29,7 @@ services:
     # CI selects exact, digest-pinned baselines from ci/nextcloud-compatibility.json.
     # The local convenience default is validated against its reference baseline.
     # Use scripts/nextcloud_compatibility.py prepare to reproduce the full lock.
-    image: ${NEXTCLOUD_IMAGE:-nextcloud:34.0.0}
+    image: ${NEXTCLOUD_IMAGE:-nextcloud:35.0.0}
     restart: unless-stopped
     environment: *nextcloud-env
     depends_on:

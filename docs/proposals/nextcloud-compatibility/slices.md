@@ -9,6 +9,10 @@ two weeks for one engineer and support for maintained majors, currently 33–35,
 with explicit retirement of 32. This document follows the authoritative
 [requirements, shape and breadboard](shaping.md).
 
+Initial V2 execution passed on 34.0.0 and 35.0.0; 35 is now the reference.
+Requalification includes the AppAPI 33 daemon-metadata fix and a browser check
+that dismisses the Nextcloud welcome dialog and clicks the actual Play button.
+
 Every slice ends in a maintainer-visible result in PR checks, Actions or release
 assets. Those existing interfaces are the UI for this infrastructure project.
 No individual coding plans or separate work assignments are needed before the
