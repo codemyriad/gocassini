@@ -22,6 +22,7 @@
     appsInUse,
     doneMessage,
     existingRecordingsLine,
+    recordingCount,
     installButtonLabel,
     missingApps,
     modeSourceLabel,
@@ -580,8 +581,14 @@
   // readable by everyone by design — and only once the instance is settled,
   // because during an unfinished migration which root is authoritative is
   // exactly what is unresolved.
+  $: archiveCount = recordingCount(status);
   $: openRecordingsApplicable =
-    status !== null && status.mode === PARTICIPANTS && status.migration_clean;
+    status !== null && status.mode === PARTICIPANTS && status.migration_clean &&
+    (!archiveCount.known || archiveCount.count > 0);
+  // An empty review queue is evidence that no action is queued, not that all
+  // recordings are private: public-room and ignored recordings are omitted.
+  $: reviewEmpty = openRecordings !== null && !openLoading && openError === null &&
+    !hasOpenRows;
 
   async function reviewExistingRecordings(): Promise<void> {
     await tick();
@@ -726,7 +733,7 @@
     pendingAccessChoice.set(null);
     choose(next);
   }
-  $: existingLine = existingRecordingsLine(status, switched);
+  $: existingLine = reviewEmpty ? "" : existingRecordingsLine(status, switched);
   $: narrowableRows = (openRecordings?.recordings ?? []).filter(
     (row: OpenRecording) => row.narrowable,
   );
@@ -946,20 +953,22 @@
            so a recording leaves it by actually being limited rather than by
            this page removing a row. -->
       {#if openRecordingsApplicable}
-        <div class="rounded-box border border-warning bg-warning/10 p-3">
-          <p class="text-sm">
-            Switching to Room members does not restrict existing recordings. Review who can
-            still see them and choose which recordings to restrict.
-          </p>
-          <button
-            class="btn btn-sm btn-primary mt-2"
-            type="button"
-            disabled={busy || openLoading || restricting}
-            on:click={() => void reviewExistingRecordings()}
-          >
-            Review existing recordings
-          </button>
-        </div>
+        {#if !reviewEmpty}
+          <div class="rounded-box border border-warning bg-warning/10 p-3">
+            <p class="text-sm">
+              Switching to Room members does not restrict existing recordings. Review who can
+              still see them and choose which recordings to restrict.
+            </p>
+            <button
+              class="btn btn-sm btn-primary mt-2"
+              type="button"
+              disabled={busy || openLoading || restricting}
+              on:click={() => void reviewExistingRecordings()}
+            >
+              Review existing recordings
+            </button>
+          </div>
+        {/if}
         <details
           bind:this={reviewDetails}
           class="op-tint access-panel"
@@ -1084,6 +1093,10 @@
               <p class="text-sm text-base-content/70">
                 No recordings to review. Ignored recordings keep their current permissions.
               </p>
+              <button class="btn btn-sm btn-outline" type="button"
+                disabled={busy || restricting} on:click={() => void loadOpenRecordings()}>
+                Check recording access again
+              </button>
             {/if}
 
             {#if ignoredLine}

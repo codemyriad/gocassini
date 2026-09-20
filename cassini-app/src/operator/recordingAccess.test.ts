@@ -403,7 +403,7 @@ describe("confirming a switch", () => {
 
   it("says what it did, in the words the section will be rendering", () => {
     expect(doneMessage("access_controlled")).toBe(
-      "New recordings are visible to room members only. Review existing recordings below to restrict their access too.",
+      "Done. New recordings are visible to room members only.",
     );
     expect(doneMessage("default")).toBe(
       "Done. New recordings are visible to anyone with a Nextcloud account.",

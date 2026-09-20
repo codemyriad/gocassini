@@ -172,9 +172,10 @@ function storage({ accountExists, firstRun, healthy }) {
 
 // Real UI, synthetic migration and ACL responses. No permission writes may
 // happen until the administrator selects a recording and confirms restriction.
-function accessReviewFixture({ mode = "default", failReview = false } = {}) {
+function accessReviewFixture({ mode = "default", failReview = false, count = 1, known = true, initiallyRestricted = false } = {}) {
   const writes = [];
-  let restricted = false;
+  let restricted = initiallyRestricted;
+  let reviews = 0;
   const row = { id: "admin-only", room_name: "Admin only room", narrowable: true,
     audience: [{ type: "user", id: "admin" }], audience_digest: "captured-admin-roster" };
   const snapshot = () => {
@@ -183,11 +184,12 @@ function accessReviewFixture({ mode = "default", failReview = false } = {}) {
     for (const option of state.modes) {
       option.active = option.mode === mode;
       option.available = true;
-      option.archive.meetings = option.active ? 1 : 0;
+      option.archive.meetings = option.active ? count : 0;
+      option.archive.probed = known;
     }
     return state;
   };
-  return { writes, handle: async (route, request) => {
+  return { writes, get reviews() { return reviews; }, handle: async (route, request) => {
     const body = request.postDataJSON();
     const action = body?.action;
     if (request.method() === "PUT") {
@@ -195,6 +197,7 @@ function accessReviewFixture({ mode = "default", failReview = false } = {}) {
       mode = "access_controlled";
       writes.push("switch");
     }
+    if (action === "list_unrestricted") reviews++;
     if (action === "list_unrestricted" && failReview) {
       failReview = false;
       return route.fulfill({ status: 503, json: { error: "Permission check unavailable" } });
@@ -207,7 +210,7 @@ function accessReviewFixture({ mode = "default", failReview = false } = {}) {
       state.restricted = [{ id: row.id, outcome: "restricted", grants: 1 }];
     }
     if (["list_unrestricted", "restrict_meetings"].includes(action)) {
-      state.open_recordings = { recordings: restricted ? [] : [row], ignored: [], narrowable: restricted ? 0 : 1 };
+      state.open_recordings = { recordings: restricted || count === 0 ? [] : [row], ignored: [], narrowable: restricted || count === 0 ? 0 : 1 };
     } else assert([undefined, "recheck"].includes(action), `Unexpected storage action: ${action}`);
     return route.fulfill({ json: state });
   }};
@@ -670,6 +673,11 @@ try {
     await page.getByLabel("Restrict Admin only room", { exact: true }).waitFor({ state: "detached" });
     assert.deepEqual(review.writes, ["switch", "restrict"]);
     await visible(page.getByText("No recordings to review. Ignored recordings keep their current permissions.", { exact: true }));
+    await absent(page.getByRole("button", { name: "Review existing recordings", exact: true }), "completed review should dismiss the amber prompt");
+    await absent(page.locator(".access-existing"), "completed review should dismiss stale review guidance");
+    await page.getByRole("button", { name: "Check recording access again", exact: true }).click();
+    await visible(page.getByText("No recordings to review. Ignored recordings keep their current permissions.", { exact: true }));
+    assert.deepEqual(review.writes, ["switch", "restrict"]);
   });
 
   const failedReview = accessReviewFixture({ failReview: true });
@@ -687,6 +695,41 @@ try {
     await visible(page.getByLabel("Restrict Admin only room", { exact: true }));
     assert.deepEqual(failedReview.writes, ["switch"]);
   });
+
+  const emptyArchive = accessReviewFixture({ count: 0 });
+  await scenario("empty archive switches without prompting for an unnecessary review", {
+    firstRun: false, accountExists: true, storage: emptyArchive.handle,
+  }, async page => {
+    await openPipeline(page);
+    await page.getByRole("radio", { name: /^Room members/ }).click();
+    await page.getByRole("button", { name: "Switch", exact: true }).click();
+    await visible(page.getByText("Done. New recordings are visible to room members only.", { exact: true }));
+    await absent(page.getByRole("button", { name: "Review existing recordings", exact: true }), "zero recordings need no review prompt");
+    await absent(page.locator("summary").filter({ hasText: "Recordings visible to everyone" }), "zero recordings need no review disclosure");
+    assert.equal(emptyArchive.reviews, 0);
+    await page.reload({ waitUntil: "networkidle" });
+    await visible(page.getByText("No recordings yet. Only room members will be able to see them.", { exact: true }));
+    await absent(page.getByRole("button", { name: "Review existing recordings", exact: true }), "empty archive stays quiet on reload");
+    assert.equal(emptyArchive.reviews, 0);
+  });
+
+  for (const [name, options] of [
+    ["already restricted archive", { initiallyRestricted: true }],
+    ["unknown archive count", { count: 0, known: false }],
+  ]) {
+    const fixture = accessReviewFixture({ mode: "access_controlled", ...options });
+    await scenario(`${name}: offer review until a successful empty result`, {
+      firstRun: false, accountExists: true, storage: fixture.handle,
+    }, async page => {
+      await openPipeline(page);
+      await page.getByRole("button", { name: "Review existing recordings", exact: true }).click();
+      await visible(page.getByText("No recordings to review. Ignored recordings keep their current permissions.", { exact: true }));
+      await absent(page.getByRole("button", { name: "Review existing recordings", exact: true }), "successful empty review dismisses the warning");
+      await visible(page.getByRole("button", { name: "Check recording access again", exact: true }));
+      assert.equal(fixture.reviews, 1);
+      assert.deepEqual(fixture.writes, []);
+    });
+  }
 
   console.log(`${checks} first-run browser scenarios passed${screenshotDir ? `; screenshots: ${screenshotDir}` : ""}.`);
 } finally {

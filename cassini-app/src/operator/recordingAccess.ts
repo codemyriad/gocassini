@@ -145,7 +145,7 @@ export function existingRecordingsLine(status: StorageStatus | null, switched = 
 // section will be rendering a moment later.
 export function doneMessage(mode: AccessMode): string {
   if (mode === PARTICIPANTS) {
-    return "New recordings are visible to room members only. Review existing recordings below to restrict their access too.";
+    return "Done. New recordings are visible to room members only.";
   }
   return "Done. New recordings are visible to anyone with a Nextcloud account.";
 }
