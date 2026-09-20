@@ -313,7 +313,7 @@ docker exec nc_app_gocassini cat /nc_app_gocassini_data/operator/storage_setting
 |---|---:|---|
 | `PROJECT_NAME` | `spreedtest` | Docker Compose project name. CI/e2e scripts often set a run-scoped value. |
 | `NEXTCLOUD_HOST_PORT` | `28080` | Host port mapped to Nextcloud port 80. Some e2e scripts randomize this to avoid stale-run collisions. |
-| `NEXTCLOUD_IMAGE` | `nextcloud:34.0.0` | Override the pinned Nextcloud image. CI compatibility legs may set this. |
+| `NEXTCLOUD_IMAGE` | `nextcloud:34.0.0` | Local reference default. CI selects digest-pinned baselines from `ci/nextcloud-compatibility.json`; see [compatibility testing](../docs/nextcloud-compatibility.md). |
 | `CASSINI_HARNESS_HOST` | `127.0.0.1` or VM route source IP | Host/IP added to Nextcloud trusted domains and used by some play helpers. |
 | `SPREED_PROFILE` | derived | Legacy compose profile escape hatch. Explicit `--services` values set it for you. |
 | `NEXTCLOUD_URL` | `http://127.0.0.1:${NEXTCLOUD_HOST_PORT}` | Operator/API URL used by harness scripts. |

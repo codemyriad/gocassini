@@ -98,6 +98,11 @@ occ() { compose exec -T -u www-data nextcloud php occ "$@"; }
 
 collect_diagnostics() {
   set +e
+  if [[ -n "${CASSINI_COMPAT_LOCK:-}" ]]; then
+    python3 "$REPO_ROOT/scripts/nextcloud_compatibility.py" observe \
+      --stack "$CASSINI_COMPAT_LOCK" --project "$PROJECT_NAME" --image "$IMAGE_REF" \
+      --out "$LOG_DIR/observed.json" >"$LOG_DIR/observe.log" 2>&1
+  fi
   docker ps -a --no-trunc >"$LOG_DIR/docker-ps.txt" 2>&1
   docker image inspect "$IMAGE_REF" >"$LOG_DIR/source-image.json" 2>&1
   docker image inspect "$PRODUCTION_IMAGE" >"$LOG_DIR/production-image.json" 2>&1
@@ -303,6 +308,10 @@ LOG_DIR="$VALIDATOR_LOG_DIR" \
 validator_summary="$VALIDATOR_LOG_DIR/summary.json"
 jq -e --argjson runs "$validator_runs" '.result == "passed" and (.runs | length) == $runs and all(.runs[]; .artifact.segment_count > 0 and .artifact.word_count > 0)' \
   "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"
+if [[ -n "${CASSINI_COMPAT_LOCK:-}" ]]; then
+  node "$REPO_ROOT/cassini-app/scripts/check-installed-browser.mjs" \
+    "$validator_summary" "$LOG_DIR/browser"
+fi
 if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
   log "faithful CPU-host vertical passed: portable image transcribed on the CPU, positive segments and decoded words"
 else

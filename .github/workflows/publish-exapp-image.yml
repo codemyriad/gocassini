@@ -41,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       relevant: ${{ steps.changes.outputs.relevant }}
+      compatibility-matrix: ${{ steps.compatibility.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,6 +74,24 @@ jobs:
             relevant="$(printf '%s\n' "$changed" | "$GITHUB_WORKSPACE/scripts/classify-image-relevance.sh")"
           fi
           echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Select required Nextcloud baselines
+        id: compatibility
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          tier=all
+          paths="$RUNNER_TEMP/compatibility-paths"
+          : > "$paths"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            if git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" > "$paths"; then
+              tier="pr"
+            fi
+          fi
+          matrix="$(python3 scripts/nextcloud_compatibility.py matrix --tier "$tier" --paths-file "$paths")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   validate-manifest:
     name: Validate appinfo/info.xml
@@ -115,6 +134,8 @@ jobs:
             echo "they are lifecycle callbacks, not browser routes" >&2
             exit 1
           fi
+      - name: Validate compatibility policy and documentation
+        run: python3 scripts/nextcloud_compatibility.py validate
       - name: Version pin consistency check
         id: version
         run: |
@@ -399,105 +420,117 @@ jobs:
         if: github.event_name == 'pull_request'
         run: echo "PR build; downstream jobs load the amd64 image from the exapp-image artifact."
 
-  faithful-installed-exapp-talk-cpu:
-    name: Faithful installed ExApp Talk artifact (CPU)
+  compatibility:
+    name: Installed compatibility (${{ matrix.baseline }})
     runs-on: ubuntu-latest
     needs: [classify-changes, build-image]
-    timeout-minutes: 30
-    # Required product gate: one no-retry AppAPI/HaRP-installed Talk recording.
-    # Relevant PRs and every main push execute the product path. Unrelated PRs
-    # emit an explicit not-applicable success so branch protection never waits on
-    # a skipped path-filtered workflow.
-    if: always()
+    if: needs.classify-changes.outputs.relevant == 'true'
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.classify-changes.outputs.compatibility-matrix) }}
     steps:
-      - name: Fail if change classification is unavailable
-        if: needs.classify-changes.result != 'success'
-        run: |
-          echo "::error::change classifier result was ${{ needs.classify-changes.result }}" >&2
-          exit 1
-
-      - name: Fail if the exact image build is unavailable
-        if: >-
-          needs.classify-changes.outputs.relevant == 'true' &&
-          needs.build-image.result != 'success'
-        run: |
-          echo "::error::exact image build result was ${{ needs.build-image.result }}" >&2
-          exit 1
-
-      - name: Mark unrelated change as not applicable
-        if: needs.classify-changes.outputs.relevant != 'true'
-        run: echo 'Faithful installed-ExApp gate is not applicable; no image, product, CLI, workflow, or harness input changed.'
-
       - uses: actions/checkout@v4
-        if: needs.classify-changes.outputs.relevant == 'true'
-
-      - uses: actions/setup-go@v5
-        if: needs.classify-changes.outputs.relevant == 'true'
-        with:
-          go-version: '1.22'
-
-      - name: Install host validation tools
-        if: needs.classify-changes.outputs.relevant == 'true'
-        run: |
-          # A vendor apt source we never install from can fail `apt-get update`
-          # (exit 100) and take this step with it. See ci-apt-update.sh.
-          sudo ./scripts/ci-apt-update.sh
-          # Portable-image mode probes retained audio inside the image and does
-          # not decode speech or require host ffmpeg/ffprobe.
-          sudo apt-get install -y --no-install-recommends jq libxml2-utils ffmpeg
-          git lfs version
-
-      - name: Materialize only the known audible participant fixture
-        if: needs.classify-changes.outputs.relevant == 'true'
-        run: >-
-          git lfs pull
-          --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
-
-      - name: Verify participant fixture is materialized
-        if: needs.classify-changes.outputs.relevant == 'true'
-        run: |
-          set -euo pipefail
-          prefix=harness/media/processed/showcase-lantern-festival-v1/mira
-          for media in "$prefix.ivf" "$prefix.ogg"; do
-            [[ -s "$media" && $(stat -c%s "$media") -gt 10000 ]] || {
-              echo "::error::known participant media missing or still an LFS pointer: $media" >&2
-              exit 1
-            }
-          done
-
-      - name: Load exact ExApp image
-        if: needs.classify-changes.outputs.relevant == 'true'
+      - uses: ./.github/actions/compatibility-tools
+      - name: Load exact built image
         id: load
         uses: ./.github/actions/load-exapp-image
         with:
-          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          image-ref-list: ${{ github.event_name == 'pull_request' && needs.build-image.outputs.image_ref || format('ghcr.io/{0}@{1}', github.repository, needs.build-image.outputs.digest) }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pre-pull stack images
-        if: needs.classify-changes.outputs.relevant == 'true'
-        run: docker compose -f harness/compose.yml --profile full pull
-
-      - name: Verify recording readiness and Talk publication before and after restart
-        if: needs.classify-changes.outputs.relevant == 'true'
+      - name: Run locked installed compatibility scenario
         env:
+          BASELINE: ${{ matrix.baseline }}
           IMAGE_REF: ${{ steps.load.outputs.ref }}
-          LOG_DIR: ${{ runner.temp }}/faithful-installed-exapp-talk-cpu
-          # The portable image runs on a GPU-less hosted runner, and must
-          # complete the whole vertical there: capture, then transcribe on the
-          # CPU, then publish a transcript with decoded words (D-702). The mode
-          # also asserts the operator reported device=cpu, so a runner that
-          # quietly had a GPU could not pass this off as the CPU path.
-          CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
-        run: ./harness/bin/ci-e2e-recording-readiness.sh
-
-      - name: Upload faithful check evidence
-        if: always() && needs.classify-changes.outputs.relevant == 'true'
-        uses: actions/upload-artifact@v4
+          LOG_DIR: ${{ runner.temp }}/compatibility/${{ matrix.baseline }}
+        run: ./harness/bin/ci-nextcloud-compatibility.sh "$BASELINE"
+      - name: Publish compatibility summary
+        if: always()
+        env:
+          REPORT: ${{ runner.temp }}/compatibility/${{ matrix.baseline }}/compatibility.json
+        run: |
+          if [[ -f "$REPORT" ]]; then
+            jq -r '"Nextcloud \(.stack.nextcloud_version): **\(.result)** (\(.duration_seconds)s)", "", (.checks | to_entries[] | "- \(.key): \(.value)")' "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Compatibility did not reach execution; no qualifying evidence.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: faithful-installed-exapp-talk-cpu-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/faithful-installed-exapp-talk-cpu
+          name: compatibility-${{ matrix.baseline }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/compatibility/${{ matrix.baseline }}/compatibility.json
+            ${{ runner.temp }}/compatibility/${{ matrix.baseline }}/lock/stack.json
+            ${{ runner.temp }}/compatibility/${{ matrix.baseline }}/browser/
+            ${{ runner.temp }}/compatibility/${{ matrix.baseline }}/observe.log
           if-no-files-found: warn
           retention-days: 14
+
+  # Preserve the branch-protection context while requiring every selected row.
+  faithful-installed-exapp-talk-cpu:
+    name: Faithful installed ExApp Talk artifact (CPU)
+    runs-on: ubuntu-latest
+    needs: [classify-changes, build-image, compatibility]
+    if: always()
+    steps:
+      - name: Require classified, built and executed product coverage
+        env:
+          CLASSIFIED: ${{ needs.classify-changes.result }}
+          RELEVANT: ${{ needs.classify-changes.outputs.relevant }}
+          BUILT: ${{ needs.build-image.result }}
+          COMPATIBILITY: ${{ needs.compatibility.result }}
+        run: |
+          set -euo pipefail
+          [[ "$CLASSIFIED" == success ]]
+          if [[ "$RELEVANT" == true ]]; then
+            [[ "$BUILT" == success && "$COMPATIBILITY" == success ]]
+          elif [[ "$RELEVANT" == false ]]; then
+            echo 'Not applicable: all changes are classified as unrelated.'
+          else
+            echo 'Invalid applicability result' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        if: needs.classify-changes.outputs.relevant == 'true'
+      - uses: actions/download-artifact@v4
+        if: needs.classify-changes.outputs.relevant == 'true'
+        with:
+          pattern: compatibility-*-${{ github.run_attempt }}
+          path: evidence
+      - name: Verify complete matching evidence
+        if: needs.classify-changes.outputs.relevant == 'true'
+        env:
+          MATRIX: ${{ needs.classify-changes.outputs.compatibility-matrix }}
+        run: python3 scripts/compatibility_evidence.py aggregate --records evidence --matrix "$MATRIX"
+
+  release-evidence:
+    name: Qualify release artifacts
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [validate-manifest, build-image, build-image-arm64, build-image-cuda, faithful-installed-exapp-talk-cpu, smoke, e2e-container, e2e-entrypoint, e2e-install, e2e-talk-record-cuda, transcribe-smoke-cuda]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: compatibility-*-${{ github.run_attempt }}
+          path: evidence
+      - name: Bind product evidence to release images
+        env:
+          COMPAT_BUILD_JOBS: ${{ toJSON(needs) }}
+        run: python3 scripts/compatibility_evidence.py index --records evidence --out qualified/release-evidence.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ github.run_attempt }}
+          path: qualified/
+          if-no-files-found: error
+          retention-days: 90
 
   d403-manifest-sensitivity-control:
     # The NEGATIVE control for the faithful gate above: it runs the exact same

@@ -31,11 +31,13 @@ done
 grep -F '  --storage-mode acl-enabled' "$ORCHESTRATOR" >/dev/null \
   || fail "faithful private-Talk orchestrator does not explicitly select the ACL storage mode"
 
-faithful_job="$(sed -n '/^  faithful-installed-exapp-talk-cpu:/,/^  d403-manifest-sensitivity-control:/p' "$WORKFLOW")"
-grep -F 'apt-get install -y --no-install-recommends jq libxml2-utils' <<<"$faithful_job" >/dev/null \
-  || fail "faithful CPU job does not install its minimal host tools"
-if ! grep -Eq 'apt-get install .*\bffmpeg\b' <<<"$faithful_job"; then
-  fail "faithful CPU job must install host ffmpeg: it now validates a decoded transcript"
-fi
+compatibility_job="$(sed -n '/^  compatibility:/,/^  faithful-installed-exapp-talk-cpu:/p' "$WORKFLOW")"
+grep -F 'uses: ./.github/actions/compatibility-tools' <<<"$compatibility_job" >/dev/null \
+  || fail "compatibility matrix does not prepare host tools"
+tools_action="$REPO_ROOT/.github/actions/compatibility-tools/action.yml"
+grep -Eq 'apt-get install .*\bffmpeg\b' "$tools_action" \
+  || fail "installed compatibility tools must install host ffmpeg"
+grep -F 'playwright install --with-deps chromium' "$tools_action" >/dev/null \
+  || fail "installed compatibility tools must install a real browser"
 
 echo "PASS: both device modes preflight host decode tools and the CPU job installs them"

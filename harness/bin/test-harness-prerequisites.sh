@@ -31,10 +31,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # 1. The harness must still be able to provide both apps before the enabled edge
 #    fires — that is what every access-controlled e2e assertion rests on.
 for app in groupfolders group_everyone; do
-  grep -qF "app:install $app" "$BOOTSTRAP" \
-    || fail "bootstrap does not install required Nextcloud app $app"
-  grep -qF "app:enable $app" "$BOOTSTRAP" \
-    || fail "bootstrap does not enable required Nextcloud app $app"
+  grep -qF "harness_install_app $app" "$BOOTSTRAP" \
+    || fail "bootstrap does not install and enable required Nextcloud app $app"
 done
 
 # 1b. ...and it must be able NOT to. A stack asked for the default model, or for

@@ -50,9 +50,13 @@ package, creates the GitHub release, and publishes to the App Store.
 The tag push triggers two workflows automatically:
 
 1. `publish-exapp-image.yml` — builds and pushes the `:<version>` images.
-2. `release.yml` — validates, waits for the images, then behind **one approval**
-   (the `release` environment) signs the tarball, creates the GitHub release, and
-   POSTs it to apps.nextcloud.com.
+2. `release.yml` — waits for the exact tagged image workflow and its complete
+   compatibility evidence. It checks the commit, manifest, policy, required
+   baselines and image digests, validates an unsigned package, then offers the
+   existing **one approval**. After approval it rechecks image/tag identities,
+   signs the package, attaches compatibility evidence and publishes to the store.
+   A failed, skipped, cancelled, expired or mismatched result blocks publication.
+   Image availability alone does not authorize a release.
 
 So a release is **one command + one approval**. Declining the approval aborts it;
 the images still build. You can also re-run `release.yml` from **Actions** on an
@@ -69,9 +73,19 @@ Every bump restarts the ladder at `-alpha.1`; advance with
 straight to stable, and `rc.1 → stable` is fine (one RC instead of two).
 Suffixed versions upload as App Store pre-releases automatically.
 
-Cassini targets **one Nextcloud major per release**. The supported range lives in
-`info.xml` (`<nextcloud min-version max-version>`) and changes in a normal PR, not
-at release time.
+Cassini supports the maintained Nextcloud majors recorded in
+[`ci/nextcloud-compatibility.json`](../ci/nextcloud-compatibility.json).
+The [generated support table](nextcloud-support-table.md) identifies the exact
+minimum and representative tested patches. CI rejects a manifest or generated
+table that differs from the inventory. Changes to support happen in a normal PR.
+See [compatibility testing](nextcloud-compatibility.md) for qualification and replay.
+
+For a release rehearsal, dispatch `Release` for the intended tag with
+`dry_run=true`. It validates evidence and the unsigned package and stops before
+signing or publication. Old tags without the evidence format are refused; there
+is no automatic legacy bypass. Release assets include `release-evidence.json`,
+a readable report, and `release-package.json` binding the final package checksum
+to its tested manifest.
 
 ## Changelog
 
