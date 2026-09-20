@@ -1,0 +1,26 @@
+# Nightly snapshot of the Cassini meeting archive.
+#
+# 22:50 local: one hour after the last ingest pass of the day (21:40 + up to
+# 10 m jitter), so the snapshot pins that day's ingest, and well clear of
+#   03:30-03:50  cassini-exapp-backup.timer
+#   02:00 on the 1st  btrfs scrub -B /mnt/data
+#   03:10 e2scrub_all / xfs_scrub_all
+#
+# The archive is append-only and never rewrites a file, so a snapshot pins
+# almost nothing and costs essentially metadata. Daily is deliberately generous:
+# it means the freshness assertion in cassini-archive-healthcheck.sh (newest
+# snapshot younger than 30 h) is a real signal rather than noise.
+
+[Unit]
+Description=Nightly read-only btrfs snapshot of the Cassini meeting archive
+Documentation=https://github.com/codemyriad/gocassini/blob/main/docs/meeting-archive.md
+
+[Timer]
+OnCalendar=*-*-* 22:50:00
+RandomizedDelaySec=10m
+Persistent=true
+AccuracySec=1m
+Unit=cassini-archive-snapshot.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,31 @@
+# /etc/default/cassini-archive-alert — OPTIONAL notifier for the alert handler.
+#
+# Install (only if you want a notifier; the alert works without it):
+#     cp ops/cassini-archive-alert.default /etc/default/cassini-archive-alert
+#     chown root:root /etc/default/cassini-archive-alert
+#     chmod 0600 /etc/default/cassini-archive-alert    # it may hold a token
+#
+# With NEITHER key set, cassini-archive-alert still writes the durable ALARM
+# marker, the daemon.crit journal record, the wall broadcast, the motd line and
+# the failed-status stamp in the off-host heartbeat — and exits 0. An
+# unconfigured notifier must never turn into a failing unit.
+#
+# NOTE: this file is read by systemd as an EnvironmentFile AND sourced by the
+# script, so use plain KEY=value and QUOTE any value containing a space — both
+# systemd and bash strip the quotes, while an unquoted `KEY=a b` is a bash
+# syntax error. Single quotes keep $VAR unexpanded until the notifier runs.
+
+# POST the alert as JSON: {text, host, unit, at, detail}. Works with Slack and
+# Zulip incoming webhooks, ntfy, and anything else that accepts a JSON body.
+#ALERT_WEBHOOK_URL=https://example.invalid/hooks/xxxxx
+
+# Arbitrary command; the plain-text alert arrives on stdin. Example, the Roy
+# telegram bot (put the token in this same file, it is 0600):
+#TG_TOKEN=123456:aaaa
+#TG_CHAT=987654
+#ALERT_COMMAND='curl -sS --max-time 15 -F chat_id="$TG_CHAT" -F text=@- "https://api.telegram.org/bot$TG_TOKEN/sendMessage"'
+
+# Set to 0 to suppress the wall(1) broadcast.
+#ALERT_WALL=1
+# Lines of the failing unit's journal to capture into the alarm report.
+#ALERT_JOURNAL_LINES=40

@@ -1,0 +1,28 @@
+# OPTIONAL low-latency trigger for the Cassini archive ingest.
+#
+# The operator promotes a finished capture by renaming it into
+# .../operator/jobs/current/, which changes that directory's mtime. This path
+# unit reacts within seconds, so a meeting recorded at 13:15 is archived at
+# 13:15 instead of at the 13:40 timer tick.
+#
+# Safe to enable alongside the timer: cassini-archive-sync.service passes
+# --debounce, so a burst of promotions collapses into one pass
+# (MIN_RUN_INTERVAL, default 300 s), and a second invocation cannot overlap the
+# first (flock). The debounce is a flag rather than a global precisely so that a
+# hand-run --apply — the one-time backfill — is never silently skipped by it.
+#
+# It is OPTIONAL and off by default. The timer alone is sufficient; enable this
+# only if you want the lower latency:
+#     systemctl enable --now cassini-archive-sync.path
+
+[Unit]
+Description=Trigger the Cassini archive ingest when a capture is promoted
+Documentation=https://github.com/codemyriad/gocassini/blob/main/docs/meeting-archive.md
+RequiresMountsFor=/mnt/data
+
+[Path]
+PathChanged=/mnt/data/cassini-exapp/docker/volumes/nc_app_gocassini_data/_data/operator/jobs/current
+Unit=cassini-archive-sync.service
+
+[Install]
+WantedBy=paths.target

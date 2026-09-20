@@ -1,0 +1,75 @@
+# Cassini unified meeting archive — the ongoing ingest pass.
+#
+# Runs ops/cassini-archive-sync.sh (installed as /usr/local/sbin/cassini-archive-sync)
+# in --sync-new mode: it ingests new ExApp captures from the operator volume,
+# attaches derived .meeting/.opus/.mjr bundles, rebuilds index.jsonl and the
+# link farms, writes state/health.json and the off-host heartbeat, and fails the
+# run when nothing new has been captured for MAX_QUIET_WEEKDAYS weekdays.
+#
+# The one-time backfill of the cron/legacy/hpb corpora is NOT run here. It reads
+# ~123.6 GiB and is launched by hand, once:
+#     sudo /usr/local/sbin/cassini-archive-sync --apply --backfill-old
+#
+# Install: see the INSTALL section of ops/README.md.
+
+[Unit]
+Description=Ingest new Cassini captures into the unified meeting archive
+Documentation=https://github.com/codemyriad/gocassini/blob/main/docs/meeting-archive.md
+# Nothing here talks to the network or to docker: the archive is built from the
+# host filesystem so a stopped or upgrading CT 112 cannot stop it.
+After=local-fs.target
+RequiresMountsFor=/mnt/data
+# There is no mail, no metrics exporter and no messaging on this host, so the
+# alert handler is the notification channel. It writes a durable ALARM marker,
+# a daemon.crit journal record, a wall broadcast and (if configured) a webhook.
+OnFailure=cassini-archive-alert@%n.service
+
+[Service]
+Type=oneshot
+# /etc/default/cassini-archive is ALSO sourced by the script itself, and a plain
+# assignment there wins over the environment. Keep every archive knob in that
+# one file; use plain KEY=value lines only (no `export`, no shell expansion).
+# The -sync file exists for knobs that must apply to this unit alone.
+EnvironmentFile=-/etc/default/cassini-archive
+EnvironmentFile=-/etc/default/cassini-archive-sync
+# The outer lock serialises this unit against cassini-archive-snapshot.service.
+# The script's own `flock -n` would otherwise make the loser exit 0 having done
+# nothing, which is exactly the kind of silent skip this project exists to stop.
+# --debounce is what makes cassini-archive-sync.path safe to enable: a
+# promotion can change current/ several times a minute and each change starts
+# this unit. It is a FLAG, not a global, precisely so a hand-run backfill is
+# never silently skipped by it.
+ExecStart=/usr/bin/flock -w 3600 /run/lock/cassini-archive-unit.lock /usr/local/sbin/cassini-archive-sync --apply --sync-new --debounce
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=6h
+
+# Sandbox. ReadOnlyPaths on the two source corpora is the single most valuable
+# line in this unit: a bug that tries to write, rename or unlink anything in a
+# source tree gets EROFS and a failed unit instead of a deleted meeting.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadOnlyPaths=/mnt/data/cassini /mnt/data/cassini-exapp
+# The heartbeat lives inside the ExApp volume on purpose — that directory is
+# already in cassini-exapp-backup's path list, so the health file ships to R2
+# nightly with zero edits to the production backup script. It is the only
+# detection channel that survives george being dead.
+ReadWritePaths=/mnt/data/cassini-archive /mnt/data/cassini-archive-snapshots /run/lock
+# StateDirectory, not ReadWritePaths: systemd creates /var/lib/cassini-archive
+# if it is missing instead of refusing to start the unit.
+StateDirectory=cassini-archive
+StateDirectoryMode=0750
+# LEADING DASH, and it matters. A ReadWritePaths= entry that does not exist is a
+# unit START failure (status=226/NAMESPACE) — and this path lives inside a
+# docker volume that gets recreated whenever the ExApp is reinstalled. Without
+# the dash, an ExApp redeploy makes this unit fail 226/NAMESPACE, its OnFailure=
+# handler (which names the same path) ALSO fail 226/NAMESPACE, and the whole
+# alert chain go silent: no ALARM marker, no journal record, no wall, nothing.
+ReadWritePaths=-/mnt/data/cassini-exapp/docker/volumes/nc_app_gocassini_data/_data/operator/backups

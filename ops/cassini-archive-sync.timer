@@ -1,0 +1,33 @@
+# Schedule for the Cassini archive ingest.
+#
+# Three passes a day, chosen to miss every other scheduled job on george:
+#   05:20  mop-up for anything that landed overnight
+#   13:40  catches the ~13:15 CEST standup once its build/publish has finished
+#   21:40  catches late meetings and refreshes the heartbeat ~6 h before
+#          cassini-exapp-backup uploads it to R2
+#
+# Deliberately NOT scheduled near:
+#   03:30-03:50  cassini-exapp-backup.timer (03:30 + RandomizedDelaySec=20m)
+#   02:00 on the 1st  `0 2 1 * *` btrfs scrub -B /mnt/data (/etc/cron.d)
+#   03:10 daily / 03:10 Sunday  e2scrub_all, xfs_scrub_all
+#   22:50-23:00  cassini-archive-snapshot.timer
+#
+# Times are host local (Europe/Rome). The archive's own timestamps are UTC; the
+# schedule is local because the meetings it chases are.
+
+[Unit]
+Description=Ingest new Cassini captures into the unified meeting archive (3x/day)
+Documentation=https://github.com/codemyriad/gocassini/blob/main/docs/meeting-archive.md
+
+[Timer]
+OnCalendar=*-*-* 05:20:00
+OnCalendar=*-*-* 13:40:00
+OnCalendar=*-*-* 21:40:00
+RandomizedDelaySec=10m
+# A powered-off or rebooting host still gets one catch-up pass.
+Persistent=true
+AccuracySec=1m
+Unit=cassini-archive-sync.service
+
+[Install]
+WantedBy=timers.target

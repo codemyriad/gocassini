@@ -1,0 +1,59 @@
+# Cassini unified meeting archive — nightly read-only btrfs snapshot, fenced
+# retention prune, and one rotating integrity slice.
+#
+# This is a SEPARATE unit from cassini-archive-sync.service on purpose:
+#   * the snapshot must still be taken on a day when nothing new was captured,
+#     so a quiet fortnight still leaves a marker in the history;
+#   * a snapshot failure and an ingest failure are different incidents and
+#     should be separately visible in `systemctl --failed`.
+#
+# --snapshot takes /mnt/data/cassini-archive-snapshots/<UTC stamp> and then runs
+# the pruner, which is fenced four ways (exact name shape only, never the newest
+# or the pinned 000-baseline--*, refuses a history shorter than 3 or staler than
+# 30 h, and never deletes more than SNAPSHOT_MAX_DELETES=3 in one pass).
+#
+# --verify re-hashes the next VERIFY_BYTES_PER_RUN (default 4 GiB) slice of the
+# corpus against ARCHIVE/MANIFEST.sha256, oldest-verified-first, so the whole
+# ~123.6 GiB is re-read roughly every 40 days and bit rot is found on a bounded
+# schedule instead of at restore time.
+
+[Unit]
+Description=Snapshot the Cassini meeting archive and verify one integrity slice
+Documentation=https://github.com/codemyriad/gocassini/blob/main/docs/meeting-archive.md
+After=local-fs.target
+RequiresMountsFor=/mnt/data
+OnFailure=cassini-archive-alert@%n.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/cassini-archive
+EnvironmentFile=-/etc/default/cassini-archive-sync
+# Same outer lock as the ingest unit: if a long ingest is still running, wait
+# for it rather than skipping the night's snapshot silently.
+ExecStart=/usr/bin/flock -w 3600 /run/lock/cassini-archive-unit.lock /usr/local/sbin/cassini-archive-sync --apply --snapshot --verify
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=6h
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadOnlyPaths=/mnt/data/cassini /mnt/data/cassini-exapp
+ReadWritePaths=/mnt/data/cassini-archive /mnt/data/cassini-archive-snapshots /run/lock
+# StateDirectory, not ReadWritePaths: systemd creates /var/lib/cassini-archive
+# if it is missing instead of refusing to start the unit.
+StateDirectory=cassini-archive
+StateDirectoryMode=0750
+# LEADING DASH, and it matters. A ReadWritePaths= entry that does not exist is a
+# unit START failure (status=226/NAMESPACE) — and this path lives inside a
+# docker volume that gets recreated whenever the ExApp is reinstalled. Without
+# the dash, an ExApp redeploy makes this unit fail 226/NAMESPACE, its OnFailure=
+# handler (which names the same path) ALSO fail 226/NAMESPACE, and the whole
+# alert chain go silent: no ALARM marker, no journal record, no wall, nothing.
+ReadWritePaths=-/mnt/data/cassini-exapp/docker/volumes/nc_app_gocassini_data/_data/operator/backups

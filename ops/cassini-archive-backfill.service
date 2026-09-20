@@ -1,0 +1,61 @@
+# Cassini unified meeting archive — the ONE-TIME backfill, run under the same
+# sandbox as everything else.
+#
+# There is no timer for this unit and no [Install] section: you start it by
+# hand, once, and watch it.
+#
+#     systemctl start --no-block cassini-archive-backfill.service
+#     journalctl -fu cassini-archive-backfill.service
+#     systemctl show -p Result -p ExecMainStatus cassini-archive-backfill.service
+#
+# WHY A UNIT AND NOT JUST A SHELL COMMAND
+#   This is the single pass that walks all 103 old bundles and ~123.6 GiB, by
+#   hand, once, unrepeatably — and it was the only pass that ran WITHOUT
+#   ProtectSystem=strict and ReadOnlyPaths on the two source corpora. Every
+#   scheduled pass gets those two lines; the run with the most irreplaceable
+#   data in front of it got none of them, with only the script's in-process
+#   guard_write() between a bug and the corpus. Running it here means a bug that
+#   tries to write, rename or unlink anything under /mnt/data/cassini gets EROFS
+#   and a failed unit instead of a deleted meeting.
+#
+# ONE INVOCATION, BOTH FLAGS. The acceptance counts are asserted per pass, so a
+# pass that skips an era cannot vouch for it — and --debounce is deliberately
+# absent here, so nothing this unit does can be silently skipped.
+#
+# TimeoutStartSec is 12 h rather than the usual 6 h: the backfill hashes
+# ~123.6 GiB at Nice=10 with idle I/O (expect 1-3 h, but it must not be killed
+# half way if the box is busy). It is resumable per meeting, so a kill costs at
+# most re-reading the largest bundle.
+
+[Unit]
+Description=One-time backfill of the Cassini meeting archive (cron/legacy/hpb + ExApp)
+Documentation=https://github.com/codemyriad/gocassini/blob/main/docs/meeting-archive.md
+After=local-fs.target
+RequiresMountsFor=/mnt/data
+OnFailure=cassini-archive-alert@%n.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/cassini-archive
+EnvironmentFile=-/etc/default/cassini-archive-sync
+# Same outer lock as the ingest and snapshot units, so enabling the timers
+# before the backfill has finished cannot produce two concurrent passes.
+ExecStart=/usr/bin/flock -w 3600 /run/lock/cassini-archive-unit.lock /usr/local/sbin/cassini-archive-sync --apply --backfill-old --sync-new
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=12h
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadOnlyPaths=/mnt/data/cassini /mnt/data/cassini-exapp
+ReadWritePaths=/mnt/data/cassini-archive /mnt/data/cassini-archive-snapshots /run/lock
+StateDirectory=cassini-archive
+StateDirectoryMode=0750
+ReadWritePaths=-/mnt/data/cassini-exapp/docker/volumes/nc_app_gocassini_data/_data/operator/backups

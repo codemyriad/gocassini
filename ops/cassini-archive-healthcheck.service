@@ -1,0 +1,40 @@
+# Cassini archive watchdog.
+#
+# This unit exists because OnFailure= cannot fire for a unit that was disabled,
+# masked, or never scheduled — which is exactly how cassini-ingest-batch.service
+# sat `failed` for three weeks unnoticed. It is a DIFFERENT unit on a DIFFERENT
+# schedule from the thing it watches, and one of its assertions is
+# `systemctl is-failed` over a configurable unit list.
+#
+# Exit codes: 0 healthy, 2 usage/environment, 3 one or more assertions failed.
+# A non-zero exit fails the unit, which fires cassini-archive-alert@.service:
+# durable ALARM marker + daemon.crit journal record + wall + optional webhook.
+
+[Unit]
+Description=Assert the Cassini meeting archive is fresh, complete and being fed
+Documentation=https://github.com/codemyriad/gocassini/blob/main/docs/meeting-archive.md
+After=local-fs.target
+RequiresMountsFor=/mnt/data
+OnFailure=cassini-archive-alert@%n.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/cassini-archive
+EnvironmentFile=-/etc/default/cassini-archive-sync
+ExecStart=/usr/local/sbin/cassini-archive-healthcheck
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15m
+
+# The healthcheck only reads. It needs no write access anywhere, so it gets
+# none: ProtectSystem=strict with no ReadWritePaths at all.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadOnlyPaths=/mnt/data/cassini /mnt/data/cassini-exapp /mnt/data/cassini-archive /mnt/data/cassini-archive-snapshots

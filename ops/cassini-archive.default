@@ -1,0 +1,74 @@
+# /etc/default/cassini-archive — configuration for the Cassini meeting archive.
+#
+# Install: cp ops/cassini-archive.default /etc/default/cassini-archive
+#          chmod 0644 /etc/default/cassini-archive
+#
+# This file is BOTH sourced by the scripts and read by systemd as an
+# EnvironmentFile, so it must be plain `KEY=value` lines only:
+#   * no `export`, no `$(...)`, no shell expansion, no arrays
+#   * ANY value containing a space must be quoted — 'a b' or "a b". Both
+#     systemd and bash strip the quotes; an unquoted `KEY=a b` is a syntax
+#     error when bash sources this file.
+#   * `#` comments and blank lines are fine
+# A plain assignment here WINS over the environment, because each script sources
+# this file before applying its ${VAR:-default} fallbacks. Keep every archive
+# knob here and there is exactly one place to look.
+#
+# Everything below is commented out at its built-in default. Uncomment only what
+# you actually want to change.
+
+# --- roots -------------------------------------------------------------------
+#ARCHIVE_ROOT=/mnt/data/cassini-archive
+#SNAPSHOT_ROOT=/mnt/data/cassini-archive-snapshots
+#VAR_DIR=/var/lib/cassini-archive
+#SRC_OLD=/mnt/data/cassini/recordings
+#SRC_HPB=/mnt/data/cassini/hpb-talk-recordings
+#SRC_EXA_DATA=/mnt/data/cassini-exapp/docker/volumes/nc_app_gocassini_data/_data
+
+# --- ingest ------------------------------------------------------------------
+# Seconds between accepted runs. It applies ONLY to a run started with
+# --debounce, which is what cassini-archive-sync.service passes so that the
+# optional .path unit can fire on every promotion without starting a pass each
+# time. A hand-run --apply is never debounced: when it was, the documented
+# two-step backfill silently archived nothing on its second command and exited 0.
+#MIN_RUN_INTERVAL=300
+# Refuse to run below this much free space on the archive filesystem (200 GiB).
+#MIN_FREE_BYTES=214748364800
+# Set to 1 ONLY if you deliberately want a real ~123.6 GiB copy instead of
+# reflinks. Never set this to work around a reflink failure without reading why.
+#ALLOW_FULL_COPY=0
+
+# --- integrity ---------------------------------------------------------------
+# Bytes re-hashed per --verify pass. 4 GiB/night walks the whole corpus in ~40 d.
+#VERIFY_BYTES_PER_RUN=4294967296
+
+# --- snapshot retention ------------------------------------------------------
+#SNAPSHOT_KEEP_DAYS=14
+#SNAPSHOT_KEEP_WEEKS=8
+#SNAPSHOT_KEEP_MONTHS=24
+# Hard brake: no single pruner run may delete more than this many snapshots.
+#SNAPSHOT_MAX_DELETES=3
+
+# --- failure detection -------------------------------------------------------
+# Fail the run when no new meeting has been captured in this many weekdays.
+# Replayed over the real 2026-03→08 capture calendar, 3 fires TWICE: on the
+# 2026-07-31 → 08-06 incident this whole project exists to prevent, and on one
+# genuine quiet week (2026-05-13 → 05-19). It does not fire on the 07-16 /
+# 08-10 / 08-14 single-day holes. Raising it to 4 changes nothing (both gaps are
+# 4 weekdays) and 5 would miss the incident, so 3 stands — at the price of about
+# one false positive a quarter. Declare those with EXPECTED_QUIET_UNTIL below
+# rather than raising the threshold, or the alarm gets learned-ignored.
+#MAX_QUIET_WEEKDAYS=3
+# Declare a holiday ON THE RECORD instead of letting the alarm be learned-
+# ignored. Format YYYY-MM-DD; suppression ends the day AFTER this date.
+#EXPECTED_QUIET_UNTIL=
+
+# --- healthcheck thresholds --------------------------------------------------
+#MAX_RUN_AGE_S=108000        # 30 h without a completed run
+#MAX_SNAPSHOT_AGE_S=108000   # 30 h without a snapshot
+#MAX_PENDING_AGE_S=172800    # 48 h stuck in pending.tsv
+#MAX_CAPTURE_LAG_S=28800     # 8 h of operator DB ahead of the archive
+#INGEST_GRACE_S=21600        # 6 h a finished .run may sit unarchived
+# Space-separated. Empty disables the check.
+#WATCH_UNITS='cassini-archive-sync.service cassini-archive-snapshot.service cassini-archive-healthcheck.service cassini-archive-backfill.service cassini-exapp-backup.service'
+#WATCH_TIMERS='cassini-archive-sync.timer cassini-archive-snapshot.timer cassini-archive-healthcheck.timer cassini-exapp-backup.timer'

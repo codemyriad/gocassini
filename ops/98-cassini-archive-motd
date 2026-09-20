@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# /etc/update-motd.d/98-cassini-archive
+#
+# Puts the archive's failure state in front of whoever logs in. This host has no
+# mail and no metrics, so "somebody SSHes in" is a real detection channel — the
+# one that would have shortened the 2026-07-31 outage from three days to one.
+#
+# Install:
+#     install -m 0755 ops/98-cassini-archive-motd /etc/update-motd.d/98-cassini-archive
+#
+# Prints NOTHING when the archive is healthy: a motd that always says something
+# is a motd nobody reads.
+
+set -u
+
+VAR_DIR=${VAR_DIR:-/var/lib/cassini-archive}
+ARCHIVE_ROOT=${ARCHIVE_ROOT:-/mnt/data/cassini-archive}
+ALARM_FILE="$VAR_DIR/ALARM"
+HEALTH_JSON="$ARCHIVE_ROOT/state/health.json"
+
+if [ -f "$ALARM_FILE" ]; then
+  printf '\n\033[1;31m*** CASSINI ARCHIVE ALARM — UNACKNOWLEDGED ***\033[0m\n'
+  # Newest block only; the whole latched history is in the file itself.
+  awk '/^=== cassini-archive alert/{buf=""} {buf = buf $0 "\n"} END{printf "%s", buf}' \
+    "$ALARM_FILE" 2>/dev/null | sed -n '1,14p'
+  printf '  full history: %s\n' "$ALARM_FILE"
+  printf '  diagnose:     sudo cassini-archive-healthcheck\n'
+  printf '  acknowledge:  sudo cassini-archive-sync --apply --ack\n\n'
+  exit 0
+fi
+
+# No alarm: say something only when the archive has gone stale anyway (e.g. the
+# timer was disabled, so nothing ever failed and nothing ever alerted).
+[ -f "$HEALTH_JSON" ] || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+last=$(jq -r '.last_run_finished_utc // empty' "$HEALTH_JSON" 2>/dev/null)
+[ -n "$last" ] || exit 0
+last_s=$(date -u -d "$last" +%s 2>/dev/null) || exit 0
+age=$(( $(date -u +%s) - last_s ))
+if [ "$age" -gt "${MAX_RUN_AGE_S:-108000}" ]; then
+  printf '\n\033[1;33mCassini archive: no run has completed for %d h (last %s).\033[0m\n' \
+    "$((age / 3600))" "$last"
+  printf '  sudo cassini-archive-healthcheck   # why\n\n'
+fi
+exit 0
