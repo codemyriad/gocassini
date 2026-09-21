@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -34,4 +34,62 @@ it("distinguishes saved credentials and historical playback from current verific
  expect(test.checked_at).toBe(report.test.playback_verified_at);
  report.checks.push({id:"configuration",state:"needs_action",code:"setup_store_unreadable",message:"Unreadable"});
  expect(readinessRows(report).some(c=>c.id==="talk.authentication")).toBe(false);
+});
+
+// D-763: the checklist reads at a glance.
+describe("check severity", () => {
+  const check = (over: Partial<ReadinessCheck> = {}): ReadinessCheck => ({
+    id: "storage", state: "passed", code: "storage_ready", message: "", ...over,
+  });
+
+  it("is green for a check that looked and succeeded", () => {
+    expect(checkTone(check())).toBe("success");
+  });
+
+  it("is red for a check that blocks recording", () => {
+    expect(checkTone(check({ state: "needs_action", code: "storage_incomplete" }))).toBe("error");
+  });
+
+  // "Nobody looked" is not "impaired". Folding them together would make one
+  // colour mean two different facts, and the operator already downgrades
+  // expired evidence to not_verified rather than to a weaker pass.
+  it("is neutral, not a warning, for a check nobody has run", () => {
+    expect(checkTone(check({ state: "not_verified", code: "storage_check_expired" }))).toBe("neutral");
+  });
+
+  // These two look like a middle state and are not. "Configured" claims a
+  // secret is saved, which is true; whether it works is talk.hpb's job.
+  // "Previously confirmed" claims a past playback, which is also true — and
+  // playback confirmation is inherently historical, so amber would be its
+  // permanent ceiling on a healthy install.
+  it("does not invent a middle state for the synthesised rows", () => {
+    expect(checkTone(check({ code: "internal_secret_configuration" }))).toBe("success");
+    expect(checkTone(check({ code: "test_playback" }))).toBe("success");
+  });
+});
+
+describe("the instance's worst news", () => {
+  const report = (checks: ReadinessCheck[]): RecordingReadiness => ({
+    state: "passed", checks, secret_configured: true, secret_source: "env",
+    test_room_url: "", test: { state: "idle", published: false, playback_verified_at: "2026-09-01T00:00:00Z" },
+  });
+  const broken = { id: "storage", state: "needs_action", code: "storage_incomplete", message: "" } as ReadinessCheck;
+  const unchecked = { id: "talk.discovery", state: "not_verified", code: "connection_not_verified", message: "" } as ReadinessCheck;
+
+  it("reports broken over unchecked", () => {
+    expect(reportTone(report([broken, unchecked]))).toBe("error");
+    expect(reportTone(report([unchecked]))).toBe("neutral");
+  });
+
+  // A healthy install MUST be able to reach green, or the colour says nothing.
+  it("reaches green when everything the list shows has passed", () => {
+    expect(reportTone(report([]))).toBe("success");
+  });
+
+  // The header reads the rows the list renders, including the ones
+  // readinessRows synthesises — otherwise it can disagree with what is under it.
+  it("counts a synthesised row that has not been verified", () => {
+    const noPlayback = { ...report([]), test: { state: "idle", published: false } };
+    expect(reportTone(noPlayback)).toBe("neutral");
+  });
 });

@@ -3,7 +3,7 @@
   import { initialEnvironment } from './operator/deploymentGuidance';
   import { onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, readinessTitle, readinessHealthKey, readinessRows, rowActions, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
   let report: RecordingReadiness | null = null;
@@ -82,7 +82,7 @@
 
 <section class="rounded-box border border-base-300 bg-base-100 p-5 shadow-sm" aria-labelledby="recording-readiness-title" aria-busy={busy}>
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 id="recording-readiness-title" class="text-lg font-semibold">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
+    <h2 id="recording-readiness-title" class="text-lg font-semibold {report && !stale ? toneClasses[reportTone(report)] : ''}">{stale ? "Recording setup needs verification" : report ? readinessTitle(report) : "Check recording setup"}</h2>
     <button class="btn btn-sm" disabled={busy || polling} on:click={() => load(true)}>{busy ? "Checking…" : "Check again"}</button>
   </div>
   <p class="mt-2 text-sm text-base-content/70">Check the connection and recording storage, then verify a short recording through Talk.</p>
@@ -93,7 +93,7 @@
         <li class="py-3" data-check-id={check.id}>
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
-              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal">{checkStateLabel(check)}</span></p>
+              <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span></p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
               {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50">{check.code === "test_playback" ? "Confirmed" : "Checked"} {new Date(check.checked_at).toLocaleString()}</p>{/if}
             </div>
