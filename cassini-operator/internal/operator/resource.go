@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -74,6 +73,9 @@ func resourceLimitsFromEnv() resourceLimits {
 // 0.6B fp32. A 4-core/8GiB host therefore runs the fast and balanced tiers and
 // declines "best" with an actionable message instead of OOMing Talk.
 func (l resourceLimits) minFreeMemForBuild(device, model string) int {
+	if model == "" {
+		return envIntDefault("CASSINI_BUILD_AUDIO_MIN_FREE_MEM_MB", 1024)
+	}
 	if isCUDA(device) {
 		return l.minFreeMemMB
 	}
@@ -121,59 +123,24 @@ func (e *resourceUnavailableError) Error() string {
 	return fmt.Sprintf("resource governor: %s unavailable: %s", e.resource, e.detail)
 }
 
-// admitModelForDevice returns the model an admitted build will load: the model
-// of the quality tier on the resolved device. Every tier can run on every
-// image, because a model the image does not carry is downloaded once into the
-// persistent cache (D-704).
+// admitModelForDevice reflects locally ready bytes only. Missing or unusable
+// transcription is admitted with the smaller audio-processing budget.
 func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (string, error) {
-	model := settings.modelForDevice(device)
-	// An air-gapped deployment asked for no downloads. Say that the tier cannot
-	// run here, rather than starting a build that will fail when it reaches for
-	// the network.
-	if rt.cfg.DisallowModelDownload && rt.modelNeedsDownload(model) {
-		return "", &resourceUnavailableError{
-			resource: "model bundle",
-			detail: fmt.Sprintf(
-				"this image does not bundle model %q, and CASSINI_DISALLOW_MODEL_DOWNLOAD forbids fetching it; "+
-					"select a quality tier this image bundles, or clear that setting to allow the one-off download",
-				model),
-			permanent: true,
-		}
+	if !settings.TranscriptionEnabled || settings.ActiveModel == "" || settings.ActiveRevision == "" {
+		return "", nil
 	}
-	return model, nil
+	ctx, cancel := context.WithTimeout(rt.ctx, 2*time.Second)
+	defer cancel()
+	inventory, err := rt.modelInventory(ctx, device)
+	if err != nil {
+		return "", nil
+	}
+	m, err := findModel(inventory, settings.ActiveModel, settings.ActiveRevision)
+	if err != nil || !m.Ready {
+		return "", nil
+	}
+	return m.ID, nil
 }
-
-// modelNeedsDownload reports whether a build must fetch this model before it
-// can transcribe. Each image carries the models for the device it serves, so a
-// tier outside that set arrives by download. The operator only reports the
-// wait: the recorder performs the download, and fails with an actionable error
-// when the host has no network egress.
-func (rt *Runtime) modelNeedsDownload(model string) bool {
-	// The image root is built and verified by the image smoke test, so a
-	// directory there counts. The cache is written at run time, and only the
-	// completion marker proves a download finished: an interrupted one leaves
-	// files that exist. This mirrors EnsureModel in the recorder, which is a
-	// separate module, so the marker name lives in both places.
-	bundled := func(root string) bool {
-		if strings.TrimSpace(root) == "" {
-			return false
-		}
-		entries, err := os.ReadDir(filepath.Join(root, "models", model))
-		return err == nil && len(entries) > 0
-	}
-	cached := func(root string) bool {
-		if strings.TrimSpace(root) == "" {
-			return false
-		}
-		_, err := os.Stat(filepath.Join(root, "models", model, modelCompletionMarker))
-		return err == nil
-	}
-	return !bundled(rt.cfg.BundledModelRoot) && !cached(rt.cfg.ModelCacheRoot)
-}
-
-// modelCompletionMarker is transcribe.completionMarker. The operator and the
-// recorder are separate modules, so the name is duplicated. Keep them equal.
-const modelCompletionMarker = ".cassini-model-complete"
 
 // applyToEnv injects the STT execution policy for the device resolveBuildDevice
 // admitted. The device is always written explicitly so the child process cannot

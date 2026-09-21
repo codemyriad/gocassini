@@ -450,8 +450,8 @@ func TestPutSettingsAcceptsCPUOverride(t *testing.T) {
 	}
 	// best on CPU is fp32 — the tiers mean something again once builds are not
 	// forced onto CUDA.
-	if resp.Effective.Model != modelParakeetV3Fp32 {
-		t.Fatalf("effective.model = %q, want %s", resp.Effective.Model, modelParakeetV3Fp32)
+	if resp.TranscriptionEnabled || resp.Effective.Model != "" {
+		t.Fatalf("quality change implicitly enabled a model: %#v", resp)
 	}
 	persisted, err := LoadOrInitSettings(rt.settingsPath)
 	if err != nil {
@@ -489,8 +489,8 @@ func TestGetSettingsReturnsEffectiveView(t *testing.T) {
 	if resp.Effective.Device != deviceCPU {
 		t.Fatalf("effective.device = %q, want cpu: %s", resp.Effective.Device, rec.Body.String())
 	}
-	if resp.Effective.Model != modelForQuality(resp.Quality, deviceCPU) {
-		t.Fatalf("effective.model = %q, want %s: %s", resp.Effective.Model, modelForQuality(resp.Quality, deviceCPU), rec.Body.String())
+	if resp.TranscriptionEnabled || resp.Effective.Model != "" {
+		t.Fatalf("fresh settings must be audio-only: %#v", resp)
 	}
 	if resp.Effective.Note == "" {
 		t.Error("effective.note is empty; the panel has nothing to explain the device with")
@@ -614,72 +614,26 @@ func TestAutoQualityFollowsEffectiveCUDACapability(t *testing.T) {
 	}
 }
 
-func TestGetSettingsReportsTheTiersModel(t *testing.T) {
-	// The panel reads /settings, and every tier runs on every image now: a
-	// model the image does not carry is downloaded once (D-704). So the
-	// reported model is the tier's own model, not whatever the image happens
-	// to bundle.
+func TestEffectiveOffDoesNotRequireOrDownloadModels(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	t.Setenv(envSTTCUDACapable, "0")
-	stubNVIDIADevice(t, false)
-
-	// GET /settings re-reads from disk, so the policy has to be persisted: an
-	// in-memory set alone would be replaced by whatever the loader detects, and
-	// the assertion would then depend on the host.
-	balanced := STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser}
-	if err := Save(rt.settingsPath, balanced); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	rt.setSettings(balanced)
-
-	rec := httptest.NewRecorder()
-	rt.settingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /settings = %d, want 200 body=%s", rec.Code, rec.Body.String())
-	}
-	var resp settingsResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Effective.Device != deviceCPU {
-		t.Fatalf("effective.device = %q, want cpu", resp.Effective.Device)
-	}
-	if resp.Effective.Model != modelParakeetV3Int8 {
-		t.Fatalf("effective.model = %q, want the balanced tier model %s", resp.Effective.Model, modelParakeetV3Int8)
+	for _, quality := range []string{sttQualityFast, sttQualityBalanced, sttQualityBest} {
+		effective := rt.effectiveFor(STTSettings{Quality: quality})
+		if effective.Model != "" || effective.ModelDownloadMB != 0 || effective.MinFreeMemoryMB != 0 {
+			t.Fatalf("off requires model resources: %#v", effective)
+		}
+		if !strings.Contains(effective.Note, "off") {
+			t.Fatal(effective.Note)
+		}
 	}
 }
 
-func TestEffectiveReportsAPendingModelDownload(t *testing.T) {
-	// The first build of a tier the image does not bake waits for one download.
-	// The panel reads /settings, so the size belongs there and not only in the
-	// operator log (D-704).
+func TestEffectivePinsActiveModelAcrossQualityDefaults(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.cfg.BundledModelRoot = t.TempDir()
-	rt.cfg.ModelCacheRoot = t.TempDir()
-	t.Setenv(envSTTCUDACapable, "0")
-	stubNVIDIADevice(t, false)
-
-	effective := rt.effectiveFor(STTSettings{Quality: sttQualityBest, Source: sttSourceUser})
-	if effective.Model != modelParakeetV3Fp32 {
-		t.Fatalf("effective.model = %q, want %s", effective.Model, modelParakeetV3Fp32)
-	}
-	if effective.ModelDownloadMB != modelDownloadMB(modelParakeetV3Fp32) {
-		t.Errorf("model_download_mb = %d, want %d", effective.ModelDownloadMB, modelDownloadMB(modelParakeetV3Fp32))
-	}
-
-	// A model the image bakes needs no download, and the field stays zero so
-	// the panel shows nothing.
-	dir := filepath.Join(rt.cfg.BundledModelRoot, "models", modelParakeetV3Fp32)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "encoder.onnx"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := rt.effectiveFor(STTSettings{Quality: sttQualityBest}).ModelDownloadMB; got != 0 {
-		t.Errorf("model_download_mb = %d for a bundled model, want 0", got)
+	effective := rt.effectiveFor(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, ActiveRevision: "pinned", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
+	if effective.Model != modelParakeetV3Fp32 || effective.ModelDownloadMB != 0 {
+		t.Fatalf("active model changed: %#v", effective)
 	}
 }
 

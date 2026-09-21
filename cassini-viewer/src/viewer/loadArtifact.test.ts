@@ -99,6 +99,23 @@ describe("loadArtifactFromDirectory", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps audio and participant metadata for an explicitly skipped transcript", async () => {
+    globalThis.window = {location: {href: "http://localhost/", protocol: "http:"}} as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url=String(input);
+      if (init?.method==="HEAD") return {ok:url.endsWith("meeting.webm")} as Response;
+      if (url.endsWith("manifest.json")) return {ok:true,json:async()=>({files:{audio:"meeting.webm",transcripts:[{id:"untranscribed",path:"transcript.words.v1.json",default:true}]},processing:{transcription:{status:"skipped",reason:"disabled"}}})} as Response;
+      if (url.endsWith("transcript.words.v1.json")) return {ok:true,json:async()=>({...transcriptFixture,segments:[]})} as Response;
+      return {ok:false} as Response;
+    }) as typeof fetch;
+    const artifact=await loadArtifactFromDirectory("./audio-only");
+    expect(artifact.transcriptionStatus).toEqual({status:"skipped",reason:"disabled"});
+    expect(artifact.audioSrc).toBe("http://localhost/audio-only/meeting.opus");
+    expect(artifact.transcript.speakers).toEqual(transcriptFixture.speakers);
+    expect(artifact.transcript.segments).toHaveLength(0);
+    expect(artifact.summary).toBeNull();
+  });
+
   it("loads display transcript from the document-relative artifact path", async () => {
     const calls: string[] = [];
     globalThis.window = {

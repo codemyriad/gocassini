@@ -134,6 +134,7 @@
   let creating = false;
   let createError = "";
 
+  $: textless = entries.filter((entry) => entry.wordCount === 0);
   $: meetingIds = entries.map((entry) => entry.id);
   // "Generate insight", as the design has it. The count is already on the rows
   // above it and on the selection bar behind the panel, and repeating it on the
@@ -245,7 +246,7 @@
   }
 
   async function generate() {
-    if (creating || meetingIds.length === 0 || questionMissing) {
+    if (creating || meetingIds.length === 0 || questionMissing || textless.length > 0) {
       return;
     }
     creating = true;
@@ -405,7 +406,7 @@
       <button
         class="btn btn-primary w-full"
         type="button"
-        disabled={creating || questionMissing}
+        disabled={creating || questionMissing || textless.length > 0}
         on:click={generate}
       >
         {creating ? "Starting…" : generateLabel}
@@ -424,6 +425,9 @@
       </p>
     </div>
 
+    {#if textless.length > 0}
+      <p class="text-xs" role="status">{textless.length} selected recording(s) have no transcript text. Remove them from the selection to generate an insight. Their audio is still available.</p>
+    {/if}
     {#if createError}
       <p class="text-xs text-error" role="alert">{createError}</p>
     {/if}

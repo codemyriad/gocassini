@@ -146,7 +146,7 @@ Documentation: https://gocassini.com/docs]]></description>
       <variable>
         <name>CASSINI_DISALLOW_MODEL_DOWNLOAD</name>
         <display-name>Never download speech models (optional)</display-name>
-        <description>Set to 1 on a host with no outbound network access. Each image bundles the model of the quality tier it runs by default, and any other tier is downloaded once into the model cache on the persistent volume. With this set, the operator blocks a build whose tier needs a download and says which tier to select instead, rather than starting a build that cannot reach the network.</description>
+        <description>Set to 1 to prevent speech-model downloads, including resuming interrupted downloads. Transcription is optional and defaults to off. Import manually transferred models with cassini models import, then enable transcription in Settings. Verified models persist across upgrades; recording and audio playback work without models.</description>
       </variable>
       <variable>
         <name>CASSINI_ATTRIBUTION_DISABLED</name>
@@ -211,6 +211,12 @@ Documentation: https://gocassini.com/docs]]></description>
       <route>
         <url>^operator\/events\/?$</url>
         <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <!-- Model acquisition is explicit and administrator-only (D-797). -->
+      <route>
+        <url>^operator\/settings\/models\/(install|jobs\/[^\/]+\/(cancel|retry))$</url>
+        <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: STT quality settings (read + update) driven by the operator

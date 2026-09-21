@@ -176,7 +176,7 @@ func TestApplyToEnv(t *testing.T) {
 	}
 }
 
-func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
+func TestExecuteBuildCLIPreservesAudioWithoutCUDARuntime(t *testing.T) {
 	// An impossible RAM floor proves CUDA capability is checked first. A
 	// portable image must block immediately, not spend five minutes waiting for
 	// memory that cannot make its missing execution provider appear.
@@ -211,6 +211,8 @@ func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
 			// Emulate a portable image installed on a GPU daemon. Visible GPU
 			// hardware must not override the missing CUDA execution provider;
 			// admission must fail before cmd.Run can start the ASR process.
+			TranscriptionEnabled: true,
+			ActiveModel:          modelParakeetV3Fp32, ActiveRevision: "pinned",
 			DeviceOverride: "cuda",
 		},
 	}
@@ -219,12 +221,11 @@ func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
 	_, err = rt.executeBuildCLI(ctx, buildTask{
 		JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath,
 	})
-	var unavailable *resourceUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.resource != "CUDA runtime" || !unavailable.permanent {
-		t.Fatalf("executeBuildCLI() error = %v, want permanent CUDA runtime resourceUnavailableError", err)
+	if err == nil || !strings.Contains(err.Error(), "build output missing") {
+		t.Fatalf("expected mock build to run the audio path: %v", err)
 	}
-	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("Cassini subprocess ran on CPU (marker stat error = %v)", statErr)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("audio build never ran: %v", err)
 	}
 }
 
@@ -843,89 +844,10 @@ func TestCPUFloorsRankByTierCost(t *testing.T) {
 	}
 }
 
-func TestModelNeedsDownload(t *testing.T) {
-	// Each image carries the models for the device it serves. A tier outside
-	// that set arrives by one download into the persistent cache (D-704).
-	bundledRoot := t.TempDir()
-	cacheRoot := t.TempDir()
-	rt := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: cacheRoot}}
-
-	seed := func(root, model string, complete bool) {
-		t.Helper()
-		dir := filepath.Join(root, "models", model)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "encoder.onnx"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if complete {
-			if err := os.WriteFile(filepath.Join(dir, modelCompletionMarker), []byte("t\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-
-	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
-		t.Error("a model in neither root must read as a download")
-	}
-
-	seed(bundledRoot, modelParakeetV3Fp32, false)
-	if rt.modelNeedsDownload(modelParakeetV3Fp32) {
-		t.Error("a model baked into the image must not be downloaded")
-	}
-
-	// An interrupted download leaves files without the marker. That directory
-	// must still read as a download, or the operator would promise a build the
-	// recorder cannot start.
-	seed(cacheRoot, modelParakeetV3Int8, false)
-	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
-		t.Error("an unfinished cache directory must still read as a download")
-	}
-
-	seed(cacheRoot, modelParakeetV3Int8, true)
-	if rt.modelNeedsDownload(modelParakeetV3Int8) {
-		t.Error("a completed download must not be fetched again")
-	}
-}
-
-func TestAdmitModelForDeviceHonoursTheAirGapSwitch(t *testing.T) {
-	// An administrator who forbids downloads must get a blocked build with a
-	// message, not a build that reaches for the network and fails there.
-	bundledRoot := t.TempDir()
-	rt := &Runtime{cfg: Config{
-		BundledModelRoot:      bundledRoot,
-		ModelCacheRoot:        t.TempDir(),
-		DisallowModelDownload: true,
-	}}
-
-	_, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU)
-	var unavailable *resourceUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.resource != "model bundle" {
-		t.Fatalf("admission error = %v, want a model bundle refusal", err)
-	}
-	if !unavailable.permanent {
-		t.Error("no download can arrive while the switch is set; want a permanent block")
-	}
-	if !strings.Contains(unavailable.detail, "CASSINI_DISALLOW_MODEL_DOWNLOAD") {
-		t.Errorf("detail %q does not name the setting that blocks the build", unavailable.detail)
-	}
-
-	// The tier the image bakes still runs on the same air-gapped host.
-	dir := filepath.Join(bundledRoot, "models", modelParakeetV3Int8)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "encoder.int8.onnx"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU); err != nil {
-		t.Fatalf("a bundled tier was blocked on an air-gapped host: %v", err)
-	}
-
-	// Without the switch the same missing model is a download, not a block.
-	open := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: t.TempDir()}}
-	if _, err := open.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU); err != nil {
-		t.Fatalf("admission blocked a downloadable tier: %v", err)
+func TestAirGapAllowsAudioOnlyAdmission(t *testing.T) {
+	rt := &Runtime{cfg: Config{DisallowModelDownload: true, ModelCacheRoot: t.TempDir()}}
+	model, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU)
+	if err != nil || model != "" {
+		t.Fatalf("audio-only admission: %s %v", model, err)
 	}
 }

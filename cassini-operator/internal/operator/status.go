@@ -309,7 +309,8 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	// The substrate counts toward health only where it applies. An ExApp whose
 	// group folder does not exist is genuinely broken and should say 503; a
 	// standalone dev operator must not go 503 for a Nextcloud it never had.
-	resp.OK = resp.STT.DeviceUsable && resp.DB.OK && resp.Storage.WorkRoot.OK &&
+	// Optional speech processing never blocks audio recording or publication.
+	resp.OK = resp.DB.OK && resp.Storage.WorkRoot.OK &&
 		resp.Storage.SiteRoot.OK && resp.RecordingsAccess.OK
 
 	status := http.StatusOK
@@ -490,6 +491,9 @@ func (s *Store) Ping(ctx context.Context) error {
 // what left CPU-only installs unable to transcribe at all (D-702), when CPU
 // inference is a supported outcome that needs no GPU probe.
 func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (bool, string) {
+	if !settings.TranscriptionEnabled {
+		return true, "Transcription is off; recordings are available as audio."
+	}
 	override := strings.ToLower(strings.TrimSpace(settings.DeviceOverride))
 	if override == "auto" {
 		override = ""

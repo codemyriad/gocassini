@@ -111,6 +111,9 @@ export interface SettingsEffective {
 }
 
 export interface Settings {
+  transcription_enabled?: boolean;
+  active_model?: string;
+  active_revision?: string;
   quality: SettingsQuality;
   device_override: string;
   transcription_terms: string[];
@@ -128,6 +131,9 @@ export interface Settings {
 }
 
 export interface SettingsUpdate {
+  transcription_enabled?: boolean;
+  active_model?: string;
+  active_revision?: string;
   quality: SettingsQuality;
   device_override: string;
   transcription_terms: string[];
@@ -483,4 +489,16 @@ export interface StorageMigration {
   phase: "copying" | "verifying" | "switching" | "clearing";
   done: number;
   total: number;
+}
+
+export interface SpeechModel {
+  id: string; name: string; description: string; revision: string;
+  download_bytes: number; installed_bytes: number; installed: boolean; ready: boolean; device: string;
+}
+export interface SpeechModelJob {
+  id: string; model: string; revision: string; device: string; state: string; error?: string; updated_at: string;
+  progress: { phase: string; file?: string; completed_bytes: number; total_bytes: number; reused_bytes: number };
+}
+export interface SpeechModelInventory {
+  models: SpeechModel[]; jobs: SpeechModelJob[]; downloads_allowed: boolean; device: string;
 }

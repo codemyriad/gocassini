@@ -658,12 +658,8 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
 
-      # The portable image is the one a CPU install runs, and every quality tier
-      # it declares must be executable there. This asserts the models are
-      # bundled and pass the recorder's pre-build checks; it needs no GPU and no
-      # transcription, so it belongs on this runner rather than only where the
-      # CUDA smoke happens to look (D-702).
-      - name: Assert the image bundles and validates every model it declares
+      # Every image starts with an empty model store and an offline catalogue.
+      - name: Assert model-free image and optional transcription
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           CASSINI_SMOKE_MODELS_ONLY: '1'
@@ -717,34 +713,10 @@ jobs:
             /usr/local/bin/cassini doctor
           "
 
-      - name: Smoke-transcribe with bundled Parakeet on ARM64
-        run: |
-          set -euo pipefail
-          out_dir="${RUNNER_TEMP}/smoke-arm64"
-          mkdir -p "${out_dir}"
-          docker run --rm --platform linux/arm64 \
-            -v "${GITHUB_WORKSPACE}/harness/media:/media:ro" \
-            -v "${out_dir}:/out" \
-            --entrypoint /bin/sh gocassini:arm64-smoke -c '
-              set -eu
-              /usr/local/bin/cassini build /media/parakeet-smoke.mkv --out /out/smoke.opus
-            '
-          if [ ! -s "${out_dir}/smoke.opus" ] || [ "$(stat -c%s "${out_dir}/smoke.opus")" -le 50000 ]; then
-            echo "::error::ARM64 transcription failed to produce valid opus meeting" >&2
-            exit 1
-          fi
-
-          words=$(docker run --rm --platform linux/arm64 \
-            -v "${out_dir}:/out:ro" \
-            --entrypoint /bin/sh gocassini:arm64-smoke -c '
-              /usr/local/bin/cassini inspect --transcript /out/smoke.opus
-            ' | jq '[.segments[]?.words[]?] | length')
-
-          echo "ARM64 transcribed ${words} word(s) from parakeet-smoke.mkv"
-          if [ "${words}" -lt 40 ]; then
-            echo "::error::ARM64 transcription produced only ${words} words (expected >= 40)" >&2
-            exit 1
-          fi
+      - name: Install Parakeet and smoke-transcribe on ARM64
+        env:
+          IMAGE_REF: gocassini:arm64-smoke
+        run: ./harness/bin/ci-transcribe-smoke-exapp.sh
 
       # Same inputs as the smoke build, so every layer comes from this
       # builder's local cache; only the push is new work.
@@ -763,8 +735,8 @@ jobs:
           cache-from: type=gha,scope=build-image-arm64
 
   build-cuda-base:
-    name: Build CUDA base image (model + CUDA libs)
-    # The fat, slow-changing substrate (~2.3GB fp32 model + CUDA native libs +
+    name: Build CUDA base image (native CUDA libraries)
+    # The slow-changing substrate (CUDA native libs +
     # nvidia runtime + apt) lives in a separate image tagged by a content hash
     # of its inputs. Build+push it only when that exact hash is absent from
     # ghcr, so an unchanged base is never rebuilt or re-downloaded; the
@@ -796,56 +768,11 @@ jobs:
 
       - name: Resolve base ref + check existence
         id: base
-        # The hash covers every input that defines the base's bytes: the asset
-        # URLs (model ids from the base Dockerfile's ARG default, resolved to
-        # URLs by the fetch script — each remains a single source of truth), a
-        # best-effort content fingerprint of each (so an in-place overwrite of a
-        # non-versioned URL still moves the hash), the resolved nvidia base
-        # digest (catches silent upstream re-pushes), and the bytes of both the
-        # base Dockerfile and the fetch script. No timestamps/random — fully
-        # reproducible.
+        # Hash native library URLs/validators, the resolved NVIDIA base digest,
+        # and the base Dockerfile. Model bytes are acquired at configuration time.
         run: |
           set -euo pipefail
           DF=deployment/Dockerfile.exapp.cuda.base
-          APP_DF=deployment/Dockerfile.exapp.cuda
-          # Read an ARG default from a Dockerfile, failing loudly if the line is
-          # absent or empty — a renamed ARG must not silently yield a wrong hash.
-          df_get() {
-            local v
-            v="$(grep -E "^ARG $2=" "$1" | head -1 | sed "s/^ARG $2=//")" \
-              || { echo "ARG $2 not found in $1" >&2; exit 1; }
-            test -n "$v" || { echo "ARG $2 empty in $1" >&2; exit 1; }
-            printf '%s' "$v"
-          }
-          MODEL_ID="$(df_get "$DF" CASSINI_BUNDLED_MODEL_ID)"
-          # The base bundles a set of models (CPU fallback tiers alongside the
-          # fp32 CUDA model), and their URLs live in the fetch script rather
-          # than in ARG defaults. Resolve ids through the script itself so the
-          # hash still covers every asset the base downloads.
-          MODEL_IDS="$(df_get "$DF" CASSINI_BUNDLED_MODELS | tr -d '"')"
-          FETCH=deployment/models/fetch-models.sh
-          VAD_URL="$(df_get "$DF" SILERO_VAD_URL)"
-
-          # The app Dockerfile independently sets CASSINI_STT_MODEL from its own
-          # CASSINI_BUNDLED_MODEL_ID. If it drifts from the base's, the runtime
-          # points at a model dir the base never baked — a model-less image that
-          # builds green and fails at first transcribe. Enforce equality.
-          APP_MODEL_ID="$(df_get "$APP_DF" CASSINI_BUNDLED_MODEL_ID)"
-          if [ "$MODEL_ID" != "$APP_MODEL_ID" ]; then
-            echo "CASSINI_BUNDLED_MODEL_ID mismatch: base=$MODEL_ID app=$APP_MODEL_ID" >&2
-            exit 1
-          fi
-
-          # The app image advertises the bundled set as ENV, and tests trust it
-          # to decide which quality tiers must be executable. If it drifts from
-          # what the base actually baked, the image would claim a tier it cannot
-          # run — the same class of failure as a model-less image.
-          APP_MODEL_IDS="$(df_get "$APP_DF" CASSINI_BUNDLED_MODELS | tr -d '"')"
-          if [ "$MODEL_IDS" != "$APP_MODEL_IDS" ]; then
-            echo "CASSINI_BUNDLED_MODELS mismatch: base=[$MODEL_IDS] app=[$APP_MODEL_IDS]" >&2
-            exit 1
-          fi
-
           # Pin the nvidia base by digest (catches silent upstream re-pushes).
           # Retry: Docker Hub anonymous manifest reads occasionally rate-limit.
           NV_REF="nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04"
@@ -860,22 +787,10 @@ jobs:
           done
           test -n "$NV_DIGEST" || { echo "could not resolve ${NV_REF} digest" >&2; exit 1; }
 
-          fp() { curl -fsSL -I "$1" 2>/dev/null | tr -d '\r' \
-                 | awk -F': ' 'tolower($1)=="etag"||tolower($1)=="last-modified"{print $2; exit}' || true; }
-
-          MODEL_INPUTS="$(for id in $MODEL_IDS; do
-            url="$("$FETCH" --print-url "$id")"
-            test -n "$url" || { echo "no URL for bundled model $id" >&2; exit 1; }
-            printf '%s\n%s\n%s\n' "$id" "$url" "$(fp "$url")"
-          done)"
-
           BASE_HASH="$(printf '%s\n' \
-            "$MODEL_ID" "$MODEL_INPUTS" \
             "$(deployment/sherpa/build.sh --fingerprint)" \
-            "$VAD_URL" "$(fp "$VAD_URL")" \
             "$NV_DIGEST" \
             "$(sha256sum "$DF" | cut -d' ' -f1)" \
-            "$(sha256sum "$FETCH" | cut -d' ' -f1)" \
             | sha256sum | cut -c1-16)"
           BASE_REF="${{ env.REGISTRY }}/${{ github.repository_owner }}/gocassini-cuda-base:${BASE_HASH}"
           echo "base_ref=${BASE_REF}" >> "$GITHUB_OUTPUT"
@@ -980,8 +895,8 @@ jobs:
       # Build + push in one step. push: true is safe for same-repo PRs
       # (job-level if: guarantees we are not running on a fork PR) and lets
       # the downstream CUDA jobs docker-pull from ghcr. FROM the prebuilt base
-      # (D-375): only the thin per-commit layers build here; the 2.3GB model +
-      # CUDA libs come from build-cuda-base, so an unchanged base is neither
+      # (D-375): only the per-commit application layers build here; the
+      # CUDA libraries come from build-cuda-base, so an unchanged base is neither
       # re-downloaded from origin nor re-extracted. Registry cache (on ghcr)
       # replaces the flaky type=gha export (the "error writing layer blob:
       # not_found" seen on PR #59); PRs read the cache, only pushes write it.
@@ -1011,7 +926,7 @@ jobs:
           cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}-buildcache:cuda,mode=max', env.REGISTRY, env.IMAGE) || '' }}
 
   transcribe-smoke-cuda:
-    name: Smoke transcription on GPU (bundled fp32 model + CUDA EP)
+    name: Install fp32 model and smoke transcription on GPU
     runs-on: [self-hosted, Linux, X64, gpu]
     needs: build-image-cuda
     # Heavy tier (self-hosted GPU): push/dispatch, or a same-repo PR labeled

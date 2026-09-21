@@ -1,12 +1,12 @@
 # check=skip=InvalidDefaultArgInFrom
 # BASE_IMAGE intentionally has no default: CI always passes the content-hash
 # pinned base ref (--build-arg BASE_IMAGE=…). A bogus default would let a
-# forgotten arg build a model-less image silently, so we'd rather fail loudly.
+# forgotten arg build an incompatible native runtime silently, so we'd rather fail loudly.
 #
 # Dockerfile for the CUDA variant of the Cassini ExApp image — thin app layer.
 #
-# The slow-changing substrate (nvidia/cuda runtime, apt layer, ~2.3GB fp32
-# Parakeet model + Silero VAD, sherpa-onnx CUDA native libs) lives in the
+# The slow-changing substrate (nvidia/cuda runtime, apt layer, and
+# sherpa-onnx CUDA native libs) lives in the
 # prebuilt base image Dockerfile.exapp.cuda.base, published as
 # ghcr.io/codemyriad/gocassini-cuda-base:<hash> and reused across commits (D-375).
 # This file builds only the fast, per-commit layers (Go binaries + SPAs) on top.
@@ -19,17 +19,12 @@
 
 ARG BASE_IMAGE
 ARG FRP_VERSION=0.61.1
-ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3
-# Keep in step with Dockerfile.exapp.cuda.base: the GPU image carries only the
-# fp32 model, which is what every CUDA quality tier loads. If this image ever
-# falls back to CPU decoding, the CPU tiers download on demand (D-704).
-ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-0.6b-v3"
 ARG FFMPEG_VERSION=latest
 ARG FFMPEG_BUILD_JOBS=2
 
 # Match the Ubuntu 22.04 CUDA runtime ABI. FFmpeg stays in this thin layer so
 # every application build can pick up the latest stable release without
-# rebuilding the multi-gigabyte model/CUDA base.
+# rebuilding the CUDA base.
 FROM ubuntu:22.04 AS ffmpeg-builder
 ARG FFMPEG_VERSION
 ARG FFMPEG_BUILD_JOBS
@@ -98,18 +93,16 @@ RUN set -eux; \
 
 # ---- Runtime stage: the prebuilt CUDA base + thin per-commit layers ----
 FROM ${BASE_IMAGE}
+# Reject an old model-bearing base; deleting files would retain its huge layer.
+RUN test ! -d /opt/cassini/cache/models
 # Fail closed when a manually supplied/cached base predates the current patch.
 COPY deployment/sherpa /tmp/cassini-native-inputs
 RUN expected=$(/tmp/cassini-native-inputs/build.sh --fingerprint) \
  && { test "$expected" = "$(cat /opt/cassini/lib/cassini-native-inputs.sha256 2>/dev/null)" \
       || { echo "CUDA base lacks current Cassini native frontend; rebuild the base." >&2; exit 1; }; } \
  && rm -rf /tmp/cassini-native-inputs
-ARG CASSINI_BUNDLED_MODELS
-ARG CASSINI_BUNDLED_MODEL_ID
 ARG FFMPEG_VERSION
 LABEL io.gocassini.ffmpeg.requested-version=${FFMPEG_VERSION}
-ENV CASSINI_BUNDLED_MODELS="${CASSINI_BUNDLED_MODELS}"
-ENV CASSINI_STT_MODEL=${CASSINI_BUNDLED_MODEL_ID}
 
 WORKDIR /var/lib/cassini-operator
 # CASSINI_OPERATOR_{DB_PATH,WORK_ROOT,SITE_ROOT} are fallbacks for runs
@@ -133,7 +126,7 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_APPAPI_REQUIRED=true \
     CASSINI_STT_CUDA_CAPABLE=1 \
     CASSINI_STT_DEVICE=cuda \
-    CASSINI_BUNDLED_MODEL_ROOT=/opt/cassini/cache
+    CASSINI_TRANSCRIPTION=off
 ENV PATH=/opt/cassini/ffmpeg/bin:${PATH}
 
 # AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api

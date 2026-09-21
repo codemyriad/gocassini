@@ -287,10 +287,12 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	}
 	settings := rt.currentSettings()
 	device := rt.effectiveFor(settings).Device
-	if ok, detail := rt.effectiveComputeStatus(settings, device); ok {
+	if !settings.TranscriptionEnabled {
+		add("processing", "passed", "audio_only", "Transcription is off. Recordings can be published and played as audio.", "")
+	} else if ok, detail := rt.effectiveComputeStatus(settings, device); ok {
 		add("processing", "passed", "processing_ready", "Speech-processing prerequisites passed for "+device+".", "")
 	} else {
-		add("processing", "needs_action", "processing_unavailable", detail, "settings")
+		add("processing", "passed", "audio_fallback", "Recordings will retain audio. Transcription is unavailable: "+detail, "settings")
 	}
 	if secret == "" && !failed {
 		add("talk.authentication", "needs_action", "internal_secret_missing", "Enter the internal secret from your Talk signaling server.", "configure_talk")

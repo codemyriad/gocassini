@@ -21,18 +21,20 @@ var buildArtifactFn = func(ctx context.Context, mkvPath, outputDir string, cfg t
 }
 
 type buildOptions struct {
-	inputPath string
-	outDir    string
-	device    string
-	keepWork  bool
-	rebuild   bool
+	transcription string
+	inputPath     string
+	outDir        string
+	device        string
+	keepWork      bool
+	rebuild       bool
 }
 
 func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	opts := buildOptions{device: "auto"}
+	opts := buildOptions{device: "auto", transcription: transcribe.DefaultBuildConfig().TranscriptionMode}
 
 	fs := flag.NewFlagSet("cassini build", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.StringVar(&opts.transcription, "transcription", opts.transcription, "transcription: off or on (installed model required)")
 	fs.StringVar(&opts.outDir, "out", "", "output .meeting bundle directory or portable .opus file")
 	fs.StringVar(&opts.device, "device", "auto", "transcriber device: auto, cpu, cuda")
 	fs.BoolVar(&opts.keepWork, "keep-work", false, "keep transcriber work files inside the meeting bundle")
@@ -82,7 +84,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 	fmt.Fprintln(stdout, "[2/4] Validating environment")
 	_ = UpdateMeetingBundleStatus(bundle, bundleStatePreparing, "doctor", "")
-	if err := runDoctorChecks("build", stdout); err != nil {
+	if err := runDoctorChecks("media", stdout); err != nil {
 		_ = UpdateMeetingBundleStatus(bundle, bundleStateFailed, "doctor", "build blocked by doctor failures")
 		fmt.Fprintf(stderr, "build blocked by doctor failures\n")
 		fmt.Fprintf(stderr, "partial_meeting -> %s\n", bundle.RootDir)
@@ -130,7 +132,7 @@ func runBuildPortable(ctx context.Context, opts buildOptions, stdout, stderr io.
 	}
 
 	fmt.Fprintln(stdout, "[1/4] Validating environment")
-	if err := runDoctorChecks("build", stdout); err != nil {
+	if err := runDoctorChecks("media", stdout); err != nil {
 		fmt.Fprintf(stderr, "build blocked by doctor failures\n")
 		printPortableResumeHint(stderr, workspace.RootDir, outPath)
 		return 1
@@ -144,7 +146,7 @@ func runBuildPortable(ctx context.Context, opts buildOptions, stdout, stderr io.
 	}
 
 	fmt.Fprintln(stdout, "[2/4] Preparing or resuming meeting workspace")
-	bundle, reusedMeeting, err := reusableMeetingBundle(workspace.MeetingDir, input, stdout)
+	bundle, reusedMeeting, err := reusableMeetingBundle(workspace.MeetingDir, input, stdout, opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "prepare meeting bundle: %v\n", err)
 		printPortableResumeHint(stderr, workspace.RootDir, outPath)
@@ -175,6 +177,9 @@ func runBuildPortable(ctx context.Context, opts buildOptions, stdout, stderr io.
 }
 
 func validateBuildOptions(opts buildOptions) error {
+	if opts.transcription != "" && opts.transcription != "off" && opts.transcription != "on" {
+		return fmt.Errorf("invalid --transcription %q", opts.transcription)
+	}
 	if opts.outDir == "" {
 		return errors.New("--out is required")
 	}
@@ -257,9 +262,15 @@ func runDoctorChecks(target string, stdout io.Writer) error {
 }
 
 func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle MeetingBundle, opts buildOptions, stdout, stderr io.Writer) error {
+	if err := os.WriteFile(filepath.Join(bundle.RootDir, ".processing-request"), []byte(buildPolicyFingerprint(opts)), 0600); err != nil {
+		return err
+	}
 	_ = UpdateMeetingBundleSource(bundle, input.SourceKind, input.SourcePath, "build")
 
 	cfg := transcribe.DefaultBuildConfig()
+	if opts.transcription != "" {
+		cfg.TranscriptionMode = opts.transcription
+	}
 	// An explicit --device wins; the default "auto" leaves the env/auto-detect
 	// resolution (CASSINI_STT_DEVICE or GPU detection) in place.
 	if d := strings.ToLower(strings.TrimSpace(opts.device)); d == "cpu" || d == "cuda" {

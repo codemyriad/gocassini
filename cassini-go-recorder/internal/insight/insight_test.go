@@ -338,3 +338,17 @@ func TestNewArtifactIDIsPrefixedAndUnique(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+func TestTextlessMeetingNeverCallsProvider(t *testing.T) {
+	provider := testProvider("must not be called")
+	empty := meeting("audio", "Audio only", "", "")
+	empty.Segments = nil
+	empty.WordCount = 0
+	_, err := Run(context.Background(), fixedRun(Request{Workflow: testWorkflow(t, "Summarize", ""), Contexts: []meetingcontext.Bundle{testBundle(meeting("text", "Transcribed", "", ""), empty)}, Provider: provider}))
+	if ReasonOf(err) != ReasonBadRequest || !strings.Contains(err.Error(), "no transcript text") {
+		t.Fatalf("expected clear refusal, got %v", err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("sent incomplete selection to provider: %d calls", provider.calls)
+	}
+}

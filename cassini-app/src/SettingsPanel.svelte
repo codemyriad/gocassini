@@ -17,6 +17,7 @@
   import { cancelLeave, confirmLeave, guardLeave, leavePrompt, unsavedChanges } from "./operator/unsaved";
   import { ChevronDown, RefreshCw, TriangleAlert } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
+  import SpeechModels from "./SpeechModels.svelte";
   import ModelCombobox from "./ModelCombobox.svelte";
   // D-757: "Who can see recordings" is a section of the Settings panel, above
   // the pipeline it applies to. Its own component because it is a page's worth
@@ -78,6 +79,10 @@
   ];
 
   let settings: Settings | null = null;
+  let transcriptionEnabled = false;
+  let activeModel = "";
+  let activeRevision = "";
+  let savedTranscription = "";
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
   let transcriptionTermsText = "";
@@ -186,6 +191,10 @@
 
   function applySettings(next: Settings) {
     settings = next;
+    transcriptionEnabled = next.transcription_enabled === true;
+    activeModel = next.active_model ?? "";
+    activeRevision = next.active_revision ?? "";
+    savedTranscription = JSON.stringify([transcriptionEnabled,activeModel,activeRevision]);
     quality = next.quality;
     deviceOverride = next.device_override;
     transcriptionTermsText = next.transcription_terms.join("\n");
@@ -243,6 +252,9 @@
       try {
         applySettings(
           await operatorClient.putSettings({
+            transcription_enabled: transcriptionEnabled,
+            active_model: activeModel,
+            active_revision: activeRevision,
             quality,
             device_override: deviceOverride,
             transcription_terms: transcriptionTermsText.split(/\r?\n/),
@@ -378,7 +390,8 @@
   }
 
   $: effectiveDevice = settings?.effective.device ?? "";
-  $: runsOnGPU = effectiveDevice === "cuda";
+  $: selectedDevice = deviceOverride === "cpu" || deviceOverride === "cuda" ? deviceOverride : effectiveDevice || "cpu";
+  $: runsOnGPU = selectedDevice === "cuda";
 
   $: providers = llm?.providers ?? [];
   // Null while the LLM settings have not been read: three states, and the
@@ -392,7 +405,8 @@
   // the LLM one.
   $: sttDirty =
     settings !== null &&
-    (quality !== savedQuality ||
+    (JSON.stringify([transcriptionEnabled,activeModel,activeRevision]) !== savedTranscription ||
+      quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
       transcriptionTermsText !== savedTranscriptionTermsText ||
       searchAliasesText !== savedSearchAliasesText);
@@ -553,12 +567,6 @@
               of memory is free.
             </p>
           {/if}
-          {#if settings.effective.model_download_mb > 0}
-            <p class="set-row-sub pipe-warn">
-              This model isn't included yet. The first recording downloads it once (about
-              {settings.effective.model_download_mb} MB); after that, processing starts straight away.
-            </p>
-          {/if}
           {#if settings.effective.note}
             <p class="set-row-sub">{settings.effective.note}</p>
           {/if}
@@ -622,6 +630,9 @@
               </label>
             {/each}
           </div>
+          <SpeechModels client={operatorClient} {quality} device={selectedDevice} enabled={transcriptionEnabled} {activeModel} {activeRevision}
+            on:disable={() => transcriptionEnabled = false}
+            on:select={(event) => { activeModel = event.detail.id; activeRevision = event.detail.revision; transcriptionEnabled = true; }} />
         </div>
 
       </section>
