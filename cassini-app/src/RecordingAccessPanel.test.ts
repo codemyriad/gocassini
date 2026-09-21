@@ -27,7 +27,7 @@ describe("the section", () => {
 
   it("leads with who can see a recording", () => {
     expect(panelSource).toContain('<h2 class="set-row-name op-card-title">Who can see recordings</h2>');
-    expect(panelSource).toContain("Applies to every recording Cassini publishes to this Nextcloud.");
+    expect(panelSource).toContain("Choose who can see new recordings. Review existing recordings separately.");
   });
 
   it("points detailed permission changes to the individual recording in Nextcloud Files", () => {
