@@ -22,6 +22,7 @@ if [[ "${MODELS_ONLY}" != "1" ]]; then
 fi
 
 CONTAINER_NAME="cassini-transcribe-smoke-$$"
+MODEL_VOLUME="${CONTAINER_NAME}-models"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-transcribe-smoke-${$}}"
 mkdir -p "${LOG_DIR}"
 
@@ -47,6 +48,7 @@ cleanup() {
     fi
   fi
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  docker volume rm "${MODEL_VOLUME}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -93,14 +95,15 @@ fi
 log "starting container ${CONTAINER_NAME} ${GPU_FLAGS[*]:-(cpu)}"
 docker run -d --rm \
   --name "${CONTAINER_NAME}" \
+  -v "${MODEL_VOLUME}:/var/lib/cassini-operator" \
   "${GPU_FLAGS[@]}" \
   --entrypoint /bin/sh \
   "${IMAGE_REF}" \
   -c 'tail -f /dev/null' >/dev/null
 
 # The image must contain no model data; inspect all known weight roots.
-docker exec "${CONTAINER_NAME}" sh -c 'test ! -d /opt/cassini/cache/models && test ! -f /opt/cassini/cache/vad/silero_vad.onnx'
-docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models list --json --cache-root /tmp/empty-model-store > "${LOG_DIR}/models.json"
+docker exec "${CONTAINER_NAME}" sh -c 'test ! -d /opt/cassini/cache/models && test ! -f /opt/cassini/cache/vad/silero_vad.onnx && test ! -d "$CASSINI_CACHE_ROOT/models"'
+docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models list --json --cache-root "${CACHE_ROOT}" > "${LOG_DIR}/models.json"
 python3 - "${LOG_DIR}/models.json" <<'CHECK'
 import json,sys
 models=json.load(open(sys.argv[1]))
@@ -127,6 +130,27 @@ log "installing ${MODEL_ID} into the writable model store"
 docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${MODEL_ID}" --cache-root "${CACHE_ROOT}" --device "${DEVICE}" --progress-json > "${LOG_DIR}/install.log" 2>&1
 # A warm install is locally satisfied even when network acquisition is forbidden.
 docker exec -e CASSINI_DISALLOW_MODEL_DOWNLOAD=1 "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${MODEL_ID}" --cache-root "${CACHE_ROOT}" --device "${DEVICE}" --no-probe > "${LOG_DIR}/reuse.log" 2>&1
+
+# Replacing the container must keep weights on the state volume. Invalidate the
+# executable's readiness fingerprint and prove its local recheck and the next
+# transcription with networking physically disabled, as on an offline upgrade.
+docker rm -f "${CONTAINER_NAME}" >/dev/null
+docker run -d --rm --network none \
+  --name "${CONTAINER_NAME}" \
+  -v "${MODEL_VOLUME}:/var/lib/cassini-operator" \
+  "${GPU_FLAGS[@]}" --entrypoint /bin/sh "${IMAGE_REF}" \
+  -c 'tail -f /dev/null' >/dev/null
+docker exec "${CONTAINER_NAME}" touch /usr/local/bin/cassini
+docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models list --json --cache-root "${CACHE_ROOT}" --device "${DEVICE}" > "${LOG_DIR}/replaced-models.json"
+python3 - "${LOG_DIR}/replaced-models.json" "$MODEL_ID" <<'CHECK'
+import json,sys
+model=next(m for m in json.load(open(sys.argv[1])) if m['id']==sys.argv[2])
+assert model['installed'] and not model['ready'], model
+CHECK
+docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${MODEL_ID}" --cache-root "${CACHE_ROOT}" --device "${DEVICE}" > "${LOG_DIR}/offline-recheck.log" 2>&1
+docker exec "${CONTAINER_NAME}" mkdir -p /tmp/smoke-in /tmp/smoke-out
+docker cp "${FIXTURE_HOST}" "${CONTAINER_NAME}:/tmp/smoke-in/parakeet-smoke.mkv"
+log "OK   container replacement preserved weights; runtime recheck passed with network disabled"
 
 # While the build runs, sample (a) the host PIDs of processes inside OUR
 # container (docker top) and (b) the host-visible CUDA compute apps
