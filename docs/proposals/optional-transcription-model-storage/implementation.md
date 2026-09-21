@@ -4,7 +4,7 @@ shaping: true
 
 # Implementation and operator guide
 
-Implemented on `feat/d-797-optional-transcription-models` for [D-797](https://linear.app/code-myriad/issue/D-797/make-transcription-optional-and-persist-models-with-downloads-and), assigned to Silvio and In Progress. This is a working-tree implementation; image publication and production rollout have not been performed.
+Implemented on `feat/d-797-optional-transcription-models` for [D-797](https://linear.app/code-myriad/issue/D-797/make-transcription-optional-and-persist-models-with-downloads-and), assigned to Silvio and In Progress. Review and CI: [PR #323](https://github.com/codemyriad/gocassini/pull/323). Production rollout has not been performed.
 
 ## Configure transcription
 
@@ -98,8 +98,8 @@ Implemented tests cover optional recording output, participant preservation, pin
 
 Real CDN checks on 2026-09-21 downloaded, decompressed, and verified the Fast and Balanced models plus VAD. Both passed CPU load/execution probes. All 12 unique CDN artifacts returned correct nonzero byte ranges and strong digest ETags. A warm Fast pack and import into a separate local store passed with network acquisition disabled; import was also tested with unusable HTTP proxies and no global policy flag. An audio-only portable file passed integrity inspection with an empty store and invalid STT configuration. A fresh import and subsequent Fast transcription also succeeded inside an isolated Linux network namespace with no network interfaces providing internet access and the no-download policy unset. Balanced transcription matched the existing known-text smoke fixture exactly (similarity 1.000). Audio-only output also passed static publication.
 
-The app test suite passes 539 tests and the viewer suite passes 905; both production builds pass. The model store and operator model-job tests pass under the Go race detector. The standalone `tsc --noEmit` command reports 68 test/configuration diagnostics on both the unchanged baseline and this branch, with no new diagnostic messages; it is not a passing project check.
+The app test suite passes 539 tests and the viewer suite passes 905; both production builds pass. The full recorder, operator and Talk rotator suites pass under the Go race detector and `go vet`; all 12 first-run browser scenarios also pass. The standalone `tsc --noEmit` command reports 68 test/configuration diagnostics on both the unchanged baseline and this branch, with no new diagnostic messages; it is not a passing project check.
 
-The updated image smoke checks require an empty model store, audio-only packing, explicit installation, warm offline reuse, known-text transcription, and real GPU use for CUDA. Release validation still needs actual CPU amd64/arm64 and CUDA image builds, the CUDA smoke on NVIDIA hardware, an AppAPI ADMIN/non-admin proxy check and upgrade, and a never-connected full Nextcloud deployment. These deployment checks have not been claimed complete by local tests.
+The updated image smoke checks require an empty model store, audio-only packing, explicit installation, warm offline reuse, known-text transcription, and real GPU use for CUDA. The PR runs CPU amd64/arm64 and CUDA image builds, NVIDIA transcription and installed Nextcloud compatibility checks. Talk tests install and enable models through the AppAPI ADMIN proxy and assert that preparation alone leaves transcription off. Consult the PR for their current results. An in-place production AppAPI upgrade and a never-connected full Nextcloud deployment remain release validation tasks; local tests do not establish those results.
 
 At release time, follow CONTRIBUTING to bump the app manifest/image versions so AppAPI refreshes the new ADMIN model POST routes. No release version was changed during implementation. The operator database adds migration 0013 for durable model-install jobs.
