@@ -35,7 +35,9 @@ cache would still pay transfer and extraction; it needs a separate benchmark.
 ## Implemented boundaries
 
 - Cache host recorder CLI and Talk rotator using both module lockfiles.
-- Resolve the CUDA base before conditionally reclaiming build space.
+- Resolve the CUDA base before conditionally reclaiming build space. Both CUDA
+  builds first check available space, skipping deletion when at least 40 GiB is
+  free and refusing a build if cleanup cannot reach that floor.
 - Run one GPU smoke transcription and apply model/no-download/GPU/no-fallback
   and text-quality assertions to that same invocation's output. Keep standalone
   transcript verification available and keep short-clip regression unchanged.
@@ -50,12 +52,21 @@ check contexts. Consolidating those jobs is a separate follow-up. Compatibility
 rows remain parallel and use fresh data volumes; no cached installed database
 can conceal installation failures.
 
+The first implementation run, [35578934838](https://github.com/codemyriad/gocassini/actions/runs/35578934838),
+confirmed the cached CUDA-base job dropped from 118 to 14 seconds. It also exposed
+another unnecessary cleanup: the CUDA app runner had 86 GB free, yet spent 355
+seconds deleting SDKs (versus 22 seconds in the baseline). That observation led
+to the free-space guard on both CUDA build paths. This first sample cannot be
+used as a clean elapsed-time comparison; its final validation and the subsequent
+run are recorded in the PR.
+
 ## Validation
 
 Offline regressions exercise a deliberately wrong/empty transcript, timing on
 an actual failing shell command with cleanup, registry retention across paginated
 responses, protected index children, inspection failure, and both CUDA-base
-presence decisions. The existing workflow conditions must clean before building
+presence decisions, plus ample-space, low-space and unsuccessful-cleanup paths.
+The existing workflow conditions must clean before building
 on a miss and skip both operations on a hit.
 
 The implementation must also pass observed PR CI: all advertised baselines,

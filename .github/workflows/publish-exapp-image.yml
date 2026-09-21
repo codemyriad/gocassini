@@ -891,14 +891,7 @@ jobs:
 
       - name: Free disk for a missing CUDA base
         if: steps.base.outputs.build == 'true'
-        run: |
-          set -euo pipefail
-          sudo rm -rf \
-            /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
-            /usr/local/share/powershell /usr/share/swift
-          sudo docker image prune -af 2>&1 | tail -1 || true
-          df -h / | head -2
+        run: ./scripts/ci-cuda-build-space.sh
 
       - name: Build + push base image
         if: steps.base.outputs.build == 'true'
@@ -933,24 +926,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The CUDA image is ~5 GiB and the build needs additional scratch space
-      # for layers and the buildx cache. ubuntu-latest ships with ~14 GiB free
-      # by default; reclaim ~30 GiB by removing preinstalled toolchains we
-      # don't use (Android SDK, .NET, Haskell, CodeQL).
-      - name: Free disk on ubuntu-latest
-        run: |
-          set -euo pipefail
-          df -h / | head -3
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /opt/hostedtoolcache/CodeQL \
-            /usr/local/share/boost \
-            /usr/local/share/powershell \
-            /usr/share/swift
-          sudo docker image prune -af 2>&1 | tail -2 || true
-          df -h / | head -3
+      # Runner disk sizes vary. Reclaim tools only when build space is low;
+      # a large runner should not spend minutes deleting an unused SDK tree.
+      - name: Ensure CUDA build disk space
+        run: ./scripts/ci-cuda-build-space.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

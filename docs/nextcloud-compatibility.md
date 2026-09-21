@@ -116,7 +116,8 @@ Failed phases retain their exit code; timings are diagnostic and cannot qualify
 a release. Tool setup and Cassini image transfer/load have separate Actions steps.
 
 The shared tool action caches both host Go modules by their `go.sum` files.
-CUDA-base disk cleanup runs only when that content-addressed base needs building.
+CUDA-base preparation runs only when that content-addressed base needs building.
+Both CUDA builds reclaim disk only below a 40 GiB free-space floor.
 GPU smoke checks bundled models, actual GPU use, no fallback and transcript quality
 against one fresh transcription; short-clip regression remains a separate scenario.
 

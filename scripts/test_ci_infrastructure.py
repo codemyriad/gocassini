@@ -138,6 +138,33 @@ touch "$LOG_DIR/should-not-exist"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(set((self.directory / "deleted").read_text().splitlines()), {"1", "2", "3", "4", "5", "6"})
 
+    def test_cuda_cleanup_only_when_needed_and_refuses_insufficient_space(self):
+        self.executable("df", '''
+            import os, pathlib
+            cleaned = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "reclaimed").exists()
+            free = os.environ["FREE_AFTER" if cleaned else "FREE_BEFORE"]
+            print("Filesystem 1024-blocks Used Available Capacity Mounted on")
+            print("/dev/test 150000000 10000000 " + free + " 10% /")
+        ''')
+        self.executable("sudo", '''
+            import os, pathlib, sys
+            root = pathlib.Path(os.environ["RUNNER_TEMP"])
+            with (root / "sudo-calls").open("a") as out:
+                out.write(" ".join(sys.argv[1:]) + "\\n")
+            (root / "reclaimed").touch()
+        ''')
+        script = "scripts/ci-cuda-build-space.sh"
+        result = self.run_script(script, FREE_BEFORE="86000000", FREE_AFTER="110000000")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.directory / "sudo-calls").exists())
+        result = self.run_script(script, FREE_BEFORE="14000000", FREE_AFTER="46000000")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("rm -rf", (self.directory / "sudo-calls").read_text())
+        (self.directory / "reclaimed").unlink()
+        result = self.run_script(script, FREE_BEFORE="14000000", FREE_AFTER="20000000")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Insufficient disk space", result.stderr)
+
     def test_cuda_base_hit_and_miss_decisions_and_cleanup_order(self):
         self.executable("curl", 'print("ETag: fixed-test-etag")\n')
         self.executable("docker", '''
