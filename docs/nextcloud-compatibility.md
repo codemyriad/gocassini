@@ -105,3 +105,27 @@ then the actual production manifest before adding 36 to required support.
 
 Persisted upgrades are a [separate follow-on](proposals/nextcloud-compatibility/spike-upgrades.md).
 The existing restart scenario is not evidence of a Nextcloud major upgrade.
+
+## CI timing and maintenance
+
+Installed scenarios publish `phase-timings.jsonl` (schema version 1) alongside
+the compatibility record, plus a phase table in the Actions summary. Log groups
+separate stack pulls (including extraction), host CLI/installation, identity
+checks, recording/publication/access/restart, browser, observations and cleanup.
+Failed phases retain their exit code; timings are diagnostic and cannot qualify
+a release. Tool setup and Cassini image transfer/load have separate Actions steps.
+
+The shared tool action caches both host Go modules by their `go.sum` files.
+CUDA-base disk cleanup runs only when that content-addressed base needs building.
+GPU smoke checks bundled models, actual GPU use, no fallback and transcript quality
+against one fresh transcription; short-clip regression remains a separate scenario.
+
+`Registry housekeeping` runs daily or manually, independently of qualification.
+Manual runs default to a dry run. It retains named release tags, the ten newest
+rolling image versions, their child manifests, a two-hour untagged upload grace,
+and five CUDA bases; it verifies named tags and their children remain pullable.
+Maintenance failures have their own workflow notifications and do not invalidate
+product evidence. A newly added scheduled workflow becomes active after merge.
+
+See the [CI performance investigation](proposals/nextcloud-compatibility/ci-performance.md)
+for the measured baseline and validation method.

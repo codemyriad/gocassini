@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${IMAGE_REF:?exact Cassini image required}"
 : "${LOG_DIR:?isolated evidence directory required}"
+# shellcheck disable=SC1091
+source "$ROOT/harness/bin/lib/ci-phases.sh"
 mode="${COMPAT_MODE:-baseline}"
 # Never let observations or a browser result from an earlier run qualify this
 # attempt if collection fails. Each invocation owns a newly created directory.
@@ -23,11 +25,14 @@ started="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
 finish() {
   local rc=$?
   trap - EXIT INT TERM
+  ci_phase_end "$rc"
+  ci_phase_begin "Collect compatibility evidence"
   python3 "$ROOT/scripts/compatibility_evidence.py" collect \
     --log "$LOG_DIR" --stack "$LOG_DIR/lock/stack.json" --mode "$mode" \
     --started "$started" --exit-code "$rc" \
     --manifest "${D453_MANIFEST_PATH:-$ROOT/appinfo/info.xml}" \
     --out "$LOG_DIR/compatibility.json" || rc=1
+  ci_phase_end "$rc"
   exit "$rc"
 }
 trap finish EXIT
@@ -41,5 +46,7 @@ if docker ps -a --format '{{.Names}}' | grep -Eq '^(appapi-harp|nc_app_gocassini
   echo 'Compatibility run needs a dedicated empty Cassini Docker fixture' >&2
   exit 1
 fi
+ci_phase_begin "Pull and extract locked stack images"
 docker compose -f "$ROOT/harness/compose.yml" --profile full pull
+ci_phase_end
 "$ROOT/harness/bin/ci-e2e-recording-readiness.sh"

@@ -78,6 +78,8 @@ upstream checks. A separate bounded follow-on covers persisted upgrades; its
   and the concrete changes needed to enforce release evidence.
 - [Upgrade investigation brief](spike-upgrades.md): the information needed before
   betting on the follow-on upgrade harness.
+- [CI performance investigation](ci-performance.md): measured costs and focused
+  improvements that preserve the compatibility and release assertions.
 
 These documents follow the supplied [shaping skill](/home/silvio/.local/share/shaping-skills/shaping/SKILL.md)
 and [breadboarding skill](/home/silvio/.local/share/shaping-skills/breadboarding/skill.md).

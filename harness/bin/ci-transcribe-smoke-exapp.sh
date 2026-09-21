@@ -22,6 +22,8 @@
 #      release that transcribes on CPU must fail this smoke, not ship.
 #      Set CASSINI_SMOKE_GPU_ASSERT=0 to skip assertion 5 (e.g. exotic local
 #      setups where the GPU is reachable but host nvidia-smi is not).
+#   6. The same fresh build's transcript passes the known-text quality floor.
+#      Model-only checks skip transcription and this assertion.
 #
 # Run after build-image in CI. Locally:
 #   IMAGE_REF=ghcr.io/codemyriad/gocassini:branch-foo ./harness/bin/ci-transcribe-smoke-exapp.sh
@@ -354,4 +356,10 @@ fi
 log "OK   build produced output files:"
 printf '%s\n' "${OUT_FILES}" | sed 's/^/    /'
 
-log "transcribe smoke passed"
+# Assert quality before cleanup, directly from this invocation's container and
+# exact IMAGE_REF. No cross-job transcript cache or second model execution.
+TRANSCRIPT_HOST="${LOG_DIR}/transcript.words.v1.json"
+docker cp "${CONTAINER_NAME}:/tmp/smoke-out/transcript.words.v1.json" "$TRANSCRIPT_HOST"
+python3 "$REPO_ROOT/harness/bin/verify-smoke-transcript.py" \
+  "$TRANSCRIPT_HOST" --minimum "${MIN_LEVENSHTEIN:-0.50}"
+log "transcribe smoke and transcript quality passed"

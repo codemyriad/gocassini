@@ -79,6 +79,7 @@ jobs:
           if [[ -f "$report" ]]; then
             jq -r '"Result: **\(.result)**. Frozen Cassini: `\(.observed.cassini.config_id // "not observed")`", "", (.checks | to_entries[] | "- \(.key): \(.value)")' "$report" >> "$GITHUB_STEP_SUMMARY"
           fi
+          python3 scripts/ci_phase_timings.py summary "${report%/*}/phase-timings.jsonl" >> "$GITHUB_STEP_SUMMARY"
           echo 'Replay using the downloaded candidate.json as COMPAT_STACK, info.xml as D453_MANIFEST_PATH, and the Cassini ref recorded in compatibility.json as IMAGE_REF; COMPAT_MODE=canary.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -93,5 +94,6 @@ jobs:
             ${{ runner.temp }}/canary/result/compatibility.json
             ${{ runner.temp }}/canary/result/browser/
             ${{ runner.temp }}/canary/result/observe.log
+            ${{ runner.temp }}/canary/result/phase-timings.jsonl
           retention-days: 14
           if-no-files-found: warn

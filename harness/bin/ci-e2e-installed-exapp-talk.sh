@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck disable=SC1091 # SCRIPT_DIR is resolved dynamically above.
 source "$SCRIPT_DIR/lib-exapp-manifest.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/ci-phases.sh"
 
 : "${IMAGE_REF:?IMAGE_REF must name the exact pre-built CPU image under test}"
 PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
@@ -176,16 +178,21 @@ write_summary() {
 }
 
 finish() {
-  local rc=$?
+  local rc=$? cleanup_rc=0
   trap - EXIT INT TERM
+  ci_phase_end "$rc"
+  ci_phase_begin "Observe versions and collect diagnostics"
   collect_diagnostics
+  ci_phase_end
+  ci_phase_begin "Tear down and verify cleanup"
   if (( STACK_STARTED == 1 )); then
     log "tearing down through cassini dev stack"
     CASSINI_HARNESS_INFO_XML="$MANIFEST_PATH" PROJECT_NAME="$PROJECT_NAME" \
       "$REPO_ROOT/bin/cassini" dev stack down --volumes "${STACK_TOPOLOGY[@]}" \
-      >"$LOG_DIR/stack-down.log" 2>&1 || rc=1
+      >"$LOG_DIR/stack-down.log" 2>&1 || { rc=1; cleanup_rc=1; }
   fi
-  if verify_cleanup; then CLEANUP_RESULT="passed"; else CLEANUP_RESULT="failed"; rc=1; fi
+  if verify_cleanup; then CLEANUP_RESULT="passed"; else CLEANUP_RESULT="failed"; rc=1; cleanup_rc=1; fi
+  ci_phase_end "$cleanup_rc"
   [[ "$rc" -ne 0 || "$RESULT" != "running" ]] || RESULT="passed"
   write_summary "$rc"
   log "result=$RESULT cleanup=$CLEANUP_RESULT evidence=$LOG_DIR/summary.json"
@@ -219,6 +226,7 @@ log "exact image prepared: $IMAGE_REF -> $SOURCE_IMAGE_ID"
 # resource created below and the matching teardown in finish(). Mark ownership
 # before invoking up so a partial setup failure is still torn down.
 STACK_STARTED=1
+ci_phase_begin "Prepare host CLI and install locked stack"
 if ! CASSINI_HARNESS_INFO_XML="$MANIFEST_PATH" PROJECT_NAME="$PROJECT_NAME" \
   "$REPO_ROOT/bin/cassini" dev stack up \
     "${STACK_TOPOLOGY[@]}" \
@@ -254,6 +262,8 @@ if ! CASSINI_HARNESS_INFO_XML="$MANIFEST_PATH" PROJECT_NAME="$PROJECT_NAME" \
   fail "cassini dev stack up failed"
 fi
 
+ci_phase_end
+ci_phase_begin "Verify installed image and AppAPI identity"
 [[ "$FAIL_AT" != after-stack ]] || fail "forced failure after stack setup"
 
 daemon_json="$(daemon_metadata)"
@@ -285,6 +295,7 @@ jq -e --arg version "$APP_VERSION" '.version == $version and .image_tag == $vers
 jq -e '.talk.secret_configured == true and .talk.signaling_internal_secret_configured == true and .talk.backend_url_override_configured == true' \
   <<<"$status_json" >/dev/null || fail "manifest-gated Talk configuration is incomplete"
 
+ci_phase_end
 RESULT="running"
 # The run now commits to driving a real recording; record that as a fact so
 # summary.json's control.recording_performed is true here and false on the D-403
@@ -303,15 +314,19 @@ validator_args=(
   --project-name "$PROJECT_NAME"
 )
 
+ci_phase_begin "Record, publish, check access and restart"
 LOG_DIR="$VALIDATOR_LOG_DIR" \
   "$SCRIPT_DIR/validate-installed-exapp-private-talk.sh" "${validator_args[@]}"
 
 validator_summary="$VALIDATOR_LOG_DIR/summary.json"
 jq -e --argjson runs "$validator_runs" '.result == "passed" and (.runs | length) == $runs and all(.runs[]; .artifact.segment_count > 0 and .artifact.word_count > 0)' \
   "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"
+ci_phase_end
 if [[ -n "${CASSINI_COMPAT_LOCK:-}" ]]; then
+  ci_phase_begin "Verify embedded browser playback"
   node "$REPO_ROOT/cassini-app/scripts/check-installed-browser.mjs" \
     "$validator_summary" "$LOG_DIR/browser"
+  ci_phase_end
 fi
 if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
   log "faithful CPU-host vertical passed: portable image transcribed on the CPU, positive segments and decoded words"
