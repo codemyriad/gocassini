@@ -58,7 +58,7 @@ CI is partitioned into distinct workflows in `.github/workflows/` to balance fas
    - Builds CPU and CUDA ExApp container images (CUDA split into content-hashed base and app layer).
    - Container e2e (`ci-e2e-exapp.sh`) and published entrypoint validation (`ci-e2e-entrypoint-exapp.sh`).
    - Manual-install checks (`ci-e2e-install-exapp.sh`) and faithful AppAPI/HaRP installation and Talk verification (`ci-e2e-installed-exapp-talk.sh`).
-   - Talk recording roundtrip (`ci-e2e-talk-record-roundtrip.sh`), GPU transcription smoke (`ci-transcribe-smoke-exapp.sh`), and v3 transcript verification (`ci-e2e-v3-transcript-verify.sh`).
+   - Talk recording roundtrip (`ci-e2e-talk-record-roundtrip.sh`) and GPU transcription smoke with transcript-quality verification (`ci-transcribe-smoke-exapp.sh`).
 
 3. **`.github/workflows/deploy-preview.yml` (Branch Previews & GPU Processing)**:
    - Deploys UI previews or runs full GPU transcription pipelines.

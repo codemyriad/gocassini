@@ -117,7 +117,8 @@ a release. Tool setup and Cassini image transfer/load have separate Actions step
 
 The shared tool action caches both host Go modules by their `go.sum` files.
 CUDA-base preparation runs only when that content-addressed base needs building.
-Both CUDA builds reclaim disk only below a 40 GiB free-space floor.
+Both CUDA builds reclaim disk below a conservative 40 GiB free-space threshold;
+that threshold does not impose a minimum space requirement on the build.
 GPU smoke checks bundled models, actual GPU use, no fallback and transcript quality
 against one fresh transcription; short-clip regression remains a separate scenario.
 

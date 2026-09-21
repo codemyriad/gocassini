@@ -37,10 +37,10 @@ cache would still pay transfer and extraction; it needs a separate benchmark.
 - Cache host recorder CLI and Talk rotator using both module lockfiles.
 - Resolve the CUDA base before conditionally reclaiming build space. Both CUDA
   builds first check available space, skipping deletion when at least 40 GiB is
-  free and refusing a build if cleanup cannot reach that floor.
+  free. That is a cleanup threshold, not a measured minimum for building.
 - Run one GPU smoke transcription and apply model/no-download/GPU/no-fallback
-  and text-quality assertions to that same invocation's output. Keep standalone
-  transcript verification available and keep short-clip regression unchanged.
+  and text-quality assertions to that same invocation's output. Use the same
+  smoke script locally; keep short-clip regression unchanged.
 - Record versioned scenario phase timings and log groups, including failure,
   observation and cleanup. Keep timings separate from qualification evidence.
 - Move registry pruning and retained-tag verification into daily/manual
@@ -62,12 +62,12 @@ run are recorded in the PR.
 
 ## Validation
 
-Offline regressions exercise a deliberately wrong/empty transcript, timing on
-an actual failing shell command with cleanup, registry retention across paginated
-responses, protected index children, inspection failure, and both CUDA-base
-presence decisions, plus ample-space, low-space and unsuccessful-cleanup paths.
-The existing workflow conditions must clean before building
-on a miss and skip both operations on a hit.
+Offline regressions exercise a deliberately wrong/empty transcript, preservation
+of command failure with timing enabled, registry retention across paginated
+responses, protected index children, inspection failure, and disk cleanup only
+when space is low. Workflow lint and observed CI validate the orchestration.
+On a CUDA-base miss, check space before building; on a hit, skip preparation
+and rebuilding.
 
 The implementation must also pass observed PR CI: all advertised baselines,
 GPU-use and no-fallback assertions, unchanged quality floor, short clips, required
@@ -81,4 +81,4 @@ This is a before/after comparison, not a percentile or cold-build benchmark.
 The new scheduled housekeeping workflow cannot be dispatched until present on
 the default branch. Its retention and dry-run behavior are covered offline;
 registry inspection can additionally run locally in dry-run mode without deleting
-versions. A missing-base path check does not claim a full cold CUDA build.
+versions. These checks do not claim a full cold CUDA build.

@@ -9,8 +9,8 @@
 #   - portable transcript production and extraction
 #   - PR #30 (ExApp install handshake)
 #   - PR #32 (bundled v3 model image)
-# The ci-e2e-v3-transcript-verify.sh smoke verifies cassini build + model
-# loading; this script additionally exercises the Talk recording-backend
+# The ci-transcribe-smoke-exapp.sh smoke verifies cassini build, bundled
+# models and transcript quality; this script also exercises the Talk recording-backend
 # trigger path that PR #22 introduces.
 #
 # Phases:

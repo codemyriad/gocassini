@@ -520,9 +520,12 @@ These scripts validate the ExApp image or transcription behavior without using
 IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-smoke-exapp.sh
 IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-e2e-exapp.sh
 IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-transcribe-smoke-exapp.sh
-IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-e2e-v3-transcript-verify.sh
 IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-transcribe-short-clip-regression.sh
 ```
+
+`ci-transcribe-smoke-exapp.sh` checks bundled models and transcript quality in
+one run, including actual GPU use for CUDA images. It replaces the separate
+transcript-verification runner.
 
 Use the stack-backed install/roundtrip tests above when you need Nextcloud,
 AppAPI, Talk recording-backend, or WebRTC media coverage.

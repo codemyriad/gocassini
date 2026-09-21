@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Reclaim hosted-runner space only when a CUDA build needs it. Keep 40 GiB
-# available for the base, extracted layers, build cache and exported app image.
+# Reclaim hosted-runner space below a conservative 40 GiB cleanup threshold.
+# This threshold is not a measured minimum required by the build.
 set -euo pipefail
-minimum_kib=$((40 * 1024 * 1024))
+cleanup_threshold_kib=$((40 * 1024 * 1024))
 available_kib() { df -Pk / | awk 'NR == 2 {print $4}'; }
 df -h / | head -2
-if [[ "$(available_kib)" -ge "$minimum_kib" ]]; then
+if [[ "$(available_kib)" -ge "$cleanup_threshold_kib" ]]; then
   echo 'At least 40 GiB free; skipping CUDA build disk cleanup.'
   exit 0
 fi
@@ -17,7 +17,3 @@ sudo rm -rf \
   /usr/local/share/powershell /usr/share/swift
 sudo docker image prune -af 2>&1 | tail -1 || true
 df -h / | head -2
-if [[ "$(available_kib)" -lt "$minimum_kib" ]]; then
-  echo 'Insufficient disk space for the CUDA build after cleanup (need 40 GiB).' >&2
-  exit 1
-fi
