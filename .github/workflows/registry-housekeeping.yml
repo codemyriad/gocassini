@@ -1,0 +1,38 @@
+name: Registry housekeeping
+
+on:
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Inspect retention and pullability without deleting versions
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: registry-housekeeping
+  cancel-in-progress: false
+
+jobs:
+  prune-old-versions:
+    name: Prune old image versions and verify retained tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OWNER: ${{ github.repository_owner }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Prune rolling image versions
+        run: ./scripts/prune-container-images.sh images
+      - name: Verify keep-forever tags and their platform manifests
+        run: ./scripts/prune-container-images.sh verify
+      - name: Prune old CUDA base versions
+        run: ./scripts/prune-container-images.sh cuda-base

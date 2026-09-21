@@ -1,0 +1,30 @@
+name: Prepare installed compatibility tools
+description: Shared host tools and known audible fixture for baseline and canary runs.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: cassini-go-recorder/go.mod
+        cache-dependency-path: |
+          cassini-go-recorder/go.sum
+          harness/go-talk-rotator/go.sum
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: package-lock.json
+    - name: Install host validation tools
+      shell: bash
+      run: |
+        sudo ./scripts/ci-apt-update.sh
+        sudo apt-get install -y --no-install-recommends jq libxml2-utils ffmpeg
+        npm ci
+        npx playwright install --with-deps chromium
+    - name: Materialize known audible participant fixture
+      shell: bash
+      run: |
+        git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+        for media in harness/media/processed/showcase-lantern-festival-v1/mira.{ivf,ogg}; do
+          [[ -s "$media" && $(stat -c%s "$media") -gt 10000 ]] || exit 1
+        done

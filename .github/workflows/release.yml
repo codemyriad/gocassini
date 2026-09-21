@@ -12,7 +12,7 @@
 #   - workflow_dispatch on an existing tag: choose whether to publish to the
 #     store (publish_appstore).
 #
-# Flow: validate -> verify-images (waits for the parallel image build) ->
+# Flow: validate -> verify-evidence (waits for qualified image tests) ->
 # publish. `publish` is the single `release`-environment job, so the whole
 # signed release + store push is gated behind ONE approval; declining it aborts
 # the release (the images still build independently).
@@ -29,6 +29,11 @@ on:
         description: 'Existing release version without leading v (e.g. 0.3.0-alpha.1)'
         required: true
         type: string
+      dry_run:
+        description: 'Validate evidence and an unsigned candidate package without signing or publishing'
+        required: true
+        type: boolean
+        default: false
       publish_appstore:
         description: 'Publish the signed tarball to apps.nextcloud.com'
         required: true
@@ -40,6 +45,7 @@ on:
 permissions:
   contents: write
   packages: read
+  actions: read
 
 # Never run two releases of the same version concurrently.
 concurrency:
@@ -58,6 +64,8 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
       publish: ${{ steps.v.outputs.publish }}
+      commit: ${{ steps.v.outputs.commit }}
+      dry_run: ${{ steps.v.outputs.dry_run }}
     steps:
       - name: Checkout the release tag
         uses: actions/checkout@v4
@@ -71,6 +79,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
           INPUT_PUBLISH: ${{ github.event.inputs.publish_appstore }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           set -euo pipefail
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
@@ -86,6 +95,8 @@ jobs:
             echo "version=$version"
             echo "tag=v$version"
             echo "publish=$publish"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "dry_run=${INPUT_DRY_RUN:-false}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Install xmllint
@@ -111,41 +122,59 @@ jobs:
           # Release notes must exist for this version (also used by the publish job).
           ./scripts/extract-release-notes.sh --version "$VERSION" >/dev/null
 
-  verify-images:
-    name: Wait for GHCR image tags
+  verify-evidence:
+    name: Verify tested release artifacts
     runs-on: ubuntu-latest
     needs: validate
+    timeout-minutes: 100
     steps:
-      - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
         with:
-          registry: ${{ env.REGISTRY }}
+          ref: ${{ needs.validate.outputs.commit }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Wait for the release images (built in parallel on the tag push)
+      - name: Wait for exact tagged build and required product evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          if [[ ! -f ci/nextcloud-compatibility.json || ! -f scripts/compatibility_evidence.py ]]; then
+            echo '::error::This tag predates compatibility evidence. Qualify a new release with the evidence-enabled workflow; old image availability cannot authorize publication.'
+            exit 1
+          fi
+          python3 scripts/nextcloud_compatibility.py validate
+          python3 scripts/compatibility_evidence.py verify-release \
+            --repo "$GITHUB_REPOSITORY" --tag "$TAG" --commit "$COMMIT" \
+            --out qualified/release-evidence.json
+          cat qualified/release-evidence.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate unsigned candidate package
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          set -euo pipefail
-          ref="${REGISTRY}/${IMAGE}"
-          for tag in "${VERSION}" "${VERSION}-cuda"; do
-            echo "Waiting for ${ref}:${tag} ..."
-            found=0
-            for _ in $(seq 1 120); do   # up to ~60 min while publish-exapp-image builds
-              if docker manifest inspect "${ref}:${tag}" >/dev/null 2>&1; then found=1; break; fi
-              sleep 30
-            done
-            [[ "$found" -eq 1 ]] || { echo "::error::timed out waiting for ${ref}:${tag}"; exit 1; }
-            echo "found ${ref}:${tag}"
-          done
-          docker manifest inspect "${ref}:${VERSION}-rocm" >/dev/null 2>&1 \
-            || echo "::warning::optional ${ref}:${VERSION}-rocm not found"
+          sudo ./scripts/ci-apt-update.sh
+          sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
+          ./scripts/build-appstore-tarball.sh --version "$VERSION"
+          ./scripts/validate-appstore-tarball.sh --version "$VERSION" --tarball build/artifacts/appstore/gocassini.tar.gz
+          python3 scripts/verify-compatibility-package.py \
+            build/artifacts/appstore/gocassini.tar.gz qualified/release-evidence.json \
+            > qualified/candidate-package.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-release-evidence-${{ github.run_attempt }}
+          path: qualified/
+          if-no-files-found: error
+          retention-days: 90
 
   publish:
     name: Sign, release, and publish
     runs-on: ubuntu-latest
-    needs: [validate, verify-images]
+    needs: [validate, verify-evidence]
+    if: needs.validate.outputs.dry_run != 'true'
     # The single gated job: signing keys and the App Store token live in the
     # protected `release` environment, so the whole signed release + store push
     # pauses for ONE approval here.
@@ -158,7 +187,26 @@ jobs:
       - name: Checkout the release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.validate.outputs.tag }}
+          ref: ${{ needs.validate.outputs.commit }}
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-release-evidence-${{ github.run_attempt }}
+          path: qualified
+      - name: Recheck identities after approval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT: ${{ needs.validate.outputs.commit }}
+        run: |
+          python3 scripts/compatibility_evidence.py verify-release --existing \
+            --repo "$GITHUB_REPOSITORY" --tag "$TAG" --commit "$COMMIT" \
+            --out qualified/release-evidence.json
 
       - name: Install store-schema validators
         run: sudo ./scripts/ci-apt-update.sh && sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
@@ -178,6 +226,9 @@ jobs:
             --version "$VERSION" \
             --tarball build/artifacts/appstore/gocassini.tar.gz --signed
           ( cd build/artifacts/appstore && sha256sum gocassini.tar.gz > gocassini.tar.gz.sha256 )
+          python3 scripts/verify-compatibility-package.py \
+            build/artifacts/appstore/gocassini.tar.gz qualified/release-evidence.json \
+            > qualified/release-package.json
 
       - name: Create or update the GitHub release and attach the asset
         env:
@@ -196,7 +247,8 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" "${args[@]}"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-            build/artifacts/appstore/gocassini.tar.gz build/artifacts/appstore/gocassini.tar.gz.sha256
+            build/artifacts/appstore/gocassini.tar.gz build/artifacts/appstore/gocassini.tar.gz.sha256 \
+            qualified/release-evidence.json qualified/release-evidence.md qualified/release-package.json
 
       - name: Publish to apps.nextcloud.com
         if: ${{ needs.validate.outputs.publish == 'true' }}

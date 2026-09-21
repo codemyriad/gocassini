@@ -313,7 +313,7 @@ docker exec nc_app_gocassini cat /nc_app_gocassini_data/operator/storage_setting
 |---|---:|---|
 | `PROJECT_NAME` | `spreedtest` | Docker Compose project name. CI/e2e scripts often set a run-scoped value. |
 | `NEXTCLOUD_HOST_PORT` | `28080` | Host port mapped to Nextcloud port 80. Some e2e scripts randomize this to avoid stale-run collisions. |
-| `NEXTCLOUD_IMAGE` | `nextcloud:34.0.0` | Override the pinned Nextcloud image. CI compatibility legs may set this. |
+| `NEXTCLOUD_IMAGE` | `nextcloud:34.0.0` | Local reference default. CI selects digest-pinned baselines from `ci/nextcloud-compatibility.json`; see [compatibility testing](../docs/nextcloud-compatibility.md). |
 | `CASSINI_HARNESS_HOST` | `127.0.0.1` or VM route source IP | Host/IP added to Nextcloud trusted domains and used by some play helpers. |
 | `SPREED_PROFILE` | derived | Legacy compose profile escape hatch. Explicit `--services` values set it for you. |
 | `NEXTCLOUD_URL` | `http://127.0.0.1:${NEXTCLOUD_HOST_PORT}` | Operator/API URL used by harness scripts. |
@@ -520,9 +520,12 @@ These scripts validate the ExApp image or transcription behavior without using
 IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-smoke-exapp.sh
 IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-e2e-exapp.sh
 IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-transcribe-smoke-exapp.sh
-IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-e2e-v3-transcript-verify.sh
 IMAGE_REF=ghcr.io/codemyriad/gocassini:<tag> ./harness/bin/ci-transcribe-short-clip-regression.sh
 ```
+
+`ci-transcribe-smoke-exapp.sh` checks bundled models and transcript quality in
+one run, including actual GPU use for CUDA images. It replaces the separate
+transcript-verification runner.
 
 Use the stack-backed install/roundtrip tests above when you need Nextcloud,
 AppAPI, Talk recording-backend, or WebRTC media coverage.

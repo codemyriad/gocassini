@@ -11,7 +11,7 @@ x-nextcloud-env: &nextcloud-env
 
 services:
   db:
-    image: postgres:16-alpine
+    image: ${COMPAT_DB_IMAGE:-postgres:16-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_DB: nextcloud
@@ -26,24 +26,10 @@ services:
       - db_data:/var/lib/postgresql/data
 
   nextcloud:
-    # Pinned to the current Nextcloud release so an upstream image push is
-    # distinguishable from a product regression when an e2e leg goes red.
-    # NOT :stable — that alias lags on Docker Hub (it stayed on 32.x for
-    # months after NC 33 shipped). NOT :latest — it silently jumps majors
-    # (it moved 33 -> 34 in June 2026), which would make "works with NC33"
-    # coverage vanish without any diff in this repo.
-    #
-    # NEXTCLOUD_IMAGE overrides the default; CI's NC33 compatibility leg
-    # sets it to nextcloud:33 (see .github/workflows/ci.yml integration
-    # matrix).
-    #
-    # Bump procedure: pick the newest x.y.z tag that nextcloud:latest
-    # resolves to on https://hub.docker.com/_/nextcloud, update the
-    # default below, run a full-profile e2e
-    # (SPREED_PROFILE=full harness/bin/ci-e2e.sh), and keep the ci.yml
-    # compatibility leg pointed at the oldest Nextcloud major that
-    # appinfo/info.xml supports.
-    image: ${NEXTCLOUD_IMAGE:-nextcloud:34.0.0}
+    # CI selects exact, digest-pinned baselines from ci/nextcloud-compatibility.json.
+    # The local convenience default is validated against its reference baseline.
+    # Use scripts/nextcloud_compatibility.py prepare to reproduce the full lock.
+    image: ${NEXTCLOUD_IMAGE:-nextcloud:35.0.0}
     restart: unless-stopped
     environment: *nextcloud-env
     depends_on:
@@ -76,7 +62,7 @@ services:
   # only NC's PHP and the ExApp container resolve "reverse-proxy" via
   # the compose network.
   reverse-proxy:
-    image: nginx:alpine
+    image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
     restart: unless-stopped
     depends_on:
       - nextcloud
@@ -89,7 +75,7 @@ services:
   # deploy; the Cassini entrypoint starts its frpc tunnel when those are
   # present and runs tunnel-less otherwise.
   appapi-harp:
-    image: ghcr.io/nextcloud/nextcloud-appapi-harp:release
+    image: ${COMPAT_HARP_IMAGE:-ghcr.io/nextcloud/nextcloud-appapi-harp:release}
     container_name: appapi-harp
     restart: unless-stopped
     environment:
@@ -103,7 +89,7 @@ services:
     # Pinned patch release (was nats:2.11-alpine, which resolved to this
     # tag when pinned). Bump alongside the rest of the stack after a green
     # full-profile e2e run.
-    image: nats:2.11.17-alpine
+    image: ${COMPAT_NATS_IMAGE:-nats:2.11.17-alpine}
     profiles: ["full"]
     restart: unless-stopped
     network_mode: host
@@ -116,7 +102,7 @@ services:
     # (last pushed 2023; :master is newer but untested here). Bump by
     # resolving the new digest (docker buildx imagetools inspect
     # canyan/janus-gateway:latest) after a green full-profile e2e run.
-    image: canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1
+    image: ${COMPAT_JANUS_IMAGE:-canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1}
     profiles: ["full"]
     restart: unless-stopped
     network_mode: host
@@ -133,7 +119,7 @@ services:
     # Bump to the newest release tag on
     # https://hub.docker.com/r/strukturag/nextcloud-spreed-signaling after
     # a green full-profile e2e run.
-    image: strukturag/nextcloud-spreed-signaling:2.1.1
+    image: ${COMPAT_SIGNALING_IMAGE:-strukturag/nextcloud-spreed-signaling:2.1.1}
     profiles: ["full"]
     restart: unless-stopped
     network_mode: host
@@ -151,7 +137,7 @@ services:
       - ${SIGNALING_CONF:-./config/signaling.conf}:/config/server.conf:ro
 
   signaling-public-proxy:
-    image: nginx:alpine
+    image: ${COMPAT_PROXY_IMAGE:-nginx:alpine}
     profiles: ["remote"]
     restart: unless-stopped
     depends_on:
@@ -180,7 +166,7 @@ services:
   coturn:
     # Pinned patch release (was coturn/coturn:4.6-alpine, which resolved
     # to this tag when pinned).
-    image: coturn/coturn:4.6.3-alpine
+    image: ${COMPAT_COTURN_IMAGE:-coturn/coturn:4.6.3-alpine}
     profiles: ["full"]
     restart: unless-stopped
     network_mode: host

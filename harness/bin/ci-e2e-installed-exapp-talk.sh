@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck disable=SC1091 # SCRIPT_DIR is resolved dynamically above.
 source "$SCRIPT_DIR/lib-exapp-manifest.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/ci-phases.sh"
 
 : "${IMAGE_REF:?IMAGE_REF must name the exact pre-built CPU image under test}"
 PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
@@ -95,9 +97,15 @@ fi
 
 compose() { docker compose -p "$PROJECT_NAME" -f "$REPO_ROOT/harness/compose.yml" "$@"; }
 occ() { compose exec -T -u www-data nextcloud php occ "$@"; }
+daemon_metadata() { compose exec -T -u www-data nextcloud php <"$SCRIPT_DIR/appapi-daemon-metadata.php"; }
 
 collect_diagnostics() {
   set +e
+  if [[ -n "${CASSINI_COMPAT_LOCK:-}" ]]; then
+    python3 "$REPO_ROOT/scripts/nextcloud_compatibility.py" observe \
+      --stack "$CASSINI_COMPAT_LOCK" --project "$PROJECT_NAME" --image "$IMAGE_REF" \
+      --out "$LOG_DIR/observed.json" >"$LOG_DIR/observe.log" 2>&1
+  fi
   docker ps -a --no-trunc >"$LOG_DIR/docker-ps.txt" 2>&1
   docker image inspect "$IMAGE_REF" >"$LOG_DIR/source-image.json" 2>&1
   docker image inspect "$PRODUCTION_IMAGE" >"$LOG_DIR/production-image.json" 2>&1
@@ -105,7 +113,7 @@ collect_diagnostics() {
   docker logs nc_app_gocassini >"$LOG_DIR/installed-container.log" 2>&1
   compose ps -a >"$LOG_DIR/compose-ps.txt" 2>&1
   compose logs --no-color >"$LOG_DIR/compose.log" 2>&1
-  occ app_api:daemon:list --output=json >"$LOG_DIR/daemon.json" 2>"$LOG_DIR/daemon.err"
+  daemon_metadata >"$LOG_DIR/daemon.json" 2>"$LOG_DIR/daemon.err"
   curl -sS -u admin:admin \
     "http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/operator/status" \
     >"$LOG_DIR/operator-status.json" 2>"$LOG_DIR/operator-status.err"
@@ -170,16 +178,21 @@ write_summary() {
 }
 
 finish() {
-  local rc=$?
+  local rc=$? cleanup_rc=0
   trap - EXIT INT TERM
+  ci_phase_end "$rc"
+  ci_phase_begin "Observe versions and collect diagnostics"
   collect_diagnostics
+  ci_phase_end
+  ci_phase_begin "Tear down and verify cleanup"
   if (( STACK_STARTED == 1 )); then
     log "tearing down through cassini dev stack"
     CASSINI_HARNESS_INFO_XML="$MANIFEST_PATH" PROJECT_NAME="$PROJECT_NAME" \
       "$REPO_ROOT/bin/cassini" dev stack down --volumes "${STACK_TOPOLOGY[@]}" \
-      >"$LOG_DIR/stack-down.log" 2>&1 || rc=1
+      >"$LOG_DIR/stack-down.log" 2>&1 || { rc=1; cleanup_rc=1; }
   fi
-  if verify_cleanup; then CLEANUP_RESULT="passed"; else CLEANUP_RESULT="failed"; rc=1; fi
+  if verify_cleanup; then CLEANUP_RESULT="passed"; else CLEANUP_RESULT="failed"; rc=1; cleanup_rc=1; fi
+  ci_phase_end "$cleanup_rc"
   [[ "$rc" -ne 0 || "$RESULT" != "running" ]] || RESULT="passed"
   write_summary "$rc"
   log "result=$RESULT cleanup=$CLEANUP_RESULT evidence=$LOG_DIR/summary.json"
@@ -213,6 +226,7 @@ log "exact image prepared: $IMAGE_REF -> $SOURCE_IMAGE_ID"
 # resource created below and the matching teardown in finish(). Mark ownership
 # before invoking up so a partial setup failure is still torn down.
 STACK_STARTED=1
+ci_phase_begin "Prepare host CLI and install locked stack"
 if ! CASSINI_HARNESS_INFO_XML="$MANIFEST_PATH" PROJECT_NAME="$PROJECT_NAME" \
   "$REPO_ROOT/bin/cassini" dev stack up \
     "${STACK_TOPOLOGY[@]}" \
@@ -248,11 +262,13 @@ if ! CASSINI_HARNESS_INFO_XML="$MANIFEST_PATH" PROJECT_NAME="$PROJECT_NAME" \
   fail "cassini dev stack up failed"
 fi
 
+ci_phase_end
+ci_phase_begin "Verify installed image and AppAPI identity"
 [[ "$FAIL_AT" != after-stack ]] || fail "forced failure after stack setup"
 
-daemon_json="$(occ app_api:daemon:list --output=json)"
+daemon_json="$(daemon_metadata)"
 printf '%s\n' "$daemon_json" >"$LOG_DIR/daemon-asserted.json"
-jq -e 'length == 1 and .[0].name == "harp_local" and .[0].deploy_id == "docker-install" and .[0].deploy_config.harp != null' \
+jq -e 'length == 1 and .[0].name == "harp_local" and .[0].deploy_id == "docker-install" and .[0].harp == true' \
   <<<"$daemon_json" >/dev/null || fail "AppAPI daemon is not the expected HaRP docker-install owner"
 
 docker inspect nc_app_gocassini >/dev/null 2>&1 || fail "AppAPI/HaRP did not create nc_app_gocassini"
@@ -279,6 +295,7 @@ jq -e --arg version "$APP_VERSION" '.version == $version and .image_tag == $vers
 jq -e '.talk.secret_configured == true and .talk.signaling_internal_secret_configured == true and .talk.backend_url_override_configured == true' \
   <<<"$status_json" >/dev/null || fail "manifest-gated Talk configuration is incomplete"
 
+ci_phase_end
 RESULT="running"
 # The run now commits to driving a real recording; record that as a fact so
 # summary.json's control.recording_performed is true here and false on the D-403
@@ -297,12 +314,20 @@ validator_args=(
   --project-name "$PROJECT_NAME"
 )
 
+ci_phase_begin "Record, publish, check access and restart"
 LOG_DIR="$VALIDATOR_LOG_DIR" \
   "$SCRIPT_DIR/validate-installed-exapp-private-talk.sh" "${validator_args[@]}"
 
 validator_summary="$VALIDATOR_LOG_DIR/summary.json"
 jq -e --argjson runs "$validator_runs" '.result == "passed" and (.runs | length) == $runs and all(.runs[]; .artifact.segment_count > 0 and .artifact.word_count > 0)' \
   "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"
+ci_phase_end
+if [[ -n "${CASSINI_COMPAT_LOCK:-}" ]]; then
+  ci_phase_begin "Verify embedded browser playback"
+  node "$REPO_ROOT/cassini-app/scripts/check-installed-browser.mjs" \
+    "$validator_summary" "$LOG_DIR/browser"
+  ci_phase_end
+fi
 if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
   log "faithful CPU-host vertical passed: portable image transcribed on the CPU, positive segments and decoded words"
 else

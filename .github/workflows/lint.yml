@@ -210,6 +210,12 @@ jobs:
           bash /tmp/dl-actionlint.bash >/dev/null
           ./actionlint
 
+      - name: Compatibility policy and release refusal controls
+        run: |
+          python3 scripts/nextcloud_compatibility.py validate
+          python3 -m unittest discover -s scripts -p 'test_*compatibility*.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_infrastructure.py'
+
       - name: Run script test suites
         run: |
           set -euo pipefail
