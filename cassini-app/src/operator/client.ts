@@ -20,6 +20,8 @@ import type {
   StorageServiceAccount,
   StorageSetupStep,
   StorageStatus,
+  StorageUsage,
+  StorageUsageSource,
 } from "./types";
 
 const SETTINGS_QUALITIES: readonly SettingsQuality[] = ["fast", "balanced", "best"];
@@ -200,6 +202,10 @@ export class OperatorClient {
 
   async getStorage(): Promise<StorageStatus> {
     return normalizeStorage(await this.#request<unknown>("/storage"));
+  }
+
+  async getStorageUsage(): Promise<StorageUsage> {
+    return normalizeStorageUsage(await this.#request<unknown>("/storage/usage"));
   }
 
   getRetention(): Promise<RetentionSettings> {
@@ -437,6 +443,27 @@ function normalizeSetupSteps(value: unknown): StorageSetupStep[] {
     return [{ id, action, title: asString(row.title), args,
       browser: row.browser === true, occ: asString(row.occ) }];
   });
+}
+
+function normalizeStorageUsage(raw: unknown): StorageUsage {
+  const value = raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const sources: StorageUsageSource[] = [];
+  if (Array.isArray(value.sources)) {
+    for (const item of value.sources) {
+      if (item == null || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const id = asString(row.id);
+      if (id === "") continue;
+      sources.push({
+        id,
+        label: asString(row.label) || id,
+        location: asString(row.location),
+        bytes: Math.max(0, asNumber(row.bytes)),
+        error: asString(row.error),
+      });
+    }
+  }
+  return { measured_at: asString(value.measured_at), sources };
 }
 
 function normalizeInsightWorkflows(raw: unknown): InsightWorkflow[] {

@@ -29,3 +29,30 @@ describe("recordings storage API", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ action: "recheck" });
   });
 });
+
+describe("OperatorClient storage", () => {
+  it("reads the recording and build folder sizes from the separate usage endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      reply({
+        measured_at: "2026-09-22T09:15:00Z",
+        sources: [
+          { id: "published", label: "Published meetings", location: "Nextcloud Files", bytes: 12 },
+          { id: "current", label: "Current working archive", location: "Cassini persistent storage", bytes: 7, error: "unavailable" },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const usage = await new OperatorClient("/operator").getStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage");
+    expect(usage).toEqual({
+      measured_at: "2026-09-22T09:15:00Z",
+      sources: [
+        { id: "published", label: "Published meetings", location: "Nextcloud Files", bytes: 12, error: "" },
+        { id: "current", label: "Current working archive", location: "Cassini persistent storage", bytes: 7, error: "unavailable" },
+      ],
+    });
+  });
+
+});
