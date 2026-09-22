@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, hasCommands, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -154,5 +154,27 @@ describe("the warning tone, now that something can produce it", () => {
     expect(reportTone(report(["warn", "needs_action"]))).toBe("error");
     // A warning is louder than something nobody has run.
     expect(reportTone(report(["not_verified", "warn"]))).toBe("warning");
+  });
+});
+
+// D-798 R0.1: a reader told what is wrong is owed what to do about it.
+describe("what to do about a check", () => {
+  const check = (over: Partial<ReadinessCheck> = {}): ReadinessCheck => ({
+    id: "configuration", state: "needs_action", code: "setup_store_unreadable", message: "", ...over,
+  });
+
+  it("knows when a remedy involves commands", () => {
+    expect(hasCommands(check({ steps: [{ label: "do a thing" }] }))).toBe(false);
+    expect(hasCommands(check({ steps: [{ label: "run this", commands: ["occ app:list"] }] }))).toBe(true);
+  });
+
+  // The occ note qualifies commands. With none, it would be noise.
+  it("has nothing to qualify when there are no commands", () => {
+    expect(hasCommands(check())).toBe(false);
+    expect(hasCommands(check({ steps: [] }))).toBe(false);
+  });
+
+  it("survives a check from an operator that sends no steps", () => {
+    expect(hasCommands(check({ steps: undefined }))).toBe(false);
   });
 });

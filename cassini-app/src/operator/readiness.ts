@@ -3,13 +3,38 @@
 // Nothing in the recording checks could legitimately produce one, which is why
 // #322 shipped three tones and no amber. A host check genuinely can.
 export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
+// One thing to do about a check that is not ok. Mirrors SetupNoticeStep, which
+// already renders this shape for storage faults: commands behind a disclosure,
+// so an administrator who just wants the button never reads a command line.
+export interface ReadinessStep {
+  label: string;
+  // Shell lines to run verbatim. Empty when the step is not a command.
+  commands?: string[];
+}
+
 export interface ReadinessCheck {
   id: string;
   state: CheckState;
   code: string;
   message: string;
   action?: string;
+  // The remedy, for a check that is not ok (D-798 R0.1). Distinct from
+  // `action`: plenty of remedies are not a place to navigate to, but a command
+  // to run on a host this app cannot reach.
+  steps?: ReadinessStep[];
   checked_at?: string;
+}
+
+// How occ is invoked varies by deployment, and a command that assumes wrong is
+// worse than none. Same sentence setupHealth.ts uses, for the same reason.
+export const OCC_NOTE =
+  "occ here is however your deployment invokes it — for example sudo -u www-data php occ …, " +
+  "or docker exec -u www-data <nextcloud-container> php occ …";
+
+// Whether any step in a check carries commands, which is what the note above
+// qualifies. No commands, no note.
+export function hasCommands(check: ReadinessCheck): boolean {
+  return (check.steps ?? []).some((step) => (step.commands ?? []).length > 0);
 }
 export interface RecordingReadiness {
   state: CheckState;

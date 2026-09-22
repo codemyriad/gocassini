@@ -21,12 +21,33 @@ var errRecordingSetup = errors.New("recording setup incomplete")
 const readinessTTL = 5 * time.Minute
 
 type readinessCheck struct {
-	ID        string `json:"id"`
-	State     string `json:"state"`
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Action    string `json:"action,omitempty"`
-	CheckedAt string `json:"checked_at,omitempty"`
+	ID      string `json:"id"`
+	State   string `json:"state"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Action is a verb the panel renders as a button. It answers "where do I go
+	// to fix this", and only inside the app.
+	Action string `json:"action,omitempty"`
+	// Steps are the remedy for a check that is not ok: what to do, and the
+	// commands to do it with (D-798 R0.1).
+	//
+	// Action cannot carry this. Plenty of remedies are not a place to navigate
+	// to — they are a command to run on a host the app cannot reach, or a
+	// sentence naming what to look at. Leaving those in the message told a
+	// reader what was wrong and not what to do, which is the failure the
+	// existing SetupNotice was built to avoid for storage faults.
+	Steps     []readinessStep `json:"steps,omitempty"`
+	CheckedAt string          `json:"checked_at,omitempty"`
+}
+
+// readinessStep mirrors SetupNoticeStep, deliberately: the app already renders
+// that shape for storage faults, with the commands behind a disclosure so an
+// administrator who just wants the button never reads a command line.
+type readinessStep struct {
+	Label string `json:"label"`
+	// Commands are shell lines to run verbatim. Empty when the step is not a
+	// command — most are not.
+	Commands []string `json:"commands,omitempty"`
 }
 
 type recordingSetupState struct {
@@ -283,19 +304,19 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 		if strings.TrimSpace(r.ID) == "" {
 			return nil, errors.New("doctor check with no id")
 		}
-		message := r.Summary
-		// doctor's advice is the remedy, and dropping it would leave a reader
-		// told what is wrong and not what to do (R0.1). Carried in the message
-		// until V4 gives every check SetupNotice's {summary, cause, steps}.
-		if state != "passed" && strings.TrimSpace(r.Advice) != "" {
-			message += " — " + r.Advice
-		}
-		checks = append(checks, readinessCheck{
+		check := readinessCheck{
 			ID:      "host." + r.ID,
 			State:   state,
 			Code:    r.ID,
-			Message: message,
-		})
+			Message: r.Summary,
+		}
+		// doctor's advice is already the remedy in prose. It becomes a step
+		// rather than being appended to the summary, so the message stays the
+		// finding and the step stays the fix.
+		if state != "passed" && strings.TrimSpace(r.Advice) != "" {
+			check.Steps = []readinessStep{{Label: r.Advice}}
+		}
+		checks = append(checks, check)
 	}
 	return checks, nil
 }
@@ -355,8 +376,22 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	add := func(id, state, code, message, action string) {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: id, State: state, Code: code, Message: message, Action: action})
 	}
+	// addWithSteps is for a remedy the app cannot perform on the reader's
+	// behalf: a command on a host it cannot reach, or a thing to go and look at.
+	addWithSteps := func(id, state, code, message, action string, steps ...readinessStep) {
+		resp.Checks = append(resp.Checks, readinessCheck{
+			ID: id, State: state, Code: code, Message: message, Action: action, Steps: steps,
+		})
+	}
 	if failed {
-		add("configuration", "needs_action", "setup_store_unreadable", "Cassini could not read its saved recording setup. Check the persistent volume and restore recording-setup.json.", "repair_configuration")
+		addWithSteps("configuration", "needs_action", "setup_store_unreadable",
+			"Cassini could not read its saved recording setup, so its Talk credentials cannot be confirmed.",
+			"repair_configuration",
+			readinessStep{Label: "Check that Cassini's persistent volume is mounted and writable, then restore recording-setup.json from a backup if it is missing"},
+			readinessStep{Label: "Re-run Cassini's setup, which runs when the app is enabled", Commands: []string{
+				"occ app_api:app:disable gocassini",
+				"occ app_api:app:enable gocassini",
+			}})
 	}
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
 	// Parsed only to tell "a check has run" from "none has". How OLD it is rides
@@ -429,9 +464,11 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 			add("archive.search", "warn", "search_coverage_unknown", "Cassini could not read the search index, so how much of the archive is searchable is unknown.", "recheck")
 		} else if fixable := coverage.Fixable(); fixable > 0 {
 			// Working, and incomplete. Exactly what warn is for.
-			add("archive.search", "warn", "search_coverage_partial", fmt.Sprintf(
-				"Search can read %d of %d meetings. %d could not be indexed and can be retried with backfill-search.",
-				coverage.Indexed, coverage.Searchable(), fixable), "recheck")
+			addWithSteps("archive.search", "warn", "search_coverage_partial", fmt.Sprintf(
+				"Search can read %d of %d meetings, so a search may answer \"no matches\" about a meeting it never read.",
+				coverage.Indexed, coverage.Searchable()), "recheck",
+				readinessStep{Label: fmt.Sprintf("Re-index the %d meeting(s) that could not be read. It is safe to re-run and skips what is already indexed", fixable),
+					Commands: []string{"cassini-operator backfill-search"}})
 		} else if coverage.Indexed > 0 {
 			// Meetings that are correctly unsearchable are NOT counted against
 			// this: a silent recording has no words, and nothing can change
@@ -461,6 +498,10 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 			Code:    "host_checks_unavailable",
 			Message: "Cassini could not run its host checks, so disk space, ffmpeg and the speech runtime are unverified on this machine.",
 			Action:  "recheck",
+			Steps: []readinessStep{{
+				Label:    "Run the host checks by hand to see what they say",
+				Commands: []string{"cassini doctor"},
+			}},
 		}}, resp.Checks...)
 	} else {
 		resp.Checks = append(host, resp.Checks...)

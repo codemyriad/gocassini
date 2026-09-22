@@ -444,13 +444,15 @@ func TestRunDoctorProbeMapsTheDoctorLadder(t *testing.T) {
 			t.Errorf("%s = %q, want %q", id, got[id], state)
 		}
 	}
-	// A reader told what is wrong is owed what to do about it (R0.1).
+	// A reader told what is wrong is owed what to do about it (R0.1). V2b
+	// appended the advice to the message as an interim; V4 moved it into a
+	// step, so the message stays the finding and the step stays the fix.
 	for _, c := range checks {
 		if c.State == "passed" {
 			continue
 		}
-		if !strings.Contains(c.Message, "—") {
-			t.Errorf("%s dropped doctor's advice: %q", c.ID, c.Message)
+		if len(c.Steps) == 0 {
+			t.Errorf("%s dropped doctor's advice: %+v", c.ID, c)
 		}
 	}
 }
@@ -564,5 +566,73 @@ func TestHealthHandlerAnswersAtTheRouteItIsRegisteredAt(t *testing.T) {
 	rt.readinessHandler(rec, httptest.NewRequest(http.MethodGet, "/readiness", nil))
 	if rec.Code == http.StatusOK {
 		t.Error("the old /readiness path still answers")
+	}
+}
+
+// D-798 R0.1: a check that is not ok says what to do about it, and the remedy
+// is structured rather than buried in the sentence describing the fault.
+func TestNonOkChecksCarryARemedy(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	// An unreachable doctor, a broken setup store: both are faults whose remedy
+	// the app cannot perform on the reader's behalf.
+	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "absent")
+	rt.recordingSetup.loadFailed = true
+
+	report := rt.readiness(context.Background())
+	checked := 0
+	for _, c := range report.Checks {
+		if c.State == "passed" {
+			continue
+		}
+		// Every non-ok check offers SOMETHING: a button to press, or a step to
+		// follow. A check that says only what is broken is the failure this
+		// requirement exists to prevent.
+		if c.Action == "" && len(c.Steps) == 0 {
+			t.Errorf("%s (%s) says what is wrong and nothing about what to do", c.ID, c.Code)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no failing checks in a runtime rigged to fail")
+	}
+}
+
+// doctor's advice is the remedy in prose. It belongs in a step, so the message
+// stays the finding.
+func TestDoctorAdviceBecomesAStepRatherThanPartOfTheMessage(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t,
+		`[{"id":"tmpdir.space","status":"fail","summary":"out of space","advice":"free some space in /tmp"}]`)
+
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if len(checks) != 1 {
+		t.Fatalf("checks = %d, want 1", len(checks))
+	}
+	if got := checks[0].Message; got != "out of space" {
+		t.Errorf("message = %q; the advice should not be appended to the finding", got)
+	}
+	if len(checks[0].Steps) != 1 || checks[0].Steps[0].Label != "free some space in /tmp" {
+		t.Errorf("advice did not become a step: %+v", checks[0].Steps)
+	}
+}
+
+// A passing check needs no remedy, and offering one would be noise.
+func TestPassingChecksCarryNoSteps(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t,
+		`[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available","advice":"this should not appear"}]`)
+
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if len(checks[0].Steps) != 0 {
+		t.Errorf("a passing check offered a remedy: %+v", checks[0].Steps)
 	}
 }

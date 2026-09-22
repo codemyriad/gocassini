@@ -3,7 +3,7 @@
   import { initialEnvironment } from './operator/deploymentGuidance';
   import { onMount } from "svelte";
   import type { OperatorClient } from "./operator/client";
-  import { checkLabels, checkStateLabel, checkTone, formatAge, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
+  import { checkLabels, checkStateLabel, checkTone, formatAge, hasCommands, OCC_NOTE, readinessTitle, readinessHealthKey, readinessRows, reportTone, rowActions, toneClasses, type RecordingReadiness, type RecordingSetupUpdate } from "./operator/readiness";
   import { onSetupChanged, notifySetupChanged } from "./operator/setupSignal";
   export let operatorClient: OperatorClient;
   let report: RecordingReadiness | null = null;
@@ -95,6 +95,28 @@
             <div class="min-w-0 flex-1">
               <p class="font-medium">{checkLabels[check.id] ?? check.id} <span class="ml-2 text-xs font-normal {toneClasses[checkTone(check)]}">{checkStateLabel(check)}</span></p>
               <p class="mt-1 text-sm text-base-content/70">{check.message}</p>
+              {#if (check.steps ?? []).length > 0}
+                <!-- Behind a disclosure, as SetupNotice does it: an
+                     administrator who wants to press a button never has to read
+                     a command line, and one who wants the commands can open
+                     them. -->
+                <details class="mt-2">
+                  <summary class="cursor-pointer text-xs text-base-content/70">What to do about it</summary>
+                  <ul class="mt-2 space-y-2">
+                    {#each check.steps ?? [] as step}
+                      <li class="text-xs">
+                        <p class="text-base-content/80">{step.label}</p>
+                        {#each step.commands ?? [] as command}
+                          <pre class="mt-1 overflow-x-auto rounded bg-base-200 p-2 text-xs"><code>{command}</code></pre>
+                        {/each}
+                      </li>
+                    {/each}
+                  </ul>
+                  {#if hasCommands(check)}
+                    <p class="mt-2 text-xs text-base-content/60">{OCC_NOTE}</p>
+                  {/if}
+                </details>
+              {/if}
               {#if check.checked_at}<p class="mt-1 text-xs text-base-content/50" title={new Date(check.checked_at).toLocaleString()}>{check.code === "test_playback" ? "Confirmed" : "Checked"} {formatAge(check.checked_at)}</p>{/if}
             </div>
             <div class="flex flex-wrap gap-2">
