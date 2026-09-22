@@ -793,3 +793,32 @@ func TestPutSettingsRejectsUnboundedAliases(t *testing.T) {
 		t.Errorf("body should name the field: %s", rec.Body.String())
 	}
 }
+
+// Readiness is lost on every restart and upgrade. An edit that leaves the model
+// selection alone must not be refused for that; enabling or switching models is
+// still checked.
+func TestPutSettingsChecksTheModelOnlyWhenTheSelectionChanges(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = fakeModelCassini(t, `[{"id":"parakeet-tdt-0.6b-v3-int8","revision":"r1","installed":true,"ready":false,"device":"cpu"}]`)
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	rt.setSettings(STTSettings{
+		TranscriptionEnabled: true, ActiveModel: modelParakeetV3Int8, ActiveRevision: "r1",
+		Quality: sttQualityBalanced, DeviceOverride: deviceCPU, Source: sttSourceUser,
+	})
+	put := func(body string) int {
+		rec := httptest.NewRecorder()
+		rt.settingsHandler(rec, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+		return rec.Code
+	}
+	if code := put(`{"quality":"balanced","transcription_enabled":true,"transcription_terms":["Cassini"]}`); code != http.StatusOK {
+		t.Fatalf("vocabulary edit with an unchanged selection = %d, want 200", code)
+	}
+	if code := put(`{"quality":"best","transcription_enabled":true}`); code != http.StatusConflict {
+		t.Fatalf("switching quality to an unprepared model = %d, want 409", code)
+	}
+	rt.setSettings(STTSettings{ActiveModel: modelParakeetV3Int8, ActiveRevision: "r1", Quality: sttQualityBalanced, DeviceOverride: deviceCPU})
+	if code := put(`{"quality":"balanced","transcription_enabled":true}`); code != http.StatusConflict {
+		t.Fatalf("enabling an unchecked model = %d, want 409", code)
+	}
+}

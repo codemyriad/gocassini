@@ -3,6 +3,7 @@ package modelstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,7 +116,43 @@ func (s *Store) existingFile(ctx context.Context, a Artifact) string {
 	}
 	return ""
 }
+
+// downloadAttempts bounds the automatic retries after a dropped connection, a
+// stalled transfer or a server error. With a strong ETag each attempt resumes
+// from the bytes already on disk, so one reset no longer costs a whole model
+// install; without one it safely starts the file again.
+const downloadAttempts = 6
+
+// downloadStallTimeout aborts an attempt that receives no bytes for this long.
+// It replaces a cap on the whole transfer, which a slow link could never meet.
+var downloadStallTimeout = 60 * time.Second
+
+var downloadRetryDelay = func(attempt int) time.Duration { return time.Duration(attempt) * 2 * time.Second }
+
+// retryableError marks a download failure that another attempt may cure.
+type retryableError struct{ err error }
+
+func (e retryableError) Error() string { return e.err.Error() }
+func (e retryableError) Unwrap() error { return e.err }
+
 func (s *Store) download(ctx context.Context, a Artifact, path string, progress func(int64)) error {
+	var err error
+	for attempt := 1; attempt <= downloadAttempts; attempt++ {
+		err = s.downloadOnce(ctx, a, path, progress)
+		var retry retryableError
+		if err == nil || ctx.Err() != nil || !errors.As(err, &retry) || attempt == downloadAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(downloadRetryDelay(attempt)):
+		}
+	}
+	return err
+}
+
+func (s *Store) downloadOnce(ctx context.Context, a Artifact, path string, progress func(int64)) error {
 	if verifyFile(ctx, path, a.Size, a.SHA256) == nil {
 		progress(a.Size)
 		return nil
@@ -145,8 +182,13 @@ func (s *Store) download(ctx context.Context, a Artifact, path string, progress 
 		}
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		attemptCtx, cancel := context.WithCancel(ctx)
+		stall := time.AfterFunc(downloadStallTimeout, cancel)
+		stalled := func() bool { return attemptCtx.Err() != nil && ctx.Err() == nil }
+		release := func() { stall.Stop(); cancel() }
+		req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, url, nil)
 		if err != nil {
+			release()
 			return err
 		}
 		req.Header.Set("Accept-Encoding", "identity")
@@ -154,20 +196,30 @@ func (s *Store) download(ctx context.Context, a Artifact, path string, progress 
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 			req.Header.Set("If-Range", cp.ETag)
 		}
-		client := http.Client{Timeout: 30 * time.Minute}
-		resp, err := client.Do(req)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("download %s: %w", filepath.Base(a.Key), err)
+			release()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return retryableError{fmt.Errorf("download %s: %w", filepath.Base(a.Key), err)}
 		}
 		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && offset > 0 {
 			resp.Body.Close()
+			release()
 			offset = 0
 			continue
 		}
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 			resp.Body.Close()
-			return fmt.Errorf("download %s: HTTP %d", filepath.Base(a.Key), resp.StatusCode)
+			release()
+			err := fmt.Errorf("download %s: HTTP %d", filepath.Base(a.Key), resp.StatusCode)
+			if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusRequestTimeout {
+				return retryableError{err}
+			}
+			return err
 		}
+		defer release()
 		if resp.StatusCode == http.StatusPartialContent {
 			expected := fmt.Sprintf("bytes %d-%d/%d", offset, a.Size-1, a.Size)
 			if resp.Header.Get("Content-Range") != expected || (cp.ETag != "" && offset > 0 && resp.Header.Get("ETag") != cp.ETag) {
@@ -214,6 +266,7 @@ func (s *Store) download(ctx context.Context, a Artifact, path string, progress 
 					readErr = fmt.Errorf("download exceeds expected size %s", strconv.FormatInt(a.Size, 10))
 					break
 				}
+				stall.Reset(downloadStallTimeout)
 				wn, we := f.Write(buf[:n])
 				count += int64(wn)
 				if we != nil {
@@ -227,7 +280,14 @@ func (s *Store) download(ctx context.Context, a Artifact, path string, progress 
 			}
 			if e != nil {
 				if e != io.EOF {
-					readErr = e
+					// The connection dropped or stalled; the bytes so far are kept.
+					readErr = retryableError{fmt.Errorf("download %s: %w", filepath.Base(a.Key), e)}
+					if stalled() {
+						readErr = retryableError{fmt.Errorf("download %s: no data for %s", filepath.Base(a.Key), downloadStallTimeout)}
+					}
+					if ctx.Err() != nil {
+						readErr = ctx.Err()
+					}
 				}
 				break
 			}
@@ -246,7 +306,7 @@ func (s *Store) download(ctx context.Context, a Artifact, path string, progress 
 			return closeErr
 		}
 		if count != a.Size {
-			return fmt.Errorf("incomplete download: %d of %d bytes; retry to resume", count, a.Size)
+			return retryableError{fmt.Errorf("incomplete download: %d of %d bytes; retry to resume", count, a.Size)}
 		}
 		return nil
 	}

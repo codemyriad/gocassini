@@ -671,6 +671,16 @@ func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
 }
 
+// transcriptionSelectionChanged reports whether next turns transcription on, or
+// changes the model, quality or device that an enabled transcription uses.
+func transcriptionSelectionChanged(prev, next STTSettings) bool {
+	return !prev.TranscriptionEnabled ||
+		prev.ActiveModel != next.ActiveModel ||
+		prev.ActiveRevision != next.ActiveRevision ||
+		normalizeQuality(prev.Quality) != normalizeQuality(next.Quality) ||
+		prev.DeviceOverride != next.DeviceOverride
+}
+
 func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -693,7 +703,8 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Start from the current settings so unspecified override fields are
 	// preserved; the host display fields are refreshed below.
-	updated := rt.currentSettings()
+	current := rt.currentSettings()
+	updated := current
 	updated.Quality = quality
 	updated.Source = sttSourceUser
 	if in.TranscriptionEnabled != nil {
@@ -733,7 +744,10 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		updated.TranscriptionTerms = terms
 	}
 
-	if updated.TranscriptionEnabled {
+	// Check the model only when this request would change what transcribes.
+	// Readiness is invalidated by every restart and upgrade, so re-checking an
+	// unchanged selection would refuse unrelated edits such as vocabulary.
+	if updated.TranscriptionEnabled && transcriptionSelectionChanged(current, updated) {
 		device, err := resolveDeviceForSettings(updated)
 		if err != nil {
 			writeJSONError(w, 409, err.Error())

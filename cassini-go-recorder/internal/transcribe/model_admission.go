@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,6 +55,11 @@ func probeMemoryFloor(model ModelID, device string) int {
 	}
 }
 
+// ErrRuntimeCheckDeferred marks a runtime check refused for lack of RAM or VRAM.
+// Waiting can clear it, so `cassini models` exits 75 (EX_TEMPFAIL) and the
+// operator defers rather than giving up on transcription.
+var ErrRuntimeCheckDeferred = errors.New("runtime check deferred")
+
 // A local import is allowed to publish verified bytes on a small host, but must
 // not mark them ready by starting a native probe without enough memory.
 func admitModelProbe(ctx context.Context, model ModelID, device string) error {
@@ -89,7 +95,7 @@ func admitModelProbe(ctx context.Context, model ModelID, device string) error {
 	}
 	floor := probeMemoryFloor(model, device)
 	if free < floor {
-		return fmt.Errorf("model installed but runtime check needs %d MiB available RAM; have %d MiB; retry models probe when memory is available", floor, free)
+		return fmt.Errorf("%w: model installed but runtime check needs %d MiB available RAM; have %d MiB; retry models probe when memory is available", ErrRuntimeCheckDeferred, floor, free)
 	}
 	if device == "cuda" {
 		if os.Getenv("CASSINI_STT_CUDA_CAPABLE") != "1" {
@@ -106,7 +112,7 @@ func admitModelProbe(ctx context.Context, model ModelID, device string) error {
 		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			n, e := strconv.Atoi(strings.TrimSpace(line))
 			if e != nil || n < 5500 {
-				return fmt.Errorf("runtime check requires at least 5500 MiB free GPU memory")
+				return fmt.Errorf("%w: runtime check requires at least 5500 MiB free GPU memory", ErrRuntimeCheckDeferred)
 			}
 		}
 	}

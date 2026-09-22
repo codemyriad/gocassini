@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -209,6 +211,12 @@ func (s *Store) publish(ctx context.Context, m Model, staging string) error {
 	if err := s.Verify(ctx, m, staging); err != nil {
 		return err
 	}
+	// An attempt killed mid-write leaves its temporary file behind. Staging is
+	// renamed into place whole, so clear those first or they are installed
+	// with the revision for good.
+	if err := removeTempFiles(staging); err != nil {
+		return err
+	}
 	r := receipt{m.ID, m.Revision, map[string]fileStamp{}}
 	for _, f := range m.Files {
 		st, err := os.Stat(filepath.Join(staging, f.Path))
@@ -237,6 +245,20 @@ func (s *Store) publish(ctx context.Context, m Model, staging string) error {
 		return err
 	}
 	return syncDir(filepath.Dir(dest))
+}
+
+// removeTempFiles deletes the CreateTemp leftovers of unpack and writeJSON.
+func removeTempFiles(root string) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := d.Name()
+		if !d.IsDir() && (strings.HasPrefix(name, ".file-") || strings.HasPrefix(name, ".metadata-")) {
+			return os.Remove(path)
+		}
+		return nil
+	})
 }
 
 func syncDir(path string) error {

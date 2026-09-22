@@ -104,10 +104,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	if err != nil {
 		var unavailable *resourceUnavailableError
 		if errors.As(err, &unavailable) {
-			maxDeferrals := rt.maxBuildResourceDeferrals
-			if maxDeferrals <= 0 {
-				maxDeferrals = defaultMaxBuildResourceDeferrals
-			}
+			maxDeferrals := rt.buildResourceDeferralLimit()
 			nextDeferral := task.DeferralCount + 1
 			if unavailable.permanent || nextDeferral > maxDeferrals {
 				blocked, blockErr := rt.store.MarkBuildBlocked(
@@ -262,6 +259,60 @@ func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, jobArtifactR
 	return nil
 }
 
+func (rt *Runtime) buildResourceDeferralLimit() int {
+	if rt.maxBuildResourceDeferrals > 0 {
+		return rt.maxBuildResourceDeferrals
+	}
+	return defaultMaxBuildResourceDeferrals
+}
+
+// transientResourceError reports whether waiting may clear err.
+func transientResourceError(err error) bool {
+	var unavailable *resourceUnavailableError
+	return errors.As(err, &unavailable) && !unavailable.permanent
+}
+
+// admitTranscription resolves the device and the selected model for one build,
+// running the model's runtime check first when a restart or upgrade invalidated
+// it. A non-permanent *resourceUnavailableError means waiting may help; any
+// other error means this build cannot transcribe.
+func (rt *Runtime) admitTranscription(ctx context.Context, settings STTSettings, limits resourceLimits) (string, string, error) {
+	device, err := resolveDeviceForSettings(settings)
+	if err != nil {
+		return "", "", err
+	}
+	if settings.ActiveModel == "" || settings.ActiveRevision == "" {
+		return "", "", errors.New("no speech model is selected")
+	}
+	inventory, err := rt.modelInventory(ctx, device)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			// A slow host, not a broken install.
+			return "", "", &resourceUnavailableError{resource: "speech model inventory", detail: err.Error()}
+		}
+		return "", "", err
+	}
+	selected, err := findModel(inventory, settings.ActiveModel, settings.ActiveRevision)
+	if err != nil {
+		return "", "", err
+	}
+	if !selected.Installed {
+		return "", "", fmt.Errorf("speech model %s %s is not installed", selected.ID, selected.Revision)
+	}
+	if !selected.Ready {
+		// A runtime change rechecks existing files without a model request.
+		if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, selected.ID), rt.logger.Printf); err != nil {
+			return "", "", err
+		}
+		probe := modelJob{Model: selected.ID, Revision: selected.Revision, Device: device}
+		if err := rt.modelCommand(ctx, &probe, "probe", false); err != nil {
+			return "", "", err
+		}
+		rt.invalidateModelInventory()
+	}
+	return device, selected.ID, nil
+}
+
 func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string, error) {
 	meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 	if err := os.MkdirAll(filepath.Dir(meetingPath), 0o755); err != nil {
@@ -284,40 +335,41 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// headroom.
 	limits := resourceLimitsFromEnv()
 	settings := rt.currentSettings()
-	device, model, reason := deviceCPU, "", "disabled"
-	mode := "off"
+	device, model, mode, reason := deviceCPU, "", "off", "disabled"
+	atCeiling := task.DeferralCount >= rt.buildResourceDeferralLimit()
+	// keepAudio drops transcription from this build. At the retry ceiling it is
+	// better to publish the audio than to block the job.
+	keepAudio := func(cause error) {
+		rt.logger.Printf("resource governor: job %s transcription unavailable, preserving audio: %v", task.JobID, cause)
+		device, model, mode, reason = deviceCPU, "", "off", "model_unavailable"
+	}
 	if settings.TranscriptionEnabled {
-		reason = "model_unavailable"
-		selectedDevice, deviceErr := resolveDeviceForSettings(settings)
-		if deviceErr == nil && settings.ActiveModel != "" && settings.ActiveRevision != "" {
-			inventory, inventoryErr := rt.modelInventory(ctx, selectedDevice)
-			if inventoryErr == nil {
-				selected, modelErr := findModel(inventory, settings.ActiveModel, settings.ActiveRevision)
-				if modelErr == nil && selected.Installed {
-					if !selected.Ready {
-						// A runtime change rechecks existing files without a model request.
-						if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(selectedDevice, selected.ID), rt.logger.Printf); err != nil {
-							return meetingPath, err
-						}
-						probe := modelJob{Model: selected.ID, Revision: selected.Revision, Device: selectedDevice}
-						if err := rt.modelCommand(ctx, &probe, "probe", false); err == nil {
-							selected.Ready = true
-						} else {
-							rt.logger.Printf("model readiness: %v", err)
-						}
-					}
-					if selected.Ready {
-						device, model, mode, reason = selectedDevice, selected.ID, "on", ""
-					}
-				}
-			} else {
-				rt.logger.Printf("model inventory: %v", inventoryErr)
-			}
+		selectedDevice, selectedModel, err := rt.admitTranscription(ctx, settings, limits)
+		switch {
+		case err == nil:
+			device, model, mode, reason = selectedDevice, selectedModel, "on", ""
+		case ctx.Err() != nil:
+			return meetingPath, ctx.Err()
+		case transientResourceError(err) && !atCeiling:
+			// Waiting can make transcription possible: a GPU that is not yet
+			// visible, VRAM or RAM held by a neighbour, a model check that timed
+			// out. Publishing audio-only now would be permanent, so defer like
+			// any other resource wait and fall back only at the retry ceiling.
+			return meetingPath, err
+		default:
+			keepAudio(err)
 		}
 	}
 	rt.logger.Printf("resource governor: job %s transcription=%s device=%s model=%s reason=%s", task.JobID, mode, device, model, reason)
 	if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, model), rt.logger.Printf); err != nil {
-		return meetingPath, err
+		if mode != "on" || !atCeiling || !transientResourceError(err) {
+			return meetingPath, err
+		}
+		// Still short of RAM for the model at the ceiling; audio needs far less.
+		keepAudio(err)
+		if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, model), rt.logger.Printf); err != nil {
+			return meetingPath, err
+		}
 	}
 	// Use the admission snapshot, even if settings changed during resource waits.
 	env := settings.ChildEnv(rt.childEnv())
@@ -326,6 +378,12 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	env = setEnvKey(env, "CASSINI_TRANSCRIPTION", mode)
 	env = setEnvKey(env, "CASSINI_TRANSCRIPTION_REASON", reason)
 	buildEnv, err := limits.applyToEnv(env, device, model)
+	if err != nil && mode == "on" && atCeiling && transientResourceError(err) {
+		// Still no VRAM at the retry ceiling: keep the audio rather than block.
+		keepAudio(err)
+		env = setEnvKey(setEnvKey(env, "CASSINI_TRANSCRIPTION", mode), "CASSINI_TRANSCRIPTION_REASON", reason)
+		buildEnv, err = limits.applyToEnv(env, device, model)
+	}
 	if err != nil {
 		return meetingPath, err
 	}
@@ -344,6 +402,12 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		_, prepared := os.Stat(filepath.Join(meetingPath, ".transcription-started"))
 		if mode != "on" || ctx.Err() != nil || prepared != nil {
 			return meetingPath, fmt.Errorf("cassini build: %w", err)
+		}
+		// The crashed attempt left a partial bundle, and a meeting build only
+		// writes into an empty directory. The directory belongs to this attempt
+		// alone; the capture it is built from is untouched.
+		if cleanErr := os.RemoveAll(meetingPath); cleanErr != nil {
+			return meetingPath, fmt.Errorf("preserve audio after transcription failure: %w", cleanErr)
 		}
 		fallback := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath, "--transcription", "off")
 		fallback.Stdout, fallback.Stderr = cmd.Stdout, cmd.Stderr

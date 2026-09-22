@@ -83,11 +83,15 @@ type Config struct {
 }
 
 type Runtime struct {
-	modelMu        sync.Mutex
-	modelCancel    context.CancelFunc
-	modelJobID     string
-	recordingSetup recordingSetup
-	ctx            context.Context
+	modelMu     sync.Mutex
+	modelCancel context.CancelFunc
+	modelJobID  string
+	// modelInventoryCache holds `cassini models list` results per device;
+	// see cachedModelInventory.
+	modelInventoryMu    sync.Mutex
+	modelInventoryCache map[string]modelInventoryEntry
+	recordingSetup      recordingSetup
+	ctx                 context.Context
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.

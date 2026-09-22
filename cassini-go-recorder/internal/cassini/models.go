@@ -156,6 +156,10 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if !*noProbe {
 		s.Progress(modelstore.Progress{Version: 1, Phase: "checking"})
 		if err := transcribe.ProbeInstalledModel(ctx, s, m, *device); err != nil {
+			if errors.Is(err, transcribe.ErrRuntimeCheckDeferred) {
+				fmt.Fprintln(stderr, "models:", err)
+				return exitTempFail
+			}
 			return fail(fmt.Errorf("files installed, but runtime check failed: %w", err))
 		}
 		s.Progress(modelstore.Progress{Version: 1, Phase: "ready"})
@@ -168,3 +172,7 @@ func runModels(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	return 0
 }
+
+// exitTempFail (EX_TEMPFAIL) tells the operator a runtime check was refused for
+// lack of memory and can be retried later.
+const exitTempFail = 75

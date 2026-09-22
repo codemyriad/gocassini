@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -115,6 +116,131 @@ func TestAcquirePackImportAndReuse(t *testing.T) {
 		t.Fatal("corrupt model accepted")
 	}
 }
+
+// A download killed while unpacking leaves a temporary file in staging. It must
+// not be installed with the revision.
+func TestPublishDropsTempFilesFromKilledAttempts(t *testing.T) {
+	s, m, data := fixture(t)
+	var calls atomic.Int32
+	serve(t, s, data, &calls)
+	stage := filepath.Join(s.Root, "downloads", m.Revision, "files")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{".file-123", ".metadata-456"} {
+		if err := os.WriteFile(filepath.Join(stage, name), []byte("partial"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Acquire(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{".file-123", ".metadata-456"} {
+		if _, err := os.Stat(filepath.Join(s.Dir(m), name)); !os.IsNotExist(err) {
+			t.Fatalf("%s was installed with the revision (stat err = %v)", name, err)
+		}
+	}
+	if err := s.Complete(m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fastDownloadRetries makes the automatic resume loop test-sized.
+func fastDownloadRetries(t *testing.T, stall time.Duration) {
+	t.Helper()
+	prevStall, prevDelay := downloadStallTimeout, downloadRetryDelay
+	downloadStallTimeout = stall
+	downloadRetryDelay = func(int) time.Duration { return 10 * time.Millisecond }
+	t.Cleanup(func() { downloadStallTimeout, downloadRetryDelay = prevStall, prevDelay })
+}
+
+// flakyServer serves each artifact with a strong ETag and honours Range. The
+// first request for each artifact breaks after half its bytes: drop closes the
+// connection, otherwise the server stops sending and waits.
+func flakyServer(t *testing.T, s *Store, data map[string][]byte, drop bool, calls *atomic.Int32) {
+	t.Helper()
+	broken := map[string]bool{}
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		key := strings.TrimPrefix(r.URL.Path, "/")
+		body := data[key]
+		mu.Lock()
+		first := !broken[key]
+		broken[key] = true
+		mu.Unlock()
+		w.Header().Set("ETag", `"fixture"`)
+		if !first {
+			http.ServeContent(w, r, "model", timeZero, bytes.NewReader(body))
+			return
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+		w.WriteHeader(http.StatusOK)
+		w.Write(body[:len(body)/2])
+		w.(http.Flusher).Flush()
+		if drop {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				conn.Close()
+			}
+			return
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+	s.URL = func(a Artifact) string { return server.URL + "/" + a.Key }
+}
+
+// A connection reset mid-transfer is routine on real networks. The install
+// resumes on its own instead of failing the whole model.
+func TestAcquireResumesAfterADroppedConnection(t *testing.T) {
+	fastDownloadRetries(t, 5*time.Second)
+	s, m, data := fixture(t)
+	var calls atomic.Int32
+	flakyServer(t, s, data, true, &calls)
+	if err := s.Acquire(context.Background(), m); err != nil {
+		t.Fatalf("Acquire() after one dropped connection = %v", err)
+	}
+	if err := s.Complete(m); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 4 {
+		t.Fatalf("requests = %d, want one broken and one resumed request per artifact", calls.Load())
+	}
+}
+
+func TestAcquireResumesAfterAStalledTransfer(t *testing.T) {
+	fastDownloadRetries(t, 200*time.Millisecond)
+	s, m, data := fixture(t)
+	var calls atomic.Int32
+	flakyServer(t, s, data, false, &calls)
+	if err := s.Acquire(context.Background(), m); err != nil {
+		t.Fatalf("Acquire() after a stalled transfer = %v", err)
+	}
+	if err := s.Complete(m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A missing file will not appear on retry.
+func TestAcquireDoesNotRetryAClientError(t *testing.T) {
+	fastDownloadRetries(t, 5*time.Second)
+	s, m, _ := fixture(t)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	s.URL = func(a Artifact) string { return server.URL + "/" + a.Key }
+	if err := s.Acquire(context.Background(), m); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("Acquire() = %v, want HTTP 404", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", calls.Load())
+	}
+}
+
 func TestResumeAndServerIgnoringRange(t *testing.T) {
 	for _, ignore := range []bool{false, true} {
 		t.Run(fmt.Sprint(ignore), func(t *testing.T) {

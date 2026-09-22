@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -382,6 +383,70 @@ func TestAttributionEnvelopesAreBuiltOncePerBuild(t *testing.T) {
 		if tr.Provenance == nil || tr.Provenance.Backend != "fake-envelope-count" {
 			t.Errorf("transcript %q provenance backend = %#v, want fake-envelope-count", tr.ID, tr.Provenance)
 		}
+	}
+}
+
+// Additional models are comparison extras. One that is not installed must not
+// cost the primary transcript that was already written.
+func TestBuildMeetingArtifactKeepsPrimaryWhenAnAdditionalModelIsMissing(t *testing.T) {
+	requireFFMediaTools(t)
+	stubModelEnsurers(t)
+	stubbed := ensureModelFn
+	ensureModelFn = func(cacheDir string, id ModelID, revision string, progress io.Writer) (ModelPaths, error) {
+		if id == "stub-extra-model" {
+			return ModelPaths{}, errors.New("not installed")
+		}
+		return stubbed(cacheDir, id, revision, progress)
+	}
+	t.Setenv("CASSINI_ATTRIBUTION_DISABLED", "1")
+	registerFixedBackend(t, "fake-extra-missing", fixedTimedWords(12))
+
+	dir := t.TempDir()
+	mkv := buildTwoTrackMeetingFromSmoke(t, dir)
+	outDir := filepath.Join(dir, "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := BuildConfig{
+		TranscriptionMode: "on",
+		Device:            "cpu",
+		Backend:           "fake-extra-missing",
+		ModelID:           ModelID("stub-model"),
+		AdditionalModels:  []ModelID{"stub-extra-model"},
+		CacheDir:          t.TempDir(),
+		NumThreads:        1,
+		SkipAttribution:   true,
+	}
+	var stdout bytes.Buffer
+	if err := BuildMeetingArtifact(context.Background(), mkv, outDir, cfg, &stdout); err != nil {
+		t.Fatalf("BuildMeetingArtifact: %v\noutput:\n%s", err, stdout.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest artifactManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Processing == nil || manifest.Processing.Transcription.Status != "completed" {
+		t.Fatalf("a missing additional model downgraded the build: %s", raw)
+	}
+	for _, tr := range manifest.Files.Transcripts {
+		if tr.ID == "stub-extra-model" {
+			t.Fatalf("listed a transcript that was never written: %s", raw)
+		}
+	}
+	rawTranscript, err := os.ReadFile(filepath.Join(outDir, "transcript.words.v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var transcript transcriptFile
+	if err := json.Unmarshal(rawTranscript, &transcript); err != nil {
+		t.Fatal(err)
+	}
+	if len(transcript.Segments) == 0 {
+		t.Fatalf("the primary transcript was replaced by an empty one: %s", rawTranscript)
 	}
 }
 

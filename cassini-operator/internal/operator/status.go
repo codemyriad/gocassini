@@ -2,7 +2,6 @@ package operator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -506,18 +505,9 @@ func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (
 			return false, detail
 		}
 	}
-	// Readiness must not be more optimistic than admission: run the same model
-	// predicate the governor will run. A CUDA image that has fallen back to the
-	// CPU carries only the fp32 model, so a tier that needs another one blocks
-	// permanently — reporting that host as ready would leave an administrator
-	// waiting for builds that can never start.
-	if _, err := rt.admitModelForDevice(settings, device); err != nil {
-		var unavailable *resourceUnavailableError
-		if errors.As(err, &unavailable) {
-			return false, unavailable.detail
-		}
-		return false, err.Error()
-	}
+	// The device only. Whether the selected model can run is reported beside
+	// it (readiness, /settings/models): a missing optional model must not make
+	// the device look broken.
 	if rt.computeReadiness != nil {
 		return rt.computeReadiness.check(device)
 	}

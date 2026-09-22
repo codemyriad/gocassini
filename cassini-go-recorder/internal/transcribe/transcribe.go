@@ -282,7 +282,14 @@ func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath string
 
 	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, streams, audioDurationMS, sha256hex, pass, cfg, envCache, stdout)
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// The primary transcript is already on disk. An extra model that is
+		// not installed, or fails, costs only its own transcript; returning
+		// here would send the build to writeUntranscribed and replace the
+		// primary with an empty one.
+		fmt.Fprintf(stdout, "  additional transcripts incomplete: %v\n", err)
 	}
 
 	// --- 8. Captions ---
@@ -698,7 +705,7 @@ feed:
 // the primary model's BPE vocabulary, and handing it to a different model would
 // either be rejected or, worse, silently encode the terms wrongly; a different
 // model may also not support beam search at all. Each additional model resolves
-// its own.
+// its own. On error it still returns the transcripts it has already written.
 func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex string, primary passConfig, cfg BuildConfig, envCache *speakerEnvelopeCache, stdout io.Writer) ([]AdditionalTranscript, error) {
 	if len(cfg.AdditionalModels) == 0 {
 		return nil, nil
@@ -722,7 +729,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		fmt.Fprintf(stdout, "  ensuring additional model %s is cached...\n", modelID)
 		modelPaths, err := ensureModelFn(cfg.CacheDir, modelID, "", stdout)
 		if err != nil {
-			return nil, fmt.Errorf("ensure additional model %s: %w", modelID, err)
+			return out, fmt.Errorf("ensure additional model %s: %w", modelID, err)
 		}
 		extra := primary
 		extra.ModelPaths = modelPaths
@@ -730,15 +737,15 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		vocabulary := vocabularyForBuild(cfg.Vocabulary, streams)
 		extra.Decoder, _, err = resolveDecoderVocabulary(outputDir, vocabulary, modelPaths)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		extra.SpeakerDecoders, err = speakerDecoders(outputDir, vocabulary, streams, extra.Decoder)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		segs, err := transcribePass(ctx, mkvPath, streams, extra, stdout)
 		if err != nil {
-			return nil, fmt.Errorf("additional transcribe %s: %w", modelID, err)
+			return out, fmt.Errorf("additional transcribe %s: %w", modelID, err)
 		}
 		// Every transcript this build emits carries the same attribution
 		// contract, or switching models would silently change whether a word
@@ -748,7 +755,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		}
 		path := fmt.Sprintf("transcript-%s.words.v1.json", id)
 		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
-			return nil, fmt.Errorf("write additional transcript %s: %w", id, err)
+			return out, fmt.Errorf("write additional transcript %s: %w", id, err)
 		}
 		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: primary.Backend})
 	}

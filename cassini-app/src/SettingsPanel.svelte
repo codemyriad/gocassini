@@ -554,13 +554,20 @@
           </div>
         </dl>
         <div class="hw-section">
-          <p class="hw-effective">
-            Transcribes on the
-            <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>
-            {#if settings.effective.model}
-              with the <code class="pipe-code">{settings.effective.model}</code> model
-            {/if}
-          </p>
+          {#if settings.transcription_enabled}
+            <p class="hw-effective">
+              Transcribes on the
+              <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>
+              {#if settings.effective.model}
+                with the <code class="pipe-code">{settings.effective.model}</code> model
+              {/if}
+            </p>
+          {:else}
+            <p class="hw-effective">
+              Transcription is off. Recordings are published as audio. If you turn it on, it runs on the
+              <code class="pipe-code">{deviceLabel(settings.effective.device)}</code>.
+            </p>
+          {/if}
           {#if settings.effective.min_free_memory_mb > 0}
             <p class="set-row-sub">
               Each recording is processed once {formatMemory(settings.effective.min_free_memory_mb)}
@@ -605,7 +612,12 @@
         <div class="set-row-main">
           <p id="stt-quality-heading" class="set-row-name op-card-title">Quality</p>
           <p class="set-row-sub">
-            Applies to every recording on this machine.
+            {#if transcriptionEnabled}
+              Applies to every recording on this machine.
+            {:else}
+              Transcription is off, so recordings are published as audio. To transcribe, install
+              and enable a model below.
+            {/if}
             {#if runsOnGPU}
               On the GPU, every quality setting uses the same full-precision model, so this only
               changes transcription on the CPU.
@@ -658,6 +670,11 @@
           <p class="set-row-sub" class:off={hasProvider === false}>
             Sends each transcript to the provider and writes the summary shown on the meeting.
           </p>
+          {#if !transcriptionEnabled}
+            <p class="set-row-sub pipe-gap">
+              A summary needs a transcript. While transcription is off, recordings get no summary.
+            </p>
+          {/if}
 
           {#if llmError}
             <p class="set-row-sub pipe-warn pipe-gap">

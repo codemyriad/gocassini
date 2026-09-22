@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -123,21 +124,37 @@ func (e *resourceUnavailableError) Error() string {
 	return fmt.Sprintf("resource governor: %s unavailable: %s", e.resource, e.detail)
 }
 
-// admitModelForDevice reflects locally ready bytes only. Missing or unusable
-// transcription is admitted with the smaller audio-processing budget.
+// admitModelForDevice returns the selected model when transcription is on and
+// that model is installed and has passed its runtime check on device. With
+// transcription off it returns "" and no error. When transcription is on but
+// cannot run, the error says why, and readiness reports it; builds then keep
+// the audio with the smaller audio-processing budget.
 func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (string, error) {
-	if !settings.TranscriptionEnabled || settings.ActiveModel == "" || settings.ActiveRevision == "" {
+	if !settings.TranscriptionEnabled {
 		return "", nil
 	}
-	ctx, cancel := context.WithTimeout(rt.ctx, 2*time.Second)
+	if settings.ActiveModel == "" || settings.ActiveRevision == "" {
+		return "", errors.New("transcription is on but no speech model is selected; install and enable one in Settings")
+	}
+	parent := rt.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
-	inventory, err := rt.modelInventory(ctx, device)
+	inventory, err := rt.cachedModelInventory(ctx, device)
 	if err != nil {
-		return "", nil
+		return "", fmt.Errorf("cannot read the installed speech models: %w", err)
 	}
 	m, err := findModel(inventory, settings.ActiveModel, settings.ActiveRevision)
-	if err != nil || !m.Ready {
-		return "", nil
+	if err != nil {
+		return "", err
+	}
+	if !m.Installed {
+		return "", fmt.Errorf("speech model %s is not installed; install it in Settings", m.ID)
+	}
+	if !m.Ready {
+		return "", fmt.Errorf("speech model %s has not passed its runtime check on %s; check it in Settings", m.ID, device)
 	}
 	return m.ID, nil
 }

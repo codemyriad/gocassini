@@ -257,6 +257,18 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	s.mu.Unlock()
 }
 
+// transcriptionUnavailable says why enabled transcription cannot run on device:
+// the device itself, or the selected model. Empty means it can run.
+func (rt *Runtime) transcriptionUnavailable(settings STTSettings, device string) string {
+	if ok, detail := rt.effectiveComputeStatus(settings, device); !ok {
+		return detail
+	}
+	if _, err := rt.admitModelForDevice(settings, device); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	secret, source := rt.signalingSecret()
 	s := &rt.recordingSetup
@@ -289,11 +301,14 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	device := rt.effectiveFor(settings).Device
 	if !settings.TranscriptionEnabled {
 		add("processing", "passed", "audio_only", "Transcription is off. Recordings can be published and played as audio.", "")
-	} else if ok, detail := rt.effectiveComputeStatus(settings, device); ok {
-		add("processing", "passed", "processing_ready", "Speech-processing prerequisites passed for "+device+".", "")
+	} else if detail := rt.transcriptionUnavailable(settings, device); detail != "" {
+		// Recording still works, so this stays passed until the health ladder
+		// (D-798) gives optional features their own warning state.
+		add("processing", "passed", "transcription_unavailable", "Recordings keep their audio, but transcription cannot run: "+detail, "settings")
 	} else {
-		add("processing", "passed", "audio_fallback", "Recordings will retain audio. Transcription is unavailable: "+detail, "settings")
+		add("processing", "passed", "processing_ready", "Speech-processing prerequisites passed for "+device+".", "")
 	}
+
 	if secret == "" && !failed {
 		add("talk.authentication", "needs_action", "internal_secret_missing", "Enter the internal secret from your Talk signaling server.", "configure_talk")
 	}

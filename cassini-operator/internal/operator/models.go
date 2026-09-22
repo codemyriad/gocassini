@@ -56,6 +56,54 @@ func (rt *Runtime) modelEnv() []string {
 	}
 	return setEnvKey(env, envDisallowModelDownload, value)
 }
+
+// modelInventoryTTL bounds how stale a cached inventory may be. Model jobs and
+// build-time checks invalidate it at once; the TTL only catches out-of-band
+// changes such as `cassini models import` run by an administrator. A failure is
+// kept for a shorter time, so a broken binary cannot turn the one-second
+// auto-policy monitor into one process per second.
+const (
+	modelInventoryTTL      = 30 * time.Second
+	modelInventoryErrorTTL = 5 * time.Second
+)
+
+type modelInventoryEntry struct {
+	models []modelInfo
+	err    error
+	at     time.Time
+}
+
+// cachedModelInventory serves pollers — /status, readiness, the Settings page
+// and the auto-policy monitor — without starting a recorder process each time.
+// Build admission reads modelInventory directly, because a build must not act
+// on a stale answer.
+func (rt *Runtime) cachedModelInventory(ctx context.Context, device string) ([]modelInfo, error) {
+	rt.modelInventoryMu.Lock()
+	entry, ok := rt.modelInventoryCache[device]
+	rt.modelInventoryMu.Unlock()
+	ttl := modelInventoryTTL
+	if entry.err != nil {
+		ttl = modelInventoryErrorTTL
+	}
+	if ok && time.Since(entry.at) < ttl {
+		return entry.models, entry.err
+	}
+	models, err := rt.modelInventory(ctx, device)
+	rt.modelInventoryMu.Lock()
+	if rt.modelInventoryCache == nil {
+		rt.modelInventoryCache = map[string]modelInventoryEntry{}
+	}
+	rt.modelInventoryCache[device] = modelInventoryEntry{models: models, err: err, at: time.Now()}
+	rt.modelInventoryMu.Unlock()
+	return models, err
+}
+
+func (rt *Runtime) invalidateModelInventory() {
+	rt.modelInventoryMu.Lock()
+	rt.modelInventoryCache = nil
+	rt.modelInventoryMu.Unlock()
+}
+
 func (rt *Runtime) modelInventory(ctx context.Context, device string) ([]modelInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -65,6 +113,11 @@ func (rt *Runtime) modelInventory(ctx context.Context, device string) ([]modelIn
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			// Say it timed out: callers treat a timeout as transient and a
+			// failing command as a broken install.
+			return nil, fmt.Errorf("model inventory: %w", ctx.Err())
+		}
 		return nil, fmt.Errorf("model inventory: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	var models []modelInfo
@@ -136,7 +189,7 @@ func (rt *Runtime) modelsHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, 400, "device must be cpu or cuda")
 			return
 		}
-		models, err := rt.modelInventory(r.Context(), device)
+		models, err := rt.cachedModelInventory(r.Context(), device)
 		if err != nil {
 			writeJSONError(w, 503, err.Error())
 			return
@@ -331,7 +384,15 @@ func (rt *Runtime) runModelJob(job modelJob) {
 		}
 		// Network transfer never holds the inference gate. The expensive probe
 		// shares the same admission gate and memory/VRAM policy as meeting builds.
-		rt.buildExecutionMu.Lock()
+		// A build holds the gate for its whole run, so wait for it in a way
+		// Cancel can interrupt.
+		for !rt.buildExecutionMu.TryLock() {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
 		defer rt.buildExecutionMu.Unlock()
 		if err := ctx.Err(); err != nil {
 			return err
@@ -363,6 +424,7 @@ func (rt *Runtime) runModelJob(job modelJob) {
 		job.State = "ready"
 		job.Error = ""
 	}
+	rt.invalidateModelInventory()
 	if err := rt.updateModelJob(job); err != nil {
 		rt.logger.Printf("persist model result: %v", err)
 	}
@@ -426,7 +488,16 @@ func (rt *Runtime) modelCommand(ctx context.Context, job *modelJob, action strin
 		if len(detail) > 2000 {
 			detail = detail[len(detail)-2000:]
 		}
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) && exitErr.ExitCode() == modelExitTempFail {
+			// The recorder refused for lack of RAM or VRAM. Waiting can fix that.
+			return &resourceUnavailableError{resource: "memory for the speech model check", detail: detail}
+		}
 		return fmt.Errorf("%s: %w: %s", action, waitErr, detail)
 	}
 	return nil
 }
+
+// modelExitTempFail is the recorder's `cassini models` exit status when a
+// runtime check was refused for lack of memory (EX_TEMPFAIL).
+const modelExitTempFail = 75
