@@ -54,9 +54,8 @@ Documentation: https://gocassini.com/docs]]></description>
   <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-operator.png</screenshot>
 
   <dependencies>
-    <!-- HaRP (the recommended AppAPI deploy daemon) requires NC 32+; older
-         releases only offer daemon types this image was never tested on. -->
-    <nextcloud min-version="32" max-version="35"/>
+    <!-- Support bounds are enforced by ci/nextcloud-compatibility.json. -->
+    <nextcloud min-version="33.0.9" max-version="35"/>
   </dependencies>
 
   <external-app>

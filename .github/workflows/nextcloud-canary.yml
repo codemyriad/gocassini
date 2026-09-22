@@ -1,0 +1,99 @@
+name: Nextcloud upstream canary
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: nextcloud-canary-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      image: ${{ steps.select.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: select
+        run: |
+          python3 scripts/nextcloud_compatibility.py validate
+          echo "matrix=$(python3 scripts/nextcloud_compatibility.py matrix --tier canary)" >> "$GITHUB_OUTPUT"
+          echo "image=$(jq -r .canary_image ci/nextcloud-compatibility.json)" >> "$GITHUB_OUTPUT"
+
+  canary:
+    name: Upstream Nextcloud ${{ matrix.major }}
+    needs: select
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/compatibility-tools
+      - uses: docker/setup-buildx-action@v3
+      - name: Load frozen Cassini artifact
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.select.outputs.image }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve upstream candidate
+        id: resolve
+        env:
+          MAJOR: ${{ matrix.major }}
+          CANDIDATE_IMAGE: ${{ matrix.image }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/canary"
+          if ! python3 scripts/nextcloud_compatibility.py resolve --major "$MAJOR" \
+            --image "$CANDIDATE_IMAGE" --out "$RUNNER_TEMP/canary/candidate.json"; then
+            echo 'Candidate unavailable: image or compatible stable app dependencies could not be resolved. No compatibility pass.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          jq -r '"Resolved Nextcloud \(.nextcloud_version)", (.apps | to_entries[] | "- \(.key): \(.value.version)")' \
+            "$RUNNER_TEMP/canary/candidate.json" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/canary/candidate.changes.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Run upstream candidate against frozen Cassini image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_REF: ${{ needs.select.outputs.image }}
+          COMPAT_STACK: ${{ runner.temp }}/canary/candidate.json
+          COMPAT_MODE: canary
+          LOG_DIR: ${{ runner.temp }}/canary/result
+        run: |
+          # An out-of-range preview uses a recorded temporary manifest only.
+          python3 scripts/prepare-compatibility-preview.py "$COMPAT_STACK" "$RUNNER_TEMP/canary/info.xml"
+          export D453_MANIFEST_PATH="$RUNNER_TEMP/canary/info.xml"
+          ./harness/bin/ci-nextcloud-compatibility.sh
+      - name: Summarize result
+        if: always()
+        run: |
+          report="$RUNNER_TEMP/canary/result/compatibility.json"
+          if [[ -f "$report" ]]; then
+            jq -r '"Result: **\(.result)**. Frozen Cassini: `\(.observed.cassini.config_id // "not observed")`", "", (.checks | to_entries[] | "- \(.key): \(.value)")' "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python3 scripts/ci_phase_timings.py summary "${report%/*}/phase-timings.jsonl" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Replay using the downloaded candidate.json as COMPAT_STACK, info.xml as D453_MANIFEST_PATH, and the Cassini ref recorded in compatibility.json as IMAGE_REF; COMPAT_MODE=canary.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upstream-nextcloud-${{ matrix.major }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/canary/candidate.json
+            ${{ runner.temp }}/canary/candidate.changes.json
+            ${{ runner.temp }}/canary/candidate.changes.md
+            ${{ runner.temp }}/canary/info.xml
+            ${{ runner.temp }}/canary/info.original.xml
+            ${{ runner.temp }}/canary/result/compatibility.json
+            ${{ runner.temp }}/canary/result/browser/
+            ${{ runner.temp }}/canary/result/observe.log
+            ${{ runner.temp }}/canary/result/phase-timings.jsonl
+          retention-days: 14
+          if-no-files-found: warn

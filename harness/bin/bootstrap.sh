@@ -15,8 +15,7 @@ harness_bootstrap_core_nextcloud() {
   wait_for_nextcloud 420
 
   log "Ensuring Talk app is installed/enabled"
-  occ_ignore_failure app:install spreed >/dev/null 2>&1
-  occ_ignore_failure app:enable spreed >/dev/null 2>&1
+  harness_install_app spreed
 
   # Per-participant recording access needs two native Nextcloud apps that an
   # ExApp cannot install for itself: Team folders supplies the shared tree and
@@ -31,12 +30,10 @@ harness_bootstrap_core_nextcloud() {
     log "Skipping Group Folders / Everyone Group (--debug-skip-storage-scaffold)"
   else
     log "Ensuring Group Folders app is installed/enabled"
-    occ_ignore_failure app:install groupfolders >/dev/null 2>&1
-    occ_ignore_failure app:enable groupfolders >/dev/null 2>&1
+    harness_install_app groupfolders
 
     log "Ensuring Everyone Group app is installed/enabled"
-    occ_ignore_failure app:install group_everyone >/dev/null 2>&1
-    occ_ignore_failure app:enable group_everyone >/dev/null 2>&1
+    harness_install_app group_everyone
   fi
 
   # The installs above tolerate failure on purpose: all three are app-store apps

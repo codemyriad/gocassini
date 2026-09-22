@@ -1,0 +1,127 @@
+{
+  "baselines": [
+    {
+      "apps": {
+        "app_api": {
+          "sha256": "f2f7989dc460d09cc0cb5da8fad633766d32c0227f5456f3cf4ccfe5d467ac30",
+          "source": "bundled",
+          "version": "33.0.0"
+        },
+        "group_everyone": {
+          "sha256": "049bb5919baabe0475c94e746b6558747a96a165f194e9d876a527e31cc0051d",
+          "source": "archive",
+          "url": "https://github.com/icewind1991/group_everyone/releases/download/v0.1.21/group_everyone-v0.1.21.tar.gz",
+          "version": "0.1.21"
+        },
+        "groupfolders": {
+          "sha256": "1ecdd644a2e913de8b333560717660f0ba75836309c4463af858e886cdc3a68c",
+          "source": "archive",
+          "url": "https://github.com/nextcloud-releases/groupfolders/releases/download/v21.0.15/groupfolders-v21.0.15.tar.gz",
+          "version": "21.0.15"
+        },
+        "spreed": {
+          "sha256": "f490cc783e23db4fbcde71e7c3c3e38f88f824ef469fd6f22c394dad6de3d069",
+          "source": "archive",
+          "url": "https://github.com/nextcloud-releases/spreed/releases/download/v23.0.11/spreed-v23.0.11.tar.gz",
+          "version": "23.0.11"
+        }
+      },
+      "id": "nc33",
+      "images": {
+        "appapi-harp": "ghcr.io/nextcloud/nextcloud-appapi-harp:release@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39",
+        "coturn": "coturn/coturn:4.6.3-alpine@sha256:e2bca2f79a4269d7240de5872ab60a9305013ad37296d2acf14f9510874346be",
+        "db": "postgres:16-alpine@sha256:3c5c8892d184f738f4fe282d14ddaa613a38f00f4189d2d94725ebe6f2909ddb",
+        "janus": "canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1",
+        "nats": "nats:2.11.17-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+        "nextcloud": "nextcloud:33.0.9@sha256:98f8db7fa866cf4a8cfabd441731be428f54854caa760bd8e022a03cac77c581",
+        "reverse-proxy": "nginx:alpine@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8",
+        "signaling": "strukturag/nextcloud-spreed-signaling:2.1.1@sha256:b306eae9d1e62c4b2eaf10a6683dfe1fe76b833bd0f68d1606861e33aff5bca1"
+      },
+      "nextcloud_version": "33.0.9"
+    },
+    {
+      "apps": {
+        "app_api": {
+          "sha256": "0e9a4ce4a567080a7725c6e0ed5ea300c1438674c4df2e54a766bafe509377f2",
+          "source": "bundled",
+          "version": "34.0.0"
+        },
+        "group_everyone": {
+          "sha256": "049bb5919baabe0475c94e746b6558747a96a165f194e9d876a527e31cc0051d",
+          "source": "archive",
+          "url": "https://github.com/icewind1991/group_everyone/releases/download/v0.1.21/group_everyone-v0.1.21.tar.gz",
+          "version": "0.1.21"
+        },
+        "groupfolders": {
+          "sha256": "bfff357b12bbd24257d8d127cf30e83a72256e7659f1cc3e32bd09fe647d2f9b",
+          "source": "archive",
+          "url": "https://github.com/nextcloud-releases/groupfolders/releases/download/v22.0.6/groupfolders-v22.0.6.tar.gz",
+          "version": "22.0.6"
+        },
+        "spreed": {
+          "sha256": "7228913aa7051b9b4fe3d2312bdc0c0bace6c96f43085556748dc2910af9a584",
+          "source": "archive",
+          "url": "https://github.com/nextcloud-releases/spreed/releases/download/v24.0.5/spreed-v24.0.5.tar.gz",
+          "version": "24.0.5"
+        }
+      },
+      "id": "nc34",
+      "images": {
+        "appapi-harp": "ghcr.io/nextcloud/nextcloud-appapi-harp:release@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39",
+        "coturn": "coturn/coturn:4.6.3-alpine@sha256:e2bca2f79a4269d7240de5872ab60a9305013ad37296d2acf14f9510874346be",
+        "db": "postgres:16-alpine@sha256:3c5c8892d184f738f4fe282d14ddaa613a38f00f4189d2d94725ebe6f2909ddb",
+        "janus": "canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1",
+        "nats": "nats:2.11.17-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+        "nextcloud": "nextcloud:34.0.0@sha256:5baecc7baf8991ca0d4b202c349c75c1c83129568284fd1ec6bb7e4417e0a5bb",
+        "reverse-proxy": "nginx:alpine@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8",
+        "signaling": "strukturag/nextcloud-spreed-signaling:2.1.1@sha256:b306eae9d1e62c4b2eaf10a6683dfe1fe76b833bd0f68d1606861e33aff5bca1"
+      },
+      "nextcloud_version": "34.0.0"
+    },
+    {
+      "apps": {
+        "app_api": {
+          "sha256": "1c01a94cd3865f347774033e870d80c91d6ef3c3364f42fabdce75bf13294bef",
+          "source": "bundled",
+          "version": "35.0.0"
+        },
+        "group_everyone": {
+          "sha256": "049bb5919baabe0475c94e746b6558747a96a165f194e9d876a527e31cc0051d",
+          "source": "archive",
+          "url": "https://github.com/icewind1991/group_everyone/releases/download/v0.1.21/group_everyone-v0.1.21.tar.gz",
+          "version": "0.1.21"
+        },
+        "groupfolders": {
+          "sha256": "3949e6a45947188090c170c6983aae11a1d66134ec317ffe7b7609062f3aecf3",
+          "source": "archive",
+          "url": "https://github.com/nextcloud-releases/groupfolders/releases/download/v23.0.1/groupfolders-v23.0.1.tar.gz",
+          "version": "23.0.1"
+        },
+        "spreed": {
+          "sha256": "7afac005c7726b99a2195151eb04a5ca50c2993da3e7d416d76e00f094ce7b45",
+          "source": "archive",
+          "url": "https://github.com/nextcloud-releases/spreed/releases/download/v25.0.0/spreed-v25.0.0.tar.gz",
+          "version": "25.0.0"
+        }
+      },
+      "id": "nc35",
+      "images": {
+        "appapi-harp": "ghcr.io/nextcloud/nextcloud-appapi-harp:release@sha256:603fdf5ca2802235fd4e40301476dd2fafff409e84a42f8cb3b8f2e17c22ce39",
+        "coturn": "coturn/coturn:4.6.3-alpine@sha256:e2bca2f79a4269d7240de5872ab60a9305013ad37296d2acf14f9510874346be",
+        "db": "postgres:16-alpine@sha256:3c5c8892d184f738f4fe282d14ddaa613a38f00f4189d2d94725ebe6f2909ddb",
+        "janus": "canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1",
+        "nats": "nats:2.11.17-alpine@sha256:e4bf19f15fd3218814a4e3c9e0064e1334bd8aa20d5984b9f1a0afd084f8cc00",
+        "nextcloud": "nextcloud:35.0.0@sha256:23c101539e295aaf83888c9c1cae7df3fb6ce80b9ea9310248dad46af8c89936",
+        "reverse-proxy": "nginx:alpine@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8",
+        "signaling": "strukturag/nextcloud-spreed-signaling:2.1.1@sha256:b306eae9d1e62c4b2eaf10a6683dfe1fe76b833bd0f68d1606861e33aff5bca1"
+      },
+      "nextcloud_version": "35.0.0"
+    }
+  ],
+  "canary_image": "ghcr.io/codemyriad/gocassini:0.2.0-beta.7@sha256:84534f683ecc816749f2b86f53ee17811fa6f3573815e98e695441ba4ccac745",
+  "maximum_major": 35,
+  "minimum": "33.0.9",
+  "previews": [],
+  "reference": "nc35",
+  "schema": 1
+}

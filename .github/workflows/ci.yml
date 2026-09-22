@@ -45,6 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       recorder-integration: ${{ steps.changes.outputs.relevant }}
+      recorder-matrix: ${{ steps.matrix.outputs.value }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,6 +70,13 @@ jobs:
           fi
           echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
           echo "Standalone recorder integration relevant: $relevant" >> "$GITHUB_STEP_SUMMARY"
+      - name: Derive recorder matrix from compatibility inventory
+        id: matrix
+        run: echo "value=$(python3 scripts/nextcloud_compatibility.py matrix --tier recorder)" >> "$GITHUB_OUTPUT"
+      - name: Check compatibility contracts
+        run: |
+          python3 scripts/nextcloud_compatibility.py validate
+          python3 -m unittest discover -s scripts -p 'test_*compatibility*.py'
       - name: Install contract tools
         run: |
           sudo ./scripts/ci-apt-update.sh
@@ -290,28 +298,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      matrix:
-        script:
-          - ci-e2e.sh
-          - ci-e2e-private.sh
-          - ci-e2e-rejoin.sh
-          # ci-e2e-mute.sh is NOT in this matrix: it is a heavier 3-publisher
-          # WebRTC scenario with its own readiness gate, so it runs as its own
-          # job below (with the same relevance condition).
-        # Empty string selects the pinned default Nextcloud image in
-        # harness/compose.yml. If the pinned leg goes red we broke it; if
-        # only a compatibility leg goes red, upstream moved.
-        nextcloud_image:
-          - ""
-        include:
-          # NC33 compatibility leg: the hard requirement is "works with
-          # NC33 and future versions", so exercise the oldest supported
-          # major explicitly. Only the base e2e variant gets the extra leg
-          # to keep CI minutes sane (mute/rejoin cover recorder behavior,
-          # not Nextcloud version compatibility). Keep this image in sync
-          # with the minimum major in appinfo/info.xml.
-          - script: ci-e2e.sh
-            nextcloud_image: "nextcloud:33"
+      matrix: ${{ fromJSON(needs.contracts.outputs.recorder-matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -375,7 +362,7 @@ jobs:
           NEXTCLOUD_URL: "http://127.0.0.1:28080"
           SIGNALING_URL: "http://127.0.0.1:28082"
           BOT_PASSWORD: "ci-bot-password"
-          NEXTCLOUD_IMAGE: ""
+          NEXTCLOUD_IMAGE: ${{ fromJSON(needs.contracts.outputs.recorder-matrix).include[0].nextcloud_image }}
         run: ./harness/bin/ci-e2e-mute.sh
       # Capture recorder/publisher logs + session artifact on failure so a
       # genuine (non-flake) regression can be triaged from the funnel summary and

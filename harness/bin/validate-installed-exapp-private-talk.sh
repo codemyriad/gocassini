@@ -586,7 +586,7 @@ run_private_job() {
       --arg label "$label" \
       --arg started_at "$started_at" \
       --argjson artifact "$RUN_ARTIFACT_SUMMARY" \
-      '{label:$label,started_at:$started_at,job_id:$artifact.job_id,artifact:$artifact}' \
+      '{label:$label,started_at:$started_at,job_id:$artifact.job_id,artifact:$artifact,access:{participant:true,outsider_denied:true}}' \
       >>"$SUMMARY_NDJSON"
   fi
 }

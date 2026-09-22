@@ -294,6 +294,23 @@ compose() {
   fi
 }
 
+# A compatibility fixture installs the recorded app bytes. Other harness modes
+# retain their normal app-store bootstrap behavior.
+harness_install_app() {
+  local app="$1"
+  if [[ -n "${CASSINI_COMPAT_LOCK:-}" ]]; then
+    [[ "${CASSINI_COMPAT_FIXTURE:-0}" == 1 ]] || {
+      echo "Locked app installation requires a disposable compatibility fixture" >&2
+      return 1
+    }
+    python3 "$REPO_ROOT/scripts/nextcloud_compatibility.py" install-app \
+      --stack "$CASSINI_COMPAT_LOCK" --project "$PROJECT_NAME" "$app"
+  else
+    occ_ignore_failure app:install "$app" >/dev/null 2>&1
+    occ app:enable "$app" >/dev/null
+  fi
+}
+
 harness_require_docker() {
   if ! command -v docker >/dev/null 2>&1; then
     echo "Docker is required for the Cassini dev stack" >&2
@@ -621,8 +638,7 @@ harness_configure_appapi_phase() {
   harness_grant_nextcloud_docker_socket
 
   log "AppAPI phase: installing/enabling AppAPI"
-  occ app:install app_api || true
-  occ app:enable app_api
+  harness_install_app app_api
 
   log "AppAPI phase: registering HaRP deploy daemon"
   occ app_api:daemon:unregister docker_local >/dev/null 2>&1 || true
