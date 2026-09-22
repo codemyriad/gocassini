@@ -29,6 +29,7 @@
       items: [
         { id: "endpoints", label: "AI providers" },
         { id: "pipeline", label: "Publish pipeline" },
+        { id: "storage", label: "Storage" },
         { id: "templates", label: "Insight templates" },
       ],
     },

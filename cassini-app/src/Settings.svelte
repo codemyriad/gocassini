@@ -15,6 +15,7 @@
   import SettingsPanel from "./SettingsPanel.svelte";
   import LLMSettingsPanel from "./LLMSettingsPanel.svelte";
   import InsightTemplatesPanel from "./InsightTemplatesPanel.svelte";
+  import StorageUsagePanel from "./StorageUsagePanel.svelte";
   import type { OperatorPanel } from "./surfaceRouting";
 
   export let panel: OperatorPanel = "endpoints";
@@ -46,6 +47,8 @@
       on:openProviders={() => dispatch("panel", "endpoints")}
       on:openTemplates={() => dispatch("panel", "templates")}
     />
+  {:else if panel === "storage"}
+    <StorageUsagePanel {operatorClient} />
   {:else if panel === "templates"}
     <InsightTemplatesPanel
       {operatorClient}

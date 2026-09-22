@@ -217,6 +217,22 @@ export interface LLMModel {
 // "default".
 export type StorageMode = "" | "default" | "access_controlled";
 
+// StorageUsage is the first-pass accounting view (D-804): apparent file bytes
+// in the folders that hold a recording or its build artifacts. It deliberately
+// does not claim filesystem allocation, free space, or a de-duplicated total.
+export interface StorageUsageSource {
+  id: string;
+  label: string;
+  location: string;
+  bytes: number;
+  error: string;
+}
+
+export interface StorageUsage {
+  measured_at: string;
+  sources: StorageUsageSource[];
+}
+
 // StorageModeOption is one of the two models as GET <basePath>/storage
 // describes it. The copy — summary, consequence, blocker, instructions — comes
 // from the operator rather than from this app, because that is the layer that

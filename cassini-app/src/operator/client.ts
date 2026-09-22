@@ -32,6 +32,8 @@ import type {
   StorageStatus,
   StorageTransition,
   StorageTransitionPreview,
+  StorageUsage,
+  StorageUsageSource,
 } from "./types";
 
 const SETTINGS_QUALITIES: readonly SettingsQuality[] = ["fast", "balanced", "best"];
@@ -192,6 +194,10 @@ export class OperatorClient {
 
   async getStorage(): Promise<StorageStatus> {
     return normalizeStorage(await this.#request<unknown>("/storage"));
+  }
+
+  async getStorageUsage(): Promise<StorageUsage> {
+    return normalizeStorageUsage(await this.#request<unknown>("/storage/usage"));
   }
 
   // putStorage switches the storage model, which MOVES every published
@@ -775,6 +781,27 @@ function normalizeSetupSteps(value: unknown): StorageSetupStep[] {
 
 function normalizeStorageMode(value: unknown): StorageMode {
   return STORAGE_MODES.includes(value as StorageMode) ? (value as StorageMode) : "";
+}
+
+function normalizeStorageUsage(raw: unknown): StorageUsage {
+  const value = raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const sources: StorageUsageSource[] = [];
+  if (Array.isArray(value.sources)) {
+    for (const item of value.sources) {
+      if (item == null || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const id = asString(row.id);
+      if (id === "") continue;
+      sources.push({
+        id,
+        label: asString(row.label) || id,
+        location: asString(row.location),
+        bytes: Math.max(0, asNumber(row.bytes)),
+        error: asString(row.error),
+      });
+    }
+  }
+  return { measured_at: asString(value.measured_at), sources };
 }
 
 function normalizeStorageModes(value: unknown): StorageModeOption[] {
