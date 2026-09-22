@@ -48,10 +48,16 @@ func TestStorageUsageReportsRecordingAndBuildLocations(t *testing.T) {
 	defer nc.Close()
 
 	response := testExAppConfig(nc.URL).scanStorageUsage(t.Context(), rt)
-	assertUsageSource(t, response, "published", 12, "")
+	published := assertUsageSource(t, response, "published", 12, "")
 	assertUsageSource(t, response, "current", 11, "")
 	assertUsageSource(t, response, "runs", 17, "")
 	assertUsageSource(t, response, "legacy-site", 19, "")
+	if published.Requests != 2 || published.Collections != 2 || published.Files != 2 {
+		t.Fatalf("published diagnostics = %+v, want 2 requests, 2 collections and 2 files", published)
+	}
+	if published.DurationMS <= 0 || response.DurationMS < published.DurationMS {
+		t.Fatalf("timings = response %.3fms, published %.3fms; want a measured request within the total", response.DurationMS, published.DurationMS)
+	}
 }
 
 func TestStorageUsageKeepsSuccessfulRowsWhenNextcloudFails(t *testing.T) {
@@ -180,7 +186,7 @@ func writeUsageFile(t *testing.T, name string, size int) {
 	}
 }
 
-func assertUsageSource(t *testing.T, response storageUsageResponse, id string, bytes int64, errorPart string) {
+func assertUsageSource(t *testing.T, response storageUsageResponse, id string, bytes int64, errorPart string) storageUsageSource {
 	t.Helper()
 	for _, source := range response.Sources {
 		if source.ID != id {
@@ -195,9 +201,10 @@ func assertUsageSource(t *testing.T, response storageUsageResponse, id string, b
 		if errorPart != "" && !strings.Contains(source.Error, errorPart) {
 			t.Fatalf("%s error = %q, want it to contain %q", id, source.Error, errorPart)
 		}
-		return
+		return source
 	}
 	t.Fatalf("response did not contain source %q: %+v", id, response.Sources)
+	return storageUsageSource{}
 }
 
 func davSizesXML(entries ...any) string {

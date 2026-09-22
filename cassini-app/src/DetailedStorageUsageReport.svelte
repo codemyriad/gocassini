@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { RefreshCw, TriangleAlert } from "@lucide/svelte";
-  import { formatStorageBytes, storageUsageTotal } from "./operator/storageUsage";
+  import { formatStorageBytes, formatStorageDuration, storageUsageTotal, summarizeStorageLoads, type StorageLoadSample, type StorageLoadSummary } from "./operator/storageUsage";
   import type { OperatorClient } from "./operator/client";
   import type { ArtifactStorageFileType, DetailedStorageUsage } from "./operator/types";
 
@@ -13,16 +13,21 @@
   let recalculating = false;
   let loadError = "";
   let lastActionWasRecalculation = false;
+  let benchmarking = false;
+  let benchmarkProgress = 0;
+  let benchmarkSummary: StorageLoadSummary | null = null;
+  let latestSample: StorageLoadSample | null = null;
 
   $: publishedTotal = usage ? storageUsageTotal(usage.published) : null;
   onMount(() => void load());
 
-  async function load(recalculate = false): Promise<void> {
+  async function load(recalculate = false): Promise<StorageLoadSample | null> {
     if (!operatorClient) {
       loading = false;
       loadError = "Cassini’s operator connection is not available.";
-      return;
+      return null;
     }
+    const started = now();
     loading = true;
     recalculating = recalculate;
     loadError = "";
@@ -30,13 +35,46 @@
       usage = recalculate
         ? await operatorClient.recalculateDetailedStorageUsage()
         : await operatorClient.getDetailedStorageUsage();
+      const requestFinished = now();
       lastActionWasRecalculation = recalculate;
+      loading = false;
+      await nextPaint();
+      latestSample = {
+        operation: recalculate ? "recalculate" : "lookup",
+        measured_at: usage.measured_at,
+        end_to_end_ms: now() - started,
+        request_ms: requestFinished - started,
+        render_ms: now() - requestFinished,
+        operator_ms: usage.duration_ms,
+      };
+      return latestSample;
     } catch (error) {
       loadError = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
       recalculating = false;
     }
+    return null;
+  }
+
+  async function runBenchmark() {
+    benchmarking = true;
+    benchmarkSummary = null;
+    const samples: StorageLoadSample[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      benchmarkProgress = index + 1;
+      const sample = await load();
+      if (!sample) break;
+      samples.push(sample);
+    }
+    benchmarkSummary = summarizeStorageLoads(samples);
+    benchmarking = false;
+  }
+
+  function now(): number { return globalThis.performance?.now?.() ?? Date.now(); }
+  async function nextPaint() {
+    await tick();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   }
 
   function formatCalculationDuration(milliseconds: number): string {
@@ -64,7 +102,8 @@
       <p>Published storage, working archive, and build history.</p>
     </div>
     <div class="report-actions">
-      <button class="op-btn recalculate" class:refreshing={recalculating} type="button" on:click={() => void load(true)} disabled={loading}>
+      <button class="op-btn" type="button" on:click={runBenchmark} disabled={loading || benchmarking || !usage?.measured_at}>{benchmarking ? `Benchmark ${benchmarkProgress}/5` : "Run benchmark"}</button>
+      <button class="op-btn recalculate" class:refreshing={recalculating} type="button" on:click={() => void load(true)} disabled={loading || benchmarking}>
         <RefreshCw size={15} aria-hidden="true" />
         {recalculating ? "Calculating…" : usage?.measured_at ? "Recalculate" : "Calculate"}
       </button>
@@ -124,6 +163,14 @@
         {/if}
       </section>
     {/each}
+
+    {#if latestSample}
+      <details class="benchmark op-tint">
+        <summary>Measurement details</summary>
+        <p>Last {latestSample.operation === "lookup" ? "index lookup" : "recalculation"}: {formatStorageDuration(latestSample.end_to_end_ms)} end to end · {formatStorageDuration(latestSample.request_ms)} request · {formatStorageDuration(latestSample.render_ms)} UI.</p>
+        {#if benchmarkSummary}<strong>Five cached loads: median {formatStorageDuration(benchmarkSummary.median_ms)}, min {formatStorageDuration(benchmarkSummary.min_ms)}, max {formatStorageDuration(benchmarkSummary.max_ms)}.</strong>{/if}
+      </details>
+    {/if}
   {/if}
 </section>
 
@@ -158,6 +205,9 @@
   .format-legend b { color: var(--color-base-content); }
   .empty { margin: 0; padding: 14px 18px; font-size: 12px; color: color-mix(in oklch, var(--color-base-content) 58%, transparent); }
   .error { color: var(--color-error); font-size: 12px; font-weight: 600; }
+  .benchmark { padding: 0 16px 14px; font-size: 11px; }
+  .benchmark summary { padding: 12px 0 8px; cursor: pointer; font-weight: 600; }
+  .benchmark p { margin: 0 0 6px; color: color-mix(in oklch, var(--color-base-content) 62%, transparent); }
   .refreshing :global(svg) { animation: report-spin .8s linear infinite; }
   @media (max-width: 600px) { .report-head, .section-head, .refresh-line { align-items: start; flex-direction: column; } }
   @keyframes report-spin { to { transform: rotate(360deg); } }
