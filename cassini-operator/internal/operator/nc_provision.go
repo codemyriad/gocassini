@@ -189,6 +189,7 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 		// because during AppAPI registration outbound act-as-user calls are
 		// rejected: running at process start deterministically gets 401.
 		c.preflightNCStorage(ctx, logger)
+		c.runAfterPreflight()
 	}
 }
 
@@ -222,6 +223,19 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 // Asynchronous, because an unreachable Nextcloud must not stop the operator from
 // serving /status — which is how an administrator finds out it is unreachable.
 // Both paths take provisionMu, so a startup run and an enable cannot interleave.
+// runAfterPreflight fires the hook the runtime installs to establish a health
+// verdict, once the substrate it depends on has been proven (D-798 R3.5).
+//
+// Chained rather than fired alongside: the storage check reads what preflight
+// writes, so running them concurrently would report "not checked yet" on an
+// install that is about to be fine. Both callers already hold provisionMu
+// through preflightNCStorage, so the ordering here is real.
+func (c ExAppConfig) runAfterPreflight() {
+	if c.afterPreflight != nil {
+		c.afterPreflight()
+	}
+}
+
 func (c ExAppConfig) preflightOnRestart(ctx context.Context, logger *log.Logger) {
 	if !c.appAPIActive() {
 		return
@@ -236,6 +250,7 @@ func (c ExAppConfig) preflightOnRestart(ctx context.Context, logger *log.Logger)
 	go func() {
 		logger.Printf("nc storage: re-proving the recorded %q mode at startup (the enabled edge is not the only writer any more)", settings.Mode())
 		c.preflightNCStorage(ctx, logger)
+		c.runAfterPreflight()
 	}()
 }
 

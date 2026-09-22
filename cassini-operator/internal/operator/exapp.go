@@ -186,6 +186,10 @@ type ExAppConfig struct {
 	// served at all rather than served by a binary that may not be there.
 	CassiniBin string
 	onEnabled  func(bool)
+	// afterPreflight runs once the storage substrate has been proven, on both
+	// the enabled edge and the restart path. The runtime installs it to
+	// establish a health verdict at startup (D-798 R3.5).
+	afterPreflight func()
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build

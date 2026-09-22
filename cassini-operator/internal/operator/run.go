@@ -406,6 +406,19 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// The preflight remains tied to the AppAPI enabled edge, but not to the
 	// eager whole-archive uploader removed by D-613.
+	//
+	// A health verdict is established once the substrate is proven, on both the
+	// enabled edge and the restart path (D-798 R3.5). Without it the admin
+	// banner is mute after every restart — nothing re-probes on its own, so an
+	// administrator is not told recording is broken until they happen to open
+	// the panel, which is the one place that probes.
+	//
+	// Once, not on a timer. R4.1 forbids "every render", not "ever": this is one
+	// PROPFIND and one bounded Talk call, and the panel's own on-mount check
+	// covers every later question.
+	exappCfg.afterPreflight = func() {
+		runtime.checkRecordingReadiness(runtime.ctx)
+	}
 	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
 	exappCfg.preflightOnRestart(runtime.ctx, logger)
 	if interrupted > 0 {

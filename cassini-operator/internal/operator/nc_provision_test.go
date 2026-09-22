@@ -1016,3 +1016,52 @@ func TestProvisionReportsALegacyDenyFloor(t *testing.T) {
 		t.Errorf("the report does not say what the flag costs: %s", snap.Detail)
 	}
 }
+
+// D-798 R3.5: a verdict exists without anyone opening the panel.
+//
+// Chained after preflight rather than fired alongside it: the storage check
+// reads what preflight writes, so running them together would report "not
+// checked yet" on an install that is about to be fine.
+func TestPreflightFiresTheHealthHookOnTheEnabledEdge(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+
+	fired := 0
+	cfg := ExAppConfig{
+		NextcloudURL:   "http://nextcloud.invalid",
+		AppSecret:      "secret",
+		AAVersion:      "1.0",
+		AppID:          "gocassini",
+		afterPreflight: func() { fired++ },
+	}
+	callback := cfg.enabledCallback(context.Background(), log.New(ioDiscard{}, "", 0))
+	if callback == nil {
+		t.Fatal("no enabled callback for an AppAPI config")
+	}
+
+	// Disabling establishes nothing and must not claim to.
+	callback(false)
+	if fired != 0 {
+		t.Errorf("the hook fired on a disable edge: %d", fired)
+	}
+
+	callback(true)
+	if fired != 1 {
+		t.Errorf("hook fired %d times on enable, want 1", fired)
+	}
+}
+
+// A config with no hook installed must not panic — tests build ExAppConfig
+// literals all over this package.
+func TestPreflightToleratesNoHealthHook(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	cfg := ExAppConfig{
+		NextcloudURL: "http://nextcloud.invalid",
+		AppSecret:    "secret",
+		AAVersion:    "1.0",
+		AppID:        "gocassini",
+	}
+	callback := cfg.enabledCallback(context.Background(), log.New(ioDiscard{}, "", 0))
+	callback(true) // must not panic
+}
