@@ -234,6 +234,11 @@ Documentation: https://gocassini.com/docs]]></description>
            {"action":"recheck"} re-probes Nextcloud after the browser creates
            the account. ADMIN like the rest of the operator API. -->
       <route>
+        <url>^operator\/storage\/usage\/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
         <url>^operator\/storage\/?$</url>
         <verb>GET,POST</verb>
         <access_level>ADMIN</access_level>

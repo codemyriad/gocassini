@@ -939,6 +939,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// (D-718).
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
+		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/storage/retention", http.HandlerFunc(rt.retentionHandler)},
 		{"/storage/retention/sweep", http.HandlerFunc(rt.retentionSweepHandler)},
