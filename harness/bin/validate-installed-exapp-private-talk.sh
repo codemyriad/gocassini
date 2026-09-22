@@ -655,7 +655,7 @@ prepare_readiness_test() {
   body="$(jq -nc --arg room "${BASE_URL%/}/index.php/call/$token" '{test_room_url:$room,action:"arm_test"}')"
   curl -fsS "${AUTH[@]}" -X PUT -H 'Content-Type: application/json' --data "$body" \
     "$PROXY_URL/operator/talk/setup" >"$LOG_DIR/readiness-armed-$label.json"
-  curl -fsS "${AUTH[@]}" -X POST "$PROXY_URL/operator/readiness/check" >"$LOG_DIR/readiness-check-$label.json"
+  curl -fsS "${AUTH[@]}" -X POST "$PROXY_URL/operator/health/check" >"$LOG_DIR/readiness-check-$label.json"
   jq -e 'any(.checks[]; .code == "hpb_authenticated" and .state == "passed")' \
     "$LOG_DIR/readiness-check-$label.json" >/dev/null || fail "HPB probe failed for $label"
   # Prove this is an authenticated user with access to a USER route first.
@@ -663,7 +663,7 @@ prepare_readiness_test() {
   # the successful administrator calls above already prove these routes exist.
   code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/setup")"
   [[ "$code" == 200 ]] || fail "ordinary-user setup route returned $code"
-  code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/readiness")"
+  code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/health")"
   [[ "$code" == 403 || "$code" == 404 ]] || fail "readiness admin route returned $code for an ordinary user"
   code="$(curl -sS -u "$OUTSIDER_USER:$OUTSIDER_PASSWORD" -X PUT -H 'Content-Type: application/json' --data '{"internal_secret":"must-not-save"}' -o /dev/null -w '%{http_code}' "$PROXY_URL/operator/talk/setup")"
   [[ "$code" == 403 || "$code" == 404 ]] || fail "secret configuration route returned $code for an ordinary user"
@@ -676,7 +676,7 @@ for run in $(seq 1 "$RUN_COUNT"); do
       "${COMPOSE[@]}" restart nextcloud >/dev/null
       docker restart nc_app_gocassini >/dev/null
       for ((attempt=0; attempt<60; attempt++)); do
-        if curl -fsS "${AUTH[@]}" "$PROXY_URL/operator/readiness" >"$LOG_DIR/readiness-restarted.json" 2>/dev/null; then break; fi
+        if curl -fsS "${AUTH[@]}" "$PROXY_URL/operator/health" >"$LOG_DIR/readiness-restarted.json" 2>/dev/null; then break; fi
         sleep 2
       done
       jq -e 'all(.checks[]; .id != "talk.handoff" or .state != "passed") and .test.started_at != null' \
@@ -687,7 +687,7 @@ for run in $(seq 1 "$RUN_COUNT"); do
   run_private_job "job${run}"
   new_job_ids+=("$RUN_JOB_ID")
   if [[ "${CASSINI_VALIDATE_READINESS:-0}" == 1 ]]; then
-    fetch_json "$PROXY_URL/operator/readiness" "$LOG_DIR/readiness-published-job${run}.json" false
+    fetch_json "$PROXY_URL/operator/health" "$LOG_DIR/readiness-published-job${run}.json" false
     jq -e --arg id "$RUN_JOB_ID" '.test.job_id == $id and .test.published == true and .test.playback_verified_at == null' \
       "$LOG_DIR/readiness-published-job${run}.json" >/dev/null || fail "test did not follow the Talk job to publication, or claimed unconfirmed playback"
   fi
