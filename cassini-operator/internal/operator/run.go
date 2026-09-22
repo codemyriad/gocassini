@@ -963,8 +963,11 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		// the other. These are the three ADMIN routes the AppAPI manifest
 		// declares, and an existing registration needs its metadata refreshed
 		// before they resolve.
-		{"/readiness", http.HandlerFunc(rt.readinessHandler)},
-		{"/readiness/check", http.HandlerFunc(rt.readinessHandler)},
+		// Named for what it returns. It carried host, recording and archive
+		// checks from D-798 V2, at which point "readiness" described a third of
+		// it. Renamed while it was days old and had one caller (D-798).
+		{"/health", http.HandlerFunc(rt.readinessHandler)},
+		{"/health/check", http.HandlerFunc(rt.readinessHandler)},
 		{"/talk/setup", http.HandlerFunc(rt.recordingSetupHandler)},
 	}
 }

@@ -383,7 +383,9 @@ try {
       if (url.pathname === "/operator/settings/llm") return json({});
       if (url.pathname === "/operator/settings/workflows") return json([]);
 
-      if (options.readiness && ["/operator/readiness", "/operator/readiness/check", "/operator/talk/setup"].includes(url.pathname)) {
+      // /operator/health since D-798 V2: the route carries host, recording and
+      // archive checks, so "readiness" named a third of what it returns.
+      if (options.readiness && ["/operator/health", "/operator/health/check", "/operator/talk/setup"].includes(url.pathname)) {
         return options.readiness(route, request);
       }
       // D-763's readiness checks now render inside the Publish pipeline panel,
@@ -391,7 +393,7 @@ try {
       // these. Answered as a healthy, fully verified install: this check is
       // about the first-run ACCESS flow, and a readiness card reporting work to
       // do would put a second call to action on the screen it is measuring.
-      if (url.pathname === "/operator/readiness" || url.pathname === "/operator/readiness/check") {
+      if (url.pathname === "/operator/health" || url.pathname === "/operator/health/check") {
         return json({
           state: "passed",
           checks: [],
@@ -632,7 +634,7 @@ try {
     await page.getByRole("button", { name: "Save secret", exact: true }).click();
     await saved;
     await visible(page.getByText("An internal secret is saved. Enter a new value to replace it.", { exact: true }));
-    const polled = page.waitForResponse(response => response.url().endsWith("/readiness") && response.request().method() === "GET");
+    const polled = page.waitForResponse(response => response.url().endsWith("/health") && response.request().method() === "GET");
     releasePoll();
     await polled;
     await page.waitForTimeout(100);

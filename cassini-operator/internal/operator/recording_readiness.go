@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -214,6 +215,91 @@ func (rt *Runtime) runConnectionProbe(ctx context.Context, room string) ([]readi
 	return checks, nil
 }
 
+// Host checks, from the recorder (D-798 V2).
+//
+// Mirrors runConnectionProbe deliberately: same boundary, same discipline —
+// stderr discarded because upstream output is not ours to relay, states
+// validated on entry, an empty document treated as an error rather than as "no
+// problems found". The recorder's own host is the operator's host in the ExApp
+// image, so these findings describe the machine this API is served from.
+//
+// doctor speaks ok/warn/fail. Mapped here at the edge:
+//
+//	ok    -> passed
+//	warn  -> warn        the archive still works, something is impaired
+//	fail  -> needs_action
+//
+// `warn` is new to this response. Nothing in the recording checks could
+// legitimately produce it — which is why #322 shipped three tones and no
+// amber — but a host check genuinely can: a missing model that will download
+// on first use is working-but-impaired, and saying so is the point.
+func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error) {
+	bin := strings.TrimSpace(rt.cfg.CassiniBin)
+	if bin == "" {
+		return nil, errors.New("no recorder binary configured")
+	}
+	cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "all", "--json")
+	cmd.WaitDelay = 500 * time.Millisecond
+	// doctor checks disks and directories; it has no use for the Talk secret,
+	// so it does not get one.
+	cmd.Env = rt.childEnv()
+	cmd.Stderr = io.Discard
+	// A non-zero exit is how doctor reports `fail`, so the document is still
+	// what matters — read it whenever there is one.
+	out, err := cmd.Output()
+	if len(out) == 0 {
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("empty doctor output")
+	}
+	var reported []struct {
+		ID      string `json:"id"`
+		Status  string `json:"status"`
+		Summary string `json:"summary"`
+		Advice  string `json:"advice"`
+	}
+	if err := json.Unmarshal(out, &reported); err != nil {
+		return nil, err
+	}
+	if len(reported) == 0 {
+		return nil, errors.New("doctor reported no checks")
+	}
+	checks := make([]readinessCheck, 0, len(reported))
+	for _, r := range reported {
+		state := ""
+		switch r.Status {
+		case "ok":
+			state = "passed"
+		case "warn":
+			state = "warn"
+		case "fail":
+			state = "needs_action"
+		default:
+			// A doctor this operator does not understand is not evidence that
+			// the host is healthy.
+			return nil, fmt.Errorf("unknown doctor status %q", r.Status)
+		}
+		if strings.TrimSpace(r.ID) == "" {
+			return nil, errors.New("doctor check with no id")
+		}
+		message := r.Summary
+		// doctor's advice is the remedy, and dropping it would leave a reader
+		// told what is wrong and not what to do (R0.1). Carried in the message
+		// until V4 gives every check SetupNotice's {summary, cause, steps}.
+		if state != "passed" && strings.TrimSpace(r.Advice) != "" {
+			message += " — " + r.Advice
+		}
+		checks = append(checks, readinessCheck{
+			ID:      "host." + r.ID,
+			State:   state,
+			Code:    r.ID,
+			Message: message,
+		})
+	}
+	return checks, nil
+}
+
 // Coalesce concurrent checks and put a ceiling on network/process work. GET
 // never launches a process. Every result expires, including successful ones.
 func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
@@ -336,20 +422,49 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	} else {
 		add("talk.handoff", "not_verified", "handoff_not_verified", "No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.", "test_recording")
 	}
+	// Host checks lead: they describe the machine every other check runs on, so
+	// a full disk explains a storage failure rather than competing with it.
+	//
+	// Cheap by measurement — doctor does no network and no subprocess beyond
+	// LookPath — so these need no on-demand gate (R4.1 is about expensive
+	// checks, and expensive is a property of a check rather than of a layer).
+	if host, err := rt.runDoctorProbe(ctx); err != nil {
+		// R2.3: a source we could not reach is a finding about the check, not a
+		// verdict about the host.
+		resp.Checks = append([]readinessCheck{{
+			ID:      "host",
+			State:   "warn",
+			Code:    "host_checks_unavailable",
+			Message: "Cassini could not run its host checks, so disk space, ffmpeg and the speech runtime are unverified on this machine.",
+			Action:  "recheck",
+		}}, resp.Checks...)
+	} else {
+		resp.Checks = append(host, resp.Checks...)
+	}
 	resp.Test = rt.readinessTest(ctx, state)
 	if resp.Test.PlaybackVerifiedAt == "" {
 		add("test", "not_verified", "test_not_verified", "Record a short test through Talk, then open it and confirm playback.", "test_recording")
 	}
-	for _, c := range resp.Checks {
-		if c.State == "needs_action" {
-			resp.State = "needs_action"
-			break
-		}
-		if c.State != "passed" {
-			resp.State = "not_verified"
+	resp.State = worstReadinessState(resp.Checks)
+	return resp
+}
+
+// worstReadinessState is the instance's worst news, ordered by how much it
+// costs to ignore.
+//
+// `warn` sits between passed and needs_action: something is impaired but the
+// thing still works, so it must neither be swallowed into "passed" nor promoted
+// into a blocking failure. `not_verified` ranks below warn — nothing has been
+// established, which is not the same as having found a problem.
+func worstReadinessState(checks []readinessCheck) string {
+	worst := "passed"
+	rank := map[string]int{"passed": 0, "not_verified": 1, "warn": 2, "needs_action": 3}
+	for _, c := range checks {
+		if rank[c.State] > rank[worst] {
+			worst = c.State
 		}
 	}
-	return resp
+	return worst
 }
 
 func (rt *Runtime) readinessTest(ctx context.Context, setup recordingSetupState) readinessTest {
@@ -389,11 +504,11 @@ func (rt *Runtime) readinessTest(ctx context.Context, setup recordingSetupState)
 func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	switch {
-	case r.URL.Path == "/readiness" && r.Method == http.MethodGet:
-	case r.URL.Path == "/readiness/check" && r.Method == http.MethodPost:
+	case r.URL.Path == "/health" && r.Method == http.MethodGet:
+	case r.URL.Path == "/health/check" && r.Method == http.MethodPost:
 		rt.checkRecordingReadiness(r.Context())
 	default:
-		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported readiness operation")
+		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported health operation")
 		return
 	}
 	writeJSON(w, http.StatusOK, rt.readiness(r.Context()))

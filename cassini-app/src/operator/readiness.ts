@@ -1,4 +1,8 @@
-export type CheckState = "passed" | "needs_action" | "not_verified";
+// `warn` arrived with the host checks (D-798 V2): something is impaired but
+// still works — a model that will download on first use, a disk getting full.
+// Nothing in the recording checks could legitimately produce one, which is why
+// #322 shipped three tones and no amber. A host check genuinely can.
+export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
 export interface ReadinessCheck {
   id: string;
   state: CheckState;
@@ -40,7 +44,7 @@ export const checkLabels: Record<string, string> = {
   test: "Test recording",
 };
 export const stateLabels: Record<CheckState, string> = {
-  passed: "Passed", needs_action: "Needs action", not_verified: "Not verified",
+  passed: "Passed", warn: "Needs attention", needs_action: "Needs action", not_verified: "Not verified",
 };
 export function readinessTitle(report: RecordingReadiness): string {
   const count = report.checks.filter(c => c.state === "needs_action").length;
@@ -102,10 +106,14 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
 // Amber belongs to coverage instead — "search can read 129 of 138 meetings" is
 // working-but-incomplete, which is a different question from readiness and has
 // its own numbers. It is not represented here yet.
-export type CheckTone = "success" | "error" | "neutral";
+export type CheckTone = "success" | "warning" | "error" | "neutral";
 
 export function checkTone(check: ReadinessCheck): CheckTone {
   if (check.state === "needs_action") return "error";
+  // Impaired but working. #322 deliberately shipped no amber because nothing
+  // could legitimately produce one; the host checks can, so it exists now for
+  // a real producer rather than an invented one.
+  if (check.state === "warn") return "warning";
   // Nobody looked, or the evidence expired. NOT a fault: a colour that means
   // both "impaired" and "unknown" means neither.
   if (check.state === "not_verified") return "neutral";
@@ -114,6 +122,7 @@ export function checkTone(check: ReadinessCheck): CheckTone {
 
 export const toneClasses: Record<CheckTone, string> = {
   success: "text-success",
+  warning: "text-warning",
   error: "text-error",
   neutral: "text-base-content/60",
 };
@@ -124,7 +133,9 @@ export const toneClasses: Record<CheckTone, string> = {
 // disagree with what is under it.
 export function reportTone(report: RecordingReadiness): CheckTone {
   const tones = readinessRows(report).map(checkTone);
+  // Ordered by how much it costs to ignore.
   if (tones.includes("error")) return "error";
+  if (tones.includes("warning")) return "warning";
   if (tones.includes("neutral")) return "neutral";
   return "success";
 }

@@ -29,7 +29,7 @@ manifest. Check the App Store for current release availability.
 
 When upgrading an existing registration to this feature, refresh its manifest
 routes using the documented [update procedure](exapp-update-constraints.md).
-The new ADMIN routes are `/operator/readiness`, `/operator/readiness/check`, and
+The new ADMIN routes are `/operator/health`, `/operator/health/check`, and
 `/operator/talk/setup`. Deploying only a new container image may leave these
 routes inaccessible until registration metadata is refreshed.
 
@@ -193,9 +193,9 @@ disabled, restore that choice through Talk's administration settings.
 
 ## API and testing
 
-- `GET /operator/readiness`: current local checks and cached network evidence;
+- `GET /operator/health`: host, recording and archive checks, with cached network evidence;
   returns 200 even when setup needs action, with `Cache-Control: no-store`.
-- `POST /operator/readiness/check`: bounded, coalesced checks, using the recorder's
+- `POST /operator/health/check`: bounded, coalesced checks, using the recorder's
   `cassini talk-check` command. That command shares discovery and hello/auth
   protocol implementations with live recording and produces redacted JSON.
 - `PUT /operator/talk/setup`: save an internal secret or test room, prepare a

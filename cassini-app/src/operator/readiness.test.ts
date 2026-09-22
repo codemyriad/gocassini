@@ -125,3 +125,34 @@ describe("how old a check is", () => {
     expect(formatAge("not a date", now)).toBe("");
   });
 });
+
+// D-798 V2: amber exists now because the host checks can legitimately produce
+// one — a model that downloads on first use, a disk getting full.
+describe("the warning tone, now that something can produce it", () => {
+  const check = (over: Partial<ReadinessCheck> = {}): ReadinessCheck => ({
+    id: "host.model.cache", state: "warn", code: "model.cache", message: "", ...over,
+  });
+
+  it("is amber for a check that is impaired but working", () => {
+    expect(checkTone(check())).toBe("warning");
+  });
+
+  it("still distinguishes the other three", () => {
+    expect(checkTone(check({ state: "passed" }))).toBe("success");
+    expect(checkTone(check({ state: "needs_action" }))).toBe("error");
+    expect(checkTone(check({ state: "not_verified" }))).toBe("neutral");
+  });
+
+  it("orders the heading by what it costs to ignore", () => {
+    const report = (states: ReadinessCheck["state"][]): RecordingReadiness => ({
+      state: "passed",
+      checks: states.map((s, i) => ({ id: `c${i}`, state: s, code: "x", message: "" })),
+      secret_configured: true, secret_source: "env", test_room_url: "",
+      test: { state: "idle", published: false, playback_verified_at: "2026-09-01T00:00:00Z" },
+    });
+    expect(reportTone(report(["passed", "warn"]))).toBe("warning");
+    expect(reportTone(report(["warn", "needs_action"]))).toBe("error");
+    // A warning is louder than something nobody has run.
+    expect(reportTone(report(["not_verified", "warn"]))).toBe("warning");
+  });
+});

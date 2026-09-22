@@ -80,11 +80,11 @@ export class OperatorClient {
   }
 
   async getReadiness(): Promise<RecordingReadiness> {
-    return this.#request<RecordingReadiness>("/readiness");
+    return this.#request<RecordingReadiness>("/health");
   }
 
   async checkReadiness(): Promise<RecordingReadiness> {
-    return this.#request<RecordingReadiness>("/readiness/check", { method: "POST" });
+    return this.#request<RecordingReadiness>("/health/check", { method: "POST" });
   }
 
   async updateRecordingSetup(payload: RecordingSetupUpdate): Promise<RecordingReadiness> {

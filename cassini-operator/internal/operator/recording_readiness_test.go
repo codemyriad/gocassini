@@ -276,7 +276,7 @@ func TestReadinessRoutesMountedAtRootAndPrefix(t *testing.T) {
 	// patterns explicitly rather than deriving them (operatorAPIRoutes). Naming
 	// them here makes the test stricter than it was: it now fails if a readiness
 	// route is dropped from the table, not merely if the mount is wrong.
-	readinessRoutes := []string{"/readiness", "/readiness/check", "/talk/setup"}
+	readinessRoutes := []string{"/health", "/health/check", "/talk/setup"}
 	for _, base := range []string{"", "/", "/operator"} {
 		root := http.NewServeMux()
 		mountBasePathOnto(root, base, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }), readinessRoutes)
@@ -419,4 +419,150 @@ func TestReadinessKeepsCurrentStorageAdmissionBlockActionable(t *testing.T) {
 		}
 	}
 	t.Fatal("missing storage check")
+}
+
+// D-798 V2: host checks come from `cassini doctor --json`, read by id.
+func TestRunDoctorProbeMapsTheDoctorLadder(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeDoctorBin(t, `[
+	  {"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
+	  {"id":"model.cache","status":"warn","summary":"model missing","advice":"it downloads on first use"},
+	  {"id":"tmpdir.space","status":"fail","summary":"out of space","advice":"free some"}]`)
+
+	checks, err := rt.runDoctorProbe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	want := map[string]string{"host.ffmpeg": "passed", "host.model.cache": "warn", "host.tmpdir.space": "needs_action"}
+	got := map[string]string{}
+	for _, c := range checks {
+		got[c.ID] = c.State
+	}
+	for id, state := range want {
+		if got[id] != state {
+			t.Errorf("%s = %q, want %q", id, got[id], state)
+		}
+	}
+	// A reader told what is wrong is owed what to do about it (R0.1).
+	for _, c := range checks {
+		if c.State == "passed" {
+			continue
+		}
+		if !strings.Contains(c.Message, "—") {
+			t.Errorf("%s dropped doctor's advice: %q", c.ID, c.Message)
+		}
+	}
+}
+
+// A doctor this operator cannot read is not evidence the host is healthy.
+func TestRunDoctorProbeRefusesWhatItCannotUnderstand(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	for name, body := range map[string]string{
+		"unknown status": `[{"id":"ffmpeg","status":"probably-fine","summary":"x"}]`,
+		"no id":          `[{"id":"","status":"ok","summary":"x"}]`,
+		"empty array":    `[]`,
+		"not json":       `not json at all`,
+	} {
+		rt.cfg.CassiniBin = writeFakeDoctorBin(t, body)
+		if _, err := rt.runDoctorProbe(context.Background()); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// R2.3: a source that could not be reached is a finding about the check, never
+// a verdict about the thing it was going to check.
+func TestReadinessReportsUnreachableHostChecksAsAWarning(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+	rt.cfg.CassiniBin = filepath.Join(t.TempDir(), "does-not-exist")
+
+	report := rt.readiness(context.Background())
+	found := false
+	for _, c := range report.Checks {
+		if c.Code == "host_checks_unavailable" {
+			found = true
+			if c.State != "warn" {
+				t.Errorf("unreachable host checks reported as %q, want warn", c.State)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("an unreachable doctor was reported as nothing at all")
+	}
+}
+
+// warn sits between passed and needs_action and must not collapse into either.
+func TestWorstReadinessStateOrdersByWhatItCostsToIgnore(t *testing.T) {
+	check := func(state string) readinessCheck { return readinessCheck{State: state} }
+	for _, tc := range []struct {
+		name   string
+		checks []readinessCheck
+		want   string
+	}{
+		{"all passing", []readinessCheck{check("passed"), check("passed")}, "passed"},
+		{"a warning is not a pass", []readinessCheck{check("passed"), check("warn")}, "warn"},
+		{"a warning is not a failure", []readinessCheck{check("warn")}, "warn"},
+		{"a failure outranks a warning", []readinessCheck{check("warn"), check("needs_action")}, "needs_action"},
+		{"a warning outranks nothing-established", []readinessCheck{check("not_verified"), check("warn")}, "warn"},
+		{"nothing-established outranks a pass", []readinessCheck{check("passed"), check("not_verified")}, "not_verified"},
+		{"order does not matter", []readinessCheck{check("needs_action"), check("passed"), check("warn")}, "needs_action"},
+		{"nothing at all", nil, "passed"},
+	} {
+		if got := worstReadinessState(tc.checks); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func writeFakeDoctorBin(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "cassini")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\ncat <<'JSON'\n"+body+"\nJSON\n"), 0o755); err != nil {
+		t.Fatalf("write fake doctor: %v", err)
+	}
+	return path
+}
+
+// The route table and the handler's own branching must name the same paths.
+//
+// They did not, briefly: the table was renamed to /health while the handler
+// still matched /readiness, which answers 405 for every request the mux sends
+// it. The mount test could not catch that — it checks that a path REACHES the
+// handler, not that the handler accepts it.
+func TestHealthHandlerAnswersAtTheRouteItIsRegisteredAt(t *testing.T) {
+	rt, cleanup := readinessRuntime(t)
+	defer cleanup()
+
+	registered := []string{}
+	for _, route := range operatorAPIRoutes(rt, ExAppConfig{}) {
+		if route.pattern == "/health" || route.pattern == "/health/check" {
+			registered = append(registered, route.pattern)
+		}
+	}
+	if len(registered) != 2 {
+		t.Fatalf("health routes registered = %v, want /health and /health/check", registered)
+	}
+
+	rec := httptest.NewRecorder()
+	rt.readinessHandler(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /health = %d, want 200", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	rt.readinessHandler(rec, httptest.NewRequest(http.MethodPost, "/health/check", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("POST /health/check = %d, want 200", rec.Code)
+	}
+
+	// The old name is gone, not aliased: an alias is debt, and this route had
+	// one caller when it was renamed.
+	rec = httptest.NewRecorder()
+	rt.readinessHandler(rec, httptest.NewRequest(http.MethodGet, "/readiness", nil))
+	if rec.Code == http.StatusOK {
+		t.Error("the old /readiness path still answers")
+	}
 }
