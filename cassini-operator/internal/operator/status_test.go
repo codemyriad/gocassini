@@ -1355,7 +1355,15 @@ func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	}
 
 	// 4. Test with CassiniBin executing a mock cassini binary
-	fakeBin := writeFakeCassini(t, "echo 'speech engine runtime 1.13.7 (reference frontend active)'\n")
+	// The fixture emits what `doctor --json` emits. It used to echo the prose
+	// the probe grepped — which is the contract D-798 replaced, and the fact
+	// that a TEST had to encode a human sentence is the clearest sign it was
+	// the wrong one. The summary here is deliberately not the real wording:
+	// nothing may depend on it.
+	fakeBin := writeFakeCassini(t, `cat <<'JSON'
+[{"id":"speech.runtime","status":"ok","summary":"any wording at all"}]
+JSON
+`)
 	rt.referenceFrontendProbe = nil
 	rt.cfg.CassiniBin = fakeBin
 	rec = httptest.NewRecorder()
@@ -1411,4 +1419,48 @@ func TestReferenceFrontendProbeCoalescesUnknownAndRetries(t *testing.T) {
 	if got := strings.Count(string(data), "call\n"); got != 2 {
 		t.Fatalf("expired probe: got %d subprocesses, want 2", got)
 	}
+}
+
+// D-798: the probe reads a doctor check BY ID, not by grepping its prose.
+//
+// The stub stands in for `cassini doctor --target build --json`. What matters
+// is that rewording a summary cannot change the answer, which is what the
+// marker-matching this replaced could not promise.
+func TestReferenceFrontendProbeReadsTheCheckByID(t *testing.T) {
+	bin := writeFakeDoctor(t, `[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"},
+	  {"id":"speech.runtime","status":"ok","summary":"wording nothing may depend on"}]`)
+	rt := &Runtime{}
+	known, isReference := rt.doProbeReferenceFrontend(bin)
+	if !known || !isReference {
+		t.Fatalf("ok on speech.runtime should mean the reference frontend is active: known=%v ref=%v", known, isReference)
+	}
+
+	bin = writeFakeDoctor(t, `[{"id":"speech.runtime","status":"warn","summary":"different wording again"}]`)
+	known, isReference = rt.doProbeReferenceFrontend(bin)
+	if !known || isReference {
+		t.Fatalf("warn on speech.runtime should mean it is inactive: known=%v ref=%v", known, isReference)
+	}
+}
+
+// A doctor that does not report the check leaves the answer unknown rather
+// than guessed at — the same discipline the rest of the health work follows.
+func TestReferenceFrontendProbeLeavesAnAbsentCheckUnknown(t *testing.T) {
+	bin := writeFakeDoctor(t, `[{"id":"ffmpeg","status":"ok","summary":"ffmpeg available"}]`)
+	rt := &Runtime{}
+	// Falls through to the build-info file, which is absent here.
+	t.Setenv(envNativeBuildInfo, filepath.Join(t.TempDir(), "absent"))
+	if known, _ := rt.doProbeReferenceFrontend(bin); known {
+		t.Error("an absent speech.runtime check was treated as an answer")
+	}
+}
+
+func writeFakeDoctor(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cassini")
+	script := "#!/bin/sh\ncat <<'JSON'\n" + body + "\nJSON\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake doctor: %v", err)
+	}
+	return path
 }

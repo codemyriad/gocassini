@@ -242,11 +242,11 @@ func runDoctorChecks(target string, stdout io.Writer) error {
 	checks := collectDoctorChecks(target)
 	hasFail := false
 	for _, check := range checks {
-		fmt.Fprintf(stdout, "%s %s\n", check.status, check.summary)
-		if check.advice != "" {
-			fmt.Fprintf(stdout, "fix %s\n", check.advice)
+		fmt.Fprintf(stdout, "%s %s\n", check.Status, check.Summary)
+		if check.Advice != "" {
+			fmt.Fprintf(stdout, "fix %s\n", check.Advice)
 		}
-		if check.status == doctorFail {
+		if check.Status == doctorFail {
 			hasFail = true
 		}
 	}

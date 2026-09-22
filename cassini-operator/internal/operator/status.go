@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -178,8 +179,10 @@ func (rt *Runtime) signalingInternalSecretConfigured() bool {
 }
 
 const (
-	speechEngineRefActiveMarker   = "reference frontend active"
-	speechEngineRefInactiveMarker = "reference frontend optimization inactive"
+	// The id doctor gives its speech-runtime check. A contract between the two
+	// modules, and — unlike the prose markers this replaces — one that cannot
+	// be broken by an editing pass.
+	speechRuntimeCheckID = "speech.runtime"
 )
 
 // probeReferenceFrontend reports whether the active sherpa runtime includes
@@ -212,16 +215,40 @@ func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference
 	if bin != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "build")
+		// --json, so this reads a CHECK BY ID rather than grepping a sentence.
+		//
+		// It used to substring-match speechEngineRefActiveMarker against
+		// doctor's prose. Those marker constants are declared once in the
+		// recorder and again here, in a separate Go module, with nothing
+		// enforcing that the two copies agree — so rewording one doctor summary
+		// silently cost this probe its answer, with no test and no compile
+		// error to catch it (D-798).
+		//
+		// The id is stable by contract; the summary is free to be reworded.
+		cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "build", "--json")
 		cmd.WaitDelay = 500 * time.Millisecond
 		cmd.Env = rt.childEnv()
 		if out, err := cmd.Output(); err == nil || len(out) > 0 {
-			text := string(out)
-			if strings.Contains(text, speechEngineRefActiveMarker) {
-				return true, true
+			var checks []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
 			}
-			if strings.Contains(text, speechEngineRefInactiveMarker) {
-				return true, false
+			if json.Unmarshal(out, &checks) == nil {
+				for _, check := range checks {
+					if check.ID != speechRuntimeCheckID {
+						continue
+					}
+					// warn is how doctor reports the reference frontend being
+					// absent; ok means it is active. Anything else is a doctor
+					// this operator does not understand, and is left unknown
+					// rather than guessed at.
+					switch check.Status {
+					case "ok":
+						return true, true
+					case "warn":
+						return true, false
+					}
+				}
 			}
 		}
 	}
