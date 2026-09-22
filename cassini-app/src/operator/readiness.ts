@@ -82,6 +82,53 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
   return actions.map(action => ({ action, label:labels[action] ?? "Configure" }));
 }
 
+// How loudly a check should read. Colour is redundant with the label text
+// beside it on purpose — the state word is always rendered, so nothing here is
+// the only carrier of meaning for a reader who cannot see the difference.
+//
+// THREE tones, and deliberately no amber. Every check here answers one binary
+// question — will recording work? — and the operator already resolves the
+// middle ground itself: evidence older than its TTL is downgraded to
+// not_verified at the source (recording_readiness.go) rather than reported as a
+// weaker pass. So there is no state left that means "working but impaired".
+//
+// The two rows readinessRows synthesises look like candidates and are not.
+// "Configured" claims only that a secret is saved, which is true and verified;
+// whether it WORKS is the separate talk.hpb check. "Previously confirmed"
+// claims a past playback, which is also true — and a playback confirmation is
+// inherently historical, so amber would be its permanent ceiling. A colour a
+// healthy install can never clear is one people learn to ignore.
+//
+// Amber belongs to coverage instead — "search can read 129 of 138 meetings" is
+// working-but-incomplete, which is a different question from readiness and has
+// its own numbers. It is not represented here yet.
+export type CheckTone = "success" | "error" | "neutral";
+
+export function checkTone(check: ReadinessCheck): CheckTone {
+  if (check.state === "needs_action") return "error";
+  // Nobody looked, or the evidence expired. NOT a fault: a colour that means
+  // both "impaired" and "unknown" means neither.
+  if (check.state === "not_verified") return "neutral";
+  return "success";
+}
+
+export const toneClasses: Record<CheckTone, string> = {
+  success: "text-success",
+  error: "text-error",
+  neutral: "text-base-content/60",
+};
+
+// The instance's worst news, for the header. Ordered by how much it costs to
+// ignore: something broken outranks something nobody has checked. Read from the
+// SAME rows the list renders, so a synthesised row cannot make the header
+// disagree with what is under it.
+export function reportTone(report: RecordingReadiness): CheckTone {
+  const tones = readinessRows(report).map(checkTone);
+  if (tones.includes("error")) return "error";
+  if (tones.includes("neutral")) return "neutral";
+  return "success";
+}
+
 export function checkStateLabel(check: ReadinessCheck): string {
   if (check.code === "internal_secret_configuration" && check.state === "passed") return "Configured";
   if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
