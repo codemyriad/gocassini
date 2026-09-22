@@ -28,15 +28,20 @@ const (
 // with a blank error page.
 type storageUsageResponse struct {
 	MeasuredAt string               `json:"measured_at"`
+	DurationMS float64              `json:"duration_ms"`
 	Sources    []storageUsageSource `json:"sources"`
 }
 
 type storageUsageSource struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Location string `json:"location"`
-	Bytes    int64  `json:"bytes"`
-	Error    string `json:"error,omitempty"`
+	ID          string  `json:"id"`
+	Label       string  `json:"label"`
+	Location    string  `json:"location"`
+	Bytes       int64   `json:"bytes"`
+	DurationMS  float64 `json:"duration_ms"`
+	Files       int     `json:"files"`
+	Collections int     `json:"collections"`
+	Requests    int     `json:"requests"`
+	Error       string  `json:"error,omitempty"`
 }
 
 func (c ExAppConfig) storageUsageHandler(rt *Runtime) http.Handler {
@@ -80,18 +85,23 @@ func (rt *Runtime) refreshStorageUsage(ctx context.Context, c ExAppConfig) stora
 }
 
 func (c ExAppConfig) scanStorageUsage(ctx context.Context, rt *Runtime) storageUsageResponse {
+	started := time.Now()
 	result := storageUsageResponse{}
 	addLocal := func(id, label, dir string) {
+		sourceStarted := time.Now()
 		source := storageUsageSource{ID: id, Label: label, Location: "Cassini persistent storage"}
-		source.Bytes, source.Error = directoryLogicalBytes(dir)
+		source.Bytes, source.Files, source.Collections, source.Error = directoryLogicalBytes(dir)
+		source.DurationMS = elapsedMilliseconds(sourceStarted)
 		result.Sources = append(result.Sources, source)
 	}
 
 	if strings.TrimSpace(c.NextcloudURL) == "" {
 		addLocal("published", "Published meetings", rt.cfg.SiteRoot)
 	} else {
+		sourceStarted := time.Now()
 		source := storageUsageSource{ID: "published", Label: "Published meetings", Location: "Nextcloud Files"}
-		source.Bytes, source.Error = c.ncArchiveLogicalBytes(ctx, recordingsRootFor(ncStorage.accessControlled()))
+		source.Bytes, source.Files, source.Collections, source.Requests, source.Error = c.ncArchiveLogicalBytesDetailed(ctx, recordingsRootFor(ncStorage.accessControlled()))
+		source.DurationMS = elapsedMilliseconds(sourceStarted)
 		result.Sources = append(result.Sources, source)
 	}
 	addLocal("current", "Current working archive", currentRoot(rt.cfg.WorkRoot))
@@ -102,34 +112,49 @@ func (c ExAppConfig) scanStorageUsage(ctx context.Context, rt *Runtime) storageU
 	// normal install; when it holds bytes it is material storage an admin needs
 	// to see before deciding what to remove.
 	if strings.TrimSpace(c.NextcloudURL) != "" {
-		if legacy, err := directoryLogicalBytes(rt.cfg.SiteRoot); err != "" || legacy > 0 {
+		sourceStarted := time.Now()
+		legacy, files, collections, err := directoryLogicalBytes(rt.cfg.SiteRoot)
+		if err != "" || legacy > 0 {
 			result.Sources = append(result.Sources, storageUsageSource{
-				ID:       "legacy-site",
-				Label:    "Legacy local published archive",
-				Location: "Cassini persistent storage",
-				Bytes:    legacy,
-				Error:    err,
+				ID:          "legacy-site",
+				Label:       "Legacy local published archive",
+				Location:    "Cassini persistent storage",
+				Bytes:       legacy,
+				DurationMS:  elapsedMilliseconds(sourceStarted),
+				Files:       files,
+				Collections: collections,
+				Error:       err,
 			})
 		}
 	}
+	result.DurationMS = elapsedMilliseconds(started)
 	result.MeasuredAt = nowUTCString()
 	return result
+}
+
+func elapsedMilliseconds(started time.Time) float64 {
+	return float64(time.Since(started).Microseconds()) / 1000
 }
 
 // directoryLogicalBytes is deliberately an apparent-size calculation, not an
 // allocated-block calculation. It does not follow symlinks and reports a fresh
 // install's absent directory as empty.
-func directoryLogicalBytes(dir string) (int64, string) {
+func directoryLogicalBytes(dir string) (int64, int, int, string) {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
-		return 0, "storage location is not configured"
+		return 0, 0, 0, "storage location is not configured"
 	}
 	var total int64
+	var files, collections int
 	err := filepath.WalkDir(dir, func(_ string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if entry.IsDir() {
+			collections++
 			return nil
 		}
 		info, err := entry.Info()
@@ -139,6 +164,7 @@ func directoryLogicalBytes(dir string) (int64, string) {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
+		files++
 		if info.Size() > math.MaxInt64-total {
 			return fmt.Errorf("storage size exceeds supported range")
 		}
@@ -146,22 +172,28 @@ func directoryLogicalBytes(dir string) (int64, string) {
 		return nil
 	})
 	if errors.Is(err, os.ErrNotExist) {
-		return 0, ""
+		return 0, 0, 0, ""
 	}
 	if err != nil {
-		return 0, err.Error()
+		return 0, files, collections, err.Error()
 	}
-	return total, ""
+	return total, files, collections, ""
 }
 
 // ncArchiveLogicalBytes lists each collection below root with Depth: 1 and sums
 // file lengths. A recursive Depth: infinity request is not portable across DAV
 // backends and makes response bounds impossible to enforce.
 func (c ExAppConfig) ncArchiveLogicalBytes(ctx context.Context, root string) (int64, string) {
+	bytes, _, _, _, err := c.ncArchiveLogicalBytesDetailed(ctx, root)
+	return bytes, err
+}
+
+func (c ExAppConfig) ncArchiveLogicalBytesDetailed(ctx context.Context, root string) (int64, int, int, int, string) {
 	client := &http.Client{Timeout: storageUsageTimeout}
 	pending := []string{strings.Trim(root, "/")}
 	seen := make(map[string]bool)
 	var total int64
+	var files, collections, requests int
 
 	for len(pending) > 0 {
 		dir := pending[0]
@@ -171,25 +203,28 @@ func (c ExAppConfig) ncArchiveLogicalBytes(ctx context.Context, root string) (in
 		}
 		seen[dir] = true
 
+		requests++
 		entries, missing, err := c.davListSizes(ctx, client, ncRecordingsOwner, dir)
 		if missing && dir == strings.Trim(root, "/") {
-			return 0, ""
+			return 0, 0, 0, requests, ""
 		}
 		if err != nil {
-			return 0, err.Error()
+			return 0, files, collections, requests, err.Error()
 		}
+		collections++
 		for _, entry := range entries {
 			if entry.collection {
 				pending = append(pending, entry.relPath)
 				continue
 			}
 			if entry.size > math.MaxInt64-total {
-				return 0, "storage size exceeds supported range"
+				return 0, files, collections, requests, "storage size exceeds supported range"
 			}
 			total += entry.size
+			files++
 		}
 	}
-	return total, ""
+	return total, files, collections, requests, ""
 }
 
 type davSizeEntry struct {

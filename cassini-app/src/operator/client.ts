@@ -816,11 +816,19 @@ function normalizeStorageUsage(raw: unknown): StorageUsage {
         label: asString(row.label) || id,
         location: asString(row.location),
         bytes: Math.max(0, asNumber(row.bytes)),
+        duration_ms: Math.max(0, asNumber(row.duration_ms)),
+        files: asCount(row.files),
+        collections: asCount(row.collections),
+        requests: asCount(row.requests),
         error: asString(row.error),
       });
     }
   }
-  return { measured_at: asString(value.measured_at), sources };
+  return {
+    measured_at: asString(value.measured_at),
+    duration_ms: Math.max(0, asNumber(value.duration_ms)),
+    sources,
+  };
 }
 
 function normalizeDetailedStorageUsage(raw: unknown): DetailedStorageUsage {

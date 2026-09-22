@@ -225,11 +225,16 @@ export interface StorageUsageSource {
   label: string;
   location: string;
   bytes: number;
+  duration_ms: number;
+  files: number;
+  collections: number;
+  requests: number;
   error: string;
 }
 
 export interface StorageUsage {
   measured_at: string;
+  duration_ms: number;
   sources: StorageUsageSource[];
 }
 

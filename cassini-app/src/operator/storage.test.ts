@@ -49,8 +49,9 @@ describe("OperatorClient storage", () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({
         measured_at: "2026-09-22T09:15:00Z",
+        duration_ms: 1420.5,
         sources: [
-          { id: "published", label: "Published meetings", location: "Nextcloud Files", bytes: 12 },
+          { id: "published", label: "Published meetings", location: "Nextcloud Files", bytes: 12, duration_ms: 1310.25, files: 1206, collections: 48, requests: 48 },
           { id: "current", label: "Current working archive", location: "Cassini persistent storage", bytes: 7, error: "unavailable" },
         ],
       }),
@@ -62,9 +63,10 @@ describe("OperatorClient storage", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage");
     expect(usage).toEqual({
       measured_at: "2026-09-22T09:15:00Z",
+      duration_ms: 1420.5,
       sources: [
-        { id: "published", label: "Published meetings", location: "Nextcloud Files", bytes: 12, error: "" },
-        { id: "current", label: "Current working archive", location: "Cassini persistent storage", bytes: 7, error: "unavailable" },
+        { id: "published", label: "Published meetings", location: "Nextcloud Files", bytes: 12, duration_ms: 1310.25, files: 1206, collections: 48, requests: 48, error: "" },
+        { id: "current", label: "Current working archive", location: "Cassini persistent storage", bytes: 7, duration_ms: 0, files: 0, collections: 0, requests: 0, error: "unavailable" },
       ],
     });
   });
