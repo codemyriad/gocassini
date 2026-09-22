@@ -118,12 +118,36 @@ func TestReadinessChecksCoalesceExpireAndInvalidateOnEdit(t *testing.T) {
 	if !found {
 		t.Fatal("no successful result")
 	}
-	rt.recordingSetup.checkedAt = time.Now().Add(-2 * readinessTTL)
+	// An aged probe keeps its verdict and carries its age (D-798).
+	//
+	// This previously asserted the opposite — that an expired pass stopped
+	// being presented at all. That made the verdict and its freshness the same
+	// field, and since nothing re-probes on its own (readiness is a read; only
+	// checkRecordingReadiness probes), "expired" was the resting state of any
+	// idle panel rather than an exception. The concern it was written for is
+	// kept, not dropped: a stale pass must never look current, which is now
+	// enforced by requiring the timestamp rather than by deleting the result.
+	probedAt := time.Now().Add(-2 * readinessTTL)
+	rt.recordingSetup.checkedAt = probedAt
 	report = rt.readiness(context.Background())
+	aged := false
 	for _, c := range report.Checks {
-		if c.Code == "hpb_authenticated" {
-			t.Fatal("expired pass presented as current")
+		if c.Code != "hpb_authenticated" {
+			continue
 		}
+		aged = true
+		if c.State != "passed" {
+			t.Fatalf("aged probe lost its verdict: %+v", c)
+		}
+		if c.CheckedAt == "" {
+			t.Fatalf("aged probe presented as current, with no age: %+v", c)
+		}
+		if got, want := c.CheckedAt, probedAt.UTC().Format(time.RFC3339); got != want {
+			t.Fatalf("aged probe CheckedAt = %q, want when the probe ran (%q)", got, want)
+		}
+	}
+	if !aged {
+		t.Fatal("aged probe dropped entirely")
 	}
 	putRecordingSetup(t, rt, `{"internal_secret":"changed"}`, 200)
 	if !rt.recordingSetup.checkedAt.IsZero() || len(rt.recordingSetup.checks) != 0 {
@@ -327,7 +351,7 @@ func TestReadinessExpiredHandoffOffersTestWithoutInventingPass(t *testing.T) {
 	t.Fatal("missing handoff check")
 }
 
-func TestReadinessStorageClaimsRequireFreshApplicableEvidence(t *testing.T) {
+func TestReadinessStorageCarriesTheAgeAndApplicabilityOfItsEvidence(t *testing.T) {
 	resetSubstrateRecord(t)
 	rt, cleanup := readinessRuntime(t)
 	defer cleanup()
@@ -351,11 +375,30 @@ func TestReadinessStorageClaimsRequireFreshApplicableEvidence(t *testing.T) {
 	if c := storage(); c.State != "passed" || c.CheckedAt == "" {
 		t.Fatalf("fresh preflight missing timestamp: %+v", c)
 	}
+	// Aged evidence keeps its verdict and carries its age (D-798), rather than
+	// being erased into "not verified". The property this test was written for
+	// — stale evidence must not masquerade as current — is enforced by
+	// requiring the timestamp, which is what lets a reader judge it.
+	//
+	// Safe because this route reports rather than authorises: admission is
+	// decided by ncAccessSubstrate.recordingRefusal(), checked earlier in
+	// readiness() and not bounded by this TTL. See the admission-block test
+	// below, which still requires that path to be actionable.
+	aged := time.Now().Add(-2 * readinessTTL).UTC().Format(time.RFC3339)
 	ncAccessSubstrate.mu.Lock()
-	ncAccessSubstrate.checkedAtUTC = time.Now().Add(-2 * readinessTTL).UTC().Format(time.RFC3339)
+	ncAccessSubstrate.checkedAtUTC = aged
 	ncAccessSubstrate.mu.Unlock()
-	if c := storage(); c.State != "not_verified" || c.Code != "storage_check_expired" {
-		t.Fatalf("expired storage check claimed readiness: %+v", c)
+	if c := storage(); c.State != "passed" || c.CheckedAt != aged {
+		t.Fatalf("aged preflight lost its verdict or its age: %+v", c)
+	}
+
+	// Never checked at all is an absence, not a verdict: no parseable
+	// timestamp means no check has run here.
+	ncAccessSubstrate.mu.Lock()
+	ncAccessSubstrate.checkedAtUTC = ""
+	ncAccessSubstrate.mu.Unlock()
+	if c := storage(); c.State != "not_verified" || c.Code != "storage_not_checked" {
+		t.Fatalf("unchecked storage reported as a verdict: %+v", c)
 	}
 }
 

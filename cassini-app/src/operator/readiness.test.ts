@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
+import { readinessTitle, readinessHealthKey, readinessRows, checkStateLabel, checkTone, formatAge, reportTone, type ReadinessCheck, type RecordingReadiness } from "./readiness";
 import { readSetupHealth } from "./setupHealth";
 
 describe("recording setup", () => {
@@ -91,5 +91,37 @@ describe("the instance's worst news", () => {
   it("counts a synthesised row that has not been verified", () => {
     const noPlayback = { ...report([]), test: { state: "idle", published: false } };
     expect(reportTone(noPlayback)).toBe("neutral");
+  });
+});
+
+// Freshness travels beside the verdict rather than inside it (D-798 V1).
+describe("how old a check is", () => {
+  const now = new Date("2026-09-22T12:00:00Z");
+  const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
+
+  it("says just now inside the first minute", () => {
+    expect(formatAge(ago(5_000), now)).toBe("just now");
+  });
+
+  it("counts minutes, hours and days", () => {
+    expect(formatAge(ago(6 * 60_000), now)).toBe("6 minutes ago");
+    expect(formatAge(ago(3 * 3_600_000), now)).toBe("3 hours ago");
+    expect(formatAge(ago(2 * 86_400_000), now)).toBe("2 days ago");
+  });
+
+  it("does not say 'minutes' for one", () => {
+    expect(formatAge(ago(60_000), now)).toBe("1 minute ago");
+    expect(formatAge(ago(3_600_000), now)).toBe("1 hour ago");
+  });
+
+  // A clock skewed forward must not produce "in 3 minutes"; the reader only
+  // needs to know the check is current.
+  it("does not go negative on a skewed clock", () => {
+    expect(formatAge(new Date(now.getTime() + 180_000).toISOString(), now)).toBe("just now");
+  });
+
+  it("says nothing it cannot parse", () => {
+    expect(formatAge("", now)).toBe("");
+    expect(formatAge("not a date", now)).toBe("");
   });
 });

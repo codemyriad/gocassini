@@ -273,13 +273,26 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 		add("configuration", "needs_action", "setup_store_unreadable", "Cassini could not read its saved recording setup. Check the persistent volume and restore recording-setup.json.", "repair_configuration")
 	}
 	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
-	storageChecked, storageTimeErr := time.Parse(time.RFC3339, access.CheckedAt)
+	// Parsed only to tell "a check has run" from "none has". How OLD it is rides
+	// on CheckedAt in the response, not on a branch here.
+	_, storageTimeErr := time.Parse(time.RFC3339, access.CheckedAt)
 	if !access.Applicable {
 		add("storage", "not_verified", "storage_not_probed", "The Nextcloud storage check does not apply to this publish destination. Verify storage with a test recording.", "test_recording")
 	} else if ncAccessSubstrate.recordingRefusal() != "" {
 		add("storage", "needs_action", "storage_admission_blocked", "Cassini currently blocks recording on its stored storage status. Review the storage details below and check again after repairing them.", "setup_storage")
-	} else if storageTimeErr != nil || time.Since(storageChecked) > readinessTTL {
-		add("storage", "not_verified", "storage_check_expired", "There is no recent Nextcloud storage check. Check again to refresh it.", "recheck")
+	} else if storageTimeErr != nil {
+		// No parseable timestamp means no storage check has ever run here — an
+		// absence, not a verdict (D-798). Age is a separate matter: the branches
+		// below report what the last check FOUND and carry CheckedAt so a reader
+		// can see how old it is. Expiring a passing check into "not verified"
+		// made the resting state of an idle panel indistinguishable from a
+		// problem, because nothing re-probes on its own (readiness is a read;
+		// only checkRecordingReadiness probes).
+		//
+		// Safe because this panel reports rather than authorises: admission is
+		// decided separately by ncAccessSubstrate.recordingRefusal(), checked
+		// above and not bounded by this TTL.
+		add("storage", "not_verified", "storage_not_checked", "Nextcloud storage has not been checked yet. Check again to run it.", "recheck")
 	} else if access.OK {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "passed", Code: "storage_ready", Message: "The Nextcloud storage preflight passed. A test recording verifies publication and playback.", CheckedAt: access.CheckedAt})
 	} else {
@@ -300,10 +313,21 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	}
 	if !rt.validTestRoom(state.TestRoomURL) {
 		add("talk.discovery", "not_verified", "test_room_required", "Choose a dedicated Talk room to verify the connection without recording it.", "test_room")
-	} else if time.Since(checkedAt) > readinessTTL || len(probes) == 0 {
-		add("talk.discovery", "not_verified", "connection_not_verified", "Check the Talk connection. Previous results have expired or this process restarted.", "recheck")
+	} else if len(probes) == 0 {
+		// The message this replaces named both cases — "Previous results have
+		// expired OR this process restarted" — while treating them as one. They
+		// are different facts: no probe result at all is an absence, whereas an
+		// aged one is a finding that happens to be old. Probe results are
+		// in-memory only, so a restart genuinely leaves nothing established.
+		add("talk.discovery", "not_verified", "connection_not_checked", "The Talk connection has not been checked yet. Check again to run it.", "recheck")
 	} else {
-		resp.Checks = append(resp.Checks, probes...)
+		// Stamped with when the probe ran, so its age travels with the verdict
+		// instead of replacing it.
+		probedAt := checkedAt.UTC().Format(time.RFC3339)
+		for _, probe := range probes {
+			probe.CheckedAt = probedAt
+			resp.Checks = append(resp.Checks, probe)
+		}
 	}
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) == "" {
 		// The actionable handoff row above already describes the missing credential.

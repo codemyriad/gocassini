@@ -129,6 +129,39 @@ export function reportTone(report: RecordingReadiness): CheckTone {
   return "success";
 }
 
+// How long ago a check established what it established.
+//
+// Relative rather than absolute because the question a reader has is "is this
+// still true?", and "6 minutes ago" answers it where "22/09/2026, 12:45:00"
+// makes them do arithmetic. The absolute time stays available as a title, for
+// the reader who wants to correlate with a log.
+//
+// This carries the freshness that used to be smuggled into the state itself:
+// an aged check keeps its verdict and says how old it is, rather than decaying
+// into "not verified" and making an idle panel look broken (D-798).
+export function formatAge(checkedAt: string, now: Date = new Date()): string {
+  const at = new Date(checkedAt);
+  if (Number.isNaN(at.getTime())) {
+    return "";
+  }
+  const seconds = Math.round((now.getTime() - at.getTime()) / 1000);
+  // A clock skewed forward should not produce "in 3 minutes"; the reader only
+  // needs to know it is current.
+  if (seconds < 60) {
+    return "just now";
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 export function checkStateLabel(check: ReadinessCheck): string {
   if (check.code === "internal_secret_configuration" && check.state === "passed") return "Configured";
   if (check.code === "test_playback" && check.state === "passed") return "Previously confirmed";
