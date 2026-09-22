@@ -365,3 +365,83 @@ func TestSearchStoreOpensWithConcurrencyPragmas(t *testing.T) {
 		}
 	}
 }
+
+// D-798 R2.2: a shortfall counts against health only when someone can act on
+// it. The demo sandbox has exactly one silent meeting out of 138, so getting
+// this wrong leaves an instance permanently short of full coverage for a
+// meeting nobody spoke in.
+func TestCoverageSeparatesFaultsFromCorrectOutcomes(t *testing.T) {
+	store := newTestSearchStore(t)
+	ctx := context.Background()
+
+	seedSearchable(t, store, "INDEXED.opus", seg("s1", "S1", 0, 1000, "words"))
+	// Correct, and unfixable: nobody spoke.
+	if err := store.MarkUnavailable(ctx, "SILENT.opus", searchIngestReasonNoSegments); err != nil {
+		t.Fatalf("mark silent: %v", err)
+	}
+	// A fault: the format families behind D-739 / D-765 / D-766.
+	if err := store.MarkUnavailable(ctx, "BROKEN.opus", searchIngestReasonUnreadable); err != nil {
+		t.Fatalf("mark unreadable: %v", err)
+	}
+
+	coverage, err := store.Coverage(ctx)
+	if err != nil {
+		t.Fatalf("coverage: %v", err)
+	}
+	if coverage.Indexed != 1 {
+		t.Errorf("Indexed = %d, want 1", coverage.Indexed)
+	}
+	if coverage.Unavailable != 2 {
+		t.Errorf("Unavailable = %d, want 2", coverage.Unavailable)
+	}
+	if coverage.Unindexable != 1 {
+		t.Errorf("Unindexable = %d, want 1 (the silent meeting)", coverage.Unindexable)
+	}
+	if got := coverage.Fixable(); got != 1 {
+		t.Errorf("Fixable() = %d, want 1 — only the unreadable one is actionable", got)
+	}
+	// The denominator excludes what can never be searched, so an archive whose
+	// only shortfall is a silent meeting reads as complete.
+	if got := coverage.Searchable(); got != 2 {
+		t.Errorf("Searchable() = %d, want 2", got)
+	}
+}
+
+func TestCoverageIsCompleteWhenTheOnlyShortfallIsSilence(t *testing.T) {
+	store := newTestSearchStore(t)
+	ctx := context.Background()
+	seedSearchable(t, store, "A.opus", seg("s1", "S1", 0, 1000, "words"))
+	if err := store.MarkUnavailable(ctx, "SILENT.opus", searchIngestReasonNoSegments); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+
+	coverage, err := store.Coverage(ctx)
+	if err != nil {
+		t.Fatalf("coverage: %v", err)
+	}
+	if coverage.Fixable() != 0 {
+		t.Errorf("Fixable() = %d; a silent meeting is not a fault", coverage.Fixable())
+	}
+	if coverage.Indexed != coverage.Searchable() {
+		t.Errorf("indexed %d of searchable %d; an archive whose only gap is silence is fully covered",
+			coverage.Indexed, coverage.Searchable())
+	}
+}
+
+// A reason nobody has classified is one nobody has looked at. Counting it as
+// correct is how a real fault becomes invisible.
+func TestCoverageTreatsAnUnclassifiedReasonAsAFault(t *testing.T) {
+	store := newTestSearchStore(t)
+	ctx := context.Background()
+	if err := store.MarkUnavailable(ctx, "MYSTERY.opus", "some-reason-from-the-future"); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+
+	coverage, err := store.Coverage(ctx)
+	if err != nil {
+		t.Fatalf("coverage: %v", err)
+	}
+	if coverage.Fixable() != 1 {
+		t.Errorf("Fixable() = %d, want 1 — an unrecognised reason must stay visible", coverage.Fixable())
+	}
+}

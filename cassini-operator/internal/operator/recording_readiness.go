@@ -422,6 +422,30 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	} else {
 		add("talk.handoff", "not_verified", "handoff_not_verified", "No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.", "test_recording")
 	}
+	// Archive coverage: the checklist's third layer, and the only one that
+	// answers "is what we produced complete?" rather than "can we produce more?"
+	if rt.searchStore != nil {
+		if coverage, err := rt.searchStore.Coverage(ctx); err != nil {
+			add("archive.search", "warn", "search_coverage_unknown", "Cassini could not read the search index, so how much of the archive is searchable is unknown.", "recheck")
+		} else if fixable := coverage.Fixable(); fixable > 0 {
+			// Working, and incomplete. Exactly what warn is for.
+			add("archive.search", "warn", "search_coverage_partial", fmt.Sprintf(
+				"Search can read %d of %d meetings. %d could not be indexed and can be retried with backfill-search.",
+				coverage.Indexed, coverage.Searchable(), fixable), "recheck")
+		} else if coverage.Indexed > 0 {
+			// Meetings that are correctly unsearchable are NOT counted against
+			// this: a silent recording has no words, and nothing can change
+			// that, so an instance must be able to reach full coverage with one
+			// in the archive (R2.2).
+			resp.Checks = append(resp.Checks, readinessCheck{
+				ID:      "archive.search",
+				State:   "passed",
+				Code:    "search_coverage_complete",
+				Message: fmt.Sprintf("Search can read all %d meetings that have anything to find.", coverage.Indexed),
+			})
+		}
+	}
+
 	// Host checks lead: they describe the machine every other check runs on, so
 	// a full disk explains a storage failure rather than competing with it.
 	//

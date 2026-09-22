@@ -450,26 +450,52 @@ func deleteMeetingRows(ctx context.Context, tx *sql.Tx, opusName string) error {
 type searchCoverage struct {
 	Indexed     int
 	Unavailable int
+	// Unindexable is the part of Unavailable that nobody can act on, because
+	// the meeting is correctly not searchable (D-798 R2.2). A silent recording
+	// has no words; counting it as a shortfall would leave an instance
+	// permanently short of full coverage for a meeting nobody spoke in.
+	Unindexable int
+}
+
+// Fixable is the shortfall someone could actually do something about.
+func (c searchCoverage) Fixable() int { return c.Unavailable - c.Unindexable }
+
+// Searchable is the population coverage is honestly measured against: every
+// meeting that could be searched if nothing were broken.
+func (c searchCoverage) Searchable() int { return c.Indexed + c.Fixable() }
+
+// unindexableReasons are outcomes that are correct rather than faults.
+//
+// Deliberately a small allow-list, and everything else counts as fixable: a
+// reason we have not classified is one we have not looked at, and treating it
+// as fine is how a real fault becomes invisible.
+var unindexableReasons = map[string]bool{
+	// "A transcript that parsed but yielded nothing indexable is a real state,
+	// not an error: a silent recording has no words." — search_ingest.go
+	searchIngestReasonNoSegments: true,
 }
 
 func (s *searchStore) Coverage(ctx context.Context) (searchCoverage, error) {
 	var coverage searchCoverage
-	rows, err := s.db.QueryContext(ctx, `SELECT state, COUNT(*) FROM meeting_index GROUP BY state`)
+	rows, err := s.db.QueryContext(ctx, `SELECT state, reason, COUNT(*) FROM meeting_index GROUP BY state, reason`)
 	if err != nil {
 		return searchCoverage{}, fmt.Errorf("read search coverage: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var state string
+		var state, reason string
 		var count int
-		if err := rows.Scan(&state, &count); err != nil {
+		if err := rows.Scan(&state, &reason, &count); err != nil {
 			return searchCoverage{}, fmt.Errorf("scan search coverage: %w", err)
 		}
 		switch state {
 		case searchStateIndexed:
-			coverage.Indexed = count
+			coverage.Indexed += count
 		case searchStateUnavailable:
-			coverage.Unavailable = count
+			coverage.Unavailable += count
+			if unindexableReasons[reason] {
+				coverage.Unindexable += count
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
