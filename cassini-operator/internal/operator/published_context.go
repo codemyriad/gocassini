@@ -32,19 +32,10 @@ import (
 // package the CLI renders from — it invokes the CLI, exactly as the build, seal
 // and publish stages already do, and streams what it printed.
 //
-// The CLI's own id path is closed to the operator: fetching a meeting by id
-// needs the caller's Nextcloud app password, which the operator does not hold
-// and cannot mint. So the operator fetches each recording itself — as the
-// caller, over WebDAV, so Nextcloud enforces the per-file ACL — and hands the
-// CLI the files (`meetings context --local`).
-//
-// Access is decided in exactly one place: serveFilteredCatalog, the same
-// authoritative-catalog-as-owner + PROPFIND-as-caller intersect the viewer's
-// catalog goes through. An id outside that set is a 404, identical to an id
-// that does not exist, because a recording you may not read must never reveal
-// that it exists (the same rule ncFilesProxy applies to meetings/<id>.opus).
-// The per-caller download is then a second, independent gate on the same
-// question, so the intersect is belt and braces rather than the only lock.
+// The operator has no caller app password. It resolves the caller's current
+// shares to select meetings, then downloads each recording as that caller over
+// WebDAV. Nextcloud checks each read. An id outside the caller's share set is a
+// 404, the same answer as an absent id.
 //
 // It is archive-relative, a sibling of catalog.json, so it rides the manifest's
 // existing `^published\/.+$` USER GET,HEAD route and needs no appinfo/info.xml
@@ -207,9 +198,8 @@ func (c ExAppConfig) serveMeetingsContext(w http.ResponseWriter, r *http.Request
 		switch {
 		case err == nil:
 		case status == http.StatusNotFound || status == http.StatusUnauthorized || status == http.StatusForbidden:
-			// The second gate disagreed with the intersect — the ACL changed
-			// between the scan and the fetch, or the recording was removed. Same
-			// answer as the first gate gives.
+			// Access changed between the share list and the DAV read, or
+			// the recording was removed. Both answer 404.
 			if logger != nil {
 				logger.Printf("meetings context: caller=%s denied id=%s at fetch -> %d (served as 404)", caller, id, status)
 			}

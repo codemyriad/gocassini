@@ -24,7 +24,7 @@ func TestDirectSharePublishStoresPrivateFileAndVerifiedShares(t *testing.T) {
 	if err := rt.store.SetJobTalkBinding(ctx, jobID, `{"backend_url":"https://talk.example","room_token":"room1","owner":"alice","room_public":true}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.store.MergeJobRoomAudience(ctx, jobID, []aclMapping{{Type: "user", ID: "bob"}}, nowUTCString()); err != nil {
+	if err := rt.store.MergeJobRoomAudience(ctx, jobID, []sharePrincipal{{Type: "user", ID: "bob"}}, nowUTCString()); err != nil {
 		t.Fatal(err)
 	}
 	metadata, err := openMeetingMetadataStore(filepath.Join(t.TempDir(), meetingMetadataFilename), nil)

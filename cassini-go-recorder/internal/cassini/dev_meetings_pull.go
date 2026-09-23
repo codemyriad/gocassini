@@ -16,19 +16,10 @@ import (
 	"time"
 )
 
-// `cassini dev meetings pull` mirrors a Nextcloud meeting archive into a local
-// directory shaped like a published site, so a development stack can be seeded
-// with real recordings instead of a synthetic fixture.
-//
-//	<out>/
-//	  catalog.json          the catalog envelope + the server's entries, verbatim
-//	  meetings/<id>.opus    one per entry, exactly as published
-//	  seed-manifest.json    provenance: where from, when, what, how big
-//
-// That layout is not invented here. It is what the viewer's exporter writes,
-// what `cassini-operator backfill-nc-files` reads, and what the published
-// catalog's own `audioPath` values already claim ("./meetings/<id>.opus"). A
-// pack is therefore a drop-in site root as well as a harness seed.
+// `cassini dev meetings pull` downloads the caller's readable meetings into a
+// local static archive. It writes catalog.json, meetings/<id>.opus and a
+// provenance manifest. The static exporter can serve this shape directly.
+// This command does not install recordings or shares into a Nextcloud stack.
 //
 // WHY IT LIVES UNDER `dev` and not beside `meetings`. The `meetings` commands
 // are the surface an agent is pointed at: find a meeting, read it, keep a copy.
@@ -116,7 +107,7 @@ func runDevMeetings(ctx context.Context, args []string, stdout, stderr io.Writer
 }
 
 func printDevMeetingsUsage(w io.Writer) {
-	fmt.Fprint(w, `Mirror a Nextcloud meeting archive into a local seed pack.
+	fmt.Fprint(w, `Download a Nextcloud meeting archive into a local static directory.
 
 Usage:
   cassini dev meetings pull --out <dir>
@@ -135,7 +126,7 @@ func runDevMeetingsPull(ctx context.Context, args []string, stdout, stderr io.Wr
 	fs := flag.NewFlagSet("cassini dev meetings pull", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	registerMeetingsConnectionFlags(fs, &cfg)
-	outDir := fs.String("out", "", "required directory to write the seed pack into")
+	outDir := fs.String("out", "", "required directory for the local archive")
 	fromDate := fs.String("from", "", "only meetings on or after this date (e.g. 2026-08-01)")
 	toDate := fs.String("to", "", "only meetings on or before this date (a bare date includes the whole day)")
 	room := fs.String("room", "", "only meetings from this room, as printed by `cassini meetings rooms`")
@@ -149,8 +140,8 @@ func runDevMeetingsPull(ctx context.Context, args []string, stdout, stderr io.Wr
   cassini dev meetings pull --out ./harness/runtime/seed/two --limit 2
   cassini dev meetings pull --out ./harness/runtime/seed/prod --dry-run
 
-Download every meeting this Nextcloud account may read into a seed pack: a
-directory holding catalog.json and meetings/<id>.opus, plus a manifest saying
+Download every meeting this Nextcloud account may read into a local directory
+holding catalog.json and meetings/<id>.opus, plus a manifest saying
 where the data came from.
 
 By default it pulls everything the account can read. The filters narrow that

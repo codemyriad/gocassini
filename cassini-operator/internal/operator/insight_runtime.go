@@ -56,12 +56,8 @@ import (
 // construction — the person who asked owns the file, Nextcloud's own share UI
 // works on it, and there is no ACL arithmetic to get wrong.
 //
-// NOT under "Cassini/". That name is the recordings Team-folder mount point
-// (ncRecordingsMount), which every account has mounted read-only through the
-// Everyone group, so "Cassini/Insights" in a caller's home is not a folder in
-// their own storage at all — it is a write into the shared archive, which is
-// denied for everybody but the service account and would be the wrong place even
-// if it were allowed. insight_runtime_test.go pins the two names apart.
+// Insight files stay in the requester's home. Recordings stay in the private
+// `cassini` account's archive, under a different root and owner.
 const (
 	// insightsURLPath is where the routes are mounted, matching the
 	// ^insights\/… block in appinfo/info.xml. Their own prefix rather than a
@@ -72,7 +68,7 @@ const (
 
 	// ncInsightsRoot is the folder an insight is delivered into, relative to the
 	// requester's own WebDAV home. Deliberately not a child of
-	// ncRecordingsMount; see the note above.
+	// recordings root; see the note above.
 	ncInsightsRoot = "Cassini Insights"
 )
 

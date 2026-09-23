@@ -23,7 +23,7 @@ import (
 
 // annotations/meetings/<id> (D-737). MEETING1 is alice's to read; SECRET is in
 // the archive and belongs to someone else; NEVER does not exist. The service
-// account's side of Nextcloud is fakeNCFiles, so ETags, If-Match and ACL rules
+// account's side of Nextcloud is fakeNCFiles, so ETags, If-Match and shares
 // behave exactly as they do for the publish sink's tests.
 
 const (
@@ -44,7 +44,7 @@ const (
 )
 
 // annotationsNextcloud is fakeNCFiles behind a front that plays Nextcloud's
-// per-caller ACL. The service account reaches the fake directly; a caller sees
+// per-caller Files access. The service account reaches the fake directly; a caller sees
 // only the recordings named visible, both in their Depth-1 scan and when
 // fetching one. What the service account writes is what a caller then reads,
 // because both come out of the same fake.
@@ -68,7 +68,6 @@ type annotationsNextcloud struct {
 
 func newAnnotationsNextcloud(t *testing.T, visible ...string) *annotationsNextcloud {
 	t.Helper()
-	// Unresolved: the access-controlled model, read as the caller.
 
 	nc := &annotationsNextcloud{fakeNCFiles: newFakeNCFiles(), visible: map[string]bool{}}
 	for _, name := range visible {

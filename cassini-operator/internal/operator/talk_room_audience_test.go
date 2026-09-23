@@ -33,7 +33,7 @@ func openAudienceStore(t *testing.T) *Store {
 // captures happened to see them in, because D-769 hashes this value so the
 // panel and the write can agree on what was shown.
 func TestEncodeRoomAudienceIsCanonical(t *testing.T) {
-	forward, err := encodeRoomAudience([]aclMapping{
+	forward, err := encodeRoomAudience([]sharePrincipal{
 		{Type: "user", ID: "bob"},
 		{Type: "group", ID: "dev-team"},
 		{Type: "user", ID: "alice"},
@@ -41,7 +41,7 @@ func TestEncodeRoomAudienceIsCanonical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encodeRoomAudience() error = %v", err)
 	}
-	reversed, err := encodeRoomAudience([]aclMapping{
+	reversed, err := encodeRoomAudience([]sharePrincipal{
 		{Type: "user", ID: "alice"},
 		{Type: "group", ID: "dev-team"},
 		{Type: "user", ID: "bob"},
@@ -61,8 +61,8 @@ func TestEncodeRoomAudienceIsCanonical(t *testing.T) {
 	}
 }
 
-func TestRoomAudienceRoundTripsIntoACLRules(t *testing.T) {
-	encoded, err := encodeRoomAudience([]aclMapping{
+func TestRoomAudienceRoundTripsIntoSharePrincipals(t *testing.T) {
+	encoded, err := encodeRoomAudience([]sharePrincipal{
 		{Type: "user", ID: "alice"},
 		{Type: "circle", ID: "circle-7"},
 	})
@@ -103,7 +103,7 @@ func TestMergeJobRoomAudienceUnionsBothCaptures(t *testing.T) {
 	seedJobRow(t, store.db, seededJobRow{ID: "job-1", Stage: "record", State: "queued", CreatedAt: "2026-09-16T10:00:00.000000000Z"})
 
 	// Start: alice and bob are in the room.
-	if err := store.MergeJobRoomAudience(ctx, "job-1", []aclMapping{
+	if err := store.MergeJobRoomAudience(ctx, "job-1", []sharePrincipal{
 		{Type: "user", ID: "alice"},
 		{Type: "user", ID: "bob"},
 	}, "2026-09-16T10:00:00.000000000Z"); err != nil {
@@ -115,7 +115,7 @@ func TestMergeJobRoomAudienceUnionsBothCaptures(t *testing.T) {
 	}
 
 	// Stop: bob has been removed, carol joined during the call.
-	if err := store.MergeJobRoomAudience(ctx, "job-1", []aclMapping{
+	if err := store.MergeJobRoomAudience(ctx, "job-1", []sharePrincipal{
 		{Type: "user", ID: "alice"},
 		{Type: "user", ID: "carol"},
 	}, "2026-09-16T11:00:00.000000000Z"); err != nil {
@@ -195,7 +195,7 @@ func TestCaptureRoomAudienceStoresResolvedPrincipals(t *testing.T) {
 
 	calls := 0
 	rt.talkAudienceRetryGap = time.Millisecond
-	rt.fetchTalkParticipants = func(_ context.Context, owner, roomToken string) ([]aclMapping, error) {
+	rt.fetchTalkParticipants = func(_ context.Context, owner, roomToken string) ([]sharePrincipal, error) {
 		calls++
 		if roomToken != "tok123" {
 			t.Errorf("fetch called with token=%q, want tok123", roomToken)
@@ -205,7 +205,7 @@ func TestCaptureRoomAudienceStoresResolvedPrincipals(t *testing.T) {
 			// later, so the ladder is the only protection this value gets.
 			return nil, errors.New("nextcloud briefly unreachable")
 		}
-		return []aclMapping{{Type: "user", ID: "alice"}, {Type: "group", ID: "dev-team"}}, nil
+		return []sharePrincipal{{Type: "user", ID: "alice"}, {Type: "group", ID: "dev-team"}}, nil
 	}
 
 	rt.captureRoomAudience("job-audience", "alice", "tok123", roomAudiencePhaseStart)
@@ -232,7 +232,7 @@ func TestCaptureRoomAudienceLeavesNothingWhenEveryTierFails(t *testing.T) {
 	seedTalkJob(t, rt, "job-doomed")
 
 	rt.talkAudienceRetryGap = time.Millisecond
-	rt.fetchTalkParticipants = func(_ context.Context, _, _ string) ([]aclMapping, error) {
+	rt.fetchTalkParticipants = func(_ context.Context, _, _ string) ([]sharePrincipal, error) {
 		return nil, errors.New("nextcloud is down")
 	}
 

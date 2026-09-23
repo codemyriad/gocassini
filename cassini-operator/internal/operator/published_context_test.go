@@ -32,7 +32,7 @@ const contextCatalog = `{"version":"cassini.viewer.catalog.v1","meetings":[` +
 // stubRecordingsDAV answers the three WebDAV calls this surface makes: the
 // authoritative catalog as the owner, the caller's Depth-1 scan of meetings/,
 // and a per-meeting GET as the caller. visible names what the caller may read;
-// anything else 404s, exactly as an advanced-ACL deny does.
+// anything else 404s, exactly as a revoked Files share does.
 func stubRecordingsDAV(t *testing.T, catalog string, opus []byte, visible ...string) (*httptest.Server, *[]string) {
 	t.Helper()
 	var fetched []string
@@ -222,11 +222,11 @@ func TestMeetingsContextAnswers404ForAnIDTheCallerMayNotRead(t *testing.T) {
 	}
 }
 
-// The second gate: the ACL can change between the caller's scan and the fetch,
+// The second gate: a share can change between the caller's list and the fetch,
 // and the fetch is made as the caller precisely so Nextcloud gets the last word.
 func TestMeetingsContextAnswers404WhenTheFetchIsDeniedAfterTheScan(t *testing.T) {
 	// The scan says alice may read MEETING1; the fetch says otherwise, which is
-	// what an ACL changed between the two looks like.
+	// what a revoked share between the two looks like.
 	var logs bytes.Buffer
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveTestShares(w, r, []string{"MEETING1.opus"}, 0) {

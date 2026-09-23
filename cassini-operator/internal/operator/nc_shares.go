@@ -184,7 +184,7 @@ func (c ExAppConfig) ownerSharesForPath(ctx context.Context, client *http.Client
 	return shares, nil
 }
 
-func (c ExAppConfig) createRecordingShare(ctx context.Context, client *http.Client, relPath string, principal aclMapping, permissions int) (ncShare, error) {
+func (c ExAppConfig) createRecordingShare(ctx context.Context, client *http.Client, relPath string, principal sharePrincipal, permissions int) (ncShare, error) {
 	shareType := -1
 	switch principal.Type {
 	case "user":
@@ -231,7 +231,7 @@ func shareTypeForPrincipal(kind string) (int, bool) {
 	}
 }
 
-func shareCoversPrincipal(shares []ncShare, principal aclMapping) bool {
+func shareCoversPrincipal(shares []ncShare, principal sharePrincipal) bool {
 	kind, ok := shareTypeForPrincipal(principal.Type)
 	if !ok {
 		return false
@@ -248,7 +248,7 @@ func shareCoversPrincipal(shares []ncShare, principal aclMapping) bool {
 // are left exactly as an administrator or recipient changed them. This is used
 // for a first publish or an interrupted first publish; completed republishes
 // must skip it, since removing a recipient is an intentional audience edit.
-func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []aclMapping, public bool) error {
+func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []sharePrincipal, public bool) error {
 	if len(audience) == 0 || audience[0].Type != "user" || audience[0].ID == "" || audience[0].ID == ncRecordingsOwner {
 		return fmt.Errorf("recording has no local starter to share with")
 	}
@@ -257,7 +257,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 		return fmt.Errorf("list recording shares: %w", err)
 	}
 	seen := map[string]bool{}
-	required := []aclMapping{}
+	required := []sharePrincipal{}
 	permissions := ncShareRead
 	if public {
 		permissions |= ncShareReshare

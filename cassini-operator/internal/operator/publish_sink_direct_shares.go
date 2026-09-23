@@ -138,7 +138,7 @@ func overlayMeetingEntry(entry json.RawMessage, roomName string) (json.RawMessag
 	return json.Marshal(fields)
 }
 
-func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID string) ([]aclMapping, bool, error) {
+func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID string) ([]sharePrincipal, bool, error) {
 	binding, ok := s.rt.talkBindingForJob(jobID)
 	if !ok {
 		return nil, false, fmt.Errorf("recording %s has no saved Talk owner or room audience", jobID)
@@ -157,6 +157,6 @@ func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID stri
 		}
 	}
 	// The starter is a known local account even if Talk's roster omits them.
-	audience = append([]aclMapping{{Type: "user", ID: binding.Owner}}, audience...)
+	audience = append([]sharePrincipal{{Type: "user", ID: binding.Owner}}, audience...)
 	return audience, binding.Public, nil
 }

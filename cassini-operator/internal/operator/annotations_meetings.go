@@ -19,9 +19,8 @@ import (
 // and search do. An id outside that set is a 404 identical to one that does not
 // exist, for a write as for a read, so marking is not a way to probe the archive.
 //
-// A read is made AS THE CALLER, so Nextcloud re-checks the ACL on the bytes. A
-// write cannot be: the recordings mount gives ordinary accounts a READ ceiling,
-// so the service account rewrites the file with If-Match.
+// A read is made as the caller, so Nextcloud checks the file permission. The
+// owner performs the conditional archive rewrite after that caller check.
 //
 // Status discipline is search's: failure is loud (502), denial is empty (404).
 
@@ -114,7 +113,7 @@ func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID, 
 	_, status, err := s.exapp.stageRecording(ctx, s.client, caller, relPath, local, maxAnnotateRecordingBytes)
 	if err != nil {
 		if deniedOrAbsent(status) {
-			// The ACL changed, or the recording went, since the catalog was read.
+			// Access changed, or the recording went, since the share list was read.
 			return annotateResult{}, annotateNotFound(fmt.Errorf("caller=%s denied meeting=%s at fetch -> %d (served as 404)", caller, meetingID, status))
 		}
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("fetch meeting=%s as caller=%s: %w", meetingID, caller, err))

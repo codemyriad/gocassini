@@ -164,11 +164,7 @@ type Runtime struct {
 	// (talk_participants.go, D-553). Zero means the package default; tests
 	// shrink it.
 	talkAudienceRetryGap time.Duration
-	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
-	// applyNCFilesAccessFn writes the per-meeting advanced-ACL grants
-	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
-	// active — inside an ExApp per-participant access is the only model there
-	// is (D-554), so there is nothing left to opt into.
+	// fetchTalkParticipants resolves the room's local share recipients.
 	fetchTalkParticipants talkParticipantsFetcher
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
@@ -1391,8 +1387,8 @@ type Job struct {
 	// completed.
 	RoomName *string `json:"room_name"`
 	// RoomAudience is who had access to the Talk room while this recording was
-	// being made: a JSON array of advanced-ACL principals (users, groups,
-	// circles), captured at record time and never re-derived (D-769).
+	// being made: a JSON array of Files share recipients (users, groups,
+	// Teams), captured at record time and never re-derived (D-769).
 	//
 	// Withheld from the API for the same reason the binding and the token are.
 	// It is a roster, it is internal plumbing for deciding a recording's

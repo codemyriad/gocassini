@@ -15,10 +15,10 @@ import (
 type recordingFetcher struct {
 	mu     sync.Mutex
 	calls  []string
-	answer map[string]func(n int) ([]aclMapping, error)
+	answer map[string]func(n int) ([]sharePrincipal, error)
 }
 
-func (f *recordingFetcher) fetch(_ context.Context, owner, _ string) ([]aclMapping, error) {
+func (f *recordingFetcher) fetch(_ context.Context, owner, _ string) ([]sharePrincipal, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, owner)
 	n := 0
@@ -61,12 +61,12 @@ func newAudienceRuntime(t *testing.T, f *recordingFetcher) *Runtime {
 func TestAudienceRetriesATransientLookupFailure(t *testing.T) {
 	// The reason this exists: the sink fails the publish when the audience
 	// cannot be resolved, so a single 5xx used to cost a recording.
-	f := &recordingFetcher{answer: map[string]func(int) ([]aclMapping, error){
-		"starter": func(n int) ([]aclMapping, error) {
+	f := &recordingFetcher{answer: map[string]func(int) ([]sharePrincipal, error){
+		"starter": func(n int) ([]sharePrincipal, error) {
 			if n < 3 {
 				return nil, errors.New("participants request returned 503")
 			}
-			return []aclMapping{{Type: "user", ID: "alice"}}, nil
+			return []sharePrincipal{{Type: "user", ID: "alice"}}, nil
 		},
 	}}
 	rt := newAudienceRuntime(t, f)
@@ -92,12 +92,12 @@ func TestAudienceRetriesATransientLookupFailure(t *testing.T) {
 func TestAudienceFallsBackToTheRecordingsOwner(t *testing.T) {
 	// The case retrying alone cannot fix: the starter left the room between
 	// record and publish, so asking as them will never work.
-	f := &recordingFetcher{answer: map[string]func(int) ([]aclMapping, error){
-		"departed": func(int) ([]aclMapping, error) {
+	f := &recordingFetcher{answer: map[string]func(int) ([]sharePrincipal, error){
+		"departed": func(int) ([]sharePrincipal, error) {
 			return nil, errors.New("participants request returned 404")
 		},
-		ncRecordingsOwner: func(int) ([]aclMapping, error) {
-			return []aclMapping{{Type: "user", ID: "bob"}}, nil
+		ncRecordingsOwner: func(int) ([]sharePrincipal, error) {
+			return []sharePrincipal{{Type: "user", ID: "bob"}}, nil
 		},
 	}}
 	rt := newAudienceRuntime(t, f)
@@ -121,9 +121,9 @@ func TestAudienceFallsBackToTheRecordingsOwner(t *testing.T) {
 }
 
 func TestAudienceReportsFailureWhenEveryTierFails(t *testing.T) {
-	f := &recordingFetcher{answer: map[string]func(int) ([]aclMapping, error){
-		"starter":         func(int) ([]aclMapping, error) { return nil, errors.New("boom-starter") },
-		ncRecordingsOwner: func(int) ([]aclMapping, error) { return nil, errors.New("boom-owner") },
+	f := &recordingFetcher{answer: map[string]func(int) ([]sharePrincipal, error){
+		"starter":         func(int) ([]sharePrincipal, error) { return nil, errors.New("boom-starter") },
+		ncRecordingsOwner: func(int) ([]sharePrincipal, error) { return nil, errors.New("boom-owner") },
 	}}
 	rt := newAudienceRuntime(t, f)
 
@@ -142,8 +142,8 @@ func TestAudienceTreatsAnEmptyRoomAsAnAnswerNotAFailure(t *testing.T) {
 	// A guests-only room genuinely has no local principal to grant. That must
 	// not read as "we could not find out" — the sink fails the publish on the
 	// latter and must not on the former.
-	f := &recordingFetcher{answer: map[string]func(int) ([]aclMapping, error){
-		"starter": func(int) ([]aclMapping, error) { return nil, nil },
+	f := &recordingFetcher{answer: map[string]func(int) ([]sharePrincipal, error){
+		"starter": func(int) ([]sharePrincipal, error) { return nil, nil },
 	}}
 	rt := newAudienceRuntime(t, f)
 
@@ -160,8 +160,8 @@ func TestAudienceTreatsAnEmptyRoomAsAnAnswerNotAFailure(t *testing.T) {
 }
 
 func TestAudienceSkipsTheOwnerTierWhenTheStarterIsTheOwner(t *testing.T) {
-	f := &recordingFetcher{answer: map[string]func(int) ([]aclMapping, error){
-		ncRecordingsOwner: func(int) ([]aclMapping, error) { return nil, errors.New("nope") },
+	f := &recordingFetcher{answer: map[string]func(int) ([]sharePrincipal, error){
+		ncRecordingsOwner: func(int) ([]sharePrincipal, error) { return nil, errors.New("nope") },
 	}}
 	rt := newAudienceRuntime(t, f)
 
@@ -175,8 +175,8 @@ func TestAudienceSkipsTheOwnerTierWhenTheStarterIsTheOwner(t *testing.T) {
 }
 
 func TestAudienceAbortsOnContextCancellation(t *testing.T) {
-	f := &recordingFetcher{answer: map[string]func(int) ([]aclMapping, error){
-		"starter": func(int) ([]aclMapping, error) { return nil, errors.New("slow") },
+	f := &recordingFetcher{answer: map[string]func(int) ([]sharePrincipal, error){
+		"starter": func(int) ([]sharePrincipal, error) { return nil, errors.New("slow") },
 	}}
 	rt := newAudienceRuntime(t, f)
 	rt.talkAudienceRetryGap = time.Hour // the gap must be interruptible

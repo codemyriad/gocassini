@@ -30,8 +30,8 @@ const (
 
 // storedAudiencePrincipal is the on-disk shape of one grantable principal.
 //
-// Spelled out here rather than marshalling aclMapping directly, because this is
-// a persisted format: aclMapping is an in-memory share principal and
+// Spelled out here rather than marshalling sharePrincipal directly, because this is
+// a persisted format: sharePrincipal is an in-memory share principal and
 // may grow a field or rename one without anybody thinking about the rows already
 // written. A column read back by a later release is a contract, so it gets a
 // type whose only job is to be that contract.
@@ -47,7 +47,7 @@ type storedAudiencePrincipal struct {
 // the union of two captures must not depend on which arrived first, and D-769's
 // apply step hashes this value so the panel and the write can agree on what was
 // shown. Both want the same principals to produce the same bytes.
-func encodeRoomAudience(mappings []aclMapping) (string, error) {
+func encodeRoomAudience(mappings []sharePrincipal) (string, error) {
 	stored := make([]storedAudiencePrincipal, 0, len(mappings))
 	seen := make(map[string]bool, len(mappings))
 	for _, mapping := range mappings {
@@ -81,7 +81,7 @@ func encodeRoomAudience(mappings []aclMapping) (string, error) {
 // An empty or blank column is an empty roster with no error: "captured, and
 // nobody in that room could be granted" is a real answer, and the caller tells
 // it apart from "never captured" by the timestamp column, not by this.
-func decodeRoomAudience(raw string) ([]aclMapping, error) {
+func decodeRoomAudience(raw string) ([]sharePrincipal, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return nil, nil
@@ -90,14 +90,14 @@ func decodeRoomAudience(raw string) ([]aclMapping, error) {
 	if err := json.Unmarshal([]byte(trimmed), &stored); err != nil {
 		return nil, fmt.Errorf("decode room audience: %w", err)
 	}
-	mappings := make([]aclMapping, 0, len(stored))
+	mappings := make([]sharePrincipal, 0, len(stored))
 	for _, principal := range stored {
 		mappingType := strings.TrimSpace(principal.Type)
 		id := strings.TrimSpace(principal.ID)
 		if mappingType == "" || id == "" {
 			continue
 		}
-		mappings = append(mappings, aclMapping{Type: mappingType, ID: id})
+		mappings = append(mappings, sharePrincipal{Type: mappingType, ID: id})
 	}
 	return mappings, nil
 }
@@ -115,7 +115,7 @@ func decodeRoomAudience(raw string) ([]aclMapping, error) {
 // capture happened at all, which is the question every reader actually asks: a
 // null there means nothing ever looked, and no later pass can fill it in,
 // because the room it would have to ask has moved on.
-func (s *Store) MergeJobRoomAudience(ctx context.Context, id string, mappings []aclMapping, capturedAt string) error {
+func (s *Store) MergeJobRoomAudience(ctx context.Context, id string, mappings []sharePrincipal, capturedAt string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin room audience merge: %w", err)
@@ -138,7 +138,7 @@ SELECT room_audience, room_audience_at FROM jobs WHERE id = ?`, id).Scan(&existi
 			// keeping something unusable.
 			previous = nil
 		}
-		merged = append(append([]aclMapping{}, previous...), mappings...)
+		merged = append(append([]sharePrincipal{}, previous...), mappings...)
 	}
 	encoded, err := encodeRoomAudience(merged)
 	if err != nil {
@@ -166,7 +166,7 @@ WHERE id = ?`, encoded, capturedAt, nowUTCString(), id); err != nil {
 // means the room held nobody grantable — every attendee a guest, an email
 // invitee or federated — which is a recording that must be left alone, not one
 // to narrow to nobody.
-func (s *Store) JobRoomAudience(ctx context.Context, id string) (mappings []aclMapping, captured bool, err error) {
+func (s *Store) JobRoomAudience(ctx context.Context, id string) (mappings []sharePrincipal, captured bool, err error) {
 	var audience, audienceAt sql.NullString
 	if err := s.db.QueryRowContext(ctx, `
 SELECT room_audience, room_audience_at FROM jobs WHERE id = ?`, id).Scan(&audience, &audienceAt); err != nil {
