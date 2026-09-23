@@ -102,6 +102,18 @@
   export let tagNotice = "";
   let tagging: { meeting: MeetingCatalogEntry; anchor: HTMLElement } | null = null;
 
+  // A row picker stays open while its request settles. Vocabulary updates can
+  // otherwise reorder the options by usage, moving an option under the
+  // pointer between clicks. A label-first order is stable for this one-meeting
+  // interaction; the selection bar retains its own ordering.
+  $: pickerTags = tags
+    ? [...tags].sort(
+        (a, b) =>
+          a.label.localeCompare(b.label, undefined, { sensitivity: "base" }) ||
+          a.tagId.localeCompare(b.tagId),
+      )
+    : [];
+
   // The filter is list-local state — no other surface reads it.
   let filter = "";
   // Which kinds the list is showing. The SHELL owns this now: the control moved
@@ -644,7 +656,7 @@
   {#if tags && tagging}
     {@const meeting = tagging.meeting}
     <TagPicker
-      {tags}
+      tags={pickerTags}
       label={`Tag ${meeting.title}`}
       multiple
       selected={wholeTagState(meetingTags, [meeting.id]).selected}
