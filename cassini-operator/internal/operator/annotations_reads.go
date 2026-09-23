@@ -9,14 +9,10 @@ import (
 	"strings"
 )
 
-func (s *annotationService) readDocument(ctx context.Context, caller, meetingID, relPath string) (annotateResult, error) {
+func (s *annotationService) readDocument(ctx context.Context, caller, meetingID, opusName, relPath string) (annotateResult, error) {
 	store := s.rt.annotationReads()
 	if store == nil {
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: fmt.Errorf("annotations store unavailable")}
-	}
-	opusName := s.exapp.recordingOriginalName(caller, relPath)
-	if opusName == "" {
-		return annotateResult{}, annotateUnavailable(fmt.Errorf("recording name mapping expired"))
 	}
 	// Check the current leaf permission without downloading its media bytes.
 	identity := s.exapp.recordingReadIdentity(caller, relPath)
@@ -84,16 +80,11 @@ func (s *annotationService) importListedDocuments(ctx context.Context, caller st
 		s.logf("annotations: read missing imports: %v", err)
 		return
 	}
-	_, root := ncArchiveReadIdentity(caller)
 	for _, entry := range entries {
 		if missing[entry.opusName] && strings.HasSuffix(entry.opusName, ".opus") {
-			rel := root + "/meetings/" + entry.opusName
-			if s.exapp.sharePaths != nil {
-				var err error
-				rel, err = s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
-				if err != nil {
-					continue
-				}
+			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
+			if err != nil {
+				continue
 			}
 			s.importDocument(caller, entry.id, entry.opusName, rel)
 		}

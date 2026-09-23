@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Nextcloud's OCS Share API is the permission boundary for recordings. The
@@ -34,6 +36,30 @@ type ncShare struct {
 	Path         string    `json:"path"`
 	UIDFileOwner string    `json:"uid_file_owner"`
 	ItemType     string    `json:"item_type"`
+}
+
+// ncShareError distinguishes a recipient or policy refusal from an outage.
+// Network and malformed-response errors remain ordinary errors and fail closed.
+type ncShareError struct {
+	HTTPStatus int
+	OCSStatus  int
+	Message    string
+}
+
+func (e *ncShareError) Error() string {
+	return fmt.Sprintf("Nextcloud share API: HTTP %d, OCS %d: %s", e.HTTPStatus, e.OCSStatus, oneLineListField(e.Message))
+}
+
+func recipientShareRefusal(err error) bool {
+	var refusal *ncShareError
+	return errors.As(err, &refusal) &&
+		(refusal.OCSStatus == http.StatusNotFound || refusal.OCSStatus == http.StatusForbidden)
+}
+
+func resharePermissionRefusal(err error) bool {
+	var refusal *ncShareError
+	return errors.As(err, &refusal) &&
+		(refusal.OCSStatus == http.StatusForbidden || refusal.OCSStatus == http.StatusBadRequest)
 }
 
 // Nextcloud serializes share IDs as strings on some server versions and as
@@ -116,7 +142,7 @@ func (c ExAppConfig) shareRequest(ctx context.Context, client *http.Client, acto
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 ||
 		(meta.StatusCode != 100 && meta.StatusCode != 200) ||
 		strings.EqualFold(meta.Status, "failure") {
-		return nil, fmt.Errorf("Nextcloud share API %s: HTTP %d, OCS %d: %s", method, resp.StatusCode, meta.StatusCode, oneLineListField(meta.Message))
+		return nil, &ncShareError{HTTPStatus: resp.StatusCode, OCSStatus: meta.StatusCode, Message: meta.Message}
 	}
 	if len(envelope.OCS.Data) == 0 || string(envelope.OCS.Data) == "null" {
 		return nil, fmt.Errorf("Nextcloud share API %s returned no data", method)
@@ -223,16 +249,20 @@ func shareCoversPrincipal(shares []ncShare, principal aclMapping) bool {
 // for a first publish or an interrupted first publish; completed republishes
 // must skip it, since removing a recipient is an intentional audience edit.
 func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.Client, relPath string, audience []aclMapping, public bool) error {
+	if len(audience) == 0 || audience[0].Type != "user" || audience[0].ID == "" || audience[0].ID == ncRecordingsOwner {
+		return fmt.Errorf("recording has no local starter to share with")
+	}
 	existing, err := c.ownerSharesForPath(ctx, client, relPath)
 	if err != nil {
 		return fmt.Errorf("list recording shares: %w", err)
 	}
 	seen := map[string]bool{}
+	required := []aclMapping{}
 	permissions := ncShareRead
 	if public {
 		permissions |= ncShareReshare
 	}
-	for _, principal := range audience {
+	for index, principal := range audience {
 		principal.Type = strings.TrimSpace(principal.Type)
 		principal.ID = strings.TrimSpace(principal.ID)
 		if principal.ID == "" || (principal.Type == "user" && principal.ID == ncRecordingsOwner) {
@@ -247,32 +277,52 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 		}
 		seen[key] = true
 		if shareCoversPrincipal(existing, principal) {
+			required = append(required, principal)
 			continue
 		}
-		share, createErr := c.createRecordingShare(ctx, client, relPath, principal, permissions)
-		if createErr != nil {
-			// A network failure may arrive after the server committed the
-			// share. Check that before any retry that could create another.
-			if refreshed, listErr := c.ownerSharesForPath(ctx, client, relPath); listErr == nil {
-				existing = refreshed
-				if shareCoversPrincipal(existing, principal) {
-					continue
-				}
-			} else {
+		var createErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			var share ncShare
+			share, createErr = c.createRecordingShare(ctx, client, relPath, principal, permissions)
+			if createErr != nil && public && resharePermissionRefusal(createErr) {
+				// Respect instance policy: read access can still work when
+				// resharing is disabled for this recipient.
+				share, createErr = c.createRecordingShare(ctx, client, relPath, principal, ncShareRead)
+			}
+			if createErr == nil {
+				existing = append(existing, share)
+				break
+			}
+			// The server may have committed a share before the reply was lost.
+			// Re-list before retrying so we never intentionally duplicate it.
+			refreshed, listErr := c.ownerSharesForPath(ctx, client, relPath)
+			if listErr != nil {
 				return fmt.Errorf("share %s %s: %w (and re-list failed: %v)", principal.Type, principal.ID, createErr, listErr)
 			}
-		}
-		if createErr != nil && public {
-			// Instance policy may refuse SHARE while allowing READ. The read
-			// grant still matters; the UI can report that resharing is limited.
-			share, createErr = c.createRecordingShare(ctx, client, relPath, principal, ncShareRead)
+			existing = refreshed
+			if shareCoversPrincipal(existing, principal) {
+				createErr = nil
+				break
+			}
+			if recipientShareRefusal(createErr) {
+				break
+			}
+			if attempt < 2 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(attempt+1) * 150 * time.Millisecond):
+				}
+			}
 		}
 		if createErr != nil {
-			// A timeout can happen after Nextcloud committed a share. A retry
-			// re-lists first so it will not create a duplicate.
+			if index > 0 && recipientShareRefusal(createErr) {
+				ncAccessSubstrate.warnShare(fmt.Sprintf("recording share skipped for %s %s: %v", principal.Type, principal.ID, createErr))
+				continue
+			}
 			return fmt.Errorf("share %s %s: %w", principal.Type, principal.ID, createErr)
 		}
-		existing = append(existing, share)
+		required = append(required, principal)
 	}
 	// Check Nextcloud's state, rather than treating a successful POST as proof
 	// that every expected share actually landed.
@@ -280,10 +330,7 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 	if err != nil {
 		return fmt.Errorf("verify recording shares: %w", err)
 	}
-	for _, principal := range audience {
-		if principal.Type == "user" && principal.ID == ncRecordingsOwner {
-			continue
-		}
+	for _, principal := range required {
 		if !shareCoversPrincipal(verified, principal) {
 			return fmt.Errorf("recording share for %s %s is missing after publication", principal.Type, principal.ID)
 		}

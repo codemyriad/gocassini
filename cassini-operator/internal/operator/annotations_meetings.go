@@ -83,11 +83,11 @@ func (s *annotationService) readMeeting(w http.ResponseWriter, r *http.Request, 
 	ctx, cancel := context.WithTimeout(r.Context(), annotateRequestTimeout)
 	defer cancel()
 
-	relPath, _, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
+	relPath, opusName, _, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
 	if !ok {
 		return
 	}
-	result, err := s.readDocument(ctx, caller, meetingID, relPath)
+	result, err := s.readDocument(ctx, caller, meetingID, opusName, relPath)
 	if err != nil {
 		s.answerFailure(w, r, "read meeting="+meetingID, err)
 		return
@@ -139,11 +139,11 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithTimeout(r.Context(), annotateRequestTimeout)
 	defer cancel()
 
-	relPath, visible, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
+	relPath, opusName, visible, ok := s.visibleRecording(ctx, w, r, caller, meetingID)
 	if !ok {
 		return
 	}
-	result, err := s.commitAndRecord(ctx, meetingID, relPath, visible, caller, request)
+	result, err := s.commitAndRecord(ctx, meetingID, opusName, relPath, visible, caller, request)
 	if err != nil {
 		s.answerFailure(w, r, "write meeting="+meetingID, err)
 		return
@@ -163,32 +163,28 @@ func (s *annotationService) writeMeeting(w http.ResponseWriter, r *http.Request,
 
 // commitAndRecord is the one write path, for a batch of marks and a tag job
 // alike: commit the batch and index the resulting archive document.
-func (s *annotationService) commitAndRecord(ctx context.Context, meetingID, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
-	return s.commitDocument(ctx, meetingID, relPath, visible, caller, request)
+func (s *annotationService) commitAndRecord(ctx context.Context, meetingID, opusName, relPath string, visible []string, caller string, request annotateWriteRequest) (annotateResult, error) {
+	return s.commitDocument(ctx, meetingID, opusName, relPath, visible, caller, request)
 }
 
-func (s *annotationService) visibleRecording(ctx context.Context, w http.ResponseWriter, r *http.Request, caller, meetingID string) (string, []string, bool) {
+func (s *annotationService) visibleRecording(ctx context.Context, w http.ResponseWriter, r *http.Request, caller, meetingID string) (string, string, []string, bool) {
 	entries, ok := s.exapp.resolveVisibleMeetings(ctx, w, s.client, caller, s.logger, "annotations meetings")
 	if !ok {
-		return "", nil, false
+		return "", "", nil, false
 	}
-	_, root := ncArchiveReadIdentity(caller)
 	for _, entry := range entries {
 		if entry.id == meetingID && strings.HasSuffix(entry.opusName, ".opus") {
-			if s.exapp.sharePaths != nil {
-				rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
-				if err != nil {
-					s.answerFailure(w, r, "meeting="+meetingID, annotateUnavailable(err))
-					return "", nil, false
-				}
-				return rel, visibleOpusNames(entries), true
+			rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
+			if err != nil {
+				s.answerFailure(w, r, "meeting="+meetingID, annotateUnavailable(err))
+				return "", "", nil, false
 			}
-			return root + "/meetings/" + entry.opusName, visibleOpusNames(entries), true
+			return rel, entry.opusName, visibleOpusNames(entries), true
 		}
 	}
 	s.answerFailure(w, r, "meeting="+meetingID, annotateNotFound(
 		fmt.Errorf("caller=%s asked for meeting=%s, which is not in their readable set (served as 404)", caller, meetingID)))
-	return "", nil, false
+	return "", "", nil, false
 }
 
 // recordCommitted brings the projection up to date with a committed write. A

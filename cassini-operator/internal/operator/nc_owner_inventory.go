@@ -27,7 +27,7 @@ func (c ExAppConfig) ownerRecordingNames(ctx context.Context, client *http.Clien
 		}
 		c.sharePaths.mu.Unlock()
 	}
-	relDir := ncDefaultRecordingsRoot + "/meetings"
+	relDir := ncRecordingsRoot + "/meetings"
 	endpoint := c.davFileURL(ncRecordingsOwner, relDir)
 	u, err := url.Parse(endpoint)
 	if err != nil {
@@ -46,6 +46,9 @@ func (c ExAppConfig) ownerRecordingNames(ctx context.Context, client *http.Clien
 		return nil, err
 	}
 	defer drainClose(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return map[int64]string{}, nil
+	}
 	if resp.StatusCode != http.StatusMultiStatus {
 		return nil, fmt.Errorf("owner recording inventory returned %d", resp.StatusCode)
 	}

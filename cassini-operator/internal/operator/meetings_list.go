@@ -348,7 +348,7 @@ func (c ExAppConfig) serveMeetingsList(ctx context.Context, w http.ResponseWrite
 		}
 	}
 	if response.Version == "" {
-		response.Version = catalogSchemaVersion
+		response.Version = "cassini.viewer.catalog.v1"
 	}
 	if filter.tag != "" {
 		entries, err := decodeCatalogEntries(resolved.body)

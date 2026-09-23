@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,7 +27,7 @@ func TestRecordingSharesUseCallerAndOCSEnvelope(t *testing.T) {
 			if got := r.FormValue("permissions"); got != "17" {
 				t.Errorf("permissions = %q", got)
 			}
-			if got := r.FormValue("path"); got != "/CassiniNoACL/Recordings/meetings/a.opus" {
+			if got := r.FormValue("path"); got != "/CassiniRecordings/meetings/a.opus" {
 				t.Errorf("path = %q", got)
 			}
 			_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":{"id":"10","share_type":0,"permissions":17}}}`)
@@ -43,10 +44,10 @@ func TestRecordingSharesUseCallerAndOCSEnvelope(t *testing.T) {
 	if p, err := got[0].recipientPath(); err != nil || p != "Shares/a.opus" {
 		t.Fatalf("recipient path = %q, %v", p, err)
 	}
-	if _, err := cfg.ownerSharesForPath(context.Background(), server.Client(), "CassiniNoACL/Recordings/meetings/a.opus"); err != nil {
+	if _, err := cfg.ownerSharesForPath(context.Background(), server.Client(), "CassiniRecordings/meetings/a.opus"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cfg.createRecordingShare(context.Background(), server.Client(), "CassiniNoACL/Recordings/meetings/a.opus", aclMapping{Type: "user", ID: "alice"}, ncShareRead|ncShareReshare); err != nil {
+	if _, err := cfg.createRecordingShare(context.Background(), server.Client(), "CassiniRecordings/meetings/a.opus", aclMapping{Type: "user", ID: "alice"}, ncShareRead|ncShareReshare); err != nil {
 		t.Fatal(err)
 	}
 	if len(calls) != 3 || !strings.Contains(calls[0], "shared_with_me=true") || !strings.Contains(calls[1], "path=") {
@@ -99,10 +100,55 @@ func TestPublicShareFallsBackToReadWhenInstanceRefusesResharing(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
-	if err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncDefaultRecordingsRoot+"/meetings/a.opus", []aclMapping{{Type: "user", ID: "alice"}}, true); err != nil {
+	if err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", []aclMapping{{Type: "user", ID: "alice"}}, true); err != nil {
 		t.Fatal(err)
 	}
 	if permissions != ncShareRead || posts != 2 {
 		t.Fatalf("permissions=%d posts=%d, want read-only fallback", permissions, posts)
+	}
+}
+
+func TestRecordingSharesKeepValidRecipientsWhenOneIsRefused(t *testing.T) {
+	shares := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			principal := r.FormValue("shareWith")
+			if principal == "bob" {
+				_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":404,"message":"user not found"},"data":[]}}`)
+				return
+			}
+			shares[principal] = true
+			_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":{"id":1}}}`)
+			return
+		}
+		items := []map[string]any{}
+		for principal := range shares {
+			items = append(items, map[string]any{"id": 1, "share_type": 0, "share_with": principal, "permissions": 1})
+		}
+		encoded, _ := json.Marshal(items)
+		_, _ = fmt.Fprintf(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":%s}}`, encoded)
+	}))
+	defer server.Close()
+	defer ncAccessSubstrate.reset()
+	ncAccessSubstrate.reset()
+	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
+	audience := []aclMapping{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}, {Type: "user", ID: "carol"}}
+	if err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false); err != nil {
+		t.Fatal(err)
+	}
+	if !shares["alice"] || !shares["carol"] || shares["bob"] {
+		t.Fatalf("shares = %v", shares)
+	}
+	if warning := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles).Warning; !strings.Contains(warning, "bob") {
+		t.Fatalf("warning = %q, want skipped recipient", warning)
+	}
+}
+
+func TestRecordingShareRequiresValidStarter(t *testing.T) {
+	cfg := ExAppConfig{}
+	for _, audience := range [][]aclMapping{nil, {{Type: "user", ID: ncRecordingsOwner}}, {{Type: "group", ID: "staff"}}} {
+		if err := cfg.reconcileRecordingShares(context.Background(), nil, "recording.opus", audience, false); err == nil {
+			t.Fatalf("accepted audience %v", audience)
+		}
 	}
 }

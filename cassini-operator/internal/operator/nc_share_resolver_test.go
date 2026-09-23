@@ -60,7 +60,7 @@ func TestDirectShareSnapshotRecoversOriginalNameAfterIndexLoss(t *testing.T) {
 		}
 		inventoryCalls++
 		w.WriteHeader(http.StatusMultiStatus)
-		_, _ = io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>/remote.php/dav/files/cassini/CassiniNoACL/Recordings/meetings/A.opus</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop><oc:fileid>11</oc:fileid><d:resourcetype/></d:prop></d:propstat></d:response></d:multistatus>`)
+		_, _ = io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>/remote.php/dav/files/cassini/CassiniRecordings/meetings/A.opus</d:href><d:propstat><d:status>HTTP/1.1 200 OK</d:status><d:prop><oc:fileid>11</oc:fileid><d:resourcetype/></d:prop></d:propstat></d:response></d:multistatus>`)
 	}))
 	defer server.Close()
 	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret", sharePaths: &recordingSharePathCache{}}
@@ -75,17 +75,5 @@ func TestDirectShareSnapshotRecoversOriginalNameAfterIndexLoss(t *testing.T) {
 	}
 	if inventoryCalls != 1 {
 		t.Fatalf("owner inventory calls = %d, want one cold recovery call", inventoryCalls)
-	}
-}
-
-func TestRecordingSharePathCacheKeepsInFlightAnnotationName(t *testing.T) {
-	cache := &recordingSharePathCache{}
-	cache.put("alice", map[string]string{"A.opus": "Shared/Old.opus"})
-	cache.put("alice", map[string]string{"A.opus": "Shared/New.opus"})
-	if name, ok := cache.originalName("alice", "Shared/Old.opus"); !ok || name != "A.opus" {
-		t.Fatalf("original name during an in-flight annotation = %q, %v", name, ok)
-	}
-	if current, ok := cache.get("alice", "A.opus"); !ok || current != "Shared/New.opus" {
-		t.Fatalf("current media path = %q, %v", current, ok)
 	}
 }

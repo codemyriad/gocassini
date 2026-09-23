@@ -74,15 +74,19 @@ func TestDirectSharePublishStoresPrivateFileAndVerifiedShares(t *testing.T) {
 	defer server.Close()
 	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret", PublishSink: publishSinkNextcloudFiles}
 	sink := &directSharesPublishSink{&nextcloudFilesPublishSink{cfg: cfg, client: server.Client(), logger: log.New(ioDiscard{}, "", 0), rt: rt}}
-	ncAccessSubstrate.setProbe(ncStorageProbe{})
+	ncAccessSubstrate.reset()
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.beginRun()
+	ncAccessSubstrate.succeed()
+	t.Cleanup(ncAccessSubstrate.reset)
 	if _, err := sink.Deliver(ctx, publishDelivery{AttemptSitePath: attempt, JobID: jobID, RoomName: "Room One"}); err != nil {
 		t.Fatal(err)
 	}
-	remote := ncDefaultRecordingsRoot + "/meetings/" + jobID + ".opus"
+	remote := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
 	if got := string(files.files[remote]); got != "sealed bytes" {
 		t.Fatalf("remote bytes = %q", got)
 	}
-	if _, wroteCatalog := files.files[ncDefaultRecordingsRoot+"/catalog.json"]; wroteCatalog {
+	if _, wroteCatalog := files.files[ncRecordingsRoot+"/catalog.json"]; wroteCatalog {
 		t.Fatal("wrote a remote catalog")
 	}
 	if len(created) != 2 || shares["alice"] != 17 || shares["bob"] != 17 {

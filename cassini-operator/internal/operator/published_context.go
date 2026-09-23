@@ -395,7 +395,6 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 	// The root is taken with the identity the staging download will use, from
 	// the one place that pairs them: a path under the wrong model's root is a
 	// 404 at best and the other model's archive at worst.
-	_, root := ncArchiveReadIdentity(caller)
 	readable := make(map[string]string, len(document.Meetings))
 	for _, entry := range document.Meetings {
 		id := strings.TrimSpace(entry.ID)
@@ -412,13 +411,9 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 			continue
 		}
 		if _, taken := readable[id]; !taken {
-			rel := root + "/meetings/" + base
-			if c.sharePaths != nil {
-				var err error
-				rel, err = c.recipientRecordingPath(ctx, client, caller, base, c.meetingMetadata)
-				if err != nil {
-					continue
-				}
+			rel, err := c.recipientRecordingPath(ctx, client, caller, base, c.meetingMetadata)
+			if err != nil {
+				continue
 			}
 			readable[id] = rel
 		}
@@ -432,10 +427,7 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 // default model, where reading as the caller would find nothing at all. It draws
 // down a shared byte budget so one request cannot stage the archive.
 func (c ExAppConfig) stageMeetingForContext(ctx context.Context, client *http.Client, caller, relPath, destPath string, budget *int64) (int, error) {
-	readAs, _ := ncArchiveReadIdentity(caller)
-	if c.sharePaths != nil {
-		readAs = caller
-	}
+	readAs := caller
 	written, status, err := c.stageRecording(ctx, client, readAs, relPath, destPath, *budget)
 	if err != nil {
 		return status, err

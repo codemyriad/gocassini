@@ -21,7 +21,7 @@ import (
 // account to grant read on, so they are warned about and skipped.
 
 // aclMapping is one advanced-ACL principal a recording is granted read on. Type
-// is the groupfolders mapping type ("user", "group", "circle"); ID is the
+// is the Nextcloud share principal type ("user", "group", "circle"); ID is the
 // principal identifier (a Nextcloud user id, group id, or circle/team id).
 type aclMapping struct {
 	Type string

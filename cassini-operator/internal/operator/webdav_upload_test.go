@@ -8,13 +8,18 @@ import (
 )
 
 func testExAppConfig(ncURL string) ExAppConfig {
-	return ExAppConfig{
+	cfg := ExAppConfig{
 		NextcloudURL: ncURL,
+		sharePaths:   &recordingSharePathCache{},
 		AppSecret:    "sekret",
 		AppID:        "gocassini",
 		AppVersion:   "1.2.3",
 		AAVersion:    "34.0.0",
 	}
+	if value, ok := testCatalogRegistry.Load(ncURL); ok {
+		cfg.meetingMetadata = value.(*meetingMetadataStore)
+	}
+	return cfg
 }
 
 type davRequest struct {
@@ -50,7 +55,9 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
+	cfg := testExAppConfig(srv.URL)
+	cfg.sharePaths.put("alice", map[string]string{"demo.opus": "Cassini/Recordings/meetings/demo.opus"})
+	proxy := cfg.ncFilesProxy(nil, searchDeps{})
 	if proxy == nil {
 		t.Fatal("proxy nil with full ExApp config")
 	}
@@ -92,7 +99,9 @@ func TestNCFilesProxyMakesFilesMissAuthoritative(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil, searchDeps{})
+	cfg := testExAppConfig(srv.URL)
+	cfg.sharePaths.put("alice", map[string]string{"nope.opus": "Cassini/Recordings/meetings/nope.opus"})
+	proxy := cfg.ncFilesProxy(nil, searchDeps{})
 	rec := httptest.NewRecorder()
 	req := callerReq(http.MethodGet, "/published/meetings/nope.opus", "alice")
 	if !proxy(rec, req, "meetings/nope.opus") {

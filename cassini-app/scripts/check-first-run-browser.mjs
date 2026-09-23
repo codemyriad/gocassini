@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The first-run dialog, the audience chip and the settings section, driven in a
+// The first-run dialog, participant disclosure and setup section, driven in a
 // real browser against synthetic API responses (D-756).
 //
 // It exists because the rest of this package's tests read .svelte files as
@@ -49,9 +49,7 @@ process.chdir(appRoot);
 
 // --- what the operator would say --------------------------------------------
 
-const ACCOUNT_CAUSE =
-  "Nextcloud is not letting the cassini account write to its files. This usually means the " +
-  "account was removed or its group changed.";
+const ACCOUNT_CAUSE = "The Cassini recordings account does not exist.";
 const ACCOUNT_STEP = "owner_account";
 
 const catalog = {
@@ -86,134 +84,24 @@ const catalog = {
   ],
 };
 
-// The two account steps a fresh install's plan carries, in the operator's own
-// order: the group before the account that joins it.
-const ACCOUNT_PLAN = [
-  {
-    id: "group",
-    action: "create_group",
-    title: "Create the cassini group",
-    args: { group: "cassini" },
-    browser: true,
-    occ: "occ group:add cassini",
-    app_url: "",
-  },
-  {
-    id: "user",
-    action: "create_user",
-    title: "Create the cassini account",
-    args: { user: "cassini", group: "cassini", display_name: "Cassini" },
-    browser: true,
-    occ: "occ user:add --group=cassini cassini",
-    app_url: "",
-  },
-];
+const ACCOUNT_PLAN = [{
+  id: "user", action: "create_user", title: "Create the cassini account",
+  args: { user: "cassini", display_name: "Cassini" }, browser: true,
+  occ: "occ user:add cassini",
+}];
 
 function storage({ accountExists, firstRun, healthy }) {
   return {
-    mode: "default",
-    mode_source: "resolved_on_enable",
-    mode_confirmed: true,
-    awaiting_choice: false,
     first_run: firstRun,
     service_account: {
-      user: "cassini",
-      known: true,
-      exists: accountExists,
+      user: "cassini", known: true, exists: accountExists,
       reset_occ: "occ user:resetpassword cassini",
     },
-    migration_clean: true,
-    pending_cleanup: "",
-    stranded_root: "",
-    stranded_recordings: 0,
-    ok: healthy,
-    state: healthy ? "provisioned" : "unavailable",
-    step: healthy ? "" : ACCOUNT_STEP,
-    detail: "",
+    ok: healthy, state: healthy ? "provisioned" : "unavailable",
+    step: healthy ? "" : ACCOUNT_STEP, detail: "",
     checked_at: "2026-09-11T09:00:00Z",
-    migration: null,
-    transition: null,
-    installs: [],
-    preview: null,
-    modes: [
-      {
-        mode: "default",
-        label: "Default",
-        active: true,
-        available: accountExists,
-        summary: "",
-        consequence: "",
-        blocker: "",
-        step: "",
-        instructions: [],
-        // A plan for the account exists only while the account does not: the
-        // operator recomputes it from what it can see.
-        setup: accountExists ? [] : ACCOUNT_PLAN,
-        root: "CassiniNoACL/Recordings",
-        archive: { probed: true, present: true, meetings: 2, catalog: true },
-      },
-      {
-        mode: "access_controlled",
-        label: "Access controlled",
-        active: false,
-        available: false,
-        summary: "",
-        consequence: "",
-        blocker: "",
-        step: "",
-        instructions: [],
-        setup: [],
-        root: "Cassini/Recordings",
-        archive: { probed: true, present: false, meetings: 0, catalog: false },
-      },
-    ],
+    setup: accountExists ? [] : ACCOUNT_PLAN,
   };
-}
-
-// Real UI, synthetic migration and ACL responses. No permission writes may
-// happen until the administrator selects a recording and confirms restriction.
-function accessReviewFixture({ mode = "default", failReview = false, count = 1, known = true, initiallyRestricted = false } = {}) {
-  const writes = [];
-  let restricted = initiallyRestricted;
-  let reviews = 0;
-  const row = { id: "admin-only", room_name: "Admin only room", narrowable: true,
-    audience: [{ type: "user", id: "admin" }], audience_digest: "captured-admin-roster" };
-  const snapshot = () => {
-    const state = storage({ accountExists: true, firstRun: false, healthy: true });
-    state.mode = mode;
-    for (const option of state.modes) {
-      option.active = option.mode === mode;
-      option.available = true;
-      option.archive.meetings = option.active ? count : 0;
-      option.archive.probed = known;
-    }
-    return state;
-  };
-  return { writes, get reviews() { return reviews; }, handle: async (route, request) => {
-    const body = request.postDataJSON();
-    const action = body?.action;
-    if (request.method() === "PUT") {
-      assert.equal(body.access_control_enabled, true);
-      mode = "access_controlled";
-      writes.push("switch");
-    }
-    if (action === "list_unrestricted") reviews++;
-    if (action === "list_unrestricted" && failReview) {
-      failReview = false;
-      return route.fulfill({ status: 503, json: { error: "Permission check unavailable" } });
-    }
-    const state = snapshot();
-    if (action === "restrict_meetings") {
-      assert.deepEqual(body.meetings, [{ id: row.id, audience_digest: row.audience_digest }]);
-      writes.push("restrict");
-      restricted = true;
-      state.restricted = [{ id: row.id, outcome: "restricted", grants: 1 }];
-    }
-    if (["list_unrestricted", "restrict_meetings"].includes(action)) {
-      state.open_recordings = { recordings: restricted || count === 0 ? [] : [row], ignored: [], narrowable: restricted || count === 0 ? 0 : 1 };
-    } else assert([undefined, "recheck"].includes(action), `Unexpected storage action: ${action}`);
-    return route.fulfill({ json: state });
-  }};
 }
 
 // --- the harness -------------------------------------------------------------
@@ -327,12 +215,9 @@ try {
               ok: healthy,
               state: healthy ? "provisioned" : "unavailable",
               step: healthy ? "" : ACCOUNT_STEP,
-              // Empty on purpose: the operator withholds a sentence that would
-              // name an account, and the app's own fallback is what an
-              // administrator then reads.
-              cause: "",
+              cause: healthy ? "" : ACCOUNT_CAUSE,
               detail: "",
-              mode: "default",
+              mode: "direct_shares",
             },
           },
           healthy ? 200 : 503,
@@ -344,7 +229,7 @@ try {
           ok: healthy,
           state: healthy ? "provisioned" : "unavailable",
           awaiting_choice: false,
-          mode: "default",
+          mode: "direct_shares",
           cause: "",
           features: { summaries: true, insights: true },
         });
@@ -472,7 +357,7 @@ try {
   // The audience, stated beside the Rooms heading as a label whose detail opens
   // on hover, focus or tap.
   const audienceChip = (page) =>
-    page.getByRole("button", { name: "Visible to all users", exact: true });
+    page.getByRole("button", { name: "Shared with participants", exact: true });
   const meeting = (page) => page.getByText("Project kickoff (demo recording)", { exact: true });
 
   // (a) A fresh install, as the administrator who enabled the app.
@@ -481,15 +366,9 @@ try {
   }, async (page, { actions, ncWrites }) => {
     await visible(dialog(page));
     await visible(page.getByRole("heading", { name: "Cassini is ready to record", exact: true }));
-    // Who can see recordings, and the rooms they came from, before anything
-    // about how Cassini works (11 September product decision) — asked as a
-    // choice, with the audience in force already chosen, so starting keeps it.
-    await visible(page.getByRole("radiogroup", { name: "Who can see recordings", exact: true }));
-    assert.equal(
-      await page.getByRole("radio", { name: /^Everyone with a Nextcloud account/ }).getAttribute("aria-checked"),
-      "true",
-      "the audience in force is the one the dialog starts with",
-    );
+    // The one permission rule is visible before account creation.
+    await visible(page.getByText("Room participants", { exact: true }));
+    await absent(page.getByRole("radiogroup"), "there is no storage-model choice");
     // The archive is behind it, not replaced by it: this dialog is a
     // disclosure, not a gate on reading what is already published.
     await visible(meeting(page));
@@ -501,12 +380,8 @@ try {
     await page.getByRole("button", { name: "Create the account and start", exact: true }).click();
     await dialog(page).waitFor({ state: "detached" });
 
-    // The group before the account that joins it, then the operator: look
-    // again, and only then record that the first run happened.
-    assert.deepEqual(ncWrites, [
-      "POST /ocs/v2.php/cloud/groups",
-      "POST /ocs/v2.php/cloud/users",
-    ]);
+    // Create the account, recheck, then acknowledge the first run.
+    assert.deepEqual(ncWrites, ["POST /ocs/v2.php/cloud/users"]);
     assert.equal(await page.evaluate(() => window.__cassiniConfirmations) >= 1, true,
       "creating the account goes through Nextcloud's own password confirmation");
     const answered = actions.indexOf("acknowledge_first_run");
@@ -519,31 +394,15 @@ try {
     await visible(audienceChip(page));
   });
 
-  // (b) The other audience. Choosing it changes nothing here and answers
-  // nothing: the dialog hands the choice to the settings section, whose switch
-  // does the work, and the first run is acknowledged only once that completes.
-  await scenario("choose the other audience: nothing is acknowledged on the way out", {}, async (page, { actions, ncWrites }) => {
+  // (b) A pre-existing account only needs the disclosure acknowledged.
+  await scenario("existing account: acknowledge the participant rule", { accountExists: true }, async (page, { actions, ncWrites }) => {
     await visible(dialog(page));
-    await page.getByRole("radio", { name: /^Room members/ }).click();
-    await page.getByRole("button", { name: "Continue in Publish pipeline", exact: true }).click();
+    await visible(page.getByText("Room participants", { exact: true }));
+    await page.getByRole("button", { name: "Start recording", exact: true }).click();
     await dialog(page).waitFor({ state: "detached" });
-
-    assert.deepEqual(ncWrites, [], "leaving for the settings writes nothing to Nextcloud");
-    assert.equal(
-      actions.includes("acknowledge_first_run"),
-      false,
-      "the first run must not be acknowledged by a button that created no account",
-    );
-
-    // It lands on the section it named, not on the operator's front page.
-    const hash = new URL(page.url()).hash;
-    assert.match(hash, /surface=operator/);
-    assert.match(hash, /panel=pipeline/);
-    await visible(page.getByRole("heading", { name: "Who can see recordings", exact: true }));
-    // …where the account can still be made.
-    await visible(page.getByText("Cassini needs a Nextcloud account to keep recordings in.", { exact: true }));
-    await visible(page.getByRole("button", { name: "Create the account", exact: true }));
-    await screenshot(page, "settings-account-row.png");
+    assert.deepEqual(ncWrites, []);
+    assert(actions.includes("acknowledge_first_run"));
+    await visible(audienceChip(page));
   });
 
   // (c) Everybody else, on an install with nothing wrong with it.
@@ -653,86 +512,18 @@ try {
     await visible(page.getByRole("heading", { name: "Who can see recordings", exact: true }));
   }
 
-  const review = accessReviewFixture();
-  await scenario("Room members switch reveals existing access; reload and restriction require review", {
-    firstRun: false, accountExists: true, storage: review.handle,
-  }, async page => {
+  await scenario("direct shares: one rule and a working recheck", {
+    firstRun: false, accountExists: true,
+  }, async (page, { actions, ncWrites }) => {
     await openPipeline(page);
-    await page.getByRole("radio", { name: /^Room members/ }).click();
-    await page.getByRole("button", { name: "Switch", exact: true }).click();
-    await visible(page.getByLabel("Restrict Admin only room", { exact: true }));
-    assert.deepEqual(review.writes, ["switch"], "review must not apply ACLs automatically");
-    await screenshot(page, "review-after-switch.png");
-
-    await page.reload({ waitUntil: "networkidle" });
-    await visible(page.getByRole("button", { name: "Review existing recordings", exact: true }));
-    await visible(page.getByText("You have 1 recording. Existing recordings may still be visible to everyone. Review their access below.", { exact: true }));
-    await page.getByRole("button", { name: "Review existing recordings", exact: true }).click();
-    await page.getByLabel("Restrict Admin only room", { exact: true }).check();
-    await page.getByRole("button", { name: "Restrict 1 recording to room members", exact: true }).click();
-    assert.deepEqual(review.writes, ["switch"], "selection must wait for confirmation");
-    const confirmation = page.getByRole("alertdialog", { name: "Restrict this recording?", exact: true });
-    await confirmation.getByRole("button", { name: "Restrict 1 recording to room members", exact: true }).click();
-    await page.getByLabel("Restrict Admin only room", { exact: true }).waitFor({ state: "detached" });
-    assert.deepEqual(review.writes, ["switch", "restrict"]);
-    await visible(page.getByText("No recordings to review. Ignored recordings keep their current permissions.", { exact: true }));
-    await absent(page.getByRole("button", { name: "Review existing recordings", exact: true }), "completed review should dismiss the amber prompt");
-    await absent(page.locator(".access-existing"), "completed review should dismiss stale review guidance");
-    await page.getByRole("button", { name: "Check recording access again", exact: true }).click();
-    await visible(page.getByText("No recordings to review. Ignored recordings keep their current permissions.", { exact: true }));
-    assert.deepEqual(review.writes, ["switch", "restrict"]);
+    await visible(page.getByText("Cassini uses Nextcloud file shares for every meeting.", { exact: true }));
+    await visible(page.getByText("Nextcloud sharing is ready.", { exact: true }));
+    await absent(page.locator("#recording-storage").getByRole("radio"), "recording access has no permission-model choice");
+    await page.getByRole("button", { name: "Check this Nextcloud again", exact: true }).click();
+    await visible(page.getByText("Nextcloud sharing is ready.", { exact: true }));
+    assert(actions.includes("recheck"));
+    assert.deepEqual(ncWrites, []);
   });
-
-  const failedReview = accessReviewFixture({ failReview: true });
-  await scenario("failed review preserves successful mode switch and offers retry", {
-    firstRun: false, accountExists: true, storage: failedReview.handle,
-  }, async page => {
-    await openPipeline(page);
-    await page.getByRole("radio", { name: /^Room members/ }).click();
-    await page.getByRole("button", { name: "Switch", exact: true }).click();
-    await visible(page.getByRole("button", { name: "Try again", exact: true }));
-    assert.equal(await page.getByRole("radio", { name: /^Room members/ }).getAttribute("aria-checked"), "true");
-    await absent(page.getByText("No recordings to review", { exact: true }), "a failed check is not an empty review");
-    assert.deepEqual(failedReview.writes, ["switch"]);
-    await page.getByRole("button", { name: "Try again", exact: true }).click();
-    await visible(page.getByLabel("Restrict Admin only room", { exact: true }));
-    assert.deepEqual(failedReview.writes, ["switch"]);
-  });
-
-  const emptyArchive = accessReviewFixture({ count: 0 });
-  await scenario("empty archive switches without prompting for an unnecessary review", {
-    firstRun: false, accountExists: true, storage: emptyArchive.handle,
-  }, async page => {
-    await openPipeline(page);
-    await page.getByRole("radio", { name: /^Room members/ }).click();
-    await page.getByRole("button", { name: "Switch", exact: true }).click();
-    await visible(page.getByText("Done. New recordings are visible to room members only.", { exact: true }));
-    await absent(page.getByRole("button", { name: "Review existing recordings", exact: true }), "zero recordings need no review prompt");
-    await absent(page.locator("summary").filter({ hasText: "Recordings visible to everyone" }), "zero recordings need no review disclosure");
-    assert.equal(emptyArchive.reviews, 0);
-    await page.reload({ waitUntil: "networkidle" });
-    await visible(page.getByText("No recordings yet. Only room members will be able to see them.", { exact: true }));
-    await absent(page.getByRole("button", { name: "Review existing recordings", exact: true }), "empty archive stays quiet on reload");
-    assert.equal(emptyArchive.reviews, 0);
-  });
-
-  for (const [name, options] of [
-    ["already restricted archive", { initiallyRestricted: true }],
-    ["unknown archive count", { count: 0, known: false }],
-  ]) {
-    const fixture = accessReviewFixture({ mode: "access_controlled", ...options });
-    await scenario(`${name}: offer review until a successful empty result`, {
-      firstRun: false, accountExists: true, storage: fixture.handle,
-    }, async page => {
-      await openPipeline(page);
-      await page.getByRole("button", { name: "Review existing recordings", exact: true }).click();
-      await visible(page.getByText("No recordings to review. Ignored recordings keep their current permissions.", { exact: true }));
-      await absent(page.getByRole("button", { name: "Review existing recordings", exact: true }), "successful empty review dismisses the warning");
-      await visible(page.getByRole("button", { name: "Check recording access again", exact: true }));
-      assert.equal(fixture.reviews, 1);
-      assert.deepEqual(fixture.writes, []);
-    });
-  }
 
   console.log(`${checks} first-run browser scenarios passed${screenshotDir ? `; screenshots: ${screenshotDir}` : ""}.`);
 } finally {

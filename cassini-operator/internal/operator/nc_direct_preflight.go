@@ -7,10 +7,8 @@ import (
 	"net/http"
 )
 
-// preflightDirectShares checks only the prerequisites of the direct-share
-// model. The groupfolders and group_everyone apps are optional and never gate
-// recording. It reuses the owner-account probe while the old setup API is
-// being retired.
+// preflightDirectShares checks only core Nextcloud account, DAV and sharing
+// capabilities. It does not require Group Folders or Everyone Group.
 func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logger) {
 	if !c.appAPIActive() {
 		return
@@ -26,27 +24,36 @@ func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logg
 	}
 	ncAccessSubstrate.setAdminUser(probe.AdminUser)
 	c.ensureServiceAccountOnEnable(ctx, client, &probe, logger)
-	ncAccessSubstrate.setProbe(probe)
-	ncAccessSubstrate.setPrerequisites(nil)
-	ncStorage.set(false, storageModeSourceResolved, true)
-	ncAccessSubstrate.setMode(storageModeName(false), storageModeSourceResolved)
 	if !probe.ServiceAccount {
-		ncAccessSubstrate.unavailable(storageStepServiceAccount, errors.New("the cassini service account is missing"))
+		ncAccessSubstrate.setProbe(probe)
+		ncAccessSubstrate.unavailable(storageStepServiceAccount, errors.New(probe.serviceAccountDetail()))
 		return
 	}
-	if !probe.DefaultRootProbed || probe.DefaultRootShadowed {
-		ncAccessSubstrate.unavailable("private_archive", errors.New("the private archive path could not be confirmed free of Team folder mounts"))
-		return
-	}
-	for _, dir := range recordingsTreeDirs(ncDefaultRecordingsRoot) {
+	for _, dir := range recordingsTreeDirs(ncRecordingsRoot) {
+		if dir == ncRecordingsRoot {
+			if _, err := c.privateArchiveRoot(ctx, client); err != nil {
+				ncAccessSubstrate.degraded("private_archive", err)
+				return
+			}
+		}
 		if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
 			ncAccessSubstrate.degraded("private_archive", err)
 			return
 		}
 	}
+	if _, err := c.privateArchiveRoot(ctx, client); err != nil {
+		ncAccessSubstrate.degraded("private_archive", err)
+		return
+	}
+	probe.PrivateRoot = true
+	ncAccessSubstrate.setProbe(probe)
 	if _, err := c.shareRequest(ctx, client, ncRecordingsOwner, http.MethodGet, c.shareAPIURL(), nil); err != nil {
 		ncAccessSubstrate.unavailable("sharing_api", err)
 		return
 	}
 	ncAccessSubstrate.succeed()
+}
+
+func (c ExAppConfig) preflightNCStorage(ctx context.Context, logger *log.Logger) {
+	c.preflightDirectShares(ctx, logger)
 }

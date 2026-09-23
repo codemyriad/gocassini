@@ -45,8 +45,7 @@ From the repo root:
 This one command:
 
 - starts local Nextcloud + AppAPI/HaRP + the full Talk signaling stack;
-- may install Team folders and Everyone Group for older harness scenarios;
-  Cassini's direct-share model does not require either app;
+- creates the private recordings owner account;
 - builds and tags the Cassini ExApp image from `appinfo/info.xml`;
 - installs/reinstalls Cassini via AppAPI;
 - passes both Talk secrets as deploy env, and points Talk's `recording_servers`
@@ -58,10 +57,9 @@ checkout; otherwise the harness deliberately runs the previously built image,
 which may be an older release even though Git is on your feature branch.
 
 The installed app writes recordings to the `cassini` account's private
-`CassiniNoACL/Recordings` tree and creates direct Nextcloud Files shares for the
-captured Talk room audience. The harness's `--storage-mode` options remain for
-older regression fixtures; they do not change the installed app's sharing
-rule. See [Recording permissions](./direct-shares-cutover.md).
+`CassiniRecordings/meetings` tree and creates direct Nextcloud Files shares for the
+captured Talk room audience. See
+[Recording permissions](./direct-shares-cutover.md).
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:
 

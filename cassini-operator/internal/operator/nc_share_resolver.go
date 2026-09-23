@@ -24,10 +24,8 @@ type recordingSharePathCache struct {
 }
 
 type recordingSharePathEntry struct {
-	expires        time.Time
-	paths          map[string]string
-	reverse        map[string]string
-	reverseExpires time.Time
+	expires time.Time
+	paths   map[string]string
 }
 
 const recordingSharePathTTL = 60 * time.Second
@@ -48,20 +46,6 @@ func (cache *recordingSharePathCache) get(caller, name string) (string, bool) {
 	return value, ok
 }
 
-func (cache *recordingSharePathCache) originalName(caller, relPath string) (string, bool) {
-	if cache == nil {
-		return "", false
-	}
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	entry, ok := cache.entries[caller]
-	if !ok || time.Now().After(entry.reverseExpires) {
-		return "", false
-	}
-	name, ok := entry.reverse[relPath]
-	return name, ok
-}
-
 func (cache *recordingSharePathCache) put(caller string, paths map[string]string) {
 	if cache == nil {
 		return
@@ -71,22 +55,8 @@ func (cache *recordingSharePathCache) put(caller string, paths map[string]string
 	if cache.entries == nil {
 		cache.entries = make(map[string]recordingSharePathEntry)
 	}
-	previous := cache.entries[caller]
-	reverse := make(map[string]string, len(paths))
-	// Annotation writes may outlive the 60-second media path cache. Keep their
-	// original-name mapping for the five-minute request deadline, including
-	// after another list refresh replaced the caller's current share paths.
-	if time.Now().Before(previous.reverseExpires) && len(previous.reverse) < 10000 {
-		for relPath, name := range previous.reverse {
-			reverse[relPath] = name
-		}
-	}
-	for name, relPath := range paths {
-		reverse[relPath] = name
-	}
 	cache.entries[caller] = recordingSharePathEntry{
 		expires: time.Now().Add(recordingSharePathTTL), paths: paths,
-		reverse: reverse, reverseExpires: time.Now().Add(10 * time.Minute),
 	}
 }
 
@@ -160,9 +130,6 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 				return directShareSnapshot{}, marshalErr
 			}
 			entry = fallback
-			if metadata != nil {
-				_ = metadata.Put(ctx, share.FileSource, name, fallback)
-			}
 		}
 		if !strings.HasSuffix(name, ".opus") || path.Base(name) != name {
 			continue

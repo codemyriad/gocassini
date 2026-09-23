@@ -142,21 +142,17 @@ Common options:
   --cassini none|installed-exapp
   --recording-backend legacy|direct-operator|installed-exapp|none
   --exapp-image-mode build|reuse-local|pull
-  --storage-mode default|acl-enabled
   --build
   --patch=auto|none|force
   --debug-skip-storage-scaffold
              build no recordings storage at all: no cassini service account,
-             no Team folder, neither native app. The state a real Nextcloud is
+             The state a real Nextcloud is
              in before anybody has set Cassini up, for exercising the app's own
              setup flow.
 
 up options:
   --resume   reuse matching stopped containers or retained harness volumes
   --reset    remove and recreate containers and volumes
-  --seed DIR load a seed pack into the recordings tree once the stack is up,
-             as written by 'cassini dev meetings pull --out DIR'. Seeded
-             meetings are readable by every account on the stack.
 
 down options (canonical teardown; containers are ephemeral, volumes persist):
   (none)      remove containers, keep volumes (persistence)
@@ -251,29 +247,9 @@ func runDevScriptExecDefault(ctx context.Context, repoRoot string, relativeScrip
 	return 0
 }
 
-// devScriptEnvironment merges a resolved stack plan into the caller's
-// environment. An undecided plan deliberately has no CASSINI_STORAGE_MODE;
-// remove any ambient override too, otherwise it would silently choose the mode
-// the caller explicitly left unselected.
+// devScriptEnvironment adds the resolved stack settings to child scripts.
 func devScriptEnvironment(baseEnv, extraEnv []string) []string {
-	undecided := false
-	for _, entry := range extraEnv {
-		if entry == "CASSINI_HARNESS_STORAGE_MODE=undecided" {
-			undecided = true
-			break
-		}
-	}
-	if !undecided {
-		return append(baseEnv, extraEnv...)
-	}
-
-	env := make([]string, 0, len(baseEnv)+len(extraEnv))
-	for _, entry := range baseEnv {
-		if !strings.HasPrefix(entry, "CASSINI_STORAGE_MODE=") {
-			env = append(env, entry)
-		}
-	}
-	return append(env, extraEnv...)
+	return append(baseEnv, extraEnv...)
 }
 
 func printDevUsage(w io.Writer) {

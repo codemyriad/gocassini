@@ -66,7 +66,7 @@ Flags:
 		fmt.Fprintf(stderr, "operator config: %v\n", err)
 		return backfillSearchExitNotStarted
 	}
-	if code != 0 || !resolveBackfillStorageMode(cfg, stderr) {
+	if code != 0 {
 		return backfillSearchExitNotStarted
 	}
 
@@ -74,7 +74,7 @@ Flags:
 	defer cancel()
 
 	logger := log.New(stderr, backfillAnnotationsCommand+": ", log.LstdFlags)
-	targets, err := exapp.archiveBackfillTargets(runCtx)
+	targets, err := exapp.archiveBackfillTargets(runCtx, cfg.DBPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "read archive catalog: %v\nnothing was read or written\n", err)
 		return backfillSearchExitNotStarted

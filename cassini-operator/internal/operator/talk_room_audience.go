@@ -57,7 +57,7 @@ const (
 // written. A column read back by a later release is a contract, so it gets a
 // type whose only job is to be that contract.
 type storedAudiencePrincipal struct {
-	// Type is the groupfolders mapping type: "user", "group" or "circle".
+	// Type is the Nextcloud share principal type: "user", "group" or "circle".
 	Type string `json:"type"`
 	ID   string `json:"id"`
 }

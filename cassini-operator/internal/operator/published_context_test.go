@@ -42,6 +42,9 @@ func stubRecordingsDAV(t *testing.T, catalog string, opus []byte, visible ...str
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := filepath.Base(r.URL.Path)
+		if serveTestShares(w, r, visible, 0) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && base == "catalog.json":
 			if !strings.Contains(r.URL.Path, "/files/"+ncRecordingsOwner+"/") {
@@ -73,6 +76,7 @@ func stubRecordingsDAV(t *testing.T, catalog string, opus []byte, visible ...str
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	registerTestCatalog(t, srv.URL, catalog)
 	t.Cleanup(srv.Close)
 	return srv, &fetched
 }
@@ -225,6 +229,9 @@ func TestMeetingsContextAnswers404WhenTheFetchIsDeniedAfterTheScan(t *testing.T)
 	// what an ACL changed between the two looks like.
 	var logs bytes.Buffer
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestShares(w, r, []string{"MEETING1.opus"}, 0) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "catalog.json"):
 			_, _ = w.Write([]byte(contextCatalog))
@@ -238,6 +245,7 @@ func TestMeetingsContextAnswers404WhenTheFetchIsDeniedAfterTheScan(t *testing.T)
 		}
 	}))
 	defer srv.Close()
+	registerTestCatalog(t, srv.URL, contextCatalog)
 	handler := contextTestConfig(srv.URL, writeFakeCassini(t, "exit 9\n")).meetingsContextHandler(log.New(&logs, "", 0))
 
 	w := httptest.NewRecorder()
@@ -319,6 +327,9 @@ func TestMeetingsContextFailsLoudly(t *testing.T) {
 		// the 404 branch — telling somebody who has just browsed their own
 		// meetings that one of them is not theirs (D-740).
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if serveTestShares(w, r, []string{"MEETING1.opus"}, http.StatusInternalServerError) {
+				return
+			}
 			switch {
 			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "catalog.json"):
 				_, _ = w.Write([]byte(contextCatalog))
@@ -337,7 +348,7 @@ func TestMeetingsContextFailsLoudly(t *testing.T) {
 		if w.Code != http.StatusBadGateway {
 			t.Fatalf("code = %d, want 502 — a scan that never ran is not a denial (%s)", w.Code, w.Body.String())
 		}
-		if !strings.Contains(logs.String(), "outage") {
+		if !strings.Contains(logs.String(), "per-caller catalog") {
 			t.Errorf("the log must say the empty set was read as an outage: %s", logs.String())
 		}
 	})

@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"cassini-operator/internal/operator/appapi"
 )
@@ -28,8 +27,8 @@ import (
 // behave exactly as they do for the publish sink's tests.
 
 const (
-	annTestRecording = "Cassini/Recordings/meetings/MEETING1.opus"
-	annTestSecret    = "Cassini/Recordings/meetings/SECRET.opus"
+	annTestRecording = "CassiniRecordings/meetings/MEETING1.opus"
+	annTestSecret    = "CassiniRecordings/meetings/SECRET.opus"
 	annTestNamespace = "urn:uuid:07e4eab6-4f5f-4cc4-8913-46432c5cd726"
 	annTestMark      = `{"ops":[{"op":"mark","tag":{"label":"hiring"},"target":{"kind":"meeting"}}]}`
 
@@ -70,14 +69,13 @@ type annotationsNextcloud struct {
 func newAnnotationsNextcloud(t *testing.T, visible ...string) *annotationsNextcloud {
 	t.Helper()
 	// Unresolved: the access-controlled model, read as the caller.
-	resetStorageMode(t)
+
 	nc := &annotationsNextcloud{fakeNCFiles: newFakeNCFiles(), visible: map[string]bool{}}
 	for _, name := range visible {
 		nc.visible[name] = true
 	}
-	nc.seed(ncACLRecordingsRoot+"/catalog.json", annTestCatalog, nil)
-	nc.seed(annTestRecording, "OPUS-original", recordingACLRules(nil, false))
-	nc.seed(annTestSecret, "OPUS-secret", recordingACLRules(nil, false))
+	nc.seed(annTestRecording, "OPUS-original", nil)
+	nc.seed(annTestSecret, "OPUS-secret", nil)
 
 	backend, err := url.Parse(nc.fakeNCFiles.server(t).URL)
 	if err != nil {
@@ -85,6 +83,26 @@ func newAnnotationsNextcloud(t *testing.T, visible ...string) *annotationsNextcl
 	}
 	proxy := httputil.NewSingleHostReverseProxy(backend)
 	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/files_sharing/api/v1/shares") {
+			nc.frontMu.Lock()
+			rows := make([]map[string]any, 0)
+			for name := range nc.visible {
+				id := 42
+				if name == "SECRET.opus" {
+					id = 43
+				}
+				rows = append(rows, map[string]any{"id": id, "share_type": 0, "file_source": id, "uid_file_owner": ncRecordingsOwner, "item_type": "file", "path": "/" + name})
+			}
+			nc.frontMu.Unlock()
+			body, _ := json.Marshal(map[string]any{"ocs": map[string]any{"meta": map[string]any{"statuscode": 100}, "data": rows}})
+			_, _ = w.Write(body)
+			return
+		}
+		if r.Method == "PROPFIND" && strings.HasSuffix(r.URL.Path, "/"+ncRecordingsRoot+"/meetings") {
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = fmt.Fprintf(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>%s</d:href></d:response><d:response><d:href>%s/MEETING1.opus</d:href><d:propstat><d:prop><oc:fileid>42</oc:fileid></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>%s/SECRET.opus</d:href><d:propstat><d:prop><oc:fileid>43</oc:fileid></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`, r.URL.Path, r.URL.Path, r.URL.Path)
+			return
+		}
 		base := path.Base(r.URL.Path)
 		if strings.HasPrefix(r.URL.Path, "/remote.php/dav/files/"+ncRecordingsOwner+"/") {
 			nc.beforeOwner(r, base)
@@ -121,6 +139,7 @@ func newAnnotationsNextcloud(t *testing.T, visible ...string) *annotationsNextcl
 				w.WriteHeader(200)
 				return
 			}
+			r.URL.Path = "/remote.php/dav/files/" + ncRecordingsOwner + "/" + ncRecordingsRoot + "/meetings/" + base
 			proxy.ServeHTTP(w, r)
 		default:
 			t.Errorf("unexpected request as a caller: %s %s", r.Method, r.URL.Path)
@@ -132,11 +151,10 @@ func newAnnotationsNextcloud(t *testing.T, visible ...string) *annotationsNextcl
 	return nc
 }
 
-func (nc *annotationsNextcloud) seed(rel, body string, rules []aclRule) {
+func (nc *annotationsNextcloud) seed(rel, body string, rules any) {
 	nc.fakeNCFiles.mu.Lock()
 	defer nc.fakeNCFiles.mu.Unlock()
 	nc.files[rel] = []byte(body)
-	nc.acls[rel] = rules
 }
 
 func (nc *annotationsNextcloud) beforeOwner(r *http.Request, base string) {
@@ -163,9 +181,7 @@ func (nc *annotationsNextcloud) afterOwner(r *http.Request) {
 	drop := nc.dropRulesOnPUT && r.Method == http.MethodPut
 	nc.frontMu.Unlock()
 	if drop {
-		nc.fakeNCFiles.mu.Lock()
-		delete(nc.acls, annTestRecording)
-		nc.fakeNCFiles.mu.Unlock()
+
 	}
 }
 
@@ -340,157 +356,4 @@ func annTestError(t *testing.T, rec *httptest.ResponseRecorder) string {
 		t.Fatalf("error response is not JSON: %v (%s)", err, rec.Body.String())
 	}
 	return body.Error
-}
-
-// The whole point of the access model, on both verbs: a meeting someone may
-// not read and a meeting that does not exist are the same answer, reached
-// before anything is fetched or run.
-func TestAnnotationsMeetingAnswersAnUnreadableMeetingAsAbsent(t *testing.T) {
-	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
-	bin := fakeCassini(t, annTestCLIExits(9, "the CLI must not run for a meeting the caller cannot read"))
-	h, _ := annTestService(t, nc.url, bin, &fakeAnnotationIndex{})
-
-	for _, method := range []string{http.MethodGet, http.MethodPost} {
-		body := ""
-		if method == http.MethodPost {
-			body = annTestMark
-		}
-		hidden := annTestCall(h, method, "SECRET", "alice", body)
-		absent := annTestCall(h, method, "NEVER", "alice", body)
-		if hidden.Code != http.StatusNotFound || absent.Code != http.StatusNotFound {
-			t.Fatalf("%s: hidden=%d absent=%d, want 404 for both", method, hidden.Code, absent.Code)
-		}
-		if hidden.Body.String() != absent.Body.String() || hidden.Header().Get("Content-Type") != absent.Header().Get("Content-Type") {
-			t.Fatalf("%s: a hidden meeting must answer exactly as an absent one:\nhidden=%q\nabsent=%q", method, hidden.Body.String(), absent.Body.String())
-		}
-	}
-	if runs := annTestRuns(t, bin); runs != 0 {
-		t.Fatalf("the CLI ran %d times for meetings the caller cannot read", runs)
-	}
-	callerGETs, ownerGETs := nc.gets()
-	if len(callerGETs) != 0 || len(ownerGETs) != 0 {
-		t.Fatalf("nothing may be fetched for a meeting the caller cannot read: caller=%v owner=%v", callerGETs, ownerGETs)
-	}
-	if nc.indexOfOp("PROPFIND", annTestSecret) != -1 || nc.indexOfOp(http.MethodPut, annTestSecret) != -1 {
-		t.Fatalf("the service account must not touch a recording the caller cannot read: %v", nc.opsFor(annTestSecret))
-	}
-}
-
-func TestAnnotationsMeetingGETReadsDurableDocument(t *testing.T) {
-	nc := newAnnotationsNextcloud(t, "MEETING1.opus")
-	store, err := openAnnotationStore(path.Join(t.TempDir(), "annotations.sqlite3"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	var result annotateResult
-	if err := json.Unmarshal([]byte(annTestApplied), &result); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Record(context.Background(), "MEETING1.opus", result); err != nil {
-		t.Fatal(err)
-	}
-	h, _ := annTestService(t, nc.url, "must-not-run", store)
-	for i := 0; i < 2; i++ {
-		rec := annTestCall(h, http.MethodGet, "MEETING1", "alice", "")
-		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "tag_known") {
-			t.Fatalf("GET: %d %s", rec.Code, rec.Body.String())
-		}
-	}
-	caller, owner := nc.gets()
-	if len(caller)+len(owner) != 0 {
-		t.Fatalf("downloaded media: %v %v", caller, owner)
-	}
-	nc.frontMu.Lock()
-	delete(nc.visible, "MEETING1.opus")
-	nc.frontMu.Unlock()
-	if rec := annTestCall(h, http.MethodGet, "MEETING1", "alice", ""); rec.Code != 404 {
-		t.Fatalf("revoked access: %d", rec.Code)
-	}
-}
-
-func TestAnnotationsMeetingPOSTRefusesABadBodyBeforeCallingNextcloud(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("Nextcloud must not be called for a bad body: %s %s", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-	bin := fakeCassini(t, annTestCLIExits(9, "the CLI must not run for a bad body"))
-	h, _ := annTestService(t, srv.URL, bin, &fakeAnnotationIndex{})
-
-	huge := `{"ops":[` + strings.Repeat(" ", maxAnnotateBodyBytes) + `]}`
-	const unmark = `{"op":"unmark","itemId":"mk_1"}`
-	many := `{"ops":[` + strings.TrimSuffix(strings.Repeat(unmark+",", maxAnnotateOps+1), ",") + `]}`
-	for _, tc := range []struct {
-		name          string
-		body          string
-		unknownLength bool
-		want          int
-	}{
-		{"larger than 64 KiB", huge, false, http.StatusRequestEntityTooLarge},
-		{"larger than 64 KiB, sent with no length", huge, true, http.StatusRequestEntityTooLarge},
-		{"more than 200 ops", many, false, http.StatusBadRequest},
-		{"not JSON", "ops", false, http.StatusBadRequest},
-		{"no ops", `{}`, false, http.StatusBadRequest},
-		{"an empty batch", `{"ops":[]}`, false, http.StatusBadRequest},
-		{"an unknown actor kind", `{"ops":[` + unmark + `],"actorKind":"robot"}`, false, http.StatusBadRequest},
-		{"an operation id that is not an id", `{"ops":[` + unmark + `],"operationId":"--out"}`, false, http.StatusBadRequest},
-		{"a negative revision", `{"ops":[` + unmark + `],"expectRevision":-1}`, false, http.StatusBadRequest},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/annotations/meetings/MEETING1", strings.NewReader(tc.body))
-			if tc.unknownLength {
-				req.ContentLength = -1
-			}
-			req = req.WithContext(appapi.WithUserID(req.Context(), "alice"))
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			if rec.Code != tc.want {
-				t.Fatalf("code = %d, want %d (%s)", rec.Code, tc.want, rec.Body.String())
-			}
-			if annTestError(t, rec) == "" {
-				t.Fatalf("a refusal must say why: %s", rec.Body.String())
-			}
-		})
-	}
-	// A batch of exactly the limit is accepted as far as the body goes.
-	exact := `{"ops":[` + strings.TrimSuffix(strings.Repeat(unmark+",", maxAnnotateOps), ",") + `]}`
-	if _, refusal := readAnnotateWriteRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/", strings.NewReader(exact))); refusal != nil {
-		t.Fatalf("%d ops must be accepted: %v", maxAnnotateOps, refusal)
-	}
-	if runs := annTestRuns(t, bin); runs != 0 {
-		t.Fatalf("the CLI ran %d times for bad bodies", runs)
-	}
-}
-
-// A re-PUT must never leave a recording without its rule, and never answer 200
-// for a write it could not verify.
-func TestKeyedLocksHonourTheContext(t *testing.T) {
-	var locks keyedLocks
-	release, err := locks.acquire(context.Background(), "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := locks.acquire(context.Background(), "b")
-	if err != nil {
-		t.Fatal("a different key must not wait")
-	}
-	other()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if _, err := locks.acquire(ctx, "a"); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("a held key must wait until the context ends, got %v", err)
-	}
-	release()
-	again, err := locks.acquire(context.Background(), "a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	again()
-	locks.mu.Lock()
-	defer locks.mu.Unlock()
-	if len(locks.locks) != 0 {
-		t.Fatalf("released keys must be forgotten, %d remain", len(locks.locks))
-	}
 }

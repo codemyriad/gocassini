@@ -53,9 +53,9 @@ func (rt *Runtime) startInitialAnnotationBuild(exapp ExAppConfig, logger *log.Lo
 func (rt *Runtime) buildAnnotationIndexOnce(exapp ExAppConfig, store *annotationStore, logger *log.Logger) error {
 	ctx, cancel := context.WithTimeout(rt.ctx, backfillAnnotationsTimeout)
 	defer cancel()
-	targets, err := exapp.archiveBackfillTargets(ctx)
+	targets, err := exapp.archiveBackfillTargets(ctx, rt.cfg.DBPath)
 	if err != nil {
-		return fmt.Errorf("read the archive catalog: %w", err)
+		return fmt.Errorf("read the owner recording inventory: %w", err)
 	}
 	report, err := backfillAnnotationIndex(ctx, store, logger, targets,
 		exapp.archiveDeliveredState(), exapp.archiveAnnotationReader(rt.cfg.CassiniBin, rt.cfg.WorkRoot))

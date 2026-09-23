@@ -104,7 +104,7 @@
   // fact comes from the deployment's operator, which this layer cannot reach
   // and a standalone export does not have. "" is "nobody said", and the chip
   // renders nothing.
-  export let audience: "" | "everyone" | "participants" = "";
+  export let audience: "" | "participants" = "";
 
   let catalogMeetings: MeetingCatalogEntry[] = [];
   let selectedMeetingId = "";

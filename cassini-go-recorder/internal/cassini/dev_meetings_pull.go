@@ -124,12 +124,9 @@ Usage:
   cassini dev meetings pull --out <dir> --room <room> --from 2026-08-01
 
 Commands:
-  pull   Download the meetings this account may read into a directory a
-         development stack can be seeded from
+  pull   Download the meetings this account may read into a local directory
 
-The pack it writes is a published site root — catalog.json plus
-meetings/<id>.opus — so `+"`cassini dev stack up --seed <dir>`"+` can load it, and so
-can the operator's backfill.
+The pack is a local static archive: catalog.json plus meetings/<id>.opus.
 `+"\n")
 }
 

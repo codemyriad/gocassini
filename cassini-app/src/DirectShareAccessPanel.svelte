@@ -77,8 +77,5 @@
     {:else if status}
       <p role="status">Nextcloud sharing is ready.</p>
     {/if}
-    {#if status && status.stranded_recordings > 0}
-      <p role="status">{status.stranded_recordings} older recording{status.stranded_recordings === 1 ? "" : "s"} remain in the former Team folder. Move and share them before retiring that folder.</p>
-    {/if}
   </div>
 </section>

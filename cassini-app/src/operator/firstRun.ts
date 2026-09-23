@@ -3,7 +3,7 @@ import type { StorageSetupStep, StorageStatus } from "./types";
 // What the first-run dialog says and does, apart from the component that draws
 // it (D-756).
 //
-// A fresh install resolves its own storage mode and records from then on. The
+// A fresh install records using Nextcloud file shares. The
 // one thing left that Nextcloud will not let the operator do on every release
 // is create the `cassini` account: those provisioning writes are guarded by
 // password confirmation, which an ExApp's act-as-user request can never satisfy
@@ -35,15 +35,6 @@ import type { StorageSetupStep, StorageStatus } from "./types";
 // created nothing spends the one showing this install gets on an install that
 // still cannot record.
 
-// The plan actions this dialog will perform, and no others.
-//
-// The operator's plan for a mode can also carry the Team folder, its group
-// mappings and its ACLs; none of that belongs in a dialog about a fresh install
-// recording for the first time, and the mode being resolved here needs none of
-// it. Naming the two actions is what keeps a longer plan from being run by
-// surprise.
-const ACCOUNT_ACTIONS: readonly string[] = ["create_group", "create_user"];
-
 export interface FirstRunPlan {
   // creates says the dialog's second paragraph is shown and its primary button
   // makes the service account. False means the account exists, or that nothing
@@ -54,8 +45,7 @@ export interface FirstRunPlan {
   // says what is true and points at Operator › Settings, and it acknowledges
   // nothing, so this install is asked again until the account exists.
   blocked: boolean;
-  // steps are the operator's own browser-side steps, in its own order: the
-  // group before the account that joins it.
+  // steps are the browser-side account creation plan.
   steps: StorageSetupStep[];
   // unavailable says the account has to be made and this page cannot make it —
   // the standalone build, which is served from Cassini's own origin and has
@@ -64,23 +54,9 @@ export interface FirstRunPlan {
   unavailable: boolean;
 }
 
-// accountSteps pulls the two account steps out of the plan for the mode that is
-// IN FORCE.
-//
-// Not out of every mode: each mode carries its own plan, and the one Cassini is
-// not using can name a Team folder this install has no use for. The active flag
-// is the fallback for a record whose `mode` has not been written yet.
+// The only browser setup action is creating the owner account.
 export function accountSteps(status: StorageStatus | null): StorageSetupStep[] {
-  if (!status) {
-    return [];
-  }
-  const option =
-    status.modes.find((entry) => entry.mode === status.mode && status.mode !== "") ??
-    status.modes.find((entry) => entry.active) ??
-    null;
-  return (option?.setup ?? []).filter(
-    (step) => step.browser && ACCOUNT_ACTIONS.includes(step.action),
-  );
+  return status?.setup.filter((step) => step.browser && step.action === "create_user") ?? [];
 }
 
 // firstRunReady says whether this dialog can leave the install able to record:

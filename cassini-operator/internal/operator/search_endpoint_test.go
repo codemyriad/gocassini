@@ -23,7 +23,10 @@ type searchUpstream struct {
 
 func (u searchUpstream) server(t *testing.T) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveTestShares(w, r, u.visible, max(u.catalogStatus, u.propfindStatus)) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/catalog.json"):
 			if u.catalogStatus != 0 && u.catalogStatus != http.StatusOK {
@@ -49,6 +52,8 @@ func (u searchUpstream) server(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	registerTestCatalog(t, srv.URL, u.catalog)
+	return srv
 }
 
 const searchTestCatalog = `{"version":"cassini.viewer.catalog.v1","meetings":[

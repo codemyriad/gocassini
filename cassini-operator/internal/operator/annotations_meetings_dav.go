@@ -2,8 +2,6 @@ package operator
 
 import (
 	"context"
-	"path"
-	"strings"
 	"sync"
 )
 
@@ -11,39 +9,7 @@ import (
 // stage, per copy: the bound meetings-context gives a whole bundle.
 const maxAnnotateRecordingBytes = maxContextStagedBytes
 
-// annotationReadIdentity is who a recording at relPath is read as for caller.
-// It is derived from relPath, whose root the caller's catalog resolution chose,
-// rather than by asking the storage mode again: a mode that changed in between
-// would pair the Team folder with the owner's identity. Anything outside the
-// private root reads as the caller, which fails closed.
-func annotationReadIdentity(caller, relPath string) string {
-	if annotationInPrivateRoot(relPath) {
-		return ncRecordingsOwner
-	}
-	return caller
-}
-
-func (c ExAppConfig) recordingReadIdentity(caller, relPath string) string {
-	if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
-		return caller
-	}
-	return annotationReadIdentity(caller, relPath)
-}
-
-func (c ExAppConfig) recordingOriginalName(caller, relPath string) string {
-	if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
-		if name, ok := c.sharePaths.originalName(caller, relPath); ok {
-			return name
-		}
-		return ""
-	}
-	return path.Base(relPath)
-}
-
-// annotationInPrivateRoot: the default model's root, where no leaf carries rules.
-func annotationInPrivateRoot(relPath string) bool {
-	return strings.HasPrefix(relPath, ncDefaultRecordingsRoot+"/")
-}
+func (c ExAppConfig) recordingReadIdentity(caller, relPath string) string { return caller }
 
 // annotationWriteLocks serialises writes to one recording within this process.
 // Workers, imports and republish share it. If-Match and content verification

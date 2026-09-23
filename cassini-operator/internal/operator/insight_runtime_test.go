@@ -78,6 +78,9 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 		dav.mu.Lock()
 		dav.calls++
 		dav.mu.Unlock()
+		if serveTestShares(w, r, visible, 0) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && base == "catalog.json":
 			_, _ = w.Write([]byte(catalog))
@@ -150,6 +153,7 @@ func newInsightDAV(t *testing.T, catalog string, visible ...string) *insightDAV 
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	registerTestCatalog(t, dav.server.URL, catalog)
 	t.Cleanup(dav.server.Close)
 	return dav
 }
@@ -331,8 +335,8 @@ func TestNewInsightServiceIsNilWhereARunCannotBePerformed(t *testing.T) {
 // shared archive, which the service account alone may perform and which is the
 // wrong place for a personal document even where it is allowed.
 func TestInsightsAreDeliveredOutsideTheRecordingsMount(t *testing.T) {
-	if firstPathSegment(ncInsightsRoot) == ncRecordingsMount {
-		t.Fatalf("ncInsightsRoot = %q is inside the %q Team-folder mount; an insight would be a write into the shared archive", ncInsightsRoot, ncRecordingsMount)
+	if ncInsightsRoot == ncRecordingsRoot {
+		t.Fatalf("ncInsightsRoot = %q is inside the %q Team-folder mount; an insight would be a write into the shared archive", ncInsightsRoot, ncRecordingsRoot)
 	}
 	if got, want := insightFolderChain(), []string{ncInsightsRoot}; len(got) != len(want) || got[0] != want[0] {
 		t.Errorf("insightFolderChain() = %v, want %v", got, want)

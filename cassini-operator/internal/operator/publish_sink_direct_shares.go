@@ -10,10 +10,8 @@ import (
 	"strings"
 )
 
-// directSharesPublishSink is the single-share-model replacement for the Team
-// folder ACL sink. It uses the private service-account tree and Nextcloud's
-// built-in file shares. The old sink remains in the package only while its
-// storage-mode migration is being removed.
+// directSharesPublishSink writes one private file and uses built-in Nextcloud
+// shares for the room audience.
 type directSharesPublishSink struct{ *nextcloudFilesPublishSink }
 
 func (s *directSharesPublishSink) Name() string { return publishSinkNextcloudFiles }
@@ -22,17 +20,15 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 	if s.rt == nil || s.rt.store == nil {
 		return "", fmt.Errorf("direct share publication has no job store")
 	}
-	if s.cfg.sharePaths != nil && !ncAccessSubstrate.usable() {
+	if !ncAccessSubstrate.usable() {
+		// A startup probe can fail during a brief Nextcloud outage. Retry once
+		// at publication, when the result matters, before refusing the job.
+		s.cfg.preflightDirectShares(ctx, s.rt.logger)
+	}
+	if !ncAccessSubstrate.usable() {
 		snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
 		return "", fmt.Errorf("Nextcloud recording shares are not ready (%s: %s)", snap.Step, snap.Detail)
 	}
-	// A mounted Team folder at this name could turn an owner-private write
-	// into a container grant. Refuse it when the setup probe has found one.
-	if probe, ok := ncAccessSubstrate.lastProbe(); ok && probe.DefaultRootShadowed {
-		return "", fmt.Errorf("a Team folder shadows the private recordings archive")
-	}
-	provisionMu.Lock()
-	defer provisionMu.Unlock()
 
 	incoming, ok, err := loadSiteCatalog(d.AttemptSitePath)
 	if err != nil {
@@ -60,7 +56,7 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 			return "", fmt.Errorf("sealed recording %s failed sha256 verification", local)
 		}
 	}
-	root := ncDefaultRecordingsRoot
+	root := ncRecordingsRoot
 	remote := root + "/" + filepath.ToSlash(assets[0])
 	for _, dir := range recordingsTreeDirs(root) {
 		if err := s.cfg.davMkcol(ctx, s.client, ncRecordingsOwner, dir); err != nil {
@@ -84,9 +80,9 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 	item := upload{local: local, remote: remote, size: info.Size()}
 	var carried *annotateResult
 	if before.Exists && s.carriesMarks(item) {
-		carried, err = s.putOverDeliveredCopy(ctx, item, before, false)
+		carried, err = s.putOverDeliveredCopy(ctx, item, before)
 	} else {
-		err = s.putAssetBytes(ctx, item, false, "")
+		err = s.putAssetBytes(ctx, item, "")
 	}
 	if err != nil {
 		return "", err
@@ -98,15 +94,6 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 	if before.Exists && before.FileID > 0 && before.FileID != after.FileID {
 		return "", fmt.Errorf("Nextcloud changed %s from file ID %d to %d; existing shares must be repaired before publication succeeds", remote, before.FileID, after.FileID)
 	}
-	if !priorSuccess || !before.Exists {
-		audience, public, err := s.audienceForJob(ctx, d.JobID)
-		if err != nil {
-			return "", err
-		}
-		if err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, public); err != nil {
-			return "", err
-		}
-	}
 	if s.rt.meetingMetadata != nil {
 		// The entry is derived metadata. No Nextcloud catalog is written.
 		// Room-name overlay is retained while local catalog export exists.
@@ -115,7 +102,16 @@ func (s *directSharesPublishSink) Deliver(ctx context.Context, d publishDelivery
 			return "", err
 		}
 		if err := s.rt.meetingMetadata.Put(ctx, after.FileID, path.Base(remote), overlaid); err != nil {
-			s.logf("meeting metadata index: %s: %v", remote, err)
+			return "", fmt.Errorf("index recording metadata: %w", err)
+		}
+	}
+	if !priorSuccess || !before.Exists {
+		audience, public, err := s.audienceForJob(ctx, d.JobID)
+		if err != nil {
+			return "", err
+		}
+		if err := s.cfg.reconcileRecordingShares(ctx, s.client, remote, audience, public); err != nil {
+			return "", err
 		}
 	}
 	carriedMap := map[string]annotateResult{}
@@ -161,6 +157,6 @@ func (s *directSharesPublishSink) audienceForJob(ctx context.Context, jobID stri
 		}
 	}
 	// The starter is a known local account even if Talk's roster omits them.
-	audience = append(audience, aclMapping{Type: "user", ID: binding.Owner})
+	audience = append([]aclMapping{{Type: "user", ID: binding.Owner}}, audience...)
 	return audience, binding.Public, nil
 }
