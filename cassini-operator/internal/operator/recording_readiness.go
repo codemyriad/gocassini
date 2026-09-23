@@ -215,7 +215,7 @@ func (rt *Runtime) runConnectionProbe(ctx context.Context, room string) ([]readi
 }
 
 // Coalesce concurrent checks and put a ceiling on network/process work. GET
-// never launches a process. Every result expires, including successful ones.
+// never launches a process. Aged findings retain their verdict and timestamp.
 func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	s := &rt.recordingSetup
 	s.checkMu.Lock()

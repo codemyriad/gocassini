@@ -106,8 +106,8 @@ export type CheckTone = "success" | "error" | "neutral";
 
 export function checkTone(check: ReadinessCheck): CheckTone {
   if (check.state === "needs_action") return "error";
-  // Nobody looked, or the evidence expired. NOT a fault: a colour that means
-  // both "impaired" and "unknown" means neither.
+  // Nobody looked, or the incoming handoff is no longer recent. NOT a fault:
+  // a colour that means both "impaired" and "unknown" means neither.
   if (check.state === "not_verified") return "neutral";
   return "success";
 }

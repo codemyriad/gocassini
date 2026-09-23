@@ -163,6 +163,6 @@
         </li>
       {/each}
     </ul>
-    {#if report.test.playback_verified_at}<p class="mt-4 text-sm">Last test playback confirmed {new Date(report.test.playback_verified_at).toLocaleString()}. Connection checks expire after five minutes; test history does not replace current checks.</p>{/if}
+    {#if report.test.playback_verified_at}<p class="mt-4 text-sm">Last test playback confirmed {new Date(report.test.playback_verified_at).toLocaleString()}. Outbound connection findings show when they were checked; past playback does not verify the current handoff.</p>{/if}
   {/if}
 </section>
