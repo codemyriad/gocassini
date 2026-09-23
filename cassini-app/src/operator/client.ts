@@ -34,9 +34,8 @@ import type {
   StorageTransitionPreview,
   StorageUsage,
   StorageUsageSource,
-  ArtifactStorageUsage,
-  ArtifactStorageRoot,
-  ArtifactStorageItem,
+  DetailedStorageUsage,
+  DetailedStorageDirectory,
   ArtifactStorageFileType,
 } from "./types";
 
@@ -210,23 +209,13 @@ export class OperatorClient {
     );
   }
 
-  async getNextcloudStorageUsage(): Promise<StorageUsage> {
-    return normalizeStorageUsage(await this.#request<unknown>("/storage/usage/nextcloud"));
+  async getDetailedStorageUsage(): Promise<DetailedStorageUsage> {
+    return normalizeDetailedStorageUsage(await this.#request<unknown>("/storage/usage/details"));
   }
 
-  async recalculateNextcloudStorageUsage(): Promise<StorageUsage> {
-    return normalizeStorageUsage(
-      await this.#request<unknown>("/storage/usage/nextcloud", { method: "POST" }),
-    );
-  }
-
-  async getArtifactStorageUsage(): Promise<ArtifactStorageUsage> {
-    return normalizeArtifactStorageUsage(await this.#request<unknown>("/storage/usage/artifacts"));
-  }
-
-  async recalculateArtifactStorageUsage(): Promise<ArtifactStorageUsage> {
-    return normalizeArtifactStorageUsage(
-      await this.#request<unknown>("/storage/usage/artifacts", { method: "POST" }),
+  async recalculateDetailedStorageUsage(): Promise<DetailedStorageUsage> {
+    return normalizeDetailedStorageUsage(
+      await this.#request<unknown>("/storage/usage/details", { method: "POST" }),
     );
   }
 
@@ -834,61 +823,47 @@ function normalizeStorageUsage(raw: unknown): StorageUsage {
   return { measured_at: asString(value.measured_at), sources };
 }
 
-function normalizeArtifactStorageUsage(raw: unknown): ArtifactStorageUsage {
+function normalizeDetailedStorageUsage(raw: unknown): DetailedStorageUsage {
   const value = raw != null && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const roots: ArtifactStorageRoot[] = [];
-  if (Array.isArray(value.roots)) {
-    for (const rawRoot of value.roots) {
+  const published = normalizeStorageUsage({ sources: value.published }).sources;
+  const directories: DetailedStorageDirectory[] = [];
+  if (Array.isArray(value.directories)) {
+    for (const rawRoot of value.directories) {
       if (rawRoot == null || typeof rawRoot !== "object") continue;
       const row = rawRoot as Record<string, unknown>;
       const id = asString(row.id);
       if (id === "") continue;
-      const items: ArtifactStorageItem[] = [];
-      if (Array.isArray(row.items)) {
-        for (const rawItem of row.items) {
-          if (rawItem == null || typeof rawItem !== "object") continue;
-          const item = rawItem as Record<string, unknown>;
-          const name = asString(item.name);
-          if (name === "") continue;
-          const formats: ArtifactStorageFileType[] = [];
-          if (Array.isArray(item.formats)) {
-            for (const rawFormat of item.formats) {
-              if (rawFormat == null || typeof rawFormat !== "object") continue;
-              const format = rawFormat as Record<string, unknown>;
-              const extension = asString(format.extension);
-              if (extension === "") continue;
-              formats.push({
-                extension,
-                bytes: Math.max(0, asNumber(format.bytes)),
-                files: asCount(format.files),
-              });
-            }
-          }
-          items.push({
-            name,
-            bytes: Math.max(0, asNumber(item.bytes)),
-            files: asCount(item.files),
-            collections: asCount(item.collections),
-            formats,
-            error: asString(item.error),
+      const formats: ArtifactStorageFileType[] = [];
+      if (Array.isArray(row.formats)) {
+        for (const rawFormat of row.formats) {
+          if (rawFormat == null || typeof rawFormat !== "object") continue;
+          const format = rawFormat as Record<string, unknown>;
+          const extension = asString(format.extension);
+          if (extension === "") continue;
+          formats.push({
+            extension,
+            bytes: Math.max(0, asNumber(format.bytes)),
+            files: asCount(format.files),
           });
         }
       }
-      roots.push({
+      directories.push({
         id,
         label: asString(row.label) || id,
         location: asString(row.location),
         bytes: Math.max(0, asNumber(row.bytes)),
         files: asCount(row.files),
         collections: asCount(row.collections),
-        items,
+        formats,
         error: asString(row.error),
       });
     }
   }
   return {
     measured_at: asString(value.measured_at),
-    roots,
+    duration_ms: Math.max(0, asNumber(value.duration_ms)),
+    published,
+    directories,
   };
 }
 

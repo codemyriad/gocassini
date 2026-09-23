@@ -239,8 +239,10 @@ export interface ArtifactStorageFileType {
   files: number;
 }
 
-export interface ArtifactStorageItem {
-  name: string;
+export interface DetailedStorageDirectory {
+  id: string;
+  label: string;
+  location: string;
   bytes: number;
   files: number;
   collections: number;
@@ -248,20 +250,11 @@ export interface ArtifactStorageItem {
   error: string;
 }
 
-export interface ArtifactStorageRoot {
-  id: string;
-  label: string;
-  location: string;
-  bytes: number;
-  files: number;
-  collections: number;
-  items: ArtifactStorageItem[];
-  error: string;
-}
-
-export interface ArtifactStorageUsage {
+export interface DetailedStorageUsage {
   measured_at: string;
-  roots: ArtifactStorageRoot[];
+  duration_ms: number;
+  published: StorageUsageSource[];
+  directories: DetailedStorageDirectory[];
 }
 
 // StorageModeOption is one of the two models as GET <basePath>/storage
