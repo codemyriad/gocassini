@@ -235,7 +235,7 @@ Documentation: https://gocassini.com/docs]]></description>
            the account. ADMIN like the rest of the operator API. -->
       <route>
         <url>^operator\/storage\/usage\/?$</url>
-        <verb>GET</verb>
+        <verb>GET,POST</verb>
         <access_level>ADMIN</access_level>
       </route>
       <route>
