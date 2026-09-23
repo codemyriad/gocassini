@@ -424,3 +424,11 @@ If the operator stops mid-flight:
 - Want the stage details: [Core pipeline](./core-pipeline.md)
 - Want exact endpoints: [Operator API reference](./reference/api.md)
 - Want exact runtime paths: [Artifacts and filesystem](./reference/artifacts-and-filesystem.md)
+
+## Optional transcription and model installation
+
+Transcription defaults to Off. Audio processing, publication, and playback need no
+model. Settings downloads models from `dist.gocassini.com` with progress and
+explicit activation. Models live under the operator's persistent model-cache root,
+independently of app versions. Use `cassini models pack` and `cassini models import`
+for air-gapped provisioning; see the [operator guide](proposals/optional-transcription-model-storage/implementation.md).

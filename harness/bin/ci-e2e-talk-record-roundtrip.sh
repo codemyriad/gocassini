@@ -8,8 +8,8 @@
 #   - PR #22 (Talk recording-backend HMAC adapter)
 #   - portable transcript production and extraction
 #   - PR #30 (ExApp install handshake)
-#   - PR #32 (bundled v3 model image)
-# The ci-transcribe-smoke-exapp.sh smoke verifies cassini build, bundled
+#   - D-797 (explicit model installation and activation)
+# The ci-transcribe-smoke-exapp.sh smoke verifies cassini build, installed
 # models and transcript quality; this script also exercises the Talk recording-backend
 # trigger path that PR #22 introduces.
 #
@@ -366,6 +366,12 @@ occ app_api:app:register "$APP_ID" manual_install \
 grep -q 'heartbeat check failed' "$LOG_DIR/register.log" \
   && fail "AppAPI registration reported heartbeat failure"
 log "OK AppAPI registered the running ExApp identity"
+
+test_device=cpu
+if (( ${#GPU_ARGS[@]} > 0 )); then test_device=cuda; fi
+OPERATOR_URL="$NC_URL_HOST/index.php/apps/app_api/proxy/$APP_ID/operator" \
+  DEVICE="$test_device" LOG_DIR="$LOG_DIR/model-setup" \
+  bash "$SCRIPT_DIR/configure-test-transcription.sh"
 
 TALK_BACKEND_URL_INTERNAL="http://${BRIDGE_GATEWAY}:${OPERATOR_HOST_PORT}"
 log "operator reachable from compose network at: $TALK_BACKEND_URL_INTERNAL"

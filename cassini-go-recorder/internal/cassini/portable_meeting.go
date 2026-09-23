@@ -64,7 +64,8 @@ type portableNamedTranscript struct {
 }
 
 type portableMeetingArtifact struct {
-	GeneratedAt string `json:"generatedAt"`
+	Processing  *portable.Processing `json:"processing,omitempty"`
+	GeneratedAt string               `json:"generatedAt"`
 	Source      struct {
 		Basename        string `json:"basename"`
 		DurationMS      int64  `json:"durationMs"`
@@ -494,6 +495,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	processedAtUTC := strings.TrimSpace(source.Artifact.GeneratedAt)
 
 	manifest := portable.NormalizePublishedManifest(portable.Manifest{
+		Processing: source.Artifact.Processing,
 		Meeting: portable.Meeting{
 			ID:              portable.MeetingIDFromAudioHash(audio.OpusSHA256),
 			Title:           title,

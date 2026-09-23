@@ -139,6 +139,7 @@
   const CONTINUATION_GAP_MS = 60_000;
 
 
+  let transcriptionStatus: LoadedArtifact["transcriptionStatus"];
   let transcriptIndex: TranscriptIndex | null = null;
   let displayTranscript: DisplayTranscriptV1 | null = null;
   let readableTranscript: ReadableTranscriptV1 | null = null;
@@ -246,6 +247,7 @@
     playing = false;
     currentTimeMs = 0;
     transcriptIndex = artifact.index;
+    transcriptionStatus = artifact.transcriptionStatus;
     displayTranscript = artifact.displayTranscript;
     readableTranscript = artifact.readableTranscript;
     summaryMarkdown = artifact.summary;
@@ -274,6 +276,7 @@
     // `audioEl.currentTime`, so the transcript highlight tracks correctly
     // as soon as the new index renders.
     transcriptIndex = artifact.index;
+    transcriptionStatus = artifact.transcriptionStatus;
     displayTranscript = artifact.displayTranscript;
     readableTranscript = artifact.readableTranscript;
     timingPrecision = artifact.timingPrecision;
@@ -290,6 +293,7 @@
     playing = false;
     currentTimeMs = 0;
     transcriptIndex = null;
+    transcriptionStatus = undefined;
     displayTranscript = null;
     readableTranscript = null;
     summaryMarkdown = null;
@@ -1173,7 +1177,13 @@
 
     {#if displaySegments.length === 0}
       <p class="mv-section-title">Transcript</p>
-      <p class="text-base-content/70 text-sm leading-normal">No transcript loaded yet.</p>
+      <p class="text-base-content/70 text-sm leading-normal">
+        {#if transcriptionStatus?.status === "failed"}Recording available. Transcription failed.
+        {:else if transcriptionStatus?.status === "skipped"}
+          {transcriptionStatus.reason === "disabled" ? "Transcription was turned off for this recording." : "Recording available. Transcription needs attention in Settings."}
+        {:else if transcriptionStatus?.status === "completed"}No speech was transcribed in this recording.
+        {:else}No transcript loaded yet.{/if}
+      </p>
     {:else}
       <!-- Heading and bar are one block, so the sheet's gap falls above the
            heading rather than between it and the search under it. -->

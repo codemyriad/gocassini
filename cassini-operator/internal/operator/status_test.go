@@ -32,7 +32,7 @@ func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	t.Setenv("CASSINI_STT_MODEL", "stale-image-model")
 	t.Setenv(envSTTCUDACapable, "1")
 	stubNVIDIADevice(t, true)
-	rt.setSettings(STTSettings{Quality: sttQualityFast})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityFast})
 	var probedDevices []string
 	rt.computeProbe = func(device string) (bool, string) {
 		probedDevices = append(probedDevices, device)
@@ -160,6 +160,7 @@ func TestStatusHandlerReportsCudaUnusable(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	t.Setenv(envSTTCUDACapable, "1")
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, DeviceOverride: "cuda", Quality: sttQualityBest})
 	stubNVIDIADevice(t, true)
 	t.Setenv("CASSINI_STT_DEVICE", "cpu") // stale process env must not win
 	rt.computeProbe = func(device string) (bool, string) {
@@ -173,15 +174,15 @@ func TestStatusHandlerReportsCudaUnusable(t *testing.T) {
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, req)
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	var resp statusResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode status response: %v", err)
 	}
-	if resp.OK {
-		t.Fatalf("expected ok=false, got %#v", resp)
+	if !resp.OK {
+		t.Fatalf("expected audio-ready ok=true, got %#v", resp)
 	}
 	if resp.STT.Device != "cuda" || resp.STT.DeviceUsable {
 		t.Fatalf("unexpected stt status: %#v", resp.STT)
@@ -198,7 +199,7 @@ func TestStatusHandlerRejectsPortableImageOnGPUHost(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	t.Setenv(envSTTCUDACapable, "0")
-	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "cuda"})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBest, DeviceOverride: "cuda"})
 	probeCalled := false
 	rt.computeProbe = func(device string) (bool, string) {
 		probeCalled = true
@@ -207,8 +208,8 @@ func TestStatusHandlerRejectsPortableImageOnGPUHost(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	var resp statusResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -251,7 +252,7 @@ func TestStatusHandlerReportsPinnedCPUAsReady(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	t.Setenv(envSTTCUDACapable, "0")
-	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: deviceCPU})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBest, DeviceOverride: deviceCPU})
 	var probedDevices []string
 	rt.computeProbe = func(device string) (bool, string) {
 		probedDevices = append(probedDevices, device)
@@ -283,7 +284,7 @@ func TestStatusHandlerRejectsUnknownDeviceOverride(t *testing.T) {
 	// rejected before any hardware probe runs.
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "tpu"})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBest, DeviceOverride: "tpu"})
 	probeCalled := false
 	rt.computeProbe = func(string) (bool, string) {
 		probeCalled = true
@@ -292,8 +293,8 @@ func TestStatusHandlerRejectsUnknownDeviceOverride(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	var resp statusResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -357,7 +358,7 @@ func TestLogComputeDeviceStatusLoudWhenUnusable(t *testing.T) {
 	stubNVIDIADevice(t, true)
 	rt := &Runtime{
 		logger:       log.New(buf, "", 0),
-		settings:     STTSettings{Quality: sttQualityBest},
+		settings:     STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBest},
 		computeProbe: func(device string) (bool, string) { return false, "GPU absent" },
 	}
 	rt.logComputeDeviceStatus()
@@ -1255,17 +1256,14 @@ func TestSetupRejectsNonGET(t *testing.T) {
 	}
 }
 
-func TestStatusHandlerReportsATierTheImageMustDownloadAsReady(t *testing.T) {
-	// A tier the image does not carry is no longer a blocked build: the model
-	// downloads once into the persistent cache (D-704). Readiness must say the
-	// host is ready, because it is.
+func TestStatusHandlerMissingOptionalModelDoesNotBlockAudio(t *testing.T) {
+	// Model installation has its own status; audio remains healthy.
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.cfg.BundledModelRoot = t.TempDir()
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
-	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Int8, Quality: sttQualityBalanced, Source: sttSourceUser})
 	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
 
 	rec := httptest.NewRecorder()
@@ -1280,19 +1278,15 @@ func TestStatusHandlerReportsATierTheImageMustDownloadAsReady(t *testing.T) {
 	if !resp.STT.DeviceUsable || resp.STT.ModelID != modelParakeetV3Int8 {
 		t.Fatalf("unexpected stt status for a downloadable tier: %#v", resp.STT)
 	}
-	if !rt.modelNeedsDownload(resp.STT.ModelID) {
-		t.Fatal("this fixture must describe a model that is in neither root")
-	}
 }
 
 func TestStatusHandlerReportsReferenceFrontendStatus(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.cfg.BundledModelRoot = t.TempDir()
 	rt.cfg.ModelCacheRoot = t.TempDir()
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
-	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser})
+	rt.setSettings(STTSettings{TranscriptionEnabled: true, ActiveModel: modelParakeetV3Fp32, Quality: sttQualityBalanced, Source: sttSourceUser})
 	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
 
 	// 1. Test with referenceFrontendProbe stubbed to true (patched runtime)

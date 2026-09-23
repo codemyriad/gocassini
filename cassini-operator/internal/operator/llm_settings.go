@@ -590,7 +590,14 @@ func (rt *Runtime) setLLMSettings(s LLMSettings) {
 // operator's own environment with the persisted STT and LLM policies applied
 // on top.
 func (rt *Runtime) childEnv() []string {
-	return rt.currentLLMSettings().ChildEnv(rt.currentSettings().ChildEnv(os.Environ()))
+	env := rt.currentLLMSettings().ChildEnv(rt.currentSettings().ChildEnv(os.Environ()))
+	// Every child resolves models from the root the operator resolved. Under
+	// AppAPI the image's CASSINI_CACHE_ROOT names an empty image directory,
+	// so a doctor run from here would report an installed model as missing.
+	if root := strings.TrimSpace(rt.cfg.ModelCacheRoot); root != "" {
+		env = setEnvKey(env, envCacheRoot, root)
+	}
+	return env
 }
 
 // --- HTTP: GET/PUT /settings/llm, GET /settings/llm/providers/{id}/models ---

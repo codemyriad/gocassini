@@ -80,6 +80,7 @@ export interface PortableMeetingManifest {
     sourceTranscriptVersion?: string;
     sourceReadableTranscriptVersion?: string;
   };
+  processing?: unknown;
   provenance?: unknown;
   transcripts?: PortableTranscriptEntry[];
   readableTranscripts?: PortableTranscriptEntry[];

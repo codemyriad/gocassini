@@ -120,6 +120,9 @@ By default the bundle uses Docker-managed named volumes:
 - `cassini_operator_state`
 - `cassini_published_site`
 
+The operator state volume also retains installed transcription models and VAD.
+Transcription defaults to Off. See [model configuration and offline pack/import](../docs/proposals/optional-transcription-model-storage/implementation.md).
+
 The shared published-site storage is mounted at `/srv/cassini-site`.
 The live deployed site is the child directory `/srv/cassini-site/published`, so the operator can atomically swap `published/` during promotion while the viewer mounts the same shared storage read-only.
 

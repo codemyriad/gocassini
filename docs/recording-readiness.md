@@ -103,10 +103,11 @@ Press **Prepare test**, open the test room, start a call and use **Talk's**
 Start recording action. Speak for about 20 seconds and stop recording. The recording checks follow the first matching recording started through Talk after the test was
 prepared. A job started directly through the operator does not count.
 
-After publishing finishes, open the recording and verify the audio and
-transcript. Confirm playback in the recording checks. This confirmation is a
-human observation;
-Cassini does not pretend that producing a file proves audible playback.
+After publishing finishes, open the recording, play its audio, and confirm
+that you can hear it. Then confirm playback in the recording checks. This is a
+human observation; producing a file alone does not prove audible playback.
+If transcription is enabled, review the transcript afterward. A missing or
+delayed transcript does not prevent audio playback confirmation.
 
 A failed/blocked job is shown with its stage. Inspect it in Operator and repair
 that stage, then rerun it or prepare a new test. If the checks keep waiting for
@@ -114,17 +115,21 @@ Talk,
 check the selected room, moderator permission, and recording-backend handoff.
 Do not prepare another test while your intended test is already recording.
 
-Live check results expire after five minutes and are discarded on restart.
-The last test's playback confirmation is retained as historical evidence while
-its published job remains in Cassini. Removing that job removes the confirmation
-from the readiness report. Storage preflight results also expire, but a local storage admission block stays
-actionable until cleared. A destination
-not covered by the Nextcloud preflight is reported as unverified. Speech
-processing checks establish prerequisites, not a successful transcription.
-**Check again** refreshes outbound connectivity and storage. It cannot verify
-that Talk can still call Cassini: the expired incoming-connection check offers
-**Test a recording**, while the previous playback confirmation remains visible. An expired result is
-**Not verified**, never a green pass or a permanent veto on recording.
+Outbound Talk and nonblocking storage preflight results retain their last
+verdict and show when they were checked, even after five minutes. An older pass
+shows what worked at that time, not proof of the current connection. **Check
+again** refreshes these checks. Outbound Talk results live in memory and are
+lost on ExApp restart; then the connection is **Not verified** until checked
+again. A local storage admission block is reported separately and stays
+actionable until cleared. A destination not covered by the Nextcloud preflight
+is reported as unverified. Speech processing checks establish prerequisites,
+not a successful transcription.
+
+**Check again** cannot verify that Talk can still call Cassini. A real incoming
+recording request verifies that handoff for five minutes; afterward the handoff
+is **Not verified** and offers **Test a recording**. The last test's playback
+confirmation remains visible as historical evidence while its published job
+remains in Cassini. Removing that job removes the confirmation from the report.
 
 ## AIO restart persistence
 
@@ -268,7 +273,6 @@ Diagnostic network findings are advisory and do not reject new recordings: an
 administrator may have repaired Nextcloud or HPB since the check. The recorder
 validates the actual connection. Missing local credentials and storage admission
 requirements still refuse recording early. The ordinary-user attention banner
-reflects current actionable evidence only; its disappearance after evidence
-expires does not establish that a problem was repaired. The checks report that
-state
-as not verified.
+can reflect the last network finding even when it is old; its age is visible in
+the administrator's checks. A restart discards that network finding, so the
+banner's disappearance does not establish that the problem was repaired.

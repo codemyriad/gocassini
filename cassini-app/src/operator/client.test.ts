@@ -245,3 +245,20 @@ describe("llm settings client", () => {
     expect(models).toEqual([{ id: "alpha", name: undefined, context_length: 8192 }]);
   });
 });
+
+it("preserves explicit transcription policy and active revision", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ quality: "fast", transcription_enabled: true, active_model: "fast-model", active_revision: "revision-a" }), { headers: { "Content-Type": "application/json" } })));
+  const settings = await new OperatorClient("https://operator.test").getSettings();
+  expect(settings.transcription_enabled).toBe(true);
+  expect(settings.active_model).toBe("fast-model");
+  expect(settings.active_revision).toBe("revision-a");
+});
+
+it("installs without implicitly writing settings", async () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ id: "job1", state: "queued" }), { status: 202, headers: { "Content-Type": "application/json" } }));
+  vi.stubGlobal("fetch", fetchMock);
+  await new OperatorClient("https://operator.test/operator").installSpeechModel("fast-model", "revision-a", "cpu");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(String(fetchMock.mock.calls[0][0])).toContain("/operator/settings/models/install");
+  expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({model: "fast-model", revision: "revision-a", device: "cpu"});
+});

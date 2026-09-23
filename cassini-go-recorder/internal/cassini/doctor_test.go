@@ -3,92 +3,42 @@ package cassini
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"gocassini/internal/transcribe"
 )
 
-func TestSTTModelCacheChecksIncludeRemediationForUnwritableModelDir(t *testing.T) {
-	tmp := t.TempDir()
-	cacheRoot := filepath.Join(tmp, "cache")
-	// Pin the device so the resolved model is deterministic regardless of
-	// whether the test host has a GPU (auto-detect would pick fp32 on a GPU box).
+func TestSTTModelCacheChecksMissingIsAudioOnlyAndNeverDownloads(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CASSINI_CACHE_ROOT", root)
 	t.Setenv("CASSINI_STT_DEVICE", "cpu")
-	modelDir := filepath.Join(cacheRoot, "models", string(transcribe.ResolveModelID("", "", "cpu")))
-	if err := os.MkdirAll(modelDir, 0o755); err != nil {
-		t.Fatalf("mkdir model dir: %v", err)
-	}
-	if err := os.Chmod(modelDir, 0o555); err != nil {
-		t.Fatalf("chmod model dir: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chmod(modelDir, 0o755)
-	})
+	t.Setenv("CASSINI_STT_MODEL", string(transcribe.ModelParakeet06BV3Int8))
+	t.Setenv("CASSINI_STT_REVISION", "")
+	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
 
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
 	checks := sttModelCacheChecks()
 	found := false
 	for _, check := range checks {
-		if strings.Contains(check.Summary, "STT model cache") && check.Status == doctorFail {
+		if check.Status == doctorFail {
+			t.Fatalf("missing optional model must not fail doctor: %#v", check)
+		}
+		if check.ID == "model.ready" {
 			found = true
-			if !strings.Contains(check.Advice, "CASSINI_CACHE_ROOT") {
-				t.Fatalf("expected cache remediation advice, got %#v", check)
+			if check.Status != doctorWarn || !strings.Contains(check.Summary, "meetings retain audio") {
+				t.Fatalf("missing model should warn about audio-only recording: %#v", check)
+			}
+			if !strings.Contains(check.Advice, "models import") {
+				t.Fatalf("missing model should have installation advice: %#v", check)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("expected STT model cache failure, got %#v", checks)
+		t.Fatalf("missing model.ready check: %#v", checks)
 	}
-}
-
-func TestModelFilesCheckAcceptsEachQualityTiersLayout(t *testing.T) {
-	// The three quality tiers ship two different architectures: the 110M "fast"
-	// model is CTC (one model.int8.onnx), the 0.6B tiers are transducers, and
-	// the fp32 one adds an external-weights sidecar. A check that names one
-	// layout fails a bundled model that is present and correct (D-702).
-	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
-	for _, model := range []transcribe.ModelID{
-		transcribe.ModelParakeet110M,
-		transcribe.ModelParakeet06BV3Int8,
-		transcribe.ModelParakeet06BV3,
-	} {
-		t.Run(string(model), func(t *testing.T) {
-			required := transcribe.RequiredModelFileNames(model)
-			if len(required) == 0 {
-				t.Fatalf("no required files known for %s", model)
-			}
-			modelDir := t.TempDir()
-			for _, name := range required {
-				if err := os.WriteFile(filepath.Join(modelDir, name), []byte("x"), 0o644); err != nil {
-					t.Fatalf("write %s: %v", name, err)
-				}
-			}
-			if check := modelFilesCheck(modelDir, model); check.Status != doctorOK {
-				t.Fatalf("modelFilesCheck(%s) = %v (%s), want ok", model, check.Status, check.Summary)
-			}
-
-			// Removing any one of them must fail the check, not pass silently.
-			victim := filepath.Join(modelDir, required[0])
-			if err := os.Remove(victim); err != nil {
-				t.Fatalf("remove %s: %v", victim, err)
-			}
-			check := modelFilesCheck(modelDir, model)
-			if check.Status != doctorFail {
-				t.Fatalf("modelFilesCheck(%s) with %s removed = %v, want fail", model, required[0], check.Status)
-			}
-			if !strings.Contains(check.Summary, required[0]) {
-				t.Errorf("failure summary %q does not name the missing file %s", check.Summary, required[0])
-			}
-		})
-	}
-}
-
-func TestModelFilesCheckWarnsForAnUnknownModel(t *testing.T) {
-	check := modelFilesCheck(t.TempDir(), transcribe.ModelID("some-future-model"))
-	if check.Status != doctorWarn {
-		t.Fatalf("modelFilesCheck(unknown) = %v, want warn", check.Status)
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("read-only doctor changed model root: %v %v", entries, err)
 	}
 }
 
@@ -163,11 +113,38 @@ func TestNativeRuntimeCheck(t *testing.T) {
 // D-798: the operator reads these checks, and it must key on something that
 // survives an editing pass.
 func TestEveryDoctorCheckCarriesAStableID(t *testing.T) {
-	for _, target := range []string{"all", "record", "build"} {
+	t.Setenv("CASSINI_TRANSCRIPTION", "on")
+	for _, target := range []string{"all", "record", "build", "media", "unsupported"} {
+		seen := map[string]bool{}
 		for _, check := range collectDoctorChecks(target) {
 			if strings.TrimSpace(check.ID) == "" {
 				t.Errorf("target %q: check with no id: %+v", target, check)
 			}
+			if seen[check.ID] {
+				t.Errorf("target %q: duplicate id %q", target, check.ID)
+			}
+			seen[check.ID] = true
+		}
+	}
+}
+
+func TestDoctorTargetsKeepMediaChecksSeparateFromOptionalTranscription(t *testing.T) {
+	t.Setenv("CASSINI_TRANSCRIPTION", "on")
+	media := map[string]bool{}
+	for _, check := range collectDoctorChecks("media") {
+		media[check.ID] = true
+	}
+	if !media["ffmpeg"] || !media["ffprobe"] {
+		t.Fatalf("media target omitted media tools: %#v", media)
+	}
+	if media["speech.runtime"] || media["model.ready"] {
+		t.Fatalf("media target included optional transcription checks: %#v", media)
+	}
+
+	t.Setenv("CASSINI_TRANSCRIPTION", "off")
+	for _, check := range collectDoctorChecks("build") {
+		if check.ID == "speech.runtime" || strings.HasPrefix(check.ID, "model.") {
+			t.Fatalf("transcription disabled, but doctor reported %q", check.ID)
 		}
 	}
 }
@@ -176,6 +153,7 @@ func TestEveryDoctorCheckCarriesAStableID(t *testing.T) {
 // so that renaming it fails a test in this module rather than silently costing
 // the operator its answer — which is exactly what the prose markers did.
 func TestDoctorReportsTheSpeechRuntimeCheckTheOperatorLooksUp(t *testing.T) {
+	t.Setenv("CASSINI_TRANSCRIPTION", "on")
 	found := false
 	for _, check := range collectDoctorChecks("build") {
 		if check.ID == "speech.runtime" {
@@ -216,7 +194,7 @@ func TestDoctorJSONIsTheWholeOfStdout(t *testing.T) {
 }
 
 // The text rendering is a shipped contract: a standalone `cassini doctor` must
-// keep printing what it printed before.
+// keep producing human-readable checks and a verdict.
 func TestDoctorTextOutputIsUnchangedByTheJSONFlag(t *testing.T) {
 	var out, errOut strings.Builder
 	runDoctor([]string{"--target", "build"}, &out, &errOut)

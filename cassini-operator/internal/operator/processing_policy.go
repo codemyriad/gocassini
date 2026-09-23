@@ -144,15 +144,19 @@ func (rt *Runtime) startProcessingMonitor() {
 			start, keep := false, false
 			freeMem := probeAvailableMem()
 			if err == nil && valid {
+
 				settings := rt.currentSettings()
 				device, deviceErr := resolveDeviceForSettings(settings)
-				if deviceErr == nil {
-					model, modelErr := rt.admitModelForDevice(settings, device)
-					if modelErr == nil {
-						limits := resourceLimitsFromEnv()
-						start, keep = overlapHeadroom(freeCPU, freeMem, limits.minFreeMemForBuild(device, model), limits.threadBudget(), device, rt.cfg.ProcessingCPUReserve, rt.cfg.ProcessingMemReserveMB)
-					}
+				model := ""
+				if settings.TranscriptionEnabled && deviceErr == nil {
+					model, _ = rt.admitModelForDevice(settings, device)
 				}
+				if model == "" {
+					device = deviceCPU
+				}
+				limits := resourceLimitsFromEnv()
+				start, keep = overlapHeadroom(freeCPU, freeMem, limits.minFreeMemForBuild(device, model), limits.threadBudget(), device, rt.cfg.ProcessingCPUReserve, rt.cfg.ProcessingMemReserveMB)
+
 			}
 			if start {
 				startSamples++
