@@ -103,10 +103,11 @@ Press **Prepare test**, open the test room, start a call and use **Talk's**
 Start recording action. Speak for about 20 seconds and stop recording. The recording checks follow the first matching recording started through Talk after the test was
 prepared. A job started directly through the operator does not count.
 
-After publishing finishes, open the recording and verify the audio and
-transcript. Confirm playback in the recording checks. This confirmation is a
-human observation;
-Cassini does not pretend that producing a file proves audible playback.
+After publishing finishes, open the recording, play its audio, and confirm
+that you can hear it. Then confirm playback in the recording checks. This is a
+human observation; producing a file alone does not prove audible playback.
+If transcription is enabled, review the transcript afterward. A missing or
+delayed transcript does not prevent audio playback confirmation.
 
 A failed/blocked job is shown with its stage. Inspect it in Operator and repair
 that stage, then rerun it or prepare a new test. If the checks keep waiting for

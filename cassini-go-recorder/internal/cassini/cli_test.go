@@ -711,6 +711,10 @@ func TestBuildPortableResumesFromReadyMeetingWorkspace(t *testing.T) {
 		t.Fatalf("write ready meeting bundle: %v", err)
 	}
 
+	if err := os.WriteFile(filepath.Join(workspace.MeetingDir, ".processing-request"), []byte(buildPolicyFingerprint(buildOptions{device: "auto", transcription: transcribe.DefaultBuildConfig().TranscriptionMode})), 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	prev := buildArtifactFn
 	buildArtifactFn = func(_ context.Context, _, _ string, _ transcribe.BuildConfig, _ io.Writer) error {
 		return fmt.Errorf("build should not be called when workspace is ready")
@@ -1117,5 +1121,26 @@ func TestInspectLooseStaticSiteDir(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "meetings=2") {
 		t.Fatalf("expected meeting count, got stdout=%q", stdout.String())
+	}
+}
+
+func TestMeetingWorkspaceChangedTranscriptionRequestIsNotReused(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "meeting.meeting")
+	if err := writeReadyMeetingBundleFixture(dir, "/tmp/source.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".processing-request"), []byte(buildPolicyFingerprint(buildOptions{transcription: "off"})), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, reused, err := reusableMeetingBundle(dir, buildInput{SourceKind: "mkv", SourcePath: "/tmp/source.mkv"}, io.Discard, buildOptions{transcription: "on"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused {
+		t.Fatal("reused audio-only workspace for explicit transcription request")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "transcript.words.v1.json")); !os.IsNotExist(err) {
+		t.Fatal("stale workspace retained")
 	}
 }

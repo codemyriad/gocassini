@@ -2,7 +2,11 @@ package cassini
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"gocassini/internal/modelstore"
+	"gocassini/internal/transcribe"
 	"io"
 	"os"
 	"path/filepath"
@@ -93,7 +97,38 @@ func reusableRunBundle(runDir string, recorderName string, stdout io.Writer) (Ru
 	return bundle, false, err
 }
 
-func reusableMeetingBundle(meetingDir string, input buildInput, stdout io.Writer) (MeetingBundle, bool, error) {
+// Only unfinished workspaces are reconsidered. A published .opus is immutable
+// here and enabling transcription never backfills previously published audio.
+func buildPolicyFingerprint(opts buildOptions) string {
+	cfg := transcribe.DefaultBuildConfig()
+	if opts.transcription != "" {
+		cfg.TranscriptionMode = opts.transcription
+	}
+	if opts.device == "cpu" || opts.device == "cuda" {
+		cfg.Device = opts.device
+	}
+	if cfg.TranscriptionMode != "off" {
+		cfg.Device = transcribe.ResolveDevice(cfg.Device)
+		if cfg.ModelID == "" {
+			cfg.ModelID = transcribe.ModelForQuality(cfg.Quality, cfg.Device)
+		}
+		if m, e := modelstore.Shipped().Model(string(cfg.ModelID), cfg.ModelRevision); e == nil {
+			cfg.ModelRevision = m.Revision
+		}
+	}
+	raw, _ := json.Marshal(cfg)
+	return fmt.Sprintf("%x", sha256.Sum256(raw))
+}
+func reusableMeetingBundle(meetingDir string, input buildInput, stdout io.Writer, options ...buildOptions) (MeetingBundle, bool, error) {
+	if len(options) > 0 {
+		stored, _ := os.ReadFile(filepath.Join(meetingDir, ".processing-request"))
+		if string(stored) != buildPolicyFingerprint(options[0]) {
+			if err := resetPortableWorkspaceDir(meetingDir); err != nil {
+				return MeetingBundle{}, false, err
+			}
+		}
+	}
+
 	if loaded, ok, err := LoadMeetingBundle(meetingDir); err != nil {
 		return MeetingBundle{}, false, err
 	} else if ok {

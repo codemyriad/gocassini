@@ -380,6 +380,9 @@ try {
       if (url.pathname === "/operator/settings") {
         return json({ quality: "balanced", device: "", search_aliases: {} });
       }
+      if (url.pathname === "/operator/settings/models") {
+        return json({ models: [], jobs: [], downloads_allowed: true, device: "cpu" });
+      }
       if (url.pathname === "/operator/settings/llm") return json({});
       if (url.pathname === "/operator/settings/workflows") return json([]);
 
