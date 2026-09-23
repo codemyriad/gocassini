@@ -208,6 +208,12 @@ export class OperatorClient {
     return normalizeStorageUsage(await this.#request<unknown>("/storage/usage"));
   }
 
+  async recalculateStorageUsage(): Promise<StorageUsage> {
+    return normalizeStorageUsage(
+      await this.#request<unknown>("/storage/usage", { method: "POST" }),
+    );
+  }
+
   getRetention(): Promise<RetentionSettings> {
     return this.#request<RetentionSettings>("/storage/retention");
   }
