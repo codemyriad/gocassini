@@ -480,11 +480,21 @@ type searchCoverage struct {
 	OtherUnavailable   int
 }
 
-// NeedsAttention excludes only outcomes known to be intentional or empty
-// after completed transcription. It does not prescribe a repair: the reasons
-// call for different actions, and the archive may hold meetings absent here.
+// NeedsAttention counts shortfalls somebody can still act on. It does not
+// prescribe a repair: the reasons call for different actions, and the archive
+// may hold meetings absent here.
+//
+// Excluded are outcomes that are intentional, empty after completed
+// transcription, or permanently outside search. Unsupported is in that last
+// group for the same reason Silent and Disabled are in the first two: a legacy
+// directory-shaped entry has no Opus join key and never will, so nothing an
+// administrator does removes it from the archive listing. Counting it turned a
+// shortfall nobody can clear into a permanently amber row — the failure D-798
+// records having caught four times over, that a colour a healthy install cannot
+// clear is one people learn to ignore. It stays in the message, where a count
+// informs without claiming something is wrong.
 func (c searchCoverage) NeedsAttention() int {
-	return c.Unavailable - c.Silent - c.Disabled + c.Untracked + c.Unsupported
+	return c.Unavailable - c.Silent - c.Disabled + c.Untracked
 }
 
 func (c searchCoverage) TotalKnown() int { return c.Indexed + c.Unavailable }

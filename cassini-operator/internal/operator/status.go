@@ -232,7 +232,12 @@ func (rt *Runtime) doProbeReferenceFrontend(bin string) (known bool, isReference
 				ID     string `json:"id"`
 				Status string `json:"status"`
 			}
-			if json.Unmarshal(out, &checks) == nil {
+			if err := json.Unmarshal(out, &checks); err != nil {
+				// Left unknown, but not unsaid: a doctor whose document does
+				// not parse is a broken contract between the two modules, and
+				// silence here would look exactly like "no reference runtime".
+				rt.logger.Printf("WARNING: could not read doctor --json while probing the speech runtime: %v", err)
+			} else {
 				for _, check := range checks {
 					if check.ID != speechRuntimeCheckID {
 						continue

@@ -172,8 +172,13 @@ func collectDoctorChecks(target string) []doctorCheck {
 }
 
 // Diagnostic markers reported in doctor summary for speech engine runtime.
-// These strings form the contract with external callers (e.g. cassini-operator's
-// /status probe).
+//
+// Prose for a person to read, NOT a contract. The operator's /status probe used
+// to substring-match these across a module boundary, against its own second
+// copy of the strings that nothing kept in agreement; it now reads the
+// speech.runtime check by id, so these are free to be reworded (D-798). They
+// stay named so the two summaries below phrase the same fact the same way —
+// not because anything parses them.
 const (
 	SpeechEngineRefActiveMarker   = "reference frontend active"
 	SpeechEngineRefInactiveMarker = "reference frontend optimization inactive"

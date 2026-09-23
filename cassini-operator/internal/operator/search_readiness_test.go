@@ -31,3 +31,28 @@ func TestSearchCoverageRemediesOnlyBackfillIndexAndBundleGaps(t *testing.T) {
 		t.Fatalf("settled empty transcripts offered a repair: %+v", steps)
 	}
 }
+
+// A shortfall nobody can act on must not colour the instance. Silent and
+// Disabled were excluded from NeedsAttention for that reason; Unsupported was
+// not, which made any archive holding one legacy directory-shaped meeting
+// permanently amber with no action that could ever clear it (D-798).
+func TestSearchCoverageIgnoresShortfallsNobodyCanClear(t *testing.T) {
+	for _, settled := range []struct {
+		name     string
+		coverage searchCoverage
+	}{
+		{"legacy non-Opus archive entries", searchCoverage{Indexed: 137, Unsupported: 1}},
+		{"silent after completed transcription", searchCoverage{Indexed: 137, Unavailable: 1, Silent: 1}},
+		{"transcription intentionally off", searchCoverage{Indexed: 137, Unavailable: 1, Disabled: 1}},
+	} {
+		if got := settled.coverage.NeedsAttention(); got != 0 {
+			t.Fatalf("%s is not actionable but counted %d against coverage", settled.name, got)
+		}
+	}
+
+	// The counterpart: a gap someone CAN close still has to be reported.
+	actionable := searchCoverage{Indexed: 130, Untracked: 8}
+	if got := actionable.NeedsAttention(); got != 8 {
+		t.Fatalf("archive recordings with no index row are actionable, counted %d", got)
+	}
+}

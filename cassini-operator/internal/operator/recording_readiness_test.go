@@ -347,8 +347,12 @@ func TestReadinessSearchCoverageCanPassAgainstLocalCatalogAndDetectLegacyGaps(t 
 	if row := check(); row.State != "warn" || !strings.Contains(row.Message, "1 archive Opus recordings without index rows") {
 		t.Fatalf("untracked legacy Opus meeting = %+v", row)
 	}
+	// Reported, but not counted against health: no action an administrator can
+	// take gives a directory-shaped meeting an Opus join key, so amber here
+	// would be a colour a healthy install could never clear. The count stays in
+	// the message, where it informs without claiming something is broken.
 	writeCatalog(`{"meetings":[{"id":"LIVE","audioPath":"./meetings/LIVE.opus"},{"id":"LEGACY","artifactPath":"./meetings/LEGACY"}]}`)
-	if row := check(); row.State != "warn" || !strings.Contains(row.Message, "1 legacy or non-Opus archive entries outside search") {
+	if row := check(); row.State != "passed" || !strings.Contains(row.Message, "1 legacy or non-Opus archive entries outside search") {
 		t.Fatalf("legacy directory-shaped meeting = %+v", row)
 	}
 }
