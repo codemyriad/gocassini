@@ -202,10 +202,14 @@ func TestNextcloudStorageUsageReportsBothStorageModeRoots(t *testing.T) {
 	defer nc.Close()
 
 	response := testExAppConfig(nc.URL).scanNextcloudStorageUsage(t.Context())
-	defaultRoot := assertUsageSource(t, response, "default", 11, "")
-	controlledRoot := assertUsageSource(t, response, "access-controlled", 23, "")
-	if defaultRoot.Location != recordingsRootFor(false) || controlledRoot.Location != recordingsRootFor(true) {
-		t.Fatalf("root locations = %q, %q", defaultRoot.Location, controlledRoot.Location)
+	assertUsageSource(t, response, "default", 11, "")
+	assertUsageSource(t, response, "access-controlled", 23, "")
+	locations := make(map[string]string)
+	for _, source := range response.Sources {
+		locations[source.ID] = source.Location
+	}
+	if locations["default"] != recordingsRootFor(false) || locations["access-controlled"] != recordingsRootFor(true) {
+		t.Fatalf("root locations = %q, %q", locations["default"], locations["access-controlled"])
 	}
 }
 
