@@ -269,10 +269,7 @@ describe("MeetingList tags", () => {
   });
 
   it("keeps a single-meeting picker alphabetically ordered as tags refresh", () => {
-    expect(meetingListSource).toMatch(
-      /\$: pickerTags = tags[\s\S]*a\.label\.localeCompare\(b\.label, undefined, \{ sensitivity: "base" \}\)[\s\S]*a\.tagId\.localeCompare\(b\.tagId\)/,
-    );
-    expect(meetingListSource).toContain("tags={pickerTags}");
+    expect(meetingListSource).toMatch(/<TagPicker[\s\S]{0,160}order="alphabetical"/);
   });
 
   it("says when the tag filter is what emptied the list", () => {

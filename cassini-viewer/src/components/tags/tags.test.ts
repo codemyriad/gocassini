@@ -97,6 +97,12 @@ describe("TagPicker", () => {
     expect(picker).toMatch(/class="tick[^"]*\bmixed\b/);
   });
 
+  it("can keep options alphabetically ordered instead of reordering by usage", () => {
+    const picker = html(TagPicker, { tags, order: "alphabetical" });
+    expect(picker.indexOf(">budget</span>")).toBeLessThan(picker.indexOf(">hiring</span>"));
+    expect(picker.indexOf(">hiring</span>")).toBeLessThan(picker.indexOf(">HR</span>"));
+  });
+
   it("emits an existing tag by id, and a new one with its colour and no icon", () => {
     expect(pickerSource).toContain('dispatch("pick", { tagId: tag.tagId, label: tag.label })');
     expect(pickerSource).toContain('dispatch("pick", { label: draft, color: newColor, icon: "" })');
