@@ -237,10 +237,20 @@ Documentation: https://gocassini.com/docs]]></description>
            blockers name accounts and folder ids, and the PUT relocates the
            archive.
 
-           One route rather than three paths, because AppAPI matches url AND
+           The setup and migration actions use one route rather than three paths, because AppAPI matches url AND
            verb: either way an install that predates this manifest has to be
            re-registered before the new surface is reachable, so the only thing
            left to choose is which is tidier to read. -->
+      <route>
+        <url>^operator\/storage\/usage\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^operator\/storage\/usage\/details\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <route>
         <url>^operator\/storage\/?$</url>
         <verb>GET,POST,PUT</verb>

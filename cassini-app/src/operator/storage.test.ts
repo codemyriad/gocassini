@@ -45,6 +45,93 @@ afterEach(() => {
 });
 
 describe("OperatorClient storage", () => {
+  it("reads the recording and build folder sizes from the separate usage endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        measured_at: "2026-09-22T09:15:00Z",
+        duration_ms: 1420.5,
+        sources: [
+          { id: "published", label: "Published meetings", location: "Nextcloud Files", bytes: 12, duration_ms: 1310.25, files: 1206, collections: 48, requests: 48 },
+          { id: "current", label: "Current working archive", location: "Cassini persistent storage", bytes: 7, error: "unavailable" },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const usage = await new OperatorClient("/operator").getStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage");
+    expect(usage).toEqual({
+      measured_at: "2026-09-22T09:15:00Z",
+      duration_ms: 1420.5,
+      sources: [
+        { id: "published", label: "Published meetings", location: "Nextcloud Files", bytes: 12, duration_ms: 1310.25, files: 1206, collections: 48, requests: 48, error: "" },
+        { id: "current", label: "Current working archive", location: "Cassini persistent storage", bytes: 7, duration_ms: 0, files: 0, collections: 0, requests: 0, error: "unavailable" },
+      ],
+    });
+  });
+
+  it("recalculates the storage index only through an explicit POST", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ measured_at: "2026-09-23T08:30:00Z", duration_ms: 42, sources: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("/operator").recalculateStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage");
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
+  it("normalizes the combined detailed storage index", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({
+      measured_at: "2026-09-23T12:00:00Z",
+      duration_ms: 8.5,
+      published: [{ id: "default", label: "Default storage mode", location: "CassiniNoACL/Recordings", bytes: 12 }],
+      directories: [{
+        id: "current",
+        label: "Working archive",
+        location: "/jobs/current",
+        bytes: 21,
+        files: 2,
+        collections: 1,
+        formats: [
+          { extension: ".mkv", bytes: 14, files: 1 },
+          { extension: ".json", bytes: 7, files: 1 },
+        ],
+      }],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const usage = await new OperatorClient("/operator").getDetailedStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage/details");
+    expect(usage.published[0]).toMatchObject({ id: "default", bytes: 12 });
+    expect(usage.directories[0]).toEqual({
+      id: "current",
+      label: "Working archive",
+      location: "/jobs/current",
+      bytes: 21,
+      files: 2,
+      collections: 1,
+      formats: [
+        { extension: ".mkv", bytes: 14, files: 1 },
+        { extension: ".json", bytes: 7, files: 1 },
+      ],
+      error: "",
+    });
+  });
+
+  it("recalculates the combined detailed index only through an explicit POST", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ measured_at: "", published: [], directories: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("/operator").recalculateDetailedStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage/details");
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
   it("reads both modes, their blockers and their instructions", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(READY_STORAGE)));
 
