@@ -39,10 +39,11 @@ func (s *ncAccessSubstrateStatus) markApplicable() {
 func (s *ncAccessSubstrateStatus) beginRun() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.state = ncSubstrateUnknown
-	s.step = ""
-	s.detail = ""
-	s.checkedAtUTC = time.Now().UTC().Format(time.RFC3339)
+	// Keep the last complete result while a new probe runs. A concurrent
+	// publication must not fail solely because an admin opened readiness.
+	if s.state == "" {
+		s.state = ncSubstrateUnknown
+	}
 }
 
 func (s *ncAccessSubstrateStatus) record(state ncSubstrateState, step string, cause error) {
@@ -70,9 +71,9 @@ func (s *ncAccessSubstrateStatus) degraded(step string, cause error) {
 func (s *ncAccessSubstrateStatus) succeed() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state == ncSubstrateUnknown || s.state == "" {
-		s.state = ncSubstrateProvisioned
-	}
+	s.state = ncSubstrateProvisioned
+	s.step = ""
+	s.detail = ""
 	s.checkedAtUTC = time.Now().UTC().Format(time.RFC3339)
 }
 
@@ -92,7 +93,11 @@ func (s *ncAccessSubstrateStatus) setProbe(probe ncStorageProbe) {
 func (s *ncAccessSubstrateStatus) warnShare(message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.shareWarning = message
+	if s.shareWarning == "" {
+		s.shareWarning = message
+	} else if len(s.shareWarning)+len(message) < 8192 {
+		s.shareWarning += "\n" + message
+	}
 }
 
 func (s *ncAccessSubstrateStatus) lastProbe() (ncStorageProbe, bool) {

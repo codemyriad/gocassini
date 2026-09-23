@@ -28,7 +28,7 @@ func TestDirectShareProxyListsAndReadsAsCallerThenRevokes(t *testing.T) {
 		switch {
 		case strings.Contains(r.URL.Path, "/files_sharing/api/v1/shares"):
 			if shared {
-				_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[{"id":1,"share_type":0,"uid_file_owner":"cassini","file_source":11,"path":"/Shared/Renamed.opus","item_type":"file"}]}}`)
+				_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[{"id":1,"share_type":0,"uid_file_owner":"cassini","file_source":11,"permissions":1,"path":"/Shared/Renamed.opus","item_type":"file"}]}}`)
 			} else {
 				_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[]}}`)
 			}

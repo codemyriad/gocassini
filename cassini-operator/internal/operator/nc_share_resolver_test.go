@@ -17,7 +17,7 @@ func TestDirectShareSnapshotIntersectsMetadataWithCurrentShares(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer metadata.Close()
-	for id, name := range map[int64]string{11: "A.opus", 22: "SECRET.opus"} {
+	for id, name := range map[int64]string{11: "A.opus", 22: "SECRET.opus", 33: "ZERO.opus"} {
 		entry := json.RawMessage(`{"id":"` + name[:1] + `","title":"` + name + `","audioPath":"./meetings/` + name + `"}`)
 		if err := metadata.Put(context.Background(), id, name, entry); err != nil {
 			t.Fatal(err)
@@ -25,8 +25,9 @@ func TestDirectShareSnapshotIntersectsMetadataWithCurrentShares(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[`+
-			`{"uid_file_owner":"cassini","file_source":11,"path":"/Shared/Renamed.opus","item_type":"file"},`+
-			`{"uid_file_owner":"bob","file_source":22,"path":"/Shared/SECRET.opus","item_type":"file"}`+
+			`{"uid_file_owner":"cassini","file_source":11,"permissions":1,"path":"/Shared/Renamed.opus","item_type":"file"},`+
+			`{"uid_file_owner":"bob","file_source":22,"path":"/Shared/SECRET.opus","item_type":"file"},`+
+			`{"uid_file_owner":"cassini","file_source":33,"permissions":0,"path":"/Shared/ZERO.opus","item_type":"file"}`+
 			`]}}`)
 	}))
 	defer server.Close()
@@ -35,11 +36,24 @@ func TestDirectShareSnapshotIntersectsMetadataWithCurrentShares(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.entries) != 1 || snapshot.paths["A.opus"] != "Shared/Renamed.opus" || snapshot.paths["SECRET.opus"] != "" {
+	if len(snapshot.entries) != 1 || snapshot.paths["A.opus"] != "Shared/Renamed.opus" || snapshot.paths["SECRET.opus"] != "" || snapshot.paths["ZERO.opus"] != "" {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
 	if p, ok := cfg.sharePaths.get("alice", "A.opus"); !ok || p != "Shared/Renamed.opus" {
 		t.Fatalf("cache = %q, %v", p, ok)
+	}
+}
+
+func TestCurrentRecordingPathBypassesStaleMediaCache(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[]}}`)
+	}))
+	defer server.Close()
+	cache := &recordingSharePathCache{}
+	cache.put("alice", map[string]string{"A.opus": "Shared/A.opus"})
+	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret", sharePaths: cache}
+	if _, err := cfg.currentRecordingPath(context.Background(), server.Client(), "alice", "A.opus", nil); err != errRecordingNotShared {
+		t.Fatalf("current path after revocation = %v", err)
 	}
 }
 
@@ -52,7 +66,7 @@ func TestDirectShareSnapshotRecoversOriginalNameAfterIndexLoss(t *testing.T) {
 	var inventoryCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/files_sharing/api/v1/shares") {
-			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[{"id":"9","uid_file_owner":"cassini","file_source":11,"path":"/Shared/Renamed.opus","item_type":"file"}]}}`)
+			_, _ = io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":[{"id":"9","uid_file_owner":"cassini","file_source":11,"permissions":1,"path":"/Shared/Renamed.opus","item_type":"file"}]}}`)
 			return
 		}
 		if r.Method != "PROPFIND" || r.Header.Get("Depth") != "1" {

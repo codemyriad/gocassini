@@ -72,7 +72,7 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 	}
 	ids := make([]int64, 0, len(shares))
 	for _, share := range shares {
-		if share.UIDFileOwner == ncRecordingsOwner && share.FileSource > 0 {
+		if share.UIDFileOwner == ncRecordingsOwner && share.FileSource > 0 && share.Permissions&ncShareRead != 0 {
 			ids = append(ids, share.FileSource)
 		}
 	}
@@ -96,7 +96,7 @@ func (c ExAppConfig) directShareSnapshot(ctx context.Context, client *http.Clien
 	}
 	result := directShareSnapshot{entries: []json.RawMessage{}, paths: map[string]string{}}
 	for _, share := range shares {
-		if share.UIDFileOwner != ncRecordingsOwner || share.FileSource <= 0 || (share.ItemType != "" && share.ItemType != "file") {
+		if share.UIDFileOwner != ncRecordingsOwner || share.FileSource <= 0 || share.Permissions&ncShareRead == 0 || (share.ItemType != "" && share.ItemType != "file") {
 			continue
 		}
 		recipientPath, err := share.recipientPath()
@@ -163,6 +163,20 @@ func (c ExAppConfig) recipientRecordingPath(ctx context.Context, client *http.Cl
 	if cached, ok := c.sharePaths.get(caller, opusName); ok {
 		return cached, nil
 	}
+	snapshot, err := c.directShareSnapshot(ctx, client, caller, metadata)
+	if err != nil {
+		return "", err
+	}
+	rel, ok := snapshot.paths[opusName]
+	if !ok {
+		return "", errRecordingNotShared
+	}
+	return rel, nil
+}
+
+// currentRecordingPath bypasses the short media path cache. Annotation reads
+// and mutations must not accept a different file placed at a revoked mount.
+func (c ExAppConfig) currentRecordingPath(ctx context.Context, client *http.Client, caller, opusName string, metadata *meetingMetadataStore) (string, error) {
 	snapshot, err := c.directShareSnapshot(ctx, client, caller, metadata)
 	if err != nil {
 		return "", err

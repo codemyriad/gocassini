@@ -20,7 +20,7 @@ func TestRecordingSharesUseCallerAndOCSEnvelope(t *testing.T) {
 		calls = append(calls, r.Method+" "+r.URL.RequestURI()+" "+r.Header.Get("AUTHORIZATION-APP-API"))
 		switch {
 		case r.Method == http.MethodGet && r.URL.Query().Get("shared_with_me") == "true":
-			_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":[{"id":"9","share_type":0,"uid_file_owner":"cassini","file_source":42,"path":"/Shares/a.opus"}]}}`)
+			_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":[{"id":"9","share_type":0,"uid_file_owner":"cassini","file_source":42,"permissions":1,"path":"/Shares/a.opus"}]}}`)
 		case r.Method == http.MethodGet:
 			_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":[]}}`)
 		case r.Method == http.MethodPost:

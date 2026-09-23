@@ -4,8 +4,9 @@ Cassini writes each new `.opus` recording into the `cassini` account's private
 `CassiniRecordings/meetings` folder. It creates Nextcloud Files shares for the
 local accounts, groups and Teams captured from the Talk room, including people
 invited who did not join the call. Guests without a Nextcloud account receive no
-share. A public Talk room adds reshare permission when this Nextcloud allows it;
-Cassini does not make a public link.
+share. A public Talk room adds reshare permission to recipients, including
+groups and Teams, when this Nextcloud allows it. Recipients can then create
+public links if the instance permits them; Cassini does not make one itself.
 
 Cassini lists meetings from the caller's **current Nextcloud shares**. Each audio
 or annotation read goes through Nextcloud as that caller, so removing a share

@@ -58,7 +58,7 @@ func serveTestShares(w http.ResponseWriter, r *http.Request, visible []string, f
 	for _, name := range visible {
 		rows = append(rows, map[string]any{
 			"id": testMeetingFileID(name), "share_type": 0,
-			"file_source": testMeetingFileID(name), "uid_file_owner": ncRecordingsOwner,
+			"file_source": testMeetingFileID(name), "permissions": 1, "uid_file_owner": ncRecordingsOwner,
 			"item_type": "file", "path": "/Cassini/Recordings/meetings/" + name,
 		})
 	}

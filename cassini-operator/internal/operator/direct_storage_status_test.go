@@ -54,3 +54,22 @@ func resetDirectSubstrate(t *testing.T) {
 	ncAccessSubstrate.markApplicable()
 	t.Cleanup(ncAccessSubstrate.reset)
 }
+
+func TestDirectPreflightKeepsLastUsableResultUntilProbeFinishes(t *testing.T) {
+	resetDirectSubstrate(t)
+	ncAccessSubstrate.beginRun()
+	ncAccessSubstrate.succeed()
+	ncAccessSubstrate.beginRun()
+	if !ncAccessSubstrate.usable() {
+		t.Fatal("a concurrent preflight hid the last successful result")
+	}
+	ncAccessSubstrate.unavailable("sharing_api", nil)
+	if ncAccessSubstrate.usable() {
+		t.Fatal("a completed failed probe was ignored")
+	}
+	ncAccessSubstrate.beginRun()
+	ncAccessSubstrate.succeed()
+	if !ncAccessSubstrate.usable() {
+		t.Fatal("a successful recheck did not recover availability")
+	}
+}

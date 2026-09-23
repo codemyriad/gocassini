@@ -91,7 +91,7 @@ func newAnnotationsNextcloud(t *testing.T, visible ...string) *annotationsNextcl
 				if name == "SECRET.opus" {
 					id = 43
 				}
-				rows = append(rows, map[string]any{"id": id, "share_type": 0, "file_source": id, "uid_file_owner": ncRecordingsOwner, "item_type": "file", "path": "/" + name})
+				rows = append(rows, map[string]any{"id": id, "share_type": 0, "file_source": id, "permissions": 1, "uid_file_owner": ncRecordingsOwner, "item_type": "file", "path": "/" + name})
 			}
 			nc.frontMu.Unlock()
 			body, _ := json.Marshal(map[string]any{"ocs": map[string]any{"meta": map[string]any{"statuscode": 100}, "data": rows}})

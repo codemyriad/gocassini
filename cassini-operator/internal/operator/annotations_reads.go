@@ -14,6 +14,13 @@ func (s *annotationService) readDocument(ctx context.Context, caller, meetingID,
 	if store == nil {
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: fmt.Errorf("annotations store unavailable")}
 	}
+	currentPath, err := s.exapp.currentRecordingPath(ctx, s.client, caller, opusName, s.exapp.meetingMetadata)
+	if errors.Is(err, errRecordingNotShared) || (err == nil && currentPath != relPath) {
+		return annotateResult{}, annotateNotFound(fmt.Errorf("recording is no longer shared with caller"))
+	}
+	if err != nil {
+		return annotateResult{}, annotateUnavailable(err)
+	}
 	// Check the current leaf permission without downloading its media bytes.
 	identity := s.exapp.recordingReadIdentity(caller, relPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, s.exapp.davFileURL(identity, relPath), nil)

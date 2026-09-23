@@ -59,7 +59,7 @@ func recipientShareRefusal(err error) bool {
 func resharePermissionRefusal(err error) bool {
 	var refusal *ncShareError
 	return errors.As(err, &refusal) &&
-		(refusal.OCSStatus == http.StatusForbidden || refusal.OCSStatus == http.StatusBadRequest)
+		refusal.OCSStatus == http.StatusForbidden
 }
 
 // Nextcloud serializes share IDs as strings on some server versions and as
@@ -311,13 +311,13 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case <-time.After(time.Duration(attempt+1) * 150 * time.Millisecond):
+				case <-time.After(time.Duration(attempt+1) * time.Second):
 				}
 			}
 		}
 		if createErr != nil {
 			if index > 0 && recipientShareRefusal(createErr) {
-				ncAccessSubstrate.warnShare(fmt.Sprintf("recording share skipped for %s %s: %v", principal.Type, principal.ID, createErr))
+				ncAccessSubstrate.warnShare(fmt.Sprintf("recording %s: share skipped for %s %s: %v", path.Base(relPath), principal.Type, principal.ID, createErr))
 				continue
 			}
 			return fmt.Errorf("share %s %s: %w", principal.Type, principal.ID, createErr)

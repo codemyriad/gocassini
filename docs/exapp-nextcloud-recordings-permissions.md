@@ -3,9 +3,11 @@
 Cassini uses one permission model for installed ExApps. Every recording belongs
 to the dedicated `cassini` account in its private `CassiniRecordings/meetings`
 folder. Cassini gives the Talk room's Nextcloud users, groups, and Teams direct
-Files shares on the recording. A public Talk room grants participants reshare
-permission when the instance permits it. Guests without an account receive no
-Files share. Cassini does not create public links.
+Files shares on the recording. A public Talk room grants reshare permission to
+those recipients, including members reached through a group or Team share,
+when the instance permits it. A recipient may then create a public link if
+Nextcloud permits link sharing. Guests without an account receive no Files
+share. Cassini itself does not create public links.
 
 ## Access checks
 
@@ -15,6 +17,10 @@ recording visible. On audio, transcript, annotation, search, and context reads,
 Cassini resolves the current share and asks Nextcloud to read the file as the
 caller. Removing access in Nextcloud removes it in Cassini. Nextcloud's handling
 of downstream reshares and instance-wide reshare policy applies.
+
+Anyone who can read a recording can add or remove its shared Cassini marks and
+tags. Each annotation request checks the caller's current share before it
+accepts a change.
 
 The `cassini` account can read all recordings because it owns them. Cassini
 requires its Files root to be a private directory before publishing. If a share
