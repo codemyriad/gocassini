@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { get } from "svelte/store";
 
 import {
   AnnotationError,
@@ -12,6 +13,7 @@ import { filterMeetingCatalogEntries, type MeetingCatalogEntry } from "./catalog
 import {
   applyEach,
   bulkReport,
+  createListTagSession,
   createTagLoader,
   createWriteQueue,
   filterByTags,
@@ -203,6 +205,96 @@ describe("writing tags", () => {
     await last;
     expect(order).toEqual(["first", "second", "third"]);
     expect(drained).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows every click immediately and replays newer intent over older answers", async () => {
+    const answers: ((value: MeetingAnnotations & { operationId: string; added: string[]; removed: string[]; notFound: string[] }) => void)[] = [];
+    const requests: unknown[] = [];
+    const apply = vi.fn((_meeting, request) => {
+      requests.push(request);
+      return new Promise<any>((resolve) => answers.push(resolve));
+    });
+    const session = createListTagSession(apply, createWriteQueue(() => undefined));
+    session.setConfirmed(vocabulary);
+
+    session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).toContain("t_b");
+    session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+
+    await settle();
+    expect(requests).toEqual([expect.objectContaining({
+      requestId: expect.any(String),
+      ops: [{ op: "mark", tag: { id: "t_b", label: "budget" }, target: { kind: "meeting" } }],
+    })]);
+    answers.shift()!({
+      meetingId: "m1", revision: 2, resolved: true, operationId: "op-1", added: ["i-b"], removed: [], notFound: [],
+      annotations: {
+        format: "cassini.annotations.v1", revision: 2, audioOpusSha256: "", tagNamespace: "ns",
+        tags: [{ id: "t_h", label: "hiring" }, { id: "t_b", label: "budget" }],
+        items: [
+          { id: "i-h", tagId: "t_h", target: { kind: "meeting" }, createdAtUtc: "", actor: { kind: "person", id: "ana" }, operationId: "op-0" },
+          { id: "i-b", tagId: "t_b", target: { kind: "meeting" }, createdAtUtc: "", actor: { kind: "person", id: "ana" }, operationId: "op-1" },
+        ],
+      },
+    });
+    await settle();
+
+    // The first server answer says ON, but the later click stays visibly OFF.
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+    expect(requests[1]).toEqual(expect.objectContaining({
+      requestId: expect.any(String),
+      ops: [{ op: "unmark-tag", tagId: "t_b", target: { kind: "meeting" } }],
+    }));
+    answers.shift()!({
+      meetingId: "m1", revision: 3, resolved: true, operationId: "op-2", added: [], removed: ["i-b"], notFound: [],
+      annotations: {
+        format: "cassini.annotations.v1", revision: 3, audioOpusSha256: "", tagNamespace: "ns",
+        tags: [{ id: "t_h", label: "hiring" }],
+        items: [{ id: "i-h", tagId: "t_h", target: { kind: "meeting" }, createdAtUtc: "", actor: { kind: "person", id: "ana" }, operationId: "op-0" }],
+      },
+    });
+    await settle();
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+  });
+
+  it("resolves an optimistic new tag id before a fast second click removes it", async () => {
+    const answers: ((value: any) => void)[] = [];
+    const apply = vi.fn(() => new Promise<any>((resolve) => answers.push(resolve)));
+    const session = createListTagSession(apply, createWriteQueue(() => undefined));
+    session.setConfirmed(vocabulary);
+
+    session.toggle(meetings[0], { label: "new", color: "red", icon: "" });
+    const optimistic = get(session).vocabulary!.tags.find(({ label }) => label === "new")!;
+    session.toggle(meetings[0], { tagId: optimistic.tagId, label: optimistic.label });
+    await settle();
+
+    answers.shift()!({
+      meetingId: "m1", revision: 2, resolved: true, operationId: "op-new", added: ["i-new"], removed: [], notFound: [],
+      annotations: {
+        format: "cassini.annotations.v1", revision: 2, audioOpusSha256: "", tagNamespace: "ns",
+        tags: [{ id: "t_h", label: "hiring" }, { id: "t_new", label: "new", color: "red", icon: "" }],
+        items: [
+          { id: "i-h", tagId: "t_h", target: { kind: "meeting" }, createdAtUtc: "", actor: { kind: "person", id: "ana" }, operationId: "op-0" },
+          { id: "i-new", tagId: "t_new", target: { kind: "meeting" }, createdAtUtc: "", actor: { kind: "person", id: "ana" }, operationId: "op-new" },
+        ],
+      },
+    });
+    await settle();
+    expect(apply.mock.calls[1][1]).toEqual(expect.objectContaining({
+      ops: [{ op: "unmark-tag", tagId: "t_new", target: { kind: "meeting" } }],
+    }));
+  });
+
+  it("rolls back a rejected optimistic click and surfaces the failure", async () => {
+    const apply = vi.fn().mockRejectedValue(new AnnotationError(400, "bad tag"));
+    const session = createListTagSession(apply, createWriteQueue(() => undefined));
+    session.setConfirmed(vocabulary);
+    session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).toContain("t_b");
+    await settle();
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+    expect(get(session).notice).toContain("Could not tag “Hiring sync”: bad tag");
   });
 });
 

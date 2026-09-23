@@ -1,11 +1,16 @@
 import type { MeetingCatalogEntry } from "./catalog";
+import { writable } from "svelte/store";
 import {
   WHOLE_MEETING,
+  describeAnnotationError,
+  findByLabel,
   groupByTag,
   markRequest,
   plural,
   retryDelay,
   untagMeetingRequest,
+  type AnnotationRequest,
+  type AnnotationResult,
   type MeetingAnnotations,
   type MeetingTag,
   type TagPick,
@@ -96,17 +101,221 @@ export function planBulkTag(entries: readonly MeetingCatalogEntry[], byMeeting: 
 }
 
 // A write answers with the meeting's document, so its row and the picker's
-// ticks need not wait for the vocabulary to reload. A tag the vocabulary does
-// not know yet appears with that reload.
+// ticks need not wait for the vocabulary to reload. A newly created tag is
+// admitted from the returned document; aggregate counts still come from reload.
 export function withMeetingResult(vocabulary: TagVocabulary, result: MeetingAnnotations): TagVocabulary {
-  const tags = groupByTag(result.annotations).map(({ tag, whole, stretches }) => ({
-    tagId: tag.id,
-    whole: whole !== null,
-    stretches: stretches.length,
-  }));
+  const meetings = new Map(vocabulary.meetings.map((meeting) => [meeting.meetingId, meeting]));
+  const vocabularyTags = new Map(vocabulary.tags.map((tag) => [tag.tagId, { ...tag }]));
+  const tags = groupByTag(result.annotations).map(({ tag, whole, stretches }) => {
+    if (!vocabularyTags.has(tag.id)) {
+      vocabularyTags.set(tag.id, {
+        tagId: tag.id,
+        namespace: result.annotations?.tagNamespace ?? "",
+        label: tag.label,
+        meetings: 1,
+        marks: Number(whole !== null) + stretches.length,
+        color: "",
+        icon: "",
+      });
+    }
+    return {
+      tagId: tag.id,
+      whole: whole !== null,
+      stretches: stretches.length,
+      color: tag.color,
+      icon: tag.icon,
+    };
+  });
+  meetings.set(result.meetingId, { meetingId: result.meetingId, tags });
   return {
     ...vocabulary,
-    meetings: [...vocabulary.meetings.filter(({ meetingId }) => meetingId !== result.meetingId), { meetingId: result.meetingId, tags }],
+    // Existing aggregate counts remain untouched until the authoritative
+    // reload; only the changed meeting document is exact in this response.
+    tags: [...vocabularyTags.values()],
+    meetings: [...meetings.values()],
+  };
+}
+
+function tagForPick(vocabulary: TagVocabulary, pick: TagPick) {
+  return ("tagId" in pick
+    ? vocabulary.tags.find(({ tagId }) => tagId === pick.tagId)
+    : undefined) ?? findByLabel(vocabulary.tags, pick.label);
+}
+
+function wholeTagOn(vocabulary: TagVocabulary, meetingId: string, pick: TagPick): boolean {
+  const tag = tagForPick(vocabulary, pick);
+  if (!tag) return false;
+  return vocabulary.meetings
+    .find((meeting) => meeting.meetingId === meetingId)
+    ?.tags.some((held) => held.tagId === tag.tagId && held.whole) ?? false;
+}
+
+// Apply one desired whole-meeting state without mutating the confirmed server
+// vocabulary. Pending actions are replayed in click order after every answer,
+// so an older answer can never erase a newer click from the picker.
+function withOptimisticWholeTag(
+  vocabulary: TagVocabulary,
+  meetingId: string,
+  pick: TagPick,
+  desired: boolean,
+  optimisticTagId: string,
+): TagVocabulary {
+  const tags = vocabulary.tags.map((tag) => ({ ...tag }));
+  let tag = ("tagId" in pick
+    ? tags.find(({ tagId }) => tagId === pick.tagId)
+    : undefined) ?? findByLabel(tags, pick.label);
+  if (!tag && desired) {
+    tag = {
+      tagId: optimisticTagId,
+      namespace: "",
+      label: pick.label,
+      meetings: 0,
+      marks: 0,
+      color: "color" in pick ? pick.color : "",
+      icon: "icon" in pick ? pick.icon : "",
+    };
+    tags.push(tag);
+  }
+  if (!tag) return vocabulary;
+
+  const meetings = vocabulary.meetings.map((meeting) => ({
+    ...meeting,
+    tags: meeting.tags.map((held) => ({ ...held })),
+  }));
+  let meeting = meetings.find((candidate) => candidate.meetingId === meetingId);
+  if (!meeting) {
+    meeting = { meetingId, tags: [] };
+    meetings.push(meeting);
+  }
+  const held = meeting.tags.find((candidate) => candidate.tagId === tag!.tagId);
+  const current = held?.whole ?? false;
+  if (current === desired) return vocabulary;
+
+  if (desired) {
+    if (held) held.whole = true;
+    else meeting.tags.push({ tagId: tag.tagId, whole: true, stretches: 0 });
+    tag.marks += 1;
+    if (!held) tag.meetings += 1;
+  } else if (held) {
+    held.whole = false;
+    tag.marks = Math.max(0, tag.marks - 1);
+    if (held.stretches === 0) {
+      meeting.tags = meeting.tags.filter((candidate) => candidate !== held);
+      tag.meetings = Math.max(0, tag.meetings - 1);
+    }
+  }
+  return { ...vocabulary, tags, meetings };
+}
+
+interface PendingTagAction {
+  meeting: MeetingCatalogEntry;
+  pick: TagPick;
+  desired: boolean;
+  optimisticTagId: string;
+  request?: AnnotationRequest;
+}
+
+export interface ListTagSessionState {
+  vocabulary: TagVocabulary | null;
+  notice: string;
+}
+
+type TagWriteScheduler = (write: () => Promise<void>) => Promise<void>;
+
+// List tagging has two layers: a confirmed server vocabulary and an ordered log
+// of clicks not yet confirmed. The store publishes their composition immediately;
+// the existing write queue still establishes one order with selection batches.
+export function createListTagSession(
+  apply: (meeting: MeetingCatalogEntry, request: AnnotationRequest) => Promise<AnnotationResult>,
+  schedule: TagWriteScheduler,
+) {
+  const state = writable<ListTagSessionState>({ vocabulary: null, notice: "" });
+  let confirmed: TagVocabulary | null = null;
+  let pending: PendingTagAction[] = [];
+  let notice = "";
+
+  const identifier = () => crypto.randomUUID?.() ?? Array.from(
+    crypto.getRandomValues(new Uint8Array(16)),
+    (n) => n.toString(16).padStart(2, "0"),
+  ).join("");
+
+  function visible(): TagVocabulary | null {
+    if (!confirmed) return null;
+    return pending.reduce(
+      (vocabulary, action) => withOptimisticWholeTag(
+        vocabulary,
+        action.meeting.id,
+        action.pick,
+        action.desired,
+        action.optimisticTagId,
+      ),
+      confirmed,
+    );
+  }
+
+  function publish() {
+    state.set({ vocabulary: visible(), notice });
+  }
+
+  function remove(action: PendingTagAction) {
+    pending = pending.filter((candidate) => candidate !== action);
+  }
+
+  function requestFor(action: PendingTagAction): AnnotationRequest | null {
+    if (!confirmed || wholeTagOn(confirmed, action.meeting.id, action.pick) === action.desired) {
+      return null;
+    }
+    const known = tagForPick(confirmed, action.pick);
+    if (!action.desired && !known) return null;
+    const base = action.desired
+      ? markRequest(known ? { tagId: known.tagId, label: known.label } : action.pick, WHOLE_MEETING)
+      : untagMeetingRequest(known!.tagId);
+    return { ...base, requestId: identifier() };
+  }
+
+  async function execute(action: PendingTagAction) {
+    try {
+      action.request ??= requestFor(action) ?? undefined;
+      if (!action.request) return;
+      const result = await apply(action.meeting, action.request);
+      if (confirmed) confirmed = withMeetingResult(confirmed, result);
+    } catch (error) {
+      notice = `Could not ${action.desired ? "tag" : "untag"} “${action.meeting.title}”: ${describeAnnotationError(error)}`;
+    } finally {
+      remove(action);
+      publish();
+    }
+  }
+
+  return {
+    subscribe: state.subscribe,
+    setConfirmed(vocabulary: TagVocabulary | null) {
+      confirmed = vocabulary;
+      publish();
+    },
+    updateConfirmed(update: (vocabulary: TagVocabulary) => TagVocabulary) {
+      if (confirmed) confirmed = update(confirmed);
+      publish();
+    },
+    toggle(meeting: MeetingCatalogEntry, pick: TagPick) {
+      const current = visible();
+      if (!current) return false;
+      const action: PendingTagAction = {
+        meeting,
+        pick,
+        desired: !wholeTagOn(current, meeting.id, pick),
+        optimisticTagId: "tagId" in pick ? pick.tagId : `optimistic-${identifier()}`,
+      };
+      pending = [...pending, action];
+      notice = "";
+      publish();
+      void schedule(() => execute(action));
+      return true;
+    },
+    dismissNotice() {
+      notice = "";
+      publish();
+    },
   };
 }
 
