@@ -12,6 +12,7 @@
 
   let usage: StorageUsage | null = null;
   let loading = true;
+  let recalculating = false;
   let loadError = "";
 
   $: total = usage ? storageUsageTotal(usage.sources) : null;
@@ -20,20 +21,24 @@
     void load();
   });
 
-  async function load() {
+  async function load(recalculate = false) {
     if (!operatorClient) {
       loading = false;
       loadError = "Cassini’s operator connection is not available.";
       return;
     }
     loading = true;
+    recalculating = recalculate;
     loadError = "";
     try {
-      usage = await operatorClient.getStorageUsage();
+      usage = recalculate
+        ? await operatorClient.recalculateStorageUsage()
+        : await operatorClient.getStorageUsage();
     } catch (error) {
       loadError = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
+      recalculating = false;
     }
   }
 
@@ -52,18 +57,31 @@
     <p>Folder sizes for Cassini’s recordings and build artifacts.</p>
   </div>
   <div class="op-panel-actions">
-    <button class="icon-btn" class:refreshing={loading} type="button" on:click={load} disabled={loading} aria-label="Refresh storage usage">
+    <button class="op-btn recalculate" class:refreshing={recalculating} type="button" on:click={() => void load(true)} disabled={loading}>
       <RefreshCw size={16} aria-hidden="true" />
+      {recalculating ? "Recalculating…" : "Recalculate"}
     </button>
   </div>
 </header>
 
+{#if loadError && usage}
+  <section class="alert alert-error text-sm" aria-live="polite">
+    <TriangleAlert size={16} aria-hidden="true" />
+    Couldn’t recalculate storage: {loadError}
+  </section>
+{/if}
+
 {#if loading && !usage}
-  <section class="op-tint storage-state" aria-live="polite">Measuring recording folders…</section>
+  <section class="op-tint storage-state" aria-live="polite">Loading the storage index…</section>
 {:else if loadError && !usage}
   <section class="alert alert-error text-sm" aria-live="polite">
     <TriangleAlert size={16} aria-hidden="true" />
     Couldn’t measure storage: {loadError}
+  </section>
+{:else if usage && usage.measured_at === ""}
+  <section class="op-tint storage-state storage-empty" aria-live="polite">
+    <h2>Storage usage has not been calculated yet</h2>
+    <p>Last refreshed: Never. Use Recalculate to scan the recording folders and build the in-memory index.</p>
   </section>
 {:else if usage}
   <section class="storage-card op-tint" aria-label="Cassini storage usage">
@@ -76,7 +94,7 @@
           <strong>{formatStorageBytes(total)}</strong>
         {/if}
       </div>
-      <p class="storage-measured">Measured {measuredAt(usage.measured_at)}</p>
+      <p class="storage-measured">Last refreshed {measuredAt(usage.measured_at)}</p>
     </div>
 
     <div class="storage-rows">
@@ -105,6 +123,10 @@
 
 <style>
   .storage-state { padding: 16px; font-size: 13px; color: color-mix(in oklch, var(--color-base-content) 68%, transparent); }
+  .storage-empty h2 { margin: 0; font-size: 14px; color: var(--color-base-content); }
+  .storage-empty p { margin: 5px 0 0; }
+  .recalculate { display: inline-flex; align-items: center; gap: 7px; }
+  .recalculate :global(svg) { width: 15px; height: 15px; }
   .storage-card { overflow: hidden; }
   .storage-summary { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 18px; }
   .storage-overline { margin: 0 0 3px; font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: color-mix(in oklch, var(--color-base-content) 55%, transparent); }

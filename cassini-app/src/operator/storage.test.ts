@@ -69,6 +69,18 @@ describe("OperatorClient storage", () => {
     });
   });
 
+  it("recalculates the storage index only through an explicit POST", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ measured_at: "2026-09-23T08:30:00Z", duration_ms: 42, sources: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("/operator").recalculateStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage");
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
   it("reads both modes, their blockers and their instructions", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(READY_STORAGE)));
 

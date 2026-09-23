@@ -200,6 +200,12 @@ export class OperatorClient {
     return normalizeStorageUsage(await this.#request<unknown>("/storage/usage"));
   }
 
+  async recalculateStorageUsage(): Promise<StorageUsage> {
+    return normalizeStorageUsage(
+      await this.#request<unknown>("/storage/usage", { method: "POST" }),
+    );
+  }
+
   // putStorage switches the storage model, which MOVES every published
   // recording. It is one call and it blocks for the length of the move: the
   // operator holds its provisioning lock for the whole transition and re-runs
