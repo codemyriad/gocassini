@@ -47,21 +47,19 @@
     type InsightRecord,
   } from "./viewer/insights";
   import {
-    describeAnnotationError,
     mergeVocabularyTags,
     tagsByMeeting,
     type AnnotationRequest,
-    type MeetingAnnotations,
     type TagPick,
     type TagVocabulary,
   } from "./viewer/annotations";
   import {
+    createListTagSession,
     createTagLoader,
     createWriteQueue,
     filterByTags,
     planBulkTag,
     wholeTagState,
-    withMeetingResult,
     type MeetingTags,
     type TagMatch,
   } from "./viewer/listTags";
@@ -404,7 +402,7 @@
   const tagLoader = createTagLoader(
     () => dataProvider.loadTagVocabulary!(),
     (vocabulary) => {
-      tagVocabulary = vocabulary ?? tagVocabulary;
+      if (vocabulary) listTagSession.setConfirmed(vocabulary);
       tagsFailed = !vocabulary;
     },
   );
@@ -418,23 +416,18 @@
 
   const queueTagWrite = createWriteQueue(() => refreshTags(true));
 
-  function applied(result: MeetingAnnotations) {
-    if (tagVocabulary) {
-      tagVocabulary = withMeetingResult(tagVocabulary, result);
-    }
-  }
+  const listTagSession = createListTagSession(
+    (meeting, request) => dataProvider.applyAnnotationOps!(meeting, request),
+    queueTagWrite,
+  );
 
-  // Both plan from what the picker showed when it was clicked.
+  $: tagVocabulary = $listTagSession.vocabulary;
+  $: tagNotice = $listTagSession.notice;
+
+  // The session applies the click to its optimistic layer before this returns;
+  // queued writes reconcile the confirmed layer underneath it.
   function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
-    const { remove, request } = planBulkTag([meeting], meetingTags, pick);
-    tagNotice = "";
-    void queueTagWrite(async () => {
-      try {
-        applied(await dataProvider.applyAnnotationOps!(meeting, request));
-      } catch (error) {
-        tagNotice = `Could not ${remove ? "untag" : "tag"} “${meeting.title}”: ${describeAnnotationError(error)}`;
-      }
-    });
+    listTagSession.toggle(meeting, pick);
   }
 
   const bulkTags = createBulkTagSession(
@@ -445,7 +438,7 @@
       });
     }),
     (result) => {
-      if (tagVocabulary) tagVocabulary = withAnnotationBatch(tagVocabulary, result);
+      listTagSession.updateConfirmed((vocabulary) => withAnnotationBatch(vocabulary, result));
       refreshTags(true);
     },
   );
@@ -1373,7 +1366,7 @@
       {tagNotice}
       on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
       on:clearTags={() => (selectedTagIds = [])}
-      on:dismissTagNotice={() => (tagNotice = "")}
+      on:dismissTagNotice={() => listTagSession.dismissNotice()}
     />
     </div>
 
