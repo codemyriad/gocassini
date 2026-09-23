@@ -231,6 +231,38 @@ export interface StorageUsage {
   sources: StorageUsageSource[];
 }
 
+export interface ArtifactStorageFileType {
+  extension: string;
+  bytes: number;
+  files: number;
+}
+
+export interface ArtifactStorageItem {
+  name: string;
+  bytes: number;
+  files: number;
+  collections: number;
+  formats: ArtifactStorageFileType[];
+  error: string;
+}
+
+export interface ArtifactStorageRoot {
+  id: string;
+  label: string;
+  location: string;
+  bytes: number;
+  files: number;
+  collections: number;
+  items: ArtifactStorageItem[];
+  error: string;
+}
+
+export interface ArtifactStorageUsage {
+  measured_at: string;
+  duration_ms: number;
+  roots: ArtifactStorageRoot[];
+}
+
 // One Nextcloud share model. The browser only provisions Cassini's owner account.
 export interface StorageServiceAccount {
   user: string;

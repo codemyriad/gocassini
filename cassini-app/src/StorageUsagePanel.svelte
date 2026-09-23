@@ -4,6 +4,8 @@
   import { OperatorClient } from "./operator/client";
   import { formatStorageBytes, storageUsageTotal } from "./operator/storageUsage";
   import type { StorageUsage } from "./operator/types";
+  import NextcloudStorageUsageReport from "./NextcloudStorageUsageReport.svelte";
+  import ArtifactStorageUsageReport from "./ArtifactStorageUsageReport.svelte";
 
   // Settings.svelte owns configuration and hands its one client to every panel.
   // This panel only reads current folder sizes; refresh is explicit because a
@@ -120,6 +122,9 @@
     Sizes are logical file bytes in each folder. Raw audio and retained video share the working archive.
   </p>
 {/if}
+
+<NextcloudStorageUsageReport {operatorClient} />
+<ArtifactStorageUsageReport {operatorClient} />
 
 <style>
   .storage-state { padding: 16px; font-size: 13px; color: color-mix(in oklch, var(--color-base-content) 68%, transparent); }
