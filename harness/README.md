@@ -1477,7 +1477,7 @@ command.
 **Seed a stack with it**, either as part of bringing one up:
 
 ```bash
-./bin/cassini dev stack up --seed harness/runtime/seed/prod
+./bin/cassini dev stack up --seed-published harness/runtime/seed/prod
 ```
 
 or against a stack that is already running:
@@ -1513,6 +1513,27 @@ shows nothing for them while every published surface — the viewer, insights,
 **A pack is confidential.** It holds real audio, transcripts and summaries.
 `harness/runtime/` is gitignored, which is why the examples above write there;
 treat a pack the way you would treat the recordings themselves.
+
+### 9.6 Seeding the installed operator volume
+
+`--seed-operator` is for a copy of Cassini's AppAPI persistent-volume root,
+not a published-files pack. It must contain `operator/jobs/`. The harness checks
+that shape before it starts, then after AppAPI deploys Cassini bind-mounts the
+source read-only into a short-lived copier and copies its contents into the
+new ExApp volume. The source is never changed.
+
+```bash
+./bin/cassini dev stack up --cassini installed-exapp \
+  --seed-operator /absolute/path/to/nc_app_gocassini_data
+```
+
+This seed is intentionally refused with `--resume`: it belongs to a fresh
+operator volume. Use the normal default fresh start or `--reset` when a prior
+harness volume exists. A 120 GB seed requires at least that much free Docker
+storage, plus room for images and new recordings. On Docker Desktop, raise the
+Disk usage limit to at least 160 GB (200 GB is the sensible working setting);
+the host's free space alone is not sufficient if Docker Desktop's VM disk limit
+is smaller.
 
 ## 10. Repository structure and operational reference
 
