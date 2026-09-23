@@ -233,6 +233,38 @@ export interface StorageUsage {
   sources: StorageUsageSource[];
 }
 
+export interface ArtifactStorageFileType {
+  extension: string;
+  bytes: number;
+  files: number;
+}
+
+export interface ArtifactStorageItem {
+  name: string;
+  bytes: number;
+  files: number;
+  collections: number;
+  formats: ArtifactStorageFileType[];
+  error: string;
+}
+
+export interface ArtifactStorageRoot {
+  id: string;
+  label: string;
+  location: string;
+  bytes: number;
+  files: number;
+  collections: number;
+  items: ArtifactStorageItem[];
+  error: string;
+}
+
+export interface ArtifactStorageUsage {
+  measured_at: string;
+  duration_ms: number;
+  roots: ArtifactStorageRoot[];
+}
+
 // StorageModeOption is one of the two models as GET <basePath>/storage
 // describes it. The copy — summary, consequence, blocker, instructions — comes
 // from the operator rather than from this app, because that is the layer that

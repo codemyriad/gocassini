@@ -81,6 +81,71 @@ describe("OperatorClient storage", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
   });
 
+  it("reads and recalculates the independent Nextcloud-roots index", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ measured_at: "", sources: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new OperatorClient("/operator");
+
+    await client.getNextcloudStorageUsage();
+    await client.recalculateNextcloudStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage/nextcloud");
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBeUndefined();
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/operator/storage/usage/nextcloud");
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe("POST");
+  });
+
+  it("normalizes the independent artifact-directory index", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({
+      measured_at: "2026-09-23T12:00:00Z",
+      duration_ms: 8.5,
+      roots: [{
+        id: "current",
+        label: "Current working archive",
+        location: "/jobs/current",
+        bytes: 21,
+        files: 2,
+        collections: 1,
+        items: [{
+          name: "one.run",
+          bytes: 21,
+          files: 2,
+          collections: 1,
+          formats: [
+            { extension: ".mkv", bytes: 14, files: 1 },
+            { extension: ".json", bytes: 7, files: 1 },
+          ],
+        }],
+      }],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const usage = await new OperatorClient("/operator").getArtifactStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage/artifacts");
+    expect(usage.roots[0]?.items[0]).toEqual({
+      name: "one.run",
+      bytes: 21,
+      files: 2,
+      collections: 1,
+      formats: [
+        { extension: ".mkv", bytes: 14, files: 1 },
+        { extension: ".json", bytes: 7, files: 1 },
+      ],
+      error: "",
+    });
+  });
+
+  it("recalculates the artifact index only through an explicit POST", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ measured_at: "", roots: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OperatorClient("/operator").recalculateArtifactStorageUsage();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/operator/storage/usage/artifacts");
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
   it("reads both modes, their blockers and their instructions", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(READY_STORAGE)));
 
