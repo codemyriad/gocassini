@@ -232,6 +232,12 @@ type Runtime struct {
 	nextcloudStorageUsageMu        sync.RWMutex
 	nextcloudStorageUsageRefreshMu sync.Mutex
 	nextcloudStorageUsage          storageUsageResponse
+	// artifactStorageUsage indexes the immediate entries in current/ and runs/
+	// and their file-format composition. It has its own refresh lifecycle so an
+	// administrator can compare this detailed report with the aggregate view.
+	artifactStorageUsageMu        sync.RWMutex
+	artifactStorageUsageRefreshMu sync.Mutex
+	artifactStorageUsage          artifactStorageUsageResponse
 }
 
 type TriggerRequest struct {
@@ -967,6 +973,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
 		{"/storage/usage/nextcloud", exappCfg.nextcloudStorageUsageHandler(rt)},
+		{"/storage/usage/artifacts", artifactStorageUsageHandler(rt)},
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the
