@@ -13,49 +13,27 @@ import (
 	"strings"
 )
 
-const emptyCatalogJSON = `{"version":"cassini.viewer.catalog.v1","meetings":[]}`
-
 const ncFilesACLMediaType = "application/xml; charset=utf-8"
 
-type catalogResolveOutcome int
-
-const (
-	catalogResolveOK catalogResolveOutcome = iota
-	catalogResolveNoArchive
-	catalogResolveUnavailable
-	catalogResolveScanFailed
-	catalogResolveNoMount
-)
-
-type resolvedCatalog struct {
-	raw  []byte
-	body []byte
-}
-
-func (c ExAppConfig) resolveCatalogForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
+// The compatibility catalog is assembled for each caller from current shares.
+func (c ExAppConfig) resolveCatalogForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) ([]byte, error) {
 	snapshot, err := c.directShareSnapshot(ctx, client, caller, c.meetingMetadata)
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc shares: caller=%s: %v", caller, err)
 		}
-		empty := []byte(emptyCatalogJSON)
-		return resolvedCatalog{raw: empty, body: empty}, catalogResolveScanFailed
+		return nil, err
 	}
-	body, err := json.Marshal(siteCatalog{Version: "cassini.viewer.catalog.v1", Meetings: snapshot.entries})
-	if err != nil {
-		empty := []byte(emptyCatalogJSON)
-		return resolvedCatalog{raw: empty, body: empty}, catalogResolveUnavailable
-	}
-	return resolvedCatalog{raw: body, body: body}, catalogResolveOK
+	return json.Marshal(siteCatalog{Version: "cassini.viewer.catalog.v1", Meetings: snapshot.entries})
 }
 
 func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger) {
-	resolved, outcome := c.resolveCatalogForCaller(ctx, client, caller, logger)
-	if outcome == catalogResolveUnavailable || outcome == catalogResolveScanFailed {
+	body, err := c.resolveCatalogForCaller(ctx, client, caller, logger)
+	if err != nil {
 		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
 		return
 	}
-	writeCatalogJSON(w, resolved.body)
+	writeCatalogJSON(w, body)
 }
 
 func writeCatalogJSON(w http.ResponseWriter, body []byte) {
@@ -142,22 +120,4 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 		}
 	}
 	return state, nil
-}
-
-func (c ExAppConfig) davGetBytes(ctx context.Context, client *http.Client, userID, relPath string) ([]byte, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	c.setAppAPIDAVHeadersForUser(req, userID)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer drainClose(resp.Body)
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
-	if err != nil {
-		return nil, resp.StatusCode, err
-	}
-	return body, resp.StatusCode, nil
 }

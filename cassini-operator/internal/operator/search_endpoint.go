@@ -325,24 +325,13 @@ func (c ExAppConfig) serveSearch(
 func (c ExAppConfig) resolveVisibleMeetings(
 	ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger, route string,
 ) ([]catalogHydration, bool) {
-	resolved, outcome := c.resolveCatalogForCaller(ctx, client, caller, logger)
-	switch outcome {
-	case catalogResolveOK, catalogResolveNoArchive:
-	case catalogResolveUnavailable:
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive is unreachable; this is not an empty result")
-		return nil, false
-	case catalogResolveScanFailed:
+	resolved, err := c.resolveCatalogForCaller(ctx, client, caller, logger)
+	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "could not determine which recordings you may read; this is not an empty result")
-		return nil, false
-	case catalogResolveNoMount:
-		writeJSONError(w, http.StatusBadGateway, "the recordings folder is not available to your account; this is not an empty result")
-		return nil, false
-	default:
-		writeJSONError(w, http.StatusBadGateway, "the recordings archive could not be read; this is not an empty result")
 		return nil, false
 	}
 
-	entries, err := decodeCatalogEntries(resolved.body)
+	entries, err := decodeCatalogEntries(resolved)
 	if err != nil {
 		if logger != nil {
 			logger.Printf("%s: parse resolved catalog caller=%s: %v", route, caller, err)

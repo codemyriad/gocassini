@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -49,9 +50,6 @@ func (s *ncAccessSubstrateStatus) beginRun() {
 func (s *ncAccessSubstrateStatus) record(state ncSubstrateState, step string, cause error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state == ncSubstrateUnavailable && state == ncSubstrateDegraded {
-		return
-	}
 	s.state = state
 	s.step = step
 	if cause != nil {
@@ -93,11 +91,15 @@ func (s *ncAccessSubstrateStatus) setProbe(probe ncStorageProbe) {
 func (s *ncAccessSubstrateStatus) warnShare(message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.shareWarning == "" {
-		s.shareWarning = message
-	} else if len(s.shareWarning)+len(message) < 8192 {
-		s.shareWarning += "\n" + message
+	lines := []string{}
+	if s.shareWarning != "" {
+		lines = strings.Split(s.shareWarning, "\n")
 	}
+	lines = append(lines, message)
+	for len(lines) > 1 && len(strings.Join(lines, "\n")) > 8192 {
+		lines = lines[1:]
+	}
+	s.shareWarning = strings.Join(lines, "\n")
 }
 
 func (s *ncAccessSubstrateStatus) lastProbe() (ncStorageProbe, bool) {

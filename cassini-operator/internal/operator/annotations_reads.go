@@ -15,14 +15,17 @@ func (s *annotationService) readDocument(ctx context.Context, caller, meetingID,
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: fmt.Errorf("annotations store unavailable")}
 	}
 	currentPath, err := s.exapp.currentRecordingPath(ctx, s.client, caller, opusName, s.exapp.meetingMetadata)
-	if errors.Is(err, errRecordingNotShared) || (err == nil && currentPath != relPath) {
+	if errors.Is(err, errRecordingNotShared) {
 		return annotateResult{}, annotateNotFound(fmt.Errorf("recording is no longer shared with caller"))
 	}
 	if err != nil {
 		return annotateResult{}, annotateUnavailable(err)
 	}
+	// The caller may have renamed the share since this request first listed it.
+	// The fresh OCS path is the one Nextcloud will authorize now.
+	relPath = currentPath
 	// Check the current leaf permission without downloading its media bytes.
-	identity := s.exapp.recordingReadIdentity(caller, relPath)
+	identity := caller
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, s.exapp.davFileURL(identity, relPath), nil)
 	if err != nil {
 		return annotateResult{}, annotateUnavailable(err)
@@ -122,8 +125,6 @@ func (s *annotationService) importDocument(caller, meetingID, opusName, relPath 
 		if _, err := store.document(ctx, opusName); err == nil {
 			return
 		}
-		provisionMu.RLock()
-		defer provisionMu.RUnlock()
 		// File writers and importers must agree on which delivered version was read.
 		unlock, err := annotationWriteLocks.acquire(ctx, opusName)
 		if err != nil {

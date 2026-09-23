@@ -152,3 +152,29 @@ func TestRecordingShareRequiresValidStarter(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordingShareFailsWhenGroupAudienceIsRefused(t *testing.T) {
+	starterShared := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			if r.FormValue("shareWith") == "staff" {
+				_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":404,"message":"group unavailable"},"data":[]}}`)
+				return
+			}
+			starterShared = true
+			_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":{"id":1}}}`)
+			return
+		}
+		list := `[]`
+		if starterShared {
+			list = `[{"id":1,"share_type":0,"share_with":"alice","permissions":1}]`
+		}
+		_, _ = io.WriteString(w, `{"ocs":{"meta":{"status":"ok","statuscode":100},"data":`+list+`}}`)
+	}))
+	defer server.Close()
+	cfg := ExAppConfig{NextcloudURL: server.URL, AppID: "cassini", AppVersion: "1", AppSecret: "secret"}
+	audience := []aclMapping{{Type: "user", ID: "alice"}, {Type: "group", ID: "staff"}}
+	if err := cfg.reconcileRecordingShares(context.Background(), server.Client(), ncRecordingsRoot+"/meetings/a.opus", audience, false); err == nil || !strings.Contains(err.Error(), "staff") {
+		t.Fatalf("group refusal must fail publication: %v", err)
+	}
+}

@@ -6,12 +6,6 @@ import "strings"
 // shared recordings through its broad, mode-selected read path after rollback.
 const ncRecordingsRoot = "CassiniRecordings"
 
-func ncArchiveReadIdentity(caller string) (readAs, root string) {
-	return caller, ncRecordingsRoot
-}
-
-func ncArchiveRoot() string { return ncRecordingsRoot }
-
 func recordingsTreeDirs(root string) []string {
 	parts := strings.Split(strings.Trim(root, "/"), "/")
 	dirs := make([]string, 0, len(parts)+1)

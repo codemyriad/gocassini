@@ -117,22 +117,3 @@ func (s *meetingMetadataStore) Forget(ctx context.Context, fileID int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM meeting_metadata WHERE file_id = ?`, fileID)
 	return err
 }
-
-// AllEntries supports administrative index rebuilds. Visibility endpoints must
-// use EntriesFor with a fresh share snapshot instead.
-func (s *meetingMetadataStore) AllEntries(ctx context.Context) ([]json.RawMessage, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT entry_json FROM meeting_metadata ORDER BY date_label DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var entries []json.RawMessage
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		entries = append(entries, json.RawMessage(raw))
-	}
-	return entries, rows.Err()
-}

@@ -205,25 +205,8 @@ func (c ExAppConfig) davDownloadFile(ctx context.Context, client *http.Client, u
 	return hex.EncodeToString(sum.Sum(nil)), written, resp.StatusCode, file.Close()
 }
 
-// ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
-// absent (dev/standalone serve straight from local disk as before).
-//
-// Constructed on AppAPI presence alone, NOT on the resolved publish sink — a
-// deliberate deferral, recorded here because it looks like an oversight.
-//
-// Under CASSINI_PUBLISH_SINK=local the proxy is still installed and still claims
-// catalog.json and meetings/*, against a Nextcloud tree nothing ever writes to.
-// Scoping its construction properly means threading the sink through
-// exapp.go:297 and every test around it, for a configuration that is an escape
-// hatch nobody runs with AppAPI active.
-//
-// What makes the deferral safe is not the sink but the substrate: reading as the
-// owner additionally requires ncAccessSubstrate.usable(), and under a `local`
-// sink the substrate is never marked applicable, so it never reaches
-// `provisioned`. The owner-identity path is therefore unreachable there.
-// TestNCFilesProxyCannotServeAsOwnerUnderALocalSink is what turns that from
-// safe-by-accident into safe-by-test — which matters, because "it should hold"
-// is the sentence that preceded the disclosure the D-616 review reproduced.
+// ncFilesProxy serves the installed Nextcloud archive as the current caller.
+// With the local static sink, the file handler serves the local export instead.
 func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFilesProxyFunc {
 	if !c.appAPIActive() {
 		return nil
@@ -232,36 +215,17 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 	// bounded by the request context; a hung upstream is bounded on headers.
 	client := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}}
 	return func(w http.ResponseWriter, r *http.Request, relPath string) bool {
-		// The list endpoint is gated on the resolved SINK, before anything else.
-		// ncFilesProxy is non-nil whenever the AppAPI env is present, regardless
-		// of where publishing actually goes — so on an ExApp running the local
-		// sink this route would otherwise answer from a Nextcloud archive that
-		// is not the one being written. Declining falls through to the local
-		// file server, which has no such file and 404s. Checked ahead of the
-		// caller guard so a deployment that does not serve this route at all
-		// answers the same way for every caller.
-		if (relPath == meetingsListPath || relPath == searchURLPath) && c.PublishSink != publishSinkNextcloudFiles {
+		if c.PublishSink != publishSinkNextcloudFiles {
 			return false
 		}
-		// The caller identity comes from the AppAPI-verified request; these
-		// routes are USER-gated, so it is always present. An absent one is a
-		// bug, not an anonymous reader, and it fails closed in BOTH modes —
-		// USER-level authentication is the entire access control in the default
-		// model, so an unidentified caller must get nothing there too.
+		// A missing AppAPI user is a transport failure, not an empty list.
 		caller := appapi.UserID(r.Context())
 		if caller == "" {
 			if logger != nil {
 				logger.Printf("nc files read: missing caller identity path=%s — failing closed", relPath)
 			}
 			switch relPath {
-			case "catalog.json":
-				writeCatalogJSON(w, []byte(emptyCatalogJSON))
-			case meetingsListPath, searchURLPath:
-				// The list endpoint must NOT reuse either arm above. An empty
-				// catalog would claim the caller may read nothing, and the 404
-				// would be phrased by the CLI as "no recording you can read"
-				// plus a permissions hint — both report a broken AppAPI
-				// identity as a denial. It is plumbing, so say so.
+			case "catalog.json", meetingsListPath, searchURLPath:
 				writeJSONError(w, http.StatusBadGateway,
 					"your Nextcloud identity did not reach Cassini; this is not an empty result")
 			default:
@@ -269,25 +233,17 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			}
 			return true
 		}
-		readAs, _ := ncArchiveReadIdentity(caller)
+		readAs := caller
 
 		if relPath == "catalog.json" {
 			c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
 			return true
 		}
 		if relPath == meetingsListPath {
-			// Same visible set as catalog.json — resolved through the same
-			// mode-aware resolution, so it narrows what THIS model says the
-			// caller may read — narrowed by the query, and with substrate
-			// failures reported loudly. See serveMeetingsList.
 			c.serveMeetingsList(r.Context(), w, r, client, caller, search, logger)
 			return true
 		}
 		if relPath == searchURLPath {
-			// Same visible set again, this time bound into the FTS statement —
-			// and resolved through the same mode-aware resolution, so in the
-			// default model the searchable set is the whole archive, exactly as
-			// catalog.json and the meetings list answer it. See serveSearch.
 			c.serveSearch(r.Context(), w, r, client, caller, search, logger)
 			return true
 		}

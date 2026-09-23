@@ -53,7 +53,3 @@ func (c ExAppConfig) preflightDirectShares(ctx context.Context, logger *log.Logg
 	}
 	ncAccessSubstrate.succeed()
 }
-
-func (c ExAppConfig) preflightNCStorage(ctx context.Context, logger *log.Logger) {
-	c.preflightDirectShares(ctx, logger)
-}

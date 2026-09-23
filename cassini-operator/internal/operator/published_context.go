@@ -356,17 +356,8 @@ func isPlainMeetingID(id string) bool {
 // is read from exactly the entry an id run would have read it from. That is
 // what makes the two documents identical rather than merely similar.
 //
-// A failed per-caller scan reaches here as an EMPTY catalog, not as an error —
-// serveFilteredCatalog fails closed — so the readable set comes back empty with
-// ok=true. That is the safe direction (over-restriction, never disclosure), and
-// both callers treat an empty set as the outage it almost always is and answer
-// 502 rather than 404: a caller who has just listed their own meetings and now
-// reads none of them has hit a failure, not a permission change. Telling the
-// two apart exactly needs the resolveCatalogForCaller extraction D-701 makes.
-//
-// Which model this instance runs is resolved inside that same resolution, so
-// this reads the caller's slice under access control and the whole archive under
-// the default model, without a mode branch of its own (D-616).
+// The catalog is assembled from the caller's current shares. A failed share
+// lookup answers 502, while a valid empty share set remains an empty catalog.
 func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (map[string]string, []byte, bool) {
 	captured := &capturedResponse{header: http.Header{}}
 	c.serveFilteredCatalog(ctx, captured, client, caller, logger)
@@ -421,11 +412,8 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 	return readable, body, true
 }
 
-// stageMeetingForContext downloads one recording into destPath under the same
-// identity the read proxy would use: AS THE CALLER under access control, so
-// Nextcloud enforces the per-file ACL a second time; as the owner under the
-// default model, where reading as the caller would find nothing at all. It draws
-// down a shared byte budget so one request cannot stage the archive.
+// stageMeetingForContext downloads as the caller. Nextcloud checks this file
+// read, and the shared byte budget prevents one request staging an archive.
 func (c ExAppConfig) stageMeetingForContext(ctx context.Context, client *http.Client, caller, relPath, destPath string, budget *int64) (int, error) {
 	readAs := caller
 	written, status, err := c.stageRecording(ctx, client, readAs, relPath, destPath, *budget)

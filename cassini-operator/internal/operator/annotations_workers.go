@@ -150,10 +150,6 @@ func (s *annotationService) snapshot(ctx context.Context, id int64) (annotateRes
 	return result, err
 }
 func (s *annotationService) syncAnnotation(ctx context.Context, name string) error {
-	// Storage transitions take the exclusive side; different workers may stage
-	// concurrently, while republish shares the per-recording lock below.
-	provisionMu.RLock()
-	defer provisionMu.RUnlock()
 	release, err := annotationWriteLocks.acquire(ctx, name)
 	if err != nil {
 		return err

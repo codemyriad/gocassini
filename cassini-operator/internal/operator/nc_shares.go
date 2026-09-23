@@ -316,7 +316,9 @@ func (c ExAppConfig) reconcileRecordingShares(ctx context.Context, client *http.
 			}
 		}
 		if createErr != nil {
-			if index > 0 && recipientShareRefusal(createErr) {
+			// A missing individual can be reported and skipped. A failed
+			// group or Team share would omit a whole audience, so fail the job.
+			if index > 0 && principal.Type == "user" && recipientShareRefusal(createErr) {
 				ncAccessSubstrate.warnShare(fmt.Sprintf("recording %s: share skipped for %s %s: %v", path.Base(relPath), principal.Type, principal.ID, createErr))
 				continue
 			}

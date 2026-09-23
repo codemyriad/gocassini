@@ -68,6 +68,11 @@ func TestDirectPreflightKeepsLastUsableResultUntilProbeFinishes(t *testing.T) {
 		t.Fatal("a completed failed probe was ignored")
 	}
 	ncAccessSubstrate.beginRun()
+	ncAccessSubstrate.degraded("private_archive", nil)
+	if got := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles).Step; got != "private_archive" {
+		t.Fatalf("new probe failure retained stale step %q", got)
+	}
+	ncAccessSubstrate.beginRun()
 	ncAccessSubstrate.succeed()
 	if !ncAccessSubstrate.usable() {
 		t.Fatal("a successful recheck did not recover availability")

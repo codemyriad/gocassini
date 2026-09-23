@@ -10,31 +10,10 @@ import (
 	"time"
 )
 
-// Capturing a recording's audience while the meeting is happening (D-769).
-//
-// Everything else in this codebase asks the audience question too late. The
-// publish path resolves it (resolveRecordingAudience) and throws the answer
-// away once the PROPPATCH lands, and in the default storage model it never asks
-// at all, because there are no rules to write there. So a recording that later
-// turns out to need an audience — every recording a default -> access-controlled
-// migration carries into the Team folder, readable by everyone — has nothing on
-// the instance that can say who it belonged to:
-//
-//	the Talk room   answers who is in it NOW. A room gains and loses members;
-//	                asking it months later is a different question wearing the
-//	                same words.
-//	the .opus       records who SPOKE. buildSpeakerEntries walks transcript
-//	                segments, so a participant who sat through the call in
-//	                silence is not in the file at all, and neither is a group.
-//
-// Neither is the audience. The audience is who had access to the room while the
-// recording was being made, and the only moment that is cheaply and exactly
-// knowable is while it is being made. So this file writes it down then.
-//
-// The result is frozen by construction: later room churn cannot reach a column
-// nothing rewrites, which is the property the whole feature rests on — a room
-// whose membership changed must not change who may open a recording made before
-// the change.
+// Capture the Talk audience while a recording is active. Room membership can
+// change later, so publication shares the recording with the users, groups and
+// Teams recorded at start and stop. The .opus lists speakers, which omits
+// silent participants and room-level grants.
 
 // roomAudienceTimeout bounds one capture. Generous relative to the work because
 // nothing waits on it: both callers run it in their own goroutine, and the value
@@ -52,7 +31,7 @@ const (
 // storedAudiencePrincipal is the on-disk shape of one grantable principal.
 //
 // Spelled out here rather than marshalling aclMapping directly, because this is
-// a persisted format: aclMapping is an in-memory argument to the ACL builder and
+// a persisted format: aclMapping is an in-memory share principal and
 // may grow a field or rename one without anybody thinking about the rows already
 // written. A column read back by a later release is a contract, so it gets a
 // type whose only job is to be that contract.

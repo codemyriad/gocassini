@@ -9,8 +9,6 @@ import (
 // stage, per copy: the bound meetings-context gives a whole bundle.
 const maxAnnotateRecordingBytes = maxContextStagedBytes
 
-func (c ExAppConfig) recordingReadIdentity(caller, relPath string) string { return caller }
-
 // annotationWriteLocks serialises writes to one recording within this process.
 // Workers, imports and republish share it. If-Match and content verification
 // remain necessary, but ETags alone are not sufficient writer coordination.

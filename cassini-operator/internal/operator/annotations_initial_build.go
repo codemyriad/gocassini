@@ -53,7 +53,7 @@ func (rt *Runtime) startInitialAnnotationBuild(exapp ExAppConfig, logger *log.Lo
 func (rt *Runtime) buildAnnotationIndexOnce(exapp ExAppConfig, store *annotationStore, logger *log.Logger) error {
 	ctx, cancel := context.WithTimeout(rt.ctx, backfillAnnotationsTimeout)
 	defer cancel()
-	targets, err := exapp.archiveBackfillTargets(ctx, rt.cfg.DBPath)
+	targets, err := exapp.archiveBackfillTargets(ctx)
 	if err != nil {
 		return fmt.Errorf("read the owner recording inventory: %w", err)
 	}

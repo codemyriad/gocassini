@@ -26,7 +26,8 @@ The `cassini` account can read all recordings because it owns them. Cassini
 requires its Files root to be a private directory before publishing. If a share
 cannot be made for the meeting starter, publication fails. An individual
 recipient share refusal is reported as a warning and other recipients remain
-accessible. Outages and malformed share responses stop publication.
+accessible. A failed group or Team share stops publication because it can omit
+many people. Outages and malformed share responses also stop publication.
 
 The installed app creates no remote `catalog.json` and needs neither Team
 folders nor the Everyone Group app. The local static exporter still uses

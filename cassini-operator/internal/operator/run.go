@@ -631,12 +631,8 @@ func defaultSiteRoot(persistRoot, dataRoot string) string {
 		filepath.Join(dataRoot, "site"))
 }
 
-// defaultDBPath is where the job database lands when nothing overrides it.
-//
-// Factored out because the one-shot commands need it too: storage_settings.json
-// lives beside the database, and a command that has to know which storage model
-// this installation runs cannot ask the running operator — it is a separate
-// process with its own empty ncStorage.
+// defaultDBPath is the operator job database path, shared by the server and
+// one-shot maintenance commands.
 func defaultDBPath(persistRoot, dataRoot string) string {
 	return exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),

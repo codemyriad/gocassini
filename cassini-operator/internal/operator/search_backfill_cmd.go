@@ -2,15 +2,12 @@ package operator
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -19,9 +16,8 @@ import (
 // `cassini-operator backfill-search`: index meetings published before the
 // search index existed (D-623).
 //
-// A hand-run admin command rather than startup work, for the same reason
-// backfill-nc-files is: it reads every promoted bundle on the volume, and that
-// is not something an operator restart should silently begin doing.
+// A hand-run admin command. It scans the owner archive without turning a
+// normal operator restart into a potentially large indexing job.
 //
 // It is safe to re-run and safe to interrupt. A meeting already indexed from
 // the same delivered artifact is skipped — one PROPFIND when the delivery
@@ -30,8 +26,7 @@ import (
 // recorded with a reason rather than left to look searched.
 const backfillSearchCommand = "backfill-search"
 
-// backfillSearchTimeout bounds the whole run. Like the NC backfill this is
-// interactive with a human watching, so it is generous rather than tight.
+// backfillSearchTimeout bounds the whole interactive run.
 const backfillSearchTimeout = 2 * time.Hour
 
 const (
@@ -112,7 +107,7 @@ Flags:
 	defer cancel()
 
 	logger := log.New(stderr, "backfill-search: ", log.LstdFlags)
-	targets, err := exapp.archiveBackfillTargets(runCtx, cfg.DBPath)
+	targets, err := exapp.archiveBackfillTargets(runCtx)
 	if err != nil {
 		fmt.Fprintf(stderr, "read owner recording inventory: %v\nnothing was read or written\n", err)
 		return backfillSearchExitNotStarted
@@ -162,7 +157,7 @@ Flags:
 
 // archiveBackfillTargets reads the owner archive. The local metadata database
 // is disposable and may be empty after a volume restore.
-func (c ExAppConfig) archiveBackfillTargets(ctx context.Context, _ string) ([]searchBackfillTarget, error) {
+func (c ExAppConfig) archiveBackfillTargets(ctx context.Context) ([]searchBackfillTarget, error) {
 	names, err := c.ownerRecordingNames(ctx, &http.Client{Timeout: ncProvisionTimeout})
 	if err != nil {
 		return nil, err
@@ -176,46 +171,5 @@ func (c ExAppConfig) archiveBackfillTargets(ctx context.Context, _ string) ([]se
 		targets = append(targets, searchBackfillTarget{JobID: jobID, OpusName: name})
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].OpusName < targets[j].OpusName })
-	return targets, nil
-}
-
-// parseBackfillTargets decodes the catalog into targets, skipping entries that
-// cannot be keyed. A legacy directory-shaped entry has no basename any
-// visibility scan can return, so indexing it would make it permanently
-// unreachable.
-func parseBackfillTargets(raw []byte) ([]searchBackfillTarget, error) {
-	var catalog struct {
-		Meetings []struct {
-			ID        string `json:"id"`
-			JobID     string `json:"jobId"`
-			AudioPath string `json:"audioPath"`
-		} `json:"meetings"`
-	}
-	if err := json.Unmarshal(raw, &catalog); err != nil {
-		return nil, fmt.Errorf("parse archive catalog: %w", err)
-	}
-	targets := make([]searchBackfillTarget, 0, len(catalog.Meetings))
-	for _, entry := range catalog.Meetings {
-		ref := strings.TrimSpace(entry.AudioPath)
-		if ref == "" {
-			continue
-		}
-		name := path.Base(filepath.ToSlash(ref))
-		if name == "" || name == "." || name == "/" {
-			continue
-		}
-		// jobId is carried explicitly since D-640, but a meeting published
-		// before that field existed has none — and for the operator's own
-		// publishes the catalog id IS the job id. Prefer the explicit field and
-		// fall back, rather than assuming either.
-		jobID := strings.TrimSpace(entry.JobID)
-		if jobID == "" {
-			jobID = strings.TrimSpace(entry.ID)
-		}
-		if jobID == "" {
-			continue
-		}
-		targets = append(targets, searchBackfillTarget{JobID: jobID, OpusName: name})
-	}
 	return targets, nil
 }

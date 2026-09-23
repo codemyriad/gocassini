@@ -74,7 +74,7 @@ Flags:
 	defer cancel()
 
 	logger := log.New(stderr, backfillAnnotationsCommand+": ", log.LstdFlags)
-	targets, err := exapp.archiveBackfillTargets(runCtx, cfg.DBPath)
+	targets, err := exapp.archiveBackfillTargets(runCtx)
 	if err != nil {
 		fmt.Fprintf(stderr, "read archive catalog: %v\nnothing was read or written\n", err)
 		return backfillSearchExitNotStarted
