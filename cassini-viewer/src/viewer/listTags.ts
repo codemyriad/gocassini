@@ -1,6 +1,7 @@
 import type { MeetingCatalogEntry } from "./catalog";
 import { writable } from "svelte/store";
 import {
+  AnnotationError,
   WHOLE_MEETING,
   describeAnnotationError,
   findByLabel,
@@ -273,11 +274,31 @@ export function createListTagSession(
     return { ...base, requestId: identifier() };
   }
 
+  function writeRetryDelay(error: unknown, attempt: number): number | null {
+    const requested = retryDelay(error, attempt);
+    if (requested !== null) return attempt < 5 ? requested : null;
+    // A disconnected client or a server failure can happen after the durable
+    // commit. Repeat the exact payload once: requestId makes that a receipt
+    // replay rather than a duplicate mutation when the first call landed.
+    const ambiguous = !(error instanceof AnnotationError) || error.status >= 500;
+    return ambiguous && attempt === 0 ? 250 : null;
+  }
+
   async function execute(action: PendingTagAction) {
     try {
       action.request ??= requestFor(action) ?? undefined;
       if (!action.request) return;
-      const result = await apply(action.meeting, action.request);
+      let result: AnnotationResult;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          result = await apply(action.meeting, action.request);
+          break;
+        } catch (error) {
+          const delay = writeRetryDelay(error, attempt);
+          if (delay === null) throw error;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
       if (confirmed) confirmed = withMeetingResult(confirmed, result);
     } catch (error) {
       notice = `Could not ${action.desired ? "tag" : "untag"} “${action.meeting.title}”: ${describeAnnotationError(error)}`;

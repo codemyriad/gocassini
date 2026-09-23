@@ -5,6 +5,8 @@ import {
   AnnotationError,
   retryDelay,
   tagsByMeeting,
+  type AnnotationRequest,
+  type AnnotationResult,
   type MeetingAnnotations,
   type TagVocabulary,
   type VocabularyTag,
@@ -208,11 +210,11 @@ describe("writing tags", () => {
   });
 
   it("shows every click immediately and replays newer intent over older answers", async () => {
-    const answers: ((value: MeetingAnnotations & { operationId: string; added: string[]; removed: string[]; notFound: string[] }) => void)[] = [];
-    const requests: unknown[] = [];
-    const apply = vi.fn((_meeting, request) => {
+    const answers: ((value: AnnotationResult) => void)[] = [];
+    const requests: AnnotationRequest[] = [];
+    const apply = vi.fn((_meeting: MeetingCatalogEntry, request: AnnotationRequest) => {
       requests.push(request);
-      return new Promise<any>((resolve) => answers.push(resolve));
+      return new Promise<AnnotationResult>((resolve) => answers.push(resolve));
     });
     const session = createListTagSession(apply, createWriteQueue(() => undefined));
     session.setConfirmed(vocabulary);
@@ -259,8 +261,8 @@ describe("writing tags", () => {
   });
 
   it("resolves an optimistic new tag id before a fast second click removes it", async () => {
-    const answers: ((value: any) => void)[] = [];
-    const apply = vi.fn(() => new Promise<any>((resolve) => answers.push(resolve)));
+    const answers: ((value: AnnotationResult) => void)[] = [];
+    const apply = vi.fn(() => new Promise<AnnotationResult>((resolve) => answers.push(resolve)));
     const session = createListTagSession(apply, createWriteQueue(() => undefined));
     session.setConfirmed(vocabulary);
 
@@ -295,6 +297,29 @@ describe("writing tags", () => {
     await settle();
     expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
     expect(get(session).notice).toContain("Could not tag “Hiring sync”: bad tag");
+  });
+
+  it("replays an ambiguous write with the same request identity", async () => {
+    vi.useFakeTimers();
+    const requests: AnnotationRequest[] = [];
+    const apply = vi.fn((_meeting: MeetingCatalogEntry, request: AnnotationRequest) => {
+      requests.push(request);
+      if (requests.length === 1) return Promise.reject(new Error("connection lost"));
+      return Promise.resolve({
+        meetingId: "m1", revision: 2, resolved: null, operationId: "op-off", added: [], removed: ["i-h"], notFound: [], annotations: null,
+      });
+    });
+    const session = createListTagSession(apply, createWriteQueue(() => undefined));
+    session.setConfirmed(vocabulary);
+    session.toggle(meetings[0], { tagId: "t_h", label: "hiring" });
+
+    await vi.runAllTimersAsync();
+
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(requests[0].requestId).toBe(requests[1].requestId);
+    expect(get(session).notice).toBe("");
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_h");
+    vi.useRealTimers();
   });
 });
 
