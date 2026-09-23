@@ -10,12 +10,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 type artifactStorageUsageResponse struct {
 	MeasuredAt string                     `json:"measured_at"`
-	DurationMS float64                    `json:"duration_ms"`
 	Roots      []artifactStorageUsageRoot `json:"roots"`
 }
 
@@ -86,7 +84,6 @@ func (rt *Runtime) refreshArtifactStorageUsage(ctx context.Context) artifactStor
 }
 
 func scanArtifactStorageUsage(ctx context.Context, workRoot string) artifactStorageUsageResponse {
-	started := time.Now()
 	result := artifactStorageUsageResponse{}
 	for _, root := range []struct {
 		id, label, path string
@@ -97,7 +94,6 @@ func scanArtifactStorageUsage(ctx context.Context, workRoot string) artifactStor
 		row := scanArtifactStorageRoot(ctx, root.id, root.label, root.path)
 		result.Roots = append(result.Roots, row)
 	}
-	result.DurationMS = elapsedMilliseconds(started)
 	result.MeasuredAt = nowUTCString()
 	return result
 }

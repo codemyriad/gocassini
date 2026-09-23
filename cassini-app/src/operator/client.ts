@@ -888,7 +888,6 @@ function normalizeArtifactStorageUsage(raw: unknown): ArtifactStorageUsage {
   }
   return {
     measured_at: asString(value.measured_at),
-    duration_ms: Math.max(0, asNumber(value.duration_ms)),
     roots,
   };
 }
