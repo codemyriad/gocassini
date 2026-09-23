@@ -401,6 +401,68 @@ describe("writing tags", () => {
     expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_h");
     vi.useRealTimers();
   });
+
+  it("keeps later intent behind an unknown outcome and resumes it after retry", async () => {
+    vi.useFakeTimers();
+    const requests: AnnotationRequest[] = [];
+    let serverOn = false;
+    const result = (on: boolean): AnnotationResult => ({
+      meetingId: "m1",
+      revision: on ? 2 : 3,
+      resolved: true,
+      operationId: on ? "op-on" : "op-off",
+      added: on ? ["i-b"] : [],
+      removed: on ? [] : ["i-b"],
+      notFound: [],
+      annotations: {
+        format: "cassini.annotations.v1",
+        revision: on ? 2 : 3,
+        audioOpusSha256: "",
+        tagNamespace: "ns",
+        tags: on
+          ? [{ id: "t_h", label: "hiring" }, { id: "t_b", label: "budget" }]
+          : [{ id: "t_h", label: "hiring" }],
+        items: [
+          { id: "i-h", tagId: "t_h", target: { kind: "meeting" }, createdAtUtc: "", actor: { kind: "person", id: "ana" }, operationId: "op-0" },
+          ...(on ? [{ id: "i-b", tagId: "t_b", target: { kind: "meeting" as const }, createdAtUtc: "", actor: { kind: "person" as const, id: "ana" }, operationId: "op-on" }] : []),
+        ],
+      },
+    });
+    let lostResponses = 0;
+    const apply = vi.fn((_meeting: MeetingCatalogEntry, request: AnnotationRequest) => {
+      requests.push(request);
+      if (request.ops[0].op === "mark") {
+        serverOn = true;
+        if (lostResponses++ < 2) return Promise.reject(new Error("connection lost after commit"));
+        return Promise.resolve(result(true));
+      }
+      serverOn = false;
+      return Promise.resolve(result(false));
+    });
+    const session = createListTagSession(apply, createWriteQueue(() => undefined));
+    session.setConfirmed(vocabulary);
+    session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
+    session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
+
+    await vi.runAllTimersAsync();
+
+    expect(requests).toHaveLength(2);
+    expect(requests[0].requestId).toBe(requests[1].requestId);
+    expect(serverOn).toBe(true);
+    expect(get(session)).toMatchObject({ retryable: true });
+    expect(get(session).notice).toContain("Could not confirm the tag update");
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+
+    expect(session.retry()).toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(requests.map((request) => request.ops[0].op)).toEqual(["mark", "mark", "mark", "unmark-tag"]);
+    expect(requests[2].requestId).toBe(requests[0].requestId);
+    expect(serverOn).toBe(false);
+    expect(get(session)).toMatchObject({ notice: "", retryable: false });
+    expect(wholeTagState(tagsByMeeting(get(session).vocabulary!), ["m1"]).selected).not.toContain("t_b");
+    vi.useRealTimers();
+  });
 });
 
 describe("loading the vocabulary", () => {

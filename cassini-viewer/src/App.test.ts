@@ -19,6 +19,14 @@ describe("the shell's answer to meeting-detail tag writes", () => {
   });
 });
 
+describe("the shell's recovery for an unknown list-tag outcome", () => {
+  it("passes retry state and action between the session and meeting list", () => {
+    expect(appSource).toContain("$: tagRetryable = $listTagSession.retryable;");
+    expect(appSource).toContain("{tagRetryable}");
+    expect(appSource).toContain("on:retryTag={() => listTagSession.retry()}");
+  });
+});
+
 // Source-level assertions, the convention this repo follows for .svelte files:
 // the suite runs in node with no DOM harness. What is asserted is the shell's
 // wiring — which surfaces can ask for a retry, and what happens to the list

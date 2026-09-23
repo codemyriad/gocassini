@@ -236,6 +236,7 @@
   let selectedTagIds: string[] = [];
   let tagMatch: TagMatch = "any";
   let tagNotice = "";
+  let tagRetryable = false;
   let tagManagerOpen = false;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
@@ -426,6 +427,7 @@
 
   $: tagVocabulary = $listTagSession.vocabulary;
   $: tagNotice = $listTagSession.notice;
+  $: tagRetryable = $listTagSession.retryable;
 
   // The session applies the click to its optimistic layer before this returns;
   // queued writes reconcile the confirmed layer underneath it.
@@ -1372,9 +1374,11 @@
       tagFilterIds={activeTagIds}
       on:removeTag={(event) => toggleTagFilter(event.detail)}
       {tagNotice}
+      {tagRetryable}
       on:tagMeeting={(event) => tagMeeting(event.detail.meeting, event.detail.pick)}
       on:clearTags={() => (selectedTagIds = [])}
       on:dismissTagNotice={() => listTagSession.dismissNotice()}
+      on:retryTag={() => listTagSession.retry()}
     />
     </div>
 

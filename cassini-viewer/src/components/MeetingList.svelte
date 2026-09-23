@@ -100,6 +100,7 @@
   // The tags the list is narrowed by, in the order they were picked.
   export let tagFilterIds: readonly string[] = [];
   export let tagNotice = "";
+  export let tagRetryable = false;
   let tagging: { meeting: MeetingCatalogEntry; anchor: HTMLElement } | null = null;
 
   // The filter is list-local state — no other surface reads it.
@@ -148,6 +149,7 @@
     clearTags: void;
     removeTag: string;
     dismissTagNotice: void;
+    retryTag: void;
     // What was typed. The shell debounces it and asks the operator.
     query: string;
     // Open a meeting AT a matched moment, carrying the query so the meeting
@@ -422,7 +424,11 @@
         <TriangleAlert size={14} aria-hidden="true" />
         <span>
           {tagNotice}
-          <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+          {#if tagRetryable}
+            <button type="button" class="link" on:click={() => dispatch("retryTag")}>Retry tag update</button>
+          {:else}
+            <button type="button" class="link" on:click={() => dispatch("dismissTagNotice")}>Dismiss</button>
+          {/if}
         </span>
       </p>
     {/if}

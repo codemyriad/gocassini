@@ -232,11 +232,13 @@ interface PendingTagAction {
   desired: boolean;
   optimisticTagId: string;
   request?: AnnotationRequest;
+  deferred?: boolean;
 }
 
 export interface ListTagSessionState {
   vocabulary: TagVocabulary | null;
   notice: string;
+  retryable: boolean;
 }
 
 type TagWriteScheduler = (write: () => Promise<void>) => Promise<void>;
@@ -248,10 +250,15 @@ export function createListTagSession(
   apply: (meeting: MeetingCatalogEntry, request: AnnotationRequest) => Promise<AnnotationResult>,
   schedule: TagWriteScheduler,
 ) {
-  const state = writable<ListTagSessionState>({ vocabulary: null, notice: "" });
+  const state = writable<ListTagSessionState>({ vocabulary: null, notice: "", retryable: false });
   let confirmed: TagVocabulary | null = null;
   let confirmedGeneration = 0;
   let pending: PendingTagAction[] = [];
+  // A transport/server failure may arrive after the operator committed. Keep
+  // that action, its request id and everything clicked after it until replay
+  // recovers the receipt; evaluating later actions against the old confirmed
+  // layer can otherwise erase the user's final intent.
+  let blocked: PendingTagAction | null = null;
   let notice = "";
 
   const identifier = () => crypto.randomUUID?.() ?? Array.from(
@@ -274,7 +281,7 @@ export function createListTagSession(
   }
 
   function publish() {
-    state.set({ vocabulary: visible(), notice });
+    state.set({ vocabulary: visible(), notice, retryable: blocked !== null });
   }
 
   function remove(action: PendingTagAction) {
@@ -299,11 +306,29 @@ export function createListTagSession(
     // A disconnected client or a server failure can happen after the durable
     // commit. Repeat the exact payload once: requestId makes that a receipt
     // replay rather than a duplicate mutation when the first call landed.
-    const ambiguous = !(error instanceof AnnotationError) || error.status >= 500;
-    return ambiguous && attempt === 0 ? 250 : null;
+    return outcomeUnknown(error) && attempt === 0 ? 250 : null;
+  }
+
+  function outcomeUnknown(error: unknown): boolean {
+    return !(error instanceof AnnotationError) || error.status >= 500;
+  }
+
+  function resumeDeferred() {
+    // Their original queue turns returned while `blocked` was set. Put them
+    // back in click order only after the uncertain action has been settled.
+    for (const action of pending) {
+      if (!action.deferred) continue;
+      action.deferred = false;
+      void schedule(() => execute(action));
+    }
   }
 
   async function execute(action: PendingTagAction) {
+    if (blocked) {
+      action.deferred = true;
+      return;
+    }
+    let settled = true;
     try {
       action.request ??= requestFor(action) ?? undefined;
       if (!action.request) return;
@@ -323,9 +348,18 @@ export function createListTagSession(
         confirmedGeneration += 1;
       }
     } catch (error) {
-      notice = `Could not ${action.desired ? "tag" : "untag"} “${action.meeting.title}”: ${describeAnnotationError(error)}`;
+      if (outcomeUnknown(error)) {
+        blocked = action;
+        settled = false;
+        notice = `Could not confirm the tag update for “${action.meeting.title}”: ${describeAnnotationError(error)}`;
+      } else {
+        notice = `Could not ${action.desired ? "tag" : "untag"} “${action.meeting.title}”: ${describeAnnotationError(error)}`;
+      }
     } finally {
-      remove(action);
+      if (settled) {
+        remove(action);
+        resumeDeferred();
+      }
       publish();
     }
   }
@@ -357,12 +391,22 @@ export function createListTagSession(
         optimisticTagId: "tagId" in pick ? pick.tagId : `optimistic-${identifier()}`,
       };
       pending = [...pending, action];
+      if (!blocked) notice = "";
+      publish();
+      void schedule(() => execute(action));
+      return true;
+    },
+    retry() {
+      if (!blocked) return false;
+      const action = blocked;
+      blocked = null;
       notice = "";
       publish();
       void schedule(() => execute(action));
       return true;
     },
     dismissNotice() {
+      if (blocked) return;
       notice = "";
       publish();
     },
