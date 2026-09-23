@@ -2,7 +2,10 @@ package transcribe
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"gocassini/internal/modelstore"
+	"gocassini/internal/portable"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,13 +16,17 @@ import (
 
 // BuildConfig holds runtime options for the transcription pipeline.
 type BuildConfig struct {
-	Device           string     // "cpu" or "cuda"
-	ModelID          ModelID    // defaults to defaultModelID
-	AdditionalModels []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
-	CacheDir         string     // root cache directory, e.g. ~/.cache/cassini
-	SummaryLLM       LLMConfig  // optional; if not configured, skip summary generation
-	NumThreads       int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
-	Quality          STTQuality // "" = balanced; picks model/device when not explicitly set
+	// Empty mode preserves the internal API; CLI/operator always pass off or on.
+	TranscriptionMode   string
+	TranscriptionReason string
+	ModelRevision       string
+	Device              string     // "cpu" or "cuda"
+	ModelID             ModelID    // defaults to defaultModelID
+	AdditionalModels    []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
+	CacheDir            string     // root cache directory, e.g. ~/.cache/cassini
+	SummaryLLM          LLMConfig  // optional; if not configured, skip summary generation
+	NumThreads          int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
+	Quality             STTQuality // "" = balanced; picks model/device when not explicitly set
 	// Vocabulary lists preferred spellings for names and project terms. It is
 	// biasing evidence for the decoder itself (see hotwords.go), not a
 	// post-processing rewrite. The score must stay conservative because this
@@ -40,8 +47,8 @@ var (
 	// ensureModelFn / ensureVADFn / buildSpeakerEnvelopesFn are seams so the
 	// pipeline can be exercised end-to-end with a registered fake backend and
 	// no multi-hundred-MB model download.
-	ensureModelFn           = EnsureModel
-	ensureVADFn             = EnsureVAD
+	ensureModelFn           = InstalledModel
+	ensureVADFn             = InstalledVAD
 	buildSpeakerEnvelopesFn = BuildSpeakerEnvelopes
 )
 
@@ -53,33 +60,6 @@ var (
 //   - summary.md            — V0 template format (if SummaryLLM configured)
 //   - manifest.json
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
-	// Resolve the STT execution policy for this host: an explicit device/model
-	// always wins; otherwise derive both from the quality tier and detected
-	// hardware (a GPU box runs fp32, a CPU box int8). CUDA uses one host thread
-	// by default so GPU inference does not create unnecessary CPU/RAM pressure.
-	cfg.Device = ResolveDevice(cfg.Device)
-	if cfg.ModelID == "" {
-		cfg.ModelID = ModelForQuality(cfg.Quality, cfg.Device)
-	}
-	if cfg.NumThreads < 1 {
-		cfg.NumThreads = DefaultNumThreadsForDevice(cfg.Device)
-	}
-	// Resolve AND validate the backend before any real work. The registry is
-	// the authority on what exists; an unknown id must fail here, not after
-	// the full mixdown, audio hash and model download have already run — the
-	// misconfiguration lives in the environment, so a late failure repeats
-	// all of that work on every operator retry.
-	backend, err := LookupRecognizerBackend(cfg.Backend)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "  STT policy: backend=%s device=%s model=%s threads=%d quality=%s\n",
-		backend,
-		cfg.Device, cfg.ModelID, cfg.NumThreads, NormalizeQuality(string(cfg.Quality)))
-	if cfg.CacheDir == "" {
-		cfg.CacheDir = defaultCacheDir()
-	}
-
 	// --- 1. Probe MKV ---
 	fmt.Fprintln(stdout, "  probing audio streams...")
 	streams, srcDurationMS, err := ProbeMKV(mkvPath)
@@ -110,16 +90,103 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// allocation hint for per-speaker PCM; packet PTS still controls timing.
 	setPCMCapacityDurationHints(streams, audioDurationMS)
 
-	// --- 3. Download / verify STT model and VAD ---
-	fmt.Fprintf(stdout, "  ensuring model %s is cached...\n", cfg.ModelID)
-	modelPaths, err := ensureModelFn(cfg.CacheDir, cfg.ModelID, stdout)
+	if cfg.TranscriptionMode == "off" {
+		reason := cfg.TranscriptionReason
+		if reason == "" {
+			reason = "disabled"
+		}
+		status := "skipped"
+		if reason == "transcription_failed" {
+			status = "failed"
+		}
+		return writeUntranscribed(outputDir, mkvPath, streams, srcDurationMS, audioDurationMS, sha256hex, status, reason)
+	}
+	// A checkpoint lets the operator salvage audio after a native process crash.
+	if err := os.WriteFile(filepath.Join(outputDir, ".transcription-started"), []byte("1"), 0600); err != nil {
+		return err
+	}
+	err = transcribePrepared(ctx, mkvPath, outputDir, webmPath, streams, srcDurationMS, audioDurationMS, sha256hex, cfg, stdout)
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	status, reason := "failed", "transcription_failed"
+	if errors.Is(err, errModelUnavailable) {
+		status, reason = "skipped", "model_unavailable"
+	}
+	fmt.Fprintf(stdout, "  transcription %s: %v; preserving audio\n", status, err)
+	return writeUntranscribed(outputDir, mkvPath, streams, srcDurationMS, audioDurationMS, sha256hex, status, reason)
+}
+
+var errModelUnavailable = errors.New("model unavailable")
+
+func writeUntranscribed(outputDir, mkvPath string, streams []AudioStream, srcDurationMS, audioDurationMS int64, hash, status, reason string) error {
+	for _, name := range []string{"captions.vtt", "summary.md"} {
+		_ = os.Remove(filepath.Join(outputDir, name))
+	}
+	doc := buildTranscriptFile(streams, nil, audioDurationMS, hash)
+	seen := map[string]bool{}
+	for _, stream := range streams {
+		if stream.SpeakerID != "" && !seen[stream.SpeakerID] {
+			seen[stream.SpeakerID] = true
+			doc.Speakers = append(doc.Speakers, speakerEntry{ID: stream.SpeakerID, Label: labelForSpeaker(stream.SpeakerID, streams)})
+		}
+	}
+	if err := writeJSON(filepath.Join(outputDir, "transcript.words.v1.json"), doc); err != nil {
+		return err
+	}
+	return WriteManifest(filepath.Join(outputDir, "manifest.json"), ManifestInput{
+		SrcBasename: filepath.Base(mkvPath), SrcDurationMS: srcDurationMS, DigestDurationMS: audioDurationMS, Streams: streams,
+		Processing: &portable.Processing{Transcription: portable.TranscriptionStatus{Status: status, Reason: reason}},
+	})
+}
+
+func transcribePrepared(ctx context.Context, mkvPath, outputDir, webmPath string, streams []AudioStream, srcDurationMS, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) error {
+	// Resolve the STT execution policy for this host: an explicit device/model
+	// always wins; otherwise derive both from the quality tier and detected
+	// hardware (a GPU box runs fp32, a CPU box int8). CUDA uses one host thread
+	// by default so GPU inference does not create unnecessary CPU/RAM pressure.
+	cfg.Device = ResolveDevice(cfg.Device)
+	if cfg.ModelID == "" {
+		cfg.ModelID = ModelForQuality(cfg.Quality, cfg.Device)
+	}
+	if cfg.NumThreads < 1 {
+		cfg.NumThreads = DefaultNumThreadsForDevice(cfg.Device)
+	}
+	// Backend errors affect transcription only; the prepared audio is retained.
+	backend, err := LookupRecognizerBackend(cfg.Backend)
 	if err != nil {
-		return fmt.Errorf("ensure model: %w", err)
+		return err
+	}
+	fmt.Fprintf(stdout, "  STT policy: backend=%s device=%s model=%s threads=%d quality=%s\n",
+		backend,
+		cfg.Device, cfg.ModelID, cfg.NumThreads, NormalizeQuality(string(cfg.Quality)))
+	if cfg.CacheDir == "" {
+		cfg.CacheDir = defaultCacheDir()
 	}
 
-	vadPath, err := ensureVADFn(cfg.CacheDir, stdout)
+	unlock, err := lockModelRuntime(ctx, cfg.CacheDir)
 	if err != nil {
-		return fmt.Errorf("ensure VAD model: %w", err)
+		return err
+	}
+	defer unlock()
+	if cfg.ModelRevision == "" {
+		if m, e := modelstore.Shipped().Model(string(cfg.ModelID), ""); e == nil {
+			cfg.ModelRevision = m.Revision
+		}
+	}
+	// --- 3. Resolve already installed STT model and VAD ---
+	fmt.Fprintf(stdout, "  resolving installed model %s...\n", cfg.ModelID)
+	modelPaths, err := ensureModelFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errModelUnavailable, err)
+	}
+
+	vadPath, err := ensureVADFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errModelUnavailable, err)
 	}
 
 	// --- 4. Transcribe with the primary model, then any additional models.
@@ -215,7 +282,14 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 
 	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, streams, audioDurationMS, sha256hex, pass, cfg, envCache, stdout)
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// The primary transcript is already on disk. An extra model that is
+		// not installed, or fails, costs only its own transcript; returning
+		// here would send the build to writeUntranscribed and replace the
+		// primary with an empty one.
+		fmt.Fprintf(stdout, "  additional transcripts incomplete: %v\n", err)
 	}
 
 	// --- 8. Captions ---
@@ -246,6 +320,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
 	if err := WriteManifest(manifestPath, ManifestInput{
+		Processing:        &portable.Processing{Transcription: portable.TranscriptionStatus{Status: "completed", Model: string(cfg.ModelID), Revision: cfg.ModelRevision}},
 		SrcBasename:       srcBasename,
 		SrcDurationMS:     srcDurationMS,
 		DigestDurationMS:  audioDurationMS,
@@ -630,12 +705,12 @@ feed:
 // the primary model's BPE vocabulary, and handing it to a different model would
 // either be rejected or, worse, silently encode the terms wrongly; a different
 // model may also not support beam search at all. Each additional model resolves
-// its own.
+// its own. On error it still returns the transcripts it has already written.
 func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex string, primary passConfig, cfg BuildConfig, envCache *speakerEnvelopeCache, stdout io.Writer) ([]AdditionalTranscript, error) {
 	if len(cfg.AdditionalModels) == 0 {
 		return nil, nil
 	}
-	vadPath, err := ensureVADFn(cfg.CacheDir, stdout)
+	vadPath, err := ensureVADFn(cfg.CacheDir, cfg.ModelID, cfg.ModelRevision, stdout)
 	if err != nil {
 		return nil, fmt.Errorf("ensure VAD model: %w", err)
 	}
@@ -652,9 +727,9 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		seen[id] = true
 
 		fmt.Fprintf(stdout, "  ensuring additional model %s is cached...\n", modelID)
-		modelPaths, err := ensureModelFn(cfg.CacheDir, modelID, stdout)
+		modelPaths, err := ensureModelFn(cfg.CacheDir, modelID, "", stdout)
 		if err != nil {
-			return nil, fmt.Errorf("ensure additional model %s: %w", modelID, err)
+			return out, fmt.Errorf("ensure additional model %s: %w", modelID, err)
 		}
 		extra := primary
 		extra.ModelPaths = modelPaths
@@ -662,15 +737,15 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		vocabulary := vocabularyForBuild(cfg.Vocabulary, streams)
 		extra.Decoder, _, err = resolveDecoderVocabulary(outputDir, vocabulary, modelPaths)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		extra.SpeakerDecoders, err = speakerDecoders(outputDir, vocabulary, streams, extra.Decoder)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		segs, err := transcribePass(ctx, mkvPath, streams, extra, stdout)
 		if err != nil {
-			return nil, fmt.Errorf("additional transcribe %s: %w", modelID, err)
+			return out, fmt.Errorf("additional transcribe %s: %w", modelID, err)
 		}
 		// Every transcript this build emits carries the same attribution
 		// contract, or switching models would silently change whether a word
@@ -680,7 +755,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		}
 		path := fmt.Sprintf("transcript-%s.words.v1.json", id)
 		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
-			return nil, fmt.Errorf("write additional transcript %s: %w", id, err)
+			return out, fmt.Errorf("write additional transcript %s: %w", id, err)
 		}
 		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: primary.Backend})
 	}
@@ -774,17 +849,24 @@ func DefaultBuildConfig() BuildConfig {
 		}
 	}
 
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("CASSINI_TRANSCRIPTION")))
+	if mode != "on" {
+		mode = "off"
+	}
 	return BuildConfig{
-		Device:           defaultDevice(),
-		ModelID:          primary,
-		AdditionalModels: additional,
-		SummaryLLM:       summaryLLM,
-		NumThreads:       envInt("CASSINI_STT_NUM_THREADS"),
-		Quality:          NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")),
-		Backend:          ResolveRecognizerBackend(""),
-		SkipAttribution:  envBool("CASSINI_ATTRIBUTION_DISABLED"),
-		DropCrosstalk:    envBool("CASSINI_ATTRIBUTION_DROP"),
-		Vocabulary:       ParseVocabulary(os.Getenv("CASSINI_TRANSCRIPTION_TERMS")),
+		TranscriptionMode:   mode,
+		TranscriptionReason: os.Getenv("CASSINI_TRANSCRIPTION_REASON"),
+		ModelRevision:       os.Getenv("CASSINI_STT_REVISION"),
+		Device:              defaultDevice(),
+		ModelID:             primary,
+		AdditionalModels:    additional,
+		SummaryLLM:          summaryLLM,
+		NumThreads:          envInt("CASSINI_STT_NUM_THREADS"),
+		Quality:             NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")),
+		Backend:             ResolveRecognizerBackend(""),
+		SkipAttribution:     envBool("CASSINI_ATTRIBUTION_DISABLED"),
+		DropCrosstalk:       envBool("CASSINI_ATTRIBUTION_DROP"),
+		Vocabulary:          ParseVocabulary(os.Getenv("CASSINI_TRANSCRIPTION_TERMS")),
 	}
 }
 
@@ -836,7 +918,7 @@ func defaultDevice() string {
 }
 
 func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) (bool, error) {
-	if !cfg.SummaryLLM.IsConfigured() {
+	if !cfg.SummaryLLM.IsConfigured() || len(segments) == 0 {
 		return false, nil
 	}
 

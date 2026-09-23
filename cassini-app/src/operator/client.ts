@@ -11,6 +11,8 @@ import type {
   LLMSettingsUpdate,
   LLMStep,
   Settings,
+  SpeechModelInventory,
+  SpeechModelJob,
   SettingsEffective,
   SettingsQuality,
   SettingsUpdate,
@@ -124,6 +126,16 @@ export class OperatorClient {
     return this.#request<RerunJobResponse>(`/jobs/${encodeURIComponent(jobId)}/rerun`, {
       method: "POST",
     });
+  }
+
+  async getSpeechModels(device: string): Promise<SpeechModelInventory> {
+    return this.#request<SpeechModelInventory>(`/settings/models?device=${encodeURIComponent(device)}`);
+  }
+  async installSpeechModel(model: string, revision: string, device: string): Promise<SpeechModelJob> {
+    return this.#request<SpeechModelJob>("/settings/models/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({model, revision, device}) });
+  }
+  async speechModelJobAction(id: string, action: "cancel" | "retry"): Promise<unknown> {
+    return this.#request(`/settings/models/jobs/${encodeURIComponent(id)}/${action}`, { method: "POST" });
   }
 
   async getSettings(): Promise<Settings> {
@@ -407,6 +419,9 @@ function normalizeSettings(raw: unknown): Settings {
     note: asString(rawEffective.note),
   };
   return {
+    transcription_enabled: value.transcription_enabled === true,
+    active_model: asString(value.active_model),
+    active_revision: asString(value.active_revision),
     quality: normalizeQuality(value.quality),
     device_override: asString(value.device_override),
     transcription_terms: asStringArray(value.transcription_terms),

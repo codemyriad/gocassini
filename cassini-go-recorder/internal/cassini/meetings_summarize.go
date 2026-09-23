@@ -164,6 +164,9 @@ func summarizePortableMeeting(ctx context.Context, inputPath, outPath string, cf
 	}
 
 	streams, segments := summaryInputFromMeeting(meeting)
+	if len(segments) == 0 {
+		return fmt.Errorf("meeting has no transcript text to summarize")
+	}
 	body, err := transcribe.BuildMeetingSummary(cfg, streams, segments)
 	if err != nil {
 		return fmt.Errorf("generate summary: %w", err)

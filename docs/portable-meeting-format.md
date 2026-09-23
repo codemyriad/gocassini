@@ -481,3 +481,14 @@ The pipeline also uses `.meeting` directories containing `cassini.json`,
 `manifest.json`, audio, and intermediate transcript artifacts. Those
 directories are transient build inputs. The `.opus` file described here is the
 single durable, shareable meeting artifact.
+
+## Recordings without transcription
+
+Portable v1 remains playable when transcription is off or unavailable. A zero-word
+`cassini.words.v1` entry with ID `untranscribed` carries the required audio duration,
+integrity binding, and participant roster. It has no speech-recognition provenance.
+The optional `processing.transcription` object distinguishes `skipped` (reason
+`disabled` or `model_unavailable`), `failed` (`transcription_failed`), and `completed`
+(with model and revision). A completed zero-word transcript means no speech was
+transcribed; absent processing metadata retains the legacy interpretation. Consumers
+ignore unknown optional fields under the existing v1 compatibility rule.

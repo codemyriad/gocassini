@@ -526,13 +526,14 @@ func TestLoadConfigAllowsExplicitPathsOutsideRepo(t *testing.T) {
 func TestLoadConfigRedirectsBakedDefaultsUnderPersistentStorage(t *testing.T) {
 	// Simulate the ExApp container: AppAPI mounted its persistent volume and
 	// the image baked the ephemeral data paths into env (Dockerfile.exapp).
-	// All three roots must redirect under APP_PERSISTENT_STORAGE.
+	// All four roots must redirect under APP_PERSISTENT_STORAGE.
 	repoRoot := makeFakeOperatorRepoRoot(t)
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
 	t.Setenv("APP_PERSISTENT_STORAGE", "/nc_app_gocassini_data")
 	t.Setenv("CASSINI_OPERATOR_DB_PATH", "/var/lib/cassini-operator/jobs.sqlite3")
 	t.Setenv("CASSINI_OPERATOR_WORK_ROOT", "/var/lib/cassini-operator/jobs")
 	t.Setenv("CASSINI_OPERATOR_SITE_ROOT", "/srv/cassini-site/published")
+	t.Setenv("CASSINI_CACHE_ROOT", "/var/lib/cassini-operator/models")
 
 	cfg, exitCode, err := loadConfig(nil, ioDiscard{})
 	if err != nil {
@@ -550,6 +551,9 @@ func TestLoadConfigRedirectsBakedDefaultsUnderPersistentStorage(t *testing.T) {
 	if cfg.SiteRoot != "/nc_app_gocassini_data/site/published" {
 		t.Fatalf("siteRoot = %q, want under APP_PERSISTENT_STORAGE", cfg.SiteRoot)
 	}
+	if cfg.ModelCacheRoot != "/nc_app_gocassini_data/operator/models" {
+		t.Fatalf("modelCacheRoot = %q, want under APP_PERSISTENT_STORAGE", cfg.ModelCacheRoot)
+	}
 }
 
 func TestLoadConfigKeepsExplicitPathsDespitePersistentStorage(t *testing.T) {
@@ -561,6 +565,7 @@ func TestLoadConfigKeepsExplicitPathsDespitePersistentStorage(t *testing.T) {
 	t.Setenv("CASSINI_OPERATOR_DB_PATH", "/mnt/big-disk/jobs.sqlite3")
 	t.Setenv("CASSINI_OPERATOR_WORK_ROOT", "/mnt/big-disk/jobs")
 	t.Setenv("CASSINI_OPERATOR_SITE_ROOT", "/mnt/big-disk/site/published")
+	t.Setenv("CASSINI_CACHE_ROOT", "/mnt/big-disk/models")
 
 	cfg, exitCode, err := loadConfig(nil, ioDiscard{})
 	if err != nil {
@@ -577,6 +582,22 @@ func TestLoadConfigKeepsExplicitPathsDespitePersistentStorage(t *testing.T) {
 	}
 	if cfg.SiteRoot != "/mnt/big-disk/site/published" {
 		t.Fatalf("siteRoot = %q, want explicit override", cfg.SiteRoot)
+	}
+	if cfg.ModelCacheRoot != "/mnt/big-disk/models" {
+		t.Fatalf("modelCacheRoot = %q, want explicit override", cfg.ModelCacheRoot)
+	}
+}
+
+func TestLoadConfigKeepsStandaloneModelsOnStateVolume(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", makeFakeOperatorRepoRoot(t))
+	t.Setenv("APP_PERSISTENT_STORAGE", "")
+	t.Setenv("CASSINI_CACHE_ROOT", "/var/lib/cassini-operator/models")
+	cfg, code, err := loadConfig(nil, ioDiscard{})
+	if err != nil || code != 0 {
+		t.Fatalf("loadConfig: code=%d err=%v", code, err)
+	}
+	if cfg.ModelCacheRoot != "/var/lib/cassini-operator/models" {
+		t.Fatalf("modelCacheRoot = %q, want inside standalone state volume", cfg.ModelCacheRoot)
 	}
 }
 
