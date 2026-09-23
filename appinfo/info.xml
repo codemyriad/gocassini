@@ -247,6 +247,11 @@ Documentation: https://gocassini.com/docs]]></description>
         <access_level>ADMIN</access_level>
       </route>
       <route>
+        <url>^operator\/storage\/usage\/nextcloud\/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
         <url>^operator\/storage\/?$</url>
         <verb>GET,POST,PUT</verb>
         <access_level>ADMIN</access_level>

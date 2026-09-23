@@ -227,6 +227,11 @@ type Runtime struct {
 	storageUsageMu        sync.RWMutex
 	storageUsageRefreshMu sync.Mutex
 	storageUsage          storageUsageResponse
+	// nextcloudStorageUsage is kept separately from the aggregate report so the
+	// two experimental views can be calculated and benchmarked independently.
+	nextcloudStorageUsageMu        sync.RWMutex
+	nextcloudStorageUsageRefreshMu sync.Mutex
+	nextcloudStorageUsage          storageUsageResponse
 }
 
 type TriggerRequest struct {
@@ -961,6 +966,7 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/settings/workflows", http.HandlerFunc(rt.settingsWorkflowsHandler)},
 		{"/settings/", http.HandlerFunc(rt.llmSettingsHandler)},
 		{"/storage/usage", exappCfg.storageUsageHandler(rt)},
+		{"/storage/usage/nextcloud", exappCfg.nextcloudStorageUsageHandler(rt)},
 		{"/storage", exappCfg.storageHandler(rt)},
 		{"/talk/provisioning", http.HandlerFunc(rt.talkProvisioningHandler)},
 		// Recording readiness (D-763). Registered here rather than beside the

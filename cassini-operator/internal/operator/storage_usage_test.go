@@ -170,6 +170,97 @@ func TestStorageUsageIsRoutedUnderTheOperatorBasePath(t *testing.T) {
 	}
 }
 
+func TestNextcloudStorageUsageReportsBothStorageModeRoots(t *testing.T) {
+	nc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		switch r.URL.Path {
+		case "/remote.php/dav/files/cassini/CassiniNoACL/Recordings":
+			_, _ = w.Write([]byte(davSizesXML(
+				"CassiniNoACL/Recordings", true, 0,
+				"CassiniNoACL/Recordings/meetings", true, 0,
+			)))
+		case "/remote.php/dav/files/cassini/CassiniNoACL/Recordings/meetings":
+			_, _ = w.Write([]byte(davSizesXML(
+				"CassiniNoACL/Recordings/meetings", true, 0,
+				"CassiniNoACL/Recordings/meetings/default.opus", false, 11,
+			)))
+		case "/remote.php/dav/files/cassini/Cassini/Recordings":
+			_, _ = w.Write([]byte(davSizesXML(
+				"Cassini/Recordings", true, 0,
+				"Cassini/Recordings/meetings", true, 0,
+			)))
+		case "/remote.php/dav/files/cassini/Cassini/Recordings/meetings":
+			_, _ = w.Write([]byte(davSizesXML(
+				"Cassini/Recordings/meetings", true, 0,
+				"Cassini/Recordings/meetings/controlled.opus", false, 23,
+			)))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer nc.Close()
+
+	response := testExAppConfig(nc.URL).scanNextcloudStorageUsage(t.Context())
+	defaultRoot := assertUsageSource(t, response, "default", 11, "")
+	controlledRoot := assertUsageSource(t, response, "access-controlled", 23, "")
+	if defaultRoot.Location != recordingsRootFor(false) || controlledRoot.Location != recordingsRootFor(true) {
+		t.Fatalf("root locations = %q, %q", defaultRoot.Location, controlledRoot.Location)
+	}
+}
+
+func TestNextcloudStorageUsageIndexOnlyChangesOnPOST(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	var size = 7
+	nc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if strings.HasSuffix(r.URL.Path, "/Cassini/Recordings") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(davSizesXML(
+			"CassiniNoACL/Recordings", true, 0,
+			"CassiniNoACL/Recordings/meeting.opus", false, size,
+		)))
+	}))
+	defer nc.Close()
+	cfg := testExAppConfig(nc.URL)
+	handler := cfg.nextcloudStorageUsageHandler(rt)
+
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/storage/usage/nextcloud", nil))
+	var response storageUsageResponse
+	if err := json.Unmarshal(get.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.MeasuredAt != "" || len(response.Sources) != 0 {
+		t.Fatalf("initial response = %+v", response)
+	}
+
+	post := httptest.NewRecorder()
+	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/storage/usage/nextcloud", nil))
+	if err := json.Unmarshal(post.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	assertUsageSource(t, response, "default", 7, "")
+
+	size = 19
+	get = httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/storage/usage/nextcloud", nil))
+	if err := json.Unmarshal(get.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	assertUsageSource(t, response, "default", 7, "")
+
+	post = httptest.NewRecorder()
+	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/storage/usage/nextcloud", nil))
+	if err := json.Unmarshal(post.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	assertUsageSource(t, response, "default", 19, "")
+}
+
 func writeUsageFile(t *testing.T, name string, size int) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
