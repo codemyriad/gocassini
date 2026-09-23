@@ -50,6 +50,7 @@
     mergeVocabularyTags,
     tagsByMeeting,
     type AnnotationRequest,
+    type MeetingAnnotations,
     type TagPick,
     type TagVocabulary,
   } from "./viewer/annotations";
@@ -60,6 +61,7 @@
     filterByTags,
     planBulkTag,
     wholeTagState,
+    withMeetingResult,
     type MeetingTags,
     type TagMatch,
   } from "./viewer/listTags";
@@ -428,6 +430,11 @@
   // queued writes reconcile the confirmed layer underneath it.
   function tagMeeting(meeting: MeetingCatalogEntry, pick: TagPick) {
     listTagSession.toggle(meeting, pick);
+  }
+
+  function reconcileMeetingTags(result: MeetingAnnotations) {
+    listTagSession.updateConfirmed((vocabulary) => withMeetingResult(vocabulary, result));
+    refreshTags(true);
   }
 
   const bulkTags = createBulkTagSession(
@@ -1472,7 +1479,7 @@
             tagVocabulary={vocabularyTags ?? []}
             loadAnnotations={annotationCalls.load}
             applyAnnotations={annotationCalls.apply}
-            on:tagsChanged={(event) => (applied(event.detail), refreshTags(true))}
+            on:tagsChanged={(event) => reconcileMeetingTags(event.detail)}
           />
         {/if}
       </aside>
