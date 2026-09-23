@@ -210,7 +210,6 @@
         {tags}
         label={`Tag ${plural(count, "meeting")}`}
         multiple
-        order={count === 1 ? "alphabetical" : "relevance"}
         selected={tagSelected}
         mixed={tagMixed}
         anchor={tagButton}

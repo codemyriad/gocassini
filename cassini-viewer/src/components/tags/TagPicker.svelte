@@ -15,10 +15,6 @@
   export let multiple = false;
   export let selected: readonly string[] = [];
   export let mixed: readonly string[] = [];
-  // Usage/relevance is useful for most tag surfaces. A picker that stays open
-  // across several changes can opt into a stable label order so refreshed
-  // usage counts never move an option under the pointer.
-  export let order: "relevance" | "alphabetical" = "relevance";
   // Focus returns here on Esc, and a click on it does not count as outside.
   export let anchor: HTMLElement | null = null;
   // Off to choose among existing tags only, as a merge target does.
@@ -34,13 +30,6 @@
   let choosingColor = false;
 
   $: matches = matchTags(tags, query);
-  $: if (order === "alphabetical") {
-    matches.sort(
-      (a, b) =>
-        a.label.localeCompare(b.label, undefined, { sensitivity: "base" }) ||
-        a.tagId.localeCompare(b.tagId),
-    );
-  }
   $: draft = query.trim();
   $: canCreate = creatable && draft !== "" && !findByLabel(tags, draft);
   $: count = matches.length + (canCreate ? 1 : 0);

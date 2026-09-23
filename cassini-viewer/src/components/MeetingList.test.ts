@@ -268,10 +268,6 @@ describe("MeetingList tags", () => {
     expect(meetingListSource).toContain('dispatch("tagMeeting", { meeting, pick: event.detail })');
   });
 
-  it("keeps a single-meeting picker alphabetically ordered as tags refresh", () => {
-    expect(meetingListSource).toMatch(/<TagPicker[\s\S]{0,160}order="alphabetical"/);
-  });
-
   it("says when the tag filter is what emptied the list", () => {
     expect(html({ meetings: [], tagFilterCount: 2, tags })).toContain("No meeting here has those tags.");
   });

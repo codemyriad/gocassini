@@ -67,9 +67,9 @@ describe("RoomsRail tag filter", () => {
   const html = (props: Record<string, unknown>) =>
     render(RoomsRail as never, { props: { tagsOffered: true, tags, ...props } } as never).body;
 
-  it("lists every tag in its colour with its meeting count, most used first, none ticked", () => {
+  it("lists every tag alphabetically in its colour with its meeting count, none ticked", () => {
     const rail = html({});
-    expect(rail).toMatch(/data-tag-color="red"[\s\S]*>hiring<[\s\S]*>5<[\s\S]*data-tag-color="teal"[\s\S]*>budget</);
+    expect(rail).toMatch(/data-tag-color="teal"[\s\S]*>budget<[\s\S]*>2<[\s\S]*data-tag-color="red"[\s\S]*>hiring</);
     expect(rail).not.toContain(" checked");
     expect(rail).toContain("Manage tags");
   });

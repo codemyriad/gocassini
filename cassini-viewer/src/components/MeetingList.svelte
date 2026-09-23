@@ -647,7 +647,6 @@
       {tags}
       label={`Tag ${meeting.title}`}
       multiple
-      order="alphabetical"
       selected={wholeTagState(meetingTags, [meeting.id]).selected}
       anchor={tagging.anchor}
       on:pick={(event) => dispatch("tagMeeting", { meeting, pick: event.detail })}

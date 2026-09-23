@@ -95,9 +95,9 @@ describe("tagsByMeeting", () => {
 describe("matchTags and findByLabel", () => {
   const tags = [vocab("t1", "rehire", 9), vocab("t2", "hiring", 1), vocab("t3", "HR", 5), vocab("t4", "budget", 2)];
 
-  it("puts prefix matches first, then the most used", () => {
-    expect(matchTags(tags, " H").map((tag) => tag.label)).toEqual(["HR", "hiring", "rehire"]);
-    expect(matchTags(tags, "").map((tag) => tag.label)).toEqual(["rehire", "HR", "budget", "hiring"]);
+  it("keeps matches alphabetically ordered regardless of usage", () => {
+    expect(matchTags(tags, " H").map((tag) => tag.label)).toEqual(["hiring", "HR", "rehire"]);
+    expect(matchTags(tags, "").map((tag) => tag.label)).toEqual(["budget", "hiring", "HR", "rehire"]);
   });
 
   it("matches a label as the operator does: trimmed and case-insensitive", () => {

@@ -97,8 +97,8 @@ describe("TagPicker", () => {
     expect(picker).toMatch(/class="tick[^"]*\bmixed\b/);
   });
 
-  it("can keep options alphabetically ordered instead of reordering by usage", () => {
-    const picker = html(TagPicker, { tags, order: "alphabetical" });
+  it("keeps options alphabetically ordered instead of reordering by usage", () => {
+    const picker = html(TagPicker, { tags });
     expect(picker.indexOf(">budget</span>")).toBeLessThan(picker.indexOf(">hiring</span>"));
     expect(picker.indexOf(">hiring</span>")).toBeLessThan(picker.indexOf(">HR</span>"));
   });
