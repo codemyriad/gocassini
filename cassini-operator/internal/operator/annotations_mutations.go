@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"time"
 )
 
@@ -31,17 +30,17 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 		return annotateResult{}, badAnnotateRequest("invalid requestId")
 	}
 	// Authorize against the current file permission before accepting a mutation.
-	if !request.Accepted {
+	if !request.Accepted || s.exapp.sharePaths != nil {
 		if _, err := s.readDocument(ctx, caller, meetingID, relPath); err != nil {
 			return annotateResult{}, err
 		}
 	}
 	if request.RetrySync {
-		if _, err := store.db.ExecContext(ctx, `UPDATE annotation_head SET blocked=0,retry_at=0,attempts=0,last_error='' WHERE opus_name=?`, path.Base(relPath)); err != nil {
+		if _, err := store.db.ExecContext(ctx, `UPDATE annotation_head SET blocked=0,retry_at=0,attempts=0,last_error='' WHERE opus_name=?`, s.exapp.recordingOriginalName(caller, relPath)); err != nil {
 			return annotateResult{}, err
 		}
 		s.wakeAnnotations()
-		return store.document(ctx, path.Base(relPath))
+		return store.document(ctx, s.exapp.recordingOriginalName(caller, relPath))
 	}
 	// Independent of the media lock: an upload never blocks a short DB commit.
 	release, err := annotationMutationLocks.acquire(ctx, store.path)
@@ -111,7 +110,7 @@ func (s *annotationService) commitDocument(ctx context.Context, meetingID, relPa
 	}
 	var result annotateResult
 	err = store.inTx(ctx, func(tx *sql.Tx) error {
-		name := path.Base(relPath)
+		name := s.exapp.recordingOriginalName(caller, relPath)
 		if request.RequestID != "" {
 			var previousHash string
 			var receipt []byte

@@ -15,12 +15,12 @@ import settingsPanelSource from "./SettingsPanel.svelte?raw";
 describe("the section", () => {
   it("is a section of the Settings panel, above the pipeline it applies to", () => {
     expect(settingsPanelSource).toContain(
-      'import RecordingAccessPanel from "./RecordingAccessPanel.svelte"',
+      'import DirectShareAccessPanel from "./DirectShareAccessPanel.svelte"',
     );
-    expect(settingsPanelSource).toContain("<RecordingAccessPanel {operatorClient} />");
+    expect(settingsPanelSource).toContain("<DirectShareAccessPanel {operatorClient} />");
     // Under the page's own header, so the page opens on its title, and above
     // every pipeline step it applies to.
-    const section = settingsPanelSource.indexOf("<RecordingAccessPanel");
+    const section = settingsPanelSource.indexOf("<DirectShareAccessPanel");
     expect(section).toBeGreaterThan(settingsPanelSource.indexOf("<h1>Publish pipeline</h1>"));
     expect(section).toBeLessThan(settingsPanelSource.indexOf(">Hardware<"));
   });

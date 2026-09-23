@@ -30,6 +30,10 @@ import (
 // The operator resolves a mode when it is enabled (D-753), so neither can be
 // reached, and storage_causes.go says why there is no copy for them.
 var everyRecordedStep = []string{
+	// nc_direct_preflight.go
+	"nextcloud_probe",
+	"private_archive",
+	"sharing_api",
 	// nc_owner_account.go, nc_provision.go, nc_storage_probe.go
 	storageStepServiceAccount,
 	storageStepUniversalGroup,

@@ -359,7 +359,14 @@ func (s *annotationService) runTagJob(job *tagJob, targets []string, op json.Raw
 		ctx, cancel := context.WithTimeout(base, annotateRequestTimeout)
 		sum := sha256.Sum256([]byte(job.ID + "/" + name))
 		request.RequestID = hex.EncodeToString(sum[:])
-		_, err := s.commitAndRecord(ctx, name, root+"/meetings/"+name, nil, job.Actor, request)
+		rel := root + "/meetings/" + name
+		var err error
+		if s.exapp.sharePaths != nil {
+			rel, err = s.exapp.recipientRecordingPath(ctx, s.client, job.Actor, name, s.exapp.meetingMetadata)
+		}
+		if err == nil {
+			_, err = s.commitAndRecord(ctx, name, rel, nil, job.Actor, request)
+		}
 		cancel()
 		if err != nil && base.Err() != nil {
 			// Shutdown is not a completed target failure. Keep its cursor so

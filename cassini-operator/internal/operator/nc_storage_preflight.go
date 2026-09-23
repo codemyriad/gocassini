@@ -44,6 +44,10 @@ func (c ExAppConfig) preflightNCStorage(ctx context.Context, logger *log.Logger)
 	if !c.appAPIActive() {
 		return
 	}
+	if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
+		c.preflightDirectShares(ctx, logger)
+		return
+	}
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
 	client := &http.Client{Timeout: ncProvisionTimeout}

@@ -412,7 +412,15 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 			continue
 		}
 		if _, taken := readable[id]; !taken {
-			readable[id] = root + "/meetings/" + base
+			rel := root + "/meetings/" + base
+			if c.sharePaths != nil {
+				var err error
+				rel, err = c.recipientRecordingPath(ctx, client, caller, base, c.meetingMetadata)
+				if err != nil {
+					continue
+				}
+			}
+			readable[id] = rel
 		}
 	}
 	return readable, body, true
@@ -425,6 +433,9 @@ func (c ExAppConfig) readableMeetingsForCaller(ctx context.Context, client *http
 // down a shared byte budget so one request cannot stage the archive.
 func (c ExAppConfig) stageMeetingForContext(ctx context.Context, client *http.Client, caller, relPath, destPath string, budget *int64) (int, error) {
 	readAs, _ := ncArchiveReadIdentity(caller)
+	if c.sharePaths != nil {
+		readAs = caller
+	}
 	written, status, err := c.stageRecording(ctx, client, readAs, relPath, destPath, *budget)
 	if err != nil {
 		return status, err

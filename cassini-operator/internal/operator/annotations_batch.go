@@ -94,7 +94,15 @@ func (s *annotationService) writeAnnotationBatch(w http.ResponseWriter, r *http.
 	paths := make(map[string]string, len(entries))
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.opusName, ".opus") {
-			paths[entry.id] = root + "/meetings/" + entry.opusName
+			rel := root + "/meetings/" + entry.opusName
+			if s.exapp.sharePaths != nil {
+				var err error
+				rel, err = s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
+				if err != nil {
+					continue
+				}
+			}
+			paths[entry.id] = rel
 		}
 	}
 	for _, id := range request.MeetingIDs {

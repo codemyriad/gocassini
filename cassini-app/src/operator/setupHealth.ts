@@ -322,7 +322,7 @@ export type RecordingAudience = "" | "everyone" | "participants";
 export function recordingAudience(health: SetupHealth | null): RecordingAudience {
   switch (health?.mode) {
     case "default":
-      return "everyone";
+      return "participants";
     case "access_controlled":
       return "participants";
     default:

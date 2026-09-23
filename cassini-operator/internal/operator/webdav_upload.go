@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -386,6 +387,11 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 			}
 			return true
 		}
+		directShares := c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles
+		if directShares && relPath == "catalog.json" {
+			http.NotFound(w, r)
+			return true
+		}
 
 		// Which identity the bytes are fetched as is the whole access model
 		// (D-616):
@@ -411,6 +417,10 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 		// exists to prevent, so neither is chosen without the other.
 		servesAsOwner := ncStorageServesAsOwner()
 		readAs, root := ncArchiveReadIdentity(caller)
+		if directShares {
+			servesAsOwner = false
+			readAs = caller
+		}
 
 		if relPath == "catalog.json" {
 			if servesAsOwner {
@@ -446,7 +456,24 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger, search searchDeps) ncFiles
 		// meetings/<id>.opus: under access control this fetches AS the caller so
 		// Nextcloud enforces the per-file ACL — a non-readable meeting 404s and
 		// never leaks.
-		davURL := c.davFileURL(readAs, root+"/"+strings.TrimPrefix(relPath, "/"))
+		davRelPath := root + "/" + strings.TrimPrefix(relPath, "/")
+		if directShares {
+			if !strings.HasPrefix(relPath, "meetings/") || !strings.HasSuffix(relPath, ".opus") {
+				http.NotFound(w, r)
+				return true
+			}
+			var resolveErr error
+			davRelPath, resolveErr = c.recipientRecordingPath(r.Context(), client, caller, path.Base(relPath), c.meetingMetadata)
+			if resolveErr != nil {
+				if errors.Is(resolveErr, errRecordingNotShared) {
+					http.NotFound(w, r)
+				} else {
+					http.Error(w, "Nextcloud shares unavailable", http.StatusBadGateway)
+				}
+				return true
+			}
+		}
+		davURL := c.davFileURL(readAs, davRelPath)
 		req, err := http.NewRequestWithContext(r.Context(), r.Method, davURL, nil)
 		if err != nil {
 			if logger != nil {

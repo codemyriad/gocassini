@@ -449,8 +449,9 @@ SELECT COUNT(*) FROM meeting_index m
 // search, not the next restart. The index is a handle because it has a
 // lifetime; the aliases are a snapshot because they do not.
 type searchDeps struct {
-	index   *searchStore
-	aliases func() [][]string
+	index    *searchStore
+	metadata *meetingMetadataStore
+	aliases  func() [][]string
 	// limiter bounds how often one caller can make this app talk to Nextcloud.
 	// Nil outside a running operator, which the limiter itself tolerates.
 	limiter *searchRateLimiter

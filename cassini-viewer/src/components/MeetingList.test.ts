@@ -62,7 +62,7 @@ describe("MeetingList rows", () => {
     // draws no meeting rows at all, so reporting the search-filtered set would
     // leave the selection bar claiming nothing was hidden while every pick was.
     expect(meetingListSource).toContain(
-      'dispatch("visible", types.meetings ? visibleMeetings : [])',
+      'dispatch("visible", types.meetings ? renderedMeetings : [])',
     );
   });
 });

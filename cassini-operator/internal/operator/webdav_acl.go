@@ -355,6 +355,22 @@ type resolvedCatalog struct {
 //	                   permission, and a per-caller scan of a tree only the
 //	                   service account has could answer nothing but 404.
 func (c ExAppConfig) resolveCatalogForCaller(ctx context.Context, client *http.Client, caller string, logger *log.Logger) (resolvedCatalog, catalogResolveOutcome) {
+	if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
+		snapshot, err := c.directShareSnapshot(ctx, client, caller, c.meetingMetadata)
+		if err != nil {
+			if logger != nil {
+				logger.Printf("nc shares: caller=%s: %v", caller, err)
+			}
+			empty := []byte(emptyCatalogJSON)
+			return resolvedCatalog{raw: empty, body: empty}, catalogResolveScanFailed
+		}
+		body, err := json.Marshal(siteCatalog{Version: catalogSchemaVersion, Meetings: snapshot.entries})
+		if err != nil {
+			empty := []byte(emptyCatalogJSON)
+			return resolvedCatalog{raw: empty, body: empty}, catalogResolveScanFailed
+		}
+		return resolvedCatalog{raw: body, body: body}, catalogResolveOK
+	}
 	if ncStorageServesAsOwner() {
 		return c.resolveOwnerCatalog(ctx, client, logger)
 	}
@@ -687,6 +703,7 @@ func audienceApplied(rules []aclRule) bool {
 // bound to it.
 type ncLeafState struct {
 	Exists   bool
+	FileID   int64
 	Size     int64
 	Checksum string
 	// ETag is the leaf's entity tag, verbatim (quotes included), so a later
@@ -704,7 +721,7 @@ type ncLeafState struct {
 func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Client, userID, relPath string) (ncLeafState, error) {
 	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
 		`<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns" xmlns:nc="http://nextcloud.org/ns">` +
-		`<d:prop><d:getcontentlength/><d:getetag/><oc:checksums/><nc:acl-list/></d:prop></d:propfind>`)
+		`<d:prop><oc:fileid/><d:getcontentlength/><d:getetag/><oc:checksums/><nc:acl-list/></d:prop></d:propfind>`)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relPath), bytes.NewReader(reqBody))
 	if err != nil {
 		return ncLeafState{}, err
@@ -731,6 +748,7 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 	var ms struct {
 		Responses []struct {
 			Propstat []struct {
+				FileID    string   `xml:"prop>fileid"`
 				Length    string   `xml:"prop>getcontentlength"`
 				ETag      string   `xml:"prop>getetag"`
 				Checksums []string `xml:"prop>checksums>checksum"`
@@ -754,6 +772,11 @@ func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Clie
 	// with an empty value, so both fields are gathered across every propstat and
 	// an unparseable or absent length simply leaves Size at zero.
 	for _, ps := range ms.Responses[0].Propstat {
+		if trimmed := strings.TrimSpace(ps.FileID); trimmed != "" {
+			if n, convErr := strconv.ParseInt(trimmed, 10, 64); convErr == nil {
+				state.FileID = n
+			}
+		}
 		if trimmed := strings.TrimSpace(ps.Length); trimmed != "" {
 			if n, convErr := strconv.ParseInt(trimmed, 10, 64); convErr == nil {
 				state.Size = n

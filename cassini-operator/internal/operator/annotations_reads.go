@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path"
 	"strings"
 )
 
@@ -15,8 +14,12 @@ func (s *annotationService) readDocument(ctx context.Context, caller, meetingID,
 	if store == nil {
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations store unavailable", cause: fmt.Errorf("annotations store unavailable")}
 	}
+	opusName := s.exapp.recordingOriginalName(caller, relPath)
+	if opusName == "" {
+		return annotateResult{}, annotateUnavailable(fmt.Errorf("recording name mapping expired"))
+	}
 	// Check the current leaf permission without downloading its media bytes.
-	identity := annotationReadIdentity(caller, relPath)
+	identity := s.exapp.recordingReadIdentity(caller, relPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, s.exapp.davFileURL(identity, relPath), nil)
 	if err != nil {
 		return annotateResult{}, annotateUnavailable(err)
@@ -33,13 +36,13 @@ func (s *annotationService) readDocument(ctx context.Context, caller, meetingID,
 	if resp.StatusCode != http.StatusOK {
 		return annotateResult{}, annotateUnavailable(fmt.Errorf("annotation access check: %d", resp.StatusCode))
 	}
-	result, err := store.document(ctx, path.Base(relPath))
+	result, err := store.document(ctx, opusName)
 	if errors.Is(err, sql.ErrNoRows) {
 		var state string
-		if e := store.db.QueryRowContext(ctx, `SELECT state FROM meeting_annotations WHERE opus_name=?`, path.Base(relPath)).Scan(&state); e == nil && state == annotationsStateUnavailable {
+		if e := store.db.QueryRowContext(ctx, `SELECT state FROM meeting_annotations WHERE opus_name=?`, opusName).Scan(&state); e == nil && state == annotationsStateUnavailable {
 			return annotateResult{}, &annotateFailure{status: 502, public: "the recording's annotations could not be read", cause: err}
 		}
-		s.importDocument(caller, meetingID, relPath)
+		s.importDocument(caller, meetingID, opusName, relPath)
 		return annotateResult{}, &annotateFailure{status: 503, public: "annotations are preparing; retry shortly", cause: err}
 	}
 	if err != nil {
@@ -84,12 +87,20 @@ func (s *annotationService) importListedDocuments(ctx context.Context, caller st
 	_, root := ncArchiveReadIdentity(caller)
 	for _, entry := range entries {
 		if missing[entry.opusName] && strings.HasSuffix(entry.opusName, ".opus") {
-			s.importDocument(caller, entry.id, root+"/meetings/"+entry.opusName)
+			rel := root + "/meetings/" + entry.opusName
+			if s.exapp.sharePaths != nil {
+				var err error
+				rel, err = s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
+				if err != nil {
+					continue
+				}
+			}
+			s.importDocument(caller, entry.id, entry.opusName, rel)
 		}
 	}
 }
 
-func (s *annotationService) importDocument(caller, meetingID, relPath string) {
+func (s *annotationService) importDocument(caller, meetingID, opusName, relPath string) {
 	if _, busy := s.imports.LoadOrStore(relPath, true); busy {
 		return
 	}
@@ -110,24 +121,24 @@ func (s *annotationService) importDocument(caller, meetingID, relPath string) {
 		ctx, cancel := context.WithTimeout(ctx, annotateRequestTimeout)
 		defer cancel()
 		store := s.rt.annotationReads()
-		if _, err := store.document(ctx, path.Base(relPath)); err == nil {
+		if _, err := store.document(ctx, opusName); err == nil {
 			return
 		}
 		provisionMu.RLock()
 		defer provisionMu.RUnlock()
 		// File writers and importers must agree on which delivered version was read.
-		unlock, err := annotationWriteLocks.acquire(ctx, path.Base(relPath))
+		unlock, err := annotationWriteLocks.acquire(ctx, opusName)
 		if err != nil {
 			return
 		}
 		defer unlock()
 		result, err := s.showMeeting(ctx, caller, meetingID, relPath)
 		if err == nil {
-			err = store.Record(ctx, path.Base(relPath), result)
+			err = store.Record(ctx, opusName, result)
 		} else if annotateExitCode(err) != 0 && ctx.Err() == nil {
 			// Download succeeded and the CLI rejected the content. Transient DAV
 			// and process-launch errors leave the document eligible for retry.
-			if markErr := store.MarkUnavailable(ctx, path.Base(relPath), ""); markErr != nil {
+			if markErr := store.MarkUnavailable(ctx, opusName, ""); markErr != nil {
 				s.logf("annotations: mark unreadable meeting=%s: %v", meetingID, markErr)
 			}
 		}

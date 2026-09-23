@@ -111,7 +111,7 @@ func (s *annotationService) showMeeting(ctx context.Context, caller, meetingID, 
 	defer os.RemoveAll(staging)
 
 	local := filepath.Join(staging, "meeting.opus")
-	_, status, err := s.exapp.stageRecording(ctx, s.client, annotationReadIdentity(caller, relPath), relPath, local, maxAnnotateRecordingBytes)
+	_, status, err := s.exapp.stageRecording(ctx, s.client, s.exapp.recordingReadIdentity(caller, relPath), relPath, local, maxAnnotateRecordingBytes)
 	if err != nil {
 		if deniedOrAbsent(status) {
 			// The ACL changed, or the recording went, since the catalog was read.
@@ -175,6 +175,14 @@ func (s *annotationService) visibleRecording(ctx context.Context, w http.Respons
 	_, root := ncArchiveReadIdentity(caller)
 	for _, entry := range entries {
 		if entry.id == meetingID && strings.HasSuffix(entry.opusName, ".opus") {
+			if s.exapp.sharePaths != nil {
+				rel, err := s.exapp.recipientRecordingPath(ctx, s.client, caller, entry.opusName, s.exapp.meetingMetadata)
+				if err != nil {
+					s.answerFailure(w, r, "meeting="+meetingID, annotateUnavailable(err))
+					return "", nil, false
+				}
+				return rel, visibleOpusNames(entries), true
+			}
 			return root + "/meetings/" + entry.opusName, visibleOpusNames(entries), true
 		}
 	}

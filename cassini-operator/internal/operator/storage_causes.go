@@ -48,6 +48,18 @@ type storageCause struct {
 // nobody will ever read. A step with no entry falls through to the app's own
 // "the check did not finish" sentence rather than to silence.
 var storageCauses = map[string]storageCause{
+	"nextcloud_probe": {
+		admin: "Nextcloud did not answer the check for the recordings account and private archive.",
+		user:  "Nextcloud did not answer the recordings setup check.",
+	},
+	"private_archive": {
+		admin: "Cassini could not confirm that its recordings directory is private and writable.",
+		user:  "The recordings directory could not be confirmed private and writable.",
+	},
+	"sharing_api": {
+		admin: "Nextcloud's built-in file sharing API is unavailable to the Cassini recordings account.",
+		user:  "Nextcloud file sharing is unavailable for recordings.",
+	},
 	// Recorded under the step name `owner_account`, from three places that all
 	// mean the same thing: the account is not there. The sentence used to say
 	// Nextcloud was refusing it write access, which is a different condition and

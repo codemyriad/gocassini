@@ -101,6 +101,9 @@ type Runtime struct {
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
 	searchStore *searchStore
+	// meetingMetadata is a disposable description index. Visibility always
+	// comes from the caller's current Nextcloud shares, never from these rows.
+	meetingMetadata *meetingMetadataStore
 	// annotations is the marks projection (D-737); nil when it could not be
 	// opened, in which case writes still commit and only indexing is skipped.
 	annotations annotationIndex
@@ -315,6 +318,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	exappCfg.meetingMetadata = runtime.meetingMetadata
 	// Join tracked workers (including startup readiness) before returning or
 	// closing the store; callers may release the log writers after Run exits.
 	defer runtime.Shutdown()
@@ -330,6 +334,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	sinkName := cfg.PublishSink
 	if sinkName == "" {
 		sinkName = defaultPublishSinkFor(exappCfg)
+	}
+	if sinkName == publishSinkNextcloudFiles {
+		exappCfg.sharePaths = &recordingSharePathCache{}
 	}
 	sink, err := newPublishSinkFor(sinkName, cfg, exappCfg, runtime, logger)
 	if err != nil {
@@ -403,8 +410,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// The preflight remains tied to the AppAPI enabled edge, but not to the
 	// eager whole-archive uploader removed by D-613.
-	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
-	exappCfg.preflightOnRestart(runtime.ctx, logger)
+	if exappCfg.sharePaths != nil && sink.Name() == publishSinkNextcloudFiles {
+		exappCfg.onEnabled = func(enabled bool) {
+			if enabled {
+				exappCfg.preflightDirectShares(runtime.ctx, logger)
+			}
+		}
+		go exappCfg.preflightDirectShares(runtime.ctx, logger)
+	} else {
+		exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
+		exappCfg.preflightOnRestart(runtime.ctx, logger)
+	}
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -812,6 +828,11 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	} else {
 		rt.searchStore = searchIndex
 	}
+	if metadata, err := openMeetingMetadataStore(meetingMetadataPath(cfg.DBPath), logger); err != nil {
+		logger.Printf("meeting metadata index unavailable (%v); list metadata will need archive recovery", err)
+	} else {
+		rt.meetingMetadata = metadata
+	}
 	// The tag index (D-737), for the same reasons. Assigned only on success: a
 	// nil *annotationStore inside the interface would be a non-nil index.
 	if annotationIndex, err := openAnnotationStore(sidecarPath(cfg.DBPath, annotationsStoreFilename), logger); err != nil {
@@ -898,6 +919,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 func (rt *Runtime) searchDeps() searchDeps {
 	return searchDeps{
 		index:       rt.searchStore,
+		metadata:    rt.meetingMetadata,
 		limiter:     rt.searchLimiter,
 		annotations: rt.annotationReads(),
 		aliases: func() [][]string {
@@ -915,6 +937,11 @@ func (rt *Runtime) Shutdown() {
 	if rt.searchStore != nil {
 		if err := rt.searchStore.Close(); err != nil {
 			rt.logger.Printf("search index close failed: %v", err)
+		}
+	}
+	if rt.meetingMetadata != nil {
+		if err := rt.meetingMetadata.Close(); err != nil {
+			rt.logger.Printf("meeting metadata index close failed: %v", err)
 		}
 	}
 	if store := rt.annotationReads(); store != nil {

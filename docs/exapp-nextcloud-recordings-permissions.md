@@ -1,5 +1,10 @@
 # Managing recording permissions in Nextcloud Files
 
+> Historical design reference. The installed app now uses built-in direct Files
+> shares as its single permission model. See the [current cutover and access
+> rules](direct-shares-cutover.md). The two-mode instructions below apply only
+> to older releases.
+
 How **per-participant access control** for Cassini recordings works and how to
 operate it. A private recording is visible only to the people who had access to
 the Talk room when it was published — that is everyone on the room's attendee

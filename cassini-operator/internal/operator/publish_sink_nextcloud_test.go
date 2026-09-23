@@ -82,7 +82,7 @@ func leafMultistatusETag(href string, size int, rules []aclRule, etag string) st
 	b.WriteString(href)
 	b.WriteString(`</d:href><d:propstat><d:prop><d:getcontentlength>`)
 	fmt.Fprintf(&b, "%d", size)
-	b.WriteString(`</d:getcontentlength>`)
+	b.WriteString(`</d:getcontentlength><oc:fileid xmlns:oc="http://owncloud.org/ns">42</oc:fileid>`)
 	if etag != "" {
 		b.WriteString(`<d:getetag>` + etag + `</d:getetag>`)
 	}

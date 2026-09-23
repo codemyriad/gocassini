@@ -710,14 +710,18 @@ func newPublishSinkFor(name string, cfg Config, exapp ExAppConfig, rt *Runtime, 
 				"sink %q needs NEXTCLOUD_URL, APP_ID and APP_SECRET; set CASSINI_PUBLISH_SINK=%s to keep recordings on this machine instead",
 				publishSinkNextcloudFiles, publishSinkLocal)
 		}
-		return &nextcloudFilesPublishSink{
+		legacy := &nextcloudFilesPublishSink{
 			cfg:         exapp,
 			logger:      logger,
 			client:      &http.Client{Timeout: ncFilesUploadTimeout},
 			applyAccess: rt.applyNCFilesAccessStrict,
 			cassiniBin:  cfg.CassiniBin,
 			rt:          rt,
-		}, nil
+		}
+		if exapp.sharePaths != nil {
+			return &directSharesPublishSink{legacy}, nil
+		}
+		return legacy, nil
 	default:
 		return newPublishSink(name, cfg, logger)
 	}

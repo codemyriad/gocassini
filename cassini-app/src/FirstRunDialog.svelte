@@ -5,14 +5,11 @@
   import { firstRunReady, type FirstRunPlan } from "./operator/firstRun";
   import { NcSetupError, runSetupPlan } from "./operator/ncSetup";
   import { notifySetupChanged } from "./operator/setupSignal";
-  import { pendingAccessChoice } from "./operator/accessChoice";
-  import { EVERYONE, accessOptions, type AccessMode } from "./operator/recordingAccess";
-  import type { StorageMode } from "./operator/types";
 
   // The one dialog a fresh install shows (D-756).
   //
   // Cassini used to open on a Setup tab and a wizard, and refused to record
-  // until somebody answered it. The operator now resolves the storage mode when
+  // until somebody answered it. The operator now checks direct sharing when
   // it is enabled and records from then on, so there is no question left — only
   // two things worth saying once: who will see recordings, and that Nextcloud
   // needs the administrator's own session to create the account they are kept
@@ -22,16 +19,9 @@
   // where they are tested. This component performs them and nothing else.
   export let operatorClient: OperatorClient;
   export let plan: FirstRunPlan;
-  export let mode: StorageMode = "";
 
-  const current: AccessMode = mode === "" ? EVERYONE : mode;
-  let chosen: AccessMode = current;
-  const options = accessOptions(null);
-  $: switching = chosen !== current;
-
-  // `done` closes the dialog; `settings` is the reader choosing to change the
-  // audience before anything is created. The shell owns which surface is
-  // showing, so this asks rather than acts.
+  // `done` closes the dialog; `settings` opens setup when the account cannot
+  // be created here. The shell owns which surface is showing.
   const dispatch = createEventDispatcher<{ done: void; settings: void }>();
 
   let busy = false;
@@ -47,7 +37,7 @@
     primary?.focus();
   });
 
-  // openSettings leaves for Operator › Settings without creating anything and
+  // openSettings leaves for Operator › Publish pipeline without creating anything and
   // WITHOUT acknowledging (D-756 review).
   //
   // It used to acknowledge on the way out, which made this the one dialog a
@@ -62,11 +52,6 @@
   // The shell hides the dialog for the rest of this page's life, so nobody is
   // shown it twice over the page they are working on.
   function openSettings(): void {
-    dispatch("settings");
-  }
-
-  function continueWithChoice(): void {
-    pendingAccessChoice.set(chosen);
     dispatch("settings");
   }
 
@@ -102,7 +87,10 @@
           onProgress: ({ step, index, total }) => (progress = `${index + 1}/${total} — ${step.title}`),
         });
         progress = "Checking…";
-        await operatorClient.recheckStorage();
+        const checked = await operatorClient.recheckStorage();
+        if (!checked.service_account.exists) {
+          throw new Error("Nextcloud has not confirmed the recordings account yet. Check its setup and try again.");
+        }
       }
       await operatorClient.acknowledgeFirstRun();
       // This Nextcloud is no longer the one the shell looked at when it
@@ -195,27 +183,12 @@
         {firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}
       </h2>
       <p class="text-sm text-base-content/80">
-        First, choose who can open Cassini's recordings and see the names of the rooms they came from. You can change this later.
+        Recordings use Nextcloud's built-in file sharing. Cassini keeps them in its own account and shares each meeting with its participants.
       </p>
 
-      <div class="fr-options" role="radiogroup" aria-label="Who can see recordings">
-        {#each options as option (option.mode)}
-          <button
-            class="fr-opt"
-            class:selected={chosen === option.mode}
-            type="button"
-            role="radio"
-            aria-checked={chosen === option.mode}
-            disabled={busy}
-            on:click={() => (chosen = option.mode)}
-          >
-            <span class="fr-radio" class:checked={chosen === option.mode} aria-hidden="true"></span>
-            <span class="fr-opt-body">
-              <span class="fr-opt-title">{option.title}</span>
-              <span class="fr-opt-desc">{option.description}</span>
-            </span>
-          </button>
-        {/each}
+      <div class="fr-opt">
+        <span class="fr-opt-title">Room participants</span>
+        <span class="fr-opt-desc">Cassini shares each recording with people who belonged to the Talk room. Public meeting participants can share it onward when this Nextcloud allows resharing.</span>
       </div>
 
       {#if plan.blocked}
@@ -231,11 +204,6 @@
           itself. Open Cassini from Nextcloud's own menu, or run the commands under
           <strong>Details for administrators</strong> in <strong>Operator › Publish pipeline</strong>
           on the server.</span>
-        </p>
-      {:else if switching}
-        <p class="text-sm text-base-content/80">
-          Next, <strong>Operator › Publish pipeline</strong> walks you through installing what this
-          needs and turning it on.
         </p>
       {:else if plan.creates}
         <p class="text-sm text-base-content/80">
@@ -264,16 +232,6 @@
             on:click={openSettings}
           >
             Open Operator › Publish pipeline
-          </button>
-        {:else if switching}
-          <button
-            class="btn btn-primary"
-            type="button"
-            disabled={busy}
-            bind:this={primary}
-            on:click={continueWithChoice}
-          >
-            Continue in Publish pipeline
           </button>
         {:else}
           <button
@@ -454,66 +412,15 @@
     color: var(--color-warning);
   }
 
-  .fr-options {
-    display: grid;
-    gap: 12px;
-  }
-  @container (min-width: 560px) {
-    .fr-options {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
   .fr-opt {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
+    display: grid;
+    gap: 4px;
     padding: 10px 12px;
     text-align: left;
-    cursor: pointer;
     color: var(--color-base-content);
     background-color: var(--color-base-200);
     border: 1px solid color-mix(in oklch, var(--color-base-content) 16%, var(--color-base-200));
     border-radius: var(--radius-box, 0.5rem);
-  }
-  .fr-opt:not(:disabled):hover {
-    border-color: color-mix(in oklch, var(--color-base-content) 30%, var(--color-base-200));
-  }
-  .fr-opt.selected,
-  .fr-opt.selected:not(:disabled):hover {
-    background-color: color-mix(in srgb, var(--color-primary) 14%, var(--color-base-100));
-    border-color: var(--color-primary);
-  }
-  .fr-opt:disabled {
-    cursor: default;
-  }
-  .fr-opt-body {
-    display: grid;
-    gap: 4px;
-    min-width: 0;
-  }
-  .fr-radio {
-    position: relative;
-    flex: none;
-    width: 16px;
-    height: 16px;
-    margin-top: 2px;
-    background: var(--color-base-100);
-    border: 1px solid color-mix(in oklch, var(--color-base-content) 26%, transparent);
-    border-radius: 50%;
-  }
-  .fr-radio.checked {
-    border-color: var(--color-primary);
-  }
-  .fr-radio.checked::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 8px;
-    height: 8px;
-    background: var(--color-primary);
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
   }
   .fr-opt-title {
     font-size: 13.5px;

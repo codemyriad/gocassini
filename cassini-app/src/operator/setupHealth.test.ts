@@ -187,9 +187,9 @@ describe("readSetupHealth", () => {
 // recordingAudience is where that translation happens (D-756). The viewing
 // layer never sees `default` or `access_controlled`.
 describe("recordingAudience", () => {
-  it("names the two audiences, and nothing else", () => {
+  it("names the participant audience for the active sharing model", () => {
     expect(recordingAudience({ ok: true, state: "provisioned", mode: "default", cause: "", features: null })).toBe(
-      "everyone",
+      "participants",
     );
     expect(
       recordingAudience({ ok: true, state: "provisioned", mode: "access_controlled", cause: "", features: null }),

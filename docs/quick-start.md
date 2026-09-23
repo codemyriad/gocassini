@@ -45,8 +45,8 @@ From the repo root:
 This one command:
 
 - starts local Nextcloud + AppAPI/HaRP + the full Talk signaling stack;
-- installs the native Team folders and Everyone Group apps — the prerequisites
-  of the access-controlled storage mode;
+- may install Team folders and Everyone Group for older harness scenarios;
+  Cassini's direct-share model does not require either app;
 - builds and tags the Cassini ExApp image from `appinfo/info.xml`;
 - installs/reinstalls Cassini via AppAPI;
 - passes both Talk secrets as deploy env, and points Talk's `recording_servers`
@@ -57,32 +57,11 @@ reuse the existing image. Keep `--build` when validating changes in the current
 checkout; otherwise the harness deliberately runs the previously built image,
 which may be an older release even though Git is on your feature branch.
 
-The harness plays the administrator, and how much of one depends on
-`--storage-mode`. The command above takes its default, `default`: the harness
-creates the `cassini` service account and its group, builds **no Team folder**,
-and registers the ExApp with `CASSINI_STORAGE_MODE=default`. Recordings land in
-that account's own `CassiniNoACL/Recordings`, visible to anyone with an account
-on this Nextcloud. (The two native apps above are installed either way — in
-this mode nothing uses them.)
-
-Add `--storage-mode acl-enabled` and the harness also builds a mapped,
-ACL-enabled `Cassini` Team folder and starts the ExApp **access-controlled**:
-recordings go to `Cassini/Recordings` inside that folder, each visible only to
-the people who were in the call. Each audience has its own root, so neither can
-shadow the other.
-
-The harness declares the mode because it knows what it built. A production
-install is not told: Cassini resolves the audience when the app is enabled,
-keeping meeting participants where the Team folder already holds recordings and
-recording as anyone with a Nextcloud account otherwise.
-`--storage-mode undecided` tells the ExApp nothing, so the app resolves it for
-itself the way a real install does.
-
-Either way it is only the *initial* value: the app records it on its first
-enable, and **Operator › Settings › Who can see recordings** is what changes it
-afterwards — which audience is in force, what the other one still needs, and the
-switch itself. See
-[Recording permissions](./exapp-nextcloud-recordings-permissions.md).
+The installed app writes recordings to the `cassini` account's private
+`CassiniNoACL/Recordings` tree and creates direct Nextcloud Files shares for the
+captured Talk room audience. The harness's `--storage-mode` options remain for
+older regression fixtures; they do not change the installed app's sharing
+rule. See [Recording permissions](./direct-shares-cutover.md).
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:
 

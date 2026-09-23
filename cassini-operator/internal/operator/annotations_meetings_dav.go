@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"path"
 	"strings"
 	"sync"
 )
@@ -20,6 +21,23 @@ func annotationReadIdentity(caller, relPath string) string {
 		return ncRecordingsOwner
 	}
 	return caller
+}
+
+func (c ExAppConfig) recordingReadIdentity(caller, relPath string) string {
+	if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
+		return caller
+	}
+	return annotationReadIdentity(caller, relPath)
+}
+
+func (c ExAppConfig) recordingOriginalName(caller, relPath string) string {
+	if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
+		if name, ok := c.sharePaths.originalName(caller, relPath); ok {
+			return name
+		}
+		return ""
+	}
+	return path.Base(relPath)
 }
 
 // annotationInPrivateRoot: the default model's root, where no leaf carries rules.

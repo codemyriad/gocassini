@@ -1,5 +1,10 @@
 # Installing Cassini as a Nextcloud ExApp
 
+> Recording access changed to one built-in Nextcloud Files direct-share model.
+> The older Team-folder and storage-switch sections in this guide are retained
+> for historical installations; follow the [current recording access and
+> cutover guide](direct-shares-cutover.md) for this version.
+
 Start with [Before installing Cassini](before-installing.md) to check eligibility
 and identify who can configure the required services.
 
@@ -50,24 +55,11 @@ for the guided flow, AIO-specific setup, and restart persistence.
   occ user:add --group=cassini cassini
   ```
 
-- **Required only for recordings visible to meeting participants.** The native
-  **Group folders / Team folders** (`groupfolders`) and **Everyone Group**
-  (`group_everyone`) apps, plus a `Cassini` Team folder mapped and ACL-enabled.
-  Cassini builds the folder, its mappings and its permissions for you, as you,
-  when you pick that audience in **Operator › Settings › Who can see
-  recordings**. It cannot install the two apps: Nextcloud requires your password
-  on that request itself and Cassini will not handle it, so it attempts the
-  install through its own backend and otherwise links you to Nextcloud's own
-  Apps page. The Everyone Group is instance-wide and may appear in other
-  Nextcloud sharing pickers; see
-  [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
-
-  Without them Cassini still records and publishes, and its recordings are
-  visible to **anyone with an account on this Nextcloud**: they live in the
-  `cassini` account's own `CassiniNoACL/Recordings`. Each audience has its own
-  root and neither can shadow the other (see
-  [Where recordings live](#where-recordings-live)). Which one an instance is in,
-  and how to switch, is in **Operator › Settings › Who can see recordings**.
+- **Required:** Nextcloud Files sharing enabled. Cassini keeps the `.opus`
+  files in the `cassini` account's private `CassiniNoACL/Recordings` tree and
+  creates direct shares for the local people, groups and Teams captured from
+  each Talk room. No additional Nextcloud app is required. See
+  [Recording permissions](./direct-shares-cutover.md).
 - An administrator account Cassini can act as, to check how the instance is set
   up: which apps are enabled, whether the `cassini` account exists, whether
   there is a Team folder. That check is read-only, and the archive itself is

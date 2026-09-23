@@ -9,27 +9,23 @@ import dialogSource from "./FirstRunDialog.svelte?raw";
 // quietly lose.
 
 describe("the first-run dialog", () => {
-  it("asks who can see recordings before it says how anything works", () => {
+  it("states the single sharing rule before account setup", () => {
     expect(dialogSource).toContain(
       `{firstRunReady(plan) ? "Cassini is ready to record" : "Cassini can't record yet"}`,
     );
     expect(dialogSource).toContain(
-      "First, choose who can open Cassini's recordings and see the names of the rooms they came from. You can change this later.",
+      "Recordings use Nextcloud's built-in file sharing. Cassini keeps them in its own account and shares each meeting with its participants.",
     );
-    // The two audiences are the settings section's own options, in its words.
-    expect(dialogSource).toContain("accessOptions(null)");
-    expect(dialogSource).toContain('role="radiogroup"');
-    expect(dialogSource.indexOf('role="radiogroup"')).toBeLessThan(
-      dialogSource.indexOf("To start, Cassini creates a Nextcloud account"),
-    );
+    expect(dialogSource).toContain("Room participants");
+    expect(dialogSource).not.toContain('role="radiogroup"');
   });
 
-  it("names the rooms as well as the recordings", () => {
+  it("names the participants and public resharing rule", () => {
     // The room name travels with every published recording, so an audience
     // sentence about the recordings alone describes half of what becomes
     // visible (11 September product decision). The settings section says the
     // same thing about the same mode, in the same words.
-    expect(dialogSource).toContain("the names of the rooms they came from");
+    expect(dialogSource).toContain("Public meeting participants can share it onward");
   });
 
   it("names the account it is about to create, and what Nextcloud will ask", () => {
@@ -42,17 +38,12 @@ describe("the first-run dialog", () => {
     expect(dialogSource).toContain("{:else if plan.creates}");
   });
 
-  it("starts on the audience in force, and hands any other choice to the settings section", () => {
+  it("offers the single account setup action", () => {
     expect(dialogSource).toContain("Create the account and start");
     expect(dialogSource).toContain("Start recording");
-    expect(dialogSource).toContain("Continue in Publish pipeline");
-    expect(dialogSource).toContain("pendingAccessChoice.set(chosen);");
+    expect(dialogSource).not.toContain("Continue in Publish pipeline");
+    expect(dialogSource).not.toContain("pendingAccessChoice.set(chosen);");
     expect(dialogSource).toContain('class="btn btn-primary"');
-    const handOff = dialogSource.slice(
-      dialogSource.indexOf("function continueWithChoice()"),
-      dialogSource.indexOf("// start does the whole of the first run"),
-    );
-    expect(handOff).not.toContain("acknowledgeFirstRun");
   });
 
   it("never shows the service account's password", () => {
@@ -91,7 +82,7 @@ describe("the first-run dialog", () => {
     );
     expect(dialogSource).toContain("Open Operator › Publish pipeline");
     const buttons = dialogSource.slice(dialogSource.indexOf("mt-1 flex flex-wrap"));
-    const blocked = buttons.slice(buttons.indexOf("{#if plan.blocked || plan.unavailable}"), buttons.indexOf("{:else if switching}"));
+    const blocked = buttons.slice(buttons.indexOf("{#if plan.blocked || plan.unavailable}"), buttons.indexOf("{:else}"));
     expect(blocked).toContain("on:click={openSettings}");
     expect(blocked).not.toContain("on:click={start}");
   });
@@ -115,7 +106,7 @@ describe("the first-run dialog", () => {
     // Never Start: every write it would make is refused before it is sent, so
     // the button would acknowledge a first run that never happened.
     const buttons = dialogSource.slice(dialogSource.indexOf("mt-1 flex flex-wrap"));
-    const noStart = buttons.slice(0, buttons.indexOf("{:else if switching}"));
+    const noStart = buttons.slice(0, buttons.indexOf("{:else}"));
     expect(noStart).toContain("{#if plan.blocked || plan.unavailable}");
     expect(noStart).toContain("on:click={openSettings}");
     expect(noStart).not.toContain("on:click={start}");

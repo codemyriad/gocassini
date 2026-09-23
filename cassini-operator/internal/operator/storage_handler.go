@@ -286,6 +286,10 @@ func (c ExAppConfig) storageHandler(rt *Runtime) http.Handler {
 		case http.MethodPost:
 			c.handlePostStorage(w, r, rt)
 		case http.MethodPut:
+			if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
+				writeJSONError(w, http.StatusGone, "storage mode switching is retired; recordings use Nextcloud file shares")
+				return
+			}
 			c.handlePutStorage(w, r, rt)
 		default:
 			writeMethodNotAllowed(w, http.MethodGet+", "+http.MethodPost+", "+http.MethodPut)
@@ -309,6 +313,11 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 			return
 		}
 	}
+	if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles &&
+		in.Action != "" && in.Action != storageActionRecheck && in.Action != storageActionAcknowledgeFirstRun {
+		writeJSONError(w, http.StatusGone, "storage mode actions are retired; recordings use Nextcloud file shares")
+		return
+	}
 
 	// The preflight runs on a context the client cannot cancel.
 	//
@@ -325,7 +334,11 @@ func (c ExAppConfig) handlePostStorage(w http.ResponseWriter, r *http.Request, r
 	case storageActionRecheck, "":
 		// An empty body means recheck: it is the harmless action, and the one a
 		// caller reaching for "look again" would guess.
-		c.preflightNCStorage(ctx, rt.logger)
+		if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
+			c.preflightDirectShares(ctx, rt.logger)
+		} else {
+			c.preflightNCStorage(ctx, rt.logger)
+		}
 		writeJSON(w, http.StatusOK, c.storageStatus(rt, nil))
 	case storageActionPreview:
 		if in.AccessControlEnabled == nil {
@@ -580,6 +593,30 @@ func (c ExAppConfig) storageStatus(rt *Runtime, transition *storageTransitionRes
 		Detail:         access.Detail,
 		CheckedAt:      access.CheckedAt,
 		Transition:     transition,
+	}
+	if c.sharePaths != nil && c.PublishSink == publishSinkNextcloudFiles {
+		var accountSetup []storageSetupStep
+		if probed && !probe.ServiceAccount {
+			accountSetup = storageSetupPlan(false, probe)
+		}
+		resp.Mode = "default"
+		resp.ModeConfirmed = true
+		resp.Migration = nil
+		resp.MigrationClean = true
+		resp.Modes = []storageModeOption{{
+			Mode: "default", Label: "Room participants", Active: true,
+			Available:   access.OK,
+			Summary:     "Each recording is shared through Nextcloud Files with its captured Talk room participants.",
+			Consequence: "Public meeting participants can share onward when this Nextcloud permits resharing.",
+			Root:        ncDefaultRecordingsRoot,
+			Archive:     archiveFactsFor(probe.DefaultArchive),
+			Setup:       accountSetup,
+		}}
+		if probed && probe.ACLArchive.Meetings() > 0 {
+			resp.StrandedRoot = ncACLRecordingsRoot
+			resp.StrandedRecordings = probe.ACLArchive.Meetings()
+		}
+		return resp
 	}
 	if current, resolved := ncStorage.mode(); resolved {
 		if !clean {
