@@ -10,26 +10,20 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
-type artifactStorageUsageResponse struct {
-	MeasuredAt string                     `json:"measured_at"`
-	Roots      []artifactStorageUsageRoot `json:"roots"`
+type detailedStorageUsageResponse struct {
+	MeasuredAt  string                     `json:"measured_at"`
+	DurationMS  float64                    `json:"duration_ms"`
+	Published   []storageUsageSource       `json:"published"`
+	Directories []artifactStorageUsageRoot `json:"directories"`
 }
 
 type artifactStorageUsageRoot struct {
-	ID          string                     `json:"id"`
-	Label       string                     `json:"label"`
-	Location    string                     `json:"location"`
-	Bytes       int64                      `json:"bytes"`
-	Files       int                        `json:"files"`
-	Collections int                        `json:"collections"`
-	Items       []artifactStorageUsageItem `json:"items"`
-	Error       string                     `json:"error,omitempty"`
-}
-
-type artifactStorageUsageItem struct {
-	Name        string                    `json:"name"`
+	ID          string                    `json:"id"`
+	Label       string                    `json:"label"`
+	Location    string                    `json:"location"`
 	Bytes       int64                     `json:"bytes"`
 	Files       int                       `json:"files"`
 	Collections int                       `json:"collections"`
@@ -43,104 +37,79 @@ type artifactStorageFileType struct {
 	Files     int    `json:"files"`
 }
 
-func artifactStorageUsageHandler(rt *Runtime) http.Handler {
+func (c ExAppConfig) detailedStorageUsageHandler(rt *Runtime) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/storage/usage/artifacts" {
+		if r.URL.Path != "/storage/usage/details" {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		switch r.Method {
 		case http.MethodGet:
-			writeJSON(w, http.StatusOK, rt.cachedArtifactStorageUsage())
+			writeJSON(w, http.StatusOK, rt.cachedDetailedStorageUsage())
 		case http.MethodPost:
 			ctx, cancel := context.WithTimeout(r.Context(), storageUsageTimeout)
 			defer cancel()
-			writeJSON(w, http.StatusOK, rt.refreshArtifactStorageUsage(ctx))
+			writeJSON(w, http.StatusOK, rt.refreshDetailedStorageUsage(ctx, c))
 		default:
 			writeMethodNotAllowed(w, http.MethodGet+", "+http.MethodPost)
 		}
 	})
 }
 
-func (rt *Runtime) cachedArtifactStorageUsage() artifactStorageUsageResponse {
-	rt.artifactStorageUsageMu.RLock()
-	defer rt.artifactStorageUsageMu.RUnlock()
-	result := rt.artifactStorageUsage
-	if result.Roots == nil {
-		result.Roots = []artifactStorageUsageRoot{}
+func (rt *Runtime) cachedDetailedStorageUsage() detailedStorageUsageResponse {
+	rt.detailedStorageUsageMu.RLock()
+	defer rt.detailedStorageUsageMu.RUnlock()
+	result := rt.detailedStorageUsage
+	if result.Published == nil {
+		result.Published = []storageUsageSource{}
+	}
+	if result.Directories == nil {
+		result.Directories = []artifactStorageUsageRoot{}
 	}
 	return result
 }
 
-func (rt *Runtime) refreshArtifactStorageUsage(ctx context.Context) artifactStorageUsageResponse {
-	rt.artifactStorageUsageRefreshMu.Lock()
-	defer rt.artifactStorageUsageRefreshMu.Unlock()
-	result := scanArtifactStorageUsage(ctx, rt.cfg.WorkRoot)
-	rt.artifactStorageUsageMu.Lock()
-	rt.artifactStorageUsage = result
-	rt.artifactStorageUsageMu.Unlock()
+func (rt *Runtime) refreshDetailedStorageUsage(ctx context.Context, c ExAppConfig) detailedStorageUsageResponse {
+	rt.detailedStorageUsageRefreshMu.Lock()
+	defer rt.detailedStorageUsageRefreshMu.Unlock()
+	result := c.scanDetailedStorageUsage(ctx, rt.cfg.WorkRoot)
+	rt.detailedStorageUsageMu.Lock()
+	rt.detailedStorageUsage = result
+	rt.detailedStorageUsageMu.Unlock()
 	return result
 }
 
-func scanArtifactStorageUsage(ctx context.Context, workRoot string) artifactStorageUsageResponse {
-	result := artifactStorageUsageResponse{}
-	for _, root := range []struct {
-		id, label, path string
-	}{
-		{"current", "Current working archive", currentRoot(workRoot)},
+func (c ExAppConfig) scanDetailedStorageUsage(ctx context.Context, workRoot string) detailedStorageUsageResponse {
+	started := time.Now()
+	result := detailedStorageUsageResponse{}
+	for _, root := range []struct{ id, label, path string }{
+		{"default", "Default storage mode", recordingsRootFor(false)},
+		{"access-controlled", "Access-controlled storage mode", recordingsRootFor(true)},
+	} {
+		source := storageUsageSource{ID: root.id, Label: root.label, Location: root.path}
+		if strings.TrimSpace(c.NextcloudURL) == "" {
+			source.Error = "Nextcloud Files is not configured"
+		} else {
+			source.Bytes, source.Error = c.ncArchiveLogicalBytes(ctx, root.path)
+		}
+		result.Published = append(result.Published, source)
+	}
+	for _, root := range []struct{ id, label, path string }{
+		{"current", "Working archive", currentRoot(workRoot)},
 		{"runs", "Build history", runsRoot(workRoot)},
 	} {
-		row := scanArtifactStorageRoot(ctx, root.id, root.label, root.path)
-		result.Roots = append(result.Roots, row)
+		result.Directories = append(result.Directories, scanArtifactStorageRoot(ctx, root.id, root.label, root.path))
 	}
+	result.DurationMS = elapsedMilliseconds(started)
 	result.MeasuredAt = nowUTCString()
 	return result
 }
 
 func scanArtifactStorageRoot(ctx context.Context, id, label, rootPath string) artifactStorageUsageRoot {
-	root := artifactStorageUsageRoot{
-		ID:       id,
-		Label:    label,
-		Location: rootPath,
-		Items:    []artifactStorageUsageItem{},
-	}
-	entries, err := os.ReadDir(rootPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return root
-	}
-	if err != nil {
-		root.Error = err.Error()
-		return root
-	}
-	for _, entry := range entries {
-		if err := ctx.Err(); err != nil {
-			root.Error = err.Error()
-			return root
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		item := scanArtifactStorageItem(ctx, filepath.Join(rootPath, entry.Name()), entry.Name())
-		root.Items = append(root.Items, item)
-		if item.Error != "" {
-			continue
-		}
-		if item.Bytes > math.MaxInt64-root.Bytes {
-			root.Error = "storage size exceeds supported range"
-			return root
-		}
-		root.Bytes += item.Bytes
-		root.Files += item.Files
-		root.Collections += item.Collections
-	}
-	return root
-}
-
-func scanArtifactStorageItem(ctx context.Context, itemPath, name string) artifactStorageUsageItem {
-	item := artifactStorageUsageItem{Name: name, Formats: []artifactStorageFileType{}}
+	root := artifactStorageUsageRoot{ID: id, Label: label, Location: rootPath, Formats: []artifactStorageFileType{}}
 	formats := make(map[string]*artifactStorageFileType)
-	err := filepath.WalkDir(itemPath, func(path string, entry os.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(rootPath, func(_ string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -154,7 +123,7 @@ func scanArtifactStorageItem(ctx context.Context, itemPath, name string) artifac
 			return nil
 		}
 		if entry.IsDir() {
-			item.Collections++
+			root.Collections++
 			return nil
 		}
 		info, err := entry.Info()
@@ -164,7 +133,7 @@ func scanArtifactStorageItem(ctx context.Context, itemPath, name string) artifac
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		if info.Size() > math.MaxInt64-item.Bytes {
+		if info.Size() > math.MaxInt64-root.Bytes {
 			return fmt.Errorf("storage size exceeds supported range")
 		}
 		extension := strings.ToLower(filepath.Ext(entry.Name()))
@@ -178,21 +147,24 @@ func scanArtifactStorageItem(ctx context.Context, itemPath, name string) artifac
 		}
 		format.Bytes += info.Size()
 		format.Files++
-		item.Bytes += info.Size()
-		item.Files++
+		root.Bytes += info.Size()
+		root.Files++
 		return nil
 	})
+	if errors.Is(err, os.ErrNotExist) {
+		return root
+	}
 	if err != nil {
-		item.Error = err.Error()
+		root.Error = err.Error()
 	}
 	for _, format := range formats {
-		item.Formats = append(item.Formats, *format)
+		root.Formats = append(root.Formats, *format)
 	}
-	sort.Slice(item.Formats, func(i, j int) bool {
-		if item.Formats[i].Bytes == item.Formats[j].Bytes {
-			return item.Formats[i].Extension < item.Formats[j].Extension
+	sort.Slice(root.Formats, func(i, j int) bool {
+		if root.Formats[i].Bytes == root.Formats[j].Bytes {
+			return root.Formats[i].Extension < root.Formats[j].Extension
 		}
-		return item.Formats[i].Bytes > item.Formats[j].Bytes
+		return root.Formats[i].Bytes > root.Formats[j].Bytes
 	})
-	return item
+	return root
 }
