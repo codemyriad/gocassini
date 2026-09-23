@@ -274,6 +274,72 @@ describe("writing tags", () => {
     expect(get(session).vocabulary!.tags.find(({ tagId }) => tagId === "t_b")?.meetings).toBe(2);
   });
 
+  it("does not let an older vocabulary load make a queued inverse click look redundant", async () => {
+    const labels = new Map(vocabulary.tags.map((tag) => [tag.tagId, tag.label]));
+    const answer = (meetingId: string, tagIds: string[]): AnnotationResult => ({
+      meetingId,
+      revision: 2,
+      resolved: true,
+      operationId: `op-${meetingId}`,
+      added: [],
+      removed: [],
+      notFound: [],
+      annotations: {
+        format: "cassini.annotations.v1",
+        revision: 2,
+        audioOpusSha256: "",
+        tagNamespace: "ns",
+        tags: tagIds.map((id) => ({ id, label: labels.get(id)! })),
+        items: tagIds.map((tagId) => ({
+          id: `i-${meetingId}-${tagId}`,
+          tagId,
+          target: { kind: "meeting" as const },
+          createdAtUtc: "",
+          actor: { kind: "person" as const, id: "ana" },
+          operationId: `op-${meetingId}`,
+        })),
+      },
+    });
+    const answers: ((value: AnnotationResult) => void)[] = [];
+    const requests: AnnotationRequest[] = [];
+    const apply = vi.fn((_meeting: MeetingCatalogEntry, request: AnnotationRequest) => {
+      requests.push(request);
+      return new Promise<AnnotationResult>((resolve) => answers.push(resolve));
+    });
+    let finishOldLoad!: (value: TagVocabulary) => void;
+    const load = vi.fn(() => new Promise<TagVocabulary>((resolve) => (finishOldLoad = resolve)));
+    let loader!: ReturnType<typeof createTagLoader>;
+    const session = createListTagSession(apply, createWriteQueue(() => void loader.reload(true)));
+    loader = createTagLoader(
+      load,
+      (next) => { if (next) session.setConfirmed(next); },
+      () => session.confirmedGeneration(),
+    );
+    session.setConfirmed(vocabulary);
+
+    void loader.reload();
+    session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
+    session.toggle(meetings[3], { tagId: "t_x", label: "exec" });
+    session.toggle(meetings[0], { tagId: "t_b", label: "budget" });
+    await settle();
+
+    answers.shift()!(answer("m1", ["t_h", "t_b"]));
+    await settle();
+    expect(requests).toHaveLength(2);
+
+    // This snapshot began before t_b was added. It must not replace the
+    // successful write response while the later t_b-off click is still queued.
+    finishOldLoad(vocabulary);
+    await settle();
+    answers.shift()!(answer("m4", ["t_x"]));
+    await settle();
+
+    expect(requests[2]).toEqual(expect.objectContaining({
+      ops: [{ op: "unmark-tag", tagId: "t_b", target: { kind: "meeting" } }],
+    }));
+    loader.stop();
+  });
+
   it("resolves an optimistic new tag id before a fast second click removes it", async () => {
     const answers: ((value: AnnotationResult) => void)[] = [];
     const apply = vi.fn(() => new Promise<AnnotationResult>((resolve) => answers.push(resolve)));

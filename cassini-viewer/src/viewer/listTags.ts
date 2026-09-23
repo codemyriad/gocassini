@@ -250,6 +250,7 @@ export function createListTagSession(
 ) {
   const state = writable<ListTagSessionState>({ vocabulary: null, notice: "" });
   let confirmed: TagVocabulary | null = null;
+  let confirmedGeneration = 0;
   let pending: PendingTagAction[] = [];
   let notice = "";
 
@@ -317,7 +318,10 @@ export function createListTagSession(
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
-      if (confirmed) confirmed = withMeetingResult(confirmed, result);
+      if (confirmed) {
+        confirmed = withMeetingResult(confirmed, result);
+        confirmedGeneration += 1;
+      }
     } catch (error) {
       notice = `Could not ${action.desired ? "tag" : "untag"} “${action.meeting.title}”: ${describeAnnotationError(error)}`;
     } finally {
@@ -330,11 +334,18 @@ export function createListTagSession(
     subscribe: state.subscribe,
     setConfirmed(vocabulary: TagVocabulary | null) {
       confirmed = vocabulary;
+      confirmedGeneration += 1;
       publish();
     },
     updateConfirmed(update: (vocabulary: TagVocabulary) => TagVocabulary) {
-      if (confirmed) confirmed = update(confirmed);
+      if (confirmed) {
+        confirmed = update(confirmed);
+        confirmedGeneration += 1;
+      }
       publish();
+    },
+    confirmedGeneration() {
+      return confirmedGeneration;
     },
     toggle(meeting: MeetingCatalogEntry, pick: TagPick) {
       const current = visible();
@@ -404,6 +415,7 @@ export function createWriteQueue(drained: () => void) {
 export function createTagLoader(
   load: () => Promise<TagVocabulary>,
   loaded: (vocabulary: TagVocabulary | null) => void,
+  confirmedGeneration: () => number = () => 0,
 ) {
   let running = false;
   let again = false;
@@ -421,16 +433,17 @@ export function createTagLoader(
     }
     clearTimeout(retry);
     running = true;
+    const startedAt = confirmedGeneration();
     try {
       const vocabulary = await load();
       attempt = 0;
-      if (!stopped && !again) {
+      if (!stopped && !again && startedAt === confirmedGeneration()) {
         loaded(vocabulary);
       }
     } catch (error) {
       const delay = retryDelay(error, attempt);
       attempt += 1;
-      if (!stopped && !again) {
+      if (!stopped && !again && startedAt === confirmedGeneration()) {
         loaded(null);
         if (delay !== null) {
           retry = setTimeout(() => void reload(), delay);

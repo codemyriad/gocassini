@@ -407,6 +407,7 @@
       if (vocabulary) listTagSession.setConfirmed(vocabulary);
       tagsFailed = !vocabulary;
     },
+    () => listTagSession.confirmedGeneration(),
   );
 
   // On open, on return to the tab and after writes; not on the catalog's timer.
