@@ -127,6 +127,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runInsight(ctx, args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
+	case "models":
+		return runModels(ctx, args[1:], stdout, stderr)
 	case "meetings":
 		return runMeetings(ctx, args[1:], stdout, stderr)
 	case "operator":
@@ -323,7 +325,7 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 		printPortableResumeHint(stderr, workspace.RootDir, outPath)
 		return 1
 	}
-	meetingBundle, reusedMeeting, err := reusableMeetingBundle(workspace.MeetingDir, input, stdout)
+	meetingBundle, reusedMeeting, err := reusableMeetingBundle(workspace.MeetingDir, input, stdout, buildOptions{device: "auto"})
 	if err != nil {
 		fmt.Fprintf(stderr, "prepare meeting bundle: %v\n", err)
 		printPortableResumeHint(stderr, workspace.RootDir, outPath)
@@ -405,6 +407,7 @@ Usage:
   cassini meetings fetch <meeting-id> --out "./Meeting.opus"
   cassini meetings context <meeting-id>
   cassini meetings summarize ./Meeting.opus
+  cassini models list|install|probe|pack|import [model] [options]
   cassini operator start [args...]
   cassini pack ./meetings/demo.meeting --out "./Meeting.opus"
   cassini publish ./meetings --out ./site
@@ -419,6 +422,7 @@ Commands:
   annotate Read and write the tags and marks a packed .opus file carries
   build    Build a browser-ready meeting artifact from a recording
   dev      Access the local harness namespace
+  models   Install, check, pack and import optional transcription models
   doctor   Validate the local environment before expensive work starts
   insight  Ask one question of several meetings and keep the answer
   inspect  Inspect a run, meeting, site, or lower-level Cassini artifact

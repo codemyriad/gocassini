@@ -66,6 +66,7 @@ type recordingSetup struct {
 	state      recordingSetupState
 	checks     []readinessCheck
 	checkedAt  time.Time
+	hostChecks []readinessCheck
 	inboundAt  time.Time
 	probe      func(context.Context, string) ([]readinessCheck, error)
 }
@@ -81,7 +82,9 @@ type readinessTest struct {
 }
 
 type readinessResponse struct {
-	State            string           `json:"state"`
+	State string `json:"state"`
+	// RecordingState excludes optional processing and archive findings.
+	RecordingState   string           `json:"recording_state"`
 	Checks           []readinessCheck `json:"checks"`
 	SecretConfigured bool             `json:"secret_configured"`
 	SecretSource     string           `json:"secret_source"`
@@ -247,23 +250,26 @@ func (rt *Runtime) runConnectionProbe(ctx context.Context, room string) ([]readi
 // doctor speaks ok/warn/fail. Mapped here at the edge:
 //
 //	ok    -> passed
-//	warn  -> warn        the archive still works, something is impaired
+//	warn  -> warn        the media host is impaired but still usable
 //	fail  -> needs_action
 //
-// `warn` is new to this response. Nothing in the recording checks could
-// legitimately produce it — which is why #322 shipped three tones and no
-// amber — but a host check genuinely can: a missing model that will download
-// on first use is working-but-impaired, and saying so is the point.
+// This target checks the media host needed for recording and publication.
+// Optional speech-model readiness has its own processing row.
 func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error) {
 	bin := strings.TrimSpace(rt.cfg.CassiniBin)
 	if bin == "" {
 		return nil, errors.New("no recorder binary configured")
 	}
-	cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "all", "--json")
+	cmd := exec.CommandContext(ctx, bin, "doctor", "--target", "media", "--json")
 	cmd.WaitDelay = 500 * time.Millisecond
-	// doctor checks disks and directories; it has no use for the Talk secret,
-	// so it does not get one.
-	cmd.Env = rt.childEnv()
+	// Doctor checks its working directory for writability and free space.
+	// Use the recording volume, which can differ from the image's CWD.
+	if rt.cfg.WorkRoot != "" {
+		cmd.Dir = filepath.Dir(rt.cfg.WorkRoot)
+	}
+	// Doctor checks media tools and disk space. It needs the recorder's runtime
+	// configuration, but not AppAPI impersonation or Talk credentials.
+	cmd.Env = withoutEnv(rt.childEnv(), operatorOnlySecretEnv())
 	cmd.Stderr = io.Discard
 	// A non-zero exit is how doctor reports `fail`, so the document is still
 	// what matters — read it whenever there is one.
@@ -322,7 +328,8 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 }
 
 // Coalesce concurrent checks and put a ceiling on network/process work. GET
-// never launches a process. Every result expires, including successful ones.
+// reports cached host and connection findings; only startup and explicit
+// checks launch these probes. Aged findings keep their verdict and timestamp.
 func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	s := &rt.recordingSetup
 	s.checkMu.Lock()
@@ -343,6 +350,26 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
 		cfg.preflightNCStorage(ctx, rt.logger)
 	}
+	// The panel polls GET every five seconds. Probe the media host once per
+	// explicit check and retain its verdict with the time it was checked.
+	hostCtx, hostCancel := context.WithTimeout(ctx, 3*time.Second)
+	host, hostErr := rt.runDoctorProbe(hostCtx)
+	hostCancel()
+	hostAt := time.Now().UTC().Format(time.RFC3339)
+	if hostErr != nil {
+		host = []readinessCheck{{
+			ID: "host", State: "warn", Code: "host_checks_unavailable",
+			Message: "Cassini could not check disk space and ffmpeg on the recording volume.",
+			Action:  "recheck",
+			Steps: []readinessStep{{
+				Label:    "In the Cassini recorder environment, run media checks from the recording work volume",
+				Commands: []string{"cassini doctor --target media"},
+			}},
+		}}
+	}
+	for i := range host {
+		host[i].CheckedAt = hostAt
+	}
 	var checks []readinessCheck
 	if strings.TrimSpace(rt.cfg.TalkSharedSecret) != "" && rt.validTestRoom(room) {
 		var err error
@@ -356,6 +383,7 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 		checks[i].CheckedAt = now.Format(time.RFC3339)
 	}
 	s.mu.Lock()
+	s.hostChecks = host
 	// A configuration edit while the probe was running invalidates its answer.
 	if s.state.TestRoomURL == room {
 		s.checks = checks
@@ -364,13 +392,33 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	s.mu.Unlock()
 }
 
+// transcriptionUnavailable says why enabled transcription cannot run on device:
+// the device itself, or the selected model. Empty means it can run.
+func (rt *Runtime) transcriptionUnavailable(settings STTSettings, device string) string {
+	if ok, detail := rt.effectiveComputeStatus(settings, device); !ok {
+		return detail
+	}
+	if _, err := rt.admitModelForDevice(settings, device); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
+	return rt.readinessWithOptional(ctx, true)
+}
+
+// The public setup route needs only RecordingState. Optional transcription and
+// archive coverage cannot affect that verdict, so ordinary users do not run
+// those diagnostics whenever they open the app.
+func (rt *Runtime) readinessWithOptional(ctx context.Context, includeOptional bool) readinessResponse {
 	secret, source := rt.signalingSecret()
 	s := &rt.recordingSetup
 	s.mu.Lock()
 	rt.loadRecordingSetupLocked()
 	state, failed, checkedAt, inbound := s.state, s.loadFailed, s.checkedAt, s.inboundAt
 	probes := append([]readinessCheck(nil), s.checks...)
+	host := append([]readinessCheck(nil), s.hostChecks...)
 	s.mu.Unlock()
 	resp := readinessResponse{State: "passed", Checks: []readinessCheck{}, SecretConfigured: secret != "", SecretSource: source, TestRoomURL: state.TestRoomURL}
 	add := func(id, state, code, message, action string) {
@@ -419,13 +467,18 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	} else {
 		resp.Checks = append(resp.Checks, readinessCheck{ID: "storage", State: "needs_action", Code: "storage_incomplete", Message: "The Nextcloud storage preflight did not pass. Review the storage details below.", Action: "setup_storage", CheckedAt: access.CheckedAt})
 	}
-	settings := rt.currentSettings()
-	device := rt.effectiveFor(settings).Device
-	if ok, detail := rt.effectiveComputeStatus(settings, device); ok {
-		add("processing", "passed", "processing_ready", "Speech-processing prerequisites passed for "+device+".", "")
-	} else {
-		add("processing", "needs_action", "processing_unavailable", detail, "settings")
+	if includeOptional {
+		settings := rt.currentSettings()
+		device := rt.effectiveFor(settings).Device
+		if !settings.TranscriptionEnabled {
+			add("processing", "passed", "audio_only", "Transcription is off. Recordings can be published and played as audio.", "")
+		} else if detail := rt.transcriptionUnavailable(settings, device); detail != "" {
+			add("processing", "warn", "transcription_unavailable", "Recordings keep their audio, but transcription cannot run: "+detail, "settings")
+		} else {
+			add("processing", "passed", "processing_ready", "Speech-processing prerequisites passed for "+device+".", "")
+		}
 	}
+
 	if secret == "" && !failed {
 		add("talk.authentication", "needs_action", "internal_secret_missing", "Enter the internal secret from your Talk signaling server.", "configure_talk")
 	}
@@ -457,61 +510,36 @@ func (rt *Runtime) readiness(ctx context.Context) readinessResponse {
 	} else {
 		add("talk.handoff", "not_verified", "handoff_not_verified", "No recent recording request from Talk. Check again verifies outbound connectivity; a new Talk recording verifies this incoming connection. Any previous playback confirmation is shown below.", "test_recording")
 	}
-	// Archive coverage: the checklist's third layer, and the only one that
-	// answers "is what we produced complete?" rather than "can we produce more?"
-	if rt.searchStore != nil {
-		if coverage, err := rt.searchStore.Coverage(ctx); err != nil {
-			add("archive.search", "warn", "search_coverage_unknown", "Cassini could not read the search index, so how much of the archive is searchable is unknown.", "recheck")
-		} else if fixable := coverage.Fixable(); fixable > 0 {
-			// Working, and incomplete. Exactly what warn is for.
-			addWithSteps("archive.search", "warn", "search_coverage_partial", fmt.Sprintf(
-				"Search can read %d of %d meetings, so a search may answer \"no matches\" about a meeting it never read.",
-				coverage.Indexed, coverage.Searchable()), "recheck",
-				readinessStep{Label: fmt.Sprintf("Re-index the %d meeting(s) that could not be read. It is safe to re-run and skips what is already indexed", fixable),
-					Commands: []string{"cassini-operator backfill-search"}})
-		} else if coverage.Indexed > 0 {
-			// Meetings that are correctly unsearchable are NOT counted against
-			// this: a silent recording has no words, and nothing can change
-			// that, so an instance must be able to reach full coverage with one
-			// in the archive (R2.2).
-			resp.Checks = append(resp.Checks, readinessCheck{
-				ID:      "archive.search",
-				State:   "passed",
-				Code:    "search_coverage_complete",
-				Message: fmt.Sprintf("Search can read all %d meetings that have anything to find.", coverage.Indexed),
-			})
-		}
+	if includeOptional {
+		resp.Checks = append(resp.Checks, rt.cachedSearchReadinessCheck(ctx))
 	}
 
-	// Host checks lead: they describe the machine every other check runs on, so
-	// a full disk explains a storage failure rather than competing with it.
-	//
-	// Cheap by measurement — doctor does no network and no subprocess beyond
-	// LookPath — so these need no on-demand gate (R4.1 is about expensive
-	// checks, and expensive is a property of a check rather than of a layer).
-	if host, err := rt.runDoctorProbe(ctx); err != nil {
-		// R2.3: a source we could not reach is a finding about the check, not a
-		// verdict about the host.
-		resp.Checks = append([]readinessCheck{{
-			ID:      "host",
-			State:   "warn",
-			Code:    "host_checks_unavailable",
-			Message: "Cassini could not run its host checks, so disk space, ffmpeg and the speech runtime are unverified on this machine.",
-			Action:  "recheck",
-			Steps: []readinessStep{{
-				Label:    "Run the host checks by hand to see what they say",
-				Commands: []string{"cassini doctor"},
-			}},
-		}}, resp.Checks...)
-	} else {
-		resp.Checks = append(host, resp.Checks...)
+	// Host findings lead so a full disk can explain a storage failure. GET
+	// never launches the media doctor subprocess.
+	if len(host) == 0 {
+		host = []readinessCheck{{ID: "host", State: "not_verified", Code: "host_not_checked", Message: "The recording host has not been checked yet.", Action: "recheck"}}
 	}
+	resp.Checks = append(host, resp.Checks...)
 	resp.Test = rt.readinessTest(ctx, state)
 	if resp.Test.PlaybackVerifiedAt == "" {
 		add("test", "not_verified", "test_not_verified", "Record a short test through Talk, then open it and confirm playback.", "test_recording")
 	}
 	resp.State = worstReadinessState(resp.Checks)
+	resp.RecordingState = recordingCapabilityState(resp.Checks)
 	return resp
+}
+
+// Optional processing and archive coverage deserve their own findings, but
+// cannot turn a working audio recorder into a reported recording failure.
+func recordingCapabilityState(checks []readinessCheck) string {
+	core := make([]readinessCheck, 0, len(checks))
+	for _, check := range checks {
+		if check.ID == "processing" || strings.HasPrefix(check.ID, "archive.") {
+			continue
+		}
+		core = append(core, check)
+	}
+	return worstReadinessState(core)
 }
 
 // worstReadinessState is the instance's worst news, ordered by how much it
@@ -572,6 +600,7 @@ func (rt *Runtime) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/health" && r.Method == http.MethodGet:
 	case r.URL.Path == "/health/check" && r.Method == http.MethodPost:
 		rt.checkRecordingReadiness(r.Context())
+		rt.invalidateSearchReadiness()
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "unsupported health operation")
 		return
@@ -699,9 +728,9 @@ func (rt *Runtime) recordingConfigurationRefusal(req TriggerRequest) string {
 // Public callers receive one coarse state. No network calls, account names,
 // room URLs, secret source, job ids, or diagnostic details leave this boundary.
 func (rt *Runtime) publicRecordingState(ctx context.Context) string {
-	// Use the same aggregate as the admin report, including storage, compute,
-	// and the current published test job. Return only the coarse state.
+	// An optional model or an incomplete search index cannot make playable
+	// audio appear broken to everyone who opens the app.
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	return rt.readiness(ctx).State
+	return rt.readinessWithOptional(ctx, false).RecordingState
 }

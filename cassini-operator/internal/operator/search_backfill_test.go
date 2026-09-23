@@ -124,6 +124,27 @@ func TestBackfillIndexesAPublishedMeeting(t *testing.T) {
 	}
 }
 
+func TestBackfillKeepsVerifiedDisabledTranscriptionDistinctFromSilence(t *testing.T) {
+	f := newBackfillFixture(t)
+	f.writeCurrent(t, "JOB1", "sealed-audio-bytes", `{"version":"transcript.words.v1","segments":[]}`)
+	manifest := `{"processing":{"transcription":{"status":"skipped","reason":"disabled"}}}`
+	if err := os.WriteFile(filepath.Join(canonicalMeetingPath(f.workRoot, "JOB1"), "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := f.rt.backfillSearchIndex(context.Background(),
+		[]searchBackfillTarget{{JobID: "JOB1", OpusName: "JOB1.opus"}},
+		deliveredState("sealed-audio-bytes"), nil)
+	if err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if report.Unavailable != 1 || report.Failed != 0 {
+		t.Fatalf("report = %+v, want known unsearchable meeting", report)
+	}
+	if got := reasonFor(t, f.rt.searchStore, "JOB1.opus"); got != searchIngestReasonDisabled {
+		t.Errorf("reason = %q, want disabled", got)
+	}
+}
+
 // THE check (review B1). current/ tracks the last attempt that BUILT; a rerun
 // that built and then failed to publish leaves a transcript there that does
 // not match the delivered .opus. The delivered digest comes from the ARCHIVE'S

@@ -184,8 +184,8 @@ CI publishes to `ghcr.io/codemyriad/gocassini`:
 
 | Tag | What it is |
 |---|---|
-| `X.Y.Z` | Multi-arch portable image (`linux/amd64`, `linux/arm64`). Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, and runs local CPU transcription with bundled int8 Parakeet on x86_64 and 64-bit ARM servers. |
-| `X.Y.Z-cuda` | CUDA release build for x86_64 (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
+| `X.Y.Z` | Multi-arch portable image (`linux/amd64`, `linux/arm64`). Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, and runs local CPU transcription with explicitly installed Parakeet models on x86_64 and 64-bit ARM servers. |
+| `X.Y.Z-cuda` | CUDA release build for x86_64 (CUDA 12 / cuDNN 9 sherpa-onnx, optional separately installed fp32 Parakeet, `CASSINI_STT_DEVICE=cuda`) |
 | `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
 | `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit, for pinning a specific build |
 | `latest` / `latest-cuda` / `latest-rocm` | Convenience tags — fine for demos, **not** for production installs |
@@ -305,8 +305,8 @@ Options).
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
 | `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used to CHECK how this instance is set up — which apps are enabled, whether the `cassini` account exists, whether there is a Team folder. That check creates nothing; the only writes made as this account are the attempt to create the `cassini` service account and its group when the app is enabled, and the app-install attempt when you pick meeting participants in the settings, and switching audiences moves nothing as it — the archive is copied by WebDAV as `cassini`, in both directions. A switch does re-run that same read-only check before it writes, so it still needs an administrator to be resolvable. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
 | `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in Nextcloud Files; `local` keeps them on the app's own volume. Set `local` only deliberately. Under `nextcloud-files`, *who can see* a recording is a separate setting, in **Operator › Settings › Who can see recordings**, not here |
-| `CASSINI_STT_BACKEND` | No | Which registered speech-to-text engine transcription uses; empty selects the default (`sherpa-onnx`). An unknown value fails the build loudly before any audio is decoded |
-| `CASSINI_DISALLOW_MODEL_DOWNLOAD` | No | Set `1` on a host with no outbound network access. Each image bundles the model of the quality tier it runs by default, and any other tier downloads once into the model cache on the persistent volume. With this set, a build whose tier needs that download is blocked with a message that names the missing model and asks for a tier the image bundles, instead of starting and failing at the network |
+| `CASSINI_STT_BACKEND` | No | Which registered speech-to-text engine transcription uses; empty selects the default (`sherpa-onnx`). An unknown value fails transcription while preserving the prepared audio |
+| `CASSINI_DISALLOW_MODEL_DOWNLOAD` | No | Set `1` on a host with no outbound network access. Images contain no models. This forbids model downloads and resumed network jobs. Local `cassini models import`, runtime checks, activation, and already installed models remain available; missing models never block audio publication |
 | `CASSINI_ATTRIBUTION_DISABLED` | No | Set `1` to skip the cross-track speaker-attribution stage. By default every word is annotated with acoustic evidence; no words are changed or removed either way |
 | `CASSINI_ATTRIBUTION_DROP` | No | Set `1` to delete words the acoustic evidence contradicts instead of annotating them (room-system microphones). The manifest records how many words were removed |
 | `CASSINI_STORAGE_MODE` | No | **Development and CI only — leave empty on a production install.** Which storage model a **fresh** install starts in: `default` keeps recordings in the `cassini` account's own `CassiniNoACL/Recordings`, visible to anyone with an account on this Nextcloud; `access_controlled` keeps them in `Cassini/Recordings` inside a Cassini Team folder, visible to each call's participants only, and additionally needs the Group folders and Everyone Group apps plus that Team folder. On a production install the audience is resolved when the app is enabled, from what is already on the instance (see [Where recordings live](#where-recordings-live)), and changed in **Operator › Settings › Who can see recordings**. A declared mode is believed only where it fits: missing prerequisites, recordings in both folders, or the same recording in both are refused loudly at enable time and **not** recorded (see [Verifying the recordings substrate](#verifying-the-recordings-substrate)). It only seeds the initial value: the settings section is where it changes afterwards, and changing this variable does not move an archive that already exists |
@@ -933,7 +933,7 @@ For the signaling internal secret:
 ## GPU transcription (CUDA)
 
 `latest-cuda` is a real CUDA build: CUDA-enabled sherpa-onnx/onnxruntime
-libraries, the fp32 Parakeet model, and `CASSINI_STT_DEVICE=cuda` baked in.
+libraries and `CASSINI_STT_DEVICE=cuda` baked in. Install the fp32 Parakeet model separately in Settings or through offline import.
 The GPU accelerates the **transcription (build) stage**; live call capture is
 CPU-bound either way.
 
@@ -944,12 +944,13 @@ needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/dat
 verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
 on that engine before registering the app.
 
-CPU transcription is supported on amd64 and arm64. The portable image bundles
-the Balanced CPU model. Auto selects usable CUDA or falls back to CPU;
-administrators can also pin CPU. Explicitly pinning unavailable CUDA blocks
-processing with an actionable error in `/operator/status`. Change the device
-in Transcription settings, then use **Rerun** in Cassini’s Operator section for
-any blocked recording. Other quality tiers may need a one-time model download.
+CPU transcription is supported on amd64 and arm64. Transcription starts Off;
+recordings remain playable without a model. In Settings, choose a quality/device,
+download and check its model, then explicitly enable transcription and save.
+Missing or unusable models produce audio with an explanatory transcription status.
+Models and VAD persist independently of application images, so routine upgrades
+reuse them. See [model configuration and air-gapped pack/import](proposals/optional-transcription-model-storage/implementation.md).
+
 
 On a CUDA-capable image, temporary RAM or VRAM pressure is different. The
 operator keeps the build queued, records `build_retry_not_before`, and retries
@@ -1000,6 +1001,8 @@ under it:
 $APP_PERSISTENT_STORAGE/operator/jobs.sqlite3    # SQLite job DB
 $APP_PERSISTENT_STORAGE/operator/app-state.json  # AppAPI lifecycle state
 $APP_PERSISTENT_STORAGE/operator/jobs            # per-attempt artifacts (raw recordings)
+$APP_PERSISTENT_STORAGE/operator/models          # verified models/VAD and resumable downloads
+$APP_PERSISTENT_STORAGE/operator/settings.json   # transcription policy and active revision
 $APP_PERSISTENT_STORAGE/site/published           # legacy published site (see below)
 ```
 

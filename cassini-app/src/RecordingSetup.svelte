@@ -160,8 +160,9 @@
             <li>Choose a dedicated test room, then press Prepare test below.</li>
             <li>Open that room, start a call, and use Talk’s Start recording action.</li>
             <li>Speak for about 20 seconds, then stop recording in Talk.</li>
-            <li>Wait for publishing, open the result, and confirm that you can play the audio and read the transcript.</li>
+            <li>Wait for publishing, open the result, and play the audio to confirm that you can hear it.</li>
           </ol>
+          <p class="mb-3 text-sm text-base-content/70">If transcription is enabled, check the transcript afterward. A transcript is not required to confirm audio playback.</p>
           <button class="btn btn-primary btn-sm" disabled={busy || !report.test_room_url} on:click={() => save({ action: "arm_test" })}>{report.test.started_at ? "Prepare a new test" : "Prepare test"}</button>
           {#if report.test_room_url}<a class="btn btn-sm ml-2" href={report.test_room_url} target="_blank" rel="noreferrer">Open test room</a>{/if}
           {#if !report.test_room_url}<button class="btn btn-sm ml-2" on:click={() => action("test_room", "talk.discovery")}>Choose test room</button>{/if}
@@ -170,11 +171,11 @@
             {#if report.test.job_id}<p class="mt-1 text-xs">Recording {report.test.job_id}</p>{/if}
             {#if report.test.published && report.test.viewer_url}
               <a class="btn btn-sm mt-3" href={report.test.viewer_url} target="_blank" rel="noreferrer">Open published recording</a>
-              <button class="btn btn-sm mt-3" disabled={busy || !!report.test.playback_verified_at} on:click={() => save({ action: "confirm_playback", job_id: report?.test.job_id })}>I played the audio and read the transcript</button>
+              <button class="btn btn-sm mt-3" disabled={busy || !!report.test.playback_verified_at} on:click={() => save({ action: "confirm_playback", job_id: report?.test.job_id })}>I played the published audio</button>
             {/if}
           {/if}
         {:else if panel === "settings"}
-          <p class="text-sm">Review the transcription quality and device below in Publish pipeline. CPU processing is supported; a GPU is optional.</p>
+          <p class="text-sm">Review optional transcription below in Publish pipeline. Recording and playback can work without a transcript. CPU transcription is supported; a GPU is optional.</p>
         {:else}
           <p class="text-sm">Ask your server administrator to check Cassini’s persistent volume and restore recording-setup.json from backup, then restart Cassini and check again.</p>
         {/if}
@@ -184,6 +185,6 @@
         </li>
       {/each}
     </ul>
-    {#if report.test.playback_verified_at}<p class="mt-4 text-sm">Last test playback confirmed {new Date(report.test.playback_verified_at).toLocaleString()}. Connection checks expire after five minutes; test history does not replace current checks.</p>{/if}
+    {#if report.test.playback_verified_at}<p class="mt-4 text-sm">Last test playback confirmed {new Date(report.test.playback_verified_at).toLocaleString()}. Outbound connection findings show when they were checked; past playback does not verify the current handoff.</p>{/if}
   {/if}
 </section>

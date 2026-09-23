@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-func TestMigrationsRunContiguouslyThroughIgnoredRecordings(t *testing.T) {
+func TestMigrationsRunContiguouslyThroughModelInstallJobs(t *testing.T) {
 	migrations, err := loadMigrations()
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
 	last := migrations[len(migrations)-1]
-	if last.Version != 12 || last.Name != "ignored_recordings" {
-		t.Fatalf("last migration = %04d_%s, want 0012_ignored_recordings", last.Version, last.Name)
+	if last.Version != 13 || last.Name != "model_install_jobs" {
+		t.Fatalf("last migration = %04d_%s, want 0013_model_install_jobs", last.Version, last.Name)
 	}
 }
 

@@ -174,7 +174,7 @@ describe("GenerateCard", () => {
     // The other half of the same refusal: a workflow with a slot for a question
     // cannot run without one.
     expect(generateCardSource).toContain("questionMissing");
-    expect(generateCardSource).toContain("disabled={creating || questionMissing}");
+    expect(generateCardSource).toContain("disabled={creating || questionMissing || textless.length > 0}");
     // Text typed against one template must not ride along into another that
     // would be refused for carrying it.
     expect(generateCardSource).toContain('question: questionAccepted ? question : ""');

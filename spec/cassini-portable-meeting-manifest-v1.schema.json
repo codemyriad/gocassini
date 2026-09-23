@@ -48,6 +48,22 @@
         "$ref": "#/$defs/transcriptEntry"
       }
     },
+    "processing": {
+      "description": "Optional processing outcome. Absent in older files; an empty transcript alone does not imply disabled transcription.",
+      "type": "object",
+      "properties": {
+        "transcription": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": {"type": "string", "enum": ["completed", "skipped", "failed"]},
+            "reason": {"type": "string"},
+            "model": {"type": "string"},
+            "revision": {"type": "string"}
+          }
+        }
+      }
+    },
     "readableTranscripts": {
       "type": "array",
       "items": {

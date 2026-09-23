@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // The search index (D-623): a SIDECAR SQLite database, beside jobs.sqlite3 and
@@ -152,7 +153,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS segment_fts USING fts5(
 `
 
 // searchStore is the sidecar index.
-type searchStore struct{ sidecarDB }
+type searchStore struct {
+	sidecarDB
+	// In-process index writes invalidate the operator's cached coverage.
+	// External writers are still bounded by the cache TTL.
+	revision atomic.Uint64
+}
 
 // searchStorePath is where the index lives for a given job-database path, or
 // "" when that cannot be answered (sidecarPath).
@@ -163,7 +169,7 @@ func openSearchStore(path string, logger *log.Logger) (*searchStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &searchStore{db}, nil
+	return &searchStore{sidecarDB: db}, nil
 }
 
 // sidecarDB is a disposable SQLite file beside the job database: the search
@@ -301,6 +307,14 @@ func (s sidecarDB) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return nil
 }
 
+func (s *searchStore) writeTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	if err := s.sidecarDB.inTx(ctx, fn); err != nil {
+		return err
+	}
+	s.revision.Add(1)
+	return nil
+}
+
 // ReplaceMeeting makes the index's rows for one meeting exactly `windows`.
 //
 // Replace, never append: re-indexing after a rerun must not leave the previous
@@ -312,7 +326,7 @@ func (s *searchStore) ReplaceMeeting(ctx context.Context, opusName, opusSHA256, 
 	if name == "" {
 		return errors.New("opus name must not be empty")
 	}
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+	return s.writeTx(ctx, func(tx *sql.Tx) error {
 		if err := deleteMeetingRows(ctx, tx, name); err != nil {
 			return err
 		}
@@ -366,7 +380,7 @@ func (s *searchStore) MarkUnavailable(ctx context.Context, opusName, reason stri
 	if name == "" {
 		return errors.New("opus name must not be empty")
 	}
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+	return s.writeTx(ctx, func(tx *sql.Tx) error {
 		if err := deleteMeetingRows(ctx, tx, name); err != nil {
 			return err
 		}
@@ -393,7 +407,7 @@ func (s *searchStore) ForgetMeeting(ctx context.Context, opusName string) error 
 	if name == "" {
 		return errors.New("opus name must not be empty")
 	}
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+	return s.writeTx(ctx, func(tx *sql.Tx) error {
 		if err := deleteMeetingRows(ctx, tx, name); err != nil {
 			return err
 		}
@@ -441,39 +455,39 @@ func deleteMeetingRows(ctx context.Context, tx *sql.Tx, opusName string) error {
 	return nil
 }
 
-// searchCoverage is what the index can honestly claim to have searched.
-//
-// It exists so an answer can say what it covered rather than implying it
-// covered everything. "No match in the 12 meetings you can read" is a different
-// statement from "no match in the 9 of them that are indexed", and only the
-// second is true when an ingest has failed.
+// searchCoverage counts only the meetings represented in this sidecar. It is
+// useful for reporting known outcomes but is not an archive census: meetings
+// published before search existed can have no row here at all.
 type searchCoverage struct {
 	Indexed     int
 	Unavailable int
-	// Unindexable is the part of Unavailable that nobody can act on, because
-	// the meeting is correctly not searchable (D-798 R2.2). A silent recording
-	// has no words; counting it as a shortfall would leave an instance
-	// permanently short of full coverage for a meeting nobody spoke in.
-	Unindexable int
+	// Untracked is an .opus in an independently listed archive with no index
+	// row. Unsupported counts non-Opus entries, including legacy directories.
+	Untracked   int
+	Unsupported int
+	// These counts retain the reason for an empty transcript. No-words by
+	// itself is not proof of silence once transcription can be disabled.
+	Silent               int
+	Disabled             int
+	ModelUnavailable     int
+	TranscriptionFailed  int
+	UnknownEmpty         int
+	MissingTranscript    int
+	UnreadableTranscript int
+	// Only these reasons describe a backfill problem for which re-running
+	// backfill-search can help. Missing or failed transcription does not.
+	BackfillCandidates int
+	OtherUnavailable   int
 }
 
-// Fixable is the shortfall someone could actually do something about.
-func (c searchCoverage) Fixable() int { return c.Unavailable - c.Unindexable }
-
-// Searchable is the population coverage is honestly measured against: every
-// meeting that could be searched if nothing were broken.
-func (c searchCoverage) Searchable() int { return c.Indexed + c.Fixable() }
-
-// unindexableReasons are outcomes that are correct rather than faults.
-//
-// Deliberately a small allow-list, and everything else counts as fixable: a
-// reason we have not classified is one we have not looked at, and treating it
-// as fine is how a real fault becomes invisible.
-var unindexableReasons = map[string]bool{
-	// "A transcript that parsed but yielded nothing indexable is a real state,
-	// not an error: a silent recording has no words." — search_ingest.go
-	searchIngestReasonNoSegments: true,
+// NeedsAttention excludes only outcomes known to be intentional or empty
+// after completed transcription. It does not prescribe a repair: the reasons
+// call for different actions, and the archive may hold meetings absent here.
+func (c searchCoverage) NeedsAttention() int {
+	return c.Unavailable - c.Silent - c.Disabled + c.Untracked + c.Unsupported
 }
+
+func (c searchCoverage) TotalKnown() int { return c.Indexed + c.Unavailable }
 
 func (s *searchStore) Coverage(ctx context.Context) (searchCoverage, error) {
 	var coverage searchCoverage
@@ -488,18 +502,79 @@ func (s *searchStore) Coverage(ctx context.Context) (searchCoverage, error) {
 		if err := rows.Scan(&state, &reason, &count); err != nil {
 			return searchCoverage{}, fmt.Errorf("scan search coverage: %w", err)
 		}
-		switch state {
-		case searchStateIndexed:
-			coverage.Indexed += count
-		case searchStateUnavailable:
-			coverage.Unavailable += count
-			if unindexableReasons[reason] {
-				coverage.Unindexable += count
-			}
-		}
+		coverage.add(state, reason, count)
 	}
 	if err := rows.Err(); err != nil {
 		return searchCoverage{}, fmt.Errorf("read search coverage: %w", err)
 	}
 	return coverage, nil
+}
+
+// CoverageForArchive counts rows only for names in an independently listed
+// archive. A stale index row cannot cancel an older meeting with no row;
+// comparing aggregate counts would miss exactly that offsetting pair.
+func (s *searchStore) CoverageForArchive(ctx context.Context, names []string) (searchCoverage, error) {
+	missing := make(map[string]bool, len(names))
+	for _, name := range names {
+		if name != "" {
+			missing[name] = true
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT opus_name, state, reason FROM meeting_index`)
+	if err != nil {
+		return searchCoverage{}, fmt.Errorf("read archive search coverage: %w", err)
+	}
+	defer rows.Close()
+	var coverage searchCoverage
+	for rows.Next() {
+		var name, state, reason string
+		if err := rows.Scan(&name, &state, &reason); err != nil {
+			return searchCoverage{}, fmt.Errorf("scan archive search coverage: %w", err)
+		}
+		if !missing[name] {
+			continue
+		}
+		delete(missing, name)
+		coverage.add(state, reason, 1)
+	}
+	if err := rows.Err(); err != nil {
+		return searchCoverage{}, fmt.Errorf("read archive search coverage: %w", err)
+	}
+	coverage.Untracked = len(missing)
+	return coverage, nil
+}
+
+func (c *searchCoverage) add(state, reason string, count int) {
+	switch state {
+	case searchStateIndexed:
+		c.Indexed += count
+	case searchStateUnavailable:
+		c.Unavailable += count
+		switch reason {
+		case searchIngestReasonCompletedEmpty:
+			c.Silent += count
+		case searchIngestReasonDisabled:
+			c.Disabled += count
+		case searchIngestReasonModelUnavailable:
+			c.ModelUnavailable += count
+		case searchIngestReasonTranscriptionFail:
+			c.TranscriptionFailed += count
+		case searchIngestReasonNoSegments:
+			c.UnknownEmpty += count
+		case searchIngestReasonNoTranscript:
+			c.MissingTranscript += count
+		case searchIngestReasonUnreadable:
+			c.UnreadableTranscript += count
+		case searchBackfillReasonNoBundle, searchBackfillReasonNoDigest,
+			searchBackfillReasonStaleBundle, searchBackfillReasonArchiveUnread:
+			c.BackfillCandidates += count
+		default:
+			// Unknown reasons remain visible. A backfill command is not
+			// assumed to create words the producer never generated.
+			c.OtherUnavailable += count
+		}
+	default:
+		c.Unavailable += count
+		c.OtherUnavailable += count
+	}
 }

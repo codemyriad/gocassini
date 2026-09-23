@@ -27,6 +27,15 @@ transcript is still produced and published; the summary is skipped, and the app
 offers no way to run an insight. A self-hosted endpoint keeps both
 on your own network too.
 
+## Speech-model downloads
+
+Transcription is optional and starts off. An explicit installation downloads model
+files and VAD from `dist.gocassini.com`; it sends no recordings or transcripts.
+The CDN receives ordinary download requests from the server. Installed revisions
+are reused across upgrades. `cassini models import` accepts manually transferred
+files without internet access; `CASSINI_DISALLOW_MODEL_DOWNLOAD=1` prevents model
+network acquisition. See the [model operator guide](proposals/optional-transcription-model-storage/implementation.md).
+
 ## What Cassini stores
 
 A recorded meeting moves through capture → build → publish, and each stage writes
@@ -36,8 +45,8 @@ artifacts:
   audio track per participant.
 - **Audio** — the processed meeting audio, ultimately the portable single-file
   `.opus`.
-- **Transcripts** — a timestamped word-level transcript.
-- **Captions** — a `captions.vtt` subtitle track.
+- **Transcripts** — a timestamped word-level transcript when transcription is enabled and succeeds. Audio-only files carry an empty compatibility transcript and an explicit skipped/failed status.
+- **Captions** — a `captions.vtt` subtitle track when transcription succeeds.
 - **Summaries** — an optional `summary.md`, produced only when the LLM step is
   enabled.
 - **Insight runs** — one row per insight requested over a set of meetings: who asked,
