@@ -175,6 +175,34 @@ func TestIngestRecordsAMissingTranscriptAsUnavailable(t *testing.T) {
 	}
 }
 
+func TestIngestClassifiesEmptyTranscriptFromAttemptManifest(t *testing.T) {
+	for _, tc := range []struct {
+		name, manifest, reason string
+	}{
+		{"completed silence", `{"processing":{"transcription":{"status":"completed"}}}`, searchIngestReasonCompletedEmpty},
+		{"intentionally disabled", `{"processing":{"transcription":{"status":"skipped","reason":"disabled"}}}`, searchIngestReasonDisabled},
+		{"model unavailable", `{"processing":{"transcription":{"status":"skipped","reason":"model_unavailable"}}}`, searchIngestReasonModelUnavailable},
+		{"failed", `{"processing":{"transcription":{"status":"failed","reason":"transcription_failed"}}}`, searchIngestReasonTranscriptionFail},
+		{"old manifest", `{"version":"cassini.meeting-artifact.v1"}`, searchIngestReasonNoSegments},
+		{"unexpected outcome", `{"processing":{"transcription":{"status":"skipped","reason":"some_new_reason"}}}`, searchIngestReasonNoSegments},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, workRoot := ingestRuntime(t)
+			siteDir := writeAttemptArtifacts(t, workRoot, "JOB1", 1, ingestCatalog, `{"version":"transcript.words.v1","segments":[]}`)
+			bundleDir := attemptMeetingPath(workRoot, "JOB1", 1)
+			if err := os.WriteFile(filepath.Join(bundleDir, "manifest.json"), []byte(tc.manifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := rt.indexPublishedMeeting(context.Background(), publishTask{JobID: "JOB1", AttemptNumber: 1}, siteDir); err != nil {
+				t.Fatalf("ingest: %v", err)
+			}
+			if got := reasonFor(t, rt.searchStore, "JOB1.opus"); got != tc.reason {
+				t.Errorf("reason = %q, want %q", got, tc.reason)
+			}
+		})
+	}
+}
+
 // Re-indexing a rerun replaces the previous attempt's rows rather than leaving
 // both attempts searchable.
 func TestIngestReplacesAPreviousAttempt(t *testing.T) {

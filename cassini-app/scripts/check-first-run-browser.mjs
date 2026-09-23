@@ -216,6 +216,18 @@ function accessReviewFixture({ mode = "default", failReview = false, count = 1, 
   }};
 }
 
+function recordingReport({ state = "passed", recordingState = "passed", checks = [] } = {}) {
+  return {
+    state,
+    recording_state: recordingState,
+    checks,
+    secret_configured: true,
+    secret_source: "env",
+    test_room_url: "",
+    test: { state: "idle", published: false },
+  };
+}
+
 // --- the harness -------------------------------------------------------------
 
 let browser;
@@ -343,6 +355,7 @@ try {
         return json({
           ok: healthy,
           state: healthy ? "provisioned" : "unavailable",
+          ...(options.recordingState ? { recording_state: options.recordingState } : {}),
           awaiting_choice: false,
           mode: "default",
           cause: "",
@@ -379,6 +392,9 @@ try {
       }
       if (url.pathname === "/operator/settings") {
         return json({ quality: "balanced", device: "", search_aliases: {} });
+      }
+      if (url.pathname === "/operator/settings/models") {
+        return json({ models: [], jobs: [], downloads_allowed: true, device: "cpu" });
       }
       if (url.pathname === "/operator/settings/llm") return json({});
       if (url.pathname === "/operator/settings/workflows") return json([]);
@@ -447,6 +463,13 @@ try {
   async function visible(locator) {
     await locator.waitFor({ state: "visible" });
   }
+  async function visibleCheckRow(page, id, label, state) {
+    const row = page.locator(`[data-check-id="${id}"]`);
+    await visible(row);
+    assert((await row.locator("p.font-medium").textContent()).includes(label),
+      `${id}: the administrator must see the ${label} label`);
+    await visible(row.getByText(state, { exact: true }));
+  }
   async function absent(locator, why) {
     assert.equal(await locator.count(), 0, why);
   }
@@ -473,6 +496,8 @@ try {
   const audienceChip = (page) =>
     page.getByRole("button", { name: "Visible to all users", exact: true });
   const meeting = (page) => page.getByText("Project kickoff (demo recording)", { exact: true });
+  const recordingBlocker = (page) =>
+    page.locator('div[role="status"]').filter({ hasText: "Recording setup needs an administrator’s attention." });
 
   // (a) A fresh install, as the administrator who enabled the app.
   await scenario("fresh install: the dialog creates the account, then acknowledges", {
@@ -554,6 +579,80 @@ try {
     await absent(page.getByText("Cassini can't save recordings right now", { exact: true }), "nothing is wrong with this install");
     await absent(page.getByText("Show details", { exact: true }), "a diagnosis is not a non-administrator's to read");
     assert.deepEqual(actions, [], "the ADMIN-gated storage record is never read for a non-administrator");
+  });
+
+  // Transcription starts Off in D-797. The first-run promise is about recording
+  // audio, and the optional model inventory cannot be a prerequisite for it.
+  await scenario("audio-only first run: no model is needed to record and verify playback", {
+    accountExists: true,
+    recordingState: "passed",
+    readiness: (route) => route.fulfill({ json: recordingReport({ checks: [
+      { id: "processing", state: "passed", code: "audio_only", message: "Transcription is off. Recordings can be published and played as audio." },
+    ] }) }),
+  }, async (page, { actions, ncWrites }) => {
+    await visible(dialog(page));
+    await visible(page.getByRole("heading", { name: "Cassini is ready to record", exact: true }));
+    await page.getByRole("button", { name: "Start recording", exact: true }).click();
+    await dialog(page).waitFor({ state: "detached" });
+    assert(actions.includes("acknowledge_first_run"), "an existing account only needs first-run acknowledgement");
+    assert.deepEqual(ncWrites, [], "audio-only first run does not provision Nextcloud again");
+
+    await page.getByRole("button", { name: "Operator", exact: true }).click();
+    await page.getByRole("navigation", { name: "Operator sections" }).getByRole("button", { name: "Publish pipeline" }).click();
+    await visible(page.getByRole("heading", { name: "Recording checks passed", exact: true }));
+    await visible(page.getByText("Transcription: Off", { exact: true }));
+    await visible(page.getByText("Recordings are available as audio. No model is needed.", { exact: true }));
+    await visibleCheckRow(page, "processing", "Transcription (optional)", "Passed");
+    await page.locator('[data-check-id="test"]').getByRole("button", { name: "Test a recording" }).click();
+    await visible(page.getByText("If transcription is enabled, check the transcript afterward. A transcript is not required to confirm audio playback.", { exact: true }));
+  });
+
+  const optionalWarnings = recordingReport({ state: "warn", checks: [
+    { id: "processing", state: "warn", code: "transcription_unavailable", message: "The selected transcription model is unavailable. Audio recording still works." },
+    { id: "archive.search", state: "warn", code: "search_coverage_partial", message: "Some published recordings cannot be found in search yet." },
+  ] });
+  await scenario("optional warnings: an ordinary user can still browse without a recording blocker", {
+    nonAdmin: true,
+    accountExists: true,
+    firstRun: false,
+    recordingState: "passed",
+    readiness: (route) => route.fulfill({ json: optionalWarnings }),
+  }, async (page) => {
+    await visible(meeting(page));
+    await absent(recordingBlocker(page),
+      "optional transcription and archive warnings do not say audio recording is blocked");
+    await absent(page.getByRole("navigation", { name: "Cassini surfaces" }), "the operator surface remains admin-only");
+  });
+
+  await scenario("optional warnings: the administrator sees separate transcription and archive rows", {
+    accountExists: true,
+    firstRun: false,
+    recordingState: "passed",
+    readiness: (route) => route.fulfill({ json: optionalWarnings }),
+  }, async (page) => {
+    await absent(recordingBlocker(page),
+      "optional warnings do not create a recording blocker for administrators either");
+    await page.getByRole("button", { name: "Operator", exact: true }).click();
+    await page.getByRole("navigation", { name: "Operator sections" }).getByRole("button", { name: "Publish pipeline" }).click();
+    await visible(page.getByRole("heading", { name: "Recording ready; transcription and archive search need attention", exact: true }));
+    await visibleCheckRow(page, "processing", "Transcription (optional)", "Needs attention");
+    await visibleCheckRow(page, "archive.search", "Archive search", "Needs attention");
+  });
+
+  await scenario("core blocker: the recording banner wins over an optional warning", {
+    accountExists: true,
+    firstRun: false,
+    recordingState: "needs_action",
+    readiness: (route) => route.fulfill({ json: recordingReport({ state: "needs_action", recordingState: "needs_action", checks: [
+      { id: "storage", state: "needs_action", code: "storage_unavailable", message: "Recording storage is unavailable." },
+      optionalWarnings.checks[0],
+    ] }) }),
+  }, async (page) => {
+    await visible(recordingBlocker(page));
+    await page.getByRole("button", { name: "Open recording setup", exact: true }).click();
+    await visible(page.getByRole("heading", { name: "One recording check needs attention", exact: true }));
+    await visible(page.locator('[data-check-id="storage"]').getByText("Needs action", { exact: true }));
+    await visible(page.locator('[data-check-id="processing"]').getByText("Needs attention", { exact: true }));
   });
 
   // (d) An install that cannot save recordings.

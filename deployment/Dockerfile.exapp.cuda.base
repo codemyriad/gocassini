@@ -1,41 +1,5 @@
-# Base image for the CUDA variant of the Cassini ExApp (D-375).
-#
-# Holds the slow-changing, input-stable substrate: the nvidia CUDA runtime, the
-# apt layer, the ~2.3GB fp32 Parakeet model + Silero VAD, and the sherpa-onnx
-# CUDA native libs. The CI job `build-cuda-base` tags this
-# ghcr.io/codemyriad/gocassini-cuda-base:<hash-of-inputs> and builds+pushes it
-# only when that tag does not already exist, so an unchanged base is never
-# rebuilt or re-fetched. Dockerfile.exapp.cuda then builds the thin per-commit
-# app (Go binaries + SPAs) FROM this image.
-#
-# The CI content hash is computed over: the model/VAD asset URLs, deployment/sherpa build inputs, the resolved
-# digest of the nvidia/cuda base, and this file's bytes. Keep
-# CASSINI_BUNDLED_MODEL_ID in sync with Dockerfile.exapp.cuda's ARG of the same
-# name (the app sets CASSINI_STT_MODEL from it; this base bakes the model dir
-# under that id).
-
-ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3
-# Every CUDA tier loads the fp32 model, so the GPU image carries only that one:
-# a GPU install should not pull the CPU tiers' models it will never load. If
-# this image ever falls back to CPU decoding (its GPU went missing, D-702), the
-# fp32 model it does carry serves the "best" tier and the operator blocks the
-# other two with an actionable message rather than failing mid-build.
-ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-0.6b-v3"
-
-# ---- Stage: model-fetcher (downloads + extracts the bundled models) ----
-FROM debian:bookworm-slim AS model-fetcher
-ARG CASSINI_BUNDLED_MODELS
-ARG SILERO_VAD_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl tar bzip2 \
- && rm -rf /var/lib/apt/lists/*
-COPY deployment/models /tmp/cassini-models
-RUN set -eux; \
- /tmp/cassini-models/fetch-models.sh /out ${CASSINI_BUNDLED_MODELS}; \
- mkdir -p /out/vad; \
- # Bundle Silero VAD alongside the STT models so the recorder doesn't dial out.
- curl -fSL "${SILERO_VAD_URL}" -o /out/vad/silero_vad.onnx; \
- ls -la /out/models /out/vad/
+# CUDA runtime substrate. Model bytes are installed separately on persistent storage.
+# The content-addressed CI tag covers native build inputs and this Dockerfile.
 
 # ---- Stage: native CUDA frontend (same glibc ABI as the runtime) ----
 FROM ubuntu:22.04 AS sherpa-cuda-fetcher
@@ -45,7 +9,7 @@ RUN apt-get update \
 COPY deployment/sherpa /tmp/cassini-sherpa
 RUN /tmp/cassini-sherpa/build.sh cuda /out/lib /tmp/native-build
 
-# ---- Base substrate: nvidia/cuda runtime + node + model + CUDA libs ----
+# ---- Base substrate: nvidia/cuda runtime + node + CUDA libs ----
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 LABEL io.gocassini.image-role=base-cuda
 
@@ -56,7 +20,5 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-# The fat layers every per-commit app build reuses: the 4 CUDA .so (complete
-# set, supersedes the CPU libs the app no longer ships) and the model + VAD.
+# Native CUDA libraries are reused independently from application binaries.
 COPY --from=sherpa-cuda-fetcher /out/lib /opt/cassini/lib
-COPY --from=model-fetcher /out /opt/cassini/cache

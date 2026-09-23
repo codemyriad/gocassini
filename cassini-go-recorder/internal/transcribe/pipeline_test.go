@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -49,10 +50,10 @@ func registerFixedBackend(t *testing.T, id string, words []Word) {
 func stubModelEnsurers(t *testing.T) {
 	t.Helper()
 	prevModel, prevVAD := ensureModelFn, ensureVADFn
-	ensureModelFn = func(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, error) {
+	ensureModelFn = func(cacheDir string, id ModelID, revision string, progress io.Writer) (ModelPaths, error) {
 		return ModelPaths{ModelType: "stub", SampleRate: 16000}, nil
 	}
-	ensureVADFn = func(cacheDir string, progress io.Writer) (string, error) {
+	ensureVADFn = func(cacheDir string, id ModelID, revision string, progress io.Writer) (string, error) {
 		return "", nil
 	}
 	t.Cleanup(func() { ensureModelFn, ensureVADFn = prevModel, prevVAD })
@@ -97,34 +98,55 @@ func buildTwoTrackMeetingFromSmoke(t *testing.T, dir string) string {
 	return out
 }
 
-// An unknown backend must be refused before any probe, mixdown, hashing or
-// model download: the misconfiguration lives in the environment, so a late
-// failure would repeat all of that work on every operator retry.
-func TestBuildMeetingArtifactRejectsUnknownBackendBeforeAnyWork(t *testing.T) {
-	t.Setenv("CASSINI_STT_BACKEND", "no-such-engine")
-	outDir := t.TempDir()
-	// The MKV deliberately does not exist: if validation ran after the probe,
-	// the error would be a probe failure, not the backend refusal.
-	missing := filepath.Join(t.TempDir(), "missing.mkv")
-
-	var stdout bytes.Buffer
-	err := BuildMeetingArtifact(context.Background(), missing, outDir,
-		BuildConfig{Device: "cpu", NumThreads: 1}, &stdout)
-	if err == nil {
-		t.Fatal("expected an error for an unknown backend")
-	}
-	if !strings.Contains(err.Error(), `unknown STT backend "no-such-engine"`) {
-		t.Fatalf("expected the loud unknown-backend error before any pipeline work, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), SherpaOnnxBackend) {
-		t.Errorf("the error should name what is available, got: %v", err)
-	}
-	entries, readErr := os.ReadDir(outDir)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if len(entries) != 0 {
-		t.Errorf("no output file may exist before backend validation, found %v", entries)
+func TestBuildMeetingArtifactOffAndFailedPreserveAudio(t *testing.T) {
+	input := buildTwoTrackMeetingFromSmoke(t, t.TempDir())
+	for _, mode := range []string{"off", "on"} {
+		t.Run(mode, func(t *testing.T) {
+			out := t.TempDir()
+			var stdout bytes.Buffer
+			cfg := BuildConfig{TranscriptionMode: mode, Backend: "no-such-engine", Device: "cuda", CacheDir: t.TempDir()}
+			if err := BuildMeetingArtifact(context.Background(), input, out, cfg, &stdout); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var manifest artifactManifest
+			if err := json.Unmarshal(raw, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			want := "skipped"
+			if mode == "on" {
+				want = "failed"
+			}
+			if manifest.Processing == nil || manifest.Processing.Transcription.Status != want {
+				t.Fatalf("processing: %s", raw)
+			}
+			if manifest.Provenance != nil || manifest.Files.Captions != "" || manifest.Files.Summary != "" {
+				t.Fatalf("fake recognition provenance: %s", raw)
+			}
+			if _, err := os.Stat(filepath.Join(out, "meeting.webm")); err != nil {
+				t.Fatal(err)
+			}
+			if len(manifest.Files.Transcripts) != 1 || manifest.Files.Transcripts[0].ID != "untranscribed" {
+				t.Fatalf("compatibility descriptor: %s", raw)
+			}
+			var transcript transcriptFile
+			rawTranscript, err := os.ReadFile(filepath.Join(out, "transcript.words.v1.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(rawTranscript, &transcript); err != nil {
+				t.Fatal(err)
+			}
+			if len(transcript.Speakers) != 2 || len(transcript.Segments) != 0 {
+				t.Fatalf("lost participants or invented text: %s", rawTranscript)
+			}
+			if mode == "off" && strings.Contains(stdout.String(), "STT policy") {
+				t.Fatal("off resolved STT policy")
+			}
+		})
 	}
 }
 
@@ -361,6 +383,70 @@ func TestAttributionEnvelopesAreBuiltOncePerBuild(t *testing.T) {
 		if tr.Provenance == nil || tr.Provenance.Backend != "fake-envelope-count" {
 			t.Errorf("transcript %q provenance backend = %#v, want fake-envelope-count", tr.ID, tr.Provenance)
 		}
+	}
+}
+
+// Additional models are comparison extras. One that is not installed must not
+// cost the primary transcript that was already written.
+func TestBuildMeetingArtifactKeepsPrimaryWhenAnAdditionalModelIsMissing(t *testing.T) {
+	requireFFMediaTools(t)
+	stubModelEnsurers(t)
+	stubbed := ensureModelFn
+	ensureModelFn = func(cacheDir string, id ModelID, revision string, progress io.Writer) (ModelPaths, error) {
+		if id == "stub-extra-model" {
+			return ModelPaths{}, errors.New("not installed")
+		}
+		return stubbed(cacheDir, id, revision, progress)
+	}
+	t.Setenv("CASSINI_ATTRIBUTION_DISABLED", "1")
+	registerFixedBackend(t, "fake-extra-missing", fixedTimedWords(12))
+
+	dir := t.TempDir()
+	mkv := buildTwoTrackMeetingFromSmoke(t, dir)
+	outDir := filepath.Join(dir, "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := BuildConfig{
+		TranscriptionMode: "on",
+		Device:            "cpu",
+		Backend:           "fake-extra-missing",
+		ModelID:           ModelID("stub-model"),
+		AdditionalModels:  []ModelID{"stub-extra-model"},
+		CacheDir:          t.TempDir(),
+		NumThreads:        1,
+		SkipAttribution:   true,
+	}
+	var stdout bytes.Buffer
+	if err := BuildMeetingArtifact(context.Background(), mkv, outDir, cfg, &stdout); err != nil {
+		t.Fatalf("BuildMeetingArtifact: %v\noutput:\n%s", err, stdout.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest artifactManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Processing == nil || manifest.Processing.Transcription.Status != "completed" {
+		t.Fatalf("a missing additional model downgraded the build: %s", raw)
+	}
+	for _, tr := range manifest.Files.Transcripts {
+		if tr.ID == "stub-extra-model" {
+			t.Fatalf("listed a transcript that was never written: %s", raw)
+		}
+	}
+	rawTranscript, err := os.ReadFile(filepath.Join(outDir, "transcript.words.v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var transcript transcriptFile
+	if err := json.Unmarshal(rawTranscript, &transcript); err != nil {
+		t.Fatal(err)
+	}
+	if len(transcript.Segments) == 0 {
+		t.Fatalf("the primary transcript was replaced by an empty one: %s", rawTranscript)
 	}
 }
 

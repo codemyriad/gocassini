@@ -1,0 +1,36 @@
+**I’d study Nextcloud’s `llm2` for ExApp integration, LocalAI for download jobs, and Ollama for resumable transfers.** They cover different parts of your problem.
+
+One useful discovery: **AppAPI already provides storage that persists across ExApp updates**, exposed through `APP_PERSISTENT_STORAGE`. Put models—and unfinished downloads—there. [Nextcloud deployment documentation](https://docs.nextcloud.com/server/latest/developer_manual/exapp_development/tech_details/Deployment.html)
+
+| Project              | What it implements                                                                                                                                                       | What to borrow                                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Nextcloud `llm2`** | Declares model URLs and destination paths under `persistent_storage()`, then passes `models_to_fetch` to the SDK’s `set_handlers()`.                                     | The native ExApp storage and initialization integration. [Source](https://github.com/nextcloud/llm2/blob/main/lib/main.py)                       |
+| **LocalAI**          | `POST /models/apply` enqueues installation and returns a job ID and status URL. `GET /models/jobs/{uuid}` reports status. Installation requests support a model variant. | The closest API design to your S/M/L selector. [Endpoints](https://github.com/mudler/LocalAI/blob/master/core/http/endpoints/localai/gallery.go) |
+| **Ollama**           | `/api/pull` streams status, digest, total bytes and completed bytes. Interrupted pulls can resume; simultaneous requests share download progress.                        | Transfer progress, deduplication and recovery. [API documentation](https://github.com/ollama/ollama/blob/main/docs/api.md#pull-a-model)          |
+| **Hugging Face Hub** | Stores downloaded files as blobs, with revision-specific snapshots referencing them. Unchanged files can be reused across revisions.                                     | Model versions independent of application versions. [Cache design](https://huggingface.co/docs/huggingface_hub/guides/manage-cache)              |
+
+**The most useful source files**
+
+LocalAI’s [`OpStatus`](https://github.com/mudler/LocalAI/blob/master/core/services/galleryop/operation.go) is a useful checklist for your progress response: phase, filename, current/total bytes, completion, error and cancellation state. This lets the UI distinguish “Downloading” from “Preparing” instead of sitting at 100% while work continues.
+
+Ollama’s [`server/download.go`](https://github.com/ollama/ollama/blob/main/server/download.go) shows the lower-level mechanics: partial files, persisted per-part progress, HTTP Range requests, retries, shared transfers keyed by digest, and renaming the completed file. It also illustrates a subtlety: downloads are cancelled when their last observer releases them. For your app, I would make the job continue after the browser closes.
+
+**How I’d adapt these patterns**
+
+1. **Separate installation from model selection.** Bring up the ExApp and its settings UI first. Selecting S/M/L starts a background download. AppAPI also supports progress during `/init`, useful if you require an initial default model, but that initialization has a configurable timeout. [ExApp lifecycle](https://docs.nextcloud.com/server/latest/developer_manual/exapp_development/development_overview/ExAppLifecycle.html)
+
+2. **Use LocalAI’s job-and-status pattern.** A start request returns promptly with a job ID; the UI polls every second or two. Persist the job’s intent and recovery metadata so a restart does not leave it permanently “downloading”. A single worker plus SQLite is sufficient for this scope.
+
+3. **Keep model identity independent of the ExApp release.** Map S/M/L to a manifest containing an immutable model revision, required files, sizes and checksums. Store under something like:
+
+   ```text
+   $APP_PERSISTENT_STORAGE/models/<variant>/<model-revision>/
+   ```
+
+   An application upgrade should reuse that directory unless it actually requires different model artifacts.
+
+4. **Publish only complete models.** Download into a staging directory on the same volume, verify all files, then atomically publish the directory. Report explicit phases: `queued`, `downloading`, `verifying`, `ready`, `failed`. For multi-file models, calculate download percentage from aggregate bytes.
+
+5. **Separate “downloaded” from “active”.** Keep S working while L downloads. Switch the active model only after L is verified and successfully loads; retain S until the user deletes it. Deduplicate download requests by model revision, even when several users select it.
+
+For your case, **`llm2`’s persistent storage convention plus LocalAI’s background-job API is the strongest starting point**. Ollama is the implementation reference when you add reliable resume support.

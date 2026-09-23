@@ -2,7 +2,6 @@ package operator
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,9 +21,12 @@ import (
 // CASSINI_STT_MODEL=int8, which would otherwise shadow the chosen tier) so the
 // recorder's auto-detect + tier resolution (D-434) actually runs (D-435).
 type STTSettings struct {
-	Quality            string   `json:"quality"`
-	DeviceOverride     string   `json:"device_override,omitempty"`
-	TranscriptionTerms []string `json:"transcription_terms,omitempty"`
+	TranscriptionEnabled bool     `json:"transcription_enabled"`
+	ActiveModel          string   `json:"active_model,omitempty"`
+	ActiveRevision       string   `json:"active_revision,omitempty"`
+	Quality              string   `json:"quality"`
+	DeviceOverride       string   `json:"device_override,omitempty"`
+	TranscriptionTerms   []string `json:"transcription_terms,omitempty"`
 	// SearchAliases are the spellings the speech recogniser produces for names
 	// an operator cares about, so a search for the name finds them (D-623).
 	//
@@ -58,13 +60,10 @@ const (
 	envSTTStreamConcurrency = "CASSINI_STT_STREAM_CONCURRENCY"
 	envSTTAdditionalModels  = "CASSINI_STT_ADDITIONAL_MODELS"
 	envTranscriptionTerms   = "CASSINI_TRANSCRIPTION_TERMS"
-	// envCacheRoot points the recorder at the writable model cache. The
-	// operator sets it per build so a tier the image does not bundle downloads
-	// onto the persistent volume (D-704).
+	// Every model command and build uses the operator's resolved persistent root.
 	envCacheRoot = "CASSINI_CACHE_ROOT"
-	// envDisallowModelDownload is stripped from every child: the image used to
-	// forbid all downloads, which is now expressed by declaring the models it
-	// bundles instead. A stale value would block the one-off fetch.
+	// Meeting builds always forbid acquisition; installation jobs use the
+	// operator policy instead of inheriting a possibly stale shell value.
 	envDisallowModelDownload = "CASSINI_DISALLOW_MODEL_DOWNLOAD"
 
 	maxTranscriptionTerms     = 100
@@ -326,8 +325,11 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if s.Source == sttSourceAuto {
 		if fingerprint != s.HardwareFingerprint {
 			// Hardware changed under an auto default: re-derive and rewrite.
+			previous := s
 			terms := s.TranscriptionTerms
 			s = detectSettings()
+			s.TranscriptionEnabled, s.ActiveModel, s.ActiveRevision = previous.TranscriptionEnabled, previous.ActiveModel, previous.ActiveRevision
+			s.SearchAliases = previous.SearchAliases
 			// Vocabulary is independent of the hardware-derived quality tier.
 			// Preserve it when re-fingerprinting an auto policy.
 			s.TranscriptionTerms = terms
@@ -449,13 +451,16 @@ func (s STTSettings) ChildEnv(base []string) []string {
 	// override) keeps the result duplicate-free and makes the appended override
 	// the single, authoritative value.
 	drop := map[string]bool{
-		envDisallowModelDownload: true,
-		envSTTQuality:            true,
-		envSTTNumThreads:         true,
-		envSTTDevice:             true,
-		envSTTModel:              true,
-		envSTTAdditionalModels:   true,
-		envTranscriptionTerms:    true,
+		envDisallowModelDownload:       true,
+		"CASSINI_TRANSCRIPTION":        true,
+		"CASSINI_TRANSCRIPTION_REASON": true,
+		"CASSINI_STT_REVISION":         true,
+		envSTTQuality:                  true,
+		envSTTNumThreads:               true,
+		envSTTDevice:                   true,
+		envSTTModel:                    true,
+		envSTTAdditionalModels:         true,
+		envTranscriptionTerms:          true,
 	}
 
 	out := make([]string, 0, len(base)+4)
@@ -470,6 +475,14 @@ func (s STTSettings) ChildEnv(base []string) []string {
 		out = append(out, kv)
 	}
 
+	mode := "off"
+	if s.TranscriptionEnabled {
+		mode = "on"
+	}
+	out = append(out, "CASSINI_TRANSCRIPTION="+mode, envDisallowModelDownload+"=1")
+	if s.ActiveModel != "" {
+		out = append(out, envSTTModel+"="+s.ActiveModel, "CASSINI_STT_REVISION="+s.ActiveRevision)
+	}
 	out = append(out, envSTTQuality+"="+normalizeQuality(s.Quality))
 	if s.DeviceOverride != "" {
 		out = append(out, envSTTDevice+"="+s.DeviceOverride)
@@ -494,9 +507,7 @@ type effectiveSTT struct {
 	Device string `json:"device"`
 	// Model is the concrete model the recorder will load on Device.
 	Model string `json:"model,omitempty"`
-	// ModelDownloadMB is the approximate download size when the running image
-	// does not bake Model, and 0 when the build starts without a download. The
-	// first build of such a tier waits for that fetch once (D-704).
+	// Retained for older settings clients. Builds never download, so this is zero.
 	ModelDownloadMB int `json:"model_download_mb,omitempty"`
 	// MinFreeMemoryMB is the memory that must be free before a build of this
 	// tier starts. An administrator who picks a heavy tier on a small host
@@ -510,34 +521,24 @@ const (
 	noteCPU  = "No GPU is available, so recordings are transcribed on the CPU. This works, but is much slower. " +
 		"For GPU speed, run Cassini's CUDA image on a server with a GPU."
 	notePinnedCPU    = "Set to CPU, so recordings stay on the CPU even if a GPU becomes available."
-	noteCUDAUnusable = "Set to GPU, but this machine has no usable GPU. Recordings won't be processed until one " +
-		"is available, or until the device is set back to Auto."
+	noteCUDAUnusable = "Set to GPU, but this machine has no usable GPU. Recordings remain available as audio. " +
+		"Make a GPU available or select CPU to prepare transcription."
 )
 
-// effectiveFor is STTSettings.effective corrected by what this image can
-// actually load: an automatic policy on an image that does not carry the tier's
-// model runs a bundled one instead, and every surface an administrator reads —
-// /settings, /status, the admin panel — must name that same model.
+// effectiveFor reports explicit Off/On policy and the pinned model. Model
+// installation/readiness is reported by the model inventory.
 func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
 	effective := s.effective()
-	admitted, err := rt.admitModelForDevice(s, effective.Device)
-	if err == nil {
-		effective.Model = admitted
-		if rt.modelNeedsDownload(admitted) {
-			effective.ModelDownloadMB = modelDownloadMB(admitted)
-		}
-		effective.MinFreeMemoryMB = resourceLimitsFromEnv().minFreeMemForBuild(effective.Device, admitted)
+	if !s.TranscriptionEnabled {
+		effective.Note = "Transcription is off. Recordings remain available as audio."
+		effective.Model = ""
+		effective.MinFreeMemoryMB = 0
 		return effective
 	}
-	// Admission refused this policy, so the panel must say why instead of
-	// describing a run that will never happen. This is not an exotic state: any
-	// save sets Source=user, so an administrator who edits the vocabulary on an
-	// image that does not carry their tier's model pins it by doing so.
-	var unavailable *resourceUnavailableError
-	if errors.As(err, &unavailable) {
-		effective.Note = unavailable.detail
-	} else {
-		effective.Note = err.Error()
+	effective.Model = s.ActiveModel
+	effective.MinFreeMemoryMB = resourceLimitsFromEnv().minFreeMemForBuild(effective.Device, effective.Model)
+	if s.ActiveModel == "" {
+		effective.Note = "Transcription needs a prepared model in Settings. Recordings remain available as audio."
 	}
 	return effective
 }
@@ -583,6 +584,9 @@ func effectiveDevice(override string) (string, string) {
 // per-model override existed, accepted exactly the three models the tiers
 // already reach, and was removed (D-702).
 func (s STTSettings) modelForDevice(device string) string {
+	if s.ActiveModel != "" {
+		return s.ActiveModel
+	}
 	return modelForQuality(s.Quality, device)
 }
 
@@ -594,9 +598,12 @@ type settingsResponse struct {
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
 // "field set to empty"; quality is required.
 type settingsUpdate struct {
-	Quality            string    `json:"quality"`
-	DeviceOverride     *string   `json:"device_override"`
-	TranscriptionTerms *[]string `json:"transcription_terms"`
+	TranscriptionEnabled *bool     `json:"transcription_enabled"`
+	ActiveModel          *string   `json:"active_model"`
+	ActiveRevision       *string   `json:"active_revision"`
+	Quality              string    `json:"quality"`
+	DeviceOverride       *string   `json:"device_override"`
+	TranscriptionTerms   *[]string `json:"transcription_terms"`
 	// SearchAliases is a pointer for the same reason as the fields above: nil
 	// means "leave it alone", so a client that does not know about aliases
 	// cannot erase them by omitting the field.
@@ -664,6 +671,16 @@ func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
 }
 
+// transcriptionSelectionChanged reports whether next turns transcription on, or
+// changes the model, quality or device that an enabled transcription uses.
+func transcriptionSelectionChanged(prev, next STTSettings) bool {
+	return !prev.TranscriptionEnabled ||
+		prev.ActiveModel != next.ActiveModel ||
+		prev.ActiveRevision != next.ActiveRevision ||
+		normalizeQuality(prev.Quality) != normalizeQuality(next.Quality) ||
+		prev.DeviceOverride != next.DeviceOverride
+}
+
 func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -686,9 +703,19 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Start from the current settings so unspecified override fields are
 	// preserved; the host display fields are refreshed below.
-	updated := rt.currentSettings()
+	current := rt.currentSettings()
+	updated := current
 	updated.Quality = quality
 	updated.Source = sttSourceUser
+	if in.TranscriptionEnabled != nil {
+		updated.TranscriptionEnabled = *in.TranscriptionEnabled
+	}
+	if in.ActiveModel != nil {
+		updated.ActiveModel = *in.ActiveModel
+	}
+	if in.ActiveRevision != nil {
+		updated.ActiveRevision = *in.ActiveRevision
+	}
 	if in.DeviceOverride != nil {
 		device := strings.ToLower(strings.TrimSpace(*in.DeviceOverride))
 		if !validDeviceOverride(device) {
@@ -717,6 +744,30 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		updated.TranscriptionTerms = terms
 	}
 
+	// Check the model only when this request would change what transcribes.
+	// Readiness is invalidated by every restart and upgrade, so re-checking an
+	// unchanged selection would refuse unrelated edits such as vocabulary.
+	if updated.TranscriptionEnabled && transcriptionSelectionChanged(current, updated) {
+		device, err := resolveDeviceForSettings(updated)
+		if err != nil {
+			writeJSONError(w, 409, err.Error())
+			return
+		}
+		models, err := rt.modelInventory(r.Context(), device)
+		if err != nil {
+			writeJSONError(w, 503, err.Error())
+			return
+		}
+		m, err := findModel(models, updated.ActiveModel, updated.ActiveRevision)
+		if err != nil || !m.Ready || updated.ActiveRevision == "" {
+			writeJSONError(w, 409, "Install and check the selected model before enabling transcription.")
+			return
+		}
+		if modelForQuality(updated.Quality, device) != m.ID {
+			writeJSONError(w, 409, "Use the prepared model matching the selected quality and device.")
+			return
+		}
+	}
 	// Refresh the host display fields so the persisted record reflects the
 	// current hardware even as the user pins policy.
 	gpu := detectGPU()

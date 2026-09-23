@@ -1,41 +1,13 @@
 #!/usr/bin/env bash
-# Transcribe smoke for the bundled-model ExApp image.
-#
-# Asserts, per D6 of planning/bundled-parakeet-images.md:
-#   1. The bundled STT model files exist inside the image at the path
-#      ${CASSINI_CACHE_ROOT}/models/${CASSINI_STT_MODEL}/ BEFORE any cassini
-#      operation runs (positive proof the model came from the image, not a
-#      runtime download).
-#   2. `cassini build` against harness/media/parakeet-smoke.mkv succeeds and
-#      produces a non-empty meeting bundle.
-#   3. The build logs contain NO "downloading model" line (negative proof).
-#   4. The bundled file mtimes are <= the image's Created timestamp (positive
-#      proof the file was baked, not written at container start).
-#   5. (CUDA images only, D-363) the GPU was ACTUALLY used:
-#      - negative proof: no sherpa-onnx "... Fallback to cpu!" line in the
-#        build log (sherpa-onnx logs that — and exits 0 — when the bundled
-#        onnxruntime has no CUDA provider; it logs nothing on success), and
-#      - positive proof: a process from this smoke's container appeared in
-#        `nvidia-smi --query-compute-apps` (i.e. held a CUDA context) while
-#        the build was running.
-#      Silent CPU fallback is the documented CUDA failure mode: a CUDA
-#      release that transcribes on CPU must fail this smoke, not ship.
-#      Set CASSINI_SMOKE_GPU_ASSERT=0 to skip assertion 5 (e.g. exotic local
-#      setups where the GPU is reachable but host nvidia-smi is not).
-#   6. The same fresh build's transcript passes the known-text quality floor.
-#      Model-only checks skip transcription and this assertion.
-#
-# Run after build-image in CI. Locally:
-#   IMAGE_REF=ghcr.io/codemyriad/gocassini:branch-foo ./harness/bin/ci-transcribe-smoke-exapp.sh
+# Model-free image and explicit-install transcription smoke (D-797).
+# Checks an empty store, then installs a model outside the image and proves
+# transcription with installed-only resolution. CUDA still requires real GPU use.
 
 set -euo pipefail
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. ghcr.io/codemyriad/gocassini:sha-abc)}"
 
-# CASSINI_SMOKE_MODELS_ONLY=1 checks only the image's model contract — every
-# declared model bundled and accepted by the recorder's pre-build checks. That
-# needs no GPU, no transcription, no ffmpeg and no LFS fixture, so the portable
-# image can be held to it on a plain runner (D-702).
+# Models-only checks need no GPU, model download, or speech fixture.
 MODELS_ONLY="${CASSINI_SMOKE_MODELS_ONLY:-0}"
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
@@ -50,6 +22,7 @@ if [[ "${MODELS_ONLY}" != "1" ]]; then
 fi
 
 CONTAINER_NAME="cassini-transcribe-smoke-$$"
+MODEL_VOLUME="${CONTAINER_NAME}-models"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-transcribe-smoke-${$}}"
 mkdir -p "${LOG_DIR}"
 
@@ -75,13 +48,11 @@ cleanup() {
     fi
   fi
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  docker volume rm "${MODEL_VOLUME}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-# Resolve the model id + cache root the image was built with. Both come from
-# the runtime ENV — we inspect the image rather than hard-code so a future
-# variant (e.g. CUDA image with model id parakeet-tdt-0.6b-v3) works without
-# editing this script.
+# Select an explicit model for the native device supported by this image.
 read_env() {
   local var="$1"
   docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "${IMAGE_REF}" \
@@ -89,10 +60,11 @@ read_env() {
 }
 
 CACHE_ROOT=$(read_env CASSINI_CACHE_ROOT)
-MODEL_ID=$(read_env CASSINI_STT_MODEL)
+MODEL_ID=parakeet-tdt-0.6b-v3-int8
 DEVICE=$(read_env CASSINI_STT_DEVICE)
-BUNDLED_ROOT=$(read_env CASSINI_BUNDLED_MODEL_ROOT)
+
 : "${DEVICE:=cpu}"
+if [[ "$DEVICE" == cuda ]]; then MODEL_ID=parakeet-tdt-0.6b-v3; fi
 
 # CUDA images need GPU exposed via CDI. Set DOCKER_RUN_GPU=1 to opt-in (or
 # set CASSINI_STT_DEVICE=cuda in the image ENV — we honor either).
@@ -118,143 +90,67 @@ if [[ -z "${CACHE_ROOT}" ]]; then
   log "FAIL image does not set CASSINI_CACHE_ROOT in ENV"
   exit 1
 fi
-if [[ -z "${MODEL_ID}" ]]; then
-  log "FAIL image does not set CASSINI_STT_MODEL in ENV"
-  exit 1
-fi
-if [[ -z "${BUNDLED_ROOT}" ]]; then
-  log "FAIL image does not set CASSINI_BUNDLED_MODEL_ROOT"
-  log "     the recorder reads baked models from that directory before it downloads anything"
-  exit 1
-fi
-
-MODEL_DIR="${BUNDLED_ROOT}/models/${MODEL_ID}"
-# The VAD is baked into the image, so assert it under the bundled root. The two
-# roots hold the same path in the images today, and an assertion against the
-# writable cache would keep passing if that stopped being true.
-VAD_PATH="${BUNDLED_ROOT}/vad/silero_vad.onnx"
-log "image ref:       ${IMAGE_REF}"
-log "cache root:      ${CACHE_ROOT}"
-log "model id:        ${MODEL_ID}"
-log "model dir:       ${MODEL_DIR}"
-log "device:          ${DEVICE}"
-log "vad path:        ${VAD_PATH}"
-
-# Image creation time as Unix seconds.
-IMG_CREATED_ISO=$(docker inspect --format='{{.Created}}' "${IMAGE_REF}")
-IMG_CREATED_TS=$(date -u -d "${IMG_CREATED_ISO}" +%s)
-log "image created:   ${IMG_CREATED_ISO}  (ts=${IMG_CREATED_TS})"
-
 # Start the container with the entrypoint overridden so we have a quiet host
 # to docker-exec into (no operator startup, no frpc dial-out, no listener).
 log "starting container ${CONTAINER_NAME} ${GPU_FLAGS[*]:-(cpu)}"
 docker run -d --rm \
   --name "${CONTAINER_NAME}" \
+  -v "${MODEL_VOLUME}:/var/lib/cassini-operator" \
   "${GPU_FLAGS[@]}" \
   --entrypoint /bin/sh \
   "${IMAGE_REF}" \
   -c 'tail -f /dev/null' >/dev/null
 
-# ---- Assertion 1: model files exist BEFORE any cassini operation runs ----
-# Every model the image declares, not just its default: the runtime forbids
-# downloads, so this set is exactly the set of quality tiers the image can
-# execute, and a missing one is a tier an admin can select and never run
-# (D-702).
-tier_model_files() {
-  case "$1" in
-    parakeet-tdt-ctc-110m-en-int8) echo "model.int8.onnx tokens.txt NOTICE" ;;
-    *-int8)                        echo "encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt NOTICE" ;;
-    # fp32 variants: unsuffixed onnx + external weights sidecar
-    *)                             echo "encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt NOTICE" ;;
-  esac
-}
-
-# The image declares what it bundles; each variant carries the models for the
-# device it serves (the portable image the CPU tiers, the CUDA image fp32).
-BUNDLED_MODELS=$(read_env CASSINI_BUNDLED_MODELS)
-if [[ -z "${BUNDLED_MODELS}" ]]; then
-  log "FAIL image does not declare CASSINI_BUNDLED_MODELS"
-  exit 1
-fi
-read -r -a TIER_MODELS <<< "${BUNDLED_MODELS}"
-log "declared bundled models: ${BUNDLED_MODELS}"
-
-# The image must bake the model of the tier it runs by default, so an install
-# transcribes without reaching the network. Other tiers download on demand
-# (D-704), so their absence here is expected.
-case " ${BUNDLED_MODELS} " in
-  *" ${MODEL_ID} "*) ;;
-  *)
-    log "FAIL image declares models [${BUNDLED_MODELS}] but its default CASSINI_STT_MODEL is ${MODEL_ID}"
-    log "     the default tier must not need a download on a fresh install"
-    exit 1
-    ;;
-esac
-for model in "${TIER_MODELS[@]}"; do
-  model_dir="${BUNDLED_ROOT}/models/${model}"
-  log "asserting bundled model files exist at ${model_dir}"
-  for f in $(tier_model_files "${model}"); do
-    if ! docker exec "${CONTAINER_NAME}" test -s "${model_dir}/${f}"; then
-      log "FAIL bundled file missing or empty: ${model_dir}/${f}"
-      docker exec "${CONTAINER_NAME}" ls -la "${model_dir}" 2>&1 || true
-      log "     every quality tier must be executable in an image that disallows downloads"
-      exit 1
-    fi
-    log "OK   present ${model_dir}/${f}"
-  done
-done
-
-# VAD is bundled separately at ${CACHE_ROOT}/vad/silero_vad.onnx
-if ! docker exec "${CONTAINER_NAME}" test -s "${VAD_PATH}"; then
-  log "FAIL bundled VAD missing or empty: ${VAD_PATH}"
-  exit 1
-fi
-log "OK   present ${VAD_PATH}"
-
-# ---- Assertion 4: bundled file mtimes are <= image creation time ----
-# (positive proof the file came from the image build, not container start)
-if [[ "${MODEL_ID}" == *-int8 ]]; then
-  enc_file="${MODEL_DIR}/encoder.int8.onnx"
-else
-  enc_file="${MODEL_DIR}/encoder.onnx"
-fi
-ENC_MTIME=$(docker exec "${CONTAINER_NAME}" stat -c %Y "${enc_file}")
-if (( ENC_MTIME > IMG_CREATED_TS + 5 )); then
-  log "FAIL ${enc_file} mtime (${ENC_MTIME}) is newer than image creation (${IMG_CREATED_TS})"
-  log "     this indicates the file was written AFTER the image was built (runtime download?)"
-  exit 1
-fi
-log "OK   ${enc_file} mtime (${ENC_MTIME}) <= image created (${IMG_CREATED_TS})"
-
-# ---- Assertion 1b: every tier passes the recorder's own pre-build checks ----
-# Presence is not enough: `cassini build` runs doctor first and aborts on a
-# failed check, so a tier can be bundled and still be unrunnable if doctor
-# expects a different file layout (D-702 — the CTC "fast" model was checked
-# against transducer file names). doctor loads no model, so this is cheap.
-for model in "${TIER_MODELS[@]}"; do
-  log "running cassini doctor with CASSINI_STT_MODEL=${model}"
-  if ! docker exec -e "CASSINI_STT_MODEL=${model}" "${CONTAINER_NAME}" \
-       /usr/local/bin/cassini doctor > "${LOG_DIR}/doctor-${model}.log" 2>&1; then
-    log "FAIL cassini doctor rejected bundled model ${model}"
-    sed -n '1,40p' "${LOG_DIR}/doctor-${model}.log" | while IFS= read -r line; do log "     ${line}"; done
-    exit 1
-  fi
-  log "OK   doctor accepts ${model}"
-done
-
-# The image contract — every declared model bundled, and every one of them
-# accepted by the recorder's own pre-build checks — holds for both variants and
-# needs no GPU and no transcription. CASSINI_SMOKE_MODELS_ONLY=1 runs just that
-# part, so the portable image can be held to it on a plain runner instead of
-# being covered only where a GPU happens to be (D-702).
+# The image must contain no model data; inspect all known weight roots.
+docker exec "${CONTAINER_NAME}" sh -c 'test ! -d /opt/cassini/cache/models && test ! -f /opt/cassini/cache/vad/silero_vad.onnx && test ! -d "$CASSINI_CACHE_ROOT/models"'
+docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models list --json --cache-root "${CACHE_ROOT}" > "${LOG_DIR}/models.json"
+python3 - "${LOG_DIR}/models.json" <<'CHECK'
+import json,sys
+models=json.load(open(sys.argv[1]))
+assert len(models)==3 and all(not m['installed'] and not m['ready'] for m in models)
+CHECK
+docker exec -e CASSINI_TRANSCRIPTION=off "${CONTAINER_NAME}" /usr/local/bin/cassini doctor --target build > "${LOG_DIR}/doctor.log" 2>&1
 if [[ "${MODELS_ONLY}" == "1" ]]; then
-  log "PASS image bundles and validates every model it declares (${BUNDLED_MODELS})"
+  log "PASS model-free image starts and lists its shipped catalogue without downloading"
   exit 0
 fi
 
-# ---- Assertion 2 + 3: `cassini build` succeeds + no download log line ----
+# Audio-only processing must work with an empty model store and bad STT config.
 docker exec "${CONTAINER_NAME}" mkdir -p /tmp/smoke-in /tmp/smoke-out
 docker cp "${FIXTURE_HOST}" "${CONTAINER_NAME}:/tmp/smoke-in/parakeet-smoke.mkv"
+docker exec -e CASSINI_DISALLOW_MODEL_DOWNLOAD=1 -e CASSINI_STT_BACKEND=invalid \
+  "${CONTAINER_NAME}" /usr/local/bin/cassini build /tmp/smoke-in/parakeet-smoke.mkv \
+  --out /tmp/audio-only.opus --transcription off > "${LOG_DIR}/audio-only.log" 2>&1
+docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini inspect /tmp/audio-only.opus > "${LOG_DIR}/audio-only-inspect.log"
+grep -q 'cassini=ok' "${LOG_DIR}/audio-only-inspect.log"
+grep -q 'words=0' "${LOG_DIR}/audio-only-inspect.log"
+
+# Explicit acquisition happens before a meeting. Keep it outside image layers.
+log "installing ${MODEL_ID} into the writable model store"
+docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${MODEL_ID}" --cache-root "${CACHE_ROOT}" --device "${DEVICE}" --progress-json > "${LOG_DIR}/install.log" 2>&1
+# A warm install is locally satisfied even when network acquisition is forbidden.
+docker exec -e CASSINI_DISALLOW_MODEL_DOWNLOAD=1 "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${MODEL_ID}" --cache-root "${CACHE_ROOT}" --device "${DEVICE}" --no-probe > "${LOG_DIR}/reuse.log" 2>&1
+
+# Replacing the container must keep weights on the state volume. Invalidate the
+# executable's readiness fingerprint and prove its local recheck and the next
+# transcription with networking physically disabled, as on an offline upgrade.
+docker rm -f "${CONTAINER_NAME}" >/dev/null
+docker run -d --rm --network none \
+  --name "${CONTAINER_NAME}" \
+  -v "${MODEL_VOLUME}:/var/lib/cassini-operator" \
+  "${GPU_FLAGS[@]}" --entrypoint /bin/sh "${IMAGE_REF}" \
+  -c 'tail -f /dev/null' >/dev/null
+docker exec "${CONTAINER_NAME}" touch /usr/local/bin/cassini
+docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models list --json --cache-root "${CACHE_ROOT}" --device "${DEVICE}" > "${LOG_DIR}/replaced-models.json"
+python3 - "${LOG_DIR}/replaced-models.json" "$MODEL_ID" <<'CHECK'
+import json,sys
+model=next(m for m in json.load(open(sys.argv[1])) if m['id']==sys.argv[2])
+assert model['installed'] and not model['ready'], model
+CHECK
+docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini models install "${MODEL_ID}" --cache-root "${CACHE_ROOT}" --device "${DEVICE}" > "${LOG_DIR}/offline-recheck.log" 2>&1
+docker exec "${CONTAINER_NAME}" mkdir -p /tmp/smoke-in /tmp/smoke-out
+docker cp "${FIXTURE_HOST}" "${CONTAINER_NAME}:/tmp/smoke-in/parakeet-smoke.mkv"
+log "OK   container replacement preserved weights; runtime recheck passed with network disabled"
 
 # While the build runs, sample (a) the host PIDs of processes inside OUR
 # container (docker top) and (b) the host-visible CUDA compute apps
@@ -281,10 +177,10 @@ fi
 
 log "running cassini build on the fixture (device=${DEVICE})"
 set +e
-docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini build \
+docker exec -e CASSINI_DISALLOW_MODEL_DOWNLOAD=1 -e CASSINI_STT_MODEL="${MODEL_ID}" "${CONTAINER_NAME}" /usr/local/bin/cassini build \
   /tmp/smoke-in/parakeet-smoke.mkv \
   --out /tmp/smoke-out \
-  --device "${DEVICE}" \
+  --device "${DEVICE}" --transcription on \
   > "${LOG_DIR}/build.log" 2>&1
 BUILD_RC=$?
 set -e
@@ -300,14 +196,13 @@ if [[ ${BUILD_RC} -ne 0 ]]; then
 fi
 log "OK   cassini build exited 0"
 
-# Any "downloading ..." string in the log means the bundled assets were
-# bypassed — either the STT model OR the VAD. Both must be in-image.
+# Meeting builds must use only the already installed model and VAD.
 if grep -qiE 'downloading (model|silero)' "${LOG_DIR}/build.log"; then
-  log "FAIL build log contains a 'downloading ...' line — bundled assets were NOT used"
+  log "FAIL build log contains a 'downloading ...' line — installed models were NOT used"
   grep -iE 'downloading (model|silero)' "${LOG_DIR}/build.log" | sed 's/^/    /'
   exit 1
 fi
-log "OK   build log contains no 'downloading ...' line (STT model + VAD both bundled)"
+log "OK   build log contains no 'downloading ...' line (STT model + VAD both installed)"
 
 # ---- Assertion 5 (CUDA only): the GPU was ACTUALLY used ----
 if (( GPU_ASSERT )); then

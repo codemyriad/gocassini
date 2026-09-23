@@ -10,9 +10,9 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"strings"
 	"syscall"
 
+	"gocassini/internal/modelstore"
 	"gocassini/internal/transcribe"
 )
 
@@ -59,13 +59,14 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	target := "all"
 	asJSON := false
-	fs.StringVar(&target, "target", "all", "check set: all, record, build")
+	fs.StringVar(&target, "target", "all", "check set: all, record, build, media")
 	fs.BoolVar(&asJSON, "json", false, "emit the checks as a JSON array instead of text")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini doctor
   cassini doctor --target record
   cassini doctor --target build
+  cassini doctor --target media
   cassini doctor --json
 
 `+"\n")
@@ -84,8 +85,8 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 
 	checks := collectDoctorChecks(target)
 	// The JSON document is for a caller; the text is for a person, and it is a
-	// shipped contract (standalone `cassini doctor` must keep printing exactly
-	// what it printed before). So --json REPLACES the text rather than
+	// shipped contract (standalone `cassini doctor` must keep its text format).
+	// So --json REPLACES the text rather than
 	// decorating it, and the exit code is identical either way.
 	if asJSON {
 		out, err := json.Marshal(checks)
@@ -135,7 +136,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 }
 
 func collectDoctorChecks(target string) []doctorCheck {
-	if target != "all" && target != "record" && target != "build" {
+	if target != "all" && target != "record" && target != "build" && target != "media" {
 		return []doctorCheck{{ID: "target", Status: doctorFail, Summary: fmt.Sprintf("unsupported doctor target %q", target)}}
 	}
 
@@ -156,9 +157,11 @@ func collectDoctorChecks(target string) []doctorCheck {
 	checks = append(checks, writableDirCheck("tmpdir.writable", tmp, "temporary directory"))
 	checks = append(checks, freeSpaceCheck("tmpdir.space", tmp, "temporary directory", minTempFreeWarn, minTempFreeFail))
 
-	if target == "all" || target == "build" {
+	if target == "all" || target == "build" || target == "media" {
 		checks = append(checks, commandCheck("ffmpeg", "ffmpeg"))
 		checks = append(checks, commandCheck("ffprobe", "ffprobe"))
+	}
+	if (target == "all" || target == "build") && transcribe.DefaultBuildConfig().TranscriptionMode == "on" {
 		device := transcribe.ResolveDevice(os.Getenv("CASSINI_STT_DEVICE"))
 		modelID := transcribe.ResolveModelID(os.Getenv("CASSINI_STT_MODEL"), os.Getenv("CASSINI_STT_QUALITY"), device)
 		checks = append(checks, nativeRuntimeCheck(modelID))
@@ -277,89 +280,33 @@ func sttModelCacheChecks() []doctorCheck {
 		parentWritableCheck("cache.root", cacheRoot, "cassini cache root"),
 	}
 
-	// Look in the image's read-only bundled root first, the same order
-	// EnsureModel uses: a tier the image carries is never downloaded, and a
-	// tier it does not carry is fetched once into the writable cache (D-704).
-	modelDir := filepath.Join(cacheRoot, "models", string(modelID))
-	if root := strings.TrimSpace(os.Getenv("CASSINI_BUNDLED_MODEL_ROOT")); root != "" {
-		bundledDir := filepath.Join(root, "models", string(modelID))
-		if check := modelFilesCheck(bundledDir, modelID); check.Status == doctorOK {
-			checks = append(checks, check)
-			return append(checks, doctorCheck{
-				ID:      "model.bundled",
-				Status:  doctorOK,
-				Summary: fmt.Sprintf("STT model %s is bundled in this image", modelID),
-			})
-		}
+	s := modelstore.New(cacheRoot)
+	m, err := s.Catalogue.Model(string(modelID), os.Getenv("CASSINI_STT_REVISION"))
+	if err == nil {
+		err = s.Complete(m)
+	}
+	if err != nil {
 		checks = append(checks, doctorCheck{
-			ID:     "model.bundled",
-			Status: doctorWarn,
-			Summary: fmt.Sprintf("STT model %s is not bundled in this image; it downloads once into %s on first use",
-				modelID, modelDir),
+			ID:      "model.ready",
+			Status:  doctorWarn,
+			Summary: fmt.Sprintf("Transcription unavailable: %v; meetings retain audio", err),
+			Advice:  "Install a model in Settings or use cassini models import; builds never download models",
+		})
+	} else if !s.Ready(m, device, transcribe.ModelRuntimeFingerprint()) {
+		checks = append(checks, doctorCheck{
+			ID:      "model.ready",
+			Status:  doctorWarn,
+			Summary: "Model installed; runtime check needed",
+			Advice:  "Run cassini models probe " + m.ID + " --device " + device,
+		})
+	} else {
+		checks = append(checks, doctorCheck{
+			ID:      "model.ready",
+			Status:  doctorOK,
+			Summary: "Pinned model and VAD installed and ready",
 		})
 	}
-	checks = append(checks, modelFilesCheck(modelDir, modelID))
-
-	if info, err := os.Stat(modelDir); err == nil && info.IsDir() {
-		checks = append(checks, writableDirCheck("model.cache.writable", modelDir, "STT model cache"))
-	} else {
-		check := parentWritableCheck("model.cache.parent", modelDir, "STT model cache parent")
-		if check.Status != doctorOK {
-			check.Advice = fmt.Sprintf("ensure %s can be created, or set CASSINI_CACHE_ROOT to a writable cache directory", modelDir)
-		}
-		checks = append(checks, check)
-	}
 	return checks
-}
-
-// modelFilesCheck reports whether the required onnx + tokens files for the
-// given model id are present inside modelDir. In bundled-image deployments
-// (CASSINI_DISALLOW_MODEL_DOWNLOAD=1) a missing file is fatal at recorder
-// startup, so doctor surfaces it up front.
-func modelFilesCheck(modelDir string, modelID transcribe.ModelID) doctorCheck {
-	// Ask the model registry which files this bundle needs rather than naming
-	// one architecture's: the 110M "fast" tier is a CTC model shipping a single
-	// model.int8.onnx, and demanding encoder/decoder/joiner of it failed a model
-	// that was present and correct (D-702).
-	required := transcribe.RequiredModelFileNames(modelID)
-	if len(required) == 0 {
-		return doctorCheck{
-			ID:      "model.files",
-			Status:  doctorWarn,
-			Summary: fmt.Sprintf("unknown STT model %q; cannot verify its files in %s", modelID, modelDir),
-			Advice:  "set CASSINI_STT_MODEL to a known model id, or leave it unset to use the quality tier's model",
-		}
-	}
-	missing := []string{}
-	for _, name := range required {
-		if !fileExists(filepath.Join(modelDir, name)) {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) == 0 {
-		return doctorCheck{
-			ID:      "model.files",
-			Status:  doctorOK,
-			Summary: fmt.Sprintf("STT model files present in %s", modelDir),
-		}
-	}
-	disallow := os.Getenv("CASSINI_DISALLOW_MODEL_DOWNLOAD")
-	if disallow == "1" || disallow == "true" {
-		return doctorCheck{
-			ID:     "model.files",
-			Status: doctorFail,
-			Summary: fmt.Sprintf("STT model files missing in %s: %s (CASSINI_DISALLOW_MODEL_DOWNLOAD set)",
-				modelDir, strings.Join(missing, ", ")),
-			Advice: fmt.Sprintf("rebuild the image with the model bundled at %s, or unset CASSINI_DISALLOW_MODEL_DOWNLOAD to allow runtime download",
-				modelDir),
-		}
-	}
-	return doctorCheck{
-		ID:     "model.files",
-		Status: doctorWarn,
-		Summary: fmt.Sprintf("STT model files missing in %s: %s (will be downloaded on first build)",
-			modelDir, strings.Join(missing, ", ")),
-	}
 }
 
 func defaultSTTDevice() string {
@@ -367,11 +314,6 @@ func defaultSTTDevice() string {
 		return v
 	}
 	return "cpu"
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 func parentWritableCheck(id string, path string, label string) doctorCheck {

@@ -155,11 +155,9 @@ const (
 	imageDefaultDBPath   = "/var/lib/cassini-operator/jobs.sqlite3"
 	imageDefaultWorkRoot = "/var/lib/cassini-operator/jobs"
 	imageDefaultSiteRoot = "/srv/cassini-site/published"
-	// imageDefaultCacheRoot is where the image bakes its models. Left at this
-	// value under an AppAPI deploy, the writable model cache moves to the
-	// persistent volume so a downloaded tier survives a container recreate,
-	// while the baked models stay where they are (D-704).
-	imageDefaultCacheRoot = "/opt/cassini/cache"
+	// Keep downloaded models beside the operator state for standalone volume
+	// mounts. AppAPI redirects this default onto its own persistent volume.
+	imageDefaultCacheRoot = "/var/lib/cassini-operator/models"
 )
 
 // ExAppConfig holds the AppAPI-derived runtime values resolved from env vars.

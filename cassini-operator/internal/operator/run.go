@@ -62,21 +62,11 @@ type Config struct {
 	ProcessingPolicy        string
 	ProcessingCPUReserve    float64
 	ProcessingMemReserveMB  int
-	// BundledModelRoot is the read-only directory where the image baked its
-	// models, and ModelCacheRoot is the writable cache that receives a tier the
-	// image does not carry. Under an AppAPI deploy the cache lands on the
-	// persistent volume, so a downloaded model survives a container recreate.
-	// Both live here rather than being read from the process environment at
-	// admission time, so the policy is fixed once at startup and a developer
-	// whose shell exports CASSINI_* for the recorder cannot change what the
-	// operator decides.
-	BundledModelRoot string
-	ModelCacheRoot   string
-	// DisallowModelDownload is the air-gap switch. When an administrator sets
-	// it, the operator blocks a tier the image does not bake instead of
-	// fetching it, and the build child receives the same instruction. The
-	// operator sets the variable for every child from this value, so an
-	// inherited one can neither enable nor defeat the policy by accident.
+	// ModelCacheRoot is independent from image layers and persists in the
+	// AppAPI volume (or the operator data root for standalone deployments).
+	ModelCacheRoot string
+	// DisallowModelDownload forbids model-network acquisition. Local import,
+	// runtime checks, activation, and audio-only operation remain available.
 	DisallowModelDownload bool
 	// APIToken (CASSINI_OPERATOR_API_TOKEN) optionally guards the operator
 	// JSON API with bearer auth for standalone deploys; empty disables it
@@ -93,8 +83,15 @@ type Config struct {
 }
 
 type Runtime struct {
-	recordingSetup recordingSetup
-	ctx            context.Context
+	modelMu     sync.Mutex
+	modelCancel context.CancelFunc
+	modelJobID  string
+	// modelInventoryCache holds `cassini models list` results per device;
+	// see cachedModelInventory.
+	modelInventoryMu    sync.Mutex
+	modelInventoryCache map[string]modelInventoryEntry
+	recordingSetup      recordingSetup
+	ctx                 context.Context
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
@@ -103,7 +100,8 @@ type Runtime struct {
 	store    *Store
 	// searchStore is the disposable full-text index (D-623). Nil when it could
 	// not be opened: search degrades, the pipeline does not.
-	searchStore *searchStore
+	searchStore     *searchStore
+	searchReadiness searchReadinessCache
 	// annotations is the marks projection (D-737); nil when it could not be
 	// opened, in which case writes still commit and only indexing is skipped.
 	annotations annotationIndex
@@ -575,7 +573,6 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.DurationVar(&cfg.RecordingIdleGrace, "recording-idle-grace", idleGrace, "quiet period after the last recording before background work")
 	// Not flags: these describe the image the operator is running inside, not a
 	// choice an invocation makes.
-	cfg.BundledModelRoot = envOrDefaultAny([]string{"CASSINI_BUNDLED_MODEL_ROOT"}, "")
 	cfg.DisallowModelDownload = envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD")
 	fs.StringVar(&cfg.BindAddr, "bind", envOrDefaultAny([]string{"CASSINI_OPERATOR_BIND_ADDR"}, defaultBind), "HTTP bind address")
 	fs.StringVar(&cfg.BasePath, "base-path", envOrDefaultAny([]string{"CASSINI_OPERATOR_BASE_PATH"}, defaultOperatorBasePath), "HTTP route prefix")
@@ -592,7 +589,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.ModelCacheRoot, "model-cache-root", exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_CACHE_ROOT"}, ""),
 		imageDefaultCacheRoot, "operator/models",
-		filepath.Join(defaultDataRoot, "models")), "writable cache for models the image does not bundle")
+		filepath.Join(defaultDataRoot, "models")), "persistent root for installed model revisions and partial downloads")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
@@ -889,6 +886,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		}
 		return rt.runRecordDoctorContext(probeCtx)
 	})
+	rt.startModelWorker()
 	rt.startProcessingMonitor()
 	rt.startBuildWorkers()
 	rt.startSealWorker()
@@ -961,6 +959,8 @@ func operatorAPIRoutes(rt *Runtime, exappCfg ExAppConfig) []struct {
 		{"/ai/providers", http.HandlerFunc(rt.aiProvidersHandler)},
 		{"/ai/providers/", http.HandlerFunc(rt.aiProviderModelsHandler)},
 		{"/settings", http.HandlerFunc(rt.settingsHandler)},
+		{"/settings/models", http.HandlerFunc(rt.modelsHandler)},
+		{"/settings/models/", http.HandlerFunc(rt.modelsHandler)},
 		// A sibling of the /settings/ prefix rather than another branch inside
 		// the LLM settings handler: the workflow registry is not LLM policy, it
 		// is what the recorder ships, and an exact pattern wins over the prefix
