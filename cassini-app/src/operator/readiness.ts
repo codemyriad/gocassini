@@ -1,7 +1,6 @@
 // `warn` arrived with the host checks (D-798 V2): something is impaired but
-// still works — a model that will download on first use, a disk getting full.
-// Nothing in the recording checks could legitimately produce one, which is why
-// #322 shipped three tones and no amber. A host check genuinely can.
+// audio recording remains possible, such as a disk getting low on space or an
+// enabled optional transcription model being unavailable.
 export type CheckState = "passed" | "warn" | "needs_action" | "not_verified";
 export interface ReadinessCheck {
   id: string;
@@ -13,6 +12,8 @@ export interface ReadinessCheck {
 }
 export interface RecordingReadiness {
   state: CheckState;
+  // Audio recording remains available when optional processing warns.
+  recording_state?: CheckState;
   checks: ReadinessCheck[];
   secret_configured: boolean;
   secret_source: "env" | "setup" | "unset";
@@ -36,7 +37,7 @@ export interface RecordingSetupUpdate {
 export const checkLabels: Record<string, string> = {
   configuration: "Saved configuration",
   storage: "Recording storage",
-  processing: "Speech processing",
+  processing: "Transcription (optional)",
   "talk.authentication": "Internal credential",
   "talk.discovery": "Talk connection",
   "talk.hpb": "High-performance backend",
@@ -47,9 +48,19 @@ export const stateLabels: Record<CheckState, string> = {
   passed: "Passed", warn: "Needs attention", needs_action: "Needs action", not_verified: "Not verified",
 };
 export function readinessTitle(report: RecordingReadiness): string {
-  const count = report.checks.filter(c => c.state === "needs_action").length;
-  if (count) return `${count === 1 ? "One recording check needs" : `${count} recording checks need`} attention`;
-  if (report.state !== "passed") return "Recording setup needs verification";
+  const recordingState = report.recording_state ?? report.state;
+  const optional = (id: string) => id === "processing" || id.startsWith("archive.");
+  const transcriptionWarns = report.checks.some(c => c.id === "processing" && c.state === "warn");
+  if (recordingState === "needs_action") {
+    const count = report.checks.filter(c => c.state === "needs_action" &&
+      (report.recording_state === undefined || !optional(c.id))).length;
+    return count ? `${count === 1 ? "One recording check needs" : `${count} recording checks need`} attention` : "Recording setup needs attention";
+  }
+  if (recordingState === "not_verified") {
+    return transcriptionWarns ? "Recording setup needs verification; transcription needs attention" : "Recording setup needs verification";
+  }
+  if (recordingState === "warn") return "Recording checks need attention";
+  if (transcriptionWarns) return "Recording ready; transcription needs attention";
   return "Recording checks passed";
 }
 // Ignore check timestamps and job progress: the shell only needs health changes.
@@ -90,11 +101,8 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
 // beside it on purpose — the state word is always rendered, so nothing here is
 // the only carrier of meaning for a reader who cannot see the difference.
 //
-// THREE tones, and deliberately no amber. Every check here answers one binary
-// question — will recording work? — and the operator already resolves the
-// middle ground itself: evidence older than its TTL is downgraded to
-// not_verified at the source (recording_readiness.go) rather than reported as a
-// weaker pass. So there is no state left that means "working but impaired".
+// Host checks and optional processing can warn without blocking audio.
+// An aged connection finding keeps its verdict and exposes its time separately.
 //
 // The two rows readinessRows synthesises look like candidates and are not.
 // "Configured" claims only that a secret is saved, which is true and verified;
@@ -103,9 +111,6 @@ export function rowActions(check: ReadinessCheck): { action: string; label: stri
 // inherently historical, so amber would be its permanent ceiling. A colour a
 // healthy install can never clear is one people learn to ignore.
 //
-// Amber belongs to coverage instead — "search can read 129 of 138 meetings" is
-// working-but-incomplete, which is a different question from readiness and has
-// its own numbers. It is not represented here yet.
 export type CheckTone = "success" | "warning" | "error" | "neutral";
 
 export function checkTone(check: ReadinessCheck): CheckTone {
@@ -114,8 +119,8 @@ export function checkTone(check: ReadinessCheck): CheckTone {
   // could legitimately produce one; the host checks can, so it exists now for
   // a real producer rather than an invented one.
   if (check.state === "warn") return "warning";
-  // Nobody looked, or the evidence expired. NOT a fault: a colour that means
-  // both "impaired" and "unknown" means neither.
+  // Nobody looked, or the incoming handoff is no longer recent. NOT a fault:
+  // a colour that means both "impaired" and "unknown" means neither.
   if (check.state === "not_verified") return "neutral";
   return "success";
 }

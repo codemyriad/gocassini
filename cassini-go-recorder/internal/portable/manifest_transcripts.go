@@ -19,6 +19,7 @@ import (
 // from the convenient flattened read model in Manifest.
 
 type multiTranscriptWire struct {
+	Processing          *Processing                    `json:"processing,omitempty"`
 	Kind                string                         `json:"kind"`
 	Version             int                            `json:"version"`
 	Profile             string                         `json:"profile"`
@@ -177,7 +178,8 @@ func DecodePublishedManifest(rawJSON []byte) (Manifest, error) {
 		wire.ReadableTranscripts = append(wire.ReadableTranscripts, entry)
 	}
 	manifest := Manifest{
-		Kind: wire.Kind, Version: wire.Version, Profile: wire.Profile,
+		Processing: wire.Processing,
+		Kind:       wire.Kind, Version: wire.Version, Profile: wire.Profile,
 		Meeting: wire.Meeting, Audio: wire.Audio, Integrity: wire.Integrity,
 		Speakers: wire.Speakers, Transcripts: wire.Transcripts,
 		ReadableTranscripts: wire.ReadableTranscripts,
@@ -415,6 +417,7 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 	}
 
 	wire := multiTranscriptWire{
+		Processing:          manifest.Processing,
 		Kind:                "cassini-portable-meeting",
 		Version:             WireVersion,
 		Profile:             Profile,

@@ -3,7 +3,6 @@ package operator
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -336,7 +335,8 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	// The substrate counts toward health only where it applies. An ExApp whose
 	// group folder does not exist is genuinely broken and should say 503; a
 	// standalone dev operator must not go 503 for a Nextcloud it never had.
-	resp.OK = resp.STT.DeviceUsable && resp.DB.OK && resp.Storage.WorkRoot.OK &&
+	// Optional speech processing never blocks audio recording or publication.
+	resp.OK = resp.DB.OK && resp.Storage.WorkRoot.OK &&
 		resp.Storage.SiteRoot.OK && resp.RecordingsAccess.OK
 
 	status := http.StatusOK
@@ -517,6 +517,9 @@ func (s *Store) Ping(ctx context.Context) error {
 // what left CPU-only installs unable to transcribe at all (D-702), when CPU
 // inference is a supported outcome that needs no GPU probe.
 func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (bool, string) {
+	if !settings.TranscriptionEnabled {
+		return true, "Transcription is off; recordings are available as audio."
+	}
 	override := strings.ToLower(strings.TrimSpace(settings.DeviceOverride))
 	if override == "auto" {
 		override = ""
@@ -529,18 +532,9 @@ func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (
 			return false, detail
 		}
 	}
-	// Readiness must not be more optimistic than admission: run the same model
-	// predicate the governor will run. A CUDA image that has fallen back to the
-	// CPU carries only the fp32 model, so a tier that needs another one blocks
-	// permanently — reporting that host as ready would leave an administrator
-	// waiting for builds that can never start.
-	if _, err := rt.admitModelForDevice(settings, device); err != nil {
-		var unavailable *resourceUnavailableError
-		if errors.As(err, &unavailable) {
-			return false, unavailable.detail
-		}
-		return false, err.Error()
-	}
+	// The device only. Whether the selected model can run is reported beside
+	// it (readiness, /settings/models): a missing optional model must not make
+	// the device look broken.
 	if rt.computeReadiness != nil {
 		return rt.computeReadiness.check(device)
 	}

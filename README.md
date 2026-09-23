@@ -34,6 +34,8 @@ Cassini is an ExApp which can be installed from the Nextcloud App Store. Once it
 - **No live transcription or captions.** Transcription starts after recording stops. The operator schedules processing around live recordings to protect capture.
 - **Audio only.** Cassini records the video streams, but the meeting file, transcript and viewer are audio only for now.
 
+Transcription starts off. [Configure a model with progress, or prepare and import it offline](docs/proposals/optional-transcription-model-storage/implementation.md). Models persist across application upgrades.
+
 ## What leaves your server
 
 Recording and transcription run on your own hardware. No audio and no transcript leaves the host for those steps.

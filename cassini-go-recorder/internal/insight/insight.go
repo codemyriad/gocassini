@@ -376,6 +376,9 @@ func assembleContext(bundles []meetingcontext.Bundle, opts meetingcontext.Render
 		}
 		parts = append(parts, strings.TrimRight(rendered, "\n"))
 		for _, meeting := range bundle.Meetings {
+			if len(meeting.Segments) == 0 {
+				return "", nil, Failf(ReasonBadRequest, "meeting %q has no transcript text; remove it from this insight selection", meeting.Meeting.Title)
+			}
 			meetings = append(meetings, MeetingRef{
 				ID:       meeting.Meeting.ID,
 				Title:    meeting.Meeting.Title,

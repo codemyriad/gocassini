@@ -34,7 +34,10 @@ require (
 	golang.org/x/sys v0.29.0 // indirect
 )
 
-require cassini-annotations v0.0.0
+require (
+	cassini-annotations v0.0.0
+	github.com/klauspost/compress v1.18.4
+)
 
 replace cassini-annotations => ../cassini-annotations
 

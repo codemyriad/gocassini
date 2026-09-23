@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gocassini/internal/meetingtime"
+	"gocassini/internal/portable"
 )
 
 // --- transcript.words.v1.json ---
@@ -151,16 +152,17 @@ func vttTime(ms int64) string {
 // --- manifest.json ---
 
 type artifactManifest struct {
-	Kind             string          `json:"kind"`
-	Version          string          `json:"version"`
-	GeneratedAt      string          `json:"generatedAt"`
-	Source           artifactSource  `json:"source"`
-	Files            artifactFiles   `json:"files"`
-	SpeakerCount     int             `json:"speakerCount"`
-	SegmentCount     int             `json:"segmentCount,omitempty"`
-	DigestDurationMS int64           `json:"digestDurationMs,omitempty"`
-	WordCount        int             `json:"wordCount"`
-	Provenance       *provenanceInfo `json:"provenance,omitempty"`
+	Processing       *portable.Processing `json:"processing,omitempty"`
+	Kind             string               `json:"kind"`
+	Version          string               `json:"version"`
+	GeneratedAt      string               `json:"generatedAt"`
+	Source           artifactSource       `json:"source"`
+	Files            artifactFiles        `json:"files"`
+	SpeakerCount     int                  `json:"speakerCount"`
+	SegmentCount     int                  `json:"segmentCount,omitempty"`
+	DigestDurationMS int64                `json:"digestDurationMs,omitempty"`
+	WordCount        int                  `json:"wordCount"`
+	Provenance       *provenanceInfo      `json:"provenance,omitempty"`
 }
 
 type artifactSource struct {
@@ -300,6 +302,7 @@ type HintsProvenance struct {
 // the point where a reader could tell the two device strings and the three
 // booleans apart at a call site.
 type ManifestInput struct {
+	Processing       *portable.Processing
 	SrcBasename      string
 	SrcDurationMS    int64
 	DigestDurationMS int64
@@ -379,7 +382,14 @@ func WriteManifest(path string, in ManifestInput) error {
 		}
 	}
 
+	if in.Processing != nil && in.Processing.Transcription.Status != "completed" {
+		files.Captions = ""
+		files.Summary = ""
+		files.Transcripts = []artifactTranscriptRef{{ID: "untranscribed", Path: "transcript.words.v1.json", Default: true}}
+		prov = nil
+	}
 	doc := artifactManifest{
+		Processing:  in.Processing,
 		Kind:        "cassini.meeting-artifact.v1",
 		Version:     "1",
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),

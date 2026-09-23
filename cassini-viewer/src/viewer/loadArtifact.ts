@@ -31,6 +31,7 @@ import {
 import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 
 export interface LoadedArtifact {
+  transcriptionStatus?: { status: "completed" | "skipped" | "failed"; reason?: string };
   transcript: TranscriptWordsV1;
   displayTranscript: DisplayTranscriptV1 | null;
   readableTranscript: ReadableTranscriptV1 | null;
@@ -348,6 +349,7 @@ function buildPortableLoadedArtifact({
         currentTranscriptId,
       ),
     ),
+    transcriptionStatus: readTranscriptionStatus(manifest.processing),
     wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest.provenance),
     availableTranscripts,
     currentTranscriptId,
@@ -401,6 +403,7 @@ async function loadArtifactFromPaths(paths: {
       paths.audioPath ? "manual-artifact" : "artifact-directory",
       buildDirectoryMetadataRaw(manifest, transcript, displayTranscript, readableTranscript),
     ),
+    transcriptionStatus: readTranscriptionStatus(manifest?.processing),
     wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest?.provenance),
     availableTranscripts: SYNTHETIC_SINGLE_TRANSCRIPT,
     currentTranscriptId: "default",
@@ -1022,4 +1025,13 @@ export async function readTranscriptFile(file: File): Promise<LoadedArtifact> {
     availableTranscripts: SYNTHETIC_SINGLE_TRANSCRIPT,
     currentTranscriptId: "default",
   };
+}
+
+export function readTranscriptionStatus(value: unknown): LoadedArtifact["transcriptionStatus"] {
+  if (!value || typeof value !== "object") return undefined;
+  const item = (value as Record<string, unknown>).transcription;
+  if (!item || typeof item !== "object") return undefined;
+  const {status, reason} = item as Record<string,unknown>;
+  if (status !== "completed" && status !== "skipped" && status !== "failed") return undefined;
+  return {status, reason: typeof reason === "string" ? reason : undefined};
 }

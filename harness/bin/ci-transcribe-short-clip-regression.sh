@@ -90,6 +90,10 @@ if ! docker exec "$CONTAINER_NAME" sh -c 'command -v ffmpeg' >/dev/null 2>&1; th
 fi
 docker cp "$SOURCE_OGG" "$CONTAINER_NAME:/tmp/source.ogg" >/dev/null
 
+model=parakeet-tdt-0.6b-v3-int8
+if [[ "$DEVICE" == cuda ]]; then model=parakeet-tdt-0.6b-v3; fi
+docker exec "$CONTAINER_NAME" cassini models install "$model" --device "$DEVICE"
+
 # Cases: length_seconds:min_words. Words is the lower bound at which the
 # test passes; -1 means informational (do not gate).
 declare -a CASES=(
@@ -116,8 +120,9 @@ for case in "${CASES[@]}"; do
     -i /tmp/clip.ogg -c copy /tmp/clip.mkv >/dev/null 2>&1
 
   set +e
-  build_out=$(docker exec "$CONTAINER_NAME" cassini build /tmp/clip.mkv \
-    --out /tmp/out --device "$DEVICE" 2>&1)
+  build_out=$(docker exec -e CASSINI_DISALLOW_MODEL_DOWNLOAD=1 -e CASSINI_STT_MODEL="$model" \
+    "$CONTAINER_NAME" cassini build /tmp/clip.mkv \
+    --out /tmp/out --device "$DEVICE" --transcription on 2>&1)
   build_rc=$?
   set -e
   if (( build_rc != 0 )); then
