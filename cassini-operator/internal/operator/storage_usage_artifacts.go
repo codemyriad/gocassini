@@ -101,7 +101,7 @@ func (c ExAppConfig) scanDetailedStorageUsage(ctx context.Context, workRoot stri
 	} {
 		result.Directories = append(result.Directories, scanArtifactStorageRoot(ctx, root.id, root.label, root.path))
 	}
-	result.DurationMS = elapsedMilliseconds(started)
+	result.DurationMS = float64(time.Since(started).Microseconds()) / 1000
 	result.MeasuredAt = nowUTCString()
 	return result
 }
