@@ -224,12 +224,13 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 // serving /status — which is how an administrator finds out it is unreachable.
 // Both paths take provisionMu, so a startup run and an enable cannot interleave.
 // runAfterPreflight fires the hook the runtime installs to establish a health
-// verdict, once the substrate it depends on has been proven (D-798 R3.5).
+// verdict after the storage preflight finishes (D-798 R3.5). A failed
+// preflight still needs a visible verdict.
 //
 // Chained rather than fired alongside: the storage check reads what preflight
 // writes, so running them concurrently would report "not checked yet" on an
-// install that is about to be fine. Both callers already hold provisionMu
-// through preflightNCStorage, so the ordering here is real.
+// install that is about to be fine. preflightNCStorage releases provisionMu
+// before this hook runs, but its storage result has already been recorded.
 func (c ExAppConfig) runAfterPreflight() {
 	if c.afterPreflight != nil {
 		c.afterPreflight()

@@ -327,16 +327,28 @@ func (rt *Runtime) runDoctorProbe(ctx context.Context) ([]readinessCheck, error)
 	return checks, nil
 }
 
-// Coalesce concurrent checks and put a ceiling on network/process work. GET
+// Coalesce explicit checks and put a ceiling on network/process work. GET
 // reports cached host and connection findings; only startup and explicit
 // checks launch these probes. Aged findings keep their verdict and timestamp.
 func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
+	rt.checkRecordingReadinessWithPreflight(ctx, true)
+}
+
+// The AppAPI enable/restart path already ran storage preflight. Reusing its
+// result avoids duplicate Nextcloud requests and a second transient verdict.
+func (rt *Runtime) checkRecordingReadinessAfterPreflight(ctx context.Context) {
+	rt.checkRecordingReadinessWithPreflight(ctx, false)
+}
+
+func (rt *Runtime) checkRecordingReadinessWithPreflight(ctx context.Context, preflight bool) {
 	s := &rt.recordingSetup
 	s.checkMu.Lock()
 	defer s.checkMu.Unlock()
 	s.mu.Lock()
 	rt.loadRecordingSetupLocked()
-	if time.Since(s.checkedAt) < 2*time.Second {
+	// A freshly completed preflight must update the verdict even if a browser
+	// check just finished; only independent explicit checks may coalesce.
+	if preflight && time.Since(s.checkedAt) < 2*time.Second {
 		s.mu.Unlock()
 		return
 	}
@@ -347,8 +359,10 @@ func (rt *Runtime) checkRecordingReadiness(ctx context.Context) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
-		cfg.preflightNCStorage(ctx, rt.logger)
+	if preflight {
+		if cfg, err := LoadExAppConfig(); err == nil && cfg.Active {
+			cfg.preflightNCStorage(ctx, rt.logger)
+		}
 	}
 	// The panel polls GET every five seconds. Probe the media host once per
 	// explicit check and retain its verdict with the time it was checked.
