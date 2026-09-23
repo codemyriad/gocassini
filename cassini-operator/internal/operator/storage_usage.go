@@ -45,19 +45,42 @@ func (c ExAppConfig) storageUsageHandler(rt *Runtime) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, http.MethodGet)
-			return
+		w.Header().Set("Cache-Control", "no-store")
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, rt.cachedStorageUsage())
+		case http.MethodPost:
+			ctx, cancel := context.WithTimeout(r.Context(), storageUsageTimeout)
+			defer cancel()
+			writeJSON(w, http.StatusOK, rt.refreshStorageUsage(ctx, c))
+		default:
+			writeMethodNotAllowed(w, http.MethodGet+", "+http.MethodPost)
 		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), storageUsageTimeout)
-		defer cancel()
-		writeJSON(w, http.StatusOK, c.storageUsage(ctx, rt))
 	})
 }
 
-func (c ExAppConfig) storageUsage(ctx context.Context, rt *Runtime) storageUsageResponse {
-	result := storageUsageResponse{MeasuredAt: nowUTCString()}
+func (rt *Runtime) cachedStorageUsage() storageUsageResponse {
+	rt.storageUsageMu.RLock()
+	defer rt.storageUsageMu.RUnlock()
+	result := rt.storageUsage
+	if result.Sources == nil {
+		result.Sources = []storageUsageSource{}
+	}
+	return result
+}
+
+func (rt *Runtime) refreshStorageUsage(ctx context.Context, c ExAppConfig) storageUsageResponse {
+	rt.storageUsageRefreshMu.Lock()
+	defer rt.storageUsageRefreshMu.Unlock()
+	result := c.scanStorageUsage(ctx, rt)
+	rt.storageUsageMu.Lock()
+	rt.storageUsage = result
+	rt.storageUsageMu.Unlock()
+	return result
+}
+
+func (c ExAppConfig) scanStorageUsage(ctx context.Context, rt *Runtime) storageUsageResponse {
+	result := storageUsageResponse{}
 	addLocal := func(id, label, dir string) {
 		source := storageUsageSource{ID: id, Label: label, Location: "Cassini persistent storage"}
 		source.Bytes, source.Error = directoryLogicalBytes(dir)
@@ -89,6 +112,7 @@ func (c ExAppConfig) storageUsage(ctx context.Context, rt *Runtime) storageUsage
 			})
 		}
 	}
+	result.MeasuredAt = nowUTCString()
 	return result
 }
 

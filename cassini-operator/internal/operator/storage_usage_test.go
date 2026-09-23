@@ -47,7 +47,7 @@ func TestStorageUsageReportsRecordingAndBuildLocations(t *testing.T) {
 	}))
 	defer nc.Close()
 
-	response := testExAppConfig(nc.URL).storageUsage(t.Context(), rt)
+	response := testExAppConfig(nc.URL).scanStorageUsage(t.Context(), rt)
 	assertUsageSource(t, response, "published", 12, "")
 	assertUsageSource(t, response, "current", 11, "")
 	assertUsageSource(t, response, "runs", 17, "")
@@ -64,12 +64,12 @@ func TestStorageUsageKeepsSuccessfulRowsWhenNextcloudFails(t *testing.T) {
 	}))
 	defer nc.Close()
 
-	response := testExAppConfig(nc.URL).storageUsage(t.Context(), rt)
+	response := testExAppConfig(nc.URL).scanStorageUsage(t.Context(), rt)
 	assertUsageSource(t, response, "published", 0, "PROPFIND")
 	assertUsageSource(t, response, "current", 11, "")
 }
 
-func TestStorageUsageHandlerAndRouteAreGetOnly(t *testing.T) {
+func TestStorageUsageHandlerReadsAndRefreshesTheIndex(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	cfg := testExAppConfig("")
@@ -79,18 +79,36 @@ func TestStorageUsageHandlerAndRouteAreGetOnly(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /storage/usage = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
 	var body storageUsageResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode storage usage: %v", err)
 	}
-	if body.MeasuredAt == "" || len(body.Sources) != 3 {
-		t.Fatalf("response = %+v, want timestamp and the three regular sources", body)
+	if body.MeasuredAt != "" || len(body.Sources) != 0 {
+		t.Fatalf("initial response = %+v, want an empty in-memory index", body)
 	}
 
 	rec = httptest.NewRecorder()
 	cfg.storageUsageHandler(rt).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/storage/usage", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /storage/usage = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode refreshed storage usage: %v", err)
+	}
+	if body.MeasuredAt == "" || len(body.Sources) != 3 {
+		t.Fatalf("refreshed response = %+v, want timestamp and the three regular sources", body)
+	}
+
+	rec = httptest.NewRecorder()
+	cfg.storageUsageHandler(rt).ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/storage/usage", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST /storage/usage = %d, want 405", rec.Code)
+		t.Fatalf("PUT /storage/usage = %d, want 405", rec.Code)
+	}
+	if got := rec.Header().Get("Allow"); got != "GET, POST" {
+		t.Fatalf("Allow = %q, want GET, POST", got)
 	}
 
 	found := false
@@ -102,6 +120,38 @@ func TestStorageUsageHandlerAndRouteAreGetOnly(t *testing.T) {
 	if !found {
 		t.Fatal("operator API did not register /storage/usage")
 	}
+}
+
+func TestStorageUsageGETDoesNotRescanFolders(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	cfg := testExAppConfig("")
+	name := filepath.Join(currentRoot(rt.cfg.WorkRoot), "one.run", "recording.mkv")
+	writeUsageFile(t, name, 11)
+
+	post := httptest.NewRecorder()
+	cfg.storageUsageHandler(rt).ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/storage/usage", nil))
+	var refreshed storageUsageResponse
+	if err := json.Unmarshal(post.Body.Bytes(), &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	assertUsageSource(t, refreshed, "current", 11, "")
+
+	writeUsageFile(t, name, 29)
+	get := httptest.NewRecorder()
+	cfg.storageUsageHandler(rt).ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/storage/usage", nil))
+	var cached storageUsageResponse
+	if err := json.Unmarshal(get.Body.Bytes(), &cached); err != nil {
+		t.Fatal(err)
+	}
+	assertUsageSource(t, cached, "current", 11, "")
+
+	post = httptest.NewRecorder()
+	cfg.storageUsageHandler(rt).ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/storage/usage", nil))
+	if err := json.Unmarshal(post.Body.Bytes(), &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	assertUsageSource(t, refreshed, "current", 29, "")
 }
 
 // The page calls the ExApp through its mounted operator path, not its internal

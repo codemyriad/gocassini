@@ -220,6 +220,13 @@ type Runtime struct {
 	llmMu           sync.RWMutex
 	llm             LLMSettings
 	llmSettingsPath string
+	// storageUsage is an explicitly refreshed, process-local index. GET reads it
+	// in constant time; only POST /storage/usage performs filesystem and WebDAV
+	// traversal. storageUsageRefreshMu keeps two administrator-triggered scans
+	// from running over the same archive at once.
+	storageUsageMu        sync.RWMutex
+	storageUsageRefreshMu sync.Mutex
+	storageUsage          storageUsageResponse
 }
 
 type TriggerRequest struct {
