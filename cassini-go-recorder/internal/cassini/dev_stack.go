@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -60,6 +61,7 @@ type devStackPlan struct {
 	PatchMode             string
 	ExistingResourceMode  string
 	SkipStorageScaffold   bool
+	OperatorSeedDir       string
 	DownSuspend           bool
 	DownVolumes           bool
 	DownFull              bool
@@ -81,6 +83,7 @@ type devStackFlagOptions struct {
 	exAppImageMode      string
 	patchMode           string
 	skipStorageScaffold bool
+	seedOperatorDir     string
 	build               bool
 	resume              bool
 	reset               bool
@@ -117,6 +120,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	patchMode := stringFlag("patch", "patch mode: auto, none, force")
 	skipStorageScaffold := fs.Bool("debug-skip-storage-scaffold", false,
 		"debug: build no recordings storage at all — no cassini service account, no Team folder, and neither native app")
+	seedOperatorDir := stringFlag("seed-operator", "AppAPI operator-volume seed to copy into a fresh installed ExApp")
 	build := fs.Bool("build", false, "build the Cassini ExApp image before registration")
 	resume := fs.Bool("resume", false, "reuse matching stopped containers or retained harness volumes")
 	reset := fs.Bool("reset", false, "stop/remove/recreate resources for the resolved stack")
@@ -151,6 +155,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	opts.exAppImageMode = *exAppImageMode
 	opts.patchMode = *patchMode
 	opts.skipStorageScaffold = *skipStorageScaffold
+	opts.seedOperatorDir = *seedOperatorDir
 	opts.build = *build
 	opts.resume = *resume
 	opts.reset = *reset
@@ -212,6 +217,14 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	plan.PatchMode = pick("patch", opts.patchMode, "CASSINI_HARNESS_PATCH_MODE", devStackPatchAuto)
 	plan.SkipStorageScaffold = opts.skipStorageScaffold ||
 		(!opts.set["debug-skip-storage-scaffold"] && get("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD") == "1")
+	plan.OperatorSeedDir = pick("seed-operator", opts.seedOperatorDir, "CASSINI_HARNESS_SEED_OPERATOR_DIR", "")
+	if plan.OperatorSeedDir != "" {
+		resolved, err := resolveDevStackOperatorSeedDir(plan.OperatorSeedDir)
+		if err != nil {
+			return plan, rest, err
+		}
+		plan.OperatorSeedDir = resolved
+	}
 	plan.DownSuspend = opts.suspend
 	plan.DownVolumes = opts.downVolumes
 	plan.DownFull = opts.downFull
@@ -222,6 +235,9 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	}
 	if command != "up" && (opts.resume || opts.reset) {
 		return plan, rest, errors.New("--resume and --reset apply only to stack up")
+	}
+	if command != "up" && command != "plan" && opts.set["seed-operator"] {
+		return plan, rest, errors.New("--seed-operator applies only to stack up")
 	}
 	if command != "down" && (opts.suspend || opts.downVolumes || opts.downFull) {
 		return plan, rest, errors.New("--suspend, --volumes, and --full apply only to stack down")
@@ -490,6 +506,12 @@ func validateDevStackPlan(plan devStackPlan) error {
 	if plan.CassiniMode == devStackCassiniNone && plan.ExAppImageMode == devStackImageBuild {
 		return errors.New("--build / ExApp image mode build requires --cassini installed-exapp")
 	}
+	if plan.OperatorSeedDir != "" && plan.CassiniMode != devStackCassiniInstalledExApp {
+		return errors.New("--seed-operator requires --cassini installed-exapp")
+	}
+	if plan.OperatorSeedDir != "" && plan.ExistingResourceMode == devStackExistingResume {
+		return errors.New("--seed-operator cannot be combined with --resume: it only copies into a fresh ExApp volume")
+	}
 	return nil
 }
 
@@ -555,8 +577,29 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_MEDIA_HOST=" + plan.MediaHost,
 		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL=" + plan.SignalingPublicURL,
 		"CASSINI_TALK_BACKEND_URL=" + plan.TalkBackendURL,
+		"CASSINI_HARNESS_SEED_OPERATOR_DIR=" + plan.OperatorSeedDir,
 	}
 	return env
+}
+
+// resolveDevStackOperatorSeedDir checks the AppAPI volume root before startup.
+func resolveDevStackOperatorSeedDir(value string) (string, error) {
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("--seed-operator %q: %w", value, err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return "", fmt.Errorf("--seed-operator %q: %w", value, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("--seed-operator %q is not a directory", value)
+	}
+	jobs, err := os.Stat(filepath.Join(absolute, "operator", "jobs"))
+	if err != nil || !jobs.IsDir() {
+		return "", fmt.Errorf("--seed-operator %q is not an operator-volume seed: expected operator/jobs/ beneath the volume root", value)
+	}
+	return absolute, nil
 }
 
 func printDevStackPlan(w io.Writer, plan devStackPlan) {
@@ -581,6 +624,8 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "  mode: %s\n", plan.PatchMode)
 	fmt.Fprintln(w, "storage:")
 	fmt.Fprintf(w, "  skip_scaffold: %t\n", plan.SkipStorageScaffold)
+	fmt.Fprintln(w, "seed:")
+	fmt.Fprintf(w, "  operator_volume: %s\n", yamlValueOrNull(plan.OperatorSeedDir))
 	fmt.Fprintln(w, "lifecycle:")
 	fmt.Fprintf(w, "  existing_resources: %s\n", plan.ExistingResourceMode)
 	fmt.Fprintf(w, "  down_suspend: %t\n", plan.DownSuspend)

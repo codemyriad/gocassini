@@ -153,6 +153,9 @@ Common options:
 up options:
   --resume   reuse matching stopped containers or retained harness volumes
   --reset    remove and recreate containers and volumes
+  --seed-operator DIR
+             copy an AppAPI persistent-volume root containing operator/jobs/
+             into a fresh installed ExApp volume after deployment
 
 down options (canonical teardown; containers are ephemeral, volumes persist):
   (none)      remove containers, keep volumes (persistence)

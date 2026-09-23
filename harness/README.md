@@ -1370,6 +1370,20 @@ recordings visible to your Nextcloud account. The output is a confidential local
 static archive. The harness records its own meetings through Talk so tests use
 Nextcloud shares created by Cassini.
 
+### 9.6 Seeding the installed operator volume
+
+`--seed-operator` copies an AppAPI persistent-volume root containing
+`operator/jobs/` into a fresh installed ExApp volume. The harness checks the
+source before startup and bind-mounts it read-only for the copy. It refuses
+`--resume`, since a seed belongs to a fresh volume.
+
+```bash
+./bin/cassini dev stack up --cassini installed-exapp \
+  --seed-operator /absolute/path/to/nc_app_gocassini_data
+```
+
+Keep enough free Docker storage for the copied volume and new recordings.
+
 ## 10. Repository structure and operational reference
 
 ### 10.1 Structure

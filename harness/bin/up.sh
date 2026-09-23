@@ -17,6 +17,10 @@ wait_for_nextcloud 420
 harness_configure_appapi_phase
 harness_install_exapp_phase
 
+if [[ -n "${CASSINI_HARNESS_SEED_OPERATOR_DIR:-}" ]]; then
+  "$SCRIPT_DIR/seed-operator-volume.sh" --pack "$CASSINI_HARNESS_SEED_OPERATOR_DIR"
+fi
+
 log "Stack is up."
 log "Create a room: $REPO_ROOT/bin/cassini dev room create --name 'Local room'"
 log "Stream media:  $REPO_ROOT/harness/bin/stream-video.sh --duration 20"
