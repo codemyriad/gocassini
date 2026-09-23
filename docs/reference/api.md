@@ -176,6 +176,21 @@ Each event carries:
 
 The control panel uses this together with snapshot reads from `GET /jobs` and `GET /jobs/:id`.
 
+## Storage usage index
+
+```http
+GET /storage/usage/details
+POST /storage/usage/details
+```
+
+`GET` returns the most recently built storage index without scanning the
+filesystem or Nextcloud. `POST` rebuilds that index and returns the refreshed
+state in the same response. The response includes both published-storage roots,
+the working archive, build history, and the per-file-format breakdown.
+
+The operator also rebuilds this index on fixed five-minute UTC boundaries. A
+`POST` does not move or reset that schedule.
+
 ## Summary of stage and state values
 
 Stage values:

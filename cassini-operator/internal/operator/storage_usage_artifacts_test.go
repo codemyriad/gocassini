@@ -8,7 +8,33 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestNextStorageUsageRebuildUsesFiveMinuteBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{
+			name: "between boundaries",
+			now:  time.Date(2026, time.September, 23, 10, 3, 41, 0, time.FixedZone("local", -7*60*60)),
+			want: time.Date(2026, time.September, 23, 17, 5, 0, 0, time.UTC),
+		},
+		{
+			name: "on a boundary advances to the next one",
+			now:  time.Date(2026, time.September, 23, 10, 5, 0, 0, time.UTC),
+			want: time.Date(2026, time.September, 23, 10, 10, 0, 0, time.UTC),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := nextStorageUsageRebuild(test.now); !got.Equal(test.want) {
+				t.Fatalf("next storage rebuild = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
 
 func TestDetailedStorageUsageCombinesPublishedAndDirectoryFormats(t *testing.T) {
 	workRoot := t.TempDir()
@@ -112,6 +138,19 @@ func TestDetailedStorageUsageIndexOnlyChangesOnPOST(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertArtifactRoot(t, response, "current", 29, 1)
+}
+
+func TestDetailedStorageUsageIsRoutedUnderTheOperatorBasePath(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.BasePath = "/operator"
+
+	handler := newHTTPHandler(discardLogger(), rt, ExAppConfig{})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/operator/storage/usage/details", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /operator/storage/usage/details = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
 }
 
 func assertPublishedRoot(t *testing.T, response detailedStorageUsageResponse, id string, bytes int64) {
