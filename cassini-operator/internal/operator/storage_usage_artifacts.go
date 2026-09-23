@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+// storageUsageRebuildInterval is deliberately anchored to wall-clock boundaries
+// by nextStorageUsageRebuild. An administrator-triggered rebuild never changes
+// this cadence.
+const storageUsageRebuildInterval = 5 * time.Minute
+
 type detailedStorageUsageResponse struct {
 	MeasuredAt  string                     `json:"measured_at"`
 	DurationMS  float64                    `json:"duration_ms"`
@@ -78,6 +83,34 @@ func (rt *Runtime) refreshDetailedStorageUsage(ctx context.Context, c ExAppConfi
 	rt.detailedStorageUsage = result
 	rt.detailedStorageUsageMu.Unlock()
 	return result
+}
+
+// startDetailedStorageUsageRebuilder keeps the detailed report warm without
+// coupling its clock to HTTP requests. The first run is the next five-minute
+// UTC boundary; each later run chooses the next boundary again so a slow scan
+// cannot turn the schedule into "five minutes after the previous scan".
+func (rt *Runtime) startDetailedStorageUsageRebuilder(c ExAppConfig) {
+	rt.workerWG.Add(1)
+	go func() {
+		defer rt.workerWG.Done()
+		timer := time.NewTimer(time.Until(nextStorageUsageRebuild(time.Now())))
+		defer timer.Stop()
+		for {
+			select {
+			case <-rt.ctx.Done():
+				return
+			case <-timer.C:
+				ctx, cancel := context.WithTimeout(rt.ctx, storageUsageTimeout)
+				rt.refreshDetailedStorageUsage(ctx, c)
+				cancel()
+				timer.Reset(time.Until(nextStorageUsageRebuild(time.Now())))
+			}
+		}
+	}()
+}
+
+func nextStorageUsageRebuild(now time.Time) time.Time {
+	return now.UTC().Truncate(storageUsageRebuildInterval).Add(storageUsageRebuildInterval)
 }
 
 func (c ExAppConfig) scanDetailedStorageUsage(ctx context.Context, workRoot string) detailedStorageUsageResponse {

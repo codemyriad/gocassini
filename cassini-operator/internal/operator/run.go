@@ -434,6 +434,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// silently does not serve published/meetings-context, and one configured
 	// with a relative CASSINI_BIN serves it via a path nothing validated.
 	exappCfg.CassiniBin = cfg.CassiniBin
+	// Keep the full storage index warm on fixed five-minute boundaries. This is
+	// started after the ExApp configuration is complete because the index may
+	// read Nextcloud Files as well as local artifacts.
+	runtime.startDetailedStorageUsageRebuilder(exappCfg)
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{
